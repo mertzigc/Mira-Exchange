@@ -4,8 +4,12 @@ import fetch from "node-fetch";
 
 const app = express();
 
-// Tillåt flera origins kommaseparerat i CORS_ORIGIN
-const allowed = (process.env.CORS_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean);
+// CORS
+const allowed = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
@@ -16,8 +20,11 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-const getRedirect = (env) => (env === "live" ? process.env.MS_REDIRECT_LIVE : process.env.MS_REDIRECT_DEV);
+const getRedirect = env => env === "live"
+  ? process.env.MS_REDIRECT_LIVE
+  : process.env.MS_REDIRECT_DEV;
 
+// API-nyckel (valfritt)
 const checkKey = (req, res, next) => {
   if (!process.env.MIRAGPT_API_KEY) return next();
   if (req.headers["x-api-key"] === process.env.MIRAGPT_API_KEY) return next();
@@ -82,6 +89,5 @@ app.post("/ms/oauth/refresh", checkKey, async (req, res) => {
 });
 
 app.get("/health", (_, res) => res.json({ ok: true }));
-
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log("OAuth server on", port));
