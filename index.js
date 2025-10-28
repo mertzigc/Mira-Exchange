@@ -331,3 +331,112 @@ app.post("/ms/refresh-save", async (req, res) => {
     return res.status(500).send("refresh-save error");
   }
 });
+// CREATE EVENT (refresh-guard + create + return id)
+app.post("/ms/create-event", async (req, res) => {
+  try {
+    const keyOk = req.headers["x-api-key"] === (process.env.MIRAGPT_API_KEY || process.env.BUBBLE_API_KEY);
+    if (!keyOk) return res.status(401).json({ error: "Unauthorized" });
+
+    const { user_unique_id, event } = req.body || {};
+    if (!user_unique_id || !event) return res.status(400).json({ error: "Missing user_unique_id or event payload" });
+
+    // 1) Hämta User från Bubble (Data API) för tokens
+    const bases = [
+      process.env.BUBBLE_BASE_URL.replace(/\/$/, ""),
+      process.env.BUBBLE_BASE_URL.replace(/\/$/, "") + "/version-test"
+    ];
+    let userObj = null, baseUsed = null;
+    for (const base of bases) {
+      const url = `${base}/api/1.1/obj/user/${encodeURIComponent(user_unique_id)}`;
+      const r = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${process.env.MIRAGPT_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      });
+      if (r.ok) {
+        userObj = await r.json();
+        baseUsed = base;
+        break;
+      }
+      if (r.status !== 404) break;
+    }
+    if (!userObj?.response)
+      return res.status(404).json({ error: "User not found in Bubble" });
+    const u = userObj.response;
+
+    // 2) Refresh-guard (om < 60s kvar)
+    const expiresAt = u.ms_expires_at ? Date.parse(u.ms_expires_at) : 0;
+    if (!u.ms_access_token || !expiresAt || (expiresAt - Date.now()) / 1000 < 60) {
+      const refreshRes = await fetch(`${BASE_URL}/ms/refresh-save`, {
+        method: "POST",
+        headers: {
+          "x-api-key": process.env.MIRAGPT_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          user_unique_id,
+          refresh_token: u.ms_refresh_token
+        })
+      });
+      if (!refreshRes.ok) {
+        const txt = await refreshRes.text();
+        return res.status(500).json({ error: "refresh_failed", details: txt });
+      }
+      // hämta ny user
+      const r2 = await fetch(
+        `${baseUsed}/api/1.1/obj/user/${encodeURIComponent(user_unique_id)}`,
+        { headers: { Authorization: `Bearer ${process.env.MIRAGPT_API_KEY}` } }
+      );
+      const j2 = await r2.json();
+      userObj = j2;
+    }
+    const accessToken = userObj.response.ms_access_token;
+
+    // 3) Skapa event i Graph (med enkel 401→refresh→retry)
+    async function createOnce(token) {
+      const r = await fetch("https://graph.microsoft.com/v1.0/me/events", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(event)
+      });
+      const j = await r.json().catch(() => ({}));
+      return { r, j };
+    }
+    let { r, j } = await createOnce(accessToken);
+    if (r.status === 401 && u.ms_refresh_token) {
+      await fetch(`${BASE_URL}/ms/refresh-save`, {
+        method: "POST",
+        headers: {
+          "x-api-key": process.env.MIRAGPT_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          user_unique_id,
+          refresh_token: u.ms_refresh_token
+        })
+      });
+      const r2 = await fetch(
+        `${baseUsed}/api/1.1/obj/user/${encodeURIComponent(user_unique_id)}`,
+        { headers: { Authorization: `Bearer ${process.env.MIRAGPT_API_KEY}` } }
+      );
+      const j2 = await r2.json();
+      ({ r, j } = await createOnce(j2.response.ms_access_token));
+    }
+
+    if (!r.ok) return res.status(r.status).json(j);
+    return res.json({
+      ok: true,
+      id: j.id,
+      webLink: j.webLink,
+      raw: j
+    });
+  } catch (e) {
+    return res
+      .status(500)
+      .json({ error: "create_event_error", details: String(e) });
+  }
+});
