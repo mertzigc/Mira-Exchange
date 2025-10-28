@@ -1,442 +1,206 @@
-// =======================
-// Mira-Exchange / index.js
-// =======================
-
 import express from "express";
 import fetch from "node-fetch";
+import dotenv from "dotenv";
 import cors from "cors";
 
+dotenv.config();
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ------- ENV -------
+// --- ENV vars ---
+const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY;
+const CLIENT_ID = process.env.MS_CLIENT_ID;
+const CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
+const REDIRECT_URI = process.env.MS_REDIRECT_URI;
+const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT = process.env.PORT || 10000;
-const BASE_URL = (process.env.BASE_URL || "https://mira-exchange.onrender.com").replace(/\/$/, "");
 
-// Bubble
-const BUBBLE_BASE_URL = (process.env.BUBBLE_BASE_URL || "https://mira-fm.com").replace(/\/$/, "");
-const BUBBLE_API_KEY = process.env.MIRAGPT_API_KEY || process.env.BUBBLE_API_KEY;
+// --- Helper ---
+const log = (msg, data) => {
+  console.log(msg, data ? JSON.stringify(data, null, 2) : "");
+};
 
-// Microsoft
-const MS_CLIENT_ID = process.env.MS_APP_CLIENT_ID;
-const MS_CLIENT_SECRET = process.env.MS_APP_CLIENT_SECRET; // kan vara tom om public client
-const MS_TENANT = process.env.MS_TENANT || "common";
-const MS_SCOPE =
-  process.env.MS_SCOPE ||
-  "User.Read Calendars.ReadWrite offline_access openid profile email";
-const MS_REDIRECT_LIVE =
-  process.env.MS_REDIRECT_LIVE || `${BASE_URL}/ms/callback`;
+// -----------------------------------------------------
+// 🔹 Health check
+// -----------------------------------------------------
+app.get("/health", (req, res) => res.json({ ok: true }));
 
-// ------- SMALL UTILS -------
-const log = (...args) => console.log(...args);
-
-function buildBubbleBases() {
-  // returnera [live, version-test] eller [version-test, live] beroende på satt bas
-  const bases = [];
-  const base = BUBBLE_BASE_URL.replace(/\/$/, "");
-  if (!base) return bases;
-
-  if (base.includes("/version-test")) {
-    bases.push(base);
-    bases.push(base.replace("/version-test", ""));
-  } else {
-    bases.push(base);
-    bases.push(`${base}/version-test`);
-  }
-  return bases.map((b) =>
-    b.replace("/version-test/version-test", "/version-test")
-  );
-}
-
-async function jsonFetch(url, opts = {}) {
-  const r = await fetch(url, opts);
-  let j = null;
-  try { j = await r.json(); } catch (e) {}
-  return { r, j };
-}
-
-function nowIso() {
-  return new Date().toISOString();
-}
-
-// ------- MS TOKEN EXCHANGE -------
-async function msTokenExchange({ grant_type, code, refresh_token, redirect_uri }) {
-  const form = new URLSearchParams();
-  form.set("client_id", MS_CLIENT_ID || "");
-  form.set("grant_type", grant_type);
-  if (code) form.set("code", code);
-  if (refresh_token) form.set("refresh_token", refresh_token);
-  if (redirect_uri) form.set("redirect_uri", redirect_uri);
-  form.set("scope", MS_SCOPE);
-  if (MS_CLIENT_SECRET) form.set("client_secret", MS_CLIENT_SECRET);
-
-  const url = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/token`;
-  return jsonFetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form,
-  });
-}
-
-// ------- SAVE TO BUBBLE (WF → WF/version-test → Data API) -------
-async function saveTokensToBubbleByAnyMeans({
-  bubble_user_id, // Bubble "Unique id" (String)
-  access_token,
-  refresh_token,
-  scope,
-  token_type,
-  expires_in,
-  ext_expires_in,
-}) {
-  const bases = buildBubbleBases();
-
-  // 1) Försök med API Workflow: /wf/ms_token_upsert
-  const wfBody = {
-    bubble_user_id,                         // <- VIKTIGT: matchar Bubble-parameter
-    access_token,
-    refresh_token,
-    expires_in,
-    scope,
-    token_type,
-    server_now_iso: nowIso(),
-  };
-
-  for (const base of bases) {
-    const wfUrl = `${base}/api/1.1/wf/ms_token_upsert`;
-    try {
-      const { r, j } = await jsonFetch(wfUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${BUBBLE_API_KEY}`,
-        },
-        body: JSON.stringify(wfBody),
-      });
-      log("[save] try WF", { base, status: r.status, ok: r.ok, j });
-      if (r.ok) return { ok: true, via: "wf", base, status: r.status, j };
-      if (r.status !== 404) {
-        // annat fel: returnera direkt
-        return { ok: false, via: "wf", base, status: r.status, j };
-      }
-      // annars 404 → prova nästa base
-    } catch (e) {
-      log("[save] WF error", { base, error: String(e) });
-    }
-  }
-
-  // 2) Fallback: Data API PUT /obj/user/:id (bubble_user_id = object id)
-  const expiresAtIso = new Date(
-    Date.now() + (Number(expires_in || 0) - 120) * 1000
-  )
-    .toISOString()
-    .replace("Z", "+00:00");
-
-  const dataBody = {
-    ms_access_token: access_token,
-    ms_scope: scope,
-    ms_token_type: token_type,
-    ms_expires_at: expiresAtIso,
-  };
-  if (refresh_token) dataBody.ms_refresh_token = refresh_token;
-
-  for (const base of bases) {
-    const putUrl = `${base}/api/1.1/obj/user/${encodeURIComponent(
-      bubble_user_id
-    )}`;
-    try {
-      const { r, j } = await jsonFetch(putUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${BUBBLE_API_KEY}`,
-        },
-        body: JSON.stringify(dataBody),
-      });
-      log("[save] try DataAPI PUT user", { base, status: r.status, ok: r.ok, j });
-      if (r.ok) return { ok: true, via: "data_api", base, status: r.status, j };
-      if (r.status !== 404) {
-        return { ok: false, via: "data_api", base, status: r.status, j };
-      }
-    } catch (e) {
-      log("[save] DataAPI error", { base, error: String(e) });
-    }
-  }
-
-  return { ok: false, via: "exhausted", error: "Could not save via WF or Data API" };
-}
-
-// ------- SERVER START & HEALTH -------
-app.listen(PORT, () => {
-  log("\n/////////////////////////////////////////");
-  log(`🚀 Mira Exchange running on port ${PORT}`);
-  log(`🌐 Health: ${BASE_URL}/health`);
-  log("/////////////////////////////////////////\n");
-});
-
-app.get("/health", (_req, res) => res.send("OK"));
-
-// ------- AUTH START -------
-app.get("/ms/auth", async (req, res) => {
-  try {
-    const { u } = req.query;
-    if (!u) return res.status(400).send("Missing ?u=user_unique_id");
-
-    const redirectUri = encodeURIComponent(MS_REDIRECT_LIVE);
-    const scope = encodeURIComponent(MS_SCOPE);
-    const state = encodeURIComponent(JSON.stringify({ u }));
-
-    const authUrl = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/authorize?client_id=${MS_CLIENT_ID}&response_type=code&redirect_uri=${redirectUri}&response_mode=query&scope=${scope}&state=${state}`;
-    log("[/ms/auth] redirecting", { u, redirectUri });
-    res.redirect(authUrl);
-  } catch (e) {
-    log("[/ms/auth] error", e);
-    res.status(500).send("auth error");
-  }
-});
-
-// ------- CALLBACK (exchange + save) -------
-app.get("/ms/callback", async (req, res) => {
-  try {
-    const { code, state } = req.query;
-    if (!code) return res.status(400).send("Missing code");
-    const decoded = JSON.parse(state || "{}");
-    const bubble_user_id = decoded.u;
-    if (!bubble_user_id) return res.status(400).send("Missing user id in state");
-
-    log("[/ms/callback] code received for", bubble_user_id);
-
-    const { r, j } = await msTokenExchange({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: MS_REDIRECT_LIVE,
-    });
-
-    log("[/ms/callback] token exchange", {
-      ok: r.ok,
-      status: r.status,
-      has_access_token: !!j.access_token,
-      has_refresh_token: !!j.refresh_token,
-      expires_in: j.expires_in,
-    });
-    if (!r.ok) return res.status(500).json(j);
-
-    const save = await saveTokensToBubbleByAnyMeans({
-      bubble_user_id,
-      access_token: j.access_token,
-      refresh_token: j.refresh_token,
-      scope: j.scope,
-      token_type: j.token_type,
-      expires_in: j.expires_in,
-      ext_expires_in: j.ext_expires_in,
-    });
-
-    log("[/ms/callback] save result", save);
-    if (!save.ok) return res.status(500).json({ error: "bubble_save_failed", details: save });
-
-    // redirect tillbaka till app (prioritera samma basordning som i buildBubbleBases)
-    const bases = buildBubbleBases();
-    const back = `${bases[0]}/dashboard?ms=connected#`;
-    return res.redirect(back);
-  } catch (e) {
-    log("[/ms/callback] error:", e);
-    res.status(500).send("callback error");
-  }
-});
-
-// ------- RAW REFRESH -------
-app.post("/ms/refresh", async (req, res) => {
-  try {
-    const keyOk = req.headers["x-api-key"] === BUBBLE_API_KEY;
-    log("[/ms/refresh] hit", {
-      auth: keyOk ? "ok" : "bad",
-      has_body: !!req.body,
-      has_refresh_token: !!(req.body && req.body.refresh_token),
-    });
-    if (!keyOk) return res.status(401).json({ error: "Unauthorized" });
-
-    const { refresh_token } = req.body || {};
-    if (!refresh_token) return res.status(400).send("Missing refresh_token");
-
-    const { r, j } = await msTokenExchange({
-      grant_type: "refresh_token",
-      refresh_token,
-    });
-
-    log("[/ms/refresh] ms token response", {
-      ok: r.ok,
-      status: r.status,
-      has_access_token: !!j.access_token,
-      has_refresh_token: !!j.refresh_token,
-      expires_in: j.expires_in,
-    });
-
-    if (!r.ok) return res.status(500).json(j);
-    return res.json(j);
-  } catch (e) {
-    log("[/ms/refresh] error:", e);
-    return res.status(500).send("refresh error");
-  }
-});
-
-// ------- REFRESH & SAVE (end-to-end) -------
+// -----------------------------------------------------
+// 🔹 Refresh Token & Save
+// -----------------------------------------------------
 app.post("/ms/refresh-save", async (req, res) => {
-  try {
-    const keyOk = req.headers["x-api-key"] === BUBBLE_API_KEY;
-    const body = req.body || {};
-    log("[/ms/refresh-save] hit", {
-      auth: keyOk ? "ok" : "bad",
-      has_body: !!req.body,
-      has_refresh_token: !!body.refresh_token,
-      has_user: !!body.user_unique_id,
-    });
-    if (!keyOk) return res.status(401).json({ error: "Unauthorized" });
+  const { user_unique_id, refresh_token } = req.body || {};
+  log("[/ms/refresh-save] hit", {
+    auth: BUBBLE_API_KEY ? "ok" : "missing",
+    has_body: !!req.body,
+    has_refresh_token: !!refresh_token,
+    has_user: !!user_unique_id
+  });
 
-    const { refresh_token, user_unique_id } = body;
-    if (!refresh_token || !user_unique_id) {
-      return res.status(400).send("Missing refresh_token or user_unique_id");
-    }
-
-    const { r, j } = await msTokenExchange({
-      grant_type: "refresh_token",
-      refresh_token,
-    });
-
-    log("[/ms/refresh-save] ms token response", {
-      ok: r.ok,
-      status: r.status,
-      has_access_token: !!j.access_token,
-      has_refresh_token: !!j.refresh_token,
-      expires_in: j.expires_in,
-    });
-    if (!r.ok) return res.status(500).json(j);
-
-    // Spara med bubblans WF (bubble_user_id) + fallback
-    const save = await saveTokensToBubbleByAnyMeans({
-      bubble_user_id: user_unique_id, // <- VIKTIGT: heter bubble_user_id i WF
-      access_token: j.access_token,
-      refresh_token: j.refresh_token,
-      scope: j.scope,
-      token_type: j.token_type,
-      expires_in: j.expires_in,
-      ext_expires_in: j.ext_expires_in,
-    });
-
-    log("[/ms/refresh-save] save result", save);
-    if (!save.ok) return res.status(500).json({ error: "bubble_save_failed", details: save });
-
-    return res.json({ ok: true, saved_via: save.via, expires_in: j.expires_in });
-  } catch (e) {
-    log("[/ms/refresh-save] error:", e);
-    return res.status(500).send("refresh-save error");
+  if (!user_unique_id || !refresh_token) {
+    return res.status(400).json({ error: "Missing user_unique_id or refresh_token" });
   }
-});
-// CREATE EVENT (refresh-guard + create + return id)
-app.post("/ms/create-event", async (req, res) => {
+
   try {
-    const keyOk = req.headers["x-api-key"] === (process.env.MIRAGPT_API_KEY || process.env.BUBBLE_API_KEY);
-    if (!keyOk) return res.status(401).json({ error: "Unauthorized" });
+    // 1. Hämta ny access token
+    const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: "refresh_token",
+        refresh_token,
+        redirect_uri: REDIRECT_URI
+      })
+    });
 
-    const { user_unique_id, event } = req.body || {};
-    if (!user_unique_id || !event) return res.status(400).json({ error: "Missing user_unique_id or event payload" });
+    const tokenData = await tokenRes.json();
+    log("[/ms/refresh-save] ms token response", {
+      ok: tokenRes.ok,
+      status: tokenRes.status,
+      has_access_token: !!tokenData.access_token,
+      has_refresh_token: !!tokenData.refresh_token,
+      expires_in: tokenData.expires_in
+    });
 
-    // 1) Hämta User från Bubble (Data API) för tokens
-    const bases = [
-      process.env.BUBBLE_BASE_URL.replace(/\/$/, ""),
-      process.env.BUBBLE_BASE_URL.replace(/\/$/, "") + "/version-test"
-    ];
-    let userObj = null, baseUsed = null;
+    if (!tokenRes.ok || !tokenData.access_token)
+      return res.status(400).json({ error: "Token refresh failed", tokenData });
+
+    // 2. Skicka till Bubble workflow
+    const payload = {
+      bubble_user_id: user_unique_id,
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token || refresh_token,
+      expires_in: tokenData.expires_in,
+      token_type: tokenData.token_type,
+      scope: tokenData.scope,
+      server_now_iso: new Date().toISOString()
+    };
+
+    const bases = ["https://mira-fm.com", "https://mira-fm.com/version-test"];
+    let saveResult = null;
+
     for (const base of bases) {
-      const url = `${base}/api/1.1/obj/user/${encodeURIComponent(user_unique_id)}`;
-      const r = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${process.env.MIRAGPT_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      });
-      if (r.ok) {
-        userObj = await r.json();
-        baseUsed = base;
-        break;
-      }
-      if (r.status !== 404) break;
-    }
-    if (!userObj?.response)
-      return res.status(404).json({ error: "User not found in Bubble" });
-    const u = userObj.response;
-
-    // 2) Refresh-guard (om < 60s kvar)
-    const expiresAt = u.ms_expires_at ? Date.parse(u.ms_expires_at) : 0;
-    if (!u.ms_access_token || !expiresAt || (expiresAt - Date.now()) / 1000 < 60) {
-      const refreshRes = await fetch(`${BASE_URL}/ms/refresh-save`, {
+      const wf = `${base}/api/1.1/wf/ms_token_upsert`;
+      const r = await fetch(wf, {
         method: "POST",
         headers: {
-          "x-api-key": process.env.MIRAGPT_API_KEY,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${BUBBLE_API_KEY}`
         },
-        body: JSON.stringify({
-          user_unique_id,
-          refresh_token: u.ms_refresh_token
-        })
-      });
-      if (!refreshRes.ok) {
-        const txt = await refreshRes.text();
-        return res.status(500).json({ error: "refresh_failed", details: txt });
-      }
-      // hämta ny user
-      const r2 = await fetch(
-        `${baseUsed}/api/1.1/obj/user/${encodeURIComponent(user_unique_id)}`,
-        { headers: { Authorization: `Bearer ${process.env.MIRAGPT_API_KEY}` } }
-      );
-      const j2 = await r2.json();
-      userObj = j2;
-    }
-    const accessToken = userObj.response.ms_access_token;
-
-    // 3) Skapa event i Graph (med enkel 401→refresh→retry)
-    async function createOnce(token) {
-      const r = await fetch("https://graph.microsoft.com/v1.0/me/events", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(event)
+        body: JSON.stringify(payload)
       });
       const j = await r.json().catch(() => ({}));
-      return { r, j };
-    }
-    let { r, j } = await createOnce(accessToken);
-    if (r.status === 401 && u.ms_refresh_token) {
-      await fetch(`${BASE_URL}/ms/refresh-save`, {
-        method: "POST",
-        headers: {
-          "x-api-key": process.env.MIRAGPT_API_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          user_unique_id,
-          refresh_token: u.ms_refresh_token
-        })
-      });
-      const r2 = await fetch(
-        `${baseUsed}/api/1.1/obj/user/${encodeURIComponent(user_unique_id)}`,
-        { headers: { Authorization: `Bearer ${process.env.MIRAGPT_API_KEY}` } }
-      );
-      const j2 = await r2.json();
-      ({ r, j } = await createOnce(j2.response.ms_access_token));
+      log("[save] try WF", { base, status: r.status, ok: r.ok, j });
+      if (r.ok) {
+        saveResult = { ok: true, via: "wf", base, status: r.status, j };
+        break;
+      }
     }
 
-    if (!r.ok) return res.status(r.status).json(j);
-    return res.json({
-      ok: true,
-      id: j.id,
-      webLink: j.webLink,
-      raw: j
-    });
-  } catch (e) {
-    return res
-      .status(500)
-      .json({ error: "create_event_error", details: String(e) });
+    if (!saveResult) throw new Error("No Bubble save succeeded");
+
+    res.json(saveResult);
+  } catch (err) {
+    console.error("[/ms/refresh-save] error", err);
+    res.status(500).json({ error: err.message });
   }
 });
+
+// -----------------------------------------------------
+// 🔹 Create Calendar Event
+// -----------------------------------------------------
+app.post("/ms/create-event", async (req, res) => {
+  const { user_unique_id, attendees_emails, event } = req.body || {};
+  log("[/ms/create-event] hit", {
+    has_user: !!user_unique_id,
+    has_event: !!event,
+    attendees_count: attendees_emails ? attendees_emails.length : 0
+  });
+
+  if (!user_unique_id || !event)
+    return res.status(400).json({ error: "Missing user_unique_id or event" });
+
+  try {
+    // 1. Hämta user från Bubble (för tokens)
+    const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
+    const userRes = await fetch(userURL, {
+      headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` }
+    });
+    const userData = await userRes.json();
+
+    const accessToken = userData?.response?.ms_access_token;
+    if (!accessToken) throw new Error("User has no ms_access_token");
+
+    // 2. Normalisera deltagare
+    let normalizedAttendees = [];
+    if (Array.isArray(attendees_emails) && attendees_emails.length > 0) {
+      const seen = new Set();
+      for (const raw of attendees_emails) {
+        const email = String(raw || "").trim();
+        if (!email) continue;
+        const lower = email.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        normalizedAttendees.push({
+          emailAddress: { address: email },
+          type: "required"
+        });
+      }
+    } else if (typeof attendees_emails === "string") {
+      const parts = attendees_emails.split(",");
+      const seen = new Set();
+      for (const raw of parts) {
+        const email = String(raw || "").trim();
+        if (!email) continue;
+        const lower = email.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        normalizedAttendees.push({
+          emailAddress: { address: email },
+          type: "required"
+        });
+      }
+    }
+
+    const eventToCreate = { ...event };
+    if (normalizedAttendees.length > 0) eventToCreate.attendees = normalizedAttendees;
+
+    // 3. Skapa event i MS Graph
+    const graphRes = await fetch(`${GRAPH_BASE}/me/events`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(eventToCreate)
+    });
+
+    const graphData = await graphRes.json();
+    log("[/ms/create-event] graph response", {
+      ok: graphRes.ok,
+      status: graphRes.status,
+      id: graphData.id,
+      webLink: graphData.webLink
+    });
+
+    if (!graphRes.ok) return res.status(graphRes.status).json({ error: graphData });
+
+    res.json({
+      ok: true,
+      id: graphData.id,
+      webLink: graphData.webLink,
+      raw: graphData
+    });
+  } catch (err) {
+    console.error("[/ms/create-event] error", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------
+app.listen(PORT, () =>
+  console.log(`🚀 Mira Exchange running on port ${PORT}`)
+);
