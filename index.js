@@ -43,7 +43,7 @@ app.post("/ms/refresh-save", async (req, res) => {
   }
 
   try {
-    // 1. Hämta ny access token
+    // 1) Refresh access token
     const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -68,7 +68,7 @@ app.post("/ms/refresh-save", async (req, res) => {
     if (!tokenRes.ok || !tokenData.access_token)
       return res.status(400).json({ error: "Token refresh failed", tokenData });
 
-    // 2. Skicka till Bubble workflow
+    // 2) Save to Bubble
     const payload = {
       bubble_user_id: user_unique_id,
       access_token: tokenData.access_token,
@@ -110,7 +110,7 @@ app.post("/ms/refresh-save", async (req, res) => {
 });
 
 // -----------------------------------------------------
-// 🔹 Create Calendar Event
+// 🔹 Create Calendar Event (with optional Teams link)
 // -----------------------------------------------------
 app.post("/ms/create-event", async (req, res) => {
   const { user_unique_id, attendees_emails, event } = req.body || {};
@@ -124,7 +124,7 @@ app.post("/ms/create-event", async (req, res) => {
     return res.status(400).json({ error: "Missing user_unique_id or event" });
 
   try {
-    // 1. Hämta user från Bubble (för tokens)
+    // 1) Fetch user (tokens) from Bubble
     const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
     const userRes = await fetch(userURL, {
       headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` }
@@ -134,41 +134,54 @@ app.post("/ms/create-event", async (req, res) => {
     const accessToken = userData?.response?.ms_access_token;
     if (!accessToken) throw new Error("User has no ms_access_token");
 
-    // 2. Normalisera deltagare
+    // 2) Normalize attendees (0..N supported)
     let normalizedAttendees = [];
-    if (Array.isArray(attendees_emails) && attendees_emails.length > 0) {
+    const pushUnique = (email, seen) => {
+      const e = String(email || "").trim();
+      if (!e) return;
+      const lower = e.toLowerCase();
+      if (seen.has(lower)) return;
+      seen.add(lower);
+      normalizedAttendees.push({
+        emailAddress: { address: e },
+        type: "required"
+      });
+    };
+
+    if (Array.isArray(attendees_emails)) {
       const seen = new Set();
-      for (const raw of attendees_emails) {
-        const email = String(raw || "").trim();
-        if (!email) continue;
-        const lower = email.toLowerCase();
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        normalizedAttendees.push({
-          emailAddress: { address: email },
-          type: "required"
-        });
-      }
+      for (const raw of attendees_emails) pushUnique(raw, seen);
     } else if (typeof attendees_emails === "string") {
       const parts = attendees_emails.split(",");
       const seen = new Set();
-      for (const raw of parts) {
-        const email = String(raw || "").trim();
-        if (!email) continue;
-        const lower = email.toLowerCase();
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        normalizedAttendees.push({
-          emailAddress: { address: email },
-          type: "required"
-        });
+      for (const raw of parts) pushUnique(raw, seen);
+    }
+
+    // 3) Build event payload
+    //    If caller didn't specify online meeting fields, default to Teams = true.
+    const eventToCreate = {
+      ...event
+    };
+
+    if (normalizedAttendees.length > 0) {
+      eventToCreate.attendees = normalizedAttendees;
+    }
+
+    const wantsOnline =
+      eventToCreate.isOnlineMeeting === true ||
+      eventToCreate.onlineMeetingProvider === "teamsForBusiness" ||
+      // default ON if neither flag provided
+      (typeof eventToCreate.isOnlineMeeting === "undefined" &&
+        typeof eventToCreate.onlineMeetingProvider === "undefined");
+
+    if (wantsOnline) {
+      eventToCreate.isOnlineMeeting = true;
+      if (!eventToCreate.onlineMeetingProvider) {
+        eventToCreate.onlineMeetingProvider = "teamsForBusiness";
       }
     }
 
-    const eventToCreate = { ...event };
-    if (normalizedAttendees.length > 0) eventToCreate.attendees = normalizedAttendees;
-
-    // 3. Skapa event i MS Graph
+    // 4) Create event in Graph
     const graphRes = await fetch(`${GRAPH_BASE}/me/events`, {
       method: "POST",
       headers: {
@@ -183,15 +196,23 @@ app.post("/ms/create-event", async (req, res) => {
       ok: graphRes.ok,
       status: graphRes.status,
       id: graphData.id,
-      webLink: graphData.webLink
+      webLink: graphData.webLink,
+      hasOnline: !!graphData?.onlineMeeting,
+      joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl
     });
 
     if (!graphRes.ok) return res.status(graphRes.status).json({ error: graphData });
 
+    const joinUrl =
+      graphData?.onlineMeeting?.joinUrl ||
+      graphData?.onlineMeetingUrl ||
+      null;
+
     res.json({
       ok: true,
       id: graphData.id,
-      webLink: graphData.webLink,
+      webLink: graphData.webLink,     // link to the calendar item in Outlook Web
+      joinUrl,                        // Teams join link (if online meeting enabled)
       raw: graphData
     });
   } catch (err) {
