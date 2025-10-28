@@ -1,9 +1,16 @@
 import express from "express";
-import fetch from "node-fetch";
-import dotenv from "dotenv";
 import cors from "cors";
 
-dotenv.config();
+// Ladda .env lokalt, men skippa i production (Render har egna env vars)
+if (process.env.NODE_ENV !== "production") {
+  try {
+    const { config } = await import("dotenv");
+    config();
+  } catch (e) {
+    console.warn("[dotenv] not loaded (development only)", e?.message || e);
+  }
+}
+
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -43,7 +50,6 @@ app.post("/ms/refresh-save", async (req, res) => {
   }
 
   try {
-    // 1) Refresh access token
     const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -68,7 +74,6 @@ app.post("/ms/refresh-save", async (req, res) => {
     if (!tokenRes.ok || !tokenData.access_token)
       return res.status(400).json({ error: "Token refresh failed", tokenData });
 
-    // 2) Save to Bubble
     const payload = {
       bubble_user_id: user_unique_id,
       access_token: tokenData.access_token,
@@ -110,21 +115,23 @@ app.post("/ms/refresh-save", async (req, res) => {
 });
 
 // -----------------------------------------------------
-// 🔹 Create Calendar Event (with optional Teams link)
+// 🔹 Create Calendar Event (adds Teams join link)
 // -----------------------------------------------------
 app.post("/ms/create-event", async (req, res) => {
   const { user_unique_id, attendees_emails, event } = req.body || {};
   log("[/ms/create-event] hit", {
     has_user: !!user_unique_id,
     has_event: !!event,
-    attendees_count: attendees_emails ? attendees_emails.length : 0
+    attendees_count: Array.isArray(attendees_emails)
+      ? attendees_emails.length
+      : (typeof attendees_emails === "string" && attendees_emails.trim() ? attendees_emails.split(",").length : 0)
   });
 
   if (!user_unique_id || !event)
     return res.status(400).json({ error: "Missing user_unique_id or event" });
 
   try {
-    // 1) Fetch user (tokens) from Bubble
+    // 1) Fetch user token from Bubble
     const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
     const userRes = await fetch(userURL, {
       headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` }
@@ -134,7 +141,7 @@ app.post("/ms/create-event", async (req, res) => {
     const accessToken = userData?.response?.ms_access_token;
     if (!accessToken) throw new Error("User has no ms_access_token");
 
-    // 2) Normalize attendees (0..N supported)
+    // 2) Normalize attendees (0..N)
     let normalizedAttendees = [];
     const pushUnique = (email, seen) => {
       const e = String(email || "").trim();
@@ -158,19 +165,12 @@ app.post("/ms/create-event", async (req, res) => {
     }
 
     // 3) Build event payload
-    //    If caller didn't specify online meeting fields, default to Teams = true.
-    const eventToCreate = {
-      ...event
-    };
-
-    if (normalizedAttendees.length > 0) {
-      eventToCreate.attendees = normalizedAttendees;
-    }
+    const eventToCreate = { ...event };
+    if (normalizedAttendees.length > 0) eventToCreate.attendees = normalizedAttendees;
 
     const wantsOnline =
       eventToCreate.isOnlineMeeting === true ||
       eventToCreate.onlineMeetingProvider === "teamsForBusiness" ||
-      // default ON if neither flag provided
       (typeof eventToCreate.isOnlineMeeting === "undefined" &&
         typeof eventToCreate.onlineMeetingProvider === "undefined");
 
@@ -211,8 +211,8 @@ app.post("/ms/create-event", async (req, res) => {
     res.json({
       ok: true,
       id: graphData.id,
-      webLink: graphData.webLink,     // link to the calendar item in Outlook Web
-      joinUrl,                        // Teams join link (if online meeting enabled)
+      webLink: graphData.webLink,
+      joinUrl,
       raw: graphData
     });
   } catch (err) {
