@@ -1,13 +1,13 @@
 import express from "express";
 import cors from "cors";
 
-// Ladda .env lokalt, men skippa i production (Render har egna env vars)
+// Load .env locally (Render uses its own env injector)
 if (process.env.NODE_ENV !== "production") {
   try {
     const { config } = await import("dotenv");
     config();
   } catch (e) {
-    console.warn("[dotenv] not loaded (development only)", e?.message || e);
+    console.warn("[dotenv] not loaded (dev only)", e?.message || e);
   }
 }
 
@@ -28,59 +28,111 @@ const log = (msg, data) => {
   console.log(msg, data ? JSON.stringify(data, null, 2) : "");
 };
 
+// Normalize "YYYY-MM-DD HH:mm:ss" -> "YYYY-MM-DDTHH:mm:ss" and add :00 if missing
+const fixDateTime = (s) => {
+  if (!s) return s;
+  let v = String(s).trim();
+  // Replace single space between date & time with 'T'
+  v = v.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(:\d{2})?)$/, "$1T$2");
+  // Add seconds if missing
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) v += ":00";
+  return v;
+};
+
 // -----------------------------------------------------
 // 🔹 Health check
 // -----------------------------------------------------
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 // -----------------------------------------------------
-// 🔹 Refresh Token & Save
+// 🔹 Refresh Token & Save (robust w/ scope retry + clear errors)
 // -----------------------------------------------------
 app.post("/ms/refresh-save", async (req, res) => {
-  const { user_unique_id, refresh_token } = req.body || {};
+  const { user_unique_id, refresh_token, scope: incomingScope, tenant } = req.body || {};
   log("[/ms/refresh-save] hit", {
     auth: BUBBLE_API_KEY ? "ok" : "missing",
     has_body: !!req.body,
     has_refresh_token: !!refresh_token,
-    has_user: !!user_unique_id
+    has_user: !!user_unique_id,
+    has_scope: !!incomingScope
   });
 
   if (!user_unique_id || !refresh_token) {
     return res.status(400).json({ error: "Missing user_unique_id or refresh_token" });
   }
 
-  try {
-    const tokenRes = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+  const tokenEndpoint = `https://login.microsoftonline.com/${tenant || "common"}/oauth2/v2.0/token`;
+
+  const doRefresh = async (scopeValue) => {
+    const params = {
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token,
+      redirect_uri: REDIRECT_URI
+    };
+    if (scopeValue) params.scope = scopeValue;
+
+    const r = await fetch(tokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: "refresh_token",
-        refresh_token,
-        redirect_uri: REDIRECT_URI
-      })
+      body: new URLSearchParams(params)
     });
-
-    const tokenData = await tokenRes.json();
+    const j = await r.json().catch(() => ({}));
     log("[/ms/refresh-save] ms token response", {
-      ok: tokenRes.ok,
-      status: tokenRes.status,
-      has_access_token: !!tokenData.access_token,
-      has_refresh_token: !!tokenData.refresh_token,
-      expires_in: tokenData.expires_in
+      ok: r.ok,
+      status: r.status,
+      has_access_token: !!j.access_token,
+      has_refresh_token: !!j.refresh_token,
+      error: j?.error,
+      error_description: j?.error_description
     });
+    return { r, j };
+  };
 
-    if (!tokenRes.ok || !tokenData.access_token)
-      return res.status(400).json({ error: "Token refresh failed", tokenData });
+  try {
+    // 1) First try (optionally with scope provided by caller)
+    let { r, j } = await doRefresh(incomingScope);
 
+    // 2) If failed and no scope was provided, fetch saved scope from Bubble and retry once
+    if ((!r.ok || !j?.access_token) && !incomingScope) {
+      try {
+        const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
+        const uRes = await fetch(userURL, { headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` } });
+        const uJson = await uRes.json().catch(() => ({}));
+        const savedScope = uJson?.response?.ms_scope || uJson?.response?.scope;
+        if (savedScope) {
+          log("[/ms/refresh-save] retry with saved scope", { savedScope });
+          ({ r, j } = await doRefresh(savedScope));
+        }
+      } catch (e) {
+        log("[/ms/refresh-save] failed to load user scope for retry", { e: String(e) });
+      }
+    }
+
+    if (!r.ok || !j?.access_token) {
+      const action =
+        j?.error === "invalid_grant" ? "reconsent_required" :
+        j?.error === "invalid_client" ? "check_client_secret" :
+        j?.error === "invalid_scope" ? "adjust_scopes" :
+        "retry_or_relogin";
+
+      return res.status(401).json({
+        error: "Token refresh failed",
+        ms_error: j?.error,
+        ms_error_description: j?.error_description,
+        action
+      });
+    }
+
+    // Save to Bubble
     const payload = {
       bubble_user_id: user_unique_id,
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token || refresh_token,
-      expires_in: tokenData.expires_in,
-      token_type: tokenData.token_type,
-      scope: tokenData.scope,
+      access_token: j.access_token,
+      refresh_token: j.refresh_token || refresh_token,
+      expires_in: j.expires_in,
+      token_type: j.token_type,
+      scope: j.scope,
       server_now_iso: new Date().toISOString()
     };
 
@@ -89,7 +141,7 @@ app.post("/ms/refresh-save", async (req, res) => {
 
     for (const base of bases) {
       const wf = `${base}/api/1.1/wf/ms_token_upsert`;
-      const r = await fetch(wf, {
+      const r2 = await fetch(wf, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -97,17 +149,14 @@ app.post("/ms/refresh-save", async (req, res) => {
         },
         body: JSON.stringify(payload)
       });
-      const j = await r.json().catch(() => ({}));
-      log("[save] try WF", { base, status: r.status, ok: r.ok, j });
-      if (r.ok) {
-        saveResult = { ok: true, via: "wf", base, status: r.status, j };
-        break;
-      }
+      const j2 = await r2.json().catch(() => ({}));
+      log("[save] try WF", { base, status: r2.status, ok: r2.ok, j: j2 });
+      if (r2.ok) { saveResult = { ok: true, via: "wf", base, status: r2.status, j: j2 }; break; }
     }
 
     if (!saveResult) throw new Error("No Bubble save succeeded");
-
     res.json(saveResult);
+
   } catch (err) {
     console.error("[/ms/refresh-save] error", err);
     res.status(500).json({ error: err.message });
@@ -127,15 +176,14 @@ app.post("/ms/create-event", async (req, res) => {
       : (typeof attendees_emails === "string" && attendees_emails.trim() ? attendees_emails.split(",").length : 0)
   });
 
-  if (!user_unique_id || !event)
+  if (!user_unique_id || !event) {
     return res.status(400).json({ error: "Missing user_unique_id or event" });
+  }
 
   try {
     // 1) Fetch user token from Bubble
     const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
-    const userRes = await fetch(userURL, {
-      headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` }
-    });
+    const userRes = await fetch(userURL, { headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` } });
     const userData = await userRes.json();
 
     const accessToken = userData?.response?.ms_access_token;
@@ -149,10 +197,7 @@ app.post("/ms/create-event", async (req, res) => {
       const lower = e.toLowerCase();
       if (seen.has(lower)) return;
       seen.add(lower);
-      normalizedAttendees.push({
-        emailAddress: { address: e },
-        type: "required"
-      });
+      normalizedAttendees.push({ emailAddress: { address: e }, type: "required" });
     };
 
     if (Array.isArray(attendees_emails)) {
@@ -166,13 +211,22 @@ app.post("/ms/create-event", async (req, res) => {
 
     // 3) Build event payload
     const eventToCreate = { ...event };
+
+    // Normalize dateTimes coming from Bubble (handles " " vs "T")
+    if (eventToCreate?.start?.dateTime) {
+      eventToCreate.start.dateTime = fixDateTime(eventToCreate.start.dateTime);
+    }
+    if (eventToCreate?.end?.dateTime) {
+      eventToCreate.end.dateTime = fixDateTime(eventToCreate.end.dateTime);
+    }
+
     if (normalizedAttendees.length > 0) eventToCreate.attendees = normalizedAttendees;
 
     const wantsOnline =
       eventToCreate.isOnlineMeeting === true ||
       eventToCreate.onlineMeetingProvider === "teamsForBusiness" ||
       (typeof eventToCreate.isOnlineMeeting === "undefined" &&
-        typeof eventToCreate.onlineMeetingProvider === "undefined");
+       typeof eventToCreate.onlineMeetingProvider === "undefined");
 
     if (wantsOnline) {
       eventToCreate.isOnlineMeeting = true;
@@ -195,24 +249,28 @@ app.post("/ms/create-event", async (req, res) => {
     log("[/ms/create-event] graph response", {
       ok: graphRes.ok,
       status: graphRes.status,
-      id: graphData.id,
-      webLink: graphData.webLink,
+      id: graphData?.id,
+      webLink: graphData?.webLink,
       hasOnline: !!graphData?.onlineMeeting,
       joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl
     });
 
-    if (!graphRes.ok) return res.status(graphRes.status).json({ error: graphData });
+    if (!graphRes.ok) {
+      log("[/ms/create-event] graph error body", {
+        status: graphRes.status,
+        error: graphData?.error?.code,
+        message: graphData?.error?.message
+      });
+      return res.status(graphRes.status).json({ error: graphData });
+    }
 
-    const joinUrl =
-      graphData?.onlineMeeting?.joinUrl ||
-      graphData?.onlineMeetingUrl ||
-      null;
+    const joinUrl = graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl || null;
 
     res.json({
       ok: true,
       id: graphData.id,
-      webLink: graphData.webLink,
-      joinUrl,
+      webLink: graphData.webLink,   // Outlook web calendar item link
+      joinUrl,                      // Teams join link (if online)
       raw: graphData
     });
   } catch (err) {
@@ -222,6 +280,6 @@ app.post("/ms/create-event", async (req, res) => {
 });
 
 // -----------------------------------------------------
-app.listen(PORT, () =>
-  console.log(`🚀 Mira Exchange running on port ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`🚀 Mira Exchange running on port ${PORT}`);
+});
