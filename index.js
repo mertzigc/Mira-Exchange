@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "node:crypto"; // for masked hash in /ms/debug-env
 
 // Load .env locally (Render uses its own env injector)
 if (process.env.NODE_ENV !== "production") {
@@ -62,6 +63,7 @@ app.post("/ms/refresh-save", async (req, res) => {
   }
 
   const tokenEndpoint = `https://login.microsoftonline.com/${tenant || "common"}/oauth2/v2.0/token`;
+  log("[/ms/refresh-save] using token endpoint", { tokenEndpoint, REDIRECT_URI });
 
   const doRefresh = async (scopeValue) => {
     const params = {
@@ -277,6 +279,35 @@ app.post("/ms/create-event", async (req, res) => {
     console.error("[/ms/create-event] error", err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// -----------------------------------------------------
+// 🔎 TEMP: Maskad env-debug (remove or protect after use)
+// -----------------------------------------------------
+app.get("/ms/debug-env", async (req, res) => {
+  const mask = (val) => {
+    if (!val) return null;
+    const s = String(val);
+    const head = s.slice(0, 3);
+    const tail = s.slice(-3);
+    return { length: s.length, preview: `${head}...${tail}` };
+  };
+  const sha256prefix = (txt) => {
+    if (!txt) return null;
+    const hash = crypto.createHash("sha256").update(String(txt)).digest("hex");
+    return hash.slice(0, 16) + "…";
+  };
+
+  res.json({
+    has_CLIENT_ID: !!process.env.MS_CLIENT_ID,
+    has_CLIENT_SECRET: !!process.env.MS_CLIENT_SECRET,
+    has_REDIRECT_URI: !!process.env.MS_REDIRECT_URI,
+    client_id: mask(process.env.MS_CLIENT_ID),
+    client_secret: mask(process.env.MS_CLIENT_SECRET),
+    client_secret_sha256_prefix: sha256prefix(process.env.MS_CLIENT_SECRET),
+    redirect_uri: process.env.MS_REDIRECT_URI || null,
+    node_env: process.env.NODE_ENV || null
+  });
 });
 
 // -----------------------------------------------------
