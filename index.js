@@ -1,6 +1,10 @@
+// Mira-Exchange SoT: supports MS_CLIENT_* and MS_APP_CLIENT_* envs.
+// Redirect picks MS_REDIRECT_URI || MS_REDIRECT_LIVE || MS_REDIRECT_DEV || onrender callback.
+// Keep /ms/debug-env for quick diagnostics. Last verified: 2025-11-03.
+
 import express from "express";
 import cors from "cors";
-import crypto from "node:crypto"; // for masked hash in /ms/debug-env
+import crypto from "node:crypto";
 
 // Load .env locally (Render uses its own env injector)
 if (process.env.NODE_ENV !== "production") {
@@ -16,11 +20,28 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// --- ENV vars ---
-const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY;
-const CLIENT_ID = process.env.MS_CLIENT_ID;
-const CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
-const REDIRECT_URI = process.env.MS_REDIRECT_URI;
+// --- ENV vars (read both schemes, pick best redirect) ---
+const BUBBLE_API_KEY = process.env.BUBBLE_API_KEY || "";
+
+// client id: prefer MS_CLIENT_ID, then MS_APP_CLIENT_ID
+const CLIENT_ID =
+  process.env.MS_CLIENT_ID ||
+  process.env.MS_APP_CLIENT_ID ||
+  "";
+
+// client secret: prefer MS_CLIENT_SECRET, then MS_APP_CLIENT_SECRET
+const CLIENT_SECRET =
+  process.env.MS_CLIENT_SECRET ||
+  process.env.MS_APP_CLIENT_SECRET ||
+  "";
+
+// redirect: prefer explicit URI, else LIVE, else DEV, else onrender callback
+const REDIRECT_URI =
+  process.env.MS_REDIRECT_URI ||
+  process.env.MS_REDIRECT_LIVE ||
+  process.env.MS_REDIRECT_DEV ||
+  "https://mira-exchange.onrender.com/ms/callback";
+
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT = process.env.PORT || 10000;
 
@@ -33,9 +54,7 @@ const log = (msg, data) => {
 const fixDateTime = (s) => {
   if (!s) return s;
   let v = String(s).trim();
-  // Replace single space between date & time with 'T'
   v = v.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(:\d{2})?)$/, "$1T$2");
-  // Add seconds if missing
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) v += ":00";
   return v;
 };
@@ -44,6 +63,15 @@ const fixDateTime = (s) => {
 // 🔹 Health check
 // -----------------------------------------------------
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+// -----------------------------------------------------
+// 🔹 (Optional) OAuth callback (for testing consent flows)
+// -----------------------------------------------------
+app.get("/ms/callback", (req, res) => {
+  const { code, state, error, error_description } = req.query || {};
+  log("[/ms/callback] hit", { code_present: !!code, state, error, error_description });
+  res.status(200).send("Mira-Exchange callback OK. Check server logs for details.");
+});
 
 // -----------------------------------------------------
 // 🔹 Refresh Token & Save (robust w/ scope retry + clear errors)
@@ -75,6 +103,16 @@ app.post("/ms/refresh-save", async (req, res) => {
     };
     if (scopeValue) params.scope = scopeValue;
 
+    // Maskad diagnostik
+    const maskHash = (txt) => (txt ? crypto.createHash("sha256").update(String(txt)).digest("hex").slice(0, 16) + "…" : null);
+    log("[/ms/refresh-save] outgoing form (masked)", {
+      client_id_len: (CLIENT_ID || "").length,
+      client_secret_len: (CLIENT_SECRET || "").length,
+      client_secret_sha256_prefix: maskHash(CLIENT_SECRET),
+      has_redirect: !!REDIRECT_URI,
+      scope_included: !!scopeValue
+    });
+
     const r = await fetch(tokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -96,7 +134,7 @@ app.post("/ms/refresh-save", async (req, res) => {
     // 1) First try (optionally with scope provided by caller)
     let { r, j } = await doRefresh(incomingScope);
 
-    // 2) If failed and no scope was provided, fetch saved scope from Bubble and retry once
+    // 2) If failed and no scope provided, fetch saved scope from Bubble and retry once
     if ((!r.ok || !j?.access_token) && !incomingScope) {
       try {
         const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
@@ -115,15 +153,17 @@ app.post("/ms/refresh-save", async (req, res) => {
     if (!r.ok || !j?.access_token) {
       const action =
         j?.error === "invalid_grant" ? "reconsent_required" :
-        j?.error === "invalid_client" ? "check_client_secret" :
+        j?.error === "invalid_client" ? "check_client_credentials" :
         j?.error === "invalid_scope" ? "adjust_scopes" :
+        j?.error === "invalid_request" ? "check_redirect_uri" :
         "retry_or_relogin";
 
-      return res.status(401).json({
+      return res.status(400).json({
         error: "Token refresh failed",
         ms_error: j?.error,
         ms_error_description: j?.error_description,
-        action
+        action,
+        used_redirect_uri: REDIRECT_URI
       });
     }
 
@@ -271,8 +311,8 @@ app.post("/ms/create-event", async (req, res) => {
     res.json({
       ok: true,
       id: graphData.id,
-      webLink: graphData.webLink,   // Outlook web calendar item link
-      joinUrl,                      // Teams join link (if online)
+      webLink: graphData.webLink,
+      joinUrl,
       raw: graphData
     });
   } catch (err) {
@@ -282,31 +322,26 @@ app.post("/ms/create-event", async (req, res) => {
 });
 
 // -----------------------------------------------------
-// 🔎 TEMP: Maskad env-debug (remove or protect after use)
+// 🔎 Maskad env-debug med källa (remove/protect after use)
 // -----------------------------------------------------
 app.get("/ms/debug-env", async (req, res) => {
-  const mask = (val) => {
-    if (!val) return null;
-    const s = String(val);
-    const head = s.slice(0, 3);
-    const tail = s.slice(-3);
-    return { length: s.length, preview: `${head}...${tail}` };
-  };
-  const sha256prefix = (txt) => {
-    if (!txt) return null;
-    const hash = crypto.createHash("sha256").update(String(txt)).digest("hex");
-    return hash.slice(0, 16) + "…";
+  const pick = (keys) => {
+    for (const k of keys) if (process.env[k]) return { key: k, value: process.env[k] };
+    return { key: null, value: null };
   };
 
+  const id = pick(["MS_CLIENT_ID", "MS_APP_CLIENT_ID"]);
+  const secret = pick(["MS_CLIENT_SECRET", "MS_APP_CLIENT_SECRET"]);
+  const redirect = pick(["MS_REDIRECT_URI", "MS_REDIRECT_LIVE", "MS_REDIRECT_DEV"]);
+
+  const mask = (v) => (v ? v.slice(0, 3) + "…" + v.slice(-3) : null);
+  const sha = (v) => (v ? crypto.createHash("sha256").update(String(v)).digest("hex").slice(0, 16) + "…" : null);
+
   res.json({
-    has_CLIENT_ID: !!process.env.MS_CLIENT_ID,
-    has_CLIENT_SECRET: !!process.env.MS_CLIENT_SECRET,
-    has_REDIRECT_URI: !!process.env.MS_REDIRECT_URI,
-    client_id: mask(process.env.MS_CLIENT_ID),
-    client_secret: mask(process.env.MS_CLIENT_SECRET),
-    client_secret_sha256_prefix: sha256prefix(process.env.MS_CLIENT_SECRET),
-    redirect_uri: process.env.MS_REDIRECT_URI || null,
-    node_env: process.env.NODE_ENV || null
+    client_id_source: id.key, client_id_preview: mask(id.value),
+    client_secret_source: secret.key, client_secret_len: secret.value ? secret.value.length : 0, client_secret_sha256_prefix: sha(secret.value),
+    redirect_source: redirect.key, redirect_uri: redirect.value || null,
+    chosen_redirect_uri: REDIRECT_URI
   });
 });
 
