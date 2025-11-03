@@ -179,12 +179,82 @@ app.post("/ms/create-event", async (req, res) => {
   }
 
   try {
-    // Hämta access token från Bubble (test räcker för dig nu)
-    const userURL = `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`;
-    const userRes = await fetch(userURL, { headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` } });
-    const userData = await userRes.json();
-    const accessToken = userData?.response?.ms_access_token;
-    if (!accessToken) throw new Error("User has no ms_access_token");
+ // 1) Hämta user från Bubble (test först, sedan live som fallback)
+const readUser = async (base) => {
+  const url = `${base}/api/1.1/obj/user/${user_unique_id}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` } });
+  return r.json().catch(() => ({}));
+};
+
+let userData = await readUser("https://mira-fm.com/version-test");
+if (!userData?.response) {
+  userData = await readUser("https://mira-fm.com");
+}
+
+let accessToken = userData?.response?.ms_access_token;
+let refreshTok  = userData?.response?.ms_refresh_token;
+
+// 2) Auto-fallback: om inget access token, men vi har refresh → gör refresh här
+if (!accessToken && refreshTok) {
+  try {
+    const tokenEndpoint = `https://login.microsoftonline.com/${process.env.MS_TENANT || "common"}/oauth2/v2.0/token`;
+    const form = new URLSearchParams({
+      client_id: process.env.MS_CLIENT_ID,
+      client_secret: process.env.MS_CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: refreshTok,
+      redirect_uri: process.env.MS_REDIRECT_LIVE || process.env.MS_REDIRECT_URI || process.env.MS_REDIRECT_DEV
+    });
+
+    const tRes = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form
+    });
+    const tJson = await tRes.json().catch(() => ({}));
+    log("[/ms/create-event] fallback refresh", {
+      ok: tRes.ok, status: tRes.status, has_access_token: !!tJson.access_token
+    });
+
+    if (tRes.ok && tJson?.access_token) {
+      accessToken = tJson.access_token;
+      refreshTok  = tJson.refresh_token || refreshTok;
+
+      // spara tillbaka (test först, sedan live) via ms_token_upsert
+      const payload = {
+        bubble_user_id: user_unique_id,
+        access_token: tJson.access_token,
+        refresh_token: refreshTok,
+        expires_in: tJson.expires_in,
+        token_type: tJson.token_type,
+        scope: tJson.scope,
+        server_now_iso: new Date().toISOString()
+      };
+      const bases = ["https://mira-fm.com", "https://mira-fm.com/version-test"];
+      for (const base of bases) {
+        const wf = `${base}/api/1.1/wf/ms_token_upsert`;
+        try {
+          const r2 = await fetch(wf, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${BUBBLE_API_KEY}`
+            },
+            body: JSON.stringify(payload)
+          });
+          log("[/ms/create-event] fallback save", { base, status: r2.status, ok: r2.ok });
+          if (r2.ok) break;
+        } catch {}
+      }
+    }
+  } catch (e) {
+    log("[/ms/create-event] fallback refresh error", { e: String(e) });
+  }
+}
+
+if (!accessToken) {
+  throw new Error("User has no ms_access_token");
+}
 
     // Normalisera attendees (0..N, dedupe)
     const attendees = [];
