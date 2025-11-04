@@ -68,6 +68,32 @@ const fixDateTime = (s) => {
   return v;
 };
 
+// Nya hjälpare (rekommenderad av MS Graph-erfarenhet)
+// Tillåt "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", "YYYY-MM-DDTHH:mm:ss"
+function toGraphDateTime(local) {
+  if (!local) return null;
+  const s = String(local).trim().replace(" ", "T");
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  return s;
+}
+
+// Minimal IANA -> Windows time zone map för vanliga case
+const IANA_TO_WINDOWS_TZ = {
+  "Europe/Stockholm": "W. Europe Standard Time",
+  "Europe/Paris": "Romance Standard Time",
+  "Europe/Berlin": "W. Europe Standard Time",
+  "Europe/Amsterdam": "W. Europe Standard Time",
+  "Europe/Madrid": "Romance Standard Time",
+  "Europe/London": "GMT Standard Time",
+  "UTC": "UTC",
+  "Etc/UTC": "UTC"
+};
+function toWindowsTz(tz) {
+  if (!tz) return "UTC";
+  const t = String(tz).trim();
+  return IANA_TO_WINDOWS_TZ[t] || (t.toUpperCase() === "UTC" ? "UTC" : "UTC");
+}
+
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
     `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`,
@@ -279,7 +305,8 @@ app.post("/ms/create-event", async (req, res) => {
       [];
     allAtt.forEach(push);
 
-    // 3) Bygg Graph-event — HÄR ÄR DIN EFTERFRÅGADE ÄNDRING
+    // 3) Bygg Graph-event — använder nya helper för tid + Windows-TZ
+    const tzInput = event?.tz || event?.start?.timeZone || "Europe/Stockholm";
     const ev = {
       subject: event?.subject || "Untitled event",
       body: {
@@ -287,12 +314,12 @@ app.post("/ms/create-event", async (req, res) => {
         content: event?.body_html || "",
       },
       start: {
-        dateTime: fixDateTime(event?.start_iso_local || event?.start?.dateTime),
-        timeZone: event?.tz || event?.start?.timeZone || "Europe/Stockholm",
+        dateTime: toGraphDateTime(event?.start_iso_local || event?.start?.dateTime || fixDateTime(event?.start_iso_local)),
+        timeZone: toWindowsTz(tzInput),
       },
       end: {
-        dateTime: fixDateTime(event?.end_iso_local || event?.end?.dateTime),
-        timeZone: event?.tz || event?.end?.timeZone || "Europe/Stockholm",
+        dateTime: toGraphDateTime(event?.end_iso_local || event?.end?.dateTime || fixDateTime(event?.end_iso_local)),
+        timeZone: toWindowsTz(tzInput),
       },
       location: {
         displayName: event?.location_name || event?.location?.displayName || "",
@@ -323,10 +350,20 @@ app.post("/ms/create-event", async (req, res) => {
       webLink: graphData?.webLink,
       hasOnline: !!graphData?.onlineMeeting,
       joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl,
+      // Vid fel – ge lite payload-insikt (utan att dumpa allt)
+      error: !graphRes.ok ? graphData?.error : undefined,
+      tzSent: ev?.start?.timeZone,
+      startSent: ev?.start?.dateTime,
+      endSent: ev?.end?.dateTime,
     });
 
     if (!graphRes.ok) {
-      return res.status(graphRes.status).json({ error: graphData });
+      // Skicka tillbaka tydligt fel inkl. status och MS-error
+      return res.status(graphRes.status).json({
+        ok: false,
+        status: graphRes.status,
+        error: graphData?.error || graphData
+      });
     }
 
     return res.json({
