@@ -89,9 +89,22 @@ const IANA_TO_WINDOWS_TZ = {
   "Etc/UTC": "UTC"
 };
 function toWindowsTz(tz) {
-  if (!tz) return "UTC";
+if (!tz) return "W. Europe Standard Time"; // bättre default för dig
   const t = String(tz).trim();
-  return IANA_TO_WINDOWS_TZ[t] || (t.toUpperCase() === "UTC" ? "UTC" : "UTC");
+  // Om det redan är ett Windows ID, behåll det
+  if (/Standard Time$/i.test(t)) return t;
+  // Vanliga IANA → Windows
+  const IANA_TO_WINDOWS_TZ = {
+    "Europe/Stockholm": "W. Europe Standard Time",
+    "Europe/Paris": "Romance Standard Time",
+    "Europe/Berlin": "W. Europe Standard Time",
+    "Europe/Amsterdam": "W. Europe Standard Time",
+    "Europe/Madrid": "Romance Standard Time",
+    "Europe/London": "GMT Standard Time",
+    "UTC": "UTC",
+    "Etc/UTC": "UTC"
+  };
+  return IANA_TO_WINDOWS_TZ[t] || "W. Europe Standard Time";
 }
 
 async function fetchBubbleUser(user_unique_id) {
