@@ -56,7 +56,7 @@ const PORT           = process.env.PORT || 10000;
 const BUBBLE_BASES = ["https://mira-fm.com", "https://mira-fm.com/version-test"];
 
 // ────────────────────────────────────────────────────────────
-/** Helpers */
+// Helpers
 const log = (msg, data) => console.log(msg, data ? JSON.stringify(data, null, 2) : "");
 
 // "YYYY-MM-DD HH:mm[:ss]" → "YYYY-MM-DDTHH:mm:ss"
@@ -89,10 +89,21 @@ const IANA_TO_WINDOWS_TZ = {
   "Etc/UTC": "UTC"
 };
 function toWindowsTz(tz) {
-  if (!tz) return "W. Europe Standard Time"; // bättre default för dig
+if (!tz) return "W. Europe Standard Time"; // bättre default för dig
   const t = String(tz).trim();
   // Om det redan är ett Windows ID, behåll det
   if (/Standard Time$/i.test(t)) return t;
+  // Vanliga IANA → Windows
+  const IANA_TO_WINDOWS_TZ = {
+    "Europe/Stockholm": "W. Europe Standard Time",
+    "Europe/Paris": "Romance Standard Time",
+    "Europe/Berlin": "W. Europe Standard Time",
+    "Europe/Amsterdam": "W. Europe Standard Time",
+    "Europe/Madrid": "Romance Standard Time",
+    "Europe/London": "GMT Standard Time",
+    "UTC": "UTC",
+    "Etc/UTC": "UTC"
+  };
   return IANA_TO_WINDOWS_TZ[t] || "W. Europe Standard Time";
 }
 
@@ -141,32 +152,6 @@ async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) 
     }
   }
   return false;
-}
-
-/** 🆕 Helper: spara eventmetadata på Activity i Bubble */
-async function saveEventMetaToBubble(activity_id, ms_event_id, ms_join_url, ms_weblink) {
-  if (!activity_id) return { ok: false, reason: "missing_activity_id" };
-  const payload = { activity_id, ms_event_id, ms_join_url, ms_weblink };
-
-  for (const base of BUBBLE_BASES) {
-    try {
-      const url = `${base}/api/1.1/wf/ms_event_save`;
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${BUBBLE_API_KEY}`,
-        },
-        body: JSON.stringify(payload),
-      });
-      const ok = r.ok;
-      log("[save event meta] try WF", { base, status: r.status, ok });
-      if (ok) return { ok: true };
-    } catch (e) {
-      log("[save event meta] WF error", { base, e: String(e) });
-    }
-  }
-  return { ok: false, reason: "all_bases_failed" };
 }
 
 async function refreshWith(refresh_token, scope) {
@@ -394,26 +379,11 @@ app.post("/ms/create-event", async (req, res) => {
       });
     }
 
-    // 🆕 Spara direkt i Bubble på Activity (om activity_id skickats)
-    const ms_event_id = graphData.id;
-    const ms_weblink  = graphData.webLink || null;
-    const ms_join_url = graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl || null;
-    const activity_id = req.body?.activity_id || req.body?.event?.activity_id || null;
-
-    if (activity_id) {
-      const savedMeta = await saveEventMetaToBubble(activity_id, ms_event_id, ms_join_url, ms_weblink);
-      log("[/ms/create-event] bubble meta save", savedMeta);
-    }
-
-    // Returnera som tidigare (plus OK att Bubble nyttjar om du vill)
     return res.json({
       ok: true,
-      id: ms_event_id,
-      webLink: ms_weblink,
-      joinUrl: ms_join_url,
-      // alias för ev. enklare mappning i Bubble om camelCase skulle strula
-      web_link: ms_weblink,
-      join_url: ms_join_url,
+      id: graphData.id,
+      webLink: graphData.webLink,
+      joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl || null,
       raw: graphData,
     });
   } catch (err) {
