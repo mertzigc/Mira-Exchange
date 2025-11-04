@@ -231,6 +231,13 @@ app.post("/ms/create-event", async (req, res) => {
 
     if (!accessToken || !refreshToken) {
       const u = await fetchBubbleUser(user_unique_id); // kan bli null
+      // efter: const u = await fetchBubbleUser(user_unique_id);
+log("[/ms/create-event] user snapshot", {
+  has_response: !!u,
+  has_ms_access_token: !!u?.ms_access_token,
+  has_ms_refresh_token: !!u?.ms_refresh_token,
+  scope: u?.ms_scope ? u.ms_scope.split(" ").slice(0,3).join(" ") + "…" : null
+});
       const dbAccess = u?.ms_access_token || null;
       const dbRefresh = u?.ms_refresh_token || null;
       scope = u?.ms_scope || u?.scope || null;
