@@ -16,14 +16,16 @@ if (process.env.NODE_ENV !== "production") {
 // ────────────────────────────────────────────────────────────
 // App & JSON
 const app = express();
+
+// Acceptera JSON även om Bubble ibland sätter "application/*+json"
 app.use(express.json({ type: ["application/json", "application/*+json"] }));
 app.use(cors());
 
 // ────────────────────────────────────────────────────────────
-// ENV resolution (stöd båda namnscheman)
+/** ENV resolution (stöd båda namnscheman och smart redirect) */
 const pick = (...vals) => vals.find(v => !!v && String(v).trim()) || null;
 
-const NODE_ENV      = process.env.NODE_ENV || "production";
+const NODE_ENV       = process.env.NODE_ENV || "production";
 const BUBBLE_API_KEY =
   pick(process.env.BUBBLE_API_KEY, process.env.MIRAGPT_API_KEY);
 
@@ -32,6 +34,7 @@ const CLIENT_ID =
 const CLIENT_SECRET =
   pick(process.env.MS_CLIENT_SECRET, process.env.MS_APP_CLIENT_SECRET);
 
+// Välj redirect i ordning: explicit → live i prod → dev → live (fallback)
 const REDIRECT_URI = pick(
   process.env.MS_REDIRECT_URI,
   NODE_ENV === "production" ? process.env.MS_REDIRECT_LIVE : null,
@@ -45,9 +48,9 @@ const MS_SCOPE  = pick(
 );
 const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
-const GRAPH_BASE      = "https://graph.microsoft.com/v1.0";
-const TOKEN_ENDPOINT  = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/token`;
-const PORT            = process.env.PORT || 10000;
+const GRAPH_BASE     = "https://graph.microsoft.com/v1.0";
+const TOKEN_ENDPOINT = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/token`;
+const PORT           = process.env.PORT || 10000;
 
 // Bubble: försök spara till prod först, sen test
 const BUBBLE_BASES = ["https://mira-fm.com", "https://mira-fm.com/version-test"];
@@ -136,7 +139,7 @@ async function refreshWith(refresh_token, scope) {
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ────────────────────────────────────────────────────────────
-// Refresh & Save
+// Refresh & Save (Bubble kallar detta innan create-event ibland)
 app.post("/ms/refresh-save", async (req, res) => {
   const { user_unique_id, refresh_token, scope: incomingScope, tenant } = req.body || {};
   log("[/ms/refresh-save] hit", {
@@ -203,8 +206,8 @@ app.post("/ms/refresh-save", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// Create Event (robust: body token OR DB OR auto-refresh)
-// Forcerar Teams + allow proposals
+// Create Event (robust: token i body → DB → auto-refresh)
+// Servern forcerar Teams + allow proposals (du bad om detta)
 app.post("/ms/create-event", async (req, res) => {
   const { user_unique_id, attendees_emails, event, ms_access_token, ms_refresh_token } = req.body || {};
   log("[/ms/create-event] hit", {
@@ -231,13 +234,12 @@ app.post("/ms/create-event", async (req, res) => {
 
     if (!accessToken || !refreshToken) {
       const u = await fetchBubbleUser(user_unique_id); // kan bli null
-      // efter: const u = await fetchBubbleUser(user_unique_id);
-log("[/ms/create-event] user snapshot", {
-  has_response: !!u,
-  has_ms_access_token: !!u?.ms_access_token,
-  has_ms_refresh_token: !!u?.ms_refresh_token,
-  scope: u?.ms_scope ? u.ms_scope.split(" ").slice(0,3).join(" ") + "…" : null
-});
+      log("[/ms/create-event] user snapshot", {
+        has_response: !!u,
+        has_ms_access_token: !!u?.ms_access_token,
+        has_ms_refresh_token: !!u?.ms_refresh_token,
+        scope: u?.ms_scope ? u.ms_scope.split(" ").slice(0,3).join(" ") + "…" : null
+      });
       const dbAccess = u?.ms_access_token || null;
       const dbRefresh = u?.ms_refresh_token || null;
       scope = u?.ms_scope || u?.scope || null;
@@ -260,7 +262,7 @@ log("[/ms/create-event] user snapshot", {
       return res.status(401).json({ error: "User has no ms_access_token (and refresh missing/failed)" });
     }
 
-    // 2) Attendees (0..N, dedupe)
+    // 2) Attendees (0..N, dedupe) – tillåt både top-level och event.attendees_emails
     const normalizedAttendees = [];
     const seen = new Set();
     const push = (raw) => {
@@ -269,19 +271,38 @@ log("[/ms/create-event] user snapshot", {
       seen.add(e);
       normalizedAttendees.push({ emailAddress: { address: e }, type: "required" });
     };
-    if (Array.isArray(attendees_emails)) attendees_emails.forEach(push);
-    else if (typeof attendees_emails === "string") attendees_emails.split(",").forEach(push);
+    const allAtt =
+      Array.isArray(attendees_emails) ? attendees_emails :
+      typeof attendees_emails === "string" ? attendees_emails.split(",") :
+      Array.isArray(event?.attendees_emails) ? event.attendees_emails :
+      typeof event?.attendees_emails === "string" ? event.attendees_emails.split(",") :
+      [];
+    allAtt.forEach(push);
 
-    // 3) Graph payload
-    const ev = { ...event };
+    // 3) Bygg Graph-event — HÄR ÄR DIN EFTERFRÅGADE ÄNDRING
+    const ev = {
+      subject: event?.subject || "Untitled event",
+      body: {
+        contentType: "HTML",
+        content: event?.body_html || "",
+      },
+      start: {
+        dateTime: fixDateTime(event?.start_iso_local || event?.start?.dateTime),
+        timeZone: event?.tz || event?.start?.timeZone || "Europe/Stockholm",
+      },
+      end: {
+        dateTime: fixDateTime(event?.end_iso_local || event?.end?.dateTime),
+        timeZone: event?.tz || event?.end?.timeZone || "Europe/Stockholm",
+      },
+      location: {
+        displayName: event?.location_name || event?.location?.displayName || "",
+      },
+      // Server-forcerat online-möte + förslag
+      isOnlineMeeting: true,
+      allowNewTimeProposals: true,
+      onlineMeetingProvider: "teamsForBusiness",
+    };
 
-    // Servern forcerar online-möte + proposals
-    ev.isOnlineMeeting = true;
-    ev.onlineMeetingProvider = "teamsForBusiness";
-    ev.allowNewTimeProposals = true;
-
-    if (ev?.start?.dateTime) ev.start.dateTime = fixDateTime(ev.start.dateTime);
-    if (ev?.end?.dateTime)   ev.end.dateTime   = fixDateTime(ev.end.dateTime);
     if (normalizedAttendees.length > 0) ev.attendees = normalizedAttendees;
 
     // 4) Skapa event
