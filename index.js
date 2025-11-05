@@ -529,7 +529,6 @@ app.get("/ms/debug-env", (_req, res) => {
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Helpers for app-only (client_credentials) Graph calls
-const pick = (...vals) => vals.find(v => !!v && String(v).trim()) || null;
 
 const NODE_ENV = process.env.NODE_ENV || "production";
 const PORT = parseInt(process.env.PORT || "10000", 10);
