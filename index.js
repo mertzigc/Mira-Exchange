@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -194,11 +193,6 @@ function buildAuthorizeUrl({ user_id, redirect }) {
   return url.toString();
 }
 
-// Start consent (Bubble: POST /ms/auth)
-app.post("/ms/auth", async (req, res) => {
-  try {
-    const { user_id, redirect } = req.body || {};
-    if (!user_id) return res.status(400).json({ error: "Missing user_id" });
     const url = buildAuthorizeUrl({ user_id, redirect });
     log("[/ms/auth] → built url", { have_clientId: !!CLIENT_ID, redirect: redirect || REDIRECT_URI });
     return res.json({ ok: true, url });
@@ -437,6 +431,25 @@ app.get("/ms/debug-env", (_req, res) => {
     redirect_uri: REDIRECT_URI || null,
     node_env: NODE_ENV
   });
+});
+// Start consent (Bubble: POST /ms/auth)
+app.post("/ms/auth", async (req, res) => {
+  try {
+    const { user_id, u, redirect } = req.body || {};
+    const uid = user_id || u;
+    log("[/ms/auth] incoming body", req.body); // TEMP: debug line
+    if (!uid) return res.status(400).json({ error: "Missing user_id" });
+
+    const url = buildAuthorizeUrl({ user_id: uid, redirect });
+    log("[/ms/auth] → built url", {
+      have_clientId: !!CLIENT_ID,
+      redirect: redirect || REDIRECT_URI
+    });
+    return res.json({ ok: true, url });
+  } catch (err) {
+    console.error("[/ms/auth] error", err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ────────────────────────────────────────────────────────────
