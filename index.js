@@ -409,4 +409,197 @@ app.get("/ms/debug-env", (_req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// Helpers for app-only (client_credentials) Graph calls
+const pick = (...vals) => vals.find(v => !!v && String(v).trim()) || null;
+
+const NODE_ENV = process.env.NODE_ENV || "production";
+const PORT = parseInt(process.env.PORT || "10000", 10);
+
+// Read BOTH naming schemes (per your canonical rule)
+const CLIENT_ID = pick(process.env.MS_APP_CLIENT_ID, process.env.MS_CLIENT_ID);
+const CLIENT_SECRET = pick(process.env.MS_APP_CLIENT_SECRET, process.env.MS_CLIENT_SECRET);
+
+// Redirect: prefer unified MS_REDIRECT_URI if present, else use LIVE/DEV
+const REDIRECT_URI = pick(
+  process.env.MS_REDIRECT_URI,
+  process.env.MS_REDIRECT_LIVE,
+  process.env.MS_REDIRECT_DEV
+);
+
+// Default tenant fallback (can be 'common', but for app-only you should pass real tenant)
+const DEFAULT_TENANT = pick(process.env.MS_TENANT, "common");
+
+// small utils
+const sha = (s) => (!s ? null : crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, 10));
+const mask = (s) => (!s ? null : String(s).slice(0, 4) + "…" + String(s).slice(-4));
+
+// Fetch wrapper
+async function graphFetch(method, url, token, body) {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": body ? "application/json" : undefined
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch {}
+  if (!res.ok) {
+    const detail = json || { text, status: res.status };
+    throw Object.assign(new Error(`Graph ${method} ${url} failed ${res.status}`), { status: res.status, detail });
+  }
+  return json;
+}
+
+// Resolve tenant to use (query param, header, or default)
+function resolveTenant(req) {
+  return pick(
+    req.query.tenant,
+    req.headers["x-tenant-id"],
+    DEFAULT_TENANT
+  );
+}
+
+// Get app-only token for a tenant
+async function getAppToken(tenant) {
+  const t = tenant || DEFAULT_TENANT;
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    throw new Error("Missing CLIENT_ID/CLIENT_SECRET for app-only flow");
+  }
+  const form = new URLSearchParams();
+  form.set("client_id", CLIENT_ID);
+  form.set("client_secret", CLIENT_SECRET);
+  form.set("grant_type", "client_credentials");
+  // Minimal default scopes for app-only
+  // For rooms & availability: Place.Read.All + Calendars.Read (app perms) must be consented in the app registration.
+  form.set("scope", "https://graph.microsoft.com/.default");
+
+  const tokenEndpoint = `https://login.microsoftonline.com/${t}/oauth2/v2.0/token`;
+  const r = await fetch(tokenEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form
+  });
+  const j = await r.json();
+  if (!r.ok) {
+    throw Object.assign(new Error("App token fetch failed"), { status: r.status, detail: j });
+  }
+  if (!j.access_token) {
+    throw Object.assign(new Error("No access_token in app token response"), { detail: j });
+  }
+  return j.access_token;
+}
+
+// ────────────────────────────────────────────────────────────
+// New endpoints (additive)
+
+// Quick health/debug for app-only
+app.get("/ms/app-token/debug", async (req, res) => {
+  try {
+    const tenant = resolveTenant(req);
+    const token = await getAppToken(tenant);
+    res.json({
+      ok: true,
+      tenant,
+      client_id: mask(CLIENT_ID),
+      has_token: !!token,
+      token_hash: sha(token)
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.detail || null });
+  }
+});
+
+// 1) List all Rooms in tenant (Graph places API)
+app.get("/ms/places/rooms", async (req, res) => {
+  try {
+    const tenant = resolveTenant(req);
+    const token = await getAppToken(tenant);
+    // You can filter/expand later; start simple:
+    // GET https://graph.microsoft.com/v1.0/places/microsoft.graph.room?$top=999
+    const base = "https://graph.microsoft.com/v1.0/places/microsoft.graph.room?$top=999";
+    const data = await graphFetch("GET", base, token);
+    // Normalize a lite payload for Bubble
+    const rooms = (data?.value || []).map(r => ({
+      id: r.id || null,
+      displayName: r.displayName || null,
+      emailAddress: r.emailAddress || null,
+      floorLabel: r.floorLabel || r.floor || null,
+      building: r.building || null,
+      capacity: r.capacity || null
+    }));
+    res.json({ ok: true, tenant, count: rooms.length, rooms });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.message, detail: e.detail || null });
+  }
+});
+
+// 2) Availability for given room emails (uses getSchedule)
+app.post("/ms/rooms/availability", async (req, res) => {
+  try {
+    const tenant = resolveTenant(req);
+    const token = await getAppToken(tenant);
+    const {
+      room_emails = [],
+      start, // ISO
+      end,   // ISO
+      timezone = "Europe/Stockholm",
+      intervalMinutes = 30
+    } = req.body || {};
+
+    if (!Array.isArray(room_emails) || room_emails.length === 0) {
+      return res.status(400).json({ ok: false, error: "room_emails (array) is required" });
+    }
+    if (!start || !end) {
+      return res.status(400).json({ ok: false, error: "start and end (ISO) are required" });
+    }
+
+    const body = {
+      schedules: room_emails,
+      startTime: { dateTime: start, timeZone: timezone },
+      endTime:   { dateTime: end,   timeZone: timezone },
+      availabilityViewInterval: intervalMinutes
+    };
+
+    // POST https://graph.microsoft.com/v1.0/users/getSchedule
+    const url = "https://graph.microsoft.com/v1.0/users/getSchedule";
+    const data = await graphFetch("POST", url, token, body);
+
+    res.json({ ok: true, tenant, result: data });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.message, detail: e.detail || null });
+  }
+});
+
+// 3) Raw events for a single room calendar (calendarView)
+app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
+  try {
+    const tenant = resolveTenant(req);
+    const token = await getAppToken(tenant);
+    const { roomEmail } = req.params;
+    const { start, end } = req.query; // ISO
+
+    if (!roomEmail) return res.status(400).json({ ok: false, error: "roomEmail is required" });
+    if (!start || !end) return res.status(400).json({ ok: false, error: "start & end ISO required" });
+
+    const params = new URLSearchParams({
+      startDateTime: String(start),
+      endDateTime: String(end),
+      // Select a light event shape; extend if you need more
+      "$select": "id,subject,organizer,start,end,location,attendees,isAllDay,webLink"
+    });
+
+    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(roomEmail)}/calendarView?${params.toString()}`;
+    const data = await graphFetch("GET", url, token);
+
+    res.json({ ok: true, tenant, events: data?.value || [] });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.message, detail: e.detail || null });
+  }
+});
+// ────────────────────────────────────────────────────────────
+
 app.listen(PORT, () => console.log(`🚀 Mira Exchange running on port ${PORT}`));
