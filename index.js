@@ -202,7 +202,9 @@ app.post("/ms/auth", async (req, res) => {
     log("[/ms/auth] incoming body", req.body);
     if (!uid) return res.status(400).json({ error: "Missing user_id" });
 
-    const url = buildAuthorizeUrl({ user_id: uid, redirect });
+    const cleanRedirect = normalizeRedirect(redirect || REDIRECT_URI);
+const url = buildAuthorizeUrl({ user_id: uid, redirect: cleanRedirect });
+
     log("[/ms/auth] → built url", {
       have_clientId: !!CLIENT_ID,
       redirect: redirect || REDIRECT_URI
@@ -242,12 +244,13 @@ app.post("/ms/refresh-save", async (req, res) => {
 
   try {
     const result = await tokenExchange({
-      code,
-      refresh_token,
-      scope: incomingScope,
-      tenant,
-      redirect_uri: redirect || REDIRECT_URI
-    });
+  code,
+  refresh_token,
+  scope: incomingScope,
+  tenant,
+  redirect_uri: normalizeRedirect(redirect || REDIRECT_URI)
+});
+
 
     log("[/ms/refresh-save] ms token response", {
       ok: result.ok,
@@ -444,6 +447,18 @@ app.get("/ms/debug-env", (_req, res) => {
     node_env: NODE_ENV
   });
 });
+// ────────────────────────────────────────────────────────────
+// Helper: normalizeRedirect – cleans up double slashes like "//ms_consent_callback"
+function normalizeRedirect(u) {
+  try {
+    const url = new URL(u);
+    // Remove duplicate slashes in the pathname
+    url.pathname = url.pathname.replace(/\/{2,}/g, "/");
+    return url.toString();
+  } catch {
+    return u;
+  }
+}
 
 // ────────────────────────────────────────────────────────────
 // Helpers for app-only (client_credentials) Graph calls
