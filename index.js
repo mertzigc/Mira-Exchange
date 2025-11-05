@@ -102,6 +102,18 @@ const sha  = (v) => {
   return h.slice(0, 16) + "…";
 };
 
+// ────────────────────────────────────────────────────────────
+// Helper: normalizeRedirect – cleans up double slashes like "//ms_consent_callback"
+function normalizeRedirect(u) {
+  try {
+    const url = new URL(u);
+    url.pathname = url.pathname.replace(/\/{2,}/g, "/"); // collapse multiple slashes
+    return url.toString();
+  } catch {
+    return u;
+  }
+}
+
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
     "https://mira-fm.com/version-test/api/1.1/obj/user/" + user_unique_id,
@@ -203,11 +215,11 @@ app.post("/ms/auth", async (req, res) => {
     if (!uid) return res.status(400).json({ error: "Missing user_id" });
 
     const cleanRedirect = normalizeRedirect(redirect || REDIRECT_URI);
-const url = buildAuthorizeUrl({ user_id: uid, redirect: cleanRedirect });
+    const url = buildAuthorizeUrl({ user_id: uid, redirect: cleanRedirect });
 
     log("[/ms/auth] → built url", {
       have_clientId: !!CLIENT_ID,
-      redirect: redirect || REDIRECT_URI
+      redirect: cleanRedirect
     });
     res.json({ ok: true, url });
   } catch (err) {
@@ -244,13 +256,12 @@ app.post("/ms/refresh-save", async (req, res) => {
 
   try {
     const result = await tokenExchange({
-  code,
-  refresh_token,
-  scope: incomingScope,
-  tenant,
-  redirect_uri: normalizeRedirect(redirect || REDIRECT_URI)
-});
-
+      code,
+      refresh_token,
+      scope: incomingScope,
+      tenant,
+      redirect_uri: normalizeRedirect(redirect || REDIRECT_URI)
+    });
 
     log("[/ms/refresh-save] ms token response", {
       ok: result.ok,
@@ -291,7 +302,6 @@ app.post("/ms/refresh-save", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// Create Event (robust: token i body → DB → auto-refresh)
 app.post("/ms/create-event", async (req, res) => {
   const { user_unique_id, attendees_emails, event, ms_access_token, ms_refresh_token } = req.body || {};
   log("[/ms/create-event] hit", {
@@ -311,13 +321,12 @@ app.post("/ms/create-event", async (req, res) => {
   }
 
   try {
-    // 1) Token via (A) body → (B) DB → (C) auto-refresh
     let accessToken = ms_access_token || null;
     let refreshToken = ms_refresh_token || null;
     let scope = null;
 
     if (!accessToken || !refreshToken) {
-      const u = await fetchBubbleUser(user_unique_id); // kan bli null
+      const u = await fetchBubbleUser(user_unique_id);
       log("[/ms/create-event] user snapshot", {
         has_response: !!u,
         has_ms_access_token: !!u?.ms_access_token,
@@ -346,7 +355,6 @@ app.post("/ms/create-event", async (req, res) => {
       return res.status(401).json({ error: "User has no ms_access_token (and refresh missing/failed)" });
     }
 
-    // 2) Attendees (0..N, dedupe)
     const normalizedAttendees = [];
     const seen = new Set();
     const push = (raw) => {
@@ -363,7 +371,6 @@ app.post("/ms/create-event", async (req, res) => {
       [];
     allAtt.forEach(push);
 
-    // 3) Build event
     const tzInput = event?.tz || event?.start?.timeZone || "Europe/Stockholm";
     const ev = {
       subject: event?.subject || "Untitled event",
@@ -388,7 +395,6 @@ app.post("/ms/create-event", async (req, res) => {
     };
     if (normalizedAttendees.length > 0) ev.attendees = normalizedAttendees;
 
-    // 4) Create event
     const graphRes = await fetch(GRAPH_BASE + "/me/events", {
       method: "POST",
       headers: {
@@ -434,7 +440,7 @@ app.post("/ms/create-event", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// ENV debug (ENKEL – bara en gång)
+// ENV debug
 app.get("/ms/debug-env", (_req, res) => {
   res.json({
     has_CLIENT_ID: !!CLIENT_ID,
@@ -447,18 +453,6 @@ app.get("/ms/debug-env", (_req, res) => {
     node_env: NODE_ENV
   });
 });
-// ────────────────────────────────────────────────────────────
-// Helper: normalizeRedirect – cleans up double slashes like "//ms_consent_callback"
-function normalizeRedirect(u) {
-  try {
-    const url = new URL(u);
-    // Remove duplicate slashes in the pathname
-    url.pathname = url.pathname.replace(/\/{2,}/g, "/");
-    return url.toString();
-  } catch {
-    return u;
-  }
-}
 
 // ────────────────────────────────────────────────────────────
 // Helpers for app-only (client_credentials) Graph calls
