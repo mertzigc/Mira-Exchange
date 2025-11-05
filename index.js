@@ -273,94 +273,8 @@ app.post("/ms/refresh-save", async (req, res) => {
 
 // ────────────────────────────────────────────────────────────
 // Exchange CODE or REFRESH TOKEN and save to Bubble
-app.post("/ms/refresh-save", async (req, res) => {
-  const {
-    user_unique_id,
-    u,
-    refresh_token,
-    code,
-    scope: incomingScope,
-    tenant,
-    redirect
-  } = req.body || {};
+// [DUPLICATE /ms/refresh-save REMOVED]
 
-  const userId = user_unique_id || u;
-  const tokenEndpoint = `https://login.microsoftonline.com/${tenant || MS_TENANT}/oauth2/v2.0/token`;
-
-  log("[/ms/refresh-save] hit", {
-    auth: BUBBLE_API_KEY ? "ok" : "missing",
-    has_body: !!req.body,
-    has_code: !!code,
-    has_refresh_token: !!refresh_token,
-    has_user: !!userId,
-    has_scope: !!incomingScope
-  });
-
-  if (!userId) return res.status(400).json({ error: "Missing user id (u or user_unique_id)" });
-
-  try {
-    const form = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-    });
-
-    if (code) {
-      form.set("grant_type", "authorization_code");
-      form.set("code", code);
-      form.set("redirect_uri", redirect || REDIRECT_URI);
-    } else if (refresh_token) {
-      form.set("grant_type", "refresh_token");
-      form.set("refresh_token", refresh_token);
-      form.set("redirect_uri", redirect || REDIRECT_URI);
-    } else {
-      return res.status(400).json({ error: "Missing code or refresh_token" });
-    }
-
-    form.set("scope", incomingScope || MS_SCOPE);
-
-    const r = await fetch(tokenEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form
-    });
-    const j = await r.json().catch(() => ({}));
-
-    log("[/ms/refresh-save] ms token response", {
-      ok: r.ok,
-      status: r.status,
-      has_access_token: !!j.access_token,
-      has_refresh_token: !!j.refresh_token
-    });
-
-    if (!r.ok || !j?.access_token) {
-      const action =
-        j?.error === "invalid_client" ? "check_client_secret" :
-        j?.error === "invalid_grant"  ? "reconsent_required" :
-        j?.error === "invalid_scope"  ? "adjust_scopes" :
-        "retry_or_relogin";
-
-      return res.status(401).json({
-        error: "Token exchange failed",
-        ms_error: j?.error,
-        ms_error_description: j?.error_description,
-        action
-      });
-    }
-
-    const saved = await upsertTokensToBubble(userId, j, j.refresh_token || refresh_token);
-    if (!saved) return res.status(502).json({ error: "Bubble save failed" });
-
-    return res.json({
-      ok: true,
-      saved_for_user: userId,
-      access_token_preview: j.access_token?.slice(0, 12) + "...",
-      expires_in: j.expires_in
-    });
-  } catch (err) {
-    console.error("[/ms/refresh-save] error", err);
-    return res.status(500).json({ error: err.message });
-  }
-});
 
 // ────────────────────────────────────────────────────────────
 // Create Event (robust: token i body → DB → auto-refresh)
@@ -730,5 +644,17 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+
+// Debug: list loaded routes
+app.get("/ms/routes", (req, res) => {
+  const routes = [];
+  (app._router?.stack || []).forEach(l => {
+    if (l.route?.path) {
+      const method = Object.keys(l.route.methods || {})[0]?.toUpperCase();
+      routes.push({ method, path: l.route.path });
+    }
+  });
+  res.json({ routes });
+});
 
 app.listen(PORT, () => console.log(`🚀 Mira Exchange running on port ${PORT}`));
