@@ -20,7 +20,7 @@ app.use(express.json({ type: ["application/json", "application/*+json"] }));
 app.use(cors());
 
 // ────────────────────────────────────────────────────────────
-/** ENV resolution (stöd båda namnscheman och smart redirect) */
+// ENV resolution (stöd båda namnscheman och smart redirect)
 const pick = (...vals) => vals.find(v => !!v && String(v).trim()) || null;
 
 const NODE_ENV       = process.env.NODE_ENV || "production";
@@ -46,8 +46,8 @@ const MS_SCOPE  = pick(
 );
 const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
-const GRAPH_BASE     = "https://graph.microsoft.com/v1.0";
-const PORT           = process.env.PORT || 10000;
+const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+const PORT       = process.env.PORT || 10000;
 
 // Bubble: försök spara till prod först, sen test
 const BUBBLE_BASES = ["https://mira-fm.com", "https://mira-fm.com/version-test"];
@@ -72,7 +72,7 @@ function toGraphDateTime(local) {
   return s;
 }
 
-// Minimal IANA -> Windows time zone map för vanliga case
+// IANA → Windows time zone (vanliga fall)
 const IANA_TO_WINDOWS_TZ = {
   "Europe/Stockholm": "W. Europe Standard Time",
   "Europe/Paris": "Romance Standard Time",
@@ -90,7 +90,7 @@ function toWindowsTz(tz) {
   return IANA_TO_WINDOWS_TZ[t] || "W. Europe Standard Time";
 }
 
-// Safe helpers without template literals
+// Safe helpers (utan template literals)
 const mask = (v) => {
   if (!v) return null;
   const s = String(v);
@@ -193,17 +193,29 @@ function buildAuthorizeUrl({ user_id, redirect }) {
   return url.toString();
 }
 
-    const url = buildAuthorizeUrl({ user_id, redirect });
-    log("[/ms/auth] → built url", { have_clientId: !!CLIENT_ID, redirect: redirect || REDIRECT_URI });
-    return res.json({ ok: true, url });
+// ────────────────────────────────────────────────────────────
+// Start consent (Bubble: POST /ms/auth)
+app.post("/ms/auth", async (req, res) => {
+  try {
+    const { user_id, u, redirect } = req.body || {};
+    const uid = user_id || u;
+    log("[/ms/auth] incoming body", req.body);
+    if (!uid) return res.status(400).json({ error: "Missing user_id" });
+
+    const url = buildAuthorizeUrl({ user_id: uid, redirect });
+    log("[/ms/auth] → built url", {
+      have_clientId: !!CLIENT_ID,
+      redirect: redirect || REDIRECT_URI
+    });
+    res.json({ ok: true, url });
   } catch (err) {
     console.error("[/ms/auth] error", err);
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ────────────────────────────────────────────────────────────
-// Exchange CODE or REFRESH TOKEN and save to Bubble
+/** Exchange CODE or REFRESH TOKEN and save to Bubble */
 app.post("/ms/refresh-save", async (req, res) => {
   const {
     user_unique_id, // gamla namnet
@@ -263,7 +275,7 @@ app.post("/ms/refresh-save", async (req, res) => {
     const saved = await upsertTokensToBubble(userId, result.data, result.data.refresh_token || refresh_token);
     if (!saved) return res.status(502).json({ error: "Bubble save failed" });
 
-    return res.json({
+    res.json({
       ok: true,
       saved_for_user: userId,
       access_token_preview: (result.data.access_token || "").slice(0, 12) + "...",
@@ -271,7 +283,7 @@ app.post("/ms/refresh-save", async (req, res) => {
     });
   } catch (err) {
     console.error("[/ms/refresh-save] error", err);
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -405,7 +417,7 @@ app.post("/ms/create-event", async (req, res) => {
       });
     }
 
-    return res.json({
+    res.json({
       ok: true,
       id: graphData.id,
       webLink: graphData.webLink,
@@ -414,12 +426,12 @@ app.post("/ms/create-event", async (req, res) => {
     });
   } catch (err) {
     console.error("[/ms/create-event] error", err);
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ────────────────────────────────────────────────────────────
-// ENV debug
+// ENV debug (ENKEL – bara en gång)
 app.get("/ms/debug-env", (_req, res) => {
   res.json({
     has_CLIENT_ID: !!CLIENT_ID,
@@ -431,25 +443,6 @@ app.get("/ms/debug-env", (_req, res) => {
     redirect_uri: REDIRECT_URI || null,
     node_env: NODE_ENV
   });
-});
-// Start consent (Bubble: POST /ms/auth)
-app.post("/ms/auth", async (req, res) => {
-  try {
-    const { user_id, u, redirect } = req.body || {};
-    const uid = user_id || u;
-    log("[/ms/auth] incoming body", req.body); // TEMP: debug line
-    if (!uid) return res.status(400).json({ error: "Missing user_id" });
-
-    const url = buildAuthorizeUrl({ user_id: uid, redirect });
-    log("[/ms/auth] → built url", {
-      have_clientId: !!CLIENT_ID,
-      redirect: redirect || REDIRECT_URI
-    });
-    return res.json({ ok: true, url });
-  } catch (err) {
-    console.error("[/ms/auth] error", err);
-    return res.status(500).json({ error: err.message });
-  }
 });
 
 // ────────────────────────────────────────────────────────────
@@ -618,6 +611,7 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────
 // Debug: list loaded routes
 app.get("/ms/routes", (req, res) => {
   const routes = [];
