@@ -524,32 +524,44 @@ app.get("/ms/debug-env", (_req, res) => {
     redirect_uri: REDIRECT_URI || null,
     node_env: NODE_ENV
   });
+
+// ────────────────────────────────────────────────────────────
+// Build Microsoft authorize URL
+function buildAuthorizeUrl({ user_id, redirect }) {
+  const authBase = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/authorize`;
+  const url = new URL(authBase);
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("response_mode", "query");
+  url.searchParams.set("scope", MS_SCOPE);
+  url.searchParams.set("redirect_uri", redirect || REDIRECT_URI);
+  if (user_id) url.searchParams.set("state", `u=${user_id}`);
+  return url.toString();
+}
+
+// Start consent (Bubble: POST /ms/auth)
+app.post("/ms/auth", async (req, res) => {
+  try {
+    const { user_id, redirect } = req.body || {};
+    if (!user_id) return res.status(400).json({ error: "Missing user_id" });
+    const url = buildAuthorizeUrl({ user_id, redirect });
+    return res.json({ ok: true, url });
+  } catch (err) {
+    console.error("[/ms/auth] error", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 });
 
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Helpers for app-only (client_credentials) Graph calls
 
-const NODE_ENV = process.env.NODE_ENV || "production";
-const PORT = parseInt(process.env.PORT || "10000", 10);
-
-// Read BOTH naming schemes (per your canonical rule)
-const CLIENT_ID = pick(process.env.MS_APP_CLIENT_ID, process.env.MS_CLIENT_ID);
-const CLIENT_SECRET = pick(process.env.MS_APP_CLIENT_SECRET, process.env.MS_CLIENT_SECRET);
-
-// Redirect: prefer unified MS_REDIRECT_URI if present, else use LIVE/DEV
-const REDIRECT_URI = pick(
-  process.env.MS_REDIRECT_URI,
-  process.env.MS_REDIRECT_LIVE,
-  process.env.MS_REDIRECT_DEV
-);
-
 // Default tenant fallback (can be 'common', but for app-only you should pass real tenant)
 const DEFAULT_TENANT = pick(process.env.MS_TENANT, "common");
 
 // small utils
-const sha = (s) => (!s ? null : crypto.createHash("sha256").update(String(s)).digest("hex").slice(0, 10));
-const mask = (s) => (!s ? null : String(s).slice(0, 4) + "…" + String(s).slice(-4));
 
 // Fetch wrapper
 async function graphFetch(method, url, token, body) {
