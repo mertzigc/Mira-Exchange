@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -16,8 +17,6 @@ if (process.env.NODE_ENV !== "production") {
 // ────────────────────────────────────────────────────────────
 // App & JSON
 const app = express();
-
-// Acceptera JSON även om Bubble ibland sätter "application/*+json"
 app.use(express.json({ type: ["application/json", "application/*+json"] }));
 app.use(cors());
 
@@ -49,7 +48,6 @@ const MS_SCOPE  = pick(
 const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
 const GRAPH_BASE     = "https://graph.microsoft.com/v1.0";
-const TOKEN_ENDPOINT = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/token`;
 const PORT           = process.env.PORT || 10000;
 
 // Bubble: försök spara till prod först, sen test
@@ -68,12 +66,10 @@ const fixDateTime = (s) => {
   return v;
 };
 
-// Nya hjälpare (rekommenderad av MS Graph-erfarenhet)
-// Tillåt "YYYY-MM-DD HH:mm", "YYYY-MM-DDTHH:mm", "YYYY-MM-DDTHH:mm:ss"
 function toGraphDateTime(local) {
   if (!local) return null;
   const s = String(local).trim().replace(" ", "T");
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return `${s}:00";
   return s;
 }
 
@@ -89,23 +85,14 @@ const IANA_TO_WINDOWS_TZ = {
   "Etc/UTC": "UTC"
 };
 function toWindowsTz(tz) {
-if (!tz) return "W. Europe Standard Time"; // bättre default för dig
+  if (!tz) return "W. Europe Standard Time";
   const t = String(tz).trim();
-  // Om det redan är ett Windows ID, behåll det
   if (/Standard Time$/i.test(t)) return t;
-  // Vanliga IANA → Windows
-  const IANA_TO_WINDOWS_TZ = {
-    "Europe/Stockholm": "W. Europe Standard Time",
-    "Europe/Paris": "Romance Standard Time",
-    "Europe/Berlin": "W. Europe Standard Time",
-    "Europe/Amsterdam": "W. Europe Standard Time",
-    "Europe/Madrid": "Romance Standard Time",
-    "Europe/London": "GMT Standard Time",
-    "UTC": "UTC",
-    "Etc/UTC": "UTC"
-  };
   return IANA_TO_WINDOWS_TZ[t] || "W. Europe Standard Time";
 }
+
+const mask = (v) => !v ? null : `${String(v).slice(0,3)}...${String(v).slice(-3)}`;
+const sha  = (v) => !v ? null : crypto.createHash("sha256").update(String(v)).digest("hex").slice(0,16) + "…";
 
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
@@ -154,17 +141,24 @@ async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) 
   return false;
 }
 
-async function refreshWith(refresh_token, scope) {
-  const form = new URLSearchParams({
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
-    grant_type: "refresh_token",
-    refresh_token,
-    redirect_uri: REDIRECT_URI,
-  });
-  if (scope) form.set("scope", scope);
+async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
+  const tokenEndpoint = `https://login.microsoftonline.com/${tenant || MS_TENANT}/oauth2/v2.0/token`;
+  const form = new URLSearchParams();
+  form.set("client_id", CLIENT_ID);
+  form.set("client_secret", CLIENT_SECRET);
+  if (code) {
+    form.set("grant_type", "authorization_code");
+    form.set("code", code);
+  } else if (refresh_token) {
+    form.set("grant_type", "refresh_token");
+    form.set("refresh_token", refresh_token);
+  } else {
+    throw new Error("Missing code or refresh_token");
+  }
+  form.set("redirect_uri", redirect_uri || REDIRECT_URI);
+  form.set("scope", scope || MS_SCOPE);
 
-  const r = await fetch(TOKEN_ENDPOINT, {
+  const r = await fetch(tokenEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form,
@@ -176,6 +170,34 @@ async function refreshWith(refresh_token, scope) {
 // ────────────────────────────────────────────────────────────
 // Health
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// ────────────────────────────────────────────────────────────
+// Build Microsoft authorize URL
+function buildAuthorizeUrl({ user_id, redirect }) {
+  const authBase = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/authorize`;
+  const url = new URL(authBase);
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("response_mode", "query");
+  url.searchParams.set("scope", MS_SCOPE);
+  url.searchParams.set("redirect_uri", redirect || REDIRECT_URI);
+  if (user_id) url.searchParams.set("state", `u:${user_id}`);
+  return url.toString();
+}
+
+// Start consent (Bubble: POST /ms/auth)
+app.post("/ms/auth", async (req, res) => {
+  try {
+    const { user_id, redirect } = req.body || {};
+    if (!user_id) return res.status(400).json({ error: "Missing user_id" });
+    const url = buildAuthorizeUrl({ user_id, redirect });
+    log("[/ms/auth] → built url", { have_clientId: !!CLIENT_ID, redirect: redirect || REDIRECT_URI });
+    return res.json({ ok: true, url });
+  } catch (err) {
+    console.error("[/ms/auth] error", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 // Exchange CODE or REFRESH TOKEN and save to Bubble
@@ -191,7 +213,6 @@ app.post("/ms/refresh-save", async (req, res) => {
   } = req.body || {};
 
   const userId = user_unique_id || u;
-  const tokenEndpoint = `https://login.microsoftonline.com/${tenant || MS_TENANT}/oauth2/v2.0/token`;
 
   log("[/ms/refresh-save] hit", {
     auth: BUBBLE_API_KEY ? "ok" : "missing",
@@ -205,43 +226,23 @@ app.post("/ms/refresh-save", async (req, res) => {
   if (!userId) return res.status(400).json({ error: "Missing user id (u or user_unique_id)" });
 
   try {
-    const form = new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
+    const result = await tokenExchange({
+      code,
+      refresh_token,
+      scope: incomingScope,
+      tenant,
+      redirect_uri: redirect || REDIRECT_URI
     });
-
-    if (code) {
-      // första bytet efter consent
-      form.set("grant_type", "authorization_code");
-      form.set("code", code);
-      form.set("redirect_uri", redirect || REDIRECT_URI);
-    } else if (refresh_token) {
-      // tyst förnyelse
-      form.set("grant_type", "refresh_token");
-      form.set("refresh_token", refresh_token);
-      form.set("redirect_uri", redirect || REDIRECT_URI);
-    } else {
-      return res.status(400).json({ error: "Missing code or refresh_token" });
-    }
-
-    // stabilare med explicita scopes
-    form.set("scope", incomingScope || MS_SCOPE);
-
-    const r = await fetch(tokenEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form
-    });
-    const j = await r.json().catch(() => ({}));
 
     log("[/ms/refresh-save] ms token response", {
-      ok: r.ok,
-      status: r.status,
-      has_access_token: !!j.access_token,
-      has_refresh_token: !!j.refresh_token
+      ok: result.ok,
+      status: result.status,
+      has_access_token: !!result.data?.access_token,
+      has_refresh_token: !!result.data?.refresh_token
     });
 
-    if (!r.ok || !j?.access_token) {
+    if (!result.ok) {
+      const j = result.data || {};
       const action =
         j?.error === "invalid_client" ? "check_client_secret" :
         j?.error === "invalid_grant"  ? "reconsent_required" :
@@ -256,14 +257,14 @@ app.post("/ms/refresh-save", async (req, res) => {
       });
     }
 
-    const saved = await upsertTokensToBubble(userId, j, j.refresh_token || refresh_token);
+    const saved = await upsertTokensToBubble(userId, result.data, result.data.refresh_token || refresh_token);
     if (!saved) return res.status(502).json({ error: "Bubble save failed" });
 
     return res.json({
       ok: true,
       saved_for_user: userId,
-      access_token_preview: j.access_token?.slice(0, 12) + "...",
-      expires_in: j.expires_in
+      access_token_preview: result.data.access_token?.slice(0, 12) + "...",
+      expires_in: result.data.expires_in
     });
   } catch (err) {
     console.error("[/ms/refresh-save] error", err);
@@ -272,13 +273,7 @@ app.post("/ms/refresh-save", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// Exchange CODE or REFRESH TOKEN and save to Bubble
-// [DUPLICATE /ms/refresh-save REMOVED]
-
-
-// ────────────────────────────────────────────────────────────
 // Create Event (robust: token i body → DB → auto-refresh)
-// Servern forcerar Teams + allow proposals (du bad om detta)
 app.post("/ms/create-event", async (req, res) => {
   const { user_unique_id, attendees_emails, event, ms_access_token, ms_refresh_token } = req.body || {};
   log("[/ms/create-event] hit", {
@@ -320,7 +315,7 @@ app.post("/ms/create-event", async (req, res) => {
     }
 
     if (!accessToken && refreshToken) {
-      const ref = await refreshWith(refreshToken, scope);
+      const ref = await tokenExchange({ refresh_token: refreshToken, scope });
       log("[/ms/create-event] auto-refresh", { ok: ref.ok, status: ref.status });
       if (ref.ok) {
         accessToken = ref.data.access_token;
@@ -333,7 +328,7 @@ app.post("/ms/create-event", async (req, res) => {
       return res.status(401).json({ error: "User has no ms_access_token (and refresh missing/failed)" });
     }
 
-    // 2) Attendees (0..N, dedupe) – tillåt både top-level och event.attendees_emails
+    // 2) Attendees (0..N, dedupe)
     const normalizedAttendees = [];
     const seen = new Set();
     const push = (raw) => {
@@ -350,7 +345,7 @@ app.post("/ms/create-event", async (req, res) => {
       [];
     allAtt.forEach(push);
 
-    // 3) Bygg Graph-event — använder nya helper för tid + Windows-TZ
+    // 3) Build event
     const tzInput = event?.tz || event?.start?.timeZone || "Europe/Stockholm";
     const ev = {
       subject: event?.subject || "Untitled event",
@@ -369,15 +364,13 @@ app.post("/ms/create-event", async (req, res) => {
       location: {
         displayName: event?.location_name || event?.location?.displayName || "",
       },
-      // Server-forcerat online-möte + förslag
       isOnlineMeeting: true,
       allowNewTimeProposals: true,
       onlineMeetingProvider: "teamsForBusiness",
     };
-
     if (normalizedAttendees.length > 0) ev.attendees = normalizedAttendees;
 
-    // 4) Skapa event
+    // 4) Create event
     const graphRes = await fetch(`${GRAPH_BASE}/me/events`, {
       method: "POST",
       headers: {
@@ -395,7 +388,6 @@ app.post("/ms/create-event", async (req, res) => {
       webLink: graphData?.webLink,
       hasOnline: !!graphData?.onlineMeeting,
       joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl,
-      // Vid fel – ge lite payload-insikt (utan att dumpa allt)
       error: !graphRes.ok ? graphData?.error : undefined,
       tzSent: ev?.start?.timeZone,
       startSent: ev?.start?.dateTime,
@@ -403,7 +395,6 @@ app.post("/ms/create-event", async (req, res) => {
     });
 
     if (!graphRes.ok) {
-      // Skicka tillbaka tydligt fel inkl. status och MS-error
       return res.status(graphRes.status).json({
         ok: false,
         status: graphRes.status,
@@ -425,9 +416,8 @@ app.post("/ms/create-event", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// ENV debug
 app.get("/ms/debug-env", (_req, res) => {
-  const mask = (v) => !v ? null : `${String(v).slice(0,3)}...${String(v).slice(-3)}`;
-  const sha  = (v) => !v ? null : crypto.createHash("sha256").update(String(v)).digest("hex").slice(0,16) + "…";
   res.json({
     has_CLIENT_ID: !!CLIENT_ID,
     has_CLIENT_SECRET: !!CLIENT_SECRET,
@@ -438,46 +428,12 @@ app.get("/ms/debug-env", (_req, res) => {
     redirect_uri: REDIRECT_URI || null,
     node_env: NODE_ENV
   });
-
-// ────────────────────────────────────────────────────────────
-// Build Microsoft authorize URL
-function buildAuthorizeUrl({ user_id, redirect }) {
-  const authBase = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/authorize`;
-  const url = new URL(authBase);
-  url.searchParams.set("client_id", CLIENT_ID);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("response_mode", "query");
-  url.searchParams.set("scope", MS_SCOPE);
-  url.searchParams.set("redirect_uri", redirect || REDIRECT_URI);
-  if (user_id) url.searchParams.set("state", `u=${user_id}`);
-  return url.toString();
-}
-
-// Start consent (Bubble: POST /ms/auth)
-app.post("/ms/auth", async (req, res) => {
-  try {
-    const { user_id, redirect } = req.body || {};
-    if (!user_id) return res.status(400).json({ error: "Missing user_id" });
-    const url = buildAuthorizeUrl({ user_id, redirect });
-    return res.json({ ok: true, url });
-  } catch (err) {
-    console.error("[/ms/auth] error", err);
-    return res.status(500).json({ error: err.message });
-  }
 });
 
-});
-
-// ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Helpers for app-only (client_credentials) Graph calls
-
-// Default tenant fallback (can be 'common', but for app-only you should pass real tenant)
 const DEFAULT_TENANT = pick(process.env.MS_TENANT, "common");
 
-// small utils
-
-// Fetch wrapper
 async function graphFetch(method, url, token, body) {
   const res = await fetch(url, {
     method,
@@ -497,7 +453,6 @@ async function graphFetch(method, url, token, body) {
   return json;
 }
 
-// Resolve tenant to use (query param, header, or default)
 function resolveTenant(req) {
   return pick(
     req.query.tenant,
@@ -506,7 +461,6 @@ function resolveTenant(req) {
   );
 }
 
-// Get app-only token for a tenant
 async function getAppToken(tenant) {
   const t = tenant || DEFAULT_TENANT;
   if (!CLIENT_ID || !CLIENT_SECRET) {
@@ -516,8 +470,6 @@ async function getAppToken(tenant) {
   form.set("client_id", CLIENT_ID);
   form.set("client_secret", CLIENT_SECRET);
   form.set("grant_type", "client_credentials");
-  // Minimal default scopes for app-only
-  // For rooms & availability: Place.Read.All + Calendars.Read (app perms) must be consented in the app registration.
   form.set("scope", "https://graph.microsoft.com/.default");
 
   const tokenEndpoint = `https://login.microsoftonline.com/${t}/oauth2/v2.0/token`;
@@ -535,9 +487,6 @@ async function getAppToken(tenant) {
   }
   return j.access_token;
 }
-
-// ────────────────────────────────────────────────────────────
-// New endpoints (additive)
 
 // Quick health/debug for app-only
 app.get("/ms/app-token/debug", async (req, res) => {
@@ -561,11 +510,8 @@ app.get("/ms/places/rooms", async (req, res) => {
   try {
     const tenant = resolveTenant(req);
     const token = await getAppToken(tenant);
-    // You can filter/expand later; start simple:
-    // GET https://graph.microsoft.com/v1.0/places/microsoft.graph.room?$top=999
     const base = "https://graph.microsoft.com/v1.0/places/microsoft.graph.room?$top=999";
     const data = await graphFetch("GET", base, token);
-    // Normalize a lite payload for Bubble
     const rooms = (data?.value || []).map(r => ({
       id: r.id || null,
       displayName: r.displayName || null,
@@ -607,7 +553,6 @@ app.post("/ms/rooms/availability", async (req, res) => {
       availabilityViewInterval: intervalMinutes
     };
 
-    // POST https://graph.microsoft.com/v1.0/users/getSchedule
     const url = "https://graph.microsoft.com/v1.0/users/getSchedule";
     const data = await graphFetch("POST", url, token, body);
 
@@ -631,7 +576,6 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
     const params = new URLSearchParams({
       startDateTime: String(start),
       endDateTime: String(end),
-      // Select a light event shape; extend if you need more
       "$select": "id,subject,organizer,start,end,location,attendees,isAllDay,webLink"
     });
 
@@ -643,7 +587,6 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
     res.status(e.status || 500).json({ ok: false, error: e.message, detail: e.detail || null });
   }
 });
-// ────────────────────────────────────────────────────────────
 
 // Debug: list loaded routes
 app.get("/ms/routes", (req, res) => {
