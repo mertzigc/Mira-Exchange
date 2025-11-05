@@ -69,7 +69,7 @@ const fixDateTime = (s) => {
 function toGraphDateTime(local) {
   if (!local) return null;
   const s = String(local).trim().replace(" ", "T");
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return `${s}:00";
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) return s + ":00";
   return s;
 }
 
@@ -91,19 +91,28 @@ function toWindowsTz(tz) {
   return IANA_TO_WINDOWS_TZ[t] || "W. Europe Standard Time";
 }
 
-const mask = (v) => !v ? null : `${String(v).slice(0,3)}...${String(v).slice(-3)}`;
-const sha  = (v) => !v ? null : crypto.createHash("sha256").update(String(v)).digest("hex").slice(0,16) + "…";
+// Safe helpers without template literals
+const mask = (v) => {
+  if (!v) return null;
+  const s = String(v);
+  return s.slice(0, 3) + "..." + s.slice(-3);
+};
+const sha  = (v) => {
+  if (!v) return null;
+  const h = crypto.createHash("sha256").update(String(v)).digest("hex");
+  return h.slice(0, 16) + "…";
+};
 
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
-    `https://mira-fm.com/version-test/api/1.1/obj/user/${user_unique_id}`,
-    `https://mira-fm.com/api/1.1/obj/user/${user_unique_id}`,
+    "https://mira-fm.com/version-test/api/1.1/obj/user/" + user_unique_id,
+    "https://mira-fm.com/api/1.1/obj/user/" + user_unique_id,
   ];
   for (const url of variants) {
     try {
-      const r = await fetch(url, { headers: { Authorization: `Bearer ${BUBBLE_API_KEY}` } });
+      const r = await fetch(url, { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } });
       const j = await r.json().catch(() => ({}));
-      if (j?.response) return j.response;
+      if (j && j.response) return j.response;
     } catch {}
   }
   return null;
@@ -122,12 +131,12 @@ async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) 
 
   for (const base of BUBBLE_BASES) {
     try {
-      const wf = `${base}/api/1.1/wf/ms_token_upsert`;
+      const wf = base + "/api/1.1/wf/ms_token_upsert";
       const r = await fetch(wf, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${BUBBLE_API_KEY}`,
+          Authorization: "Bearer " + BUBBLE_API_KEY,
         },
         body: JSON.stringify(payload),
       });
@@ -142,7 +151,7 @@ async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) 
 }
 
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
-  const tokenEndpoint = `https://login.microsoftonline.com/${tenant || MS_TENANT}/oauth2/v2.0/token`;
+  const tokenEndpoint = "https://login.microsoftonline.com/" + (tenant || MS_TENANT) + "/oauth2/v2.0/token";
   const form = new URLSearchParams();
   form.set("client_id", CLIENT_ID);
   form.set("client_secret", CLIENT_SECRET);
@@ -174,14 +183,14 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 // ────────────────────────────────────────────────────────────
 // Build Microsoft authorize URL
 function buildAuthorizeUrl({ user_id, redirect }) {
-  const authBase = `https://login.microsoftonline.com/${MS_TENANT}/oauth2/v2.0/authorize`;
+  const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
   const url = new URL(authBase);
   url.searchParams.set("client_id", CLIENT_ID);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("response_mode", "query");
   url.searchParams.set("scope", MS_SCOPE);
   url.searchParams.set("redirect_uri", redirect || REDIRECT_URI);
-  if (user_id) url.searchParams.set("state", `u:${user_id}`);
+  if (user_id) url.searchParams.set("state", "u:" + user_id);
   return url.toString();
 }
 
@@ -263,7 +272,7 @@ app.post("/ms/refresh-save", async (req, res) => {
     return res.json({
       ok: true,
       saved_for_user: userId,
-      access_token_preview: result.data.access_token?.slice(0, 12) + "...",
+      access_token_preview: (result.data.access_token || "").slice(0, 12) + "...",
       expires_in: result.data.expires_in
     });
   } catch (err) {
@@ -371,10 +380,10 @@ app.post("/ms/create-event", async (req, res) => {
     if (normalizedAttendees.length > 0) ev.attendees = normalizedAttendees;
 
     // 4) Create event
-    const graphRes = await fetch(`${GRAPH_BASE}/me/events`, {
+    const graphRes = await fetch(GRAPH_BASE + "/me/events", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: "Bearer " + accessToken,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(ev),
@@ -387,7 +396,7 @@ app.post("/ms/create-event", async (req, res) => {
       id: graphData?.id,
       webLink: graphData?.webLink,
       hasOnline: !!graphData?.onlineMeeting,
-      joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl,
+      joinUrl: (graphData?.onlineMeeting && graphData.onlineMeeting.joinUrl) || graphData?.onlineMeetingUrl,
       error: !graphRes.ok ? graphData?.error : undefined,
       tzSent: ev?.start?.timeZone,
       startSent: ev?.start?.dateTime,
@@ -406,7 +415,7 @@ app.post("/ms/create-event", async (req, res) => {
       ok: true,
       id: graphData.id,
       webLink: graphData.webLink,
-      joinUrl: graphData?.onlineMeeting?.joinUrl || graphData?.onlineMeetingUrl || null,
+      joinUrl: (graphData?.onlineMeeting && graphData.onlineMeeting.joinUrl) || graphData?.onlineMeetingUrl || null,
       raw: graphData,
     });
   } catch (err) {
@@ -438,7 +447,7 @@ async function graphFetch(method, url, token, body) {
   const res = await fetch(url, {
     method,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      "Authorization": "Bearer " + token,
       "Content-Type": body ? "application/json" : undefined
     },
     body: body ? JSON.stringify(body) : undefined
@@ -448,7 +457,10 @@ async function graphFetch(method, url, token, body) {
   try { json = text ? JSON.parse(text) : null; } catch {}
   if (!res.ok) {
     const detail = json || { text, status: res.status };
-    throw Object.assign(new Error(`Graph ${method} ${url} failed ${res.status}`), { status: res.status, detail });
+    const err = new Error("Graph " + method + " " + url + " failed " + res.status);
+    err.status = res.status;
+    err.detail = detail;
+    throw err;
   }
   return json;
 }
@@ -472,7 +484,7 @@ async function getAppToken(tenant) {
   form.set("grant_type", "client_credentials");
   form.set("scope", "https://graph.microsoft.com/.default");
 
-  const tokenEndpoint = `https://login.microsoftonline.com/${t}/oauth2/v2.0/token`;
+  const tokenEndpoint = "https://login.microsoftonline.com/" + t + "/oauth2/v2.0/token";
   const r = await fetch(tokenEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -480,10 +492,15 @@ async function getAppToken(tenant) {
   });
   const j = await r.json();
   if (!r.ok) {
-    throw Object.assign(new Error("App token fetch failed"), { status: r.status, detail: j });
+    const err = new Error("App token fetch failed");
+    err.status = r.status;
+    err.detail = j;
+    throw err;
   }
   if (!j.access_token) {
-    throw Object.assign(new Error("No access_token in app token response"), { detail: j });
+    const err = new Error("No access_token in app token response");
+    err.detail = j;
+    throw err;
   }
   return j.access_token;
 }
@@ -579,7 +596,7 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
       "$select": "id,subject,organizer,start,end,location,attendees,isAllDay,webLink"
     });
 
-    const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(roomEmail)}/calendarView?${params.toString()}`;
+    const url = "https://graph.microsoft.com/v1.0/users/" + encodeURIComponent(roomEmail) + "/calendarView?" + params.toString();
     const data = await graphFetch("GET", url, token);
 
     res.json({ ok: true, tenant, events: data?.value || [] });
@@ -600,4 +617,4 @@ app.get("/ms/routes", (req, res) => {
   res.json({ routes });
 });
 
-app.listen(PORT, () => console.log(`🚀 Mira Exchange running on port ${PORT}`));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
