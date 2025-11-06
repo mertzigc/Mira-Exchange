@@ -271,20 +271,35 @@ app.post("/ms/refresh-save", async (req, res) => {
     });
 
     if (!result.ok) {
-      const j = result.data || {};
-      const action =
-        j?.error === "invalid_client" ? "check_client_secret" :
-        j?.error === "invalid_grant"  ? "reconsent_required" :
-        j?.error === "invalid_scope"  ? "adjust_scopes" :
-        "retry_or_relogin";
-
-      return res.status(401).json({
-        error: "Token exchange failed",
-        ms_error: j?.error,
-        ms_error_description: j?.error_description,
-        action
-      });
+  const j = result.data || {};
+  // Logga tydligt i Render
+  logMsTokenError("/ms/refresh-save", result, {
+    sent: {
+      have_code: !!code,
+      have_refresh_token: !!refresh_token,
+      redirect_used: normalizeRedirect(redirect || REDIRECT_URI),
+      scope_used: incomingScope || MS_SCOPE,
+      tenant_used: tenant || MS_TENANT
     }
+  });
+
+  // Skicka tillbaka detaljerat fel till Bubble (så du ser det direkt vid test)
+  return res.status(400).json({
+    ok: false,
+    stage: "token_exchange",
+    status: result.status,
+    ms_error: j.error,
+    ms_error_description: j.error_description,
+    sent: {
+      have_code: !!code,
+      have_refresh_token: !!refresh_token,
+      redirect_used: normalizeRedirect(redirect || REDIRECT_URI),
+      scope_used: incomingScope || MS_SCOPE,
+      tenant_used: tenant || MS_TENANT
+    }
+  });
+}
+
 
     const saved = await upsertTokensToBubble(userId, result.data, result.data.refresh_token || refresh_token);
     if (!saved) return res.status(502).json({ error: "Bubble save failed" });
@@ -622,6 +637,17 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
 
 // ────────────────────────────────────────────────────────────
 // Debug: list loaded routes
+function logMsTokenError(where, result, extra = {}) {
+  try {
+    console.error(`[${where}] MS token error`, {
+      status: result?.status,
+      ms_error: result?.data?.error,
+      ms_error_description: result?.data?.error_description,
+      extra
+    });
+  } catch {}
+}
+
 app.get("/ms/routes", (req, res) => {
   const routes = [];
   (app._router?.stack || []).forEach(l => {
