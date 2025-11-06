@@ -613,7 +613,31 @@ app.post("/ms/rooms/availability", async (req, res) => {
     const url = "https://graph.microsoft.com/v1.0/users/getSchedule";
     const data = await graphFetch("POST", url, token, body);
 
-    res.json({ ok: true, tenant, result: data });
+// ...efter
+// const data = await graphFetch("POST", url, token, body);
+
+const items = [];
+const arr = Array.isArray(data?.value) ? data.value : [];
+for (const sched of arr) {
+  const schedId = sched?.scheduleId || null;
+  const list = Array.isArray(sched?.scheduleItems) ? sched.scheduleItems : [];
+  for (const it of list) {
+    const startIso = it?.start?.dateTime || null;
+    const endIso   = it?.end?.dateTime   || null;
+    items.push({
+      scheduleId: schedId,
+      status: it?.status || "busy",
+      subject: it?.subject || "",
+      start: startIso,   // ISO string → Bubble läser som date vid init
+      end:   endIso,     // ISO string → Bubble läser som date vid init
+      // valfria extra fält om du vill visa i UI:
+      start_tz: it?.start?.timeZone || null,
+      end_tz:   it?.end?.timeZone   || null
+    });
+  }
+}
+
+res.json({ ok: true, tenant, count: items.length, items });
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: e.message, detail: e.detail || null });
   }
