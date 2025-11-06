@@ -304,12 +304,22 @@ app.post("/ms/refresh-save", async (req, res) => {
     const saved = await upsertTokensToBubble(userId, result.data, result.data.refresh_token || refresh_token);
     if (!saved) return res.status(502).json({ error: "Bubble save failed" });
 
-    res.json({
-      ok: true,
-      saved_for_user: userId,
-      access_token_preview: (result.data.access_token || "").slice(0, 12) + "...",
-      expires_in: result.data.expires_in
-    });
+// --- i /ms/refresh-save, efter "if (!saved) return res.status(502)..."
+return res.json({
+  ok: true,
+  saved_for_user: userId,
+
+  // Ge Bubble de faktiska fälten:
+  access_token: result.data.access_token || null,
+  refresh_token: result.data.refresh_token || refresh_token || null,
+  expires_in: result.data.expires_in || null,
+  scope: result.data.scope || incomingScope || null,
+  token_type: result.data.token_type || "Bearer",
+
+  // Kvar för logg/diagnostik:
+  access_token_preview: (result.data.access_token || "").slice(0, 12) + "..."
+});
+
   } catch (err) {
     console.error("[/ms/refresh-save] error", err);
     res.status(500).json({ error: err.message });
