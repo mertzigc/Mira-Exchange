@@ -583,59 +583,94 @@ app.get("/ms/places/rooms", async (req, res) => {
   }
 });
 
-// 2) Availability for given room emails (uses getSchedule)
+// ────────────────────────────────────────────────────────────
+// MS Rooms Availability  (Bubble -> Render -> Microsoft Graph)
+// Body från Bubble: { room_emails: string[], start: ISO, end: ISO, timezone?: string, intervalMinutes?: number }
 app.post("/ms/rooms/availability", async (req, res) => {
   try {
-    const tenant = resolveTenant(req);
-    const token = await getAppToken(tenant);
+    // 1) Läs inpayload från Bubble
     const {
       room_emails = [],
-      start, // ISO
-      end,   // ISO
+      start,
+      end,
       timezone = "Europe/Stockholm",
-      intervalMinutes = 30
+      intervalMinutes = 30,
+      tenant
     } = req.body || {};
 
     if (!Array.isArray(room_emails) || room_emails.length === 0) {
-      return res.status(400).json({ ok: false, error: "room_emails (array) is required" });
+      return res.status(400).json({ ok: false, error: "room_emails (array) saknas" });
     }
     if (!start || !end) {
-      return res.status(400).json({ ok: false, error: "start and end (ISO) are required" });
+      return res.status(400).json({ ok: false, error: "start och/eller end saknas (ISO)" });
     }
 
-    const body = {
+    // 2) Hämta user/access token som du redan gör i övriga endpoints
+    //    (Behåll din befintliga token-funktion.)
+    const userId = req.body.u || req.query.u || null; // om du skickar med u
+    const { token, ms_tenant_id } = await getMsAccessTokenForUser(userId); // DIN existerande helper
+
+    // 3) Bygg korrekt Graph-URL (OBS: INTE /users/getSchedule)
+    //    Enklast: kör mot "me"
+    const url = "https://graph.microsoft.com/v1.0/me/calendar/getSchedule";
+    // Alternativt (om du föredrar en explicit user):
+    // const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(msAccountIdEllerUPN)}/calendar/getSchedule`;
+
+    // 4) Bygg Graph-kropp exakt enligt spec
+    const graphBody = {
       schedules: room_emails,
       startTime: { dateTime: start, timeZone: timezone },
       endTime:   { dateTime: end,   timeZone: timezone },
       availabilityViewInterval: intervalMinutes
     };
 
-    const url = "https://graph.microsoft.com/v1.0/users/getSchedule";
-    const data = await graphFetch("POST", url, token, body);
+    // 5) Anropa Graph (behåll din existerande graphFetch-helper)
+    const data = await graphFetch("POST", url, token, graphBody, {
+      // valfritt men bra för att säkra tidszon i svaret:
+      prefer: `outlook.timezone="${timezone}"`
+    });
 
-// ...efter
-// const data = await graphFetch("POST", url, token, body);
+    // 6) Mappa svar -> platt lista för Bubble-kalendern
+    // getSchedule returnerar { value: [ { scheduleId, scheduleItems: [...] }, ... ] }
+    const outItems = [];
+    const arr = Array.isArray(data?.value) ? data.value : [];
 
-const items = [];
-const arr = Array.isArray(data?.value) ? data.value : [];
-for (const sched of arr) {
-  const schedId = sched?.scheduleId || null;
-  const list = Array.isArray(sched?.scheduleItems) ? sched.scheduleItems : [];
-  for (const it of list) {
-    const startIso = it?.start?.dateTime || null;
-    const endIso   = it?.end?.dateTime   || null;
-    items.push({
-      scheduleId: schedId,
-      status: it?.status || "busy",
-      subject: it?.subject || "",
-      start: startIso,   // ISO string → Bubble läser som date vid init
-      end:   endIso,     // ISO string → Bubble läser som date vid init
-      // valfria extra fält om du vill visa i UI:
-      start_tz: it?.start?.timeZone || null,
-      end_tz:   it?.end?.timeZone   || null
+    for (const sched of arr) {
+      const scheduleId = sched?.scheduleId || null;
+      const list = Array.isArray(sched?.scheduleItems) ? sched.scheduleItems : [];
+      for (const it of list) {
+        const startIso = it?.start?.dateTime || null;
+        const endIso   = it?.end?.dateTime   || null;
+        outItems.push({
+          scheduleId: scheduleId,
+          status: it?.status || "busy",
+          subject: it?.subject || "",
+          // Bubble älskar ISO när den ska mata in till Date-fält
+          start: startIso,
+          end: endIso,
+          // valfria fält om du vill använda i UI
+          start_tz: it?.start?.timeZone || timezone,
+          end_tz: it?.end?.timeZone || timezone
+        });
+      }
+    }
+
+    // 7) Svara till Bubble
+    return res.json({
+      ok: true,
+      tenant: tenant || ms_tenant_id || null,
+      count: outItems.length,
+      items: outItems
+    });
+  } catch (e) {
+    console.error("[/ms/rooms/availability] error:", e);
+    return res.status(e?.status || 500).json({
+      ok: false,
+      error: e?.message || "Unhandled error",
+      detail: e?.detail || null
     });
   }
-}
+});
 
 res.json({ ok: true, tenant, count: items.length, items });
   } catch (e) {
