@@ -188,11 +188,9 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 }
 
 // ────────────────────────────────────────────────────────────
-// Health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ────────────────────────────────────────────────────────────
-// Build Microsoft authorize URL
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
   const url = new URL(authBase);
@@ -206,7 +204,6 @@ function buildAuthorizeUrl({ user_id, redirect }) {
 }
 
 // ────────────────────────────────────────────────────────────
-// Start consent (Bubble: POST /ms/auth)
 app.post("/ms/auth", async (req, res) => {
   try {
     const { user_id, u, redirect } = req.body || {};
@@ -271,54 +268,48 @@ app.post("/ms/refresh-save", async (req, res) => {
     });
 
     if (!result.ok) {
-  const j = result.data || {};
-  // Logga tydligt i Render
-  logMsTokenError("/ms/refresh-save", result, {
-    sent: {
-      have_code: !!code,
-      have_refresh_token: !!refresh_token,
-      redirect_used: normalizeRedirect(redirect || REDIRECT_URI),
-      scope_used: incomingScope || MS_SCOPE,
-      tenant_used: tenant || MS_TENANT
-    }
-  });
+      const j = result.data || {};
+      // Logga tydligt i Render
+      logMsTokenError("/ms/refresh-save", result, {
+        sent: {
+          have_code: !!code,
+          have_refresh_token: !!refresh_token,
+          redirect_used: normalizeRedirect(redirect || REDIRECT_URI),
+          scope_used: incomingScope || MS_SCOPE,
+          tenant_used: tenant || MS_TENANT
+        }
+      });
 
-  // Skicka tillbaka detaljerat fel till Bubble (så du ser det direkt vid test)
-  return res.status(400).json({
-    ok: false,
-    stage: "token_exchange",
-    status: result.status,
-    ms_error: j.error,
-    ms_error_description: j.error_description,
-    sent: {
-      have_code: !!code,
-      have_refresh_token: !!refresh_token,
-      redirect_used: normalizeRedirect(redirect || REDIRECT_URI),
-      scope_used: incomingScope || MS_SCOPE,
-      tenant_used: tenant || MS_TENANT
+      // Skicka tillbaka detaljerat fel till Bubble
+      return res.status(400).json({
+        ok: false,
+        stage: "token_exchange",
+        status: result.status,
+        ms_error: j.error,
+        ms_error_description: j.error_description,
+        sent: {
+          have_code: !!code,
+          have_refresh_token: !!refresh_token,
+          redirect_used: normalizeRedirect(redirect || REDIRECT_URI),
+          scope_used: incomingScope || MS_SCOPE,
+          tenant_used: tenant || MS_TENANT
+        }
+      });
     }
-  });
-}
-
 
     const saved = await upsertTokensToBubble(userId, result.data, result.data.refresh_token || refresh_token);
     if (!saved) return res.status(502).json({ error: "Bubble save failed" });
 
-// --- i /ms/refresh-save, efter "if (!saved) return res.status(502)..."
-return res.json({
-  ok: true,
-  saved_for_user: userId,
-
-  // Ge Bubble de faktiska fälten:
-  access_token: result.data.access_token || null,
-  refresh_token: result.data.refresh_token || refresh_token || null,
-  expires_in: result.data.expires_in || null,
-  scope: result.data.scope || incomingScope || null,
-  token_type: result.data.token_type || "Bearer",
-
-  // Kvar för logg/diagnostik:
-  access_token_preview: (result.data.access_token || "").slice(0, 12) + "..."
-});
+    return res.json({
+      ok: true,
+      saved_for_user: userId,
+      access_token: result.data.access_token || null,
+      refresh_token: result.data.refresh_token || refresh_token || null,
+      expires_in: result.data.expires_in || null,
+      scope: result.data.scope || incomingScope || null,
+      token_type: result.data.token_type || "Bearer",
+      access_token_preview: (result.data.access_token || "").slice(0, 12) + "..."
+    });
 
   } catch (err) {
     console.error("[/ms/refresh-save] error", err);
@@ -465,7 +456,6 @@ app.post("/ms/create-event", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// ENV debug
 app.get("/ms/debug-env", (_req, res) => {
   res.json({
     has_CLIENT_ID: !!CLIENT_ID,
@@ -584,18 +574,15 @@ app.get("/ms/places/rooms", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// MS Rooms Availability  (Bubble -> Render -> Microsoft Graph)
-// Body från Bubble: { room_emails: string[], start: ISO, end: ISO, timezone?: string, intervalMinutes?: number }
+// 2) Rooms Availability via getSchedule (app-only)
 app.post("/ms/rooms/availability", async (req, res) => {
   try {
-    // 1) Läs inpayload från Bubble
     const {
       room_emails = [],
       start,
       end,
       timezone = "Europe/Stockholm",
-      intervalMinutes = 30,
-      tenant
+      intervalMinutes = 30
     } = req.body || {};
 
     if (!Array.isArray(room_emails) || room_emails.length === 0) {
@@ -605,75 +592,43 @@ app.post("/ms/rooms/availability", async (req, res) => {
       return res.status(400).json({ ok: false, error: "start och/eller end saknas (ISO)" });
     }
 
-    // 2) Hämta user/access token som du redan gör i övriga endpoints
-    //    (Behåll din befintliga token-funktion.)
-    const userId = req.body.u || req.query.u || null; // om du skickar med u
-    const { token, ms_tenant_id } = await getMsAccessTokenForUser(userId); // DIN existerande helper
+    const tenant = resolveTenant(req);
+    const token  = await getAppToken(tenant);
 
-    // 3) Bygg korrekt Graph-URL (OBS: INTE /users/getSchedule)
-    //    Enklast: kör mot "me"
-    const url = "https://graph.microsoft.com/v1.0/me/calendar/getSchedule";
-    // Alternativt (om du föredrar en explicit user):
-    // const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(msAccountIdEllerUPN)}/calendar/getSchedule`;
+    // App-only kräver /users/{anchor}/calendar/getSchedule – välj första rummet som anchor
+    const anchor = encodeURIComponent(room_emails[0]);
+    const url = `${GRAPH_BASE}/users/${anchor}/calendar/getSchedule`;
 
-    // 4) Bygg Graph-kropp exakt enligt spec
-    const graphBody = {
+    const body = {
       schedules: room_emails,
       startTime: { dateTime: start, timeZone: timezone },
       endTime:   { dateTime: end,   timeZone: timezone },
       availabilityViewInterval: intervalMinutes
     };
 
-    // 5) Anropa Graph (behåll din existerande graphFetch-helper)
-    const data = await graphFetch("POST", url, token, graphBody, {
-      // valfritt men bra för att säkra tidszon i svaret:
-      prefer: `outlook.timezone="${timezone}"`
-    });
+    const data = await graphFetch("POST", url, token, body);
 
-    // 6) Mappa svar -> platt lista för Bubble-kalendern
-    // getSchedule returnerar { value: [ { scheduleId, scheduleItems: [...] }, ... ] }
-    const outItems = [];
+    const items = [];
     const arr = Array.isArray(data?.value) ? data.value : [];
-
     for (const sched of arr) {
       const scheduleId = sched?.scheduleId || null;
       const list = Array.isArray(sched?.scheduleItems) ? sched.scheduleItems : [];
       for (const it of list) {
-        const startIso = it?.start?.dateTime || null;
-        const endIso   = it?.end?.dateTime   || null;
-        outItems.push({
-          scheduleId: scheduleId,
+        items.push({
+          scheduleId,
           status: it?.status || "busy",
           subject: it?.subject || "",
-          // Bubble älskar ISO när den ska mata in till Date-fält
-          start: startIso,
-          end: endIso,
-          // valfria fält om du vill använda i UI
+          start: it?.start?.dateTime || null,
+          end:   it?.end?.dateTime   || null,
           start_tz: it?.start?.timeZone || timezone,
-          end_tz: it?.end?.timeZone || timezone
+          end_tz:   it?.end?.timeZone   || timezone
         });
       }
     }
 
-    // 7) Svara till Bubble
-    return res.json({
-      ok: true,
-      tenant: tenant || ms_tenant_id || null,
-      count: outItems.length,
-      items: outItems
-    });
+    return res.json({ ok: true, tenant, count: items.length, items });
   } catch (e) {
     console.error("[/ms/rooms/availability] error:", e);
-    return res.status(e?.status || 500).json({
-      ok: false,
-      error: e?.message || "Unhandled error",
-      detail: e?.detail || null
-    });
-  }
-});
-
-res.json({ ok: true, tenant, count: items.length, items });
-  } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: e.message, detail: e.detail || null });
   }
 });
@@ -705,7 +660,6 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// Debug: list loaded routes
 function logMsTokenError(where, result, extra = {}) {
   try {
     console.error(`[${where}] MS token error`, {
