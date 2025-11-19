@@ -318,17 +318,8 @@ app.post("/ms/refresh-save", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// CREATE EVENT (med stöd för room_email / resource-attendee)
 app.post("/ms/create-event", async (req, res) => {
-  const {
-    user_unique_id,
-    attendees_emails,
-    event,
-    ms_access_token,
-    ms_refresh_token,
-    room_email // NYTT: explicit room-email från Bubble
-  } = req.body || {};
-
+  const { user_unique_id, attendees_emails, event, ms_access_token, ms_refresh_token } = req.body || {};
   log("[/ms/create-event] hit", {
     has_user: !!user_unique_id,
     has_event: !!event,
@@ -339,7 +330,6 @@ app.post("/ms/create-event", async (req, res) => {
           : 0),
     body_has_access: !!ms_access_token,
     body_has_refresh: !!ms_refresh_token,
-    has_room_email: !!room_email
   });
 
   if (!user_unique_id || !event) {
@@ -381,39 +371,21 @@ app.post("/ms/create-event", async (req, res) => {
       return res.status(401).json({ error: "User has no ms_access_token (and refresh missing/failed)" });
     }
 
-    // ── Attendees + room (resource) ─────────────────────────
     const normalizedAttendees = [];
     const seen = new Set();
-    const push = (raw, type = "required") => {
+    const push = (raw) => {
       const e = String(raw || "").trim().toLowerCase();
       if (!e || seen.has(e)) return;
       seen.add(e);
-      normalizedAttendees.push({
-        emailAddress: { address: e },
-        type // "required" | "optional" | "resource"
-      });
+      normalizedAttendees.push({ emailAddress: { address: e }, type: "required" });
     };
-
     const allAtt =
       Array.isArray(attendees_emails) ? attendees_emails :
       typeof attendees_emails === "string" ? attendees_emails.split(",") :
       Array.isArray(event?.attendees_emails) ? event.attendees_emails :
       typeof event?.attendees_emails === "string" ? event.attendees_emails.split(",") :
       [];
-    allAtt.forEach(e => push(e, "required"));
-
-    // Room email kan komma både toppnivå + inne i event
-    const roomEmailFromEvent =
-      event?.room_email ||
-      event?.location_email ||
-      event?.locationEmailAddress ||
-      null;
-    const roomEmail = room_email || roomEmailFromEvent || null;
-
-    if (roomEmail) {
-      // Lägg till rummet som resource-attendee
-      push(roomEmail, "resource");
-    }
+    allAtt.forEach(push);
 
     const tzInput = event?.tz || event?.start?.timeZone || "Europe/Stockholm";
     const ev = {
@@ -423,25 +395,15 @@ app.post("/ms/create-event", async (req, res) => {
         content: event?.body_html || "",
       },
       start: {
-        dateTime: toGraphDateTime(
-          event?.start_iso_local ||
-          event?.start?.dateTime ||
-          fixDateTime(event?.start_iso_local)
-        ),
+        dateTime: toGraphDateTime(event?.start_iso_local || event?.start?.dateTime || fixDateTime(event?.start_iso_local)),
         timeZone: toWindowsTz(tzInput),
       },
       end: {
-        dateTime: toGraphDateTime(
-          event?.end_iso_local ||
-          event?.end?.dateTime ||
-          fixDateTime(event?.end_iso_local)
-        ),
+        dateTime: toGraphDateTime(event?.end_iso_local || event?.end?.dateTime || fixDateTime(event?.end_iso_local)),
         timeZone: toWindowsTz(tzInput),
       },
       location: {
         displayName: event?.location_name || event?.location?.displayName || "",
-        // Viktigt för rum – koppla location till room mailbox
-        locationEmailAddress: roomEmail || roomEmailFromEvent || undefined
       },
       isOnlineMeeting: true,
       allowNewTimeProposals: true,
