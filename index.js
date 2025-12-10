@@ -214,7 +214,7 @@ app.get("/fortnox/authorize", (_req, res) => {
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent("read write")}` +
+    `&scope=${encodeURIComponent("customer order")}` +
     `&state=${encodeURIComponent(state)}`;
 
   res.redirect(url);
