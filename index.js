@@ -189,6 +189,78 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
+// ────────────────────────────────────────────────────────────
+// Fortnox OAuth (Render-owned, frontend-agnostic)
+
+// Env read (fail early if missing)
+const FORTNOX_CLIENT_ID = process.env.FORTNOX_CLIENT_ID;
+const FORTNOX_CLIENT_SECRET = process.env.FORTNOX_CLIENT_SECRET;
+const FORTNOX_REDIRECT_URI = process.env.FORTNOX_REDIRECT_URI;
+
+if (!FORTNOX_CLIENT_ID || !FORTNOX_CLIENT_SECRET || !FORTNOX_REDIRECT_URI) {
+  console.warn("[Fortnox OAuth] Missing env vars", {
+    hasClientId: !!FORTNOX_CLIENT_ID,
+    hasClientSecret: !!FORTNOX_CLIENT_SECRET,
+    hasRedirect: !!FORTNOX_REDIRECT_URI
+  });
+}
+
+// ── Step 1: Redirect user to Fortnox authorize ───────────────
+app.get("/fortnox/authorize", (_req, res) => {
+  const state = crypto.randomUUID();
+
+  const url =
+    "https://apps.fortnox.se/oauth-v1/authorize" +
+    `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
+    `&response_type=code` +
+    `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
+    `&scope=${encodeURIComponent("read write")}` +
+    `&state=${encodeURIComponent(state)}`;
+
+  res.redirect(url);
+});
+
+// ── Step 2: Fortnox callback + token exchange ─────────────────
+app.get("/fortnox/callback", async (req, res) => {
+  const { code } = req.query || {};
+
+  if (!code) {
+    return res.status(400).send("Missing code from Fortnox");
+  }
+
+  try {
+    const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: FORTNOX_REDIRECT_URI,
+        client_id: FORTNOX_CLIENT_ID,
+        client_secret: FORTNOX_CLIENT_SECRET
+      })
+    });
+
+    const tokenJson = await tokenRes.json().catch(() => ({}));
+
+    if (!tokenRes.ok) {
+      console.error("[Fortnox OAuth] token error", tokenJson);
+      return res.status(400).json(tokenJson);
+    }
+
+    // TODO (nästa steg):
+    // – spara tokenJson.access_token
+    // – spara tokenJson.refresh_token
+    // – koppla till Bubble user / company
+
+    // Tillfällig redirect tillbaka till Bubble
+    res.redirect("https://mira-fm.com/fortnox-connected");
+
+  } catch (err) {
+    console.error("[Fortnox OAuth] callback error", err);
+    res.status(500).send("Fortnox OAuth failed");
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 function buildAuthorizeUrl({ user_id, redirect }) {
