@@ -220,8 +220,6 @@ app.get("/fortnox/authorize", (_req, res) => {
   res.redirect(url);
 });
 
-});
-
 // ── Step 2: Fortnox callback + token exchange ─────────────────
 app.get("/fortnox/callback", async (req, res) => {
   const { code } = req.query || {};
