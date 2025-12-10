@@ -48,6 +48,7 @@ const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT       = process.env.PORT || 10000;
+
 // Fortnox envs
 const FORTNOX_CLIENT_ID     = process.env.FORTNOX_CLIENT_ID;
 const FORTNOX_CLIENT_SECRET = process.env.FORTNOX_CLIENT_SECRET;
@@ -191,6 +192,9 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok && !!j.access_token, status: r.status, data: j };
 }
+
+// ────────────────────────────────────────────────────────────
+// Fortnox helpers
 async function fortnoxTokenExchange(code) {
   if (!FORTNOX_CLIENT_ID || !FORTNOX_CLIENT_SECRET || !FORTNOX_REDIRECT_URI) {
     throw new Error("Fortnox env saknas (client_id/secret/redirect_uri)");
@@ -252,7 +256,7 @@ async function upsertFortnoxTokensToBubble(bubble_user_id, tokenJson) {
 
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
-// ────────────────────────────────────────────────────────────
+
 // ────────────────────────────────────────────────────────────
 // Fortnox OAuth
 
@@ -264,11 +268,11 @@ app.get("/fortnox/authorize", (req, res) => {
   const state = u ? "u:" + u : crypto.randomUUID();
 
   const url =
-    "https://apps.fortnox.se/oauth-v1/auth" +   // ✅ rätt endpoint
+    "https://apps.fortnox.se/oauth-v1/auth" +   // rätt endpoint för OAuth
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent("customer order")}` + // ✅ funkar (order + customer)
+    `&scope=${encodeURIComponent("customer order")}` + // scope som Fortnox accepterar
     `&state=${encodeURIComponent(state)}`;
 
   log("[/fortnox/authorize] redirect", { state, have_u: !!u });
@@ -290,43 +294,28 @@ app.get("/fortnox/callback", async (req, res) => {
   }
 
   try {
-    const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: FORTNOX_REDIRECT_URI,
-        client_id: FORTNOX_CLIENT_ID,
-        client_secret: FORTNOX_CLIENT_SECRET
-      })
-    });
+    const result = await fortnoxTokenExchange(code);
 
-    const tokenJson = await tokenRes.json().catch(() => ({}));
-
-    if (!tokenRes.ok) {
-      console.error("[Fortnox OAuth] token error", tokenJson);
-      return res.status(400).json(tokenJson);
+    if (!result.ok) {
+      console.error("[Fortnox OAuth] token error", result);
+      return res.status(400).json(result.data || { error: "Fortnox token failed" });
     }
 
-    console.log("[Fortnox OAuth] token OK", {
+    const tokenJson = result.data || {};
+
+    log("[Fortnox OAuth] token OK", {
       has_access_token: !!tokenJson.access_token,
       has_refresh_token: !!tokenJson.refresh_token,
       bubbleUserId,
       raw_scope: tokenJson.scope
     });
 
-    // TODO (nästa steg):
-    // – Skicka tokenJson + bubbleUserId till Bubble via workflow,
-    //   t.ex. /api/1.1/wf/fortnox_save_tokens
-    //   med:
-    //   {
-    //     bubble_user_id: bubbleUserId,
-    //     access_token: tokenJson.access_token,
-    //     refresh_token: tokenJson.refresh_token,
-    //     expires_in: tokenJson.expires_in,
-    //     scope: tokenJson.scope
-    //   }
+    if (bubbleUserId) {
+      const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
+      if (!saved) {
+        return res.status(502).send("Failed to save Fortnox tokens to Bubble");
+      }
+    }
 
     // Tillfällig redirect tillbaka till Bubble
     res.redirect("https://mira-fm.com/fortnox-connected");
@@ -334,7 +323,7 @@ app.get("/fortnox/callback", async (req, res) => {
     console.error("[Fortnox OAuth] callback error", err);
     res.status(500).send("Fortnox OAuth failed");
   }
-})
+});
 
 // ────────────────────────────────────────────────────────────
 function buildAuthorizeUrl({ user_id, redirect }) {
