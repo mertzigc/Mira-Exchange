@@ -56,7 +56,12 @@ const FORTNOX_REDIRECT_URI  =
   process.env.FORTNOX_REDIRECT_URI || "https://api.mira-fm.com/fortnox/callback";
 
 // Bubble: försök spara till prod först, sen test
-const BUBBLE_BASES = ["https://mira-fm.com", "https://mira-fm.com/version-test"];
+const BUBBLE_BASES = [
+  // Live först
+  "https://carotteconcierge.bubbleapps.io",
+  // Version-test som fallback
+  "https://carotteconcierge.bubbleapps.io/version-test"
+];
 
 // ────────────────────────────────────────────────────────────
 // Helpers
