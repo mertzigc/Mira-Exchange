@@ -294,22 +294,33 @@ app.get("/fortnox/callback", async (req, res) => {
   }
 
   try {
-    const result = await fortnoxTokenExchange(code);
+    const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: FORTNOX_REDIRECT_URI,
+        client_id: FORTNOX_CLIENT_ID,
+        client_secret: FORTNOX_CLIENT_SECRET
+      })
+    });
 
-    if (!result.ok) {
-      console.error("[Fortnox OAuth] token error", result);
-      return res.status(400).json(result.data || { error: "Fortnox token failed" });
+    const tokenJson = await tokenRes.json().catch(() => ({}));
+
+    if (!tokenRes.ok) {
+      console.error("[Fortnox OAuth] token error", tokenJson);
+      return res.status(400).json(tokenJson);
     }
 
-    const tokenJson = result.data || {};
-
-    log("[Fortnox OAuth] token OK", {
+    console.log("[Fortnox OAuth] token OK", {
       has_access_token: !!tokenJson.access_token,
       has_refresh_token: !!tokenJson.refresh_token,
       bubbleUserId,
       raw_scope: tokenJson.scope
     });
 
+    // 🔹 NYTT: spara tokens till Bubble om vi har bubbleUserId
     if (bubbleUserId) {
       const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
       if (!saved) {
