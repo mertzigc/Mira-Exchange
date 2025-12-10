@@ -210,7 +210,7 @@ app.get("/fortnox/authorize", (_req, res) => {
   const state = crypto.randomUUID();
 
   const url =
-    "https://apps.fortnox.se/oauth-v1/authorize" +
+    "https://apps.fortnox.se/oauth-v1/auth" +   // 👈 VIKTIG ÄNDRING HÄR
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
@@ -218,6 +218,8 @@ app.get("/fortnox/authorize", (_req, res) => {
     `&state=${encodeURIComponent(state)}`;
 
   res.redirect(url);
+});
+
 });
 
 // ── Step 2: Fortnox callback + token exchange ─────────────────
