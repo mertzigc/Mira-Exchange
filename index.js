@@ -340,6 +340,157 @@ app.get("/fortnox/callback", async (req, res) => {
     res.status(500).send("Fortnox OAuth failed");
   }
 });
+// Callback + token exchange
+app.get("/fortnox/callback", async (req, res) => {
+  const { code, state } = req.query || {};
+
+  // Plocka ev. ut Bubble-user från state (format "u:<id>")
+  const bubbleUserId =
+    typeof state === "string" && state.startsWith("u:")
+      ? state.slice(2)
+      : null;
+
+  if (!code) {
+    return res.status(400).send("Missing code from Fortnox");
+  }
+
+  try {
+    const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: FORTNOX_REDIRECT_URI,
+        client_id: FORTNOX_CLIENT_ID,
+        client_secret: FORTNOX_CLIENT_SECRET
+      })
+    });
+
+    const tokenJson = await tokenRes.json().catch(() => ({}));
+
+    if (!tokenRes.ok) {
+      console.error("[Fortnox OAuth] token error", tokenJson);
+      return res.status(400).json(tokenJson);
+    }
+
+    console.log("[Fortnox OAuth] token OK", {
+      has_access_token: !!tokenJson.access_token,
+      has_refresh_token: !!tokenJson.refresh_token,
+      bubbleUserId,
+      raw_scope: tokenJson.scope
+    });
+
+    if (bubbleUserId) {
+      const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
+      if (!saved) {
+        return res.status(502).send("Failed to save Fortnox tokens to Bubble");
+      }
+    }
+
+    // Redirect tillbaka till Mira
+    res.redirect("https://mira-fm.com/fortnox-connected");
+  } catch (err) {
+    console.error("[Fortnox OAuth] callback error", err);
+    res.status(500).send("Fortnox OAuth failed");
+  }
+});
+
+
+// ────────────────────────────────────────────────────────────
+// Fortnox: refresh + spara token
+app.post("/fortnox/refresh-save", async (req, res) => {
+  const {
+    bubble_user_id, // vårt "långa" namn
+    u,              // kort variant
+    refresh_token   // valfritt: kan skickas in direkt från Bubble
+  } = req.body || {};
+
+  const userId = bubble_user_id || u || null;
+
+  log("[/fortnox/refresh-save] hit", {
+    has_body: !!req.body,
+    has_user: !!userId,
+    has_refresh_token: !!refresh_token
+  });
+
+  if (!FORTNOX_CLIENT_ID || !FORTNOX_CLIENT_SECRET) {
+    return res.status(500).json({
+      ok: false,
+      error: "Fortnox client envs missing"
+    });
+  }
+
+  try {
+    let rt = refresh_token || null;
+
+    // Om inget refresh_token skickas in – hämta från Bubble-user
+    if (!rt && userId) {
+      const uResp = await fetchBubbleUser(userId);
+      rt = uResp?.ft_refresh_token || null;
+      log("[/fortnox/refresh-save] fetched user", {
+        has_user: !!uResp,
+        has_ft_refresh_token: !!rt
+      });
+    }
+
+    if (!rt) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing refresh_token (and could not load from Bubble)"
+      });
+    }
+
+    const form = new URLSearchParams();
+    form.set("grant_type", "refresh_token");
+    form.set("refresh_token", rt);
+    form.set("client_id", FORTNOX_CLIENT_ID);
+    form.set("client_secret", FORTNOX_CLIENT_SECRET);
+
+    const r = await fetch("https://apps.fortnox.se/oauth-v1/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok || !j.access_token) {
+      console.error("[/fortnox/refresh-save] token error", {
+        status: r.status,
+        body: j
+      });
+      return res.status(400).json({
+        ok: false,
+        status: r.status,
+        error: j
+      });
+    }
+
+    let saved = false;
+    if (userId) {
+      saved = await upsertFortnoxTokensToBubble(userId, j);
+      log("[/fortnox/refresh-save] upsert", { userId, saved });
+      if (!saved) {
+        return res.status(502).json({
+          ok: false,
+          error: "Failed to save refreshed Fortnox tokens to Bubble"
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      saved_for_user: userId,
+      access_token_preview: (j.access_token || "").slice(0, 12) + "...",
+      has_refresh_token: !!j.refresh_token,
+      raw_scope: j.scope || null
+    });
+  } catch (e) {
+    console.error("[/fortnox/refresh-save] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 function buildAuthorizeUrl({ user_id, redirect }) {
