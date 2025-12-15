@@ -58,8 +58,10 @@ const FORTNOX_REDIRECT_URI  =
 // Bubble: spara till MIRA först, sen version-test
 // (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
-  "https://mira-fm.com",
-  "https://mira-fm.com/version-test"
+  // Live först
+  "https://carotteconcierge.bubbleapps.io",
+  // Version-test som fallback
+  "https://carotteconcierge.bubbleapps.io/version-test"
 ];
 
 // ────────────────────────────────────────────────────────────
