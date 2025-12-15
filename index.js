@@ -55,12 +55,11 @@ const FORTNOX_CLIENT_SECRET = process.env.FORTNOX_CLIENT_SECRET;
 const FORTNOX_REDIRECT_URI  =
   process.env.FORTNOX_REDIRECT_URI || "https://api.mira-fm.com/fortnox/callback";
 
-// Bubble: försök spara till prod först, sen test
+// Bubble: spara till MIRA först, sen version-test
+// (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
-  // Live först
-  "https://carotteconcierge.bubbleapps.io",
-  // Version-test som fallback
-  "https://carotteconcierge.bubbleapps.io/version-test"
+  "https://mira-fm.com",
+  "https://mira-fm.com/version-test"
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -273,74 +272,18 @@ app.get("/fortnox/authorize", (req, res) => {
   const state = u ? "u:" + u : crypto.randomUUID();
 
   const url =
-    "https://apps.fortnox.se/oauth-v1/auth" +   // rätt endpoint för OAuth
+    "https://apps.fortnox.se/oauth-v1/auth" +
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent("customer order")}` + // scope som Fortnox accepterar
+    `&scope=${encodeURIComponent("customer order")}` +
     `&state=${encodeURIComponent(state)}`;
 
   log("[/fortnox/authorize] redirect", { state, have_u: !!u });
   res.redirect(url);
 });
 
-// Callback + token exchange
-app.get("/fortnox/callback", async (req, res) => {
-  const { code, state } = req.query || {};
-
-  // Plocka ev. ut Bubble-user från state (format "u:<id>")
-  const bubbleUserId =
-    typeof state === "string" && state.startsWith("u:")
-      ? state.slice(2)
-      : null;
-
-  if (!code) {
-    return res.status(400).send("Missing code from Fortnox");
-  }
-
-  try {
-    const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: FORTNOX_REDIRECT_URI,
-        client_id: FORTNOX_CLIENT_ID,
-        client_secret: FORTNOX_CLIENT_SECRET
-      })
-    });
-
-    const tokenJson = await tokenRes.json().catch(() => ({}));
-
-    if (!tokenRes.ok) {
-      console.error("[Fortnox OAuth] token error", tokenJson);
-      return res.status(400).json(tokenJson);
-    }
-
-    console.log("[Fortnox OAuth] token OK", {
-      has_access_token: !!tokenJson.access_token,
-      has_refresh_token: !!tokenJson.refresh_token,
-      bubbleUserId,
-      raw_scope: tokenJson.scope
-    });
-
-    // 🔹 NYTT: spara tokens till Bubble om vi har bubbleUserId
-    if (bubbleUserId) {
-      const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
-      if (!saved) {
-        return res.status(502).send("Failed to save Fortnox tokens to Bubble");
-      }
-    }
-
-    // Tillfällig redirect tillbaka till Bubble
-    res.redirect("https://mira-fm.com/fortnox-connected");
-  } catch (err) {
-    console.error("[Fortnox OAuth] callback error", err);
-    res.status(500).send("Fortnox OAuth failed");
-  }
-});
-// Callback + token exchange
+// Callback + token exchange (ENDAST EN VERSION – tog bort dublett)
 app.get("/fortnox/callback", async (req, res) => {
   const { code, state } = req.query || {};
 
@@ -395,7 +338,6 @@ app.get("/fortnox/callback", async (req, res) => {
     res.status(500).send("Fortnox OAuth failed");
   }
 });
-
 
 // ────────────────────────────────────────────────────────────
 // Fortnox: refresh + spara token
