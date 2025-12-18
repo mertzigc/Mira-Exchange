@@ -128,7 +128,7 @@ function normalizeRedirect(u) {
 
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
-    ...BUBBLE_USER_BASES.map(b => b + "/api/1.1/obj/user/" + user_unique_id)
+    ...BUBBLE_BASES.map(b => b + "/api/1.1/obj/user/" + user_unique_id)
   ];
   for (const url of variants) {
     try {
