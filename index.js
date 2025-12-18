@@ -59,7 +59,7 @@ const FORTNOX_REDIRECT_URI  =
 // (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
   // Version-test först
-  "https://carotteconcierge.bubbleapps.io/version-test"
+  "https://carotteconcierge.bubbleapps.io/version-test",
   // Live som fallback
   "https://carotteconcierge.bubbleapps.io",
 ];
