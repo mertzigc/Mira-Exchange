@@ -58,10 +58,10 @@ const FORTNOX_REDIRECT_URI  =
 // Bubble: spara till MIRA först, sen version-test
 // (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
-  // Live först
-  "https://carotteconcierge.bubbleapps.io",
-  // Version-test som fallback
+  // Version-test först
   "https://carotteconcierge.bubbleapps.io/version-test"
+  // Live som fallback
+  "https://carotteconcierge.bubbleapps.io",
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -128,8 +128,7 @@ function normalizeRedirect(u) {
 
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
-    "https://mira-fm.com/version-test/api/1.1/obj/user/" + user_unique_id,
-    "https://mira-fm.com/api/1.1/obj/user/" + user_unique_id,
+    ...BUBBLE_USER_BASES.map(b => b + "/api/1.1/obj/user/" + user_unique_id)
   ];
   for (const url of variants) {
     try {
