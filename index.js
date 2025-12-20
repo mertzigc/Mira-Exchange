@@ -49,9 +49,18 @@ const MS_TENANT = pick(process.env.MS_TENANT, "common");
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT       = process.env.PORT || 10000;
 
+// ────────────────────────────────────────────────────────────
+// Render API key guard (Bubble -> Render)
+const RENDER_API_KEY =
+  pick(process.env.MIRA_RENDER_API_KEY, process.env.MIRA_EXCHANGE_API_KEY);
+
 // Fortnox envs
 const FORTNOX_CLIENT_ID     = process.env.FORTNOX_CLIENT_ID;
 const FORTNOX_CLIENT_SECRET = process.env.FORTNOX_CLIENT_SECRET;
+
+// Rekommenderat när Render hanterar allt:
+// - Sätt i Render: FORTNOX_REDIRECT_URI=https://mira-exchange.onrender.com/fortnox/callback
+// - Om env saknas: fallback till den gamla
 const FORTNOX_REDIRECT_URI  =
   process.env.FORTNOX_REDIRECT_URI || "https://api.mira-fm.com/fortnox/callback";
 
@@ -126,6 +135,33 @@ function normalizeRedirect(u) {
   }
 }
 
+// ────────────────────────────────────────────────────────────
+// API key guard – allow health + OAuth endpoints without key
+function requireApiKey(req, res, next) {
+  const openPaths = [
+    "/health",
+    "/fortnox/authorize",
+    "/fortnox/callback"
+  ];
+
+  // also allow /ms/debug-env without key if you want:
+  // openPaths.push("/ms/debug-env");
+
+  if (openPaths.includes(req.path)) return next();
+
+  if (!RENDER_API_KEY) {
+    return res.status(500).json({ ok: false, error: "Missing MIRA_RENDER_API_KEY on server" });
+  }
+  const key = req.headers["x-api-key"];
+  if (!key || String(key).trim() !== String(RENDER_API_KEY).trim()) {
+    return res.status(401).json({ ok: false, error: "Unauthorized (bad x-api-key)" });
+  }
+  next();
+}
+app.use(requireApiKey);
+
+// ────────────────────────────────────────────────────────────
+// Bubble helpers (User + Data API)
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
     ...BUBBLE_BASES.map(b => b + "/api/1.1/obj/user/" + user_unique_id)
@@ -199,7 +235,48 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 }
 
 // ────────────────────────────────────────────────────────────
-// Fortnox helpers
+// Bubble Data API helpers (objekt-CRUD)
+async function bubbleGet(typeName, id) {
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
+    try {
+      const r = await fetch(url, {
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.response) return j.response;
+      log("[bubbleGet] fail", { base, typeName, id, status: r.status, body: j });
+    } catch (e) {
+      log("[bubbleGet] error", { base, e: String(e) });
+    }
+  }
+  return null;
+}
+
+async function bubblePatch(typeName, id, fields) {
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
+    try {
+      const r = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + BUBBLE_API_KEY
+        },
+        body: JSON.stringify(fields || {})
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.status === "success") return true;
+      log("[bubblePatch] fail", { base, typeName, id, status: r.status, body: j });
+    } catch (e) {
+      log("[bubblePatch] error", { base, e: String(e) });
+    }
+  }
+  return false;
+}
+
+// ────────────────────────────────────────────────────────────
+// Fortnox helpers (legacy token upsert to User – kept for compatibility)
 async function fortnoxTokenExchange(code) {
   if (!FORTNOX_CLIENT_ID || !FORTNOX_CLIENT_SECRET || !FORTNOX_REDIRECT_URI) {
     throw new Error("Fortnox env saknas (client_id/secret/redirect_uri)");
@@ -260,15 +337,124 @@ async function upsertFortnoxTokensToBubble(bubble_user_id, tokenJson) {
 }
 
 // ────────────────────────────────────────────────────────────
+// Fortnox (Render-first) – connection-based token refresh + API fetch
+function nowIso() { return new Date().toISOString(); }
+
+function needsRefresh(expiresAtIso, minutes = 2) {
+  if (!expiresAtIso) return true;
+  const t = new Date(expiresAtIso).getTime();
+  if (!Number.isFinite(t)) return true;
+  return (t - Date.now()) < minutes * 60 * 1000;
+}
+
+async function fortnoxRefresh(refreshToken) {
+  if (!FORTNOX_CLIENT_ID || !FORTNOX_CLIENT_SECRET) {
+    return { ok: false, status: 500, data: { error: "Missing Fortnox client envs" } };
+  }
+
+  const form = new URLSearchParams();
+  form.set("grant_type", "refresh_token");
+  form.set("refresh_token", refreshToken);
+  form.set("client_id", FORTNOX_CLIENT_ID);
+  form.set("client_secret", FORTNOX_CLIENT_SECRET);
+
+  const r = await fetch("https://apps.fortnox.se/oauth-v1/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form
+  });
+
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok && !!j.access_token, status: r.status, data: j };
+}
+
+async function getConnectionOrThrow(connection_id) {
+  if (!connection_id) throw new Error("Missing connection_id");
+  const conn = await bubbleGet("FortnoxConnection", connection_id);
+  if (!conn) throw new Error("FortnoxConnection not found in Bubble: " + connection_id);
+  return conn;
+}
+
+async function ensureFortnoxAccessToken(connection_id) {
+  const conn = await getConnectionOrThrow(connection_id);
+
+  const access = conn.access_token || null;
+  const refresh = conn.refresh_token || null;
+  const expiresAt = conn.expires_at || null;
+
+  if (access && !needsRefresh(expiresAt, 2)) {
+    return { ok: true, access_token: access, connection: conn, refreshed: false };
+  }
+
+  if (!refresh) {
+    await bubblePatch("FortnoxConnection", connection_id, {
+      last_error: "Missing refresh_token on connection",
+      is_active: false,
+      last_refresh_at: nowIso()
+    });
+    return { ok: false, error: "Missing refresh_token on connection" };
+  }
+
+  const rr = await fortnoxRefresh(refresh);
+
+  if (!rr.ok) {
+    await bubblePatch("FortnoxConnection", connection_id, {
+      last_error: "Refresh failed: " + JSON.stringify(rr.data || {}),
+      is_active: false,
+      last_refresh_at: nowIso()
+    });
+    return { ok: false, error: "Refresh failed", detail: rr };
+  }
+
+  const newAccess = rr.data.access_token;
+  const newRefresh = rr.data.refresh_token || refresh;
+  const expiresIn = Number(rr.data.expires_in || 0);
+  const newExpiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+
+  await bubblePatch("FortnoxConnection", connection_id, {
+    access_token: newAccess,
+    refresh_token: newRefresh,
+    expires_at: newExpiresAt,
+    last_refresh_at: nowIso(),
+    last_error: "",
+    is_active: true,
+    scope: rr.data.scope || conn.scope || ""
+  });
+
+  const conn2 = await getConnectionOrThrow(connection_id);
+
+  return { ok: true, access_token: newAccess, connection: conn2, refreshed: true };
+}
+
+// Fortnox v3 API fetch helper
+async function fortnoxGet(path, accessToken, query = {}) {
+  const url = new URL("https://api.fortnox.se/3" + path);
+  Object.entries(query || {}).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === "") return;
+    url.searchParams.set(k, String(v));
+  });
+
+  const r = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "Access-Token": accessToken,
+      "Client-Secret": FORTNOX_CLIENT_SECRET,
+      "Accept": "application/json"
+    }
+  });
+
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data: j, url: url.toString() };
+}
+
+// ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ────────────────────────────────────────────────────────────
-// Fortnox OAuth
-
+// Fortnox OAuth (legacy: saves tokens to User via Bubble WF fortnox_token_upsert)
 // Starta flöde: Bubble anropar t.ex.
-// https://api.mira-fm.com/fortnox/authorize?u=BubbleUserUniqueId
+// https://mira-exchange.onrender.com/fortnox/authorize?u=BubbleUserUniqueId
 app.get("/fortnox/authorize", (req, res) => {
-  // Vi tar emot t ex ?u=BubbleUserUniqueId från Bubble
   const u = req.query.u && String(req.query.u).trim();
   const state = u ? "u:" + u : crypto.randomUUID();
 
@@ -277,18 +463,17 @@ app.get("/fortnox/authorize", (req, res) => {
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent("customer order")}` +
+    `&scope=${encodeURIComponent("customer order invoice offer")}` +
     `&state=${encodeURIComponent(state)}`;
 
-  log("[/fortnox/authorize] redirect", { state, have_u: !!u });
+  log("[/fortnox/authorize] redirect", { state, have_u: !!u, redirect_uri: FORTNOX_REDIRECT_URI });
   res.redirect(url);
 });
 
-// Callback + token exchange (ENDAST EN VERSION – tog bort dublett)
+// Callback + token exchange
 app.get("/fortnox/callback", async (req, res) => {
   const { code, state } = req.query || {};
 
-  // Plocka ev. ut Bubble-user från state (format "u:<id>")
   const bubbleUserId =
     typeof state === "string" && state.startsWith("u:")
       ? state.slice(2)
@@ -332,7 +517,6 @@ app.get("/fortnox/callback", async (req, res) => {
       }
     }
 
-    // Redirect tillbaka till Mira
     res.redirect("https://mira-fm.com/fortnox-connected");
   } catch (err) {
     console.error("[Fortnox OAuth] callback error", err);
@@ -341,12 +525,12 @@ app.get("/fortnox/callback", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
-// Fortnox: refresh + spara token
+// Fortnox: refresh + spara token (legacy to User)
 app.post("/fortnox/refresh-save", async (req, res) => {
   const {
-    bubble_user_id, // vårt "långa" namn
-    u,              // kort variant
-    refresh_token   // valfritt: kan skickas in direkt från Bubble
+    bubble_user_id,
+    u,
+    refresh_token
   } = req.body || {};
 
   const userId = bubble_user_id || u || null;
@@ -367,7 +551,6 @@ app.post("/fortnox/refresh-save", async (req, res) => {
   try {
     let rt = refresh_token || null;
 
-    // Om inget refresh_token skickas in – hämta från Bubble-user
     if (!rt && userId) {
       const uResp = await fetchBubbleUser(userId);
       rt = uResp?.ft_refresh_token || null;
@@ -436,6 +619,141 @@ app.post("/fortnox/refresh-save", async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
+app.post("/fortnox/debug/connection", async (req, res) => {
+  try {
+    const { connection_id } = req.body || {};
+    const conn = await getConnectionOrThrow(connection_id);
+
+    return res.json({
+      ok: true,
+      connection_id,
+      has_access_token: !!conn.access_token,
+      has_refresh_token: !!conn.refresh_token,
+      expires_at: conn.expires_at || null,
+      needs_refresh: needsRefresh(conn.expires_at, 2),
+      is_active: conn.is_active ?? null,
+      last_error: conn.last_error || ""
+    });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+async function listResource(resourceName, accessToken, page, limit) {
+  return await fortnoxGet("/" + resourceName, accessToken, {
+    page: page || 1,
+    limit: limit || 100
+  });
+}
+
+app.post("/fortnox/sync/customers", async (req, res) => {
+  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
+  try {
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
+
+    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
+    const r = await listResource("customers", tok.access_token, page, effLimit);
+
+    if (!r.ok) {
+      await bubblePatch("FortnoxConnection", connection_id, {
+        last_error: "Fortnox customers error: " + JSON.stringify(r.data || {}),
+        is_active: true
+      });
+      return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
+    }
+
+    const meta = r.data?.MetaInformation || null;
+    const customers = r.data?.Customers || [];
+
+    return res.json({
+      ok: true,
+      connection_id,
+      fetched: customers.length,
+      meta: meta ? {
+        totalResources: Number(meta["@TotalResources"] || 0),
+        totalPages: Number(meta["@TotalPages"] || 0),
+        currentPage: Number(meta["@CurrentPage"] || 0)
+      } : null,
+      customers
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/fortnox/sync/orders", async (req, res) => {
+  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
+  try {
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
+
+    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
+    const r = await listResource("orders", tok.access_token, page, effLimit);
+
+    if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
+
+    return res.json({
+      ok: true,
+      connection_id,
+      fetched: (r.data?.Orders || []).length,
+      meta: r.data?.MetaInformation || null,
+      orders: r.data?.Orders || []
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/fortnox/sync/invoices", async (req, res) => {
+  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
+  try {
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
+
+    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
+    const r = await listResource("invoices", tok.access_token, page, effLimit);
+
+    if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
+
+    return res.json({
+      ok: true,
+      connection_id,
+      fetched: (r.data?.Invoices || []).length,
+      meta: r.data?.MetaInformation || null,
+      invoices: r.data?.Invoices || []
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/fortnox/sync/offers", async (req, res) => {
+  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
+  try {
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
+
+    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
+    const r = await listResource("offers", tok.access_token, page, effLimit);
+
+    if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
+
+    return res.json({
+      ok: true,
+      connection_id,
+      fetched: (r.data?.Offers || []).length,
+      meta: r.data?.MetaInformation || null,
+      offers: r.data?.Offers || []
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
   const url = new URL(authBase);
@@ -448,7 +766,6 @@ function buildAuthorizeUrl({ user_id, redirect }) {
   return url.toString();
 }
 
-// ────────────────────────────────────────────────────────────
 app.post("/ms/auth", async (req, res) => {
   try {
     const { user_id, u, redirect } = req.body || {};
@@ -470,12 +787,11 @@ app.post("/ms/auth", async (req, res) => {
   }
 });
 
-// ────────────────────────────────────────────────────────────
 /** Exchange CODE or REFRESH TOKEN and save to Bubble */
 app.post("/ms/refresh-save", async (req, res) => {
   const {
-    user_unique_id, // gamla namnet
-    u,              // nya korta
+    user_unique_id,
+    u,
     refresh_token,
     code,
     scope: incomingScope,
@@ -514,7 +830,6 @@ app.post("/ms/refresh-save", async (req, res) => {
 
     if (!result.ok) {
       const j = result.data || {};
-      // Logga tydligt i Render
       logMsTokenError("/ms/refresh-save", result, {
         sent: {
           have_code: !!code,
@@ -525,7 +840,6 @@ app.post("/ms/refresh-save", async (req, res) => {
         }
       });
 
-      // Skicka tillbaka detaljerat fel till Bubble
       return res.status(400).json({
         ok: false,
         stage: "token_exchange",
@@ -562,7 +876,6 @@ app.post("/ms/refresh-save", async (req, res) => {
   }
 });
 
-// ────────────────────────────────────────────────────────────
 // CREATE EVENT (med stöd för room_email / resource-attendee)
 app.post("/ms/create-event", async (req, res) => {
   const {
@@ -571,7 +884,7 @@ app.post("/ms/create-event", async (req, res) => {
     event,
     ms_access_token,
     ms_refresh_token,
-    room_email // NYTT: explicit room-email från Bubble
+    room_email
   } = req.body || {};
 
   log("[/ms/create-event] hit", {
@@ -626,7 +939,6 @@ app.post("/ms/create-event", async (req, res) => {
       return res.status(401).json({ error: "User has no ms_access_token (and refresh missing/failed)" });
     }
 
-    // ── Attendees + room (resource) ─────────────────────────
     const normalizedAttendees = [];
     const seen = new Set();
     const push = (raw, type = "required") => {
@@ -635,7 +947,7 @@ app.post("/ms/create-event", async (req, res) => {
       seen.add(e);
       normalizedAttendees.push({
         emailAddress: { address: e },
-        type // "required" | "optional" | "resource"
+        type
       });
     };
 
@@ -647,7 +959,6 @@ app.post("/ms/create-event", async (req, res) => {
       [];
     allAtt.forEach(e => push(e, "required"));
 
-    // Room email kan komma både toppnivå + inne i event
     const roomEmailFromEvent =
       event?.room_email ||
       event?.location_email ||
@@ -656,7 +967,6 @@ app.post("/ms/create-event", async (req, res) => {
     const roomEmail = room_email || roomEmailFromEvent || null;
 
     if (roomEmail) {
-      // Lägg till rummet som resource-attendee
       push(roomEmail, "resource");
     }
 
@@ -685,7 +995,6 @@ app.post("/ms/create-event", async (req, res) => {
       },
       location: {
         displayName: event?.location_name || event?.location?.displayName || "",
-        // Viktigt för rum – koppla location till room mailbox
         locationEmailAddress: roomEmail || roomEmailFromEvent || undefined
       },
       isOnlineMeeting: true,
@@ -738,7 +1047,6 @@ app.post("/ms/create-event", async (req, res) => {
   }
 });
 
-// ────────────────────────────────────────────────────────────
 app.get("/ms/debug-env", (_req, res) => {
   res.json({
     has_CLIENT_ID: !!CLIENT_ID,
@@ -818,7 +1126,6 @@ async function getAppToken(tenant) {
   return j.access_token;
 }
 
-// Quick health/debug for app-only
 app.get("/ms/app-token/debug", async (req, res) => {
   try {
     const tenant = resolveTenant(req);
@@ -835,7 +1142,6 @@ app.get("/ms/app-token/debug", async (req, res) => {
   }
 });
 
-// 1) List all Rooms in tenant (Graph places API)
 app.get("/ms/places/rooms", async (req, res) => {
   try {
     const tenant = resolveTenant(req);
@@ -856,8 +1162,6 @@ app.get("/ms/places/rooms", async (req, res) => {
   }
 });
 
-// ────────────────────────────────────────────────────────────
-// 2) Rooms Availability via getSchedule (app-only)
 app.post("/ms/rooms/availability", async (req, res) => {
   try {
     const {
@@ -878,7 +1182,6 @@ app.post("/ms/rooms/availability", async (req, res) => {
     const tenant = resolveTenant(req);
     const token  = await getAppToken(tenant);
 
-    // App-only kräver /users/{anchor}/calendar/getSchedule – välj första rummet som anchor
     const anchor = encodeURIComponent(room_emails[0]);
     const url = `${GRAPH_BASE}/users/${anchor}/calendar/getSchedule`;
 
@@ -916,13 +1219,12 @@ app.post("/ms/rooms/availability", async (req, res) => {
   }
 });
 
-// 3) Raw events for a single room calendar (calendarView)
 app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
   try {
     const tenant = resolveTenant(req);
     const token = await getAppToken(tenant);
     const { roomEmail } = req.params;
-    const { start, end } = req.query; // ISO
+    const { start, end } = req.query;
 
     if (!roomEmail) return res.status(400).json({ ok: false, error: "roomEmail is required" });
     if (!start || !end) return res.status(400).json({ ok: false, error: "start & end ISO required" });
@@ -942,7 +1244,6 @@ app.get("/ms/rooms/:roomEmail/calendar", async (req, res) => {
   }
 });
 
-// ────────────────────────────────────────────────────────────
 function logMsTokenError(where, result, extra = {}) {
   try {
     console.error(`[${where}] MS token error`, {
