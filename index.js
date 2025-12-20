@@ -451,12 +451,14 @@ async function fortnoxGet(path, accessToken, query = {}) {
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ────────────────────────────────────────────────────────────
-// Fortnox OAuth (legacy: saves tokens to User via Bubble WF fortnox_token_upsert)
-// Starta flöde: Bubble anropar t.ex.
-// https://mira-exchange.onrender.com/fortnox/authorize?u=BubbleUserUniqueId
 app.get("/fortnox/authorize", (req, res) => {
-  const u = req.query.u && String(req.query.u).trim();
-  const state = u ? "u:" + u : crypto.randomUUID();
+  const u = req.query.u && String(req.query.u).trim();     // legacy: bubble user id
+  const c = req.query.c && String(req.query.c).trim();     // NEW: FortnoxConnection id
+
+  const state =
+    c ? "c:" + c :
+    u ? "u:" + u :
+    crypto.randomUUID();
 
   const url =
     "https://apps.fortnox.se/oauth-v1/auth" +
@@ -466,7 +468,7 @@ app.get("/fortnox/authorize", (req, res) => {
     `&scope=${encodeURIComponent("customer order invoice offer")}` +
     `&state=${encodeURIComponent(state)}`;
 
-  log("[/fortnox/authorize] redirect", { state, have_u: !!u, redirect_uri: FORTNOX_REDIRECT_URI });
+  log("[/fortnox/authorize] redirect", { state, have_u: !!u, have_c: !!c, redirect_uri: FORTNOX_REDIRECT_URI });
   res.redirect(url);
 });
 
@@ -474,14 +476,17 @@ app.get("/fortnox/authorize", (req, res) => {
 app.get("/fortnox/callback", async (req, res) => {
   const { code, state } = req.query || {};
 
+  const connectionId =
+    typeof state === "string" && state.startsWith("c:")
+      ? state.slice(2)
+      : null;
+
   const bubbleUserId =
     typeof state === "string" && state.startsWith("u:")
       ? state.slice(2)
       : null;
 
-  if (!code) {
-    return res.status(400).send("Missing code from Fortnox");
-  }
+  if (!code) return res.status(400).send("Missing code from Fortnox");
 
   try {
     const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
@@ -498,29 +503,58 @@ app.get("/fortnox/callback", async (req, res) => {
 
     const tokenJson = await tokenRes.json().catch(() => ({}));
 
-    if (!tokenRes.ok) {
+    if (!tokenRes.ok || !tokenJson.access_token) {
       console.error("[Fortnox OAuth] token error", tokenJson);
       return res.status(400).json(tokenJson);
     }
 
+    const expiresIn = Number(tokenJson.expires_in || 0);
+    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+
     console.log("[Fortnox OAuth] token OK", {
       has_access_token: !!tokenJson.access_token,
       has_refresh_token: !!tokenJson.refresh_token,
+      connectionId,
       bubbleUserId,
       raw_scope: tokenJson.scope
     });
 
-    if (bubbleUserId) {
-      const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
-      if (!saved) {
-        return res.status(502).send("Failed to save Fortnox tokens to Bubble");
-      }
+    // ✅ NEW: spara på FortnoxConnection om vi har connectionId
+    if (connectionId) {
+      const patched = await bubblePatch("FortnoxConnection", connectionId, {
+        access_token: tokenJson.access_token || null,
+        refresh_token: tokenJson.refresh_token || null,
+        expires_at: expiresAt,
+        token_type: tokenJson.token_type || "Bearer",
+        scope: tokenJson.scope || "",
+        is_active: true,
+        last_error: "",
+        last_refresh_at: new Date().toISOString()
+      });
+
+      log("[Fortnox OAuth] saved to FortnoxConnection", { connectionId, patched });
+
+      if (!patched) return res.status(502).send("Failed to save tokens to FortnoxConnection");
     }
 
-    res.redirect("https://mira-fm.com/fortnox-connected");
+    // Legacy: om du fortfarande vill stödja user-flödet parallellt
+    if (!connectionId && bubbleUserId) {
+      const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
+      log("[Fortnox OAuth] saved to User legacy", { bubbleUserId, saved });
+      if (!saved) return res.status(502).send("Failed to save Fortnox tokens to Bubble user");
+    }
+
+    // Redirect tillbaka (lägg gärna med connectionId så du kan visa “connected” per leverantör)
+    const redirectTo =
+      connectionId
+        ? "https://mira-fm.com/fortnox-connected?connection_id=" + encodeURIComponent(connectionId)
+        : "https://mira-fm.com/fortnox-connected";
+
+    return res.redirect(redirectTo);
+
   } catch (err) {
     console.error("[Fortnox OAuth] callback error", err);
-    res.status(500).send("Fortnox OAuth failed");
+    return res.status(500).send("Fortnox OAuth failed");
   }
 });
 
