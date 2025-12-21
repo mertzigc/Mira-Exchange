@@ -69,8 +69,6 @@ const FORTNOX_REDIRECT_URI  =
 const BUBBLE_BASES = [
   // Version-test först
   "https://carotteconcierge.bubbleapps.io/version-test",
-  // Live som fallback
-  "https://carotteconcierge.bubbleapps.io",
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -254,22 +252,41 @@ async function bubbleGet(typeName, id) {
 }
 
 async function bubblePatch(typeName, id, fields) {
+  const payload = fields || {};
   for (const base of BUBBLE_BASES) {
-    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
+    const url = base + "/api/1.1/obj/" + typeName + "/" + id;
+
     try {
       const r = await fetch(url, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY
+          Authorization: "Bearer " + BUBBLE_API_KEY,
         },
-        body: JSON.stringify(fields || {})
+        body: JSON.stringify(payload),
       });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok && j?.status === "success") return true;
-      log("[bubblePatch] fail", { base, typeName, id, status: r.status, body: j });
+
+      // ✅ Bubble kan svara 204 No Content vid PATCH även när allt gick bra
+      if (r.status === 204) {
+        log("[bubblePatch] ok (204)", { base, typeName, id });
+        return true;
+      }
+
+      // För andra svar: försök läsa body (kan vara JSON eller text)
+      const text = await r.text().catch(() => "");
+      let body = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { text }; }
+
+      const ok = r.ok && (body?.status === "success" || body?.response || body === null);
+
+      if (ok) {
+        log("[bubblePatch] ok", { base, typeName, id, status: r.status });
+        return true;
+      }
+
+      log("[bubblePatch] fail", { base, typeName, id, status: r.status, body });
     } catch (e) {
-      log("[bubblePatch] error", { base, e: String(e) });
+      log("[bubblePatch] error", { base, typeName, id, e: String(e) });
     }
   }
   return false;
