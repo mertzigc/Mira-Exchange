@@ -291,6 +291,20 @@ async function bubblePatch(typeName, id, fields) {
   }
   return false;
 }
+async function bubbleGet(typeName, id) {
+  for (const base of BUBBLE_BASES) {
+    const url = base + "/api/1.1/obj/" + typeName + "/" + id;
+    try {
+      const r = await fetch(url, {
+        method: "GET",
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.response) return j.response;
+    } catch {}
+  }
+  return null;
+}
 
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
@@ -572,6 +586,76 @@ app.get("/fortnox/callback", async (req, res) => {
   } catch (err) {
     console.error("[Fortnox OAuth] callback error", err);
     return res.status(500).send("Fortnox OAuth failed");
+  }
+});
+// ────────────────────────────────────────────────────────────
+// Fortnox: refresh token PER CONNECTION (ny arkitektur)
+app.post("/fortnox/connection/refresh", async (req, res) => {
+  const { connection_id } = req.body || {};
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  try {
+    // 1) Hämta FortnoxConnection från Bubble
+    const conn = await bubbleGet("FortnoxConnection", connection_id);
+    if (!conn) {
+      return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+    }
+
+    const rt = conn.refresh_token || null;
+    if (!rt) {
+      return res.status(400).json({ ok: false, error: "Missing refresh_token on connection" });
+    }
+
+    // 2) Refresh mot Fortnox
+    const form = new URLSearchParams();
+    form.set("grant_type", "refresh_token");
+    form.set("refresh_token", rt);
+    form.set("client_id", FORTNOX_CLIENT_ID);
+    form.set("client_secret", FORTNOX_CLIENT_SECRET);
+
+    const r = await fetch("https://apps.fortnox.se/oauth-v1/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form
+    });
+
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok || !j.access_token) {
+      await bubblePatch("FortnoxConnection", connection_id, {
+        last_error: JSON.stringify(j || {}),
+        last_refresh_at: new Date().toISOString()
+      });
+      return res.status(400).json({ ok: false, status: r.status, error: j });
+    }
+
+    const expiresIn = Number(j.expires_in || 0);
+    const expiresAt = expiresIn
+      ? new Date(Date.now() + expiresIn * 1000).toISOString()
+      : null;
+
+    // 3) Spara nya tokens på FortnoxConnection
+    const patched = await bubblePatch("FortnoxConnection", connection_id, {
+      access_token: j.access_token || null,
+      refresh_token: j.refresh_token || rt,
+      expires_at: expiresAt,
+      scope: j.scope || conn.scope || "",
+      last_error: "",
+      last_refresh_at: new Date().toISOString(),
+      is_active: true
+    });
+
+    return res.json({
+      ok: true,
+      patched,
+      connection_id,
+      expires_at: expiresAt,
+      has_new_refresh_token: !!j.refresh_token
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 
