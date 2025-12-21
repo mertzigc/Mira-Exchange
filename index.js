@@ -1362,7 +1362,12 @@ app.post("/fortnox/refresh-save", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
-
+const toIsoDate = (d) => {
+  const s = String(d || "").trim();        // "YYYY-MM-DD"
+  if (!s) return null;
+  // Bubble brukar gilla ISO
+  return s + "T00:00:00.000Z";
+};
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
 app.post("/fortnox/debug/connection", async (req, res) => {
