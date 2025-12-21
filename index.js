@@ -891,6 +891,98 @@ const url =
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: probe which delivery-date filter params are accepted for Orders
+app.post("/fortnox/probe/orders-delivery-filter", async (req, res) => {
+  const {
+    connection_id,
+    months_back = 12,
+    page = 1,
+    limit = 1
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  // date window
+  const mb = Math.max(1, Number(months_back) || 12);
+  const to = new Date();
+  const from = new Date();
+  from.setMonth(from.getMonth() - mb);
+
+  const fmt = (d) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+  const fromDate = fmt(from);
+  const toDate = fmt(to);
+
+  // 1) get token (reuse sync/orders token logic by calling refresh if needed)
+  const conn = await bubbleGet("FortnoxConnection", connection_id);
+  if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+
+  let accessToken = conn.access_token || null;
+  const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
+  if (!accessToken || Date.now() > expiresAt - 60_000) {
+    const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+      body: JSON.stringify({ connection_id })
+    });
+    const refJson = await ref.json().catch(() => ({}));
+    if (!ref.ok) return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
+    const updated = await bubbleGet("FortnoxConnection", connection_id);
+    accessToken = updated?.access_token || null;
+  }
+  if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
+
+  // 2) param candidates (one-at-a-time)
+  const candidates = [
+    { name: "fromdeliverydate+todeliverydate", qs: `fromdeliverydate=${fromDate}&todeliverydate=${toDate}` },
+    { name: "deliverydatefrom+deliverydateto", qs: `deliverydatefrom=${fromDate}&deliverydateto=${toDate}` },
+    { name: "fromDeliveryDate+toDeliveryDate", qs: `fromDeliveryDate=${fromDate}&toDeliveryDate=${toDate}` },
+    { name: "deliveryDateFrom+deliveryDateTo", qs: `deliveryDateFrom=${fromDate}&deliveryDateTo=${toDate}` },
+    // fallback guess: deliverydate (single) - not likely but cheap to test
+    { name: "deliverydate", qs: `deliverydate=${fromDate}` }
+  ];
+
+  const results = [];
+
+  for (const c of candidates) {
+    const url =
+      "https://api.fortnox.se/3/orders" +
+      `?page=${encodeURIComponent(page)}` +
+      `&limit=${encodeURIComponent(limit)}` +
+      `&${c.qs}`;
+
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": "Bearer " + accessToken,
+        "Client-Secret": FORTNOX_CLIENT_SECRET,
+        "Accept": "application/json"
+      }
+    });
+
+    const body = await r.json().catch(() => ({}));
+    results.push({
+      candidate: c.name,
+      status: r.status,
+      ok: r.ok,
+      error: body?.ErrorInformation || null
+    });
+
+    // if it worked, stop early
+    if (r.ok) break;
+  }
+
+  return res.json({
+    ok: true,
+    connection_id,
+    sent_filters: { months_back: mb, deliveryFrom: fromDate, deliveryTo: toDate },
+    results
+  });
+});
 
 // ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
