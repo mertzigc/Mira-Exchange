@@ -1312,10 +1312,32 @@ app.post("/fortnox/refresh-save", async (req, res) => {
   }
 });
 const toIsoDate = (d) => {
-  const s = String(d || "").trim();        // "YYYY-MM-DD"
+  const s = String(d || "").trim(); // "YYYY-MM-DD"
   if (!s) return null;
   // Bubble brukar gilla ISO
   return s + "T00:00:00.000Z";
+};
+
+function parseFtDateToTs(v) {
+  const s = String(v || "").trim();
+  if (!s) return NaN;
+
+  // "YYYY-MM-DD"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return new Date(s + "T00:00:00Z").getTime();
+  }
+
+  // "YYYY-MM-DDTHH:mm:ss"
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    return new Date(s).getTime();
+  }
+
+  // "/Date(1234567890)/"
+  const m = s.match(/Date\((\d+)\)/);
+  if (m) return Number(m[1]);
+
+  return NaN;
+}
 };
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync invoices (Render-first, read-only) with months_back filter on InvoiceDate
@@ -1405,38 +1427,56 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
     const list = Array.isArray(data?.Invoices) ? data.Invoices : [];
 
     // Filter på InvoiceDate (YYYY-MM-DD)
-    const keep = (inv) => {
-      const d = String(inv?.InvoiceDate || "").trim();
-      if (!d) return false;
-      const t = new Date(d + "T00:00:00Z").getTime();
-      return Number.isFinite(t) && t >= cutoffTs;
-    };
+   const cutoffTs = parseFtDateToTs(cutoffDate); // cutoffDate = "YYYY-MM-DD"
 
-    const filtered = list.filter(keep);
-
-    return res.json({
-      ok: true,
-      connection_id,
-      page,
-      limit,
-      sent_filters: {
-        months_back: mb,
-        invoiceDateCutoff: cutoffDate
-      },
-      meta: data?.MetaInformation || null,
-      invoices: filtered,
-      debug_counts: {
-        fetched: list.length,
-        kept_by_invoicedate: filtered.length
-      }
-    });
-
-  } catch (e) {
-    console.error("[/fortnox/sync/invoices] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+const pickInvoiceDateTs = (inv) => {
+  // prova flera vanliga Fortnox-fält (list-API kan skilja)
+  const candidates = [
+    inv?.InvoiceDate,
+    inv?.invoiceDate,
+    inv?.DocumentDate,
+    inv?.documentDate,
+    inv?.Created,
+    inv?.created,
+    inv?.DueDate,
+    inv?.dueDate
+  ];
+  for (const c of candidates) {
+    const ts = parseFtDateToTs(c);
+    if (Number.isFinite(ts)) return ts;
   }
+  return NaN;
+};
+
+const filtered = list.filter(inv => {
+  const ts = pickInvoiceDateTs(inv);
+  return Number.isFinite(ts) && ts >= cutoffTs;
 });
 
+// DEBUG: visa sample så vi ser exakt vilka fält som kommer
+const sample = list[0] || null;
+const sampleKeys = sample ? Object.keys(sample) : [];
+const samplePickedTs = sample ? pickInvoiceDateTs(sample) : null;
+
+return res.json({
+  ok: true,
+  connection_id,
+  page,
+  limit,
+  sent_filters: { months_back: mb, invoiceDateCutoff: cutoffDate },
+  meta: data?.MetaInformation || null,
+  invoices: filtered,
+  debug_counts: { fetched: list.length, kept_by_date: filtered.length },
+  debug_sample: {
+    keys: sampleKeys,
+    invoiceDate: sample?.InvoiceDate || sample?.invoiceDate || null,
+    documentDate: sample?.DocumentDate || sample?.documentDate || null,
+    created: sample?.Created || sample?.created || null,
+    dueDate: sample?.DueDate || sample?.dueDate || null,
+    picked_ts: samplePickedTs,
+    cutoff_ts: cutoffTs
+  }
+});
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert invoices into Bubble (one page)
 app.post("/fortnox/upsert/invoices", async (req, res) => {
