@@ -644,6 +644,90 @@ app.post("/fortnox/connection/refresh", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: sync customers (Render-first, read-only)
+app.post("/fortnox/sync/customers", async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100
+  } = req.body || {};
+
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  try {
+    // 1) Hämta FortnoxConnection
+    const conn = await bubbleGet("FortnoxConnection", connection_id);
+    if (!conn) {
+      return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+    }
+
+    let accessToken = conn.access_token || null;
+    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
+
+    // 2) Auto-refresh om token saknas eller är expired
+    if (!accessToken || Date.now() > expiresAt - 60_000) {
+      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id })
+      });
+      const refJson = await ref.json().catch(() => ({}));
+      if (!ref.ok) {
+        return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
+      }
+
+      const updated = await bubbleGet("FortnoxConnection", connection_id);
+      accessToken = updated?.access_token || null;
+    }
+
+    if (!accessToken) {
+      return res.status(401).json({ ok: false, error: "No access_token available" });
+    }
+
+    // 3) Call Fortnox Customers
+    const url =
+      "https://api.fortnox.se/3/customers" +
+      `?page=${encodeURIComponent(page)}` +
+      `&limit=${encodeURIComponent(limit)}`;
+
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": "Bearer " + accessToken,
+        "Client-Secret": FORTNOX_CLIENT_SECRET,
+        "Accept": "application/json"
+      }
+    });
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      return res.status(r.status).json({
+        ok: false,
+        error: "Fortnox API error",
+        detail: data
+      });
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      meta: data?.MetaInformation || null,
+      customers: data?.Customers || []
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/sync/customers] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 // Fortnox: refresh + spara token (legacy to User)
