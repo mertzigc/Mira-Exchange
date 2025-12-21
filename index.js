@@ -1020,15 +1020,15 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
         ft_document_number: docNo,
         ft_customer_number: String(o?.CustomerNumber || ""),
         ft_customer_name: String(o?.CustomerName || ""),
-        ft_order_date: String(o?.OrderDate || ""),
-        ft_delivery_date: String(o?.DeliveryDate || ""),
-        ft_total: o?.Total ?? null,
+        ft_order_date: toIsoDate(o?.OrderDate),
+ft_delivery_date: toIsoDate(o?.DeliveryDate),
+ft_last_seen_at: new Date().toISOString(),   // (detta är date i Bubble -> ISO funkar)
+        ft_total: o?.Total == null ? "" : String(o.Total),
         ft_cancelled: !!o?.Cancelled,
         ft_sent: !!o?.Sent,
         ft_currency: String(o?.Currency || ""),
         ft_url: String(o?.["@url"] || ""),
         ft_raw_json: JSON.stringify(o),
-        ft_last_seen_at: new Date().toISOString()
       };
 
       try {
@@ -1080,9 +1080,11 @@ if (existing?._id && foundDoc === docNo) {
     });
 
   } catch (e) {
-    console.error("[/fortnox/upsert/orders] fatal error", e);
-    return res.status(500).json({ ok: false, error: e.message });
-  }
+    console.error("[upsert/orders] create/patch failed", {
+  docNo,
+  message: e.message,
+  status: e.status || null,
+  detail: e.detail || null
 });
 
 // ────────────────────────────────────────────────────────────
