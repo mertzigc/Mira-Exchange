@@ -234,33 +234,39 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (objekt-CRUD)
-async function bubbleFind(typeName, { constraints = [], limit = 1 }) {
-  const qs = new URLSearchParams();
-  if (limit) qs.set("limit", String(limit));
-
-  constraints.forEach((c, i) => {
-    qs.set(`constraints[${i}][key]`, c.key);
-    qs.set(`constraints[${i}][constraint_type]`, c.constraint_type || "equals");
-    qs.set(`constraints[${i}][value]`, c.value);
-  });
+// Bubble Data API helpers — FIND via /search (viktigt!)
+async function bubbleFind(typeName, body) {
+  let lastErr = null;
 
   for (const base of BUBBLE_BASES) {
     try {
-      const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
+      const url = `${base}/api/1.1/obj/${typeName}/search`;
       const r = await fetch(url, {
+        method: "POST",
         headers: {
-          Authorization: "Bearer " + BUBBLE_API_KEY
-        }
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + BUBBLE_API_KEY
+        },
+        body: JSON.stringify(body || {})
       });
+
       const j = await r.json().catch(() => ({}));
-      if (r.ok && Array.isArray(j?.response?.results)) {
-        return j.response.results;
+
+      if (!r.ok) {
+        lastErr = { base, status: r.status, body: j };
+        continue;
       }
+
+      const results = j?.response?.results;
+      return Array.isArray(results) ? results : [];
     } catch (e) {
-      console.error("[bubbleFind] error", e.message);
+      lastErr = { base, error: String(e) };
     }
   }
-  return [];
+
+  const err = new Error("bubbleFind failed");
+  err.detail = lastErr;
+  throw err;
 }
 async function bubbleGet(typeName, id) {
   for (const base of BUBBLE_BASES) {
@@ -975,7 +981,7 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
     for (const o of orders) {
       const docNo = String(o?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
-
+  console.log("[upsert/orders] docNo", docNo);
       const payload = {
         connection: connection_id,
         ft_document_number: docNo,
@@ -1002,14 +1008,20 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
         });
 
         const existing = Array.isArray(search) && search.length ? search[0] : null;
+  console.log("[upsert/orders] found", {
+    docNo,
+    found_id: existing?._id,
+    found_doc: existing?.ft_document_number
+  });
+        const foundDoc = String(existing?.ft_document_number || "").trim();
 
-        if (existing?._id) {
-          await bubblePatch("FortnoxOrder", existing._id, payload);
-          updated++;
-        } else {
-          await bubbleCreate("FortnoxOrder", payload);
-          created++;
-        }
+if (existing?._id && foundDoc === docNo) {
+  await bubblePatch("FortnoxOrder", existing._id, payload);
+  updated++;
+} else {
+  await bubbleCreate("FortnoxOrder", payload);
+  created++;
+}
       } catch (e) {
         errors++;
         if (!firstError) {
