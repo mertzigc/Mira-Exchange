@@ -68,7 +68,7 @@ const FORTNOX_REDIRECT_URI  =
 // (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
   // Version-test först
-  "https://carotteconcierge.bubbleapps.io/version-test",
+  "https://mira-fm.com/version-test",
 ];
 
 // ────────────────────────────────────────────────────────────
@@ -235,25 +235,57 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (objekt-CRUD)
 // Bubble Data API helpers — FIND via /search (viktigt!)
-async function bubbleFind(typeName, body) {
+async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
   let lastErr = null;
 
   for (const base of BUBBLE_BASES) {
+    // 1) Försök med /search (POST)
     try {
       const url = `${base}/api/1.1/obj/${typeName}/search`;
       const r = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer " + BUBBLE_API_KEY
+          Authorization: "Bearer " + BUBBLE_API_KEY
         },
-        body: JSON.stringify(body || {})
+        body: JSON.stringify({ constraints, limit })
       });
 
-      const j = await r.json().catch(() => ({}));
+      const text = await r.text();
+      let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch {}
+
+      if (r.ok) {
+        const results = j?.response?.results;
+        return Array.isArray(results) ? results : [];
+      }
+
+      // Om /search inte finns (404) → prova fallback nedan
+      if (r.status !== 404) {
+        lastErr = { base, status: r.status, body: j || text };
+        continue;
+      }
+    } catch (e) {
+      lastErr = { base, error: String(e) };
+    }
+
+    // 2) Fallback: GET /obj/<type>?constraints=<JSON>
+    try {
+      const qs = new URLSearchParams();
+      if (limit) qs.set("limit", String(limit));
+      if (constraints?.length) qs.set("constraints", JSON.stringify(constraints));
+
+      const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
+      const r = await fetch(url, {
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+      });
+
+      const text = await r.text();
+      let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch {}
 
       if (!r.ok) {
-        lastErr = { base, status: r.status, body: j };
+        lastErr = { base, status: r.status, body: j || text };
         continue;
       }
 
