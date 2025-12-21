@@ -1473,6 +1473,11 @@ return res.json({
     cutoff_ts: cutoffTs
   }
 });
+      } catch (e) {
+    console.error("[/fortnox/sync/invoices] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert invoices into Bubble (one page)
 app.post("/fortnox/upsert/invoices", async (req, res) => {
