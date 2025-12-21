@@ -832,7 +832,7 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
         address2: c?.Address2 || "",
         zip: c?.ZipCode || "",
         city: c?.City || "",
-        ft_url: c?.["@url"] || c?.["@url".toString()] || c?.["@url"] || "",
+        ft_url: c?.["@url"] || "",
         last_seen_at: new Date().toISOString(),
         raw_json: JSON.stringify(c || {})
       };
@@ -844,7 +844,7 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
           { key: "customer_number", constraint_type: "equals", value: customerNumber }
         ]);
 
-        if (existing?."_id") {
+        if (existing?._id) {
           const ok = await bubblePatch("FortnoxCustomer", existing._id, payload);
           if (ok) updated++; else errors++;
         } else {
