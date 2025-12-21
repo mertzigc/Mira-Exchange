@@ -1425,9 +1425,6 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
 
     const list = Array.isArray(data?.Invoices) ? data.Invoices : [];
 
-    // Filter på InvoiceDate (YYYY-MM-DD)
-   const cutoffTs = parseFtDateToTs(cutoffDate); // cutoffDate = "YYYY-MM-DD"
-
 const pickInvoiceDateTs = (inv) => {
   // prova flera vanliga Fortnox-fält (list-API kan skilja)
   const candidates = [
