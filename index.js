@@ -822,7 +822,7 @@ app.post("/fortnox/sync/orders", async (req, res) => {
 
     if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
 
-    // 3) Build date window (last N months) based on DELIVERY DATE
+    // 3) date window (12 months)
 const mb = Math.max(1, Number(months_back) || 12);
 const to = new Date();
 const from = new Date();
@@ -838,25 +838,13 @@ const fmt = (d) => {
 const fromDate = fmt(from);
 const toDate   = fmt(to);
 
-// 4) Call Fortnox Orders with DELIVERY DATE candidate params
+// 4) Fortnox Orders filtered by ORDER DATE (cheap server-side)
 const url =
   "https://api.fortnox.se/3/orders" +
   `?page=${encodeURIComponent(page)}` +
   `&limit=${encodeURIComponent(limit)}` +
-
-  // Variant A (snake/lower): fromdeliverydate / todeliverydate
-  `&fromdeliverydate=${encodeURIComponent(fromDate)}` +
-  `&todeliverydate=${encodeURIComponent(toDate)}` +
-
-  // Variant B (lower camel-ish): deliverydatefrom / deliverydateto
-  `&deliverydatefrom=${encodeURIComponent(fromDate)}` +
-  `&deliverydateto=${encodeURIComponent(toDate)}` +
-
-  // Variant C (camel): fromDeliveryDate / toDeliveryDate
-  `&fromDeliveryDate=${encodeURIComponent(fromDate)}` +
-  `&toDeliveryDate=${encodeURIComponent(toDate)}`;
-
-// ...fetch(url) som tidigare
+  `&fromdate=${encodeURIComponent(fromDate)}` +
+  `&todate=${encodeURIComponent(toDate)}`;
 
     const r = await fetch(url, {
       headers: {
@@ -867,6 +855,37 @@ const url =
     });
 
     const data = await r.json().catch(() => ({}));
+const list = Array.isArray(data?.Orders) ? data.Orders : [];
+
+const cutoff = new Date(fromDate + "T00:00:00Z").getTime();
+
+const keep = (o) => {
+  const d = String(o?.DeliveryDate || "").trim(); // Fortnox brukar ge YYYY-MM-DD eller tomt
+  if (!d) return false; // saknar deliverydate -> skippa
+  const t = new Date(d + "T00:00:00Z").getTime();
+  return Number.isFinite(t) && t >= cutoff;
+};
+
+const filtered = list.filter(keep);
+
+return res.json({
+  ok: true,
+  connection_id,
+  page,
+  limit,
+  sent_filters: {
+    months_back: mb,
+    orderDateFrom: fromDate,
+    orderDateTo: toDate,
+    deliveryDateCutoff: fromDate
+  },
+  meta: data?.MetaInformation || null,
+  orders: filtered,
+  debug_counts: {
+    fetched: list.length,
+    kept_by_deliverydate: filtered.length
+  }
+});
 
     if (!r.ok) {
       return res.status(r.status).json({
