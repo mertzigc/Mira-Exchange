@@ -781,6 +781,7 @@ app.post("/fortnox/sync/customers", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
 // Fortnox: sync orders (Render-first, read-only) with months_back filter
 app.post("/fortnox/sync/orders", async (req, res) => {
   const {
@@ -795,14 +796,16 @@ app.post("/fortnox/sync/orders", async (req, res) => {
   }
 
   try {
-    // 1) Hämta FortnoxConnection
+    // 1) Load FortnoxConnection
     const conn = await bubbleGet("FortnoxConnection", connection_id);
-    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+    if (!conn) {
+      return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+    }
 
     let accessToken = conn.access_token || null;
     const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
 
-    // 2) Auto-refresh om token saknas/expired
+    // 2) Auto-refresh token
     if (!accessToken || Date.now() > expiresAt - 60_000) {
       const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
         method: "POST",
@@ -812,39 +815,43 @@ app.post("/fortnox/sync/orders", async (req, res) => {
         },
         body: JSON.stringify({ connection_id })
       });
+
       const refJson = await ref.json().catch(() => ({}));
       if (!ref.ok) {
         return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
       }
+
       const updated = await bubbleGet("FortnoxConnection", connection_id);
       accessToken = updated?.access_token || null;
     }
 
-    if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
+    if (!accessToken) {
+      return res.status(401).json({ ok: false, error: "No access_token available" });
+    }
 
-    // 3) date window (12 months)
-const mb = Math.max(1, Number(months_back) || 12);
-const to = new Date();
-const from = new Date();
-from.setMonth(from.getMonth() - mb);
+    // 3) Date window
+    const mb = Math.max(1, Number(months_back) || 12);
+    const to = new Date();
+    const from = new Date();
+    from.setMonth(from.getMonth() - mb);
 
-const fmt = (d) => {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-};
+    const fmt = (d) => {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    };
 
-const fromDate = fmt(from);
-const toDate   = fmt(to);
+    const fromDate = fmt(from);
+    const toDate   = fmt(to);
 
-// 4) Fortnox Orders filtered by ORDER DATE (cheap server-side)
-const url =
-  "https://api.fortnox.se/3/orders" +
-  `?page=${encodeURIComponent(page)}` +
-  `&limit=${encodeURIComponent(limit)}` +
-  `&fromdate=${encodeURIComponent(fromDate)}` +
-  `&todate=${encodeURIComponent(toDate)}`;
+    // 4) Fetch orders filtered by ORDER DATE (server-side)
+    const url =
+      "https://api.fortnox.se/3/orders" +
+      `?page=${encodeURIComponent(page)}` +
+      `&limit=${encodeURIComponent(limit)}` +
+      `&fromdate=${encodeURIComponent(fromDate)}` +
+      `&todate=${encodeURIComponent(toDate)}`;
 
     const r = await fetch(url, {
       headers: {
@@ -855,152 +862,49 @@ const url =
     });
 
     const data = await r.json().catch(() => ({}));
-const list = Array.isArray(data?.Orders) ? data.Orders : [];
-
-const cutoff = new Date(fromDate + "T00:00:00Z").getTime();
-
-const keep = (o) => {
-  const d = String(o?.DeliveryDate || "").trim(); // Fortnox brukar ge YYYY-MM-DD eller tomt
-  if (!d) return false; // saknar deliverydate -> skippa
-  const t = new Date(d + "T00:00:00Z").getTime();
-  return Number.isFinite(t) && t >= cutoff;
-};
-
-const filtered = list.filter(keep);
-
-return res.json({
-  ok: true,
-  connection_id,
-  page,
-  limit,
-  sent_filters: {
-    months_back: mb,
-    orderDateFrom: fromDate,
-    orderDateTo: toDate,
-    deliveryDateCutoff: fromDate
-  },
-  meta: data?.MetaInformation || null,
-  orders: filtered,
-  debug_counts: {
-    fetched: list.length,
-    kept_by_deliverydate: filtered.length
-  }
-});
-
     if (!r.ok) {
       return res.status(r.status).json({
         ok: false,
         error: "Fortnox API error",
-        sent_filters: { months_back: mb, deliveryFrom: fromDate, deliveryTo: toDate },
         detail: data
       });
     }
+
+    const list = Array.isArray(data?.Orders) ? data.Orders : [];
+
+    // 5) Render-side filter: DeliveryDate >= cutoff
+    const cutoff = new Date(fromDate + "T00:00:00Z").getTime();
+
+    const filtered = list.filter(o => {
+      const d = String(o?.DeliveryDate || "").trim();
+      if (!d) return false;
+      const t = new Date(d + "T00:00:00Z").getTime();
+      return Number.isFinite(t) && t >= cutoff;
+    });
 
     return res.json({
       ok: true,
       connection_id,
       page,
       limit,
-      sent_filters: { months_back: mb, fromDate, toDate },
+      sent_filters: {
+        months_back: mb,
+        orderDateFrom: fromDate,
+        orderDateTo: toDate,
+        deliveryDateCutoff: fromDate
+      },
       meta: data?.MetaInformation || null,
-      orders: data?.Orders || []
+      orders: filtered,
+      debug_counts: {
+        fetched: list.length,
+        kept_by_deliverydate: filtered.length
+      }
     });
+
   } catch (e) {
     console.error("[/fortnox/sync/orders] error", e);
     return res.status(500).json({ ok: false, error: e.message });
   }
-});
-// ────────────────────────────────────────────────────────────
-// Fortnox: probe which delivery-date filter params are accepted for Orders
-app.post("/fortnox/probe/orders-delivery-filter", async (req, res) => {
-  const {
-    connection_id,
-    months_back = 12,
-    page = 1,
-    limit = 1
-  } = req.body || {};
-
-  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
-
-  // date window
-  const mb = Math.max(1, Number(months_back) || 12);
-  const to = new Date();
-  const from = new Date();
-  from.setMonth(from.getMonth() - mb);
-
-  const fmt = (d) => {
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  };
-  const fromDate = fmt(from);
-  const toDate = fmt(to);
-
-  // 1) get token (reuse sync/orders token logic by calling refresh if needed)
-  const conn = await bubbleGet("FortnoxConnection", connection_id);
-  if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
-
-  let accessToken = conn.access_token || null;
-  const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
-  if (!accessToken || Date.now() > expiresAt - 60_000) {
-    const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-      body: JSON.stringify({ connection_id })
-    });
-    const refJson = await ref.json().catch(() => ({}));
-    if (!ref.ok) return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
-    const updated = await bubbleGet("FortnoxConnection", connection_id);
-    accessToken = updated?.access_token || null;
-  }
-  if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
-
-  // 2) param candidates (one-at-a-time)
-  const candidates = [
-    { name: "fromdeliverydate+todeliverydate", qs: `fromdeliverydate=${fromDate}&todeliverydate=${toDate}` },
-    { name: "deliverydatefrom+deliverydateto", qs: `deliverydatefrom=${fromDate}&deliverydateto=${toDate}` },
-    { name: "fromDeliveryDate+toDeliveryDate", qs: `fromDeliveryDate=${fromDate}&toDeliveryDate=${toDate}` },
-    { name: "deliveryDateFrom+deliveryDateTo", qs: `deliveryDateFrom=${fromDate}&deliveryDateTo=${toDate}` },
-    // fallback guess: deliverydate (single) - not likely but cheap to test
-    { name: "deliverydate", qs: `deliverydate=${fromDate}` }
-  ];
-
-  const results = [];
-
-  for (const c of candidates) {
-    const url =
-      "https://api.fortnox.se/3/orders" +
-      `?page=${encodeURIComponent(page)}` +
-      `&limit=${encodeURIComponent(limit)}` +
-      `&${c.qs}`;
-
-    const r = await fetch(url, {
-      headers: {
-        "Authorization": "Bearer " + accessToken,
-        "Client-Secret": FORTNOX_CLIENT_SECRET,
-        "Accept": "application/json"
-      }
-    });
-
-    const body = await r.json().catch(() => ({}));
-    results.push({
-      candidate: c.name,
-      status: r.status,
-      ok: r.ok,
-      error: body?.ErrorInformation || null
-    });
-
-    // if it worked, stop early
-    if (r.ok) break;
-  }
-
-  return res.json({
-    ok: true,
-    connection_id,
-    sent_filters: { months_back: mb, deliveryFrom: fromDate, deliveryTo: toDate },
-    results
-  });
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert orders into Bubble (one page)
@@ -1012,10 +916,18 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
     months_back = 12
   } = req.body || {};
 
-  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  let errors = 0;
+  let firstError = null;
 
   try {
-    // 1) reuse sync/orders (it already refreshes + delivery-filters)
+    // 1) Fetch filtered orders
     const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/orders", {
       method: "POST",
       headers: {
@@ -1032,23 +944,17 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
 
     const orders = Array.isArray(syncJson.orders) ? syncJson.orders : [];
 
-    // 2) load connection object (needed to store as field reference)
-    const conn = await bubbleGet("FortnoxConnection", connection_id);
-    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
-
-    let created = 0, updated = 0, skipped = 0, errors = 0;
-
     for (const o of orders) {
       const docNo = String(o?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
 
       const payload = {
-        connection: connection_id, // Bubble expects the thing's id when field type is FortnoxConnection
+        connection: connection_id,
         ft_document_number: docNo,
         ft_customer_number: String(o?.CustomerNumber || ""),
         ft_customer_name: String(o?.CustomerName || ""),
-        ft_order_date: String(o?.OrderDate || ""),       // börja som text om du vill
-        ft_delivery_date: String(o?.DeliveryDate || ""), // börja som text om du vill
+        ft_order_date: String(o?.OrderDate || ""),
+        ft_delivery_date: String(o?.DeliveryDate || ""),
         ft_total: o?.Total ?? null,
         ft_cancelled: !!o?.Cancelled,
         ft_sent: !!o?.Sent,
@@ -1058,9 +964,7 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
         ft_last_seen_at: new Date().toISOString()
       };
 
-      // 3) upsert by (connection + ft_document_number)
       try {
-        // find existing
         const search = await bubbleFind("FortnoxOrder", {
           constraints: [
             { key: "connection", constraint_type: "equals", value: connection_id },
@@ -1080,8 +984,14 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
         }
       } catch (e) {
         errors++;
-        // Logga bara en lätt rad så vi inte spammar
-        console.error("[upsert/orders] error", { docNo, msg: e.message });
+        if (!firstError) {
+          firstError = {
+            docNo,
+            message: e.message,
+            status: e.status || null,
+            detail: e.detail || null
+          };
+        }
       }
     }
 
@@ -1092,72 +1002,14 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
       limit,
       months_back,
       meta: syncJson.meta || null,
-      counts: { created, updated, skipped, errors }
+      counts: { created, updated, skipped, errors },
+      first_error: firstError
     });
 
-  } let firstError = null;
-
-for (const o of orders) {
-  const docNo = String(o?.DocumentNumber || "").trim();
-  if (!docNo) { skipped++; continue; }
-
-  const payload = {
-    connection: connection_id,
-    ft_document_number: docNo,
-    ft_customer_number: String(o?.CustomerNumber || ""),
-    ft_customer_name: String(o?.CustomerName || ""),
-    ft_order_date: String(o?.OrderDate || ""),
-    ft_delivery_date: String(o?.DeliveryDate || ""),
-    ft_total: o?.Total ?? null,
-    ft_cancelled: !!o?.Cancelled,
-    ft_sent: !!o?.Sent,
-    ft_currency: String(o?.Currency || ""),
-    ft_url: String(o?.["@url"] || ""),
-    ft_raw_json: JSON.stringify(o),
-    ft_last_seen_at: new Date().toISOString()
-  };
-
-  try {
-    const search = await bubbleFind("FortnoxOrder", {
-      constraints: [
-        { key: "connection", constraint_type: "equals", value: connection_id },
-        { key: "ft_document_number", constraint_type: "equals", value: docNo }
-      ],
-      limit: 1
-    });
-
-    const existing = Array.isArray(search) && search.length ? search[0] : null;
-
-    if (existing?._id) {
-      await bubblePatch("FortnoxOrder", existing._id, payload);
-      updated++;
-    } else {
-      await bubbleCreate("FortnoxOrder", payload);
-      created++;
-    }
   } catch (e) {
-    errors++;
-    if (!firstError) {
-      firstError = {
-        docNo,
-        message: e.message,
-        status: e.status || null,
-        detail: e.detail || null,
-        payload_keys: Object.keys(payload)
-      };
-    }
+    console.error("[/fortnox/upsert/orders] fatal error", e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
-}
-
-return res.json({
-  ok: true,
-  connection_id,
-  page,
-  limit,
-  months_back,
-  meta: syncJson.meta || null,
-  counts: { created, updated, skipped, errors },
-  first_error: firstError
 });
 
 // ────────────────────────────────────────────────────────────
