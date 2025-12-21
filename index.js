@@ -1493,6 +1493,8 @@ return res.json({
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert invoices into Bubble (one page)
 app.post("/fortnox/upsert/invoices", async (req, res) => {
+  const createdIds = [];
+const createdDebug = [];
   const {
     connection_id,
     page = 1,
@@ -1551,8 +1553,14 @@ const DEBUG_FORCE_CREATE = true; // TEMP: sätt false när det funkar
       try {
         // Upsert-nyckel: (connection + ft_document_number)
         if (DEBUG_FORCE_CREATE) {
-  await bubbleCreate("FortnoxInvoice", payload);
-  created++;
+  const createdRes = await bubbleCreate("FortnoxInvoice", payload);
+created++;
+
+createdIds.push(createdRes?._id || createdRes?.id || null);
+createdDebug.push({
+  id: createdRes?._id || createdRes?.id || null,
+  debug_base: createdRes?._debug_base || null
+});
   continue;
 }
         const search = await bubbleFind("FortnoxInvoice", {
@@ -1586,16 +1594,18 @@ const DEBUG_FORCE_CREATE = true; // TEMP: sätt false när det funkar
       }
     }
 
-    return res.json({
-      ok: true,
-      connection_id,
-      page,
-      limit,
-      months_back,
-      meta: syncJson.meta || null,
-      counts: { created, updated, skipped, errors },
-      first_error: firstError
-    });
+   return res.json({
+  ok: true,
+  connection_id,
+  page,
+  limit,
+  months_back,
+  meta: syncJson.meta || null,
+  counts: { created, updated, skipped, errors },
+  created_ids: createdIds,
+  created_debug: createdDebug,
+  first_error: firstError
+});
 
   } catch (e) {
     console.error("[/fortnox/upsert/invoices] error", e);
