@@ -871,6 +871,96 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert customers - batch loop (N pages per run)
+app.post("/fortnox/upsert/customers/all", async (req, res) => {
+  const {
+    connection_id,
+    start_page = 1,
+    limit = 100,
+    max_pages = 10,
+    skip_without_orgnr = true
+  } = req.body || {};
+
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  const start = Number(start_page) || 1;
+  const maxP  = Math.max(1, Number(max_pages) || 10);
+  const lim   = Math.max(1, Math.min(500, Number(limit) || 100));
+
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let page = start;
+  let totalPages = null;
+
+  try {
+    for (let i = 0; i < maxP; i++) {
+      const r = await fetch("https://mira-exchange.onrender.com/fortnox/upsert/customers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({
+          connection_id,
+          page,
+          limit: lim,
+          skip_without_orgnr
+        })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        return res.status(400).json({ ok: false, error: "upsert/customers failed", detail: j, page });
+      }
+
+      created += j.counts?.created || 0;
+      updated += j.counts?.updated || 0;
+      skipped += j.counts?.skipped || 0;
+      errors  += j.counts?.errors  || 0;
+
+      const meta = j.meta || null;
+      const cur  = Number(meta?.["@CurrentPage"] || page);
+      const tot  = Number(meta?.["@TotalPages"] || 0);
+
+      if (tot) totalPages = tot;
+
+      // om vi nått sista sidan – klart
+      if (tot && cur >= tot) {
+        return res.json({
+          ok: true,
+          connection_id,
+          done: true,
+          start_page: start,
+          end_page: cur,
+          total_pages: tot,
+          counts: { created, updated, skipped, errors },
+          next_page: null
+        });
+      }
+
+      // annars vidare
+      page = cur + 1;
+    }
+
+    // inte klar ännu → returnera nästa sida att fortsätta på
+    return res.json({
+      ok: true,
+      connection_id,
+      done: false,
+      start_page: start,
+      end_page: page - 1,
+      total_pages: totalPages,
+      counts: { created, updated, skipped, errors },
+      next_page: page
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/customers/all] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 // Fortnox: refresh + spara token (legacy to User)
