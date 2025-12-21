@@ -1318,6 +1318,233 @@ const toIsoDate = (d) => {
   return s + "T00:00:00.000Z";
 };
 // ────────────────────────────────────────────────────────────
+// Fortnox: sync invoices (Render-first, read-only) with months_back filter on InvoiceDate
+app.post("/fortnox/sync/invoices", async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    months_back = 12
+  } = req.body || {};
+
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  try {
+    // 1) Hämta FortnoxConnection
+    const conn = await bubbleGet("FortnoxConnection", connection_id);
+    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+
+    // PAUS: om du stänger av is_active stoppar vi här
+    if (conn.is_active === false) {
+      return res.json({ ok: true, paused: true, connection_id });
+    }
+
+    let accessToken = conn.access_token || null;
+    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
+
+    // 2) Auto-refresh om token saknas/expired
+    if (!accessToken || Date.now() > expiresAt - 60_000) {
+      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id })
+      });
+      const refJson = await ref.json().catch(() => ({}));
+      if (!ref.ok) {
+        return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
+      }
+      const updated = await bubbleGet("FortnoxConnection", connection_id);
+      accessToken = updated?.access_token || null;
+    }
+
+    if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
+
+    // 3) months_back window (cutoff = today - months_back)
+    const mb = Math.max(1, Number(months_back) || 12);
+    const now = new Date();
+    const from = new Date(now);
+    from.setMonth(from.getMonth() - mb);
+
+    const fmt = (d) => {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    };
+    const cutoffDate = fmt(from); // "YYYY-MM-DD"
+    const cutoffTs = new Date(cutoffDate + "T00:00:00Z").getTime();
+
+    // 4) Hämta invoices (server-side filter kan vara olika — vi gör stabil client-side filter)
+    const url =
+      "https://api.fortnox.se/3/invoices" +
+      `?page=${encodeURIComponent(page)}` +
+      `&limit=${encodeURIComponent(limit)}`;
+
+    const r = await fetch(url, {
+      headers: {
+        "Authorization": "Bearer " + accessToken,
+        "Client-Secret": FORTNOX_CLIENT_SECRET,
+        "Accept": "application/json"
+      }
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      return res.status(r.status).json({
+        ok: false,
+        error: "Fortnox API error",
+        detail: data
+      });
+    }
+
+    const list = Array.isArray(data?.Invoices) ? data.Invoices : [];
+
+    // Filter på InvoiceDate (YYYY-MM-DD)
+    const keep = (inv) => {
+      const d = String(inv?.InvoiceDate || "").trim();
+      if (!d) return false;
+      const t = new Date(d + "T00:00:00Z").getTime();
+      return Number.isFinite(t) && t >= cutoffTs;
+    };
+
+    const filtered = list.filter(keep);
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      sent_filters: {
+        months_back: mb,
+        invoiceDateCutoff: cutoffDate
+      },
+      meta: data?.MetaInformation || null,
+      invoices: filtered,
+      debug_counts: {
+        fetched: list.length,
+        kept_by_invoicedate: filtered.length
+      }
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/sync/invoices] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert invoices into Bubble (one page)
+app.post("/fortnox/upsert/invoices", async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    months_back = 12
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  try {
+    // 1) reuse sync/invoices (refresh + filter)
+    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/invoices", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({ connection_id, page, limit, months_back })
+    });
+
+    const syncJson = await syncRes.json().catch(() => ({}));
+    if (!syncRes.ok || !syncJson.ok) {
+      return res.status(400).json({ ok: false, error: "sync/invoices failed", detail: syncJson });
+    }
+    if (syncJson.paused) {
+      return res.json({ ok: true, paused: true, connection_id });
+    }
+
+    const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
+
+    let created = 0, updated = 0, skipped = 0, errors = 0;
+    let firstError = null;
+
+    for (const inv of invoices) {
+      const docNo = String(inv?.DocumentNumber || "").trim();
+      if (!docNo) { skipped++; continue; }
+
+      // Bygg payload till Bubble (viktigt: ft_total ska vara STRING)
+      const payload = {
+        connection: connection_id,
+        ft_document_number: docNo,
+        ft_customer_number: String(inv?.CustomerNumber || ""),
+        ft_customer_name: String(inv?.CustomerName || ""),
+        ft_invoice_date: toIsoDate(inv?.InvoiceDate),
+        ft_due_date: toIsoDate(inv?.DueDate),
+        ft_total: inv?.Total == null ? "" : String(inv.Total),
+        ft_balance: inv?.Balance == null ? "" : String(inv.Balance),
+        ft_currency: String(inv?.Currency || ""),
+        ft_cancelled: !!inv?.Cancelled,
+        ft_sent: !!inv?.Sent,
+        ft_url: String(inv?.["@url"] || ""),
+        ft_raw_json: JSON.stringify(inv),
+        ft_last_seen_at: new Date().toISOString()
+      };
+
+      try {
+        // Upsert-nyckel: (connection + ft_document_number)
+        const search = await bubbleFind("FortnoxInvoice", {
+          constraints: [
+            { key: "connection", constraint_type: "equals", value: connection_id },
+            { key: "ft_document_number", constraint_type: "equals", value: docNo }
+          ],
+          limit: 1
+        });
+
+        const existing = Array.isArray(search) && search.length ? search[0] : null;
+
+        if (existing?._id) {
+          await bubblePatch("FortnoxInvoice", existing._id, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxInvoice", payload);
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        if (!firstError) {
+          firstError = {
+            docNo,
+            message: e.message,
+            status: e.status || null,
+            detail: e.detail || null
+          };
+        }
+        console.error("[upsert/invoices] create/patch failed", { docNo, message: e.message });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      months_back,
+      meta: syncJson.meta || null,
+      counts: { created, updated, skipped, errors },
+      first_error: firstError
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/invoices] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
 app.post("/fortnox/debug/connection", async (req, res) => {
   try {
