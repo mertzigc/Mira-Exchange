@@ -535,7 +535,20 @@ async function fortnoxGet(path, accessToken, query = {}) {
 
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/debug/bubble-bases", (req, res) => {
+  res.json({ ok: true, bubble_bases: BUBBLE_BASES });
+});
 
+app.get("/debug/routes", (req, res) => {
+  const routes = [];
+  (app._router?.stack || []).forEach(l => {
+    if (l.route?.path) {
+      const methods = Object.keys(l.route.methods || {}).map(m => m.toUpperCase());
+      routes.push({ methods, path: l.route.path });
+    }
+  });
+  res.json({ ok: true, count: routes.length, routes });
+});
 // ────────────────────────────────────────────────────────────
 app.get("/fortnox/authorize", (req, res) => {
   const u = req.query.u && String(req.query.u).trim();     // legacy: bubble user id
