@@ -234,6 +234,34 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (objekt-CRUD)
+async function bubbleFind(typeName, { constraints = [], limit = 1 }) {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+
+  constraints.forEach((c, i) => {
+    qs.set(`constraints[${i}][key]`, c.key);
+    qs.set(`constraints[${i}][constraint_type]`, c.constraint_type || "equals");
+    qs.set(`constraints[${i}][value]`, c.value);
+  });
+
+  for (const base of BUBBLE_BASES) {
+    try {
+      const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
+      const r = await fetch(url, {
+        headers: {
+          Authorization: "Bearer " + BUBBLE_API_KEY
+        }
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && Array.isArray(j?.response?.results)) {
+        return j.response.results;
+      }
+    } catch (e) {
+      console.error("[bubbleFind] error", e.message);
+    }
+  }
+  return [];
+}
 async function bubbleGet(typeName, id) {
   for (const base of BUBBLE_BASES) {
     const url = `${base}/api/1.1/obj/${typeName}/${id}`;
