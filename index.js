@@ -1095,10 +1095,69 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
       counts: { created, updated, skipped, errors }
     });
 
+  } let firstError = null;
+
+for (const o of orders) {
+  const docNo = String(o?.DocumentNumber || "").trim();
+  if (!docNo) { skipped++; continue; }
+
+  const payload = {
+    connection: connection_id,
+    ft_document_number: docNo,
+    ft_customer_number: String(o?.CustomerNumber || ""),
+    ft_customer_name: String(o?.CustomerName || ""),
+    ft_order_date: String(o?.OrderDate || ""),
+    ft_delivery_date: String(o?.DeliveryDate || ""),
+    ft_total: o?.Total ?? null,
+    ft_cancelled: !!o?.Cancelled,
+    ft_sent: !!o?.Sent,
+    ft_currency: String(o?.Currency || ""),
+    ft_url: String(o?.["@url"] || ""),
+    ft_raw_json: JSON.stringify(o),
+    ft_last_seen_at: new Date().toISOString()
+  };
+
+  try {
+    const search = await bubbleFind("FortnoxOrder", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "ft_document_number", constraint_type: "equals", value: docNo }
+      ],
+      limit: 1
+    });
+
+    const existing = Array.isArray(search) && search.length ? search[0] : null;
+
+    if (existing?._id) {
+      await bubblePatch("FortnoxOrder", existing._id, payload);
+      updated++;
+    } else {
+      await bubbleCreate("FortnoxOrder", payload);
+      created++;
+    }
   } catch (e) {
-    console.error("[/fortnox/upsert/orders] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    errors++;
+    if (!firstError) {
+      firstError = {
+        docNo,
+        message: e.message,
+        status: e.status || null,
+        detail: e.detail || null,
+        payload_keys: Object.keys(payload)
+      };
+    }
   }
+}
+
+return res.json({
+  ok: true,
+  connection_id,
+  page,
+  limit,
+  months_back,
+  meta: syncJson.meta || null,
+  counts: { created, updated, skipped, errors },
+  first_error: firstError
 });
 
 // ────────────────────────────────────────────────────────────
