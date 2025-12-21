@@ -1002,6 +1002,104 @@ app.post("/fortnox/probe/orders-delivery-filter", async (req, res) => {
     results
   });
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert orders into Bubble (one page)
+app.post("/fortnox/upsert/orders", async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    months_back = 12
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  try {
+    // 1) reuse sync/orders (it already refreshes + delivery-filters)
+    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/orders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({ connection_id, page, limit, months_back })
+    });
+
+    const syncJson = await syncRes.json().catch(() => ({}));
+    if (!syncRes.ok || !syncJson.ok) {
+      return res.status(400).json({ ok: false, error: "sync/orders failed", detail: syncJson });
+    }
+
+    const orders = Array.isArray(syncJson.orders) ? syncJson.orders : [];
+
+    // 2) load connection object (needed to store as field reference)
+    const conn = await bubbleGet("FortnoxConnection", connection_id);
+    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+
+    let created = 0, updated = 0, skipped = 0, errors = 0;
+
+    for (const o of orders) {
+      const docNo = String(o?.DocumentNumber || "").trim();
+      if (!docNo) { skipped++; continue; }
+
+      const payload = {
+        connection: connection_id, // Bubble expects the thing's id when field type is FortnoxConnection
+        ft_document_number: docNo,
+        ft_customer_number: String(o?.CustomerNumber || ""),
+        ft_customer_name: String(o?.CustomerName || ""),
+        ft_order_date: String(o?.OrderDate || ""),       // börja som text om du vill
+        ft_delivery_date: String(o?.DeliveryDate || ""), // börja som text om du vill
+        ft_total: o?.Total ?? null,
+        ft_cancelled: !!o?.Cancelled,
+        ft_sent: !!o?.Sent,
+        ft_currency: String(o?.Currency || ""),
+        ft_url: String(o?.["@url"] || ""),
+        ft_raw_json: JSON.stringify(o),
+        ft_last_seen_at: new Date().toISOString()
+      };
+
+      // 3) upsert by (connection + ft_document_number)
+      try {
+        // find existing
+        const search = await bubbleFind("FortnoxOrder", {
+          constraints: [
+            { key: "connection", constraint_type: "equals", value: connection_id },
+            { key: "ft_document_number", constraint_type: "equals", value: docNo }
+          ],
+          limit: 1
+        });
+
+        const existing = Array.isArray(search) && search.length ? search[0] : null;
+
+        if (existing?._id) {
+          await bubblePatch("FortnoxOrder", existing._id, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxOrder", payload);
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        // Logga bara en lätt rad så vi inte spammar
+        console.error("[upsert/orders] error", { docNo, msg: e.message });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      months_back,
+      meta: syncJson.meta || null,
+      counts: { created, updated, skipped, errors }
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/orders] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
