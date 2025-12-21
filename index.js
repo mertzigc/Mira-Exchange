@@ -1524,7 +1524,7 @@ const createdDebug = [];
     }
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
-const DEBUG_FORCE_CREATE = true; // TEMP: sätt false när det funkar
+const DEBUG_FORCE_CREATE = false; // TEMP: sätt false när det funkar
     let created = 0, updated = 0, skipped = 0, errors = 0;
     let firstError = null;
 
