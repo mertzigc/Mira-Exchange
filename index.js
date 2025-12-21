@@ -1338,7 +1338,6 @@ function parseFtDateToTs(v) {
 
   return NaN;
 }
-};
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync invoices (Render-first, read-only) with months_back filter on InvoiceDate
 app.post("/fortnox/sync/invoices", async (req, res) => {
