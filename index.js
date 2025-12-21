@@ -291,20 +291,6 @@ async function bubblePatch(typeName, id, fields) {
   }
   return false;
 }
-async function bubbleGet(typeName, id) {
-  for (const base of BUBBLE_BASES) {
-    const url = base + "/api/1.1/obj/" + typeName + "/" + id;
-    try {
-      const r = await fetch(url, {
-        method: "GET",
-        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
-      });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok && j?.response) return j.response;
-    } catch {}
-  }
-  return null;
-}
 
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
