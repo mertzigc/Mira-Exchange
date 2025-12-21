@@ -67,8 +67,8 @@ const FORTNOX_REDIRECT_URI  =
 // Bubble: spara till MIRA först, sen version-test
 // (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
-  // Version-test först
   "https://mira-fm.com/version-test",
+  "https://carotteconcierge.bubbleapps.io/version-test",
 ];
 console.log("[BOOT] BUBBLE_BASES =", BUBBLE_BASES);
 console.log("[BOOT] INDEX_FINGERPRINT = 2025-12-21_15:40_v1");
@@ -234,66 +234,36 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 }
 
 // ────────────────────────────────────────────────────────────
-// Bubble Data API helpers (objekt-CRUD)
-// Bubble Data API helpers — FIND via /search (viktigt!)
+// ────────────────────────────────────────────────────────────
+// Bubble Data API helpers (object-CRUD)
 async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
+  const qs = new URLSearchParams();
+  if (limit) qs.set("limit", String(limit));
+
+  constraints.forEach((c, i) => {
+    qs.set(`constraints[${i}][key]`, c.key);
+    qs.set(`constraints[${i}][constraint_type]`, c.constraint_type || "equals");
+    qs.set(`constraints[${i}][value]`, String(c.value ?? ""));
+  });
+
   let lastErr = null;
 
   for (const base of BUBBLE_BASES) {
-    // 1) Försök med /search (POST)
+    const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
     try {
-      const url = `${base}/api/1.1/obj/${typeName}/search`;
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY
-        },
-        body: JSON.stringify({ constraints, limit })
-      });
-
-      const text = await r.text();
-      let j = {};
-      try { j = text ? JSON.parse(text) : {}; } catch {}
-
-      if (r.ok) {
-        const results = j?.response?.results;
-        return Array.isArray(results) ? results : [];
-      }
-
-      // Om /search inte finns (404) → prova fallback nedan
-      if (r.status !== 404) {
-        lastErr = { base, status: r.status, body: j || text };
-        continue;
-      }
-    } catch (e) {
-      lastErr = { base, error: String(e) };
-    }
-
-    // 2) Fallback: GET /obj/<type>?constraints=<JSON>
-    try {
-      const qs = new URLSearchParams();
-      if (limit) qs.set("limit", String(limit));
-      if (constraints?.length) qs.set("constraints", JSON.stringify(constraints));
-
-      const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
       const r = await fetch(url, {
         headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
       });
-
-      const text = await r.text();
-      let j = {};
-      try { j = text ? JSON.parse(text) : {}; } catch {}
+      const j = await r.json().catch(() => ({}));
 
       if (!r.ok) {
-        lastErr = { base, status: r.status, body: j || text };
-        continue;
+        lastErr = { base, status: r.status, body: j };
+        continue; // testa nästa base
       }
-
       const results = j?.response?.results;
       return Array.isArray(results) ? results : [];
     } catch (e) {
-      lastErr = { base, error: String(e) };
+      lastErr = { base, error: String(e?.message || e) };
     }
   }
 
@@ -301,7 +271,10 @@ async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
   err.detail = lastErr;
   throw err;
 }
+
 async function bubbleGet(typeName, id) {
+  let lastErr = null;
+
   for (const base of BUBBLE_BASES) {
     const url = `${base}/api/1.1/obj/${typeName}/${id}`;
     try {
@@ -309,108 +282,86 @@ async function bubbleGet(typeName, id) {
         headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
       });
       const j = await r.json().catch(() => ({}));
-      if (r.ok && j?.response) return j.response;
-      log("[bubbleGet] fail", { base, typeName, id, status: r.status, body: j });
+
+      if (!r.ok) {
+        lastErr = { base, status: r.status, body: j };
+        continue;
+      }
+      return j?.response || null;
     } catch (e) {
-      log("[bubbleGet] error", { base, e: String(e) });
+      lastErr = { base, error: String(e?.message || e) };
     }
   }
-  return null;
+
+  const err = new Error("bubbleGet failed");
+  err.detail = lastErr;
+  throw err;
 }
 
-async function bubblePatch(typeName, id, fields) {
-  const payload = fields || {};
-  for (const base of BUBBLE_BASES) {
-    const url = base + "/api/1.1/obj/" + typeName + "/" + id;
+async function bubbleCreate(typeName, payload) {
+  let lastErr = null;
 
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}`;
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + BUBBLE_API_KEY
+        },
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        lastErr = { base, status: r.status, body: j };
+        continue;
+      }
+      return j?.id || j?.response?.id || null;
+    } catch (e) {
+      lastErr = { base, error: String(e?.message || e) };
+    }
+  }
+
+  const err = new Error("bubbleCreate failed");
+  err.detail = lastErr;
+  throw err;
+}
+
+async function bubblePatch(typeName, id, payload) {
+  let lastErr = null;
+
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
     try {
       const r = await fetch(url, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      // ✅ Bubble kan svara 204 No Content vid PATCH även när allt gick bra
-      if (r.status === 204) {
-        log("[bubblePatch] ok (204)", { base, typeName, id });
-        return true;
-      }
-
-      // För andra svar: försök läsa body (kan vara JSON eller text)
-      const text = await r.text().catch(() => "");
-      let body = null;
-      try { body = text ? JSON.parse(text) : null; } catch { body = { text }; }
-
-      const ok = r.ok && (body?.status === "success" || body?.response || body === null);
-
-      if (ok) {
-        log("[bubblePatch] ok", { base, typeName, id, status: r.status });
-        return true;
-      }
-
-      log("[bubblePatch] fail", { base, typeName, id, status: r.status, body });
-    } catch (e) {
-      log("[bubblePatch] error", { base, typeName, id, e: String(e) });
-    }
-  }
-  return false;
-}
-async function bubbleCreate(typeName, fields) {
-  for (const base of BUBBLE_BASES) {
-    const url = base + "/api/1.1/obj/" + typeName;
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
           Authorization: "Bearer " + BUBBLE_API_KEY
         },
-        body: JSON.stringify(fields || {})
+        body: JSON.stringify(payload)
       });
 
-      if (r.status === 204) return { ok: true, id: null };
-
-      const text = await r.text().catch(() => "");
-      let body = null;
-      try { body = text ? JSON.parse(text) : null; } catch { body = { text }; }
-
-      if (r.ok && body?.id) return { ok: true, id: body.id };
-      if (r.ok && body?.response?._id) return { ok: true, id: body.response._id };
-
-      log("[bubbleCreate] fail", { base, typeName, status: r.status, body });
-    } catch (e) {
-      log("[bubbleCreate] error", { base, typeName, e: String(e) });
-    }
-  }
-  return { ok: false, id: null };
-}
-
-async function bubbleFindOne(typeName, constraints = []) {
-  // constraints: [{ key: "customer_number", constraint_type: "equals", value: "14" }, ...]
-  for (const base of BUBBLE_BASES) {
-    const url = base + "/api/1.1/obj/" + typeName;
-
-    const body = { constraints };
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY
-        },
-        body: JSON.stringify(body)
-      });
+      // Bubble PATCH ger ofta 204 utan body
+      if (r.status === 204) return true;
 
       const j = await r.json().catch(() => ({}));
-      if (r.ok && j?.response?.results?.length) return j.response.results[0];
-    } catch {}
+      if (!r.ok) {
+        lastErr = { base, status: r.status, body: j };
+        continue;
+      }
+      return true;
+    } catch (e) {
+      lastErr = { base, error: String(e?.message || e) };
+    }
   }
-  return null;
-}
 
+  const err = new Error("bubblePatch failed");
+  err.detail = lastErr;
+  throw err;
+}
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
 async function fortnoxTokenExchange(code) {
