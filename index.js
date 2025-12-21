@@ -1522,7 +1522,7 @@ app.post("/fortnox/upsert/invoices", async (req, res) => {
     }
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
-
+const DEBUG_FORCE_CREATE = true; // TEMP: sätt false när det funkar
     let created = 0, updated = 0, skipped = 0, errors = 0;
     let firstError = null;
 
@@ -1550,6 +1550,11 @@ app.post("/fortnox/upsert/invoices", async (req, res) => {
 
       try {
         // Upsert-nyckel: (connection + ft_document_number)
+        if (DEBUG_FORCE_CREATE) {
+  await bubbleCreate("FortnoxInvoice", payload);
+  created++;
+  continue;
+}
         const search = await bubbleFind("FortnoxInvoice", {
           constraints: [
             { key: "connection", constraint_type: "equals", value: connection_id },
