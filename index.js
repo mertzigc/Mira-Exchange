@@ -68,7 +68,6 @@ const FORTNOX_REDIRECT_URI  =
 // (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
   "https://mira-fm.com/version-test",
-  "https://carotteconcierge.bubbleapps.io/version-test",
 ];
 console.log("[BOOT] BUBBLE_BASES =", BUBBLE_BASES);
 console.log("[BOOT] INDEX_FINGERPRINT = 2025-12-21_15:40_v1");
