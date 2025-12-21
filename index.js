@@ -291,6 +291,58 @@ async function bubblePatch(typeName, id, fields) {
   }
   return false;
 }
+async function bubbleCreate(typeName, fields) {
+  for (const base of BUBBLE_BASES) {
+    const url = base + "/api/1.1/obj/" + typeName;
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + BUBBLE_API_KEY
+        },
+        body: JSON.stringify(fields || {})
+      });
+
+      if (r.status === 204) return { ok: true, id: null };
+
+      const text = await r.text().catch(() => "");
+      let body = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { text }; }
+
+      if (r.ok && body?.id) return { ok: true, id: body.id };
+      if (r.ok && body?.response?._id) return { ok: true, id: body.response._id };
+
+      log("[bubbleCreate] fail", { base, typeName, status: r.status, body });
+    } catch (e) {
+      log("[bubbleCreate] error", { base, typeName, e: String(e) });
+    }
+  }
+  return { ok: false, id: null };
+}
+
+async function bubbleFindOne(typeName, constraints = []) {
+  // constraints: [{ key: "customer_number", constraint_type: "equals", value: "14" }, ...]
+  for (const base of BUBBLE_BASES) {
+    const url = base + "/api/1.1/obj/" + typeName;
+
+    const body = { constraints };
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + BUBBLE_API_KEY
+        },
+        body: JSON.stringify(body)
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.response?.results?.length) return j.response.results[0];
+    } catch {}
+  }
+  return null;
+}
 
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
@@ -725,6 +777,97 @@ app.post("/fortnox/sync/customers", async (req, res) => {
 
   } catch (e) {
     console.error("[/fortnox/sync/customers] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
+// Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
+app.post("/fortnox/upsert/customers", async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    skip_without_orgnr = true
+  } = req.body || {};
+
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  try {
+    // 1) Hämta customers (återanvänd din sync-route internt)
+    const r = await fetch("https://mira-exchange.onrender.com/fortnox/sync/customers", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({ connection_id, page, limit })
+    });
+
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) {
+      return res.status(400).json({ ok: false, error: "sync/customers failed", detail: j });
+    }
+
+    const list = Array.isArray(j.customers) ? j.customers : [];
+
+    let created = 0, updated = 0, skipped = 0, errors = 0;
+
+    for (const c of list) {
+      const customerNumber = String(c?.CustomerNumber || "").trim();
+      const orgnr = String(c?.OrganisationNumber || "").trim();
+
+      if (!customerNumber) { skipped++; continue; }
+      if (skip_without_orgnr && !orgnr) { skipped++; continue; }
+
+      const payload = {
+        connection_id,
+        customer_number: customerNumber,
+        name: c?.Name || "",
+        organisation_number: orgnr || "",
+        email: c?.Email || "",
+        phone: c?.Phone || "",
+        address1: c?.Address1 || "",
+        address2: c?.Address2 || "",
+        zip: c?.ZipCode || "",
+        city: c?.City || "",
+        ft_url: c?.["@url"] || c?.["@url".toString()] || c?.["@url"] || "",
+        last_seen_at: new Date().toISOString(),
+        raw_json: JSON.stringify(c || {})
+      };
+
+      try {
+        // 2) Find existing by (connection_id + customer_number)
+        const existing = await bubbleFindOne("FortnoxCustomer", [
+          { key: "connection_id", constraint_type: "equals", value: connection_id },
+          { key: "customer_number", constraint_type: "equals", value: customerNumber }
+        ]);
+
+        if (existing?."_id") {
+          const ok = await bubblePatch("FortnoxCustomer", existing._id, payload);
+          if (ok) updated++; else errors++;
+        } else {
+          const cr = await bubbleCreate("FortnoxCustomer", payload);
+          if (cr.ok) created++; else errors++;
+        }
+      } catch {
+        errors++;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      skip_without_orgnr,
+      meta: j.meta || null,
+      counts: { created, updated, skipped, errors }
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/customers] error", e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
