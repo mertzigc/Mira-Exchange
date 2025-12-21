@@ -1019,7 +1019,7 @@ if (existing?._id && foundDoc === docNo) {
       }
     }
 
-    return res.json({
+        return res.json({
       ok: true,
       connection_id,
       page,
@@ -1031,11 +1031,9 @@ if (existing?._id && foundDoc === docNo) {
     });
 
   } catch (e) {
-    console.error("[upsert/orders] create/patch failed", {
-  docNo,
-  message: e.message,
-  status: e.status || null,
-  detail: e.detail || null
+    console.error("[/fortnox/upsert/orders] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ────────────────────────────────────────────────────────────
@@ -1337,7 +1335,11 @@ app.post("/fortnox/debug/connection", async (req, res) => {
       last_error: conn.last_error || ""
     });
   } catch (e) {
-    return res.status(400).json({ ok: false, error: e.message });
+    return res.status(400).json({
+      ok: false,
+      error: e.message,
+      detail: e.detail || null
+    });
   }
 });
 
