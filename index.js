@@ -70,7 +70,8 @@ const BUBBLE_BASES = [
   // Version-test först
   "https://mira-fm.com/version-test",
 ];
-
+console.log("[BOOT] BUBBLE_BASES =", BUBBLE_BASES);
+console.log("[BOOT] INDEX_FINGERPRINT = 2025-12-21_15:40_v1");
 // ────────────────────────────────────────────────────────────
 // Helpers
 const log = (msg, data) => console.log(msg, data ? JSON.stringify(data, null, 2) : "");
