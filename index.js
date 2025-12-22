@@ -1587,8 +1587,6 @@ if (existing && existing._id) {
   created++;
 }
 
-const existing = Array.isArray(search) && search.length ? search[0] : null;
-
 // ✅ BEVIS-DEBUG (kör bara ibland för att inte spamma)
 if (Math.random() < 0.15) {
   console.log("[upsert/invoices] find-check", {
