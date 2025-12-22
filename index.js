@@ -1572,7 +1572,10 @@ createdDebug.push({
         });
 
         const existing = Array.isArray(search) && search.length ? search[0] : null;
-
+console.log(
+  "[inv-upsert-check]",
+  { docNo, found_id: existing?._id || null, found_doc: existing?.ft_document_number || null }
+);
         if (existing?._id) {
           await bubblePatch("FortnoxInvoice", existing._id, payload);
           updated++;
