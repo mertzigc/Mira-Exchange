@@ -1544,6 +1544,7 @@ const DEBUG_FORCE_CREATE = false; // TEMP: sätt false när det funkar
         ft_balance: inv?.Balance == null ? "" : String(inv.Balance),
         ft_currency: String(inv?.Currency || ""),
         ft_cancelled: !!inv?.Cancelled,
+        ft_unique_key: `${connection_id}::${docNo}`,
         ft_sent: !!inv?.Sent,
         ft_url: String(inv?.["@url"] || ""),
         ft_raw_json: JSON.stringify(inv),
@@ -1563,13 +1564,29 @@ createdDebug.push({
 });
   continue;
 }
-        const search = await bubbleFind("FortnoxInvoice", {
+        const uniqueKey = `${connection_id}::${docNo}`;
+
+// --- STEG 4: Upsert (BOMBSÄKER) ---
+const uniqueKey = `${connection_id}::${docNo}`;
+
+// 1) Hitta ev. befintlig invoice via ft_unique_key
+const search = await bubbleFind("FortnoxInvoice", {
   constraints: [
-    { key: "connection", constraint_type: "equals", value: connection_id },
-    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+    { key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }
   ],
   limit: 1
 });
+
+const existing = Array.isArray(search) && search.length ? search[0] : null;
+
+// 2) Patch om den finns, annars Create
+if (existing && existing._id) {
+  await bubblePatch("FortnoxInvoice", existing._id, payload);
+  updated++;
+} else {
+  await bubbleCreate("FortnoxInvoice", payload);
+  created++;
+}
 
 const existing = Array.isArray(search) && search.length ? search[0] : null;
 
