@@ -1564,25 +1564,38 @@ createdDebug.push({
   continue;
 }
         const search = await bubbleFind("FortnoxInvoice", {
-          constraints: [
-            { key: "connection", constraint_type: "equals", value: connection_id },
-            { key: "ft_document_number", constraint_type: "equals", value: docNo }
-          ],
-          limit: 1
-        });
+  constraints: [
+    { key: "connection", constraint_type: "equals", value: connection_id },
+    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+  ],
+  limit: 1
+});
 
-        const existing = Array.isArray(search) && search.length ? search[0] : null;
-console.log(
-  "[inv-upsert-check]",
-  { docNo, found_id: existing?._id || null, found_doc: existing?.ft_document_number || null }
-);
-        if (existing?._id) {
-          await bubblePatch("FortnoxInvoice", existing._id, payload);
-          updated++;
-        } else {
-          await bubbleCreate("FortnoxInvoice", payload);
-          created++;
-        }
+const existing = Array.isArray(search) && search.length ? search[0] : null;
+
+// ✅ BEVIS-DEBUG (kör bara ibland för att inte spamma)
+if (Math.random() < 0.15) {
+  console.log("[upsert/invoices] find-check", {
+    docNo,
+    found_id: existing?._id,
+    found_doc: existing?.ft_document_number,
+    found_conn: existing?.connection
+  });
+}
+
+// ✅ SAFETY-GUARD: om Bubble returnerar “fel” record → behandla som “not found”
+const matched =
+  existing &&
+  String(existing?.ft_document_number || "").trim() === docNo &&
+  String(existing?.connection || "").trim() === String(connection_id);
+
+if (matched) {
+  await bubblePatch("FortnoxInvoice", existing._id, payload);
+  updated++;
+} else {
+  await bubbleCreate("FortnoxInvoice", payload);
+  created++;
+}
       } catch (e) {
         errors++;
         if (!firstError) {
