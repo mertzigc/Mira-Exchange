@@ -1564,7 +1564,6 @@ createdDebug.push({
 });
   continue;
 }
-        const uniqueKey = `${connection_id}::${docNo}`;
 
 // --- STEG 4: Upsert (BOMBSÄKER) ---
 const uniqueKey = `${connection_id}::${docNo}`;
