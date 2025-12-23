@@ -1643,6 +1643,226 @@ if (matched) {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: upsert invoice rows (per invoice docno)
+app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
+  const { connection_id, invoice_docno } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  if (!invoice_docno) return res.status(400).json({ ok: false, error: "Missing invoice_docno" });
+
+  try {
+    // 1) Connection + pause
+    const conn = await bubbleGet("FortnoxConnection", connection_id);
+    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+    if (conn.is_active === false) return res.json({ ok: true, paused: true, connection_id });
+
+    // 2) Token (refresh vid behov)
+    let accessToken = conn.access_token || null;
+    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
+
+    if (!accessToken || Date.now() > expiresAt - 60_000) {
+      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+        body: JSON.stringify({ connection_id })
+      });
+      const refJson = await ref.json().catch(() => ({}));
+      if (!ref.ok) return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
+
+      const updated = await bubbleGet("FortnoxConnection", connection_id);
+      accessToken = updated?.access_token || null;
+    }
+    if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
+
+    // 3) Hämta invoice detaljer (innehåller InvoiceRows)
+    const url = `https://api.fortnox.se/3/invoices/${encodeURIComponent(String(invoice_docno))}`;
+    const r = await fetch(url, {
+      headers: {
+        Authorization: "Bearer " + accessToken,
+        "Client-Secret": FORTNOX_CLIENT_SECRET,
+        Accept: "application/json"
+      }
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: "Fortnox API error", detail: data });
+
+    const invoice = data?.Invoice || data?.invoice || null;
+    const rows = Array.isArray(invoice?.InvoiceRows) ? invoice.InvoiceRows : [];
+
+    // 4) Hitta parent invoice i Bubble (måste finnas)
+    const invDocNo = String(invoice?.DocumentNumber || invoice_docno).trim();
+    const searchInv = await bubbleFind("FortnoxInvoice", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "ft_document_number", constraint_type: "equals", value: invDocNo }
+      ],
+      limit: 1
+    });
+    const invObj = Array.isArray(searchInv) && searchInv.length ? searchInv[0] : null;
+    if (!invObj?._id) {
+      return res.status(404).json({ ok: false, error: "Parent FortnoxInvoice not found in Bubble", invDocNo });
+    }
+
+    // 5) Upsert rows med ft_unique_key
+    let created = 0, updated = 0, errors = 0;
+    let firstError = null;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowIndex = i + 1;
+      const uniqueKey = `${connection_id}::INV::${invDocNo}::${rowIndex}`;
+
+      const payload = {
+        connection: connection_id,
+        invoice: invObj._id,
+        ft_invoice_document_number: invDocNo,
+        ft_row_index: rowIndex,
+        ft_article_number: String(row?.ArticleNumber || ""),
+        ft_description: String(row?.Description || ""),
+        ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
+        ft_unit: String(row?.Unit || ""),
+        ft_price: row?.Price == null ? "" : String(row.Price),
+        ft_discount: row?.Discount == null ? "" : String(row.Discount),
+        ft_vat: row?.VAT == null ? "" : String(row.VAT),
+        ft_total: row?.Total == null ? "" : String(row.Total),
+        ft_unique_key: uniqueKey,
+        ft_raw_json: JSON.stringify(row)
+      };
+
+      try {
+        const found = await bubbleFind("FortnoxInvoiceRow", {
+          constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
+          limit: 1
+        });
+        const existing = Array.isArray(found) && found.length ? found[0] : null;
+
+        if (existing?._id) {
+          await bubblePatch("FortnoxInvoiceRow", existing._id, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxInvoiceRow", payload);
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
+      }
+    }
+
+    return res.json({ ok: true, connection_id, invoice_docno: invDocNo, counts: { created, updated, errors }, first_error: firstError });
+  } catch (e) {
+    console.error("[/fortnox/upsert/invoice-rows] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert order rows (per order docno)
+app.post("/fortnox/upsert/order-rows", async (req, res) => {
+  const { connection_id, order_docno } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  if (!order_docno) return res.status(400).json({ ok: false, error: "Missing order_docno" });
+
+  try {
+    const conn = await bubbleGet("FortnoxConnection", connection_id);
+    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+    if (conn.is_active === false) return res.json({ ok: true, paused: true, connection_id });
+
+    let accessToken = conn.access_token || null;
+    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
+
+    if (!accessToken || Date.now() > expiresAt - 60_000) {
+      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+        body: JSON.stringify({ connection_id })
+      });
+      const refJson = await ref.json().catch(() => ({}));
+      if (!ref.ok) return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
+
+      const updated = await bubbleGet("FortnoxConnection", connection_id);
+      accessToken = updated?.access_token || null;
+    }
+    if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
+
+    const url = `https://api.fortnox.se/3/orders/${encodeURIComponent(String(order_docno))}`;
+    const r = await fetch(url, {
+      headers: {
+        Authorization: "Bearer " + accessToken,
+        "Client-Secret": FORTNOX_CLIENT_SECRET,
+        Accept: "application/json"
+      }
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return res.status(r.status).json({ ok: false, error: "Fortnox API error", detail: data });
+
+    const order = data?.Order || data?.order || null;
+    const rows = Array.isArray(order?.OrderRows) ? order.OrderRows : [];
+
+    const ordDocNo = String(order?.DocumentNumber || order_docno).trim();
+
+    const searchOrd = await bubbleFind("FortnoxOrder", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "ft_document_number", constraint_type: "equals", value: ordDocNo }
+      ],
+      limit: 1
+    });
+    const ordObj = Array.isArray(searchOrd) && searchOrd.length ? searchOrd[0] : null;
+    if (!ordObj?._id) {
+      return res.status(404).json({ ok: false, error: "Parent FortnoxOrder not found in Bubble", ordDocNo });
+    }
+
+    let created = 0, updated = 0, errors = 0;
+    let firstError = null;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowIndex = i + 1;
+      const uniqueKey = `${connection_id}::ORD::${ordDocNo}::${rowIndex}`;
+
+      const payload = {
+        connection: connection_id,
+        order: ordObj._id,
+        ft_order_document_number: ordDocNo,
+        ft_row_index: rowIndex,
+        ft_article_number: String(row?.ArticleNumber || ""),
+        ft_description: String(row?.Description || ""),
+        ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
+        ft_unit: String(row?.Unit || ""),
+        ft_price: row?.Price == null ? "" : String(row.Price),
+        ft_discount: row?.Discount == null ? "" : String(row.Discount),
+        ft_vat: row?.VAT == null ? "" : String(row.VAT),
+        ft_total: row?.Total == null ? "" : String(row.Total),
+        ft_unique_key: uniqueKey,
+        ft_raw_json: JSON.stringify(row)
+      };
+
+      try {
+        const found = await bubbleFind("FortnoxOrderRow", {
+          constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
+          limit: 1
+        });
+        const existing = Array.isArray(found) && found.length ? found[0] : null;
+
+        if (existing?._id) {
+          await bubblePatch("FortnoxOrderRow", existing._id, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxOrderRow", payload);
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
+      }
+    }
+
+    return res.json({ ok: true, connection_id, order_docno: ordDocNo, counts: { created, updated, errors }, first_error: firstError });
+  } catch (e) {
+    console.error("[/fortnox/upsert/order-rows] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
 app.post("/fortnox/debug/connection", async (req, res) => {
   try {
