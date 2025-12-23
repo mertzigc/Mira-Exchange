@@ -1755,6 +1755,88 @@ app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: upsert invoice rows for ALL invoices on one invoices page
+app.post("/fortnox/upsert/invoice-rows/page", async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 50,
+    months_back = 12,
+    pause_ms = 250
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  try {
+    // 1) Hämta listan invoices (återanvänd din sync/invoices som redan funkar)
+    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/invoices", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({ connection_id, page, limit, months_back })
+    });
+
+    const syncJson = await syncRes.json().catch(() => ({}));
+    if (!syncRes.ok || !syncJson.ok) {
+      return res.status(400).json({ ok: false, error: "sync/invoices failed", detail: syncJson });
+    }
+
+    const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
+    const docNos = invoices
+      .map(inv => String(inv?.DocumentNumber || "").trim())
+      .filter(Boolean);
+
+    // 2) Kör invoice-rows för varje docNo
+    let ok_count = 0, fail_count = 0;
+    const results = [];
+
+    for (const docNo of docNos) {
+      try {
+        const r = await fetch("https://mira-exchange.onrender.com/fortnox/upsert/invoice-rows", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.MIRA_RENDER_API_KEY
+          },
+          body: JSON.stringify({ connection_id, invoice_docno: docNo })
+        });
+
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) {
+          fail_count++;
+          results.push({ docNo, ok: false, detail: j });
+        } else {
+          ok_count++;
+          results.push({ docNo, ok: true, counts: j.counts });
+        }
+      } catch (e) {
+        fail_count++;
+        results.push({ docNo, ok: false, error: e.message });
+      }
+
+      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      months_back,
+      docs: docNos.length,
+      ok_count,
+      fail_count,
+      results
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/invoice-rows/page] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // Fortnox: upsert order rows (per order docno)
 app.post("/fortnox/upsert/order-rows", async (req, res) => {
   const { connection_id, order_docno } = req.body || {};
@@ -1859,6 +1941,74 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
     return res.json({ ok: true, connection_id, order_docno: ordDocNo, counts: { created, updated, errors }, first_error: firstError });
   } catch (e) {
     console.error("[/fortnox/upsert/order-rows] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert order rows for ALL orders on one orders page
+app.post("/fortnox/upsert/order-rows/page", async (req, res) => {
+  const { connection_id, page = 1, limit = 50, months_back = 12, pause_ms = 250 } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  try {
+    // 1) Hämta listan orders (återanvänd gärna din sync/orders om du har den)
+    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+      body: JSON.stringify({ connection_id, page, limit, months_back })
+    });
+    const syncJson = await syncRes.json().catch(() => ({}));
+    if (!syncRes.ok || !syncJson.ok) {
+      return res.status(400).json({ ok: false, error: "sync/orders failed", detail: syncJson });
+    }
+
+    const orders = Array.isArray(syncJson.orders) ? syncJson.orders : [];
+    const docNos = orders
+      .map(o => String(o?.DocumentNumber || "").trim())
+      .filter(Boolean);
+
+    // 2) Kör order-rows för varje docNo
+    let ok_count = 0, fail_count = 0;
+    const results = [];
+
+    for (const docNo of docNos) {
+      try {
+        const r = await fetch("https://mira-exchange.onrender.com/fortnox/upsert/order-rows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, order_docno: docNo })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) {
+          fail_count++;
+          results.push({ docNo, ok: false, detail: j });
+        } else {
+          ok_count++;
+          results.push({ docNo, ok: true, counts: j.counts });
+        }
+      } catch (e) {
+        fail_count++;
+        results.push({ docNo, ok: false, error: e.message });
+      }
+
+      // paus mellan anrop så Fortnox inte blir sur
+      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      months_back,
+      docs: docNos.length,
+      ok_count,
+      fail_count,
+      results
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/order-rows/page] error", e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
