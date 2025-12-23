@@ -1709,7 +1709,7 @@ app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowIndex = i + 1;
-      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? idx + 1);
+      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
       const uniqueKey = `${connection_id}::INV::${invDocNo}::${rowIndex}`;
 
       const payload = {
@@ -1912,7 +1912,7 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowIndex = i + 1;
-      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? idx + 1);
+      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
       const uniqueKey = `${connection_id}::ORD::${ordDocNo}::${rowIndex}`;
 
       const payload = {
