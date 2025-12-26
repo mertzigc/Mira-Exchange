@@ -1115,6 +1115,75 @@ if (existing?._id && foundDoc === docNo) {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: upsert orders - batch loop (N pages per run)
+app.post("/fortnox/upsert/orders/all", async (req, res) => {
+  const {
+    connection_id,
+    start_page = 1,
+    limit = 100,
+    max_pages = 10,
+    months_back = 12
+  } = req.body || {};
+
+  if (!connection_id) {
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  }
+
+  const start = Number(start_page) || 1;
+  const maxP  = Math.max(1, Number(max_pages) || 10);
+  const lim   = Math.max(1, Math.min(500, Number(limit) || 100));
+
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let page = start;
+  let totalPages = null;
+
+  try {
+    for (let i = 0; i < maxP; i++) {
+      const r = await fetch(`${BASE_URL}/fortnox/upsert/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+        body: JSON.stringify({ connection_id, page, limit: lim, months_back })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        return res.status(400).json({ ok: false, error: "upsert/orders failed", detail: j, page });
+      }
+
+      created += j.counts?.created || 0;
+      updated += j.counts?.updated || 0;
+      skipped += j.counts?.skipped || 0;
+      errors  += j.counts?.errors  || 0;
+
+      const meta = j.meta || null;
+      const cur  = Number(meta?.["@CurrentPage"] || page);
+      const tot  = Number(meta?.["@TotalPages"] || 0);
+      if (tot) totalPages = tot;
+
+      if (tot && cur >= tot) {
+        return res.json({
+          ok: true, connection_id, done: true,
+          start_page: start, end_page: cur, total_pages: tot,
+          counts: { created, updated, skipped, errors },
+          next_page: null
+        });
+      }
+
+      page = cur + 1;
+    }
+
+    return res.json({
+      ok: true, connection_id, done: false,
+      start_page: start, end_page: page - 1, total_pages: totalPages,
+      counts: { created, updated, skipped, errors },
+      next_page: page
+    });
+  } catch (e) {
+    console.error("[/fortnox/upsert/orders/all] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", async (req, res) => {
   const {
@@ -1796,7 +1865,8 @@ app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
         ft_total: row?.Total == null ? "" : String(row.Total),
         ft_row_no: rowNo,
         ft_unique_key: uniqueKey,
-        ft_raw_json: JSON.stringify(row)
+        ft_raw_json: JSON.stringify(row),
+        needs_rows_sync: true
       };
 
       try {
@@ -1818,7 +1888,12 @@ app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
         if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
       }
     }
-
+// 6) Om alla rader gick bra → markera parent invoice som synkad
+if (errors === 0) {
+  await bubblePatch("FortnoxInvoice", invObj._id, {
+    rows_last_synced_at: new Date().toISOString()
+  });
+}
     return res.json({ ok: true, connection_id, invoice_docno: invDocNo, counts: { created, updated, errors }, first_error: firstError });
   } catch (e) {
     console.error("[/fortnox/upsert/invoice-rows] error", e);
@@ -1997,7 +2072,13 @@ const uniqueKey = rowId
     if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
   }
 }
-
+// ✅ efter rows lyckats utan errors: markera parent som synkad
+if (errors === 0) {
+  await bubblePatch("FortnoxOrder", ordObj._id, {
+    needs_rows_sync: false,
+    rows_last_synced_at: new Date().toISOString()
+  });
+}
 return res.json({
   ok: true,
   connection_id,
@@ -2149,117 +2230,7 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message, detail: e.detail || null });
   }
 });
-async function listResource(resourceName, accessToken, page, limit) {
-  return await fortnoxGet("/" + resourceName, accessToken, {
-    page: page || 1,
-    limit: limit || 100
-  });
-}
 
-app.post("/fortnox/sync/customers", async (req, res) => {
-  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
-  try {
-    const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
-
-    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
-    const r = await listResource("customers", tok.access_token, page, effLimit);
-
-    if (!r.ok) {
-      await bubblePatch("FortnoxConnection", connection_id, {
-        last_error: "Fortnox customers error: " + JSON.stringify(r.data || {}),
-        is_active: true
-      });
-      return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
-    }
-
-    const meta = r.data?.MetaInformation || null;
-    const customers = r.data?.Customers || [];
-
-    return res.json({
-      ok: true,
-      connection_id,
-      fetched: customers.length,
-      meta: meta ? {
-        totalResources: Number(meta["@TotalResources"] || 0),
-        totalPages: Number(meta["@TotalPages"] || 0),
-        currentPage: Number(meta["@CurrentPage"] || 0)
-      } : null,
-      customers
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.post("/fortnox/sync/orders", async (req, res) => {
-  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
-  try {
-    const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
-
-    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
-    const r = await listResource("orders", tok.access_token, page, effLimit);
-
-    if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
-
-    return res.json({
-      ok: true,
-      connection_id,
-      fetched: (r.data?.Orders || []).length,
-      meta: r.data?.MetaInformation || null,
-      orders: r.data?.Orders || []
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.post("/fortnox/sync/invoices", async (req, res) => {
-  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
-  try {
-    const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
-
-    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
-    const r = await listResource("invoices", tok.access_token, page, effLimit);
-
-    if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
-
-    return res.json({
-      ok: true,
-      connection_id,
-      fetched: (r.data?.Invoices || []).length,
-      meta: r.data?.MetaInformation || null,
-      invoices: r.data?.Invoices || []
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.post("/fortnox/sync/offers", async (req, res) => {
-  const { connection_id, mode = "test", page = 1, limit = 3, page_size } = req.body || {};
-  try {
-    const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json({ ok: false, error: tok.error, detail: tok.detail || null });
-
-    const effLimit = mode === "test" ? Number(limit || 3) : Number(page_size || 100);
-    const r = await listResource("offers", tok.access_token, page, effLimit);
-
-    if (!r.ok) return res.status(r.status).json({ ok: false, status: r.status, error: r.data, url: r.url });
-
-    return res.json({
-      ok: true,
-      connection_id,
-      fetched: (r.data?.Offers || []).length,
-      meta: r.data?.MetaInformation || null,
-      offers: r.data?.Offers || []
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
 // ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections
 app.post("/fortnox/nightly/delta", async (req, res) => {
