@@ -414,10 +414,9 @@ console.error("[bubblePatch] payload", payload);
 const errBody = await resp.json().catch(() => null);
 console.error("[bubblePatch] body", JSON.stringify(errBody, null, 2));
 
-throw new Error("bubblePatch failed");
-  const err = new Error("bubblePatch failed");
-  err.detail = lastErr;
-  throw err;
+const err = new Error("bubblePatch failed");
+err.detail = lastErr;
+throw err;
 }
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
