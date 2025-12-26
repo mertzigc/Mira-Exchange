@@ -1939,74 +1939,84 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Parent FortnoxOrder not found in Bubble", ordDocNo });
     }
 
-    let created = 0, updated = 0, errors = 0;
-    let firstError = null;
+// 5) Upsert rows med säker identifiering
+let created = 0, updated = 0, errors = 0;
+let firstError = null;
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowIndex = i + 1;
-const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
+const debug = [];
 
-// 🔑 bättre uniqueKey: använd rowNo om den finns, annars rowIndex
-const keyPart = Number.isFinite(rowNo) ? rowNo : rowIndex;
-const uniqueKey = `${connection_id}:ORD:${ordDocNo}:${keyPart}`;
+for (let i = 0; i < rows.length; i++) {
+  const row = rows[i];
+  const rowIndex = i + 1;
 
-const payload = {
-  connection: connection_id,
-  order: ordObj._id,
-  ft_order_document_number: ordDocNo,
-  ft_row_index: rowIndex,
-  ft_row_no: rowNo,
+  const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
 
-  ft_article_number: String(row?.ArticleNumber || ""),
-  ft_description: String(row?.Description || ""),
-  ft_unit: String(row?.Unit || ""),
+  // ✅ OBS: ORD + ordDocNo + rowIndex
+  const uniqueKey = `${connection_id}::ORD::${ordDocNo}::${rowIndex}`;
 
-  // ✅ number-fält: Number eller null
-  ft_quantity: toNumOrNull(row?.DeliveredQuantity ?? row?.Quantity),
-  ft_price: toNumOrNull(row?.Price),
-  ft_discount: toNumOrNull(row?.Discount),
-  ft_vat: toNumOrNull(row?.VAT),
-  ft_total: toNumOrNull(row?.Total),
+  const payload = {
+    connection: connection_id,
+    order: ordObj._id,
+    ft_order_document_number: ordDocNo,
+    ft_row_index: rowIndex,
+    ft_row_no: rowNo,
+    ft_article_number: String(row?.ArticleNumber || ""),
+    ft_description: String(row?.Description || ""),
+    ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
+    ft_unit: String(row?.Unit || ""),
+    ft_price: row?.Price == null ? "" : String(row.Price),
+    ft_discount: row?.Discount == null ? "" : String(row.Discount),
+    ft_vat: row?.VAT == null ? "" : String(row.VAT),
+    ft_total: row?.Total == null ? "" : String(row.Total),
+    ft_unique_key: uniqueKey,
+    ft_raw_json: JSON.stringify(row || {})
+  };
 
-  ft_unique_key: uniqueKey,
-  ft_raw_json: JSON.stringify(row)
-};
+  try {
+    // ✅ robust find: använd 3 constraints (svårt att missa)
+    const found = await bubbleFind("FortnoxOrderRow", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "ft_order_document_number", constraint_type: "equals", value: ordDocNo },
+        { key: "ft_row_index", constraint_type: "equals", value: rowIndex }
+      ],
+      limit: 1
+    });
 
-      try {
-        const found = await bubbleFind("FortnoxOrderRow", {
-  constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
-  limit: 1
-});
-const existing = Array.isArray(found) && found.length ? found[0] : null;
+    const existing = Array.isArray(found) && found.length ? found[0] : null;
 
-// ✅ STRICT: om Bubble råkar returnera "fel" row (constraint ignoreras)
-// så SKA vi inte patcha den, utan skapa ny.
-const existingKey = String(existing?.ft_unique_key || "").trim();
-const isSame = existing?._id && existingKey === uniqueKey;
-
-if (isSame) {
-  await bubblePatch("FortnoxOrderRow", existing._id, payload);
-  updated++;
-} else {
-  await bubbleCreate("FortnoxOrderRow", payload);
-  created++;
-}
-      } catch (e) {
-        errors++;
-        if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
-      }
+    // debug (syns i response så vi slipper Render logs)
+    if (debug.length < 5) {
+      debug.push({
+        rowIndex,
+        uniqueKey,
+        found_id: existing?._id || null,
+        found_key: existing?.ft_unique_key || null,
+        found_row_index: existing?.ft_row_index || null
+      });
     }
-// ✅ Släck row-sync-flaggan på parent order när raderna är klara
-await bubblePatch("FortnoxOrder", ordObj._id, {
-  needs_rows_sync: false,
-  rows_last_synced_at: new Date().toISOString()
-});
-    return res.json({ ok: true, connection_id, order_docno: ordDocNo, counts: { created, updated, errors }, first_error: firstError });
+
+    if (existing?._id) {
+      await bubblePatch("FortnoxOrderRow", existing._id, payload);
+      updated++;
+    } else {
+      await bubbleCreate("FortnoxOrderRow", payload);
+      created++;
+    }
+
   } catch (e) {
-    console.error("[/fortnox/upsert/order-rows] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    errors++;
+    if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
   }
+}
+
+return res.json({
+  ok: true,
+  connection_id,
+  order_docno: ordDocNo,
+  counts: { created, updated, errors },
+  first_error: firstError,
+  debug_samples: debug
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert order rows for FLAGGED orders (needs_rows_sync=true)
