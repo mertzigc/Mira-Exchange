@@ -405,19 +405,12 @@ async function bubblePatch(typeName, id, payload) {
       lastErr = { base, error: String(e?.message || e) };
     }
   }
-// i bubblePatch, när r.ok === false
-console.error("[bubblePatch] MARKER v2 - running new code");
-  console.error("[bubblePatch] status", r.status);
-console.error("[bubblePatch] url", url);
-console.error("[bubblePatch] payload keys", Object.keys(payload || {}));
-console.error("[bubblePatch] payload", payload);
+  // Om vi kommer hit: alla BUBBLE_BASES misslyckades
+  console.error("[bubblePatch] failed across all bases", lastErr);
 
-const errBody = await r.json().catch(() => null);
-console.error("[bubblePatch] body", JSON.stringify(errBody, null, 2));
-
-const err = new Error("bubblePatch failed");
-err.detail = { base, status: r.status, body: errBody };
-throw err;
+  const err = new Error("bubblePatch failed");
+  err.detail = lastErr;
+  throw err;
 }
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
