@@ -1975,18 +1975,23 @@ const payload = {
 
       try {
         const found = await bubbleFind("FortnoxOrderRow", {
-          constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
-          limit: 1
-        });
-        const existing = Array.isArray(found) && found.length ? found[0] : null;
+  constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
+  limit: 1
+});
+const existing = Array.isArray(found) && found.length ? found[0] : null;
 
-        if (existing?._id) {
-          await bubblePatch("FortnoxOrderRow", existing._id, payload);
-          updated++;
-        } else {
-          await bubbleCreate("FortnoxOrderRow", payload);
-          created++;
-        }
+// ✅ STRICT: om Bubble råkar returnera "fel" row (constraint ignoreras)
+// så SKA vi inte patcha den, utan skapa ny.
+const existingKey = String(existing?.ft_unique_key || "").trim();
+const isSame = existing?._id && existingKey === uniqueKey;
+
+if (isSame) {
+  await bubblePatch("FortnoxOrderRow", existing._id, payload);
+  updated++;
+} else {
+  await bubbleCreate("FortnoxOrderRow", payload);
+  created++;
+}
       } catch (e) {
         errors++;
         if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
