@@ -1971,13 +1971,11 @@ for (let i = 0; i < rows.length; i++) {
   try {
     // ✅ robust find: använd 3 constraints (svårt att missa)
     const found = await bubbleFind("FortnoxOrderRow", {
-      constraints: [
-        { key: "connection", constraint_type: "equals", value: connection_id },
-        { key: "ft_order_document_number", constraint_type: "equals", value: ordDocNo },
-        { key: "ft_row_index", constraint_type: "equals", value: rowIndex }
-      ],
-      limit: 1
-    });
+  constraints: [
+    { key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }
+  ],
+  limit: 1
+});
 
     const existing = Array.isArray(found) && found.length ? found[0] : null;
 
