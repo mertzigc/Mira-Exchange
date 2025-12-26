@@ -231,8 +231,6 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok && !!j.access_token, status: r.status, data: j };
 }
-
-// ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (object-CRUD)
 async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
@@ -269,6 +267,51 @@ async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
   const err = new Error("bubbleFind failed");
   err.detail = lastErr;
   throw err;
+}
+// Bubble: paginate "search" results for a thing
+async function bubbleFindAll(typeName, {
+  constraints = [],
+  sort_field = null,
+  descending = false
+} = {}) {
+  const out = [];
+  let cursor = 0;
+  const limit = 100;
+
+  while (true) {
+    const batch = await bubbleFind(typeName, {
+      constraints,
+      limit,
+      cursor,
+      sort_field,
+      descending
+    });
+
+    const arr = Array.isArray(batch) ? batch : [];
+    out.push(...arr);
+
+    if (arr.length < limit) break;
+    cursor += limit;
+  }
+
+  return out;
+}
+
+// Fortnox: get all connections (optionally only active)
+async function getAllFortnoxConnections({ onlyActive = true } = {}) {
+  const constraints = [];
+  if (onlyActive) {
+    constraints.push({ key: "is_active", constraint_type: "equals", value: true });
+  }
+
+  // sort_field: om du är osäker på fältnamn, kommentera bort sort_field-raderna
+  const connections = await bubbleFindAll("FortnoxConnection", {
+    constraints,
+    sort_field: "Created Date",
+    descending: true
+  });
+
+  return connections;
 }
 // ────────────────────────────────────────────────────────────
 // B) Fetch all FortnoxConnections (version-test)
@@ -561,6 +604,7 @@ function releaseNightlyLock() {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/debug/bubble-bases", (req, res) => {
@@ -2004,7 +2048,25 @@ app.post("/fortnox/debug/connection", async (req, res) => {
     });
   }
 });
+app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
+  try {
+    const onlyActive = String(req.query.only_active ?? "true") !== "false";
+    const list = await getAllFortnoxConnections({ onlyActive });
 
+    const slim = list.map(c => ({
+      id: c?._id,
+      is_active: c?.is_active,
+      supplier: c?.supplier ?? null,
+      expires_at: c?.expires_at ?? null,
+      has_access_token: !!c?.access_token,
+      has_refresh_token: !!c?.refresh_token
+    }));
+
+    res.json({ ok: true, count: slim.length, connections: slim });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.detail || null });
+  }
+});
 async function listResource(resourceName, accessToken, page, limit) {
   return await fortnoxGet("/" + resourceName, accessToken, {
     page: page || 1,
