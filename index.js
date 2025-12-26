@@ -1935,6 +1935,7 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
     let firstError = null;
 
     for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
       const rowIndex = i + 1;
 const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
 
@@ -2035,8 +2036,13 @@ app.post("/fortnox/upsert/order-rows/flagged", async (req, res) => {
       const j = await r.json().catch(() => ({}));
       const ok = !!j.ok;
 
-      results.push({ docNo, ok, counts: j.counts || null, first_error: j.first_error || null });
-      ok ? ok_count++ : fail_count++;
+results.push({
+  docNo,
+  ok,
+  http_status: r.status,
+  counts: j.counts || null,
+  first_error: j.first_error || j.error || j.detail || null
+});      ok ? ok_count++ : fail_count++;
 
       if (pause_ms) await sleep(Number(pause_ms));
     }
