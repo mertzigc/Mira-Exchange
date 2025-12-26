@@ -71,6 +71,14 @@ const BUBBLE_BASES = [
 ];
 console.log("[BOOT] BUBBLE_BASES =", BUBBLE_BASES);
 console.log("[BOOT] INDEX_FINGERPRINT = 2025-12-21_15:40_v1");
+const BASE_URL =
+  pick(process.env.BASE_URL, process.env.BUBBLE_BASE_URL) ||
+  (Array.isArray(BUBBLE_BASES) && BUBBLE_BASES[0]) ||
+  null;
+
+if (!BASE_URL) {
+  console.warn("[BOOT] No BASE_URL resolved. Nightly endpoints will fail.");
+}
 // ────────────────────────────────────────────────────────────
 // Helpers
 const log = (msg, data) => console.log(msg, data ? JSON.stringify(data, null, 2) : "");
@@ -573,35 +581,33 @@ async function fortnoxGet(path, accessToken, query = {}) {
   return { ok: r.ok, status: r.status, data: j, url: url.toString() };
 }
 // ────────────────────────────────────────────────────────────
-// Nightly lock (in-memory, per Render-instance)
+// Nightly lock (process-local, per Render instance)
+
+let _nightlyRunning = false;
+let _nightlyStartedAt = null;
+
 function isNightlyRunning() {
-  return Date.now() < NIGHTLY_LOCK_UNTIL;
+  return _nightlyRunning === true;
+}
+
+function startNightly() {
+  _nightlyRunning = true;
+  _nightlyStartedAt = new Date().toISOString();
+}
+
+function stopNightly() {
+  _nightlyRunning = false;
+  _nightlyStartedAt = null;
 }
 
 function getNightlyStatus() {
-  return { running: isNightlyRunning(), lock_until: NIGHTLY_LOCK_UNTIL };
-}
-let NIGHTLY_LOCK_UNTIL = 0;
-
-function acquireNightlyLock(ttlMs = 30 * 60 * 1000) {
-  const now = Date.now();
-  if (now < NIGHTLY_LOCK_UNTIL) return false;
-  NIGHTLY_LOCK_UNTIL = now + ttlMs;
-  return true;
-}
-
-function releaseNightlyLock() {
-  NIGHTLY_LOCK_UNTIL = 0;
+  return {
+    running: _nightlyRunning,
+    started_at: _nightlyStartedAt
+  };
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-function startNightly(ttlMs = 30 * 60 * 1000) {
-  return acquireNightlyLock(ttlMs);
-}
-
-function endNightly() {
-  releaseNightlyLock();
-}
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/debug/bubble-bases", (req, res) => {
@@ -2178,6 +2184,9 @@ app.post("/fortnox/sync/offers", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections
 app.post("/fortnox/nightly/delta", async (req, res) => {
+  if (!BASE_URL) {
+  return res.status(500).json({ ok: false, error: "No BASE_URL resolved (env BASE_URL/BUBBLE_BASE_URL or BUBBLE_BASES[0])" });
+}
   // skydd mot dubbelkörning (A)
   if (isNightlyRunning()) {
     return res.status(409).json({ ok: false, error: "Nightly already running" });
@@ -2256,7 +2265,7 @@ app.post("/fortnox/nightly/delta", async (req, res) => {
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
   } finally {
-    stopNightly();
+    if (typeof stopNightly === "function") stopNightly();
   }
 });
 // ────────────────────────────────────────────────────────────
