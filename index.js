@@ -405,17 +405,17 @@ async function bubblePatch(typeName, id, payload) {
       lastErr = { base, error: String(e?.message || e) };
     }
   }
-// i bubblePatch, när resp.ok === false
-console.error("[bubblePatch] status", resp.status);
+// i bubblePatch, när r.ok === false
+console.error("[bubblePatch] status", r.status);
 console.error("[bubblePatch] url", url);
 console.error("[bubblePatch] payload keys", Object.keys(payload || {}));
 console.error("[bubblePatch] payload", payload);
 
-const errBody = await resp.json().catch(() => null);
+const errBody = await r.json().catch(() => null);
 console.error("[bubblePatch] body", JSON.stringify(errBody, null, 2));
 
 const err = new Error("bubblePatch failed");
-err.detail = lastErr;
+err.detail = { base, status: r.status, body: errBody };
 throw err;
 }
 // ────────────────────────────────────────────────────────────
