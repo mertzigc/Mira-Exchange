@@ -595,7 +595,13 @@ function releaseNightlyLock() {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+function startNightly(ttlMs = 30 * 60 * 1000) {
+  return acquireNightlyLock(ttlMs);
+}
 
+function endNightly() {
+  releaseNightlyLock();
+}
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/debug/bubble-bases", (req, res) => {
