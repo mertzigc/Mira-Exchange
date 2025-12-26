@@ -270,7 +270,21 @@ async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
   err.detail = lastErr;
   throw err;
 }
+// ────────────────────────────────────────────────────────────
+// B) Fetch all FortnoxConnections (version-test)
+async function getAllFortnoxConnections() {
+  const results = await bubbleFind("FortnoxConnection", {
+    constraints: [],
+    limit: 1000
+  });
 
+  // säker filtrering
+  return (Array.isArray(results) ? results : []).filter(c =>
+    c?._id &&
+    c?.access_token &&
+    c?.is_active !== false
+  );
+}
 async function bubbleGet(typeName, id) {
   let lastErr = null;
 
@@ -421,7 +435,6 @@ async function upsertFortnoxTokensToBubble(bubble_user_id, tokenJson) {
   }
   return false;
 }
-
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) – connection-based token refresh + API fetch
 function nowIso() { return new Date().toISOString(); }
@@ -532,7 +545,22 @@ async function fortnoxGet(path, accessToken, query = {}) {
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data: j, url: url.toString() };
 }
+// ────────────────────────────────────────────────────────────
+// Nightly lock (in-memory, per Render-instance)
+let NIGHTLY_LOCK_UNTIL = 0;
 
+function acquireNightlyLock(ttlMs = 30 * 60 * 1000) {
+  const now = Date.now();
+  if (now < NIGHTLY_LOCK_UNTIL) return false;
+  NIGHTLY_LOCK_UNTIL = now + ttlMs;
+  return true;
+}
+
+function releaseNightlyLock() {
+  NIGHTLY_LOCK_UNTIL = 0;
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // ────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/debug/bubble-bases", (req, res) => {
@@ -810,7 +838,6 @@ app.post("/fortnox/sync/customers", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
-// ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync orders (Render-first, read-only) with months_back filter
 app.post("/fortnox/sync/orders", async (req, res) => {
@@ -2089,7 +2116,90 @@ app.post("/fortnox/sync/offers", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ────────────────────────────────────────────────────────────
+// C) Nightly delta sync – ALL FortnoxConnections
+app.post("/fortnox/nightly/delta", async (req, res) => {
+  // skydd mot dubbelkörning (A)
+  if (isNightlyRunning()) {
+    return res.status(409).json({ ok: false, error: "Nightly already running" });
+  }
 
+  startNightly();
+
+  const startedAt = new Date().toISOString();
+  const results = [];
+
+  try {
+    const connections = await getAllFortnoxConnections();
+
+    for (const conn of connections) {
+      const connection_id = conn._id;
+      const one = { connection_id };
+
+      try {
+        // 1) Customers (ofta små, snabb delta)
+        await fetch(`${BASE_URL}/fortnox/upsert/customers`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.MIRA_RENDER_API_KEY
+          },
+          body: JSON.stringify({ connection_id })
+        });
+
+        // 2) Orders (ex Carotte Food)
+        await fetch(`${BASE_URL}/fortnox/upsert/orders`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.MIRA_RENDER_API_KEY
+          },
+          body: JSON.stringify({
+            connection_id,
+            months_back: 12,
+            limit: 50
+          })
+        });
+
+        // 3) Invoices (alla bolag)
+        await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.MIRA_RENDER_API_KEY
+          },
+          body: JSON.stringify({
+            connection_id,
+            months_back: 12,
+            limit: 50
+          })
+        });
+
+        one.ok = true;
+      } catch (e) {
+        one.ok = false;
+        one.error = e.message;
+      }
+
+      results.push(one);
+
+      // snäll paus mellan bolag
+      await sleep(500);
+    }
+
+    return res.json({
+      ok: true,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      connections: results
+    });
+
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    stopNightly();
+  }
+});
 // ────────────────────────────────────────────────────────────
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
