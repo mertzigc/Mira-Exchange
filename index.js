@@ -1948,7 +1948,13 @@ for (let i = 0; i < rows.length; i++) {
   const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
 
   // ✅ OBS: ORD + ordDocNo + rowIndex
-  const uniqueKey = `${connection_id}::ORD::${ordDocNo}::${rowIndex}`;
+  const rowId = row?.RowId ?? row?.rowId ?? null;
+
+// 1) Primärt: Fortnox RowId (unik, inga prefix-problem)
+const uniqueKey = rowId
+  ? `${connection_id}::ORD::${ordDocNo}::ROWID::${rowId}`
+  // 2) Fallback: pad + trailing delimiter så "1" aldrig matchar "18"
+  : `${connection_id}::ORD::${ordDocNo}::IDX::${String(rowIndex).padStart(3, "0")}::`;
 
   const payload = {
     connection: connection_id,
