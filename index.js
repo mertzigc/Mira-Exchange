@@ -1950,11 +1950,10 @@ for (let i = 0; i < rows.length; i++) {
   // ✅ OBS: ORD + ordDocNo + rowIndex
   const rowId = row?.RowId ?? row?.rowId ?? null;
 
-// 1) Primärt: Fortnox RowId (unik, inga prefix-problem)
+// ✅ Gör key som börjar med RowId (unik i början → Bubble-prefix-bug kan inte sabba)
 const uniqueKey = rowId
-  ? `${connection_id}::ORD::${ordDocNo}::ROWID::${rowId}`
-  // 2) Fallback: pad + trailing delimiter så "1" aldrig matchar "18"
-  : `${connection_id}::ORD::${ordDocNo}::IDX::${String(rowIndex).padStart(3, "0")}::`;
+  ? `ROWID::${rowId}::CONN::${connection_id}::ORDDOC::${ordDocNo}`
+  : `FALLBACK::CONN::${connection_id}::ORDDOC::${ordDocNo}::IDX::${String(rowIndex).padStart(3, "0")}`;
 
   const payload = {
     connection: connection_id,
@@ -1975,7 +1974,6 @@ const uniqueKey = rowId
   };
 
   try {
-    // ✅ robust find: använd 3 constraints (svårt att missa)
     const found = await bubbleFind("FortnoxOrderRow", {
   constraints: [
     { key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }
