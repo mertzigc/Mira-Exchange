@@ -1404,7 +1404,11 @@ const toIsoDate = (d) => {
   // Bubble brukar gilla ISO
   return s + "T00:00:00.000Z";
 };
-
+const toNumOrNull = (v) => {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 function parseFtDateToTs(v) {
   const s = String(v || "").trim();
   if (!s) return NaN;
@@ -1946,30 +1950,23 @@ const uniqueKey = `${connection_id}:ORD:${ordDocNo}:${keyPart}`;
 const payload = {
   connection: connection_id,
   order: ordObj._id,
-
-  // ✅ Bubble-fältet du har
   ft_order_document_number: ordDocNo,
-
   ft_row_index: rowIndex,
-  ft_row_no: Number.isFinite(rowNo) ? rowNo : rowIndex,
-  ft_unique_key: uniqueKey,
+  ft_row_no: rowNo,
 
-  // textfält
   ft_article_number: String(row?.ArticleNumber || ""),
   ft_description: String(row?.Description || ""),
   ft_unit: String(row?.Unit || ""),
-  ft_raw_json: JSON.stringify(row),
 
-  // numberfält (skicka number/null, inte ""/sträng)
-  ft_quantity:
-    row?.DeliveredQuantity != null ? Number(row.DeliveredQuantity)
-    : row?.Quantity != null ? Number(row.Quantity)
-    : null,
+  // ✅ number-fält: Number eller null
+  ft_quantity: toNumOrNull(row?.DeliveredQuantity ?? row?.Quantity),
+  ft_price: toNumOrNull(row?.Price),
+  ft_discount: toNumOrNull(row?.Discount),
+  ft_vat: toNumOrNull(row?.VAT),
+  ft_total: toNumOrNull(row?.Total),
 
-  ft_price: row?.Price != null ? Number(row.Price) : null,
-  ft_discount: row?.Discount != null ? Number(row.Discount) : null,
-  ft_vat: row?.VAT != null ? Number(row.VAT) : null,
-  ft_total: row?.Total != null ? Number(row.Total) : null
+  ft_unique_key: uniqueKey,
+  ft_raw_json: JSON.stringify(row)
 };
 
       try {
