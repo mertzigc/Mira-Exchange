@@ -1124,7 +1124,6 @@ if (existing?._id && foundDoc === docNo) {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 // ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", async (req, res) => {
@@ -1792,9 +1791,6 @@ app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
       const rowIndex = i + 1;
       const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
       const uniqueKey = `${connection_id}::INV::${invDocNo}::${rowIndex}`;
-console.log("[order-rows] i,rowIndex", i, rowIndex);
-console.log("[order-rows] ordDocNo", ordDocNo);
-console.log("[order-rows] uniqueKey", uniqueKey);
       const payload = {
         connection: connection_id,
         invoice: invObj._id,
@@ -2017,6 +2013,11 @@ return res.json({
   counts: { created, updated, errors },
   first_error: firstError,
   debug_samples: debug
+});
+      } catch (e) {
+    console.error("[/fortnox/upsert/order-rows] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert order rows for FLAGGED orders (needs_rows_sync=true)
