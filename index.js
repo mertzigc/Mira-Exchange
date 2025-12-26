@@ -574,6 +574,13 @@ async function fortnoxGet(path, accessToken, query = {}) {
 }
 // ────────────────────────────────────────────────────────────
 // Nightly lock (in-memory, per Render-instance)
+function isNightlyRunning() {
+  return Date.now() < NIGHTLY_LOCK_UNTIL;
+}
+
+function getNightlyStatus() {
+  return { running: isNightlyRunning(), lock_until: NIGHTLY_LOCK_UNTIL };
+}
 let NIGHTLY_LOCK_UNTIL = 0;
 
 function acquireNightlyLock(ttlMs = 30 * 60 * 1000) {
