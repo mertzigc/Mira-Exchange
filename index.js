@@ -241,34 +241,38 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
 }
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (object-CRUD)
-async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
+async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, sort_field = null, descending = false } = {}) {
   const qs = new URLSearchParams();
-  if (limit) qs.set("limit", String(limit));
+  if (limit != null) qs.set("limit", String(limit));
+  if (cursor != null) qs.set("cursor", String(cursor));
+  if (sort_field) qs.set("sort_field", String(sort_field));
+  if (descending) qs.set("descending", "true");
 
-  constraints.forEach((c, i) => {
-    qs.set(`constraints[${i}][key]`, c.key);
-    qs.set(`constraints[${i}][constraint_type]`, c.constraint_type || "equals");
-    qs.set(`constraints[${i}][value]`, String(c.value ?? ""));
-  });
+  if (constraints && constraints.length) {
+    qs.set("constraints", JSON.stringify(
+      constraints.map(c => ({
+        key: c.key,
+        constraint_type: c.constraint_type || "equals",
+        value: c.value
+      }))
+    ));
+  }
 
   let lastErr = null;
 
   for (const base of BUBBLE_BASES) {
     const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
     try {
-      const r = await fetch(url, {
-        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
-      });
+      const r = await fetch(url, { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } });
       const j = await r.json().catch(() => ({}));
 
       if (!r.ok) {
-        lastErr = { base, status: r.status, body: j };
-        continue; // testa nästa base
+        lastErr = { base, status: r.status, body: j, url };
+        continue;
       }
-      const results = j?.response?.results;
-      return Array.isArray(results) ? results : [];
+      return Array.isArray(j?.response?.results) ? j.response.results : [];
     } catch (e) {
-      lastErr = { base, error: String(e?.message || e) };
+      lastErr = { base, error: String(e?.message || e), url };
     }
   }
 
@@ -277,31 +281,17 @@ async function bubbleFind(typeName, { constraints = [], limit = 1 } = {}) {
   throw err;
 }
 // Bubble: paginate "search" results for a thing
-async function bubbleFindAll(typeName, {
-  constraints = [],
-  sort_field = null,
-  descending = false
-} = {}) {
+async function bubbleFindAll(typeName, { constraints = [], sort_field = null, descending = false } = {}) {
   const out = [];
   let cursor = 0;
   const limit = 100;
 
   while (true) {
-    const batch = await bubbleFind(typeName, {
-      constraints,
-      limit,
-      cursor,
-      sort_field,
-      descending
-    });
-
-    const arr = Array.isArray(batch) ? batch : [];
-    out.push(...arr);
-
-    if (arr.length < limit) break;
+    const batch = await bubbleFind(typeName, { constraints, limit, cursor, sort_field, descending });
+    out.push(...batch);
+    if (batch.length < limit) break;
     cursor += limit;
   }
-
   return out;
 }
 
