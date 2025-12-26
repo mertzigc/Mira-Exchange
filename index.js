@@ -297,22 +297,6 @@ async function bubbleFindAll(typeName, {
   return out;
 }
 
-// Fortnox: get all connections (optionally only active)
-async function getAllFortnoxConnections({ onlyActive = true } = {}) {
-  const constraints = [];
-  if (onlyActive) {
-    constraints.push({ key: "is_active", constraint_type: "equals", value: true });
-  }
-
-  // sort_field: om du är osäker på fältnamn, kommentera bort sort_field-raderna
-  const connections = await bubbleFindAll("FortnoxConnection", {
-    constraints,
-    sort_field: "Created Date",
-    descending: true
-  });
-
-  return connections;
-}
 // ────────────────────────────────────────────────────────────
 // B) Fetch all FortnoxConnections (version-test)
 async function getAllFortnoxConnections() {
