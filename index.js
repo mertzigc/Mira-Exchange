@@ -1066,6 +1066,7 @@ ft_last_seen_at: new Date().toISOString(),   // (detta är date i Bubble -> ISO 
         ft_currency: String(o?.Currency || ""),
         ft_url: String(o?.["@url"] || ""),
         ft_raw_json: JSON.stringify(o),
+        payload.needs_rows_sync = true;
       };
 
       try {
@@ -1934,28 +1935,41 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
     let firstError = null;
 
     for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
       const rowIndex = i + 1;
-      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
-      const uniqueKey = `${connection_id}::ORD::${ordDocNo}::${rowIndex}`;
+const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
 
-      const payload = {
-        connection: connection_id,
-        order: ordObj._id,
-        ft_order_document_number: ordDocNo,
-        ft_row_index: rowIndex,
-        ft_article_number: String(row?.ArticleNumber || ""),
-        ft_description: String(row?.Description || ""),
-        ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
-        ft_unit: String(row?.Unit || ""),
-        ft_price: row?.Price == null ? "" : String(row.Price),
-        ft_discount: row?.Discount == null ? "" : String(row.Discount),
-        ft_vat: row?.VAT == null ? "" : String(row.VAT),
-        ft_total: row?.Total == null ? "" : String(row.Total),
-        ft_row_no:rowNo,
-        ft_unique_key: uniqueKey,
-        ft_raw_json: JSON.stringify(row)
-      };
+// 🔑 bättre uniqueKey: använd rowNo om den finns, annars rowIndex
+const keyPart = Number.isFinite(rowNo) ? rowNo : rowIndex;
+const uniqueKey = `${connection_id}:ORD:${ordDocNo}:${keyPart}`;
+
+const payload = {
+  connection: connection_id,
+  order: ordObj._id,
+
+  // ✅ Bubble-fältet du har
+  ft_order_document_number: ordDocNo,
+
+  ft_row_index: rowIndex,
+  ft_row_no: Number.isFinite(rowNo) ? rowNo : rowIndex,
+  ft_unique_key: uniqueKey,
+
+  // textfält
+  ft_article_number: String(row?.ArticleNumber || ""),
+  ft_description: String(row?.Description || ""),
+  ft_unit: String(row?.Unit || ""),
+  ft_raw_json: JSON.stringify(row),
+
+  // numberfält (skicka number/null, inte ""/sträng)
+  ft_quantity:
+    row?.DeliveredQuantity != null ? Number(row.DeliveredQuantity)
+    : row?.Quantity != null ? Number(row.Quantity)
+    : null,
+
+  ft_price: row?.Price != null ? Number(row.Price) : null,
+  ft_discount: row?.Discount != null ? Number(row.Discount) : null,
+  ft_vat: row?.VAT != null ? Number(row.VAT) : null,
+  ft_total: row?.Total != null ? Number(row.Total) : null
+};
 
       try {
         const found = await bubbleFind("FortnoxOrderRow", {
@@ -1976,10 +1990,60 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
         if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
       }
     }
-
+// ✅ Släck row-sync-flaggan på parent order när raderna är klara
+await bubblePatch("FortnoxOrder", ordObj._id, {
+  needs_rows_sync: false,
+  rows_last_synced_at: new Date().toISOString()
+});
     return res.json({ ok: true, connection_id, order_docno: ordDocNo, counts: { created, updated, errors }, first_error: firstError });
   } catch (e) {
     console.error("[/fortnox/upsert/order-rows] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert order rows for FLAGGED orders (needs_rows_sync=true)
+app.post("/fortnox/upsert/order-rows/flagged", async (req, res) => {
+  try {
+    const { connection_id, limit = 30, pause_ms = 250 } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+    // 1) Hämta flaggade orders i Bubble
+    const flagged = await bubbleFind("FortnoxOrder", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "needs_rows_sync", constraint_type: "equals", value: true }
+      ],
+      limit: Number(limit) || 30
+    });
+
+    const orders = Array.isArray(flagged) ? flagged : [];
+    const results = [];
+    let ok_count = 0, fail_count = 0;
+
+    // 2) Kör rows per order (docno)
+    for (const o of orders) {
+      const docNo = String(o?.ft_document_number || "").trim();
+      if (!docNo) continue;
+
+      const r = await fetch(`${BASE_URL}/fortnox/upsert/order-rows`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+        body: JSON.stringify({ connection_id, order_docno: docNo })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      const ok = !!j.ok;
+
+      results.push({ docNo, ok, counts: j.counts || null, first_error: j.first_error || null });
+      ok ? ok_count++ : fail_count++;
+
+      if (pause_ms) await sleep(Number(pause_ms));
+    }
+
+    return res.json({ ok: true, connection_id, flagged_found: orders.length, ok_count, fail_count, results });
+  } catch (e) {
+    console.error("[/fortnox/upsert/order-rows/flagged] error", e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -2228,7 +2292,19 @@ app.post("/fortnox/nightly/delta", async (req, res) => {
             limit: 50
           })
         });
-
+// 2b) OrderRows (bara för flaggade orders som nyss skapats/uppdaterats)
+await fetch(`${BASE_URL}/fortnox/upsert/order-rows/flagged`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": process.env.MIRA_RENDER_API_KEY
+  },
+  body: JSON.stringify({
+    connection_id,
+    limit: 30,     // kör i batchar, höj sen om du vill
+    pause_ms: 250
+  })
+});
         // 3) Invoices (alla bolag)
         await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
           method: "POST",
