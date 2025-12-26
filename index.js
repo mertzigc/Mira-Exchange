@@ -406,7 +406,8 @@ async function bubblePatch(typeName, id, payload) {
     }
   }
 // i bubblePatch, när r.ok === false
-console.error("[bubblePatch] status", r.status);
+console.error("[bubblePatch] MARKER v2 - running new code");
+  console.error("[bubblePatch] status", r.status);
 console.error("[bubblePatch] url", url);
 console.error("[bubblePatch] payload keys", Object.keys(payload || {}));
 console.error("[bubblePatch] payload", payload);
