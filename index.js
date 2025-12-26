@@ -1950,10 +1950,10 @@ for (let i = 0; i < rows.length; i++) {
   // ✅ OBS: ORD + ordDocNo + rowIndex
   const rowId = row?.RowId ?? row?.rowId ?? null;
 
-// ✅ Gör key som börjar med RowId (unik i början → Bubble-prefix-bug kan inte sabba)
+// Bara URL-säkra tecken (ingen : / backticks / etc)
 const uniqueKey = rowId
-  ? `ROWID::${rowId}::CONN::${connection_id}::ORDDOC::${ordDocNo}`
-  : `FALLBACK::CONN::${connection_id}::ORDDOC::${ordDocNo}::IDX::${String(rowIndex).padStart(3, "0")}`;
+  ? `ROWID_${rowId}__CONN_${connection_id}__ORDDOC_${ordDocNo}`
+  : `FALLBACK__CONN_${connection_id}__ORDDOC_${ordDocNo}__IDX_${String(rowIndex).padStart(3, "0")}`;
 
   const payload = {
     connection: connection_id,
