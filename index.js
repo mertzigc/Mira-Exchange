@@ -1792,7 +1792,9 @@ app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
       const rowIndex = i + 1;
       const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
       const uniqueKey = `${connection_id}::INV::${invDocNo}::${rowIndex}`;
-
+console.log("[order-rows] i,rowIndex", i, rowIndex);
+console.log("[order-rows] ordDocNo", ordDocNo);
+console.log("[order-rows] uniqueKey", uniqueKey);
       const payload = {
         connection: connection_id,
         invoice: invObj._id,
