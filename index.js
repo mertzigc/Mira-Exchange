@@ -1066,7 +1066,7 @@ ft_last_seen_at: new Date().toISOString(),   // (detta är date i Bubble -> ISO 
         ft_currency: String(o?.Currency || ""),
         ft_url: String(o?.["@url"] || ""),
         ft_raw_json: JSON.stringify(o),
-        payload.needs_rows_sync = true;
+        needs_rows_sync = true;
       };
 
       try {
