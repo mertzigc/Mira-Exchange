@@ -554,23 +554,25 @@ async function ensureFortnoxAccessToken(connection_id) {
 
 // Fortnox v3 API fetch helper
 async function fortnoxGet(path, accessToken, query = {}) {
-  const url = new URL("https://api.fortnox.se/3" + path);
+  const base = "https://api.fortnox.se/3";
+  const qs = new URLSearchParams();
   Object.entries(query || {}).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === "") return;
-    url.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
   });
 
-  const r = await fetch(url.toString(), {
+  const url = base + path + (qs.toString() ? `?${qs.toString()}` : "");
+
+  const r = await fetch(url, {
     method: "GET",
     headers: {
-      "Access-Token": accessToken,
-      "Client-Secret": FORTNOX_CLIENT_SECRET,
+      "Authorization": "Bearer " + accessToken,
+      "Client-Secret": String(FORTNOX_CLIENT_SECRET || ""),  // ✅ KRITISK
       "Accept": "application/json"
     }
   });
 
-  const j = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, data: j, url: url.toString() };
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data, url };
 }
 // ────────────────────────────────────────────────────────────
 // Nightly lock (process-local, per Render instance)
