@@ -2283,7 +2283,7 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
       ft_customer_name: String(o?.CustomerName || ""),
       ft_offer_date: toIsoDate(o?.OfferDate),
       ft_valid_until: toIsoDate(o?.ValidUntil),
-      ft_total: toNumOrNull(o?.Total),
+      ft_total: toNumOrNull(row?.Total),
       ft_currency: o?.Currency || "",
       ft_sent: !!o?.Sent,
       ft_cancelled: !!o?.Cancelled,
