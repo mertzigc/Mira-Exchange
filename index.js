@@ -2345,7 +2345,7 @@ app.post("/fortnox/upsert/offer-rows", async (req,res)=>{
       ft_quantity: row.Quantity ?? null,
       ft_unit: row.Unit || "",
       ft_price: String(row.Price || ""),
-      ft_total: toNumOrNull(o?.Total),
+      ft_total: toNumOrNull(row?.Total),
       ft_unique_key: uniqueKey,
       ft_raw_json: JSON.stringify(row)
     };
