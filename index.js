@@ -2366,6 +2366,68 @@ app.post("/fortnox/upsert/offer-rows", async (req,res)=>{
   res.json({ ok:true, counts:{ created, updated }});
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: sync ONE offer (fetch offer + OfferRows)
+app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
+  try {
+    const { connection_id, offer_docno } = req.body || {};
+    const docNo = String(offer_docno || "").trim();
+
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    if (!docNo) return res.status(400).json({ ok: false, error: "Missing offer_docno" });
+
+    // token via din befintliga helper
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) {
+      return res.status(401).json({ ok: false, error: tok.error || "Token error", detail: tok.detail || null });
+    }
+
+    // hämta enskild offert (innehåller OfferRows)
+    const r = await fortnoxGet("/offers/" + encodeURIComponent(docNo), tok.access_token);
+    if (!r.ok) {
+      return res.status(r.status || 500).json({
+        ok: false,
+        status: r.status || 500,
+        data: r.data || null,
+        url: r.url || null
+      });
+    }
+
+    const offer = r.data?.Offer || r.data?.offer || null;
+    const rows = Array.isArray(offer?.OfferRows) ? offer.OfferRows : [];
+
+    return res.json({
+      ok: true,
+      connection_id,
+      offer_docno: docNo,
+      rows_count: rows.length,
+      offer,
+      rows
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Alias så att dina gamla kommandon funkar
+app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
+  // vidarebefordra till samma handler-logik genom att kalla internt via fetch
+  // (enkelt och minimerar risk för dubbellogik)
+  try {
+    const r = await fetch(`${BASE_URL}/fortnox/sync/offers/one`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify(req.body || {})
+    });
+    const j = await r.json().catch(() => ({}));
+    return res.status(r.status).json(j);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections
 app.post("/fortnox/nightly/delta", async (req, res) => {
   if (!BASE_URL) {
