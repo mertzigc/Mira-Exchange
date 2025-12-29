@@ -2423,10 +2423,33 @@ await fetch(`${BASE_URL}/fortnox/upsert/order-rows/flagged`, {
     pause_ms: 250
   })
 });
-        // OFFERS
-await fetch(`${BASE_URL}/fortnox/upsert/offers`, {...});
+// ─────────────────────────────────────────────
+// OFFERS
+await fetch(`${BASE_URL}/fortnox/upsert/offers`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": process.env.MIRA_RENDER_API_KEY
+  },
+  body: JSON.stringify({
+    connection_id,
+    limit: 50
+  })
+});
 
-await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {...});
+// OFFER ROWS (endast flaggade offers)
+await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": process.env.MIRA_RENDER_API_KEY
+  },
+  body: JSON.stringify({
+    connection_id,
+    limit: 30,
+    pause_ms: 250
+  })
+});
         // 3) Invoices (alla bolag)
         await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
           method: "POST",
