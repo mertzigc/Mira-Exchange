@@ -294,7 +294,13 @@ async function bubbleFindAll(typeName, { constraints = [], sort_field = null, de
   }
   return out;
 }
-
+async function bubbleFindOne(type, constraints) {
+  const arr = await bubbleFind(type, {
+    constraints: Array.isArray(constraints) ? constraints : [],
+    limit: 1
+  });
+  return Array.isArray(arr) && arr.length ? arr[0] : null;
+}
 // ────────────────────────────────────────────────────────────
 // B) Fetch all FortnoxConnections (version-test)
 async function getAllFortnoxConnections() {
