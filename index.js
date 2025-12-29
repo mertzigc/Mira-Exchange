@@ -2277,7 +2277,7 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
       ft_customer_name: String(o?.CustomerName || ""),
       ft_offer_date: toIsoDate(o?.OfferDate),
       ft_valid_until: toIsoDate(o?.ValidUntil),
-      ft_total: String(o?.Total || ""),
+      ft_total: toNumOrNull(o?.Total),
       ft_currency: o?.Currency || "",
       ft_sent: !!o?.Sent,
       ft_cancelled: !!o?.Cancelled,
@@ -2339,7 +2339,7 @@ app.post("/fortnox/upsert/offer-rows", async (req,res)=>{
       ft_quantity: row.Quantity ?? null,
       ft_unit: row.Unit || "",
       ft_price: String(row.Price || ""),
-      ft_total: String(row.Total || ""),
+      ft_total: toNumOrNull(o?.Total),
       ft_unique_key: uniqueKey,
       ft_raw_json: JSON.stringify(row)
     };
