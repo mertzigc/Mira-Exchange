@@ -2230,7 +2230,139 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message, detail: e.detail || null });
   }
 });
+// ────────────────────────────────────────────────────────────
+// fortnox/sync/offers  (Render-first, read-only)
+app.post("/fortnox/sync/offers", async (req, res) => {
+  const { connection_id, page = 1, limit = 100 } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
 
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok.ok) return res.status(401).json(tok);
+
+  const r = await fortnoxGet("/offers", tok.access_token, { page, limit });
+  if (!r.ok) return res.status(r.status).json(r);
+
+  return res.json({
+    ok: true,
+    connection_id,
+    meta: r.data?.MetaInformation || null,
+    offers: r.data?.Offers || []
+  });
+});
+// ────────────────────────────────────────────────────────────
+// /fortnox/upsert/offers
+app.post("/fortnox/upsert/offers", async (req, res) => {
+  const { connection_id, page = 1, limit = 100 } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok:false });
+
+  const sync = await fetch(`${BASE_URL}/fortnox/sync/offers`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-api-key":process.env.MIRA_RENDER_API_KEY },
+    body: JSON.stringify({ connection_id, page, limit })
+  }).then(r=>r.json());
+
+  const offers = sync.offers || [];
+  let created=0, updated=0;
+
+  for (const o of offers) {
+    const docNo = String(o?.DocumentNumber || "").trim();
+    if (!docNo) continue;
+
+    const payload = {
+      connection: connection_id,
+      ft_document_number: docNo,
+      ft_customer_number: String(o?.CustomerNumber || ""),
+      ft_customer_name: String(o?.CustomerName || ""),
+      ft_offer_date: toIsoDate(o?.OfferDate),
+      ft_valid_until: toIsoDate(o?.ValidUntil),
+      ft_total: String(o?.Total || ""),
+      ft_currency: o?.Currency || "",
+      ft_sent: !!o?.Sent,
+      ft_cancelled: !!o?.Cancelled,
+      ft_url: o?.["@url"] || "",
+      ft_raw_json: JSON.stringify(o),
+      needs_rows_sync: true
+    };
+
+    const found = await bubbleFind("FortnoxOffer", {
+      constraints:[
+        { key:"connection", constraint_type:"equals", value:connection_id },
+        { key:"ft_document_number", constraint_type:"equals", value:docNo }
+      ],
+      limit:1
+    });
+
+    if (found?.[0]?._id) {
+      await bubblePatch("FortnoxOffer", found[0]._id, payload);
+      updated++;
+    } else {
+      await bubbleCreate("FortnoxOffer", payload);
+      created++;
+    }
+  }
+
+  res.json({ ok:true, counts:{ created, updated }});
+});
+// ────────────────────────────────────────────────────────────
+// /fortnox/upsert/offer-rows
+app.post("/fortnox/upsert/offer-rows", async (req,res)=>{
+  const { connection_id, offer_docno } = req.body || {};
+  if (!connection_id || !offer_docno) return res.status(400).json({ ok:false });
+
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  const r = await fortnoxGet(`/offers/${offer_docno}`, tok.access_token);
+  if (!r.ok) return res.status(r.status).json(r);
+
+  const offer = r.data?.Offer;
+  const rows = offer?.OfferRows || [];
+
+  const parent = await bubbleFindOne("FortnoxOffer", [
+    { key:"connection", constraint_type:"equals", value:connection_id },
+    { key:"ft_document_number", constraint_type:"equals", value:offer_docno }
+  ]);
+
+  let created=0, updated=0;
+
+  for (let i=0;i<rows.length;i++){
+    const row = rows[i];
+    const uniqueKey = `OFFERROW_${row.RowId || i}_${connection_id}_${offer_docno}`;
+
+    const payload = {
+      connection: connection_id,
+      offer: parent._id,
+      ft_offer_document_number: offer_docno,
+      ft_row_index: i+1,
+      ft_article_number: row.ArticleNumber || "",
+      ft_description: row.Description || "",
+      ft_quantity: row.Quantity ?? null,
+      ft_unit: row.Unit || "",
+      ft_price: String(row.Price || ""),
+      ft_total: String(row.Total || ""),
+      ft_unique_key: uniqueKey,
+      ft_raw_json: JSON.stringify(row)
+    };
+
+    const found = await bubbleFind("FortnoxOfferRow", {
+      constraints:[{ key:"ft_unique_key", constraint_type:"equals", value:uniqueKey }],
+      limit:1
+    });
+
+    if (found?.[0]?._id) {
+      await bubblePatch("FortnoxOfferRow", found[0]._id, payload);
+      updated++;
+    } else {
+      await bubbleCreate("FortnoxOfferRow", payload);
+      created++;
+    }
+  }
+
+  await bubblePatch("FortnoxOffer", parent._id, {
+    rows_last_synced_at: new Date().toISOString(),
+    needs_rows_sync: false
+  });
+
+  res.json({ ok:true, counts:{ created, updated }});
+});
 // ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections
 app.post("/fortnox/nightly/delta", async (req, res) => {
@@ -2291,6 +2423,10 @@ await fetch(`${BASE_URL}/fortnox/upsert/order-rows/flagged`, {
     pause_ms: 250
   })
 });
+        // OFFERS
+await fetch(`${BASE_URL}/fortnox/upsert/offers`, {...});
+
+await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {...});
         // 3) Invoices (alla bolag)
         await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
           method: "POST",
