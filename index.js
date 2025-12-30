@@ -77,7 +77,7 @@ const BASE_URL =
   null;
 
 if (!BASE_URL) {
-  console.warn("[BOOT] No BASE_URL resolved. Nightly endpoints will fail.");
+  console.warn("[BOOT] No BASE_URL resolved.  endpoints will fail.");
 }
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -580,6 +580,7 @@ async function fortnoxGet(path, accessToken, query = {}) {
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data, url };
 }
+
 // ────────────────────────────────────────────────────────────
 // Nightly lock (process-local, per Render instance)
 
@@ -2433,105 +2434,178 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ────────────────────────────────────────────
+// Fortnox: upsert invoices - batch loop (N pages per run)
+app.post("/fortnox/upsert/invoices/all", async (req, res) => {
+  const {
+    connection_id,
+    start_page = 1,
+    limit = 100,
+    max_pages = 10,
+    months_back = 12
+  } = req.body || {};
+
+  if (!connection_id)
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let page = Number(start_page) || 1;
+  const maxP = Math.max(1, Number(max_pages) || 10);
+  const lim = Math.max(1, Math.min(500, Number(limit) || 100));
+  let totalPages = null;
+
+  try {
+    for (let i = 0; i < maxP; i++) {
+      const r = await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id, page, limit: lim, months_back })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok)
+        return res.status(400).json({ ok: false, error: "upsert/invoices failed", detail: j, page });
+
+      created += j.counts?.created || 0;
+      updated += j.counts?.updated || 0;
+      skipped += j.counts?.skipped || 0;
+      errors  += j.counts?.errors  || 0;
+
+      const meta = j.meta || {};
+      const cur = Number(meta["@CurrentPage"] || page);
+      const tot = Number(meta["@TotalPages"] || 0);
+      if (tot) totalPages = tot;
+      if (tot && cur >= tot)
+        return res.json({ ok: true, done: true, connection_id, start_page, end_page: cur,
+                          total_pages: tot, counts: { created, updated, skipped, errors } });
+      page = cur + 1;
+    }
+
+    res.json({ ok: true, done: false, connection_id,
+               start_page, end_page: page - 1, total_pages: totalPages,
+               counts: { created, updated, skipped, errors }, next_page: page });
+  } catch (e) {
+    console.error("[/fortnox/upsert/invoices/all] error", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ────────────────────────────────────────────
+// Fortnox: upsert offers - batch loop (N pages per run)
+app.post("/fortnox/upsert/offers/all", async (req, res) => {
+  const {
+    connection_id,
+    start_page = 1,
+    limit = 100,
+    max_pages = 10
+  } = req.body || {};
+
+  if (!connection_id)
+    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  let created = 0, updated = 0, errors = 0;
+  let page = Number(start_page) || 1;
+  const maxP = Math.max(1, Number(max_pages) || 10);
+  const lim = Math.max(1, Math.min(500, Number(limit) || 100));
+  let totalPages = null;
+
+  try {
+    for (let i = 0; i < maxP; i++) {
+      const r = await fetch(`${BASE_URL}/fortnox/upsert/offers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id, page, limit: lim })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok)
+        return res.status(400).json({ ok: false, error: "upsert/offers failed", detail: j, page });
+
+      created += j.counts?.created || 0;
+      updated += j.counts?.updated || 0;
+      const meta = j.meta || {};
+      const cur = Number(meta["@CurrentPage"] || page);
+      const tot = Number(meta["@TotalPages"] || 0);
+      if (tot) totalPages = tot;
+      if (tot && cur >= tot)
+        return res.json({ ok: true, done: true, connection_id, start_page, end_page: cur,
+                          total_pages: tot, counts: { created, updated, errors } });
+      page = cur + 1;
+    }
+
+    res.json({ ok: true, done: false, connection_id,
+               start_page, end_page: page - 1, total_pages: totalPages,
+               counts: { created, updated, errors }, next_page: page });
+  } catch (e) {
+    console.error("[/fortnox/upsert/offers/all] error", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections
 app.post("/fortnox/nightly/delta", async (req, res) => {
-  if (!BASE_URL) {
-  return res.status(500).json({ ok: false, error: "No BASE_URL resolved (env BASE_URL/BUBBLE_BASE_URL or BUBBLE_BASES[0])" });
-}
-  // skydd mot dubbelkörning (A)
-  if (isNightlyRunning()) {
+  if (!BASE_URL)
+    return res.status(500).json({ ok: false, error: "No BASE_URL resolved" });
+  if (isNightlyRunning())
     return res.status(409).json({ ok: false, error: "Nightly already running" });
-  }
 
   startNightly();
-
   const startedAt = new Date().toISOString();
   const results = [];
 
   try {
     const connections = await getAllFortnoxConnections();
-
     for (const conn of connections) {
       const connection_id = conn._id;
       const one = { connection_id };
-
       try {
-        // 1) Customers (ofta små, snabb delta)
-        await fetch(`${BASE_URL}/fortnox/upsert/customers`, {
+        // 1) Customers
+        await fetch(`${BASE_URL}/fortnox/upsert/customers/all`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.MIRA_RENDER_API_KEY
-          },
-          body: JSON.stringify({ connection_id })
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100 })
         });
 
-        // 2) Orders (ex Carotte Food)
-        await fetch(`${BASE_URL}/fortnox/upsert/orders`, {
+        // 2) Orders + rows
+        await fetch(`${BASE_URL}/fortnox/upsert/orders/all`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.MIRA_RENDER_API_KEY
-          },
-          body: JSON.stringify({
-            connection_id,
-            months_back: 12,
-            limit: 50
-          })
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100, months_back: 12 })
         });
-// 2b) OrderRows (bara för flaggade orders som nyss skapats/uppdaterats)
-await fetch(`${BASE_URL}/fortnox/upsert/order-rows/flagged`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": process.env.MIRA_RENDER_API_KEY
-  },
-  body: JSON.stringify({
-    connection_id,
-    limit: 30,     // kör i batchar, höj sen om du vill
-    pause_ms: 250
-  })
-});
-// ─────────────────────────────────────────────
-// OFFERS
-await fetch(`${BASE_URL}/fortnox/upsert/offers`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": process.env.MIRA_RENDER_API_KEY
-  },
-  body: JSON.stringify({
-    connection_id,
-    limit: 50
-  })
-});
-
-// OFFER ROWS (endast flaggade offers)
-await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": process.env.MIRA_RENDER_API_KEY
-  },
-  body: JSON.stringify({
-    connection_id,
-    limit: 30,
-    pause_ms: 250
-  })
-});
-        // 3) Invoices (alla bolag)
-        await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
+        await fetch(`${BASE_URL}/fortnox/upsert/order-rows/flagged`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": process.env.MIRA_RENDER_API_KEY
-          },
-          body: JSON.stringify({
-            connection_id,
-            months_back: 12,
-            limit: 50
-          })
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+        });
+
+        // 3) Offers + rows
+        await fetch(`${BASE_URL}/fortnox/upsert/offers/all`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100 })
+        });
+        await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+        });
+
+        // 4) Invoices + rows
+        await fetch(`${BASE_URL}/fortnox/upsert/invoices/all`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100, months_back: 12 })
+        });
+        await fetch(`${BASE_URL}/fortnox/upsert/invoice-rows/page`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+          body: JSON.stringify({ connection_id, limit: 30, months_back: 12 })
         });
 
         one.ok = true;
@@ -2539,27 +2613,17 @@ await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
         one.ok = false;
         one.error = e.message;
       }
-
       results.push(one);
-
-      // snäll paus mellan bolag
       await sleep(500);
     }
 
-    return res.json({
-      ok: true,
-      started_at: startedAt,
-      finished_at: new Date().toISOString(),
-      connections: results
-    });
-
+    res.json({ ok: true, started_at: startedAt, finished_at: new Date().toISOString(), connections: results });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({ ok: false, error: e.message });
   } finally {
-    if (typeof stopNightly === "function") stopNightly();
+    stopNightly();
   }
-});
-// ────────────────────────────────────────────────────────────
+});// ────────────────────────────────────────────────────────────
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
