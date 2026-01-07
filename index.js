@@ -1741,7 +1741,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       const inv = invoices[i] || {};
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
-
+const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
       const fields = {
   connection: connection_id,
   ft_document_number: docNo,
