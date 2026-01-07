@@ -2288,19 +2288,28 @@ app.post("/fortnox/upsert/offer-rows/flagged", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
 // Fortnox: sync ONE offer (fetch offer + OfferRows)
 app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
   try {
     const { connection_id, offer_docno } = req.body || {};
     const docNo = String(offer_docno || "").trim();
 
-    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
-    if (!docNo) return res.status(400).json({ ok: false, error: "Missing offer_docno" });
+    if (!connection_id) {
+      return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    }
+    if (!docNo) {
+      return res.status(400).json({ ok: false, error: "Missing offer_docno" });
+    }
 
     // token via din befintliga helper
     const tok = await ensureFortnoxAccessToken(connection_id);
     if (!tok.ok) {
-      return res.status(401).json({ ok: false, error: tok.error || "Token error", detail: tok.detail || null });
+      return res.status(401).json({
+        ok: false,
+        error: tok.error || "Token error",
+        detail: tok.detail || null
+      });
     }
 
     // hämta enskild offert (innehåller OfferRows)
@@ -2326,15 +2335,17 @@ app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
       rows
     });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
 // Alias så att dina gamla kommandon funkar
 app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
-  // vidarebefordra till samma handler-logik genom att kalla internt via fetch
-  // (enkelt och minimerar risk för dubbellogik)
   try {
+    // OBS: vi behöver INTE anropa via HTTP internt.
+    // Det räcker att kalla samma logik genom att proxy:a requesten
+    // med en vanlig fetch till din egen service — men då måste det vara "riktig" fetch utan "rr/break".
+
     const r = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers/one`, {
       method: "POST",
       headers: {
@@ -2343,23 +2354,16 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
       },
       body: JSON.stringify(req.body || {})
     });
-    const j = await r.json().catch(() => ({}));
+
+    const text = await r.text();
+    let j = {};
+    try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+
     return res.status(r.status).json(j);
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-
-  const jj = await rr.json().catch(() => ({}));
-
-  // om endpointen failar – bryt med tydligt fel
-  if (!rr.ok || !jj.ok) {
-    throw new Error("offer-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
-  }
-
-  // klart när inga fler flaggade finns
-  if (!jj.flagged_found) break;
-}
 // ────────────────────────────────────────────
 // Fortnox: upsert invoices - batch loop (N pages per run)
 app.post("/fortnox/upsert/invoices/all", async (req, res) => {
