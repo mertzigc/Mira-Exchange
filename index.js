@@ -1745,20 +1745,19 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       const fields = {
         connection_id,
         ft_document_number: docNo,
-        invoice_date: inv.InvoiceDate ? toIsoDate(inv.InvoiceDate) : null,
-        due_date: inv.DueDate ? toIsoDate(inv.DueDate) : null,
-        customer_number: String(inv.CustomerNumber || ""),
-        customer_name: String(inv.CustomerName || ""),
-        total: toNumOrNull(inv.Total),
-        balance: toNumOrNull(inv.Balance),
-        currency: String(inv.Currency || ""),
-        ocr: String(inv.OCR || ""),
-        booked: typeof inv.Booked === "boolean" ? inv.Booked : null,
-        cancelled: typeof inv.Cancelled === "boolean" ? inv.Cancelled : null,
-        sent: typeof inv.Sent === "boolean" ? inv.Sent : null,
+        ft_invoice_date: inv.InvoiceDate ? toIsoDate(inv.InvoiceDate) : null,
+        ft_due_date: inv.DueDate ? toIsoDate(inv.DueDate) : null,
+        ft_customer_number: String(inv.CustomerNumber || ""),
+        ft_customer_name: String(inv.CustomerName || ""),
+        ft_total: toNumOrNull(inv.Total),
+        ft_balance: toNumOrNull(inv.Balance),
+        ft_currency: String(inv.Currency || ""),
+        ft_ocr: String(inv.OCR || ""),
+        ft_cancelled: typeof inv.Cancelled === "boolean" ? inv.Cancelled : null,
+        ft_sent: typeof inv.Sent === "boolean" ? inv.Sent : null,
         ft_url: String(inv?.["@url"] || ""),
-        raw_json: JSON.stringify(inv || {}),
-        last_seen_at: new Date().toISOString()
+        ft_raw_json: JSON.stringify(inv || {}),
+        ft_last_seen_at: new Date().toISOString()
       };
 
       try {
