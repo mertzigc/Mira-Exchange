@@ -2002,9 +2002,16 @@ app.post("/fortnox/upsert/order-rows/page", async (req, res) => {
 });
 // efter orders:
 for (let round = 0; round < 5; round++) {
-  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows/flagged`, { ... });
-  const jj = await rr.json().catch(() => ({}));
-  if (!jj.flagged_found) break; // inget mer att göra
+  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows/flagged`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": process.env.MIRA_RENDER_API_KEY
+  },
+  body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+});
+const jj = await rr.json().catch(() => ({}));
+if (!jj.flagged_found) break;
 }
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
@@ -2355,11 +2362,24 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
-
-// efter offers:
 for (let round = 0; round < 5; round++) {
-  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows/flagged`, { ... });
+  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.MIRA_RENDER_API_KEY
+    },
+    body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+  });
+
   const jj = await rr.json().catch(() => ({}));
+
+  // om endpointen failar – bryt med tydligt fel
+  if (!rr.ok || !jj.ok) {
+    throw new Error("offer-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
+  }
+
+  // klart när inga fler flaggade finns
   if (!jj.flagged_found) break;
 }
 // ────────────────────────────────────────────
