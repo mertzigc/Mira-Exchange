@@ -1700,8 +1700,8 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
-// Fortnox: upsert invoices (NO invoice rows) – uses /fortnox/sync/invoices (fromdate/todate inside)
-// Upsert key: connection_id + DocumentNumber
+// Fortnox: upsert invoices (NO invoice rows) – uses /fortnox/sync/invoices
+// Upsert key: connection_id + document_number
 app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
   try {
     const {
@@ -1712,9 +1712,11 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       pause_ms = 0
     } = req.body || {};
 
-    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    if (!connection_id) {
+      return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    }
 
-    // 1) Sync (filtered by date in /fortnox/sync/invoices)
+    // 1) Sync invoices (date-filtered inside /fortnox/sync/invoices)
     const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/invoices`, {
       method: "POST",
       headers: {
@@ -1730,104 +1732,64 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
     }
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
+    const TYPE = "FortnoxInvoice";
 
-    // 2) Bubble helpers (lokalt i endpointen för att inte stöka med resten av filen)
-const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
-  const BUBBLE_ORIGIN = String(BASE_URL || "").replace(/\/+$/, "");
-if (!BUBBLE_ORIGIN) throw new Error("No BASE_URL (Bubble origin) resolved");
-
-const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
-  const url = `${BUBBLE_ORIGIN}${path}`;
-  const r = await fetch(url, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${BUBBLE_API_KEY}`,   // OBS: Bubble API token
-      ...headers
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, status: r.status, detail: j };
-  return { ok: true, status: r.status, json: j };
-};
-    const bubbleFindOne = async (type, constraintsArr) => {
-      const constraints = encodeURIComponent(JSON.stringify(constraintsArr));
-      const out = await bubbleFetch(`/obj/${encodeURIComponent(type)}?constraints=${constraints}`);
-      const results = Array.isArray(out.json?.response?.results) ? out.json.response.results : [];
-      return { ok: out.ok, status: out.status, item: results[0] || null, raw: out.json };
-    };
-
-    const bubbleCreate = async (type, fields) => {
-      return bubbleFetch(`/obj/${encodeURIComponent(type)}`, { method: "POST", body: fields });
-    };
-
-    const bubbleUpdate = async (type, id, fields) => {
-      return bubbleFetch(`/obj/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, { method: "PATCH", body: fields });
-    };
-
-    // 3) Upsert loop (NO rows)
-    const TYPE = "FortnoxInvoice"; // <-- din Bubble datatype (ändra om du heter nåt annat)
     let created = 0, updated = 0, skipped = 0, errors = 0;
-    const results = [];
     let first_error = null;
 
     for (let i = 0; i < invoices.length; i++) {
       const inv = invoices[i] || {};
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
-      if (!docNo) {
-        skipped++;
-        continue;
-      }
+      if (!docNo) { skipped++; continue; }
 
-      // Minimal “header fields” (inga rows)
       const fields = {
         connection_id,
         document_number: docNo,
-        invoice_date: inv.InvoiceDate || null,
-        due_date: inv.DueDate || null,
-        customer_number: inv.CustomerNumber || null,
-        customer_name: inv.CustomerName || null,
-        total: typeof inv.Total === "number" ? inv.Total : (inv.Total ? Number(inv.Total) : null),
-        balance: typeof inv.Balance === "number" ? inv.Balance : (inv.Balance ? Number(inv.Balance) : null),
-        currency: inv.Currency || null,
-        ocr: inv.OCR || null,
+        invoice_date: inv.InvoiceDate ? toIsoDate(inv.InvoiceDate) : null,
+        due_date: inv.DueDate ? toIsoDate(inv.DueDate) : null,
+        customer_number: String(inv.CustomerNumber || ""),
+        customer_name: String(inv.CustomerName || ""),
+        total: toNumOrNull(inv.Total),
+        balance: toNumOrNull(inv.Balance),
+        currency: String(inv.Currency || ""),
+        ocr: String(inv.OCR || ""),
         booked: typeof inv.Booked === "boolean" ? inv.Booked : null,
         cancelled: typeof inv.Cancelled === "boolean" ? inv.Cancelled : null,
         sent: typeof inv.Sent === "boolean" ? inv.Sent : null,
-        // valfritt: rå snapshot för debug (om du har ett textfält)
-        raw_json: JSON.stringify(inv)
+        ft_url: String(inv?.["@url"] || ""),
+        raw_json: JSON.stringify(inv || {}),
+        last_seen_at: new Date().toISOString()
       };
 
-      // Find existing (connection_id + document_number)
-      const found = await bubbleFindOne(TYPE, [
-        { key: "connection_id", constraint_type: "equals", value: connection_id },
-        { key: "document_number", constraint_type: "equals", value: docNo }
-      ]);
+      try {
+        const existing = await bubbleFindOne(TYPE, [
+          { key: "connection_id", constraint_type: "equals", value: connection_id },
+          { key: "document_number", constraint_type: "equals", value: docNo }
+        ]);
 
-      if (!found.ok) {
+        if (existing?._id) {
+          await bubblePatch(TYPE, existing._id, fields);
+          updated++;
+        } else {
+          const id = await bubbleCreate(TYPE, fields);
+          if (id) created++;
+          else {
+            errors++;
+            if (!first_error) first_error = { step: "bubbleCreate", docNo, detail: "bubbleCreate returned null id" };
+          }
+        }
+      } catch (e) {
         errors++;
-        if (!first_error) first_error = { step: "bubbleFindOne", status: found.status, detail: found.raw };
-        results.push({ docNo, ok: false, action: "find_failed" });
-        continue;
+        if (!first_error) first_error = {
+          step: "bubbleUpsert",
+          docNo,
+          message: e?.message || String(e),
+          status: e?.status || null,
+          detail: e?.detail || null
+        };
       }
 
-      let out;
-      if (found.item?._id) {
-  out = await bubbleUpdate(TYPE, found.item._id, fields);
-        if (out.ok) updated++; else errors++;
-        results.push({ docNo, ok: out.ok, action: "updated", status: out.status });
-      } else {
-        out = await bubbleCreate(TYPE, fields);
-        if (out.ok) created++; else errors++;
-        results.push({ docNo, ok: out.ok, action: "created", status: out.status });
-      }
-
-      if (!out.ok && !first_error) {
-        first_error = { step: "bubbleUpsert", status: out.status, detail: out.json, docNo };
-      }
-
-      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
+      if (pause_ms) await sleep(Number(pause_ms));
     }
 
     return res.json({
@@ -1839,12 +1801,11 @@ const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) =>
       meta: syncJson.meta || null,
       counts: { created, updated, skipped, errors },
       first_error,
-      docs: invoices.length,
-      results
+      docs: invoices.length
     });
   } catch (e) {
     console.error("[/fortnox/upsert/invoices] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -2673,7 +2634,7 @@ app.post("/fortnox/upsert/offers/all", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections (eller en specifik)
 app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
-  const lock = getNightlyLock();
+  const lock = getLock();
   const now = Date.now();
   const LOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6 timmar
 
