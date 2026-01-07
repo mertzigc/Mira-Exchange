@@ -2705,134 +2705,172 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     const results = [];
 
     for (const conn of pick) {
-      const cid = conn?._id || conn?.id;
-      const one = { connection_id: cid, ok: false, steps: {}, error: null };
+      const connection_id = conn._id;
+const one = { connection_id, ok: false, steps: {} };
 
-      console.log("[nightly/delta] conn start", { connection_id: cid });
+try {
+  console.log("[nightly/delta] conn start", { connection_id });
 
-      try {
-        // CUSTOMERS (en sida)
-        {
-          const { r, j } = await postJson("/fortnox/upsert/customers", { connection_id: cid, page: 1, limit: 100 }, 120000);
-          one.steps.customers = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null, error: j.error || null };
-          if (!one.steps.customers.ok) throw new Error("customers failed: " + JSON.stringify(one.steps.customers));
-        }
+  // 1) CUSTOMERS
+  const customersJ = await postJson(
+    "/fortnox/upsert/customers",
+    { connection_id, page: 1, limit: 100 },
+    120000
+  );
+  one.steps.customers = {
+    ok: !!customersJ?.ok,
+    counts: customersJ?.counts || null,
+    first_error: customersJ?.first_error || null
+  };
+  if (!customersJ?.ok) throw new Error("customers failed: " + JSON.stringify(customersJ));
 
-        // ORDERS (delta 1 sida) + ROWS flagged loop (om du fortfarande vill köra rows; annars kommentera hela blocket)
-        {
-          const { r, j } = await postJson("/fortnox/upsert/orders", { connection_id: cid, months_back: mb, page: 1, limit: 50 }, 180000);
-          one.steps.orders = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null, error: j.error || null };
-          if (!one.steps.orders.ok) throw new Error("orders failed: " + JSON.stringify(one.steps.orders));
+  // 2) ORDERS (delta)
+  const ordersJ = await postJson(
+    "/fortnox/upsert/orders",
+    { connection_id, months_back, page: 1, limit: 50 },
+    180000
+  );
+  one.steps.orders = {
+    ok: !!ordersJ?.ok,
+    counts: ordersJ?.counts || null,
+    first_error: ordersJ?.first_error || null
+  };
+  if (!ordersJ?.ok) throw new Error("orders failed: " + JSON.stringify(ordersJ));
 
-          // rows flagged – små chunkar så nightly inte ser "hängd" ut
-let totalFlagged = 0;
-let roundsUsed = 0;
+  // 3) ORDER ROWS (flagged loop)
+  {
+    let rounds = 0;
+    let total_ok = 0;
+    let total_fail = 0;
+    let total_flagged_hits = 0;
 
-for (let round = 0; round < 30; round++) {
-  roundsUsed = round + 1;
+    for (let round = 0; round < 5; round++) {
+      rounds++;
 
-  const rr = await postJson("/fortnox/upsert/order-rows/flagged", {
-    connection_id,
-    limit: 3,       // <-- viktigt: 2–3 är rimligt (du såg ~8s för 1)
-    pause_ms: 0
-  }, 180_000);      // 3 min timeout per varv (ändra vid behov)
+      const rowsJ = await postJson(
+        "/fortnox/upsert/order-rows/flagged",
+        { connection_id, limit: 30, pause_ms: 250 },
+        180000
+      );
 
-  const jj = rr.json || {};
-  if (!rr.ok || !jj.ok) {
-    throw new Error("order-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
-  }
+      if (!rowsJ?.ok) throw new Error("order-rows/flagged failed: " + JSON.stringify(rowsJ));
 
-  totalFlagged += Number(jj.flagged_found || 0);
+      total_ok += Number(rowsJ?.ok_count || 0);
+      total_fail += Number(rowsJ?.fail_count || 0);
+      total_flagged_hits += Number(rowsJ?.flagged_found || 0);
 
-  // klart när inga fler flaggade finns
-  if (!jj.flagged_found) break;
-
-  // liten paus mellan varv för att skona Fortnox/Bubble
-  await sleep(150);
-}
-
-one.steps.order_rows = { ok: true, rounds: roundsUsed, flagged_seen: totalFlagged };
-        }
-
-        // OFFERS (chunk) + OFFER ROWS flagged loop
-        {
-          const startPage = await getConnNextPage(cid, "offers_next_page", 1);
-
-          const { r, j } = await postJson("/fortnox/upsert/offers/all", { connection_id: cid, start_page: startPage, limit: 100, max_pages: 5 }, 300000);
-          one.steps.offers = { ok: r.ok && !!j.ok, status: r.status, done: !!j.done, next_page: j.next_page ?? null, counts: j.counts || null, error: j.error || null };
-          if (!one.steps.offers.ok) throw new Error("offers failed: " + JSON.stringify(one.steps.offers));
-
-          await setConnPaging(cid, {
-            offers_next_page: j.next_page || 1,
-            offers_last_progress_at: nowIso(),
-            ...(j.done ? { offers_last_full_sync_at: nowIso() } : {})
-          });
-
-          let totalFlaggedOffers = 0;
-let roundsUsedOffers = 0;
-
-for (let round = 0; round < 40; round++) {
-  roundsUsedOffers = round + 1;
-
-  const rr = await postJson(`${ORIGIN}/fortnox/upsert/offer-rows/flagged`, {
-    connection_id,
-    limit: 1,       // <-- viktigt: din mätning ~26.5s för 1
-    pause_ms: 0
-  }, 240_000);      // 4 min timeout per varv
-
-  const jj = rr.json || {};
-  if (!rr.ok || !jj.ok) {
-    throw new Error("offer-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
-  }
-
-  totalFlaggedOffers += Number(jj.flagged_found || 0);
-
-  if (!jj.flagged_found) break;
-
-  await sleep(200);
-}
-
-one.steps.offer_rows = { ok: true, rounds: roundsUsedOffers, flagged_seen: totalFlaggedOffers };
-        }
-
-        // INVOICES (chunk) – INGA invoice rows
-        {
-          const startPage = await getConnNextPage(cid, "invoices_next_page", 1);
-
-          const { r, j } = await postJson("/fortnox/upsert/invoices/all", { connection_id: cid, start_page: startPage, limit: 50, max_pages: 5, months_back: mb }, 300000);
-          one.steps.invoices = { ok: r.ok && !!j.ok, status: r.status, done: !!j.done, next_page: j.next_page ?? null, counts: j.counts || null, error: j.error || null };
-          if (!one.steps.invoices.ok) throw new Error("invoices failed: " + JSON.stringify(one.steps.invoices));
-
-          await setConnPaging(cid, {
-            invoices_next_page: j.next_page || 1,
-            invoices_last_progress_at: nowIso(),
-            ...(j.done ? { invoices_last_full_sync_at: nowIso() } : {})
-          });
-        }
-
-        one.ok = true;
-
-        await bubblePatch("FortnoxConnection", cid, {
-          nightly_last_run_at: nowIso(),
-          nightly_last_error: ""
-        });
-
-        console.log("[nightly/delta] conn done", { connection_id: cid, ok: true });
-      } catch (e) {
-        one.ok = false;
-        one.error = e?.message || String(e);
-
-        console.error("[nightly/delta] conn error", { connection_id: cid, error: one.error });
-
-        await bubblePatch("FortnoxConnection", cid, {
-          nightly_last_run_at: nowIso(),
-          nightly_last_error: one.error
-        }).catch(() => {});
-      }
-
-      results.push(one);
+      if (!rowsJ?.flagged_found) break;
     }
 
+    one.steps.order_rows = {
+      ok: true,
+      rounds,
+      ok_count: total_ok,
+      fail_count: total_fail,
+      flagged_seen: total_flagged_hits
+    };
+  }
+
+  // 4) OFFERS (paged chunk)
+  const startPageOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
+
+  const offersJ = await postJson(
+    "/fortnox/upsert/offers/all",
+    { connection_id, start_page: startPageOffers, limit: 100, max_pages: 5 },
+    180000
+  );
+
+  one.steps.offers = {
+    ok: !!offersJ?.ok,
+    done: !!offersJ?.done,
+    next_page: offersJ?.next_page ?? null,
+    counts: offersJ?.counts || null,
+    first_error: offersJ?.first_error || null
+  };
+  if (!offersJ?.ok) throw new Error("offers/all failed: " + JSON.stringify(offersJ));
+
+  await setConnPaging(connection_id, {
+    offers_next_page: offersJ?.next_page || 1,
+    offers_last_progress_at: nowIso(),
+    ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
+  });
+
+  // 5) OFFER ROWS (flagged loop)
+  {
+    let rounds = 0;
+    let total_ok = 0;
+    let total_fail = 0;
+    let total_flagged_hits = 0;
+
+    for (let round = 0; round < 5; round++) {
+      rounds++;
+
+      const rowsJ = await postJson(
+        "/fortnox/upsert/offer-rows/flagged",
+        { connection_id, limit: 30, pause_ms: 250 },
+        180000
+      );
+
+      if (!rowsJ?.ok) throw new Error("offer-rows/flagged failed: " + JSON.stringify(rowsJ));
+
+      total_ok += Number(rowsJ?.ok_count || 0);
+      total_fail += Number(rowsJ?.fail_count || 0);
+      total_flagged_hits += Number(rowsJ?.flagged_found || 0);
+
+      if (!rowsJ?.flagged_found) break;
+    }
+
+    one.steps.offer_rows = {
+      ok: true,
+      rounds,
+      ok_count: total_ok,
+      fail_count: total_fail,
+      flagged_seen: total_flagged_hits
+    };
+  }
+
+  // 6) INVOICES (paged chunk) – INGA invoice rows
+  const startPageInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
+
+  const invoicesJ = await postJson(
+    "/fortnox/upsert/invoices/all",
+    { connection_id, start_page: startPageInv, limit: 50, max_pages: 5, months_back },
+    180000
+  );
+
+  one.steps.invoices = {
+    ok: !!invoicesJ?.ok,
+    done: !!invoicesJ?.done,
+    next_page: invoicesJ?.next_page ?? null,
+    counts: invoicesJ?.counts || null,
+    first_error: invoicesJ?.first_error || null
+  };
+  if (!invoicesJ?.ok) throw new Error("invoices/all failed: " + JSON.stringify(invoicesJ));
+
+  await setConnPaging(connection_id, {
+    invoices_next_page: invoicesJ?.next_page || 1,
+    invoices_last_progress_at: nowIso(),
+    ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
+  });
+
+  one.ok = true;
+
+  await bubblePatch("FortnoxConnection", connection_id, {
+    nightly_last_run_at: nowIso(),
+    nightly_last_error: ""
+  });
+} catch (e) {
+  one.ok = false;
+  one.error = e?.message || String(e);
+
+  console.error("[nightly/delta] conn error", { connection_id, error: one.error });
+
+  await bubblePatch("FortnoxConnection", connection_id, {
+    nightly_last_run_at: nowIso(),
+    nightly_last_error: one.error
+  });
+}
+results.push(one);
     return res.json({
       ok: true,
       run_id: lock.run_id,
