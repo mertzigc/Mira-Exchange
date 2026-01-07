@@ -76,8 +76,13 @@ const BASE_URL =
   (Array.isArray(BUBBLE_BASES) && BUBBLE_BASES[0]) ||
   null;
 
+const BUBBLE_BASE_URL = BASE_URL; // ✅ BACKWARD COMPAT för endpoints som använder BUBBLE_BASE_URL
+
 if (!BASE_URL) {
-  console.warn("[BOOT] No BASE_URL resolved.  endpoints will fail.");
+  console.warn("[BOOT] No BASE_URL resolved. endpoints will fail.");
+}
+if (!BUBBLE_API_KEY) {
+  console.warn("[BOOT] No BUBBLE_API_KEY resolved. Bubble calls will fail.");
 }
 // ────────────────────────────────────────────────────────────
 // Helpers
@@ -1727,21 +1732,26 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
 
     // 2) Bubble helpers (lokalt i endpointen för att inte stöka med resten av filen)
-    const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
-      const base = String(BUBBLE_BASE_URL || "").replace(/\/+$/, "");
-      const url = `${base}${path}`;
-      const r = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.BUBBLE_API_KEY}`,
-          ...headers
-        },
-        body: body ? JSON.stringify(body) : undefined
-      });
-      const j = await r.json().catch(() => ({}));
-      return { ok: r.ok, status: r.status, json: j, url };
-    };
+const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
+  const base = String(BUBBLE_BASE_URL || "").replace(/\/+$/, "");
+  if (!base) throw new Error("BUBBLE_BASE_URL is not resolved (set BUBBLE_BASE_URL_TEST/LIVE)");
+
+  const cleanPath = String(path || "");
+  const url = cleanPath.startsWith("/") ? `${base}${cleanPath}` : `${base}/${cleanPath}`;
+
+  const r = await fetch(url, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.BUBBLE_API_KEY}`,
+      ...headers
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, json: j };
+};
 
     const bubbleFindOne = async (type, constraintsArr) => {
       const constraints = encodeURIComponent(JSON.stringify(constraintsArr));
