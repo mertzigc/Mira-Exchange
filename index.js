@@ -683,7 +683,7 @@ app.get("/fortnox/authorize", (req, res) => {
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent("customer order invoice offer")}` +
+    `&scope=${encodeURIComponent("customer order  offer")}` +
     `&state=${encodeURIComponent(state)}`;
 
   log("[/fortnox/authorize] redirect", { state, have_u: !!u, have_c: !!c, redirect_uri: FORTNOX_REDIRECT_URI });
@@ -1541,7 +1541,7 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
 
     // 2) Auto-refresh om token saknas/expired
     if (!accessToken || Date.now() > expiresAt - 60_000) {
-      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+      const ref = await fetch(`${SELF_BASE_URL}/fortnox/connection/refresh`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1549,10 +1549,12 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
         },
         body: JSON.stringify({ connection_id })
       });
+
       const refJson = await ref.json().catch(() => ({}));
       if (!ref.ok) {
         return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
       }
+
       const updated = await bubbleGet("FortnoxConnection", connection_id);
       accessToken = updated?.access_token || null;
     }
@@ -1571,14 +1573,20 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
       const dd = String(d.getDate()).padStart(2, "0");
       return `${yyyy}-${mm}-${dd}`;
     };
-    const cutoffDate = fmt(from); // "YYYY-MM-DD"
+
+    const cutoffDate = fmt(from);      // fromdate
+    const toDate = fmt(now);           // todate
     const cutoffTs = new Date(cutoffDate + "T00:00:00Z").getTime();
 
-    // 4) Hämta invoices (server-side filter kan vara olika — vi gör stabil client-side filter)
-    const url =
-      "https://api.fortnox.se/3/invoices" +
-      `?page=${encodeURIComponent(page)}` +
-      `&limit=${encodeURIComponent(limit)}`;
+    // 4) Hämta invoices (LÅT FORTNOX FILTRERA via fromdate/todate)
+    const qs = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+      fromdate: cutoffDate,
+      todate: toDate
+    });
+
+    const url = `https://api.fortnox.se/3/invoices?${qs.toString()}`;
 
     const r = await fetch(url, {
       headers: {
@@ -1599,145 +1607,192 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
 
     const list = Array.isArray(data?.Invoices) ? data.Invoices : [];
 
-const pickInvoiceDateTs = (inv) => {
-  // prova flera vanliga Fortnox-fält (list-API kan skilja)
-  const candidates = [
-    inv?.InvoiceDate,
-    inv?.invoiceDate,
-    inv?.DocumentDate,
-    inv?.documentDate,
-    inv?.Created,
-    inv?.created,
-    inv?.DueDate,
-    inv?.dueDate
-  ];
-  for (const c of candidates) {
-    const ts = parseFtDateToTs(c);
-    if (Number.isFinite(ts)) return ts;
-  }
-  return NaN;
-};
+    // Safety net: client-side filter också (ska normalt vara redundant nu)
+    const pickInvoiceDateTs = (inv) => {
+      const candidates = [
+        inv?.InvoiceDate,
+        inv?.invoiceDate,
+        inv?.DocumentDate,
+        inv?.documentDate,
+        inv?.Created,
+        inv?.created,
+        inv?.DueDate,
+        inv?.dueDate
+      ];
+      for (const c of candidates) {
+        const ts = parseFtDateToTs(c);
+        if (Number.isFinite(ts)) return ts;
+      }
+      return NaN;
+    };
 
-const filtered = list.filter(inv => {
-  const ts = pickInvoiceDateTs(inv);
-  return Number.isFinite(ts) && ts >= cutoffTs;
-});
+    const filtered = list.filter(inv => {
+      const ts = pickInvoiceDateTs(inv);
+      return Number.isFinite(ts) && ts >= cutoffTs;
+    });
 
-// DEBUG: visa sample så vi ser exakt vilka fält som kommer
-const sample = list[0] || null;
-const sampleKeys = sample ? Object.keys(sample) : [];
-const samplePickedTs = sample ? pickInvoiceDateTs(sample) : null;
+    // DEBUG: visa sample så vi ser exakt vilka fält som kommer
+    const sample = list[0] || null;
+    const sampleKeys = sample ? Object.keys(sample) : [];
+    const samplePickedTs = sample ? pickInvoiceDateTs(sample) : null;
 
-return res.json({
-  ok: true,
-  connection_id,
-  page,
-  limit,
-  sent_filters: { months_back: mb, invoiceDateCutoff: cutoffDate },
-  meta: data?.MetaInformation || null,
-  invoices: filtered,
-  debug_counts: { fetched: list.length, kept_by_date: filtered.length },
-  debug_sample: {
-    keys: sampleKeys,
-    invoiceDate: sample?.InvoiceDate || sample?.invoiceDate || null,
-    documentDate: sample?.DocumentDate || sample?.documentDate || null,
-    created: sample?.Created || sample?.created || null,
-    dueDate: sample?.DueDate || sample?.dueDate || null,
-    picked_ts: samplePickedTs,
-    cutoff_ts: cutoffTs
-  }
-});
-      } catch (e) {
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      sent_filters: {
+        months_back: mb,
+        fromdate: cutoffDate,
+        todate: toDate,
+        invoiceDateCutoff: cutoffDate
+      },
+      meta: data?.MetaInformation || null,
+      invoices: filtered,
+      debug_counts: { fetched: list.length, kept_by_date: filtered.length },
+      debug_sample: {
+        keys: sampleKeys,
+        invoiceDate: sample?.InvoiceDate || sample?.invoiceDate || null,
+        documentDate: sample?.DocumentDate || sample?.documentDate || null,
+        created: sample?.Created || sample?.created || null,
+        dueDate: sample?.DueDate || sample?.dueDate || null,
+        picked_ts: samplePickedTs,
+        cutoff_ts: cutoffTs,
+        request_url: url
+      }
+    });
+  } catch (e) {
     console.error("[/fortnox/sync/invoices] error", e);
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
 // ────────────────────────────────────────────────────────────
-// Fortnox: upsert invoices into Bubble (one page)
-app.post("/fortnox/upsert/invoices", async (req, res) => {
-  const createdIds = [];
-  const createdDebug = [];
-
-  const { connection_id, page = 1, limit = 100, months_back = 12 } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
-
-  const DEBUG_FORCE_CREATE = false;
-
-  let created = 0, updated = 0, skipped = 0, errors = 0;
-  let firstError = null;
-
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert invoices (NO invoice rows) – uses /fortnox/sync/invoices (fromdate/todate inside)
+// Upsert key: connection_id + DocumentNumber
+app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
   try {
-    // 1) reuse sync/invoices (refresh + filter) — robust parse
-    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/invoices", {
+    const {
+      connection_id,
+      page = 1,
+      limit = 100,
+      months_back = 12,
+      pause_ms = 0
+    } = req.body || {};
+
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+    // 1) Sync (filtered by date in /fortnox/sync/invoices)
+    const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/invoices`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
       body: JSON.stringify({ connection_id, page, limit, months_back })
     });
 
-    const syncText = await syncRes.text();
-    let syncJson = {};
-    try { syncJson = syncText ? JSON.parse(syncText) : {}; } catch { syncJson = { raw: syncText }; }
-
+    const syncJson = await syncRes.json().catch(() => ({}));
     if (!syncRes.ok || !syncJson.ok) {
-      return res.status(400).json({ ok: false, error: "sync/invoices failed", http_status: syncRes.status, detail: syncJson });
+      return res.status(400).json({ ok: false, error: "sync/invoices failed", detail: syncJson });
     }
-    if (syncJson.paused) return res.json({ ok: true, paused: true, connection_id });
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
 
-    for (const inv of invoices) {
-      const docNo = String(inv?.DocumentNumber || "").trim();
-      if (!docNo) { skipped++; continue; }
+    // 2) Bubble helpers (lokalt i endpointen för att inte stöka med resten av filen)
+    const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
+      const base = String(BUBBLE_BASE_URL || "").replace(/\/+$/, "");
+      const url = `${base}${path}`;
+      const r = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.BUBBLE_API_KEY}`,
+          ...headers
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const j = await r.json().catch(() => ({}));
+      return { ok: r.ok, status: r.status, json: j, url };
+    };
 
-      const uniqueKey = `${connection_id}::${docNo}`;
+    const bubbleFindOne = async (type, constraintsArr) => {
+      const constraints = encodeURIComponent(JSON.stringify(constraintsArr));
+      const out = await bubbleFetch(`/obj/${encodeURIComponent(type)}?constraints=${constraints}`);
+      const results = Array.isArray(out.json?.response?.results) ? out.json.response.results : [];
+      return { ok: out.ok, status: out.status, item: results[0] || null, raw: out.json };
+    };
 
-      const payload = {
-        connection: connection_id,
-        ft_document_number: docNo,
-        ft_customer_number: String(inv?.CustomerNumber || ""),
-        ft_customer_name: String(inv?.CustomerName || ""),
-        ft_invoice_date: toIsoDate(inv?.InvoiceDate),
-        ft_due_date: toIsoDate(inv?.DueDate),
-        ft_total: inv?.Total == null ? "" : String(inv.Total),
-        ft_balance: inv?.Balance == null ? "" : String(inv.Balance),
-        ft_currency: String(inv?.Currency || ""),
-        ft_cancelled: !!inv?.Cancelled,
-        ft_unique_key: uniqueKey,
-        ft_sent: !!inv?.Sent,
-        ft_url: String(inv?.["@url"] || ""),
-        ft_raw_json: JSON.stringify(inv || {}),
-        ft_last_seen_at: new Date().toISOString()
+    const bubbleCreate = async (type, fields) => {
+      return bubbleFetch(`/obj/${encodeURIComponent(type)}`, { method: "POST", body: fields });
+    };
+
+    const bubbleUpdate = async (type, id, fields) => {
+      return bubbleFetch(`/obj/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, { method: "PATCH", body: fields });
+    };
+
+    // 3) Upsert loop (NO rows)
+    const TYPE = "FortnoxInvoice"; // <-- din Bubble datatype (ändra om du heter nåt annat)
+    let created = 0, updated = 0, skipped = 0, errors = 0;
+    const results = [];
+    let first_error = null;
+
+    for (let i = 0; i < invoices.length; i++) {
+      const inv = invoices[i] || {};
+      const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
+      if (!docNo) {
+        skipped++;
+        continue;
+      }
+
+      // Minimal “header fields” (inga rows)
+      const fields = {
+        connection_id,
+        document_number: docNo,
+        invoice_date: inv.InvoiceDate || null,
+        due_date: inv.DueDate || null,
+        customer_number: inv.CustomerNumber || null,
+        customer_name: inv.CustomerName || null,
+        total: typeof inv.Total === "number" ? inv.Total : (inv.Total ? Number(inv.Total) : null),
+        balance: typeof inv.Balance === "number" ? inv.Balance : (inv.Balance ? Number(inv.Balance) : null),
+        currency: inv.Currency || null,
+        ocr: inv.OCR || null,
+        booked: typeof inv.Booked === "boolean" ? inv.Booked : null,
+        cancelled: typeof inv.Cancelled === "boolean" ? inv.Cancelled : null,
+        sent: typeof inv.Sent === "boolean" ? inv.Sent : null,
+        // valfritt: rå snapshot för debug (om du har ett textfält)
+        raw_json: JSON.stringify(inv)
       };
 
-      try {
-        if (DEBUG_FORCE_CREATE) {
-          const createdId = await bubbleCreate("FortnoxInvoice", payload);
-          created++;
-          createdIds.push(createdId || null);
-          createdDebug.push({ id: createdId || null });
-          continue;
-        }
+      // Find existing (connection_id + document_number)
+      const found = await bubbleFindOne(TYPE, [
+        { key: "connection_id", constraint_type: "equals", value: connection_id },
+        { key: "document_number", constraint_type: "equals", value: docNo }
+      ]);
 
-        // Upsert via ft_unique_key (EN gång)
-        const found = await bubbleFind("FortnoxInvoice", {
-          constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
-          limit: 1
-        });
-        const existing = Array.isArray(found) && found.length ? found[0] : null;
-
-        if (existing?._id) {
-          await bubblePatch("FortnoxInvoice", existing._id, payload);
-          updated++;
-        } else {
-          await bubbleCreate("FortnoxInvoice", payload);
-          created++;
-        }
-      } catch (e) {
+      if (!found.ok) {
         errors++;
-        if (!firstError) {
-          firstError = { docNo, message: e?.message || String(e), status: e?.status || null, detail: e?.detail || null };
-        }
+        if (!first_error) first_error = { step: "bubbleFindOne", status: found.status, detail: found.raw };
+        results.push({ docNo, ok: false, action: "find_failed" });
+        continue;
       }
+
+      let out;
+      if (found.item?."_id") {
+        out = await bubbleUpdate(TYPE, found.item._id, fields);
+        if (out.ok) updated++; else errors++;
+        results.push({ docNo, ok: out.ok, action: "updated", status: out.status });
+      } else {
+        out = await bubbleCreate(TYPE, fields);
+        if (out.ok) created++; else errors++;
+        results.push({ docNo, ok: out.ok, action: "created", status: out.status });
+      }
+
+      if (!out.ok && !first_error) {
+        first_error = { step: "bubbleUpsert", status: out.status, detail: out.json, docNo };
+      }
+
+      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
     }
 
     return res.json({
@@ -1748,13 +1803,13 @@ app.post("/fortnox/upsert/invoices", async (req, res) => {
       months_back,
       meta: syncJson.meta || null,
       counts: { created, updated, skipped, errors },
-      created_ids: createdIds,
-      created_debug: createdDebug,
-      first_error: firstError
+      first_error,
+      docs: invoices.length,
+      results
     });
-
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    console.error("[/fortnox/upsert/invoices] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -2365,86 +2420,81 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────
-// Fortnox: upsert invoices - batch loop (N pages per run)
-app.post("/fortnox/upsert/invoices/all", async (req, res) => {
-  const {
-    connection_id,
-    start_page = 1,
-    limit = 50,
-    max_pages = 10,
-    months_back = 12
-  } = req.body || {};
-
-  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
-
-  const start = numOr(start_page, 1);
-  const lim = Math.max(1, Math.min(200, numOr(limit, 50)));
-  const maxP = Math.max(1, numOr(max_pages, 10));
-
-  let page = start;
-  let created = 0, updated = 0, skipped = 0, errors = 0;
-  let totalPages = null;
-
+// Fortnox: upsert ALL invoices pages (NO rows) – pages via /fortnox/sync/invoices meta
+app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
   try {
-    for (let i = 0; i < maxP; i++) {
+    const {
+      connection_id,
+      start_page = 1,
+      limit = 100,
+      months_back = 12,
+      max_pages = 9999,
+      pause_ms = 250
+    } = req.body || {};
+
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+    let page = Math.max(1, Number(start_page) || 1);
+    let pages_done = 0;
+
+    let created = 0, updated = 0, skipped = 0, errors = 0;
+    let first_error = null;
+
+    // vi summerar lätt – inte ALLA results (kan bli enormt)
+    while (pages_done < max_pages) {
       const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/invoices`, {
         method: "POST",
-        headers: { "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-        body: JSON.stringify({ connection_id, page, limit: lim, months_back })
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id, page, limit, months_back, pause_ms: 0 })
       });
 
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
-        return res.status(400).json({ ok:false, error:"upsert/invoices failed", page, detail:j });
-      }
-      if (j.paused) {
-        return res.json({ ok:true, paused:true, connection_id, page });
+        return res.status(400).json({ ok: false, error: "upsert/invoices failed", detail: j });
       }
 
-      created += j.counts?.created || 0;
-      updated += j.counts?.updated || 0;
-      skipped += j.counts?.skipped || 0;
-      errors  += j.counts?.errors  || 0;
+      created += Number(j?.counts?.created || 0);
+      updated += Number(j?.counts?.updated || 0);
+      skipped += Number(j?.counts?.skipped || 0);
+      errors += Number(j?.counts?.errors || 0);
+      if (!first_error && j.first_error) first_error = j.first_error;
 
-      const meta = j.meta || null;
-      const cur = numOr(meta?.["@CurrentPage"], page);
-      const tot = numOr(meta?.["@TotalPages"], 0);
-      if (tot) totalPages = tot;
+      pages_done++;
 
-      // om meta finns: använd den
-      if (tot && cur >= tot) {
-        return res.json({
-          ok: true,
-          connection_id,
-          done: true,
-          start_page: start,
-          end_page: cur,
-          total_pages: tot,
-          counts: { created, updated, skipped, errors },
-          next_page: 1
-        });
-      }
+      const totalPagesRaw = j?.meta?.["@TotalPages"] ?? j?.meta?.TotalPages ?? null;
+      const totalPages = totalPagesRaw ? Number(totalPagesRaw) : null;
 
-      // fallback om meta saknas: om vi fick färre än limit invoices från sync -> done
-      // (kräver att upsert/invoices returnerar debug_counts eller invoices length – annars hoppa denna)
-      page = cur + 1;
+      // stopvillkor:
+      // 1) om Fortnox säger total pages och vi passerat
+      if (totalPages && page >= totalPages) break;
+
+      // 2) om ingen data kom tillbaka på denna sida (vanligt vid filter)
+      const docsThisPage = Number(j?.docs || 0);
+      if (!docsThisPage) break;
+
+      page++;
+
+      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
     }
 
     return res.json({
       ok: true,
       connection_id,
-      done: false,
-      start_page: start,
-      end_page: page - 1,
-      total_pages: totalPages,
+      months_back,
+      start_page,
+      limit,
+      pages_done,
       counts: { created, updated, skipped, errors },
-      next_page: page
+      first_error
     });
   } catch (e) {
-    return res.status(500).json({ ok:false, error:e.message });
+    console.error("[/fortnox/upsert/invoices/all] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 // ────────────────────────────────────────────
 // Fortnox: upsert offers - batch loop (N pages per run)
 app.post("/fortnox/upsert/offers/all", async (req, res) => {
