@@ -48,6 +48,9 @@ const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT       = process.env.PORT || 10000;
+// 🔒 Används för interna calls (Render → samma Render-instans)
+// localhost funkar på Render och gör att du aldrig råkar träffa Bubble.
+const SELF_BASE_URL = pick(process.env.SELF_BASE_URL, `http://127.0.0.1:${PORT}`);
 
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
@@ -468,6 +471,20 @@ async function upsertFortnoxTokensToBubble(bubble_user_id, tokenJson) {
   }
   return false;
 }
+const numOr = (v, fallback) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+async function getConnNextPage(connection_id, key, fallback = 1) {
+  const conn = await bubbleGet("FortnoxConnection", connection_id);
+  return numOr(conn?.[key], fallback);
+}
+
+async function setConnPaging(connection_id, patch) {
+  // patch t.ex { offers_next_page: 12, offers_last_progress_at: nowIso() }
+  await bubblePatch("FortnoxConnection", connection_id, patch);
+}
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) – connection-based token refresh + API fetch
 function nowIso() { return new Date().toISOString(); }
@@ -610,6 +627,35 @@ function getNightlyStatus() {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // ────────────────────────────────────────────────────────────
+const SELF_BASE_URL = pick(
+  process.env.SELF_BASE_URL,          // sätt denna i Render till https://api.mira-fm.com
+  process.env.RENDER_EXTERNAL_URL,     // om Render har den
+  "https://api.mira-fm.com"
+);
+
+async function renderPostJson(path, body) {
+  const url = SELF_BASE_URL.replace(/\/$/, "") + path;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.MIRA_RENDER_API_KEY
+    },
+    body: JSON.stringify(body || {})
+  });
+
+  const text = await r.text();
+  let j = {};
+  try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+
+  if (!r.ok || j?.ok === false) {
+    const err = new Error(`POST ${path} failed (${r.status})`);
+    err.status = r.status;
+    err.detail = j;
+    throw err;
+  }
+  return j;
+}
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/debug/bubble-bases", (req, res) => {
   res.json({ ok: true, bubble_bases: BUBBLE_BASES });
@@ -1014,37 +1060,25 @@ app.post("/fortnox/sync/orders", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert orders into Bubble (one page)
 app.post("/fortnox/upsert/orders", async (req, res) => {
-  const {
-    connection_id,
-    page = 1,
-    limit = 100,
-    months_back = 12
-  } = req.body || {};
+  const { connection_id, page = 1, limit = 100, months_back = 12 } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  if (!connection_id) {
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
-  }
-
-  let created = 0;
-  let updated = 0;
-  let skipped = 0;
-  let errors = 0;
+  let created = 0, updated = 0, skipped = 0, errors = 0;
   let firstError = null;
 
   try {
-    // 1) Fetch filtered orders
     const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/orders", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
       body: JSON.stringify({ connection_id, page, limit, months_back })
     });
 
-    const syncJson = await syncRes.json().catch(() => ({}));
+    const syncText = await syncRes.text();
+    let syncJson = {};
+    try { syncJson = syncText ? JSON.parse(syncText) : {}; } catch { syncJson = { raw: syncText }; }
+
     if (!syncRes.ok || !syncJson.ok) {
-      return res.status(400).json({ ok: false, error: "sync/orders failed", detail: syncJson });
+      return res.status(400).json({ ok: false, error: "sync/orders failed", http_status: syncRes.status, detail: syncJson });
     }
 
     const orders = Array.isArray(syncJson.orders) ? syncJson.orders : [];
@@ -1052,21 +1086,21 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
     for (const o of orders) {
       const docNo = String(o?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
-  console.log("[upsert/orders] docNo", docNo);
+
       const payload = {
         connection: connection_id,
         ft_document_number: docNo,
         ft_customer_number: String(o?.CustomerNumber || ""),
         ft_customer_name: String(o?.CustomerName || ""),
         ft_order_date: toIsoDate(o?.OrderDate),
-ft_delivery_date: toIsoDate(o?.DeliveryDate),
-ft_last_seen_at: new Date().toISOString(),   // (detta är date i Bubble -> ISO funkar)
+        ft_delivery_date: toIsoDate(o?.DeliveryDate),
+        ft_last_seen_at: new Date().toISOString(),
         ft_total: o?.Total == null ? "" : String(o.Total),
         ft_cancelled: !!o?.Cancelled,
         ft_sent: !!o?.Sent,
         ft_currency: String(o?.Currency || ""),
         ft_url: String(o?.["@url"] || ""),
-        ft_raw_json: JSON.stringify(o),
+        ft_raw_json: JSON.stringify(o || {}),
         needs_rows_sync: true
       };
 
@@ -1080,34 +1114,22 @@ ft_last_seen_at: new Date().toISOString(),   // (detta är date i Bubble -> ISO 
         });
 
         const existing = Array.isArray(search) && search.length ? search[0] : null;
-  console.log("[upsert/orders] found", {
-    docNo,
-    found_id: existing?._id,
-    found_doc: existing?.ft_document_number
-  });
         const foundDoc = String(existing?.ft_document_number || "").trim();
 
-if (existing?._id && foundDoc === docNo) {
-  await bubblePatch("FortnoxOrder", existing._id, payload);
-  updated++;
-} else {
-  await bubbleCreate("FortnoxOrder", payload);
-  created++;
-}
+        if (existing?._id && foundDoc === docNo) {
+          await bubblePatch("FortnoxOrder", existing._id, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxOrder", payload);
+          created++;
+        }
       } catch (e) {
         errors++;
-        if (!firstError) {
-          firstError = {
-            docNo,
-            message: e.message,
-            status: e.status || null,
-            detail: e.detail || null
-          };
-        }
+        if (!firstError) firstError = { docNo, message: e?.message || String(e), status: e?.status || null, detail: e?.detail || null };
       }
     }
 
-        return res.json({
+    return res.json({
       ok: true,
       connection_id,
       page,
@@ -1119,8 +1141,7 @@ if (existing?._id && foundDoc === docNo) {
     });
 
   } catch (e) {
-    console.error("[/fortnox/upsert/orders] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -1148,7 +1169,7 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
 
   try {
     for (let i = 0; i < maxP; i++) {
-      const r = await fetch(`${BASE_URL}/fortnox/upsert/orders`, {
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id, page, limit: lim, months_back })
@@ -1195,36 +1216,28 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", async (req, res) => {
-  const {
-    connection_id,
-    page = 1,
-    limit = 100,
-    skip_without_orgnr = true
-  } = req.body || {};
+  const { connection_id, page = 1, limit = 100, skip_without_orgnr = true } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  if (!connection_id) {
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
-  }
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let firstError = null;
 
   try {
-    // 1) Hämta customers (återanvänd din sync-route internt)
     const r = await fetch("https://mira-exchange.onrender.com/fortnox/sync/customers", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
       body: JSON.stringify({ connection_id, page, limit })
     });
 
-    const j = await r.json().catch(() => ({}));
+    const text = await r.text();
+    let j = {};
+    try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+
     if (!r.ok || !j.ok) {
-      return res.status(400).json({ ok: false, error: "sync/customers failed", detail: j });
+      return res.status(400).json({ ok: false, error: "sync/customers failed", http_status: r.status, detail: j });
     }
 
     const list = Array.isArray(j.customers) ? j.customers : [];
-
-    let created = 0, updated = 0, skipped = 0, errors = 0;
 
     for (const c of list) {
       const customerNumber = String(c?.CustomerNumber || "").trim();
@@ -1236,35 +1249,39 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
       const payload = {
         connection_id,
         customer_number: customerNumber,
-        name: c?.Name || "",
+        name: String(c?.Name || ""),
         organisation_number: orgnr || "",
-        email: c?.Email || "",
-        phone: c?.Phone || "",
-        address1: c?.Address1 || "",
-        address2: c?.Address2 || "",
-        zip: c?.ZipCode || "",
-        city: c?.City || "",
-        ft_url: c?.["@url"] || "",
+        email: String(c?.Email || ""),
+        phone: String(c?.Phone || ""),
+        address1: String(c?.Address1 || ""),
+        address2: String(c?.Address2 || ""),
+        zip: String(c?.ZipCode || ""),
+        city: String(c?.City || ""),
+        ft_url: String(c?.["@url"] || ""),
         last_seen_at: new Date().toISOString(),
         raw_json: JSON.stringify(c || {})
       };
 
       try {
-        // 2) Find existing by (connection_id + customer_number)
         const existing = await bubbleFindOne("FortnoxCustomer", [
           { key: "connection_id", constraint_type: "equals", value: connection_id },
           { key: "customer_number", constraint_type: "equals", value: customerNumber }
         ]);
 
         if (existing?._id) {
-          const ok = await bubblePatch("FortnoxCustomer", existing._id, payload);
-          if (ok) updated++; else errors++;
+          await bubblePatch("FortnoxCustomer", existing._id, payload);
+          updated++;
         } else {
-          const cr = await bubbleCreate("FortnoxCustomer", payload);
-          if (cr.ok) created++; else errors++;
+          const id = await bubbleCreate("FortnoxCustomer", payload);
+          if (id) created++;
+          else {
+            errors++;
+            if (!firstError) firstError = { customerNumber, message: "bubbleCreate returned null id" };
+          }
         }
-      } catch {
+      } catch (e) {
         errors++;
+        if (!firstError) firstError = { customerNumber, message: e?.message || String(e), detail: e?.detail || null };
       }
     }
 
@@ -1275,12 +1292,12 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
       limit,
       skip_without_orgnr,
       meta: j.meta || null,
-      counts: { created, updated, skipped, errors }
+      counts: { created, updated, skipped, errors },
+      first_error: firstError
     });
 
   } catch (e) {
-    console.error("[/fortnox/upsert/customers] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -1642,45 +1659,41 @@ return res.json({
 // Fortnox: upsert invoices into Bubble (one page)
 app.post("/fortnox/upsert/invoices", async (req, res) => {
   const createdIds = [];
-const createdDebug = [];
-  const {
-    connection_id,
-    page = 1,
-    limit = 100,
-    months_back = 12
-  } = req.body || {};
+  const createdDebug = [];
 
+  const { connection_id, page = 1, limit = 100, months_back = 12 } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
+  const DEBUG_FORCE_CREATE = false;
+
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let firstError = null;
+
   try {
-    // 1) reuse sync/invoices (refresh + filter)
+    // 1) reuse sync/invoices (refresh + filter) — robust parse
     const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/invoices", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
       body: JSON.stringify({ connection_id, page, limit, months_back })
     });
 
-    const syncJson = await syncRes.json().catch(() => ({}));
+    const syncText = await syncRes.text();
+    let syncJson = {};
+    try { syncJson = syncText ? JSON.parse(syncText) : {}; } catch { syncJson = { raw: syncText }; }
+
     if (!syncRes.ok || !syncJson.ok) {
-      return res.status(400).json({ ok: false, error: "sync/invoices failed", detail: syncJson });
+      return res.status(400).json({ ok: false, error: "sync/invoices failed", http_status: syncRes.status, detail: syncJson });
     }
-    if (syncJson.paused) {
-      return res.json({ ok: true, paused: true, connection_id });
-    }
+    if (syncJson.paused) return res.json({ ok: true, paused: true, connection_id });
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
-const DEBUG_FORCE_CREATE = false; // TEMP: sätt false när det funkar
-    let created = 0, updated = 0, skipped = 0, errors = 0;
-    let firstError = null;
 
     for (const inv of invoices) {
       const docNo = String(inv?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
 
-      // Bygg payload till Bubble (viktigt: ft_total ska vara STRING)
+      const uniqueKey = `${connection_id}::${docNo}`;
+
       const payload = {
         connection: connection_id,
         ft_document_number: docNo,
@@ -1692,264 +1705,59 @@ const DEBUG_FORCE_CREATE = false; // TEMP: sätt false när det funkar
         ft_balance: inv?.Balance == null ? "" : String(inv.Balance),
         ft_currency: String(inv?.Currency || ""),
         ft_cancelled: !!inv?.Cancelled,
-        ft_unique_key: `${connection_id}::${docNo}`,
+        ft_unique_key: uniqueKey,
         ft_sent: !!inv?.Sent,
         ft_url: String(inv?.["@url"] || ""),
-        ft_raw_json: JSON.stringify(inv),
+        ft_raw_json: JSON.stringify(inv || {}),
         ft_last_seen_at: new Date().toISOString()
       };
 
       try {
-        // Upsert-nyckel: (connection + ft_document_number)
         if (DEBUG_FORCE_CREATE) {
-  const createdRes = await bubbleCreate("FortnoxInvoice", payload);
-created++;
-
-createdIds.push(createdRes?._id || createdRes?.id || null);
-createdDebug.push({
-  id: createdRes?._id || createdRes?.id || null,
-  debug_base: createdRes?._debug_base || null
-});
-  continue;
-}
-
-// --- STEG 4: Upsert (BOMBSÄKER) ---
-const uniqueKey = `${connection_id}::${docNo}`;
-
-// 1) Hitta ev. befintlig invoice via ft_unique_key
-const search = await bubbleFind("FortnoxInvoice", {
-  constraints: [
-    { key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }
-  ],
-  limit: 1
-});
-
-const existing = Array.isArray(search) && search.length ? search[0] : null;
-
-// 2) Patch om den finns, annars Create
-if (existing && existing._id) {
-  await bubblePatch("FortnoxInvoice", existing._id, payload);
-  updated++;
-} else {
-  await bubbleCreate("FortnoxInvoice", payload);
-  created++;
-}
-
-// ✅ BEVIS-DEBUG (kör bara ibland för att inte spamma)
-if (Math.random() < 0.15) {
-  console.log("[upsert/invoices] find-check", {
-    docNo,
-    found_id: existing?._id,
-    found_doc: existing?.ft_document_number,
-    found_conn: existing?.connection
-  });
-}
-
-// ✅ SAFETY-GUARD: om Bubble returnerar “fel” record → behandla som “not found”
-const matched =
-  existing &&
-  String(existing?.ft_document_number || "").trim() === docNo &&
-  String(existing?.connection || "").trim() === String(connection_id);
-
-if (matched) {
-  await bubblePatch("FortnoxInvoice", existing._id, payload);
-  updated++;
-} else {
-  await bubbleCreate("FortnoxInvoice", payload);
-  created++;
-}
-      } catch (e) {
-        errors++;
-        if (!firstError) {
-          firstError = {
-            docNo,
-            message: e.message,
-            status: e.status || null,
-            detail: e.detail || null
-          };
+          const createdId = await bubbleCreate("FortnoxInvoice", payload);
+          created++;
+          createdIds.push(createdId || null);
+          createdDebug.push({ id: createdId || null });
+          continue;
         }
-        console.error("[upsert/invoices] create/patch failed", { docNo, message: e.message });
-      }
-    }
 
-   return res.json({
-  ok: true,
-  connection_id,
-  page,
-  limit,
-  months_back,
-  meta: syncJson.meta || null,
-  counts: { created, updated, skipped, errors },
-  created_ids: createdIds,
-  created_debug: createdDebug,
-  first_error: firstError
-});
-
-  } catch (e) {
-    console.error("[/fortnox/upsert/invoices] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-// ────────────────────────────────────────────────────────────
-// Fortnox: upsert invoice rows (per invoice docno)
-app.post("/fortnox/upsert/invoice-rows", async (req, res) => {
-  const { connection_id, invoice_docno } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
-  if (!invoice_docno) return res.status(400).json({ ok: false, error: "Missing invoice_docno" });
-
-  try {
-    // 1) Connection + pause
-    const conn = await bubbleGet("FortnoxConnection", connection_id);
-    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
-    if (conn.is_active === false) return res.json({ ok: true, paused: true, connection_id });
-
-    // 2) Token (refresh vid behov)
-    let accessToken = conn.access_token || null;
-    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
-
-    if (!accessToken || Date.now() > expiresAt - 60_000) {
-      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-        body: JSON.stringify({ connection_id })
-      });
-      const refJson = await ref.json().catch(() => ({}));
-      if (!ref.ok) return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
-
-      const updated = await bubbleGet("FortnoxConnection", connection_id);
-      accessToken = updated?.access_token || null;
-    }
-    if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
-
-    // 3) Hämta invoice detaljer (innehåller InvoiceRows)
-    const url = `https://api.fortnox.se/3/invoices/${encodeURIComponent(String(invoice_docno))}`;
-    const r = await fetch(url, {
-      headers: {
-        Authorization: "Bearer " + accessToken,
-        "Client-Secret": FORTNOX_CLIENT_SECRET,
-        Accept: "application/json"
-      }
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return res.status(r.status).json({ ok: false, error: "Fortnox API error", detail: data });
-
-    const invoice = data?.Invoice || data?.invoice || null;
-    const rows = Array.isArray(invoice?.InvoiceRows) ? invoice.InvoiceRows : [];
-
-    // 4) Hitta parent invoice i Bubble (måste finnas)
-    const invDocNo = String(invoice?.DocumentNumber || invoice_docno).trim();
-    const searchInv = await bubbleFind("FortnoxInvoice", {
-      constraints: [
-        { key: "connection", constraint_type: "equals", value: connection_id },
-        { key: "ft_document_number", constraint_type: "equals", value: invDocNo }
-      ],
-      limit: 1
-    });
-    const invObj = Array.isArray(searchInv) && searchInv.length ? searchInv[0] : null;
-    if (!invObj?._id) {
-      return res.status(404).json({ ok: false, error: "Parent FortnoxInvoice not found in Bubble", invDocNo });
-    }
-
-    // 5) Upsert rows med ft_unique_key
-    let created = 0, updated = 0, errors = 0;
-    let firstError = null;
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowIndex = i + 1;
-      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
-      const uniqueKey = `${connection_id}::INV::${invDocNo}::${rowIndex}`;
-      const payload = {
-        connection: connection_id,
-        invoice: invObj._id,
-        ft_invoice_document_number: invDocNo,
-        ft_row_index: rowIndex,
-        ft_article_number: String(row?.ArticleNumber || ""),
-        ft_description: String(row?.Description || ""),
-        ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
-        ft_unit: String(row?.Unit || ""),
-        ft_price: row?.Price == null ? "" : String(row.Price),
-        ft_discount: row?.Discount == null ? "" : String(row.Discount),
-        ft_vat: row?.VAT == null ? "" : String(row.VAT),
-        ft_total: row?.Total == null ? "" : String(row.Total),
-        ft_row_no: rowNo,
-        ft_unique_key: uniqueKey,
-        ft_raw_json: JSON.stringify(row),
-        needs_rows_sync: true
-      };
-
-      try {
-        const found = await bubbleFind("FortnoxInvoiceRow", {
+        // Upsert via ft_unique_key (EN gång)
+        const found = await bubbleFind("FortnoxInvoice", {
           constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
           limit: 1
         });
         const existing = Array.isArray(found) && found.length ? found[0] : null;
 
         if (existing?._id) {
-          await bubblePatch("FortnoxInvoiceRow", existing._id, payload);
+          await bubblePatch("FortnoxInvoice", existing._id, payload);
           updated++;
         } else {
-          await bubbleCreate("FortnoxInvoiceRow", payload);
+          await bubbleCreate("FortnoxInvoice", payload);
           created++;
         }
       } catch (e) {
         errors++;
-        if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
+        if (!firstError) {
+          firstError = { docNo, message: e?.message || String(e), status: e?.status || null, detail: e?.detail || null };
+        }
       }
     }
-// 6) Om alla rader gick bra → markera parent invoice som synkad
-if (errors === 0) {
-  await bubblePatch("FortnoxInvoice", invObj._id, {
-    rows_last_synced_at: new Date().toISOString()
-  });
-}
-    return res.json({ ok: true, connection_id, invoice_docno: invDocNo, counts: { created, updated, errors }, first_error: firstError });
-  } catch (e) {
-    console.error("[/fortnox/upsert/invoice-rows] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-// ────────────────────────────────────────────────────────────
-// Fortnox: upsert invoice rows for ALL invoices on one invoices page
-app.post("/fortnox/upsert/invoice-rows/page", async (req, res) => {
-  try {
-    const { connection_id, page = 1, limit = 50, months_back = 12, pause_ms = 250 } = req.body || {};
-    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/invoices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-      body: JSON.stringify({ connection_id, page, limit, months_back })
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      months_back,
+      meta: syncJson.meta || null,
+      counts: { created, updated, skipped, errors },
+      created_ids: createdIds,
+      created_debug: createdDebug,
+      first_error: firstError
     });
-    const syncJson = await syncRes.json().catch(() => ({}));
-    if (!syncRes.ok || !syncJson.ok) return res.status(400).json({ ok: false, error: "sync/invoices failed", detail: syncJson });
 
-    const docs = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
-    const results = [];
-    let ok_count = 0, fail_count = 0;
-
-    for (let i = 0; i < docs.length; i++) {
-      const docNo = String(docs[i]?.DocumentNumber || "").trim();
-      if (!docNo) continue;
-
-      const r = await fetch("https://mira-exchange.onrender.com/fortnox/upsert/invoice-rows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-        body: JSON.stringify({ connection_id, invoice_docno: docNo })
-      });
-      const j = await r.json().catch(() => ({}));
-      const ok = !!j.ok;
-
-      results.push({ docNo, ok, counts: j.counts || null, first_error: j.first_error || null });
-      ok ? ok_count++ : fail_count++;
-
-      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
-    }
-
-    return res.json({ ok: true, connection_id, page, limit, months_back, docs: docs.length, ok_count, fail_count, results });
   } catch (e) {
-    console.error("[/fortnox/upsert/invoice-rows/page] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -2126,7 +1934,7 @@ app.post("/fortnox/upsert/order-rows/flagged", async (req, res) => {
       const docNo = String(o?.ft_document_number || "").trim();
       if (!docNo) continue;
 
-      const r = await fetch(`${BASE_URL}/fortnox/upsert/order-rows`, {
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id, order_docno: docNo })
@@ -2195,6 +2003,12 @@ app.post("/fortnox/upsert/order-rows/page", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// efter orders:
+for (let round = 0; round < 5; round++) {
+  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows/flagged`, { ... });
+  const jj = await rr.json().catch(() => ({}));
+  if (!jj.flagged_found) break; // inget mer att göra
+}
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
 app.post("/fortnox/debug/connection", async (req, res) => {
@@ -2262,55 +2076,114 @@ app.post("/fortnox/sync/offers", async (req, res) => {
 // /fortnox/upsert/offers
 app.post("/fortnox/upsert/offers", async (req, res) => {
   const { connection_id, page = 1, limit = 100 } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok:false });
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  const sync = await fetch(`${BASE_URL}/fortnox/sync/offers`, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key":process.env.MIRA_RENDER_API_KEY },
-    body: JSON.stringify({ connection_id, page, limit })
-  }).then(r=>r.json());
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let firstError = null;
+  let meta = null;
 
-  const offers = sync.offers || [];
-  let created=0, updated=0;
+  try {
+    // 1) Hämta offers via sync-route (robust)
+    let sync = null;
 
-  for (const o of offers) {
-    const docNo = String(o?.DocumentNumber || "").trim();
-    if (!docNo) continue;
+    if (typeof renderPostJson === "function") {
+      sync = await renderPostJson("/fortnox/sync/offers", { connection_id, page, limit });
+    } else {
+      const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id, page, limit })
+      });
 
-    const payload = {
-      connection: connection_id,
-      ft_document_number: docNo,
-      ft_customer_number: String(o?.CustomerNumber || ""),
-      ft_customer_name: String(o?.CustomerName || ""),
-      ft_offer_date: toIsoDate(o?.OfferDate),
-      ft_valid_until: toIsoDate(o?.ValidUntil),
-      ft_total: toNumOrNull(row?.Total),
-      ft_currency: o?.Currency || "",
-      ft_sent: !!o?.Sent,
-      ft_cancelled: !!o?.Cancelled,
-      ft_url: o?.["@url"] || "",
-      ft_raw_json: JSON.stringify(o),
-      needs_rows_sync: true
-    };
+      const text = await syncRes.text();
+      try { sync = text ? JSON.parse(text) : null; }
+      catch { sync = { raw: text }; }
 
-    const found = await bubbleFind("FortnoxOffer", {
-      constraints:[
-        { key:"connection", constraint_type:"equals", value:connection_id },
-        { key:"ft_document_number", constraint_type:"equals", value:docNo }
-      ],
-      limit:1
+      if (!syncRes.ok || !sync || sync.ok === false) {
+        return res.status(400).json({
+          ok: false,
+          error: "sync/offers failed",
+          http_status: syncRes.status,
+          detail: sync
+        });
+      }
+    }
+
+    // 2) Normalisera
+    const offers = Array.isArray(sync?.offers) ? sync.offers : [];
+    meta = sync?.meta || null;
+
+    // 3) Upsert per offer
+    for (const o of offers) {
+      const docNo = String(o?.DocumentNumber || "").trim();
+      if (!docNo) { skipped++; continue; }
+
+      const payload = {
+        connection: connection_id,
+        ft_document_number: docNo,
+        ft_customer_number: String(o?.CustomerNumber || ""),
+        ft_customer_name: String(o?.CustomerName || ""),
+        ft_offer_date: toIsoDate(o?.OfferDate),
+        ft_valid_until: toIsoDate(o?.ValidUntil),
+        ft_total: toNumOrNull(o?.Total), // ✅ FIX
+        ft_currency: String(o?.Currency || ""),
+        ft_sent: !!o?.Sent,
+        ft_cancelled: !!o?.Cancelled,
+        ft_url: String(o?.["@url"] || ""),
+        ft_raw_json: JSON.stringify(o || {}),
+        needs_rows_sync: true
+      };
+
+      try {
+        const found = await bubbleFind("FortnoxOffer", {
+          constraints: [
+            { key: "connection", constraint_type: "equals", value: connection_id },
+            { key: "ft_document_number", constraint_type: "equals", value: docNo }
+          ],
+          limit: 1
+        });
+
+        const existing = Array.isArray(found) && found.length ? found[0] : null;
+
+        if (existing?._id) {
+          await bubblePatch("FortnoxOffer", existing._id, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxOffer", payload);
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        if (!firstError) {
+          firstError = {
+            docNo,
+            message: e?.message || String(e),
+            detail: e?.detail || null
+          };
+        }
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      meta,
+      counts: { created, updated, skipped, errors },
+      first_error: firstError
     });
 
-    if (found?.[0]?._id) {
-      await bubblePatch("FortnoxOffer", found[0]._id, payload);
-      updated++;
-    } else {
-      await bubbleCreate("FortnoxOffer", payload);
-      created++;
-    }
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
   }
-
-  res.json({ ok:true, counts:{ created, updated }});
 });
 // ────────────────────────────────────────────────────────────
 // /fortnox/upsert/offer-rows
@@ -2372,6 +2245,57 @@ app.post("/fortnox/upsert/offer-rows", async (req,res)=>{
 
   res.json({ ok:true, counts:{ created, updated }});
 });
+// Fortnox: upsert offer rows for FLAGGED offers (needs_rows_sync=true)
+app.post("/fortnox/upsert/offer-rows/flagged", async (req, res) => {
+  try {
+    const { connection_id, limit = 30, pause_ms = 250 } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+    // 1) Hämta flaggade offers i Bubble
+    const flagged = await bubbleFind("FortnoxOffer", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "needs_rows_sync", constraint_type: "equals", value: true }
+      ],
+      limit: Number(limit) || 30
+    });
+
+    const offers = Array.isArray(flagged) ? flagged : [];
+    const results = [];
+    let ok_count = 0, fail_count = 0;
+
+    // 2) Kör rows per offer (docno)
+    for (const o of offers) {
+      const docNo = String(o?.ft_document_number || "").trim();
+      if (!docNo) continue;
+
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+        body: JSON.stringify({ connection_id, offer_docno: docNo })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      const ok = !!j.ok;
+
+      results.push({
+        docNo,
+        ok,
+        http_status: r.status,
+        counts: j.counts || null,
+        first_error: j.first_error || j.error || j.detail || null
+      });
+
+      ok ? ok_count++ : fail_count++;
+      if (pause_ms) await sleep(Number(pause_ms));
+    }
+
+    return res.json({ ok: true, connection_id, flagged_found: offers.length, ok_count, fail_count, results });
+  } catch (e) {
+    console.error("[/fortnox/upsert/offer-rows/flagged] error", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync ONE offer (fetch offer + OfferRows)
 app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
@@ -2420,7 +2344,7 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
   // vidarebefordra till samma handler-logik genom att kalla internt via fetch
   // (enkelt och minimerar risk för dubbellogik)
   try {
-    const r = await fetch(`${BASE_URL}/fortnox/sync/offers/one`, {
+    const r = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers/one`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2434,62 +2358,91 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+// efter offers:
+for (let round = 0; round < 5; round++) {
+  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows/flagged`, { ... });
+  const jj = await rr.json().catch(() => ({}));
+  if (!jj.flagged_found) break;
+}
 // ────────────────────────────────────────────
 // Fortnox: upsert invoices - batch loop (N pages per run)
 app.post("/fortnox/upsert/invoices/all", async (req, res) => {
   const {
     connection_id,
     start_page = 1,
-    limit = 100,
+    limit = 50,
     max_pages = 10,
     months_back = 12
   } = req.body || {};
 
-  if (!connection_id)
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
 
+  const start = numOr(start_page, 1);
+  const lim = Math.max(1, Math.min(200, numOr(limit, 50)));
+  const maxP = Math.max(1, numOr(max_pages, 10));
+
+  let page = start;
   let created = 0, updated = 0, skipped = 0, errors = 0;
-  let page = Number(start_page) || 1;
-  const maxP = Math.max(1, Number(max_pages) || 10);
-  const lim = Math.max(1, Math.min(500, Number(limit) || 100));
   let totalPages = null;
 
   try {
     for (let i = 0; i < maxP; i++) {
-      const r = await fetch(`${BASE_URL}/fortnox/upsert/invoices`, {
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/invoices`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
+        headers: { "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id, page, limit: lim, months_back })
       });
 
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok)
-        return res.status(400).json({ ok: false, error: "upsert/invoices failed", detail: j, page });
+      if (!r.ok || !j.ok) {
+        return res.status(400).json({ ok:false, error:"upsert/invoices failed", page, detail:j });
+      }
+      if (j.paused) {
+        return res.json({ ok:true, paused:true, connection_id, page });
+      }
 
       created += j.counts?.created || 0;
       updated += j.counts?.updated || 0;
       skipped += j.counts?.skipped || 0;
       errors  += j.counts?.errors  || 0;
 
-      const meta = j.meta || {};
-      const cur = Number(meta["@CurrentPage"] || page);
-      const tot = Number(meta["@TotalPages"] || 0);
+      const meta = j.meta || null;
+      const cur = numOr(meta?.["@CurrentPage"], page);
+      const tot = numOr(meta?.["@TotalPages"], 0);
       if (tot) totalPages = tot;
-      if (tot && cur >= tot)
-        return res.json({ ok: true, done: true, connection_id, start_page, end_page: cur,
-                          total_pages: tot, counts: { created, updated, skipped, errors } });
+
+      // om meta finns: använd den
+      if (tot && cur >= tot) {
+        return res.json({
+          ok: true,
+          connection_id,
+          done: true,
+          start_page: start,
+          end_page: cur,
+          total_pages: tot,
+          counts: { created, updated, skipped, errors },
+          next_page: 1
+        });
+      }
+
+      // fallback om meta saknas: om vi fick färre än limit invoices från sync -> done
+      // (kräver att upsert/invoices returnerar debug_counts eller invoices length – annars hoppa denna)
       page = cur + 1;
     }
 
-    res.json({ ok: true, done: false, connection_id,
-               start_page, end_page: page - 1, total_pages: totalPages,
-               counts: { created, updated, skipped, errors }, next_page: page });
+    return res.json({
+      ok: true,
+      connection_id,
+      done: false,
+      start_page: start,
+      end_page: page - 1,
+      total_pages: totalPages,
+      counts: { created, updated, skipped, errors },
+      next_page: page
+    });
   } catch (e) {
-    console.error("[/fortnox/upsert/invoices/all] error", e);
-    res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok:false, error:e.message });
   }
 });
 
@@ -2503,48 +2456,67 @@ app.post("/fortnox/upsert/offers/all", async (req, res) => {
     max_pages = 10
   } = req.body || {};
 
-  if (!connection_id)
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
 
+  const start = numOr(start_page, 1);
+  const lim = Math.max(1, Math.min(500, numOr(limit, 100)));
+  const maxP = Math.max(1, numOr(max_pages, 10));
+
+  let page = start;
   let created = 0, updated = 0, errors = 0;
-  let page = Number(start_page) || 1;
-  const maxP = Math.max(1, Number(max_pages) || 10);
-  const lim = Math.max(1, Math.min(500, Number(limit) || 100));
   let totalPages = null;
 
   try {
     for (let i = 0; i < maxP; i++) {
-      const r = await fetch(`${BASE_URL}/fortnox/upsert/offers`, {
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offers`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
+        headers: { "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id, page, limit: lim })
       });
 
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok)
-        return res.status(400).json({ ok: false, error: "upsert/offers failed", detail: j, page });
+      if (!r.ok || !j.ok) {
+        return res.status(400).json({ ok:false, error:"upsert/offers failed", page, detail:j });
+      }
 
       created += j.counts?.created || 0;
       updated += j.counts?.updated || 0;
-      const meta = j.meta || {};
-      const cur = Number(meta["@CurrentPage"] || page);
-      const tot = Number(meta["@TotalPages"] || 0);
+
+      // meta kommer från sync/offers -> MetaInformation
+      const meta = j.meta || null;
+      const cur = numOr(meta?.["@CurrentPage"], page);
+      const tot = numOr(meta?.["@TotalPages"], 0);
       if (tot) totalPages = tot;
-      if (tot && cur >= tot)
-        return res.json({ ok: true, done: true, connection_id, start_page, end_page: cur,
-                          total_pages: tot, counts: { created, updated, errors } });
+
+      if (tot && cur >= tot) {
+        return res.json({
+          ok: true,
+          connection_id,
+          done: true,
+          start_page: start,
+          end_page: cur,
+          total_pages: tot,
+          counts: { created, updated, errors },
+          next_page: 1
+        });
+      }
+
+      // fallback om meta saknas: om vi skapade/uppdaterade 0 och limit är fullt osäkert -> vi fortsätter ändå
       page = cur + 1;
     }
 
-    res.json({ ok: true, done: false, connection_id,
-               start_page, end_page: page - 1, total_pages: totalPages,
-               counts: { created, updated, errors }, next_page: page });
+    return res.json({
+      ok: true,
+      connection_id,
+      done: false,
+      start_page: start,
+      end_page: page - 1,
+      total_pages: totalPages,
+      counts: { created, updated, errors },
+      next_page: page
+    });
   } catch (e) {
-    console.error("[/fortnox/upsert/offers/all] error", e);
-    res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok:false, error:e.message });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -2563,66 +2535,91 @@ app.post("/fortnox/nightly/delta", async (req, res) => {
     const connections = await getAllFortnoxConnections();
     for (const conn of connections) {
       const connection_id = conn._id;
-      const one = { connection_id };
-      try {
-        // 1) Customers
-        await fetch(`${BASE_URL}/fortnox/upsert/customers/all`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100 })
-        });
+const one = { connection_id, steps: {} };
 
-        // 2) Orders + rows
-        await fetch(`${BASE_URL}/fortnox/upsert/orders/all`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100, months_back: 12 })
-        });
-        await fetch(`${BASE_URL}/fortnox/upsert/order-rows/flagged`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-        });
+try {
+  // --- CUSTOMERS (om du vill paginera: customers/all + customers_next_page)
+  await fetch(`${SELF_BASE_URL}/fortnox/upsert/customers`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+    body: JSON.stringify({ connection_id, page: 1, limit: 100 })
+  });
 
-        // 3) Offers + rows
-        await fetch(`${BASE_URL}/fortnox/upsert/offers/all`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100 })
-        });
-        await fetch(`${BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-        });
+  // --- ORDERS: (du kan byta till /orders/all + orders_next_page om du vill)
+  await fetch(`${SELF_BASE_URL}/fortnox/upsert/orders`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+    body: JSON.stringify({ connection_id, months_back: 12, page: 1, limit: 50 })
+  });
 
-        // 4) Invoices + rows
-        await fetch(`${BASE_URL}/fortnox/upsert/invoices/all`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, max_pages: 3, limit: 100, months_back: 12 })
-        });
-        await fetch(`${BASE_URL}/fortnox/upsert/invoice-rows/page`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-          body: JSON.stringify({ connection_id, limit: 30, months_back: 12 })
-        });
-
-        one.ok = true;
-      } catch (e) {
-        one.ok = false;
-        one.error = e.message;
-      }
-      results.push(one);
-      await sleep(500);
-    }
-
-    res.json({ ok: true, started_at: startedAt, finished_at: new Date().toISOString(), connections: results });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  } finally {
-    stopNightly();
+  // --- ORDER ROWS: loopa flagged så du inte fastnar på 30
+  for (let round = 0; round < 5; round++) {
+    const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows/flagged`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+      body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+    });
+    const jj = await rr.json().catch(() => ({}));
+    if (!jj.flagged_found) break;
   }
+
+  // --- OFFERS: paged chunk med next_page
+  const offersStart = await getConnNextPage(connection_id, "offers_next_page", 1);
+
+  const offersAllRes = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offers/all`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+    body: JSON.stringify({ connection_id, start_page: offersStart, limit: 100, max_pages: 5 })
+  });
+  const offersAll = await offersAllRes.json().catch(() => ({}));
+
+  if (offersAll?.ok) {
+    await setConnPaging(connection_id, {
+      offers_next_page: offersAll.next_page || 1,
+      offers_last_progress_at: nowIso(),
+      ...(offersAll.done ? { offers_last_full_sync_at: nowIso() } : {})
+    });
+  }
+
+  // --- OFFER ROWS: loopa flagged (nu när du lagt in endpointen)
+  for (let round = 0; round < 5; round++) {
+    const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+      body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+    });
+    const jj = await rr.json().catch(() => ({}));
+    if (!jj.flagged_found) break;
+  }
+
+  // --- INVOICES: paged chunk med next_page
+  const invStart = await getConnNextPage(connection_id, "invoices_next_page", 1);
+
+  const invAllRes = await fetch(`${SELF_BASE_URL}/fortnox/upsert/invoices/all`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+    body: JSON.stringify({ connection_id, start_page: invStart, limit: 50, max_pages: 5, months_back: 12 })
+  });
+  const invAll = await invAllRes.json().catch(() => ({}));
+
+  if (invAll?.ok) {
+    await setConnPaging(connection_id, {
+      invoices_next_page: invAll.next_page || 1,
+      invoices_last_progress_at: nowIso(),
+      ...(invAll.done ? { invoices_last_full_sync_at: nowIso() } : {})
+    });
+  }
+
+  one.ok = true;
+
+} catch (e) {
+  one.ok = false;
+  one.error = e.message;
+  await bubblePatch("FortnoxConnection", connection_id, {
+    nightly_last_error: String(e.message || e),
+    nightly_last_run_at: nowIso()
+  });
+}
 });// ────────────────────────────────────────────────────────────
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
