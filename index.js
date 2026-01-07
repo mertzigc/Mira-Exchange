@@ -48,9 +48,6 @@ const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT       = process.env.PORT || 10000;
-// 🔒 Används för interna calls (Render → samma Render-instans)
-// localhost funkar på Render och gör att du aldrig råkar träffa Bubble.
-const SELF_BASE_URL = pick(process.env.SELF_BASE_URL, `http://127.0.0.1:${PORT}`);
 
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
