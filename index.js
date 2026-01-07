@@ -1778,8 +1778,8 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       }
 
       let out;
-      if (found.item?."_id") {
-        out = await bubbleUpdate(TYPE, found.item._id, fields);
+      if (found.item?._id) {
+  out = await bubbleUpdate(TYPE, found.item._id, fields);
         if (out.ok) updated++; else errors++;
         results.push({ docNo, ok: out.ok, action: "updated", status: out.status });
       } else {
