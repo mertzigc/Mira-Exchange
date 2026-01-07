@@ -1744,7 +1744,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
 
       const fields = {
         connection_id,
-        document_number: docNo,
+        ft_document_number: docNo,
         invoice_date: inv.InvoiceDate ? toIsoDate(inv.InvoiceDate) : null,
         due_date: inv.DueDate ? toIsoDate(inv.DueDate) : null,
         customer_number: String(inv.CustomerNumber || ""),
@@ -1764,7 +1764,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       try {
         const existing = await bubbleFindOne(TYPE, [
           { key: "connection_id", constraint_type: "equals", value: connection_id },
-          { key: "document_number", constraint_type: "equals", value: docNo }
+          { key: "ft_document_number", constraint_type: "equals", value: docNo }
         ]);
 
         if (existing?._id) {
