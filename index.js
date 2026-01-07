@@ -2600,7 +2600,7 @@ app.post("/fortnox/upsert/offers/all", async (req, res) => {
 app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
   const lock = getNightlyLock();
   const now = Date.now();
-  const LOCK_TTL_MS = 30 * 60 * 1000; // 30 min
+  const LOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6 timmar
 
   // acceptera båda (du har loggar som visar only_connection_id)
   const {
@@ -2711,21 +2711,34 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
           one.steps.orders = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null, error: j.error || null };
           if (!one.steps.orders.ok) throw new Error("orders failed: " + JSON.stringify(one.steps.orders));
 
-          let rounds = 0;
-          let flagged_found_total = 0;
+          // rows flagged – små chunkar så nightly inte ser "hängd" ut
+let totalFlagged = 0;
+let roundsUsed = 0;
 
-          for (let round = 0; round < 5; round++) {
-            rounds++;
-            const { r: rr, j: jj } = await postJson("/fortnox/upsert/order-rows/flagged", { connection_id: cid, limit: 30, pause_ms: 250 }, 180000);
-            if (!rr.ok || !jj.ok) throw new Error("order-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
+for (let round = 0; round < 30; round++) {
+  roundsUsed = round + 1;
 
-            const flagged = Number(jj.flagged_found || 0);
-            flagged_found_total += flagged;
+  const rr = await postJson(`${ORIGIN}/fortnox/upsert/order-rows/flagged`, {
+    connection_id,
+    limit: 3,       // <-- viktigt: 2–3 är rimligt (du såg ~8s för 1)
+    pause_ms: 0
+  }, 180_000);      // 3 min timeout per varv (ändra vid behov)
 
-            if (!flagged) break;
-          }
+  const jj = rr.json || {};
+  if (!rr.ok || !jj.ok) {
+    throw new Error("order-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
+  }
 
-          one.steps.order_rows = { ok: true, rounds, flagged_found_total };
+  totalFlagged += Number(jj.flagged_found || 0);
+
+  // klart när inga fler flaggade finns
+  if (!jj.flagged_found) break;
+
+  // liten paus mellan varv för att skona Fortnox/Bubble
+  await sleep(150);
+}
+
+one.steps.order_rows = { ok: true, rounds: roundsUsed, flagged_seen: totalFlagged };
         }
 
         // OFFERS (chunk) + OFFER ROWS flagged loop
@@ -2742,21 +2755,31 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
             ...(j.done ? { offers_last_full_sync_at: nowIso() } : {})
           });
 
-          let rounds = 0;
-          let flagged_found_total = 0;
+          let totalFlaggedOffers = 0;
+let roundsUsedOffers = 0;
 
-          for (let round = 0; round < 5; round++) {
-            rounds++;
-            const { r: rr, j: jj } = await postJson("/fortnox/upsert/offer-rows/flagged", { connection_id: cid, limit: 30, pause_ms: 250 }, 180000);
-            if (!rr.ok || !jj.ok) throw new Error("offer-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
+for (let round = 0; round < 40; round++) {
+  roundsUsedOffers = round + 1;
 
-            const flagged = Number(jj.flagged_found || 0);
-            flagged_found_total += flagged;
+  const rr = await postJson(`${ORIGIN}/fortnox/upsert/offer-rows/flagged`, {
+    connection_id,
+    limit: 1,       // <-- viktigt: din mätning ~26.5s för 1
+    pause_ms: 0
+  }, 240_000);      // 4 min timeout per varv
 
-            if (!flagged) break;
-          }
+  const jj = rr.json || {};
+  if (!rr.ok || !jj.ok) {
+    throw new Error("offer-rows/flagged failed: " + JSON.stringify({ status: rr.status, body: jj }));
+  }
 
-          one.steps.offer_rows = { ok: true, rounds, flagged_found_total };
+  totalFlaggedOffers += Number(jj.flagged_found || 0);
+
+  if (!jj.flagged_found) break;
+
+  await sleep(200);
+}
+
+one.steps.offer_rows = { ok: true, rounds: roundsUsedOffers, flagged_seen: totalFlaggedOffers };
         }
 
         // INVOICES (chunk) – INGA invoice rows
