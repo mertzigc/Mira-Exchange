@@ -2648,35 +2648,48 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
   const startedAtIso = nowIso();
 
   // helper: POST JSON med timeout + logg
-  const postJson = async (path, body, timeoutMs = 120000) => {
-    const t0 = Date.now();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const postJson = async (pathOrUrl, body, timeoutMs = 120000) => {
+  const t0 = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    console.log("[nightly/delta] ->", { path, timeoutMs, body_preview: body?.connection_id ? { connection_id: body.connection_id } : null });
+  // tillåt både "/fortnox/..." och "https://.../fortnox/..."
+  const isFullUrl = /^https?:\/\//i.test(String(pathOrUrl || ""));
+  const cleanOrigin = String(ORIGIN || "").replace(/\/+$/, "");
+  const cleanPath = String(pathOrUrl || "").startsWith("/") ? String(pathOrUrl) : `/${pathOrUrl}`;
 
-    try {
-      const r = await fetch(`${ORIGIN}${path}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify(body || {}),
-        signal: controller.signal
-      });
+  const url = isFullUrl ? String(pathOrUrl) : `${cleanOrigin}${cleanPath}`;
 
-      const text = await r.text();
-      let j = {};
-      try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+  console.log("[nightly/delta] ->", {
+    url,
+    timeoutMs,
+    body_preview: body?.connection_id ? { connection_id: body.connection_id } : null
+  });
 
-      console.log("[nightly/delta] <-", { path, status: r.status, ms: Date.now() - t0, ok: r.ok && !!j.ok });
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify(body || {}),
+      signal: controller.signal
+    });
 
-      return { r, j };
-    } finally {
-      clearTimeout(timer);
-    }
-  };
+    const j = await r.json().catch(() => ({}));
+    console.log("[nightly/delta] <-", { url, status: r.status, ms: Date.now() - t0, ok: r.ok });
+
+    // returnera alltid JSON men med status om fail
+    if (!r.ok) return { ok: false, status: r.status, ...j };
+    return j;
+  } catch (e) {
+    console.error("[nightly/delta] fetch error", { url, ms: Date.now() - t0, msg: e?.message || String(e) });
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
   try {
     console.log("[nightly/delta] start", { run_id: lock.run_id, only_connection_id: onlyId, months_back: mb });
@@ -2718,7 +2731,7 @@ let roundsUsed = 0;
 for (let round = 0; round < 30; round++) {
   roundsUsed = round + 1;
 
-  const rr = await postJson(`${ORIGIN}/fortnox/upsert/order-rows/flagged`, {
+  const rr = await postJson("/fortnox/upsert/order-rows/flagged", {
     connection_id,
     limit: 3,       // <-- viktigt: 2–3 är rimligt (du såg ~8s för 1)
     pause_ms: 0
