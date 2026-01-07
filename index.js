@@ -2000,19 +2000,6 @@ app.post("/fortnox/upsert/order-rows/page", async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
-// efter orders:
-for (let round = 0; round < 5; round++) {
-  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows/flagged`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": process.env.MIRA_RENDER_API_KEY
-  },
-  body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-});
-const jj = await rr.json().catch(() => ({}));
-if (!jj.flagged_found) break;
-}
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) endpoints – use FortnoxConnection in Bubble
 app.post("/fortnox/debug/connection", async (req, res) => {
@@ -2362,15 +2349,6 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
-for (let round = 0; round < 5; round++) {
-  const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.MIRA_RENDER_API_KEY
-    },
-    body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-  });
 
   const jj = await rr.json().catch(() => ({}));
 
@@ -2539,104 +2517,165 @@ app.post("/fortnox/upsert/offers/all", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections
 app.post("/fortnox/nightly/delta", async (req, res) => {
-  if (!BASE_URL)
-    return res.status(500).json({ ok: false, error: "No BASE_URL resolved" });
-  if (isNightlyRunning())
+  if (!SELF_BASE_URL && !BASE_URL) {
+    return res.status(500).json({ ok: false, error: "No SELF_BASE_URL/BASE_URL resolved" });
+  }
+  const ORIGIN = SELF_BASE_URL || BASE_URL;
+
+  if (isNightlyRunning()) {
     return res.status(409).json({ ok: false, error: "Nightly already running" });
+  }
 
   startNightly();
-  const startedAt = new Date().toISOString();
+  const startedAt = nowIso();
   const results = [];
 
   try {
     const connections = await getAllFortnoxConnections();
+
     for (const conn of connections) {
       const connection_id = conn._id;
-const one = { connection_id, steps: {} };
+      const one = { connection_id, ok: false, steps: {} };
 
-try {
-  // --- CUSTOMERS (om du vill paginera: customers/all + customers_next_page)
-  await fetch(`${SELF_BASE_URL}/fortnox/upsert/customers`, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-    body: JSON.stringify({ connection_id, page: 1, limit: 100 })
-  });
+      try {
+        // CUSTOMERS (en sida räcker oftast – vill du paginera senare: customers/all + customers_next_page)
+        {
+          const r = await fetch(`${ORIGIN}/fortnox/upsert/customers`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+            body: JSON.stringify({ connection_id, page: 1, limit: 100 })
+          });
+          const j = await r.json().catch(() => ({}));
+          one.steps.customers = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null };
+        }
 
-  // --- ORDERS: (du kan byta till /orders/all + orders_next_page om du vill)
-  await fetch(`${SELF_BASE_URL}/fortnox/upsert/orders`, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-    body: JSON.stringify({ connection_id, months_back: 12, page: 1, limit: 50 })
-  });
+        // ORDERS (1 sida delta) + ROWS (flagged loop)
+        {
+          const r = await fetch(`${ORIGIN}/fortnox/upsert/orders`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+            body: JSON.stringify({ connection_id, months_back: 12, page: 1, limit: 50 })
+          });
+          const j = await r.json().catch(() => ({}));
+          one.steps.orders = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null };
 
-  // --- ORDER ROWS: loopa flagged så du inte fastnar på 30
-  for (let round = 0; round < 5; round++) {
-    const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows/flagged`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-      body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+          // rows flagged – kör några varv tills tomt
+          let totalFlagged = 0;
+          for (let round = 0; round < 5; round++) {
+            const rr = await fetch(`${ORIGIN}/fortnox/upsert/order-rows/flagged`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+              body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+            });
+            const jj = await rr.json().catch(() => ({}));
+            totalFlagged += Number(jj.flagged_found || 0);
+            if (!jj.flagged_found) break;
+          }
+          one.steps.order_rows = { ok: true, rounds: 5, flagged_seen: totalFlagged };
+        }
+
+        // OFFERS paged chunk + paging state + OFFER ROWS flagged loop
+        {
+          const startPage = await getConnNextPage(connection_id, "offers_next_page", 1);
+
+          const r = await fetch(`${ORIGIN}/fortnox/upsert/offers/all`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+            body: JSON.stringify({ connection_id, start_page: startPage, limit: 100, max_pages: 5 })
+          });
+          const j = await r.json().catch(() => ({}));
+
+          one.steps.offers = {
+            ok: r.ok && !!j.ok,
+            status: r.status,
+            done: !!j.done,
+            next_page: j.next_page ?? null,
+            counts: j.counts || null
+          };
+
+          if (r.ok && j.ok) {
+            await setConnPaging(connection_id, {
+              offers_next_page: j.next_page || 1,
+              offers_last_progress_at: nowIso(),
+              ...(j.done ? { offers_last_full_sync_at: nowIso() } : {})
+            });
+          }
+
+          let totalFlagged = 0;
+          for (let round = 0; round < 5; round++) {
+            const rr = await fetch(`${ORIGIN}/fortnox/upsert/offer-rows/flagged`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+              body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
+            });
+            const jj = await rr.json().catch(() => ({}));
+            totalFlagged += Number(jj.flagged_found || 0);
+            if (!jj.flagged_found) break;
+          }
+          one.steps.offer_rows = { ok: true, rounds: 5, flagged_seen: totalFlagged };
+        }
+
+        // INVOICES paged chunk + paging state (INGA invoice rows)
+        {
+          const startPage = await getConnNextPage(connection_id, "invoices_next_page", 1);
+
+          const r = await fetch(`${ORIGIN}/fortnox/upsert/invoices/all`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+            body: JSON.stringify({ connection_id, start_page: startPage, limit: 50, max_pages: 5, months_back: 12 })
+          });
+          const j = await r.json().catch(() => ({}));
+
+          one.steps.invoices = {
+            ok: r.ok && !!j.ok,
+            status: r.status,
+            done: !!j.done,
+            next_page: j.next_page ?? null,
+            counts: j.counts || null
+          };
+
+          if (r.ok && j.ok) {
+            await setConnPaging(connection_id, {
+              invoices_next_page: j.next_page || 1,
+              invoices_last_progress_at: nowIso(),
+              ...(j.done ? { invoices_last_full_sync_at: nowIso() } : {})
+            });
+          }
+        }
+
+        one.ok = true;
+
+        await bubblePatch("FortnoxConnection", connection_id, {
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: ""
+        });
+      } catch (e) {
+        one.ok = false;
+        one.error = e?.message || String(e);
+
+        await bubblePatch("FortnoxConnection", connection_id, {
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: one.error
+        });
+      }
+
+      results.push(one);
+    }
+
+    stopNightly();
+
+    return res.json({
+      ok: true,
+      started_at: startedAt,
+      finished_at: nowIso(),
+      connections: results.length,
+      results
     });
-    const jj = await rr.json().catch(() => ({}));
-    if (!jj.flagged_found) break;
+  } catch (e) {
+    stopNightly();
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
-
-  // --- OFFERS: paged chunk med next_page
-  const offersStart = await getConnNextPage(connection_id, "offers_next_page", 1);
-
-  const offersAllRes = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offers/all`, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-    body: JSON.stringify({ connection_id, start_page: offersStart, limit: 100, max_pages: 5 })
-  });
-  const offersAll = await offersAllRes.json().catch(() => ({}));
-
-  if (offersAll?.ok) {
-    await setConnPaging(connection_id, {
-      offers_next_page: offersAll.next_page || 1,
-      offers_last_progress_at: nowIso(),
-      ...(offersAll.done ? { offers_last_full_sync_at: nowIso() } : {})
-    });
-  }
-
-  // --- OFFER ROWS: loopa flagged (nu när du lagt in endpointen)
-  for (let round = 0; round < 5; round++) {
-    const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows/flagged`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-      body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-    });
-    const jj = await rr.json().catch(() => ({}));
-    if (!jj.flagged_found) break;
-  }
-
-  // --- INVOICES: paged chunk med next_page
-  const invStart = await getConnNextPage(connection_id, "invoices_next_page", 1);
-
-  const invAllRes = await fetch(`${SELF_BASE_URL}/fortnox/upsert/invoices/all`, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-    body: JSON.stringify({ connection_id, start_page: invStart, limit: 50, max_pages: 5, months_back: 12 })
-  });
-  const invAll = await invAllRes.json().catch(() => ({}));
-
-  if (invAll?.ok) {
-    await setConnPaging(connection_id, {
-      invoices_next_page: invAll.next_page || 1,
-      invoices_last_progress_at: nowIso(),
-      ...(invAll.done ? { invoices_last_full_sync_at: nowIso() } : {})
-    });
-  }
-
-  one.ok = true;
-
-} catch (e) {
-  one.ok = false;
-  one.error = e.message;
-  await bubblePatch("FortnoxConnection", connection_id, {
-    nightly_last_error: String(e.message || e),
-    nightly_last_run_at: nowIso()
-  });
-}
+});
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
