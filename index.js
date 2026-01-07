@@ -594,7 +594,34 @@ async function fortnoxGet(path, accessToken, query = {}) {
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data, url };
 }
+// ────────────────────────────────────────────────────────────
+// Nightly lock (in-memory, survives within same Node process)
+const getNightlyLock = () => {
+  if (!globalThis.__miraNightlyLock) {
+    globalThis.__miraNightlyLock = {
+      running: false,
+      started_at: 0,
+      finished_at: 0,
+      connection_id: null,
+      run_id: null
+    };
+  }
+  return globalThis.__miraNightlyLock;
+};
+app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
+  const lock = getNightlyLock();
+  return res.json({ ok: true, lock });
+});
 
+app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
+  const lock = getNightlyLock();
+  const was = { ...lock };
+  lock.running = false;
+  lock.started_at = 0;
+  lock.connection_id = null;
+  lock.run_id = null;
+  return res.json({ ok: true, unlocked: true, was });
+});
 // ────────────────────────────────────────────────────────────
 // Nightly lock (process-local, per Render instance)
 
@@ -2569,30 +2596,142 @@ app.post("/fortnox/upsert/offers/all", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// C) Nightly delta sync – ALL FortnoxConnections
-app.post("/fortnox/nightly/delta", async (req, res) => {
-  if (!SELF_BASE_URL && !BASE_URL) {
+// C) Nightly delta sync – ALL FortnoxConnections (or one if connection_id provided)
+app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
+  const lock = getNightlyLock();
+  const now = Date.now();
+  const LOCK_TTL_MS = 30 * 60 * 1000; // 30 min
+
+  const { connection_id: only_connection_id = null, months_back = 12 } = req.body || {};
+
+  const ORIGIN = SELF_BASE_URL || BASE_URL;
+  if (!ORIGIN) {
     return res.status(500).json({ ok: false, error: "No SELF_BASE_URL/BASE_URL resolved" });
   }
-  const ORIGIN = SELF_BASE_URL || BASE_URL;
 
-  if (isNightlyRunning()) {
-    return res.status(409).json({ ok: false, error: "Nightly already running" });
+  // logga ALLTID innan vi ev returnerar 409
+  console.log("[nightly/delta] hit", {
+    running: lock.running,
+    started_at: lock.started_at,
+    only_connection_id,
+    months_back
+  });
+
+  // om låset är "running" men för gammalt -> rensa
+  if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
+    console.warn("[nightly/delta] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
+    lock.running = false;
+    lock.started_at = 0;
+    lock.finished_at = 0;
+    lock.connection_id = null;
+    lock.run_id = null;
   }
 
-  startNightly();
-  const startedAt = nowIso();
+  // aktivt lock
+  if (lock.running) {
+    return res.status(409).json({
+      ok: false,
+      error: "Nightly already running",
+      lock
+    });
+  }
+
+  // ta låset
+  lock.running = true;
+  lock.started_at = now;
+  lock.finished_at = 0;
+  lock.connection_id = only_connection_id || null;
+  lock.run_id = `${now}-${Math.random().toString(16).slice(2)}`;
+
+  const startedAtIso = (typeof nowIso === "function") ? nowIso() : new Date().toISOString();
+  const mb = Math.max(1, Number(months_back) || 12);
+
+  // liten helper: loopa flagged-endpoints tills tomt (maxRounds)
+  const runFlaggedLoop = async ({
+    path,
+    connection_id,
+    limit = 30,
+    pause_ms = 250,
+    maxRounds = 5
+  }) => {
+    let rounds_run = 0;
+    let flagged_rounds = 0;
+    let last = null;
+
+    for (let round = 0; round < maxRounds; round++) {
+      rounds_run++;
+
+      const rr = await fetch(`${ORIGIN}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id, limit, pause_ms })
+      });
+
+      const jj = await rr.json().catch(() => ({}));
+      last = { status: rr.status, ok: rr.ok, body: jj };
+
+      if (!rr.ok || !jj.ok) {
+        throw new Error(`${path} failed: ` + JSON.stringify({ status: rr.status, body: jj }));
+      }
+
+      // flagged_found kan vara boolean eller count i vissa implementationer
+      const flaggedFound =
+        jj.flagged_found === true ||
+        (Number.isFinite(Number(jj.flagged_found)) && Number(jj.flagged_found) > 0) ||
+        (Number.isFinite(Number(jj.flagged_count)) && Number(jj.flagged_count) > 0);
+
+      if (flaggedFound) flagged_rounds++;
+      if (!flaggedFound) break;
+    }
+
+    return {
+      ok: true,
+      rounds_run,
+      flagged_rounds,
+      last
+    };
+  };
+
   const results = [];
 
   try {
-    const connections = await getAllFortnoxConnections();
+    console.log("[nightly/delta] start", { run_id: lock.run_id, only_connection_id, months_back: mb });
 
+    // 1) Hämta connections (alla eller en)
+    let connections = [];
+
+    if (only_connection_id) {
+      const one = await bubbleGet("FortnoxConnection", only_connection_id);
+      if (!one) {
+        return res.status(404).json({ ok: false, error: "FortnoxConnection not found", connection_id: only_connection_id });
+      }
+      connections = [one];
+    } else {
+      connections = await getAllFortnoxConnections();
+    }
+
+    console.log("[nightly/delta] connections", { count: connections.length });
+
+    // 2) Kör per connection
     for (const conn of connections) {
-      const connection_id = conn._id;
+      const connection_id = conn?._id || conn?.id || conn?.["_id"] || null;
+      if (!connection_id) continue;
+
+      // respekteera din "pause"
+      if (conn?.is_active === false) {
+        results.push({ connection_id, ok: true, paused: true, steps: {} });
+        continue;
+      }
+
       const one = { connection_id, ok: false, steps: {} };
 
+      console.log("[nightly/delta] conn start", { connection_id });
+
       try {
-        // CUSTOMERS (en sida räcker oftast – vill du paginera senare: customers/all + customers_next_page)
+        // A) CUSTOMERS (1 sida)
         {
           const r = await fetch(`${ORIGIN}/fortnox/upsert/customers`, {
             method: "POST",
@@ -2600,35 +2739,33 @@ app.post("/fortnox/nightly/delta", async (req, res) => {
             body: JSON.stringify({ connection_id, page: 1, limit: 100 })
           });
           const j = await r.json().catch(() => ({}));
-          one.steps.customers = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null };
+          one.steps.customers = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null, first_error: j.first_error || null };
+          if (!one.steps.customers.ok) throw new Error("customers failed: " + JSON.stringify(one.steps.customers));
         }
 
-        // ORDERS (1 sida delta) + ROWS (flagged loop)
+        // B) ORDERS (delta 1 sida)
         {
           const r = await fetch(`${ORIGIN}/fortnox/upsert/orders`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-            body: JSON.stringify({ connection_id, months_back: 12, page: 1, limit: 50 })
+            body: JSON.stringify({ connection_id, months_back: mb, page: 1, limit: 50 })
           });
           const j = await r.json().catch(() => ({}));
-          one.steps.orders = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null };
+          one.steps.orders = { ok: r.ok && !!j.ok, status: r.status, counts: j.counts || null, first_error: j.first_error || null };
+          if (!one.steps.orders.ok) throw new Error("orders failed: " + JSON.stringify(one.steps.orders));
 
-          // rows flagged – kör några varv tills tomt
-          let totalFlagged = 0;
-          for (let round = 0; round < 5; round++) {
-            const rr = await fetch(`${ORIGIN}/fortnox/upsert/order-rows/flagged`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-              body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-            });
-            const jj = await rr.json().catch(() => ({}));
-            totalFlagged += Number(jj.flagged_found || 0);
-            if (!jj.flagged_found) break;
-          }
-          one.steps.order_rows = { ok: true, rounds: 5, flagged_seen: totalFlagged };
+          // rows flagged loop
+          const flagged = await runFlaggedLoop({
+            path: "/fortnox/upsert/order-rows/flagged",
+            connection_id,
+            limit: 30,
+            pause_ms: 250,
+            maxRounds: 5
+          });
+          one.steps.order_rows = flagged;
         }
 
-        // OFFERS paged chunk + paging state + OFFER ROWS flagged loop
+        // C) OFFERS (chunk/pagination-state) + OFFER ROWS flagged loop
         {
           const startPage = await getConnNextPage(connection_id, "offers_next_page", 1);
 
@@ -2643,40 +2780,36 @@ app.post("/fortnox/nightly/delta", async (req, res) => {
             ok: r.ok && !!j.ok,
             status: r.status,
             done: !!j.done,
-            next_page: j.next_page ?? null,
-            counts: j.counts || null
+            next_page: (j.next_page ?? null),
+            counts: j.counts || null,
+            first_error: j.first_error || null
           };
+          if (!one.steps.offers.ok) throw new Error("offers failed: " + JSON.stringify(one.steps.offers));
 
-          if (r.ok && j.ok) {
-            await setConnPaging(connection_id, {
-              offers_next_page: j.next_page || 1,
-              offers_last_progress_at: nowIso(),
-              ...(j.done ? { offers_last_full_sync_at: nowIso() } : {})
-            });
-          }
+          await setConnPaging(connection_id, {
+            offers_next_page: j.next_page || 1,
+            offers_last_progress_at: (typeof nowIso === "function") ? nowIso() : new Date().toISOString(),
+            ...(j.done ? { offers_last_full_sync_at: (typeof nowIso === "function") ? nowIso() : new Date().toISOString() } : {})
+          });
 
-          let totalFlagged = 0;
-          for (let round = 0; round < 5; round++) {
-            const rr = await fetch(`${ORIGIN}/fortnox/upsert/offer-rows/flagged`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-              body: JSON.stringify({ connection_id, limit: 30, pause_ms: 250 })
-            });
-            const jj = await rr.json().catch(() => ({}));
-            totalFlagged += Number(jj.flagged_found || 0);
-            if (!jj.flagged_found) break;
-          }
-          one.steps.offer_rows = { ok: true, rounds: 5, flagged_seen: totalFlagged };
+          const flagged = await runFlaggedLoop({
+            path: "/fortnox/upsert/offer-rows/flagged",
+            connection_id,
+            limit: 30,
+            pause_ms: 250,
+            maxRounds: 5
+          });
+          one.steps.offer_rows = flagged;
         }
 
-        // INVOICES paged chunk + paging state (INGA invoice rows)
+        // D) INVOICES (chunk/pagination-state) — INGA invoice rows
         {
           const startPage = await getConnNextPage(connection_id, "invoices_next_page", 1);
 
           const r = await fetch(`${ORIGIN}/fortnox/upsert/invoices/all`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-            body: JSON.stringify({ connection_id, start_page: startPage, limit: 50, max_pages: 5, months_back: 12 })
+            body: JSON.stringify({ connection_id, start_page: startPage, limit: 50, max_pages: 5, months_back: mb })
           });
           const j = await r.json().catch(() => ({}));
 
@@ -2684,50 +2817,69 @@ app.post("/fortnox/nightly/delta", async (req, res) => {
             ok: r.ok && !!j.ok,
             status: r.status,
             done: !!j.done,
-            next_page: j.next_page ?? null,
-            counts: j.counts || null
+            next_page: (j.next_page ?? null),
+            counts: j.counts || null,
+            first_error: j.first_error || null
           };
+          if (!one.steps.invoices.ok) throw new Error("invoices failed: " + JSON.stringify(one.steps.invoices));
 
-          if (r.ok && j.ok) {
-            await setConnPaging(connection_id, {
-              invoices_next_page: j.next_page || 1,
-              invoices_last_progress_at: nowIso(),
-              ...(j.done ? { invoices_last_full_sync_at: nowIso() } : {})
-            });
-          }
+          await setConnPaging(connection_id, {
+            invoices_next_page: j.next_page || 1,
+            invoices_last_progress_at: (typeof nowIso === "function") ? nowIso() : new Date().toISOString(),
+            ...(j.done ? { invoices_last_full_sync_at: (typeof nowIso === "function") ? nowIso() : new Date().toISOString() } : {})
+          });
         }
 
         one.ok = true;
 
+        // skriv tillbaka status på connection
         await bubblePatch("FortnoxConnection", connection_id, {
-          nightly_last_run_at: nowIso(),
+          nightly_last_run_at: (typeof nowIso === "function") ? nowIso() : new Date().toISOString(),
           nightly_last_error: ""
         });
+
+        console.log("[nightly/delta] conn ok", { connection_id });
       } catch (e) {
         one.ok = false;
         one.error = e?.message || String(e);
 
-        await bubblePatch("FortnoxConnection", connection_id, {
-          nightly_last_run_at: nowIso(),
-          nightly_last_error: one.error
-        });
+        console.error("[nightly/delta] conn error", { connection_id, error: one.error });
+
+        try {
+          await bubblePatch("FortnoxConnection", connection_id, {
+            nightly_last_run_at: (typeof nowIso === "function") ? nowIso() : new Date().toISOString(),
+            nightly_last_error: one.error
+          });
+        } catch (patchErr) {
+          console.error("[nightly/delta] bubblePatch failed", { connection_id, error: patchErr?.message || String(patchErr) });
+        }
       }
 
       results.push(one);
     }
 
-    stopNightly();
+    const finishedAtIso = (typeof nowIso === "function") ? nowIso() : new Date().toISOString();
 
     return res.json({
       ok: true,
-      started_at: startedAt,
-      finished_at: nowIso(),
+      run_id: lock.run_id,
+      started_at: startedAtIso,
+      finished_at: finishedAtIso,
       connections: results.length,
+      only_connection_id: only_connection_id || null,
+      months_back: mb,
       results
     });
   } catch (e) {
-    stopNightly();
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    console.error("[nightly/delta] fatal", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e), run_id: lock.run_id });
+  } finally {
+    lock.running = false;
+    lock.finished_at = Date.now();
+    console.log("[nightly/delta] end", {
+      run_id: lock.run_id,
+      ms: lock.finished_at - lock.started_at
+    });
   }
 });
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
