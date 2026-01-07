@@ -2637,7 +2637,6 @@ try {
     nightly_last_run_at: nowIso()
   });
 }
-});// ────────────────────────────────────────────────────────────
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
