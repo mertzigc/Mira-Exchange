@@ -2455,7 +2455,7 @@ app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────
-// Fortnox: upsert ALL invoices pages (NO rows) – pages via /fortnox/sync/invoices meta
+// Fortnox: upsert ALL invoices pages (NO rows) – pages via /fortnox/upsert/invoices meta
 app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
   try {
     const {
@@ -2467,7 +2467,30 @@ app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
       pause_ms = 250
     } = req.body || {};
 
-    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    if (!connection_id) {
+      return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    }
+
+    const mb = Math.max(1, Number(months_back) || 12);
+    const perPage = Math.max(1, Math.min(500, Number(limit) || 100));
+    const maxPages = Math.max(1, Number(max_pages) || 9999);
+    const pauseMs = Math.max(0, Number(pause_ms) || 0);
+
+    // Robust ORIGIN för self-calls
+    const ORIGIN =
+      (typeof SELF_BASE_URL !== "undefined" && SELF_BASE_URL) ||
+      (typeof BASE_URL !== "undefined" && BASE_URL) || // sista fallback (brukar vara Bubble – men bättre än null)
+      `http://127.0.0.1:${process.env.PORT || 10000}`;
+
+    const apiKey =
+      (typeof RENDER_API_KEY !== "undefined" && RENDER_API_KEY) ||
+      process.env.MIRA_RENDER_API_KEY ||
+      process.env.MIRA_EXCHANGE_API_KEY ||
+      null;
+
+    if (!apiKey) {
+      return res.status(500).json({ ok: false, error: "No Render API key resolved (RENDER_API_KEY/MIRA_RENDER_API_KEY)" });
+    }
 
     let page = Math.max(1, Number(start_page) || 1);
     let pages_done = 0;
@@ -2475,59 +2498,103 @@ app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
     let created = 0, updated = 0, skipped = 0, errors = 0;
     let first_error = null;
 
-    // vi summerar lätt – inte ALLA results (kan bli enormt)
-    while (pages_done < max_pages) {
-      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/invoices`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify({ connection_id, page, limit, months_back, pause_ms: 0 })
+    const callUpsertInvoicesPage = async (body) => {
+      const controller = new AbortController();
+      const timeoutMs = 180000; // 3 min per sida (justera vid behov)
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      const url = String(ORIGIN).replace(/\/+$/, "") + "/fortnox/upsert/invoices";
+
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j?.ok) {
+          return { ok: false, status: r.status, detail: j };
+        }
+        return j;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    while (pages_done < maxPages) {
+      const j = await callUpsertInvoicesPage({
+        connection_id,
+        page,
+        limit: perPage,
+        months_back: mb,
+        pause_ms: 0 // undvik dubbel-paus (vi pausar här i /all)
       });
 
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) {
-        return res.status(400).json({ ok: false, error: "upsert/invoices failed", detail: j });
+      if (!j?.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: "upsert/invoices failed",
+          connection_id,
+          page,
+          detail: j
+        });
       }
 
       created += Number(j?.counts?.created || 0);
       updated += Number(j?.counts?.updated || 0);
       skipped += Number(j?.counts?.skipped || 0);
       errors += Number(j?.counts?.errors || 0);
-      if (!first_error && j.first_error) first_error = j.first_error;
+      if (!first_error && j?.first_error) first_error = j.first_error;
 
       pages_done++;
 
-      const totalPagesRaw = j?.meta?.["@TotalPages"] ?? j?.meta?.TotalPages ?? null;
+      const meta = j?.meta || null;
+      const totalPagesRaw = meta?.["@TotalPages"] ?? meta?.TotalPages ?? null;
       const totalPages = totalPagesRaw ? Number(totalPagesRaw) : null;
 
-      // stopvillkor:
-      // 1) om Fortnox säger total pages och vi passerat
+      // docs på sidan – robust om j.docs saknas
+      const docsThisPage =
+        Number(
+          j?.docs ??
+          j?.debug_counts?.fetched ??
+          j?.debug_counts?.kept_by_date ??
+          (Array.isArray(j?.invoices) ? j.invoices.length : 0) ??
+          0
+        ) || 0;
+
+      // Stopvillkor #1: Fortnox total pages och vi är klara
       if (totalPages && page >= totalPages) break;
 
-      // 2) om ingen data kom tillbaka på denna sida (vanligt vid filter)
-      const docsThisPage = Number(j?.docs || 0);
+      // Stopvillkor #2: inga docs på denna sida (vanligt vid filter)
       if (!docsThisPage) break;
 
       page++;
 
-      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
+      if (pauseMs) await new Promise(r => setTimeout(r, pauseMs));
     }
+
+    const done = pages_done >= maxPages ? false : true; // "true" betyder "vi stannade pga stopvillkor", inte pga max_pages
 
     return res.json({
       ok: true,
       connection_id,
-      months_back,
-      start_page,
-      limit,
+      months_back: mb,
+      start_page: Math.max(1, Number(start_page) || 1),
+      limit: perPage,
       pages_done,
+      next_page: page,          // nästa sida att köra om du fortsätter senare
+      done,                     // true om vi stoppade naturligt (slut/0 docs), annars false om vi nådde max_pages
       counts: { created, updated, skipped, errors },
       first_error
     });
   } catch (e) {
     console.error("[/fortnox/upsert/invoices/all] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────
