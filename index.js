@@ -1733,26 +1733,24 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
 
     // 2) Bubble helpers (lokalt i endpointen för att inte stöka med resten av filen)
 const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
-  const base = String(BUBBLE_BASE_URL || "").replace(/\/+$/, "");
-  if (!base) throw new Error("BUBBLE_BASE_URL is not resolved (set BUBBLE_BASE_URL_TEST/LIVE)");
+  const BUBBLE_ORIGIN = String(BASE_URL || "").replace(/\/+$/, "");
+if (!BUBBLE_ORIGIN) throw new Error("No BASE_URL (Bubble origin) resolved");
 
-  const cleanPath = String(path || "");
-  const url = cleanPath.startsWith("/") ? `${base}${cleanPath}` : `${base}/${cleanPath}`;
-
+const bubbleFetch = async (path, { method = "GET", headers = {}, body } = {}) => {
+  const url = `${BUBBLE_ORIGIN}${path}`;
   const r = await fetch(url, {
     method,
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env.BUBBLE_API_KEY}`,
+      "Authorization": `Bearer ${BUBBLE_API_KEY}`,   // OBS: Bubble API token
       ...headers
     },
     body: body ? JSON.stringify(body) : undefined
   });
-
   const j = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, json: j };
+  if (!r.ok) return { ok: false, status: r.status, detail: j };
+  return { ok: true, status: r.status, json: j };
 };
-
     const bubbleFindOne = async (type, constraintsArr) => {
       const constraints = encodeURIComponent(JSON.stringify(constraintsArr));
       const out = await bubbleFetch(`/obj/${encodeURIComponent(type)}?constraints=${constraints}`);
