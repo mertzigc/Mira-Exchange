@@ -1743,22 +1743,26 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       if (!docNo) { skipped++; continue; }
 
       const fields = {
-        connection_id,
-        ft_document_number: docNo,
-        ft_invoice_date: inv.InvoiceDate ? toIsoDate(inv.InvoiceDate) : null,
-        ft_due_date: inv.DueDate ? toIsoDate(inv.DueDate) : null,
-        ft_customer_number: String(inv.CustomerNumber || ""),
-        ft_customer_name: String(inv.CustomerName || ""),
-        ft_total: toNumOrNull(inv.Total),
-        ft_balance: toNumOrNull(inv.Balance),
-        ft_currency: String(inv.Currency || ""),
-        ft_ocr: String(inv.OCR || ""),
-        ft_cancelled: typeof inv.Cancelled === "boolean" ? inv.Cancelled : null,
-        ft_sent: typeof inv.Sent === "boolean" ? inv.Sent : null,
-        ft_url: String(inv?.["@url"] || ""),
-        ft_raw_json: JSON.stringify(inv || {}),
-        ft_last_seen_at: new Date().toISOString()
-      };
+  connection: connection_id,
+  ft_document_number: docNo,
+
+  ft_invoice_date: toIsoDate(inv.InvoiceDate),
+  ft_due_date: toIsoDate(inv.DueDate),
+
+  ft_customer_number: String(inv.CustomerNumber || ""),
+  ft_customer_name: String(inv.CustomerName || ""),
+
+  // ✅ Bubble textfält → skicka string
+  ft_total: asTextOrEmpty(inv.Total),
+  ft_balance: asTextOrEmpty(inv.Balance),
+  ft_currency: String(inv.Currency || ""),
+  ft_ocr: asTextOrEmpty(inv.OCR),
+
+  ft_cancelled: inv.Cancelled === undefined ? null : !!inv.Cancelled,
+  ft_sent: inv.Sent === undefined ? null : !!inv.Sent,
+
+  ft_raw_json: JSON.stringify(inv || "")
+};
 
       try {
         const existing = await bubbleFindOne(TYPE, [
