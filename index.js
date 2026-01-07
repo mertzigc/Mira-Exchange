@@ -1699,9 +1699,8 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────
 // Fortnox: upsert invoices (NO invoice rows) – uses /fortnox/sync/invoices
-// Upsert key: connection_id + document_number
+// Upsert key: connection_id + ft_document_number
 app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
   try {
     const {
@@ -1716,7 +1715,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing connection_id" });
     }
 
-    // 1) Sync invoices (date-filtered inside /fortnox/sync/invoices)
+    // 1) Hämta invoices via din sync-endpoint (filtrerar på datum)
     const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/invoices`, {
       method: "POST",
       headers: {
@@ -1733,6 +1732,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
     const TYPE = "FortnoxInvoice";
+    const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
     let created = 0, updated = 0, skipped = 0, errors = 0;
     let first_error = null;
@@ -1741,28 +1741,28 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       const inv = invoices[i] || {};
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
-const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
+
       const fields = {
-  connection: connection_id,
-  ft_document_number: docNo,
+        connection_id: connection_id,                           // ✅ matchar ditt relationsfält
+        ft_document_number: docNo,
 
-  ft_invoice_date: toIsoDate(inv.InvoiceDate),
-  ft_due_date: toIsoDate(inv.DueDate),
+        ft_invoice_date: toIsoDate(inv.InvoiceDate),            // ✅ date-fält
+        ft_due_date: toIsoDate(inv.DueDate),                    // ✅ date-fält
 
-  ft_customer_number: String(inv.CustomerNumber || ""),
-  ft_customer_name: String(inv.CustomerName || ""),
+        ft_customer_number: asTextOrEmpty(inv.CustomerNumber),  // ✅ text
+        ft_customer_name: asTextOrEmpty(inv.CustomerName),      // ✅ text
 
-  // ✅ Bubble textfält → skicka string
-  ft_total: asTextOrEmpty(inv.Total),
-  ft_balance: asTextOrEmpty(inv.Balance),
-  ft_currency: String(inv.Currency || ""),
-  ft_ocr: asTextOrEmpty(inv.OCR),
+        ft_total: asTextOrEmpty(inv.Total),                     // ✅ text
+        ft_balance: asTextOrEmpty(inv.Balance),                 // ✅ text
+        ft_currency: asTextOrEmpty(inv.Currency),               // ✅ text
+        ft_ocr: asTextOrEmpty(inv.OCR),                         // ✅ text
 
-  ft_cancelled: inv.Cancelled === undefined ? null : !!inv.Cancelled,
-  ft_sent: inv.Sent === undefined ? null : !!inv.Sent,
+        ft_cancelled: inv.Cancelled === true,                   // ✅ yes/no
+        ft_sent: inv.Sent === true,                             // ✅ yes/no
 
-  ft_raw_json: JSON.stringify(inv || "")
-};
+        ft_url: asTextOrEmpty(inv["@url"]),                     // ✅ text
+        ft_raw_json: JSON.stringify(inv || {})
+      };
 
       try {
         const existing = await bubbleFindOne(TYPE, [
@@ -1783,13 +1783,14 @@ const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
         }
       } catch (e) {
         errors++;
-        if (!first_error) first_error = {
-          step: "bubbleUpsert",
-          docNo,
-          message: e?.message || String(e),
-          status: e?.status || null,
-          detail: e?.detail || null
-        };
+        if (!first_error)
+          first_error = {
+            step: "bubbleUpsert",
+            docNo,
+            message: e?.message || String(e),
+            status: e?.status || null,
+            detail: e?.detail || null
+          };
       }
 
       if (pause_ms) await sleep(Number(pause_ms));
