@@ -309,7 +309,7 @@ async function bubbleFindOne(type, constraints) {
 // ────────────────────────────────────────────────────────────
 const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
-const asNumberOrNull = (v) => {
+
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   if (!s) return null;
@@ -1291,7 +1291,6 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Helpers (customers)
 
-const asNumberOrNull = (v) => {
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   if (!s) return null;
