@@ -245,6 +245,22 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
   return { ok: r.ok && !!j.access_token, status: r.status, data: j };
 }
 // ────────────────────────────────────────────────────────────
+// Helpers
+const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
+
+const asNumberOrNull = (v) => {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+
+  // plocka ut siffror (funkar även för +46, mellanslag, bindestreck etc)
+  const digits = s.replace(/[^\d]/g, "");
+  if (!digits) return null;
+
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : null;
+};
+// ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (object-CRUD)
 async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, sort_field = null, descending = false } = {}) {
   const qs = new URLSearchParams();
