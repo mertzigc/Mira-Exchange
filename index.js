@@ -327,49 +327,47 @@ async function bubbleFindOne(type, constraints) {
 
 // ────────────────────────────────────────────────────────────
 // Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
-// OBS: bubbleCreate(...) måste finnas längre ner i filen (som tidigare).
-const CLIENTCOMPANY_ORG_KEYS = ["Org_Nummer", "Org_Number", "OrgNr", "Org_nr", "Org_Nr"];
-
-async function findClientCompanyByOrgNo(orgNo) {
-  for (const key of CLIENTCOMPANY_ORG_KEYS) {
-    try {
-      const existing = await bubbleFindOne("ClientCompany", [
-        { key, constraint_type: "equals", value: orgNo }
-      ]);
-      // Om sökningen funkar (oavsett om vi hittar något) så är detta ett giltigt fält
-      return { existing, keyUsed: key, keyWorks: true };
-    } catch (e) {
-      const msg = String(e?.detail?.body?.body?.message || e?.message || "");
-      if (msg.includes("Field not found")) continue; // testa nästa kandidat
-      throw e; // annat fel → bubbla upp
-    }
-  }
-  return { existing: null, keyUsed: "Org_Nummer", keyWorks: false };
-}
-
-async function ensureClientCompanyForFortnoxCustomer(cust) {
+// + säkerställ ft_customer_number är satt på ClientCompany
+async function ensureClientCompanyForFortnoxCustomer(cust, { connection_id, customerNumber } = {}) {
   const orgNo = asTextOrEmpty(
     cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber
   ).trim();
-
-  // Utan orgnr blir det lätt dubbletter, så vi skapar bara om orgnr finns.
-  if (!orgNo) return null;
 
   const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
   const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
   const phone = cust?.Phone || cust?.phone;
 
-  // 1) hitta befintligt ClientCompany på orgnr (tål olika fältnamn)
-  const { existing, keyUsed, keyWorks } = await findClientCompanyByOrgNo(orgNo);
-  if (existing?._id) return existing._id;
+  // Utan orgnr blir det lätt dubbletter
+  if (!orgNo) return null;
+
+  // 1) hitta befintligt ClientCompany på Org_Nummer
+  const existing = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
+  ]);
+
+  // fält vi vill säkerställa på ClientCompany
+  const patchFields = {};
+  if (customerNumber) patchFields.ft_customer_number = String(customerNumber);
+  // (valfritt om du har fält, annars ta bort)
+  // if (connection_id) patchFields.connection_id = String(connection_id);
+
+  if (existing?._id) {
+    // Om ft_customer_number saknas / är fel -> patcha
+    const currentFtNo = existing?.ft_customer_number ? String(existing.ft_customer_number) : "";
+    const wantedFtNo  = customerNumber ? String(customerNumber) : "";
+
+    if (wantedFtNo && currentFtNo !== wantedFtNo) {
+      await bubblePatch("ClientCompany", existing._id, patchFields);
+    }
+    return existing._id;
+  }
 
   // 2) skapa nytt ClientCompany (minimalt & säkert)
   const ccFields = {
     Name_company: name || orgNo,
+    Org_Nummer: orgNo,
+    ...(customerNumber ? { ft_customer_number: String(customerNumber) } : {})
   };
-
-  // skriv orgnr på det fält som faktiskt finns (om vi kunde verifiera)
-  ccFields[keyWorks ? keyUsed : "Org_Nummer"] = orgNo;
 
   if (email) ccFields.Email = email;
 
