@@ -327,52 +327,64 @@ async function bubbleFindOne(type, constraints) {
 
 // ────────────────────────────────────────────────────────────
 // Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
-// + säkerställ ft_customer_number är satt på ClientCompany
-async function ensureClientCompanyForFortnoxCustomer(cust, { connection_id, customerNumber } = {}) {
+// + sätter/patchar ft_customer_number (number) från Fortnox CustomerNumber
+async function ensureClientCompanyForFortnoxCustomer(cust) {
   const orgNo = asTextOrEmpty(
     cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber
   ).trim();
 
+  if (!orgNo) return null;
+
+  const customerNoText = asTextOrEmpty(
+    cust?.CustomerNumber || cust?.customer_number || cust?.customerNumber
+  ).trim();
+
+  const customerNoNum = asNumberOrNull(customerNoText);
+
   const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
   const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
   const phone = cust?.Phone || cust?.phone;
-
-  // Utan orgnr blir det lätt dubbletter
-  if (!orgNo) return null;
 
   // 1) hitta befintligt ClientCompany på Org_Number
   const existing = await bubbleFindOne("ClientCompany", [
     { key: "Org_Number", constraint_type: "equals", value: orgNo }
   ]);
 
-  // fält vi vill säkerställa på ClientCompany
-  const patchFields = {};
-  if (customerNumber) patchFields.ft_customer_number = String(customerNumber);
-  // (valfritt om du har fält, annars ta bort)
-  // if (connection_id) patchFields.connection_id = String(connection_id);
-
   if (existing?._id) {
-    // Om ft_customer_number saknas / är fel -> patcha
-    const currentFtNo = existing?.ft_customer_number ? String(existing.ft_customer_number) : "";
-    const wantedFtNo  = customerNumber ? String(customerNumber) : "";
+    // Patcha bara om fält saknas (så vi inte skriver över manuellt CRM-data)
+    const patch = {};
 
-    if (wantedFtNo && currentFtNo !== wantedFtNo) {
-      await bubblePatch("ClientCompany", existing._id, patchFields);
+    if (customerNoNum !== null && (existing.ft_customer_number === undefined || existing.ft_customer_number === null)) {
+      patch.ft_customer_number = customerNoNum;
     }
+
+    if (name && !existing.Name_company) patch.Name_company = name;
+    if (email && !existing.Email) patch.Email = email;
+
+    const phoneNum = asNumberOrNull(phone);
+    if (phoneNum !== null && (existing.Telefon === undefined || existing.Telefon === null)) {
+      patch.Telefon = phoneNum;
+    }
+
+    if (Object.keys(patch).length) {
+      await bubblePatch("ClientCompany", existing._id, patch);
+    }
+
     return existing._id;
   }
 
-  // 2) skapa nytt ClientCompany (minimalt & säkert)
+  // 2) skapa nytt ClientCompany
   const ccFields = {
     Name_company: name || orgNo,
-    Org_Number: orgNo,
-    ...(customerNumber ? { ft_customer_number: String(customerNumber) } : {})
+    Org_Number: orgNo
   };
 
   if (email) ccFields.Email = email;
 
   const phoneNum = asNumberOrNull(phone);
   if (phoneNum !== null) ccFields.Telefon = phoneNum;
+
+  if (customerNoNum !== null) ccFields.ft_customer_number = customerNoNum;
 
   const ccId = await bubbleCreate("ClientCompany", ccFields);
   return ccId || null;
@@ -1378,11 +1390,12 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
         ]);
 
         let ccId = null;
-        const hasLinkedAlready = !!(existing && (existing.linked_company || existing.linked_company?._id));
+const hasLinkedAlready = !!(existing && (existing.linked_company || existing.linked_company?._id));
 
-        if (link_company && orgnr && (!existing?._id || !hasLinkedAlready)) {
-          ccId = await ensureClientCompanyForFortnoxCustomer(c);
-        }
+// ✅ Kör alltid (så ClientCompany kan patchas med ft_customer_number även om den redan är länkad)
+if (link_company && orgnr) {
+  ccId = await ensureClientCompanyForFortnoxCustomer(c);
+}
 
         if (existing?._id) {
           const patchPayload = { ...basePayload };
