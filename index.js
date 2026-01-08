@@ -1331,6 +1331,51 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
 }
 
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// Helpers (customers)
+// OBS: asTextOrEmpty finns redan globalt i din fil -> deklarera INTE igen här.
+
+const asNumberOrNull = (v) => {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const digits = s.replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Skapa/hitta ClientCompany baserat på orgnr (Org_Nummer)
+async function ensureClientCompanyForFortnoxCustomer(cust) {
+  const orgNo = asTextOrEmpty(
+    cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber
+  ).trim();
+  if (!orgNo) return null;
+
+  const existing = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
+  ]);
+  if (existing?._id) return existing._id;
+
+  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
+  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
+  const phone = cust?.Phone || cust?.phone;
+
+  const ccFields = {
+    Name_company: name || orgNo,
+    Org_Nummer: orgNo
+  };
+
+  if (email) ccFields.Email = email;
+
+  const phoneNum = asNumberOrNull(phone);
+  if (phoneNum !== null) ccFields.Telefon = phoneNum;
+
+  const ccId = await bubbleCreate("ClientCompany", ccFields);
+  return ccId || null;
+}
+
+// ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
   const {
@@ -1338,7 +1383,7 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
     page = 1,
     limit = 100,
     skip_without_orgnr = true,
-    link_company = true // <- stäng av om du vill testa utan ClientCompany-länkning
+    link_company = true
   } = req.body || {};
 
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
@@ -1371,7 +1416,6 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
       if (!customerNumber) { skipped++; continue; }
       if (skip_without_orgnr && !orgnr) { skipped++; continue; }
 
-      // FortnoxCustomer-fält (matchar din Bubble-typ)
       const basePayload = {
         connection_id: asTextOrEmpty(connection_id),
         customer_number: customerNumber,
@@ -1384,7 +1428,6 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
         zip: asTextOrEmpty(c?.ZipCode),
         city: asTextOrEmpty(c?.City),
         ft_url: asTextOrEmpty(c?.["@url"]),
-        // Bubble date-fält -> ISO funkar
         last_seen_at: new Date().toISOString(),
         raw_json: JSON.stringify(c || {}),
         fortnox_json: JSON.stringify(c || {})
@@ -1396,7 +1439,6 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
           { key: "customer_number", constraint_type: "equals", value: customerNumber }
         ]);
 
-        // Länka/Backfill ClientCompany om önskat och om orgnr finns
         let ccId = null;
         const hasLinkedAlready = !!(existing && (existing.linked_company || existing.linked_company?._id));
 
@@ -1523,7 +1565,6 @@ app.post("/fortnox/upsert/customers/all", requireApiKey, async (req, res) => {
       }
 
       page = cur + 1;
-
       if (pause) await sleep(pause);
     }
 
