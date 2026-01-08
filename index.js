@@ -3048,6 +3048,217 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
   }
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: Nightly orchestrator – kör ALLA connections i rätt ordning
+app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
+  try {
+    const body = req.body || {};
+
+    const months_back = Number(body.months_back ?? 12) || 12;
+
+    const customers = body.customers || {};
+    const orders    = body.orders || {};
+    const offers    = body.offers || {};
+    const invoices  = body.invoices || {};
+    const rows      = body.rows || {};
+
+    // defaults (kan styras från .sh / env)
+    const cfg = {
+      customers: {
+        limit: Number(customers.limit ?? 500) || 500,
+        max_pages: Number(customers.max_pages ?? 30) || 30,
+        pause_ms: Number(customers.pause_ms ?? 50) || 50,
+        skip_without_orgnr: true,
+        link_company: true
+      },
+      orders: {
+        limit: Number(orders.limit ?? 200) || 200,
+        pages_per_call: Number(orders.max_pages ?? 5) || 5, // du skickar "max_pages" från .sh
+        pause_ms: Number(orders.pause_ms ?? 150) || 150
+      },
+      offers: {
+        limit: Number(offers.limit ?? 200) || 200,
+        pages_per_call: Number(offers.max_pages ?? 5) || 5,
+        pause_ms: Number(offers.pause_ms ?? 150) || 150
+      },
+      invoices: {
+        limit: Number(invoices.limit ?? 200) || 200,
+        pages_per_call: Number(invoices.max_pages ?? 5) || 5,
+        pause_ms: Number(invoices.pause_ms ?? 150) || 150
+      },
+      rows: {
+        limit: Number(rows.limit ?? 30) || 30,
+        passes: Number(rows.passes ?? 20) || 20,
+        pause_ms: Number(rows.pause_ms ?? 250) || 250
+      }
+    };
+
+    const conns = await getAllFortnoxConnections();
+    const results = [];
+    let totals = {
+      connections: conns.length,
+      customers: { created: 0, updated: 0, skipped: 0, errors: 0 },
+      orders:    { created: 0, updated: 0, skipped: 0, errors: 0 },
+      offers:    { created: 0, updated: 0, skipped: 0, errors: 0 },
+      invoices:  { created: 0, updated: 0, skipped: 0, errors: 0 },
+      order_rows: { ok: 0, fail: 0 },
+      offer_rows: { ok: 0, fail: 0 }
+    };
+
+    const postInternal = async (path, payload) => {
+      const r = await fetch(`${SELF_BASE_URL}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify(payload || {})
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        const err = new Error(`internal call failed: ${path}`);
+        err.detail = { path, status: r.status, body: j };
+        throw err;
+      }
+      return j;
+    };
+
+    // loop-helper för /all endpoints som returnerar done/next_page
+    const runAllPaged = async (path, basePayload, pagesPerCall, pauseMs) => {
+      let start_page = Number(basePayload.start_page ?? 1) || 1;
+      let safetyCalls = 0;
+
+      while (true) {
+        safetyCalls++;
+        if (safetyCalls > 500) {
+          // skydd mot oändliga loopar
+          return { done: false, next_page: start_page, safety_stop: true };
+        }
+
+        const j = await postInternal(path, {
+          ...basePayload,
+          start_page,
+          max_pages: pagesPerCall
+        });
+
+        // om endpointen returnerar next_page: använd den
+        if (j.done === true) return { done: true, next_page: j.next_page ?? null, last: j };
+        start_page = Number(j.next_page ?? (start_page + pagesPerCall)) || (start_page + pagesPerCall);
+
+        if (pauseMs) await sleep(Number(pauseMs));
+      }
+    };
+
+    for (const c of conns) {
+      const connection_id = c._id;
+      const one = {
+        connection_id,
+        customers: null,
+        orders: null,
+        offers: null,
+        invoices: null,
+        order_rows: null,
+        offer_rows: null,
+        errors: []
+      };
+
+      try {
+        // 1) Customers (masterdata)
+        one.customers = await runAllPaged(
+          "/fortnox/upsert/customers/all",
+          {
+            connection_id,
+            start_page: 1,
+            limit: cfg.customers.limit,
+            pause_ms: cfg.customers.pause_ms,
+            skip_without_orgnr: cfg.customers.skip_without_orgnr,
+            link_company: cfg.customers.link_company
+          },
+          cfg.customers.max_pages,
+          cfg.customers.pause_ms
+        );
+
+        // 2) Orders (12 mån bakåt) + flagga needs_rows_sync=true i dina orders
+        one.orders = await runAllPaged(
+          "/fortnox/upsert/orders/all",
+          {
+            connection_id,
+            start_page: 1,
+            limit: cfg.orders.limit,
+            months_back
+          },
+          cfg.orders.pages_per_call,
+          cfg.orders.pause_ms
+        );
+
+        // 2b) Order rows (flagged) – kör några varv tills inga flaggade kvar
+        for (let p = 0; p < cfg.rows.passes; p++) {
+          const j = await postInternal("/fortnox/upsert/order-rows/flagged", {
+            connection_id,
+            limit: cfg.rows.limit,
+            pause_ms: cfg.rows.pause_ms
+          });
+          if (j.flagged_found === 0) break;
+          if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+        }
+
+        // 3) Offers + rows
+        one.offers = await runAllPaged(
+          "/fortnox/upsert/offers/all",
+          {
+            connection_id,
+            start_page: 1,
+            limit: cfg.offers.limit
+          },
+          cfg.offers.pages_per_call,
+          cfg.offers.pause_ms
+        );
+
+        for (let p = 0; p < cfg.rows.passes; p++) {
+          const j = await postInternal("/fortnox/upsert/offer-rows/flagged", {
+            connection_id,
+            limit: cfg.rows.limit,
+            pause_ms: cfg.rows.pause_ms
+          });
+          if (j.flagged_found === 0) break;
+          if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+        }
+
+        // 4) Invoices (12 mån bakåt)
+        one.invoices = await runAllPaged(
+          "/fortnox/upsert/invoices/all",
+          {
+            connection_id,
+            start_page: 1,
+            limit: cfg.invoices.limit,
+            months_back,
+            pause_ms: cfg.invoices.pause_ms
+          },
+          cfg.invoices.pages_per_call,
+          cfg.invoices.pause_ms
+        );
+
+      } catch (e) {
+        one.errors.push({
+          message: e?.message || String(e),
+          detail: e?.detail || null
+        });
+      }
+
+      results.push(one);
+    }
+
+    return res.json({
+      ok: true,
+      months_back,
+      config: cfg,
+      connections: conns.length,
+      results
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
