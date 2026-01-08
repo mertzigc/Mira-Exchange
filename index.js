@@ -1290,7 +1290,6 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Helpers (customers)
-const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
 const asNumberOrNull = (v) => {
   if (v === undefined || v === null) return null;
