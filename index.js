@@ -65,18 +65,18 @@ const FORTNOX_REDIRECT_URI  =
   process.env.FORTNOX_REDIRECT_URI || "https://api.mira-fm.com/fortnox/callback";
 
 // Bubble: spara till MIRA först, sen version-test
-// (VIKTIGT: måste matcha fetchBubbleUser() som läser från mira-fm.com)
 const BUBBLE_BASES = [
   "https://mira-fm.com/version-test",
 ];
 console.log("[BOOT] BUBBLE_BASES =", BUBBLE_BASES);
 console.log("[BOOT] INDEX_FINGERPRINT = 2025-12-21_15:40_v1");
+
 const BASE_URL =
   pick(process.env.BASE_URL, process.env.BUBBLE_BASE_URL) ||
   (Array.isArray(BUBBLE_BASES) && BUBBLE_BASES[0]) ||
   null;
 
-const BUBBLE_BASE_URL = BASE_URL; // ✅ BACKWARD COMPAT för endpoints som använder BUBBLE_BASE_URL
+const BUBBLE_BASE_URL = BASE_URL; // ✅ BACKWARD COMPAT
 
 if (!BASE_URL) {
   console.warn("[BOOT] No BASE_URL resolved. endpoints will fail.");
@@ -84,9 +84,11 @@ if (!BASE_URL) {
 if (!BUBBLE_API_KEY) {
   console.warn("[BOOT] No BUBBLE_API_KEY resolved. Bubble calls will fail.");
 }
+
 // ────────────────────────────────────────────────────────────
 // Helpers
-const log = (msg, data) => console.log(msg, data ? JSON.stringify(data, null, 2) : "");
+const log = (msg, data) =>
+  console.log(msg, data ? JSON.stringify(data, null, 2) : "");
 
 // "YYYY-MM-DD HH:mm[:ss]" → "YYYY-MM-DDTHH:mm:ss"
 const fixDateTime = (s) => {
@@ -139,7 +141,7 @@ const sha  = (v) => {
 function normalizeRedirect(u) {
   try {
     const url = new URL(u);
-    url.pathname = url.pathname.replace(/\/{2,}/g, "/"); // collapse multiple slashes
+    url.pathname = url.pathname.replace(/\/{2,}/g, "/");
     return url.toString();
   } catch {
     return u;
@@ -154,9 +156,6 @@ function requireApiKey(req, res, next) {
     "/fortnox/authorize",
     "/fortnox/callback"
   ];
-
-  // also allow /ms/debug-env without key if you want:
-  // openPaths.push("/ms/debug-env");
 
   if (openPaths.includes(req.path)) return next();
 
@@ -244,22 +243,24 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok && !!j.access_token, status: r.status, data: j };
 }
+
 // ────────────────────────────────────────────────────────────
-// Helpers
+// Helpers (deklarera EN gång)
 const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
+// Telefon/orgnr: plocka siffror ur sträng (+46, mellanslag, bindestreck osv)
 const asNumberOrNull = (v) => {
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   if (!s) return null;
 
-  // plocka ut siffror (funkar även för +46, mellanslag, bindestreck etc)
   const digits = s.replace(/[^\d]/g, "");
   if (!digits) return null;
 
   const n = Number(digits);
   return Number.isFinite(n) ? n : null;
 };
+
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (object-CRUD)
 async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, sort_field = null, descending = false } = {}) {
@@ -301,7 +302,7 @@ async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, s
   err.detail = lastErr;
   throw err;
 }
-// Bubble: paginate "search" results for a thing
+
 async function bubbleFindAll(typeName, { constraints = [], sort_field = null, descending = false } = {}) {
   const out = [];
   let cursor = 0;
@@ -315,6 +316,7 @@ async function bubbleFindAll(typeName, { constraints = [], sort_field = null, de
   }
   return out;
 }
+
 async function bubbleFindOne(type, constraints) {
   const arr = await bubbleFind(type, {
     constraints: Array.isArray(constraints) ? constraints : [],
@@ -322,45 +324,52 @@ async function bubbleFindOne(type, constraints) {
   });
   return Array.isArray(arr) && arr.length ? arr[0] : null;
 }
+
 // ────────────────────────────────────────────────────────────
-// Helpers (deklarera EN gång i hela filen)
-const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
-
-// Telefon/orgnr: plocka siffror ur sträng (+46, mellanslag, bindestreck osv)
-const asDigitsNumberOrNull = (v) => {
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-
-  const digits = s.replace(/[^\d]/g, "");
-  if (!digits) return null;
-
-  const n = Number(digits);
-  return Number.isFinite(n) ? n : null;
-};
-
 // Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
+// OBS: bubbleCreate(...) måste finnas längre ner i filen (som tidigare).
+const CLIENTCOMPANY_ORG_KEYS = ["Org_Nummer", "Org_Number", "OrgNr", "Org_nr", "Org_Nr"];
+
+async function findClientCompanyByOrgNo(orgNo) {
+  for (const key of CLIENTCOMPANY_ORG_KEYS) {
+    try {
+      const existing = await bubbleFindOne("ClientCompany", [
+        { key, constraint_type: "equals", value: orgNo }
+      ]);
+      // Om sökningen funkar (oavsett om vi hittar något) så är detta ett giltigt fält
+      return { existing, keyUsed: key, keyWorks: true };
+    } catch (e) {
+      const msg = String(e?.detail?.body?.body?.message || e?.message || "");
+      if (msg.includes("Field not found")) continue; // testa nästa kandidat
+      throw e; // annat fel → bubbla upp
+    }
+  }
+  return { existing: null, keyUsed: "Org_Nummer", keyWorks: false };
+}
+
 async function ensureClientCompanyForFortnoxCustomer(cust) {
-  const orgNo = asTextOrEmpty(cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber).trim();
-  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
-  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
-  const phone = cust?.Phone || cust?.phone;
+  const orgNo = asTextOrEmpty(
+    cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber
+  ).trim();
 
   // Utan orgnr blir det lätt dubbletter, så vi skapar bara om orgnr finns.
   if (!orgNo) return null;
 
-  // 1) hitta befintligt ClientCompany på Org_Nummbr
-  const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: orgNo }
-  ]);
+  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
+  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
+  const phone = cust?.Phone || cust?.phone;
 
+  // 1) hitta befintligt ClientCompany på orgnr (tål olika fältnamn)
+  const { existing, keyUsed, keyWorks } = await findClientCompanyByOrgNo(orgNo);
   if (existing?._id) return existing._id;
 
   // 2) skapa nytt ClientCompany (minimalt & säkert)
   const ccFields = {
     Name_company: name || orgNo,
-    Org_Nummer: orgNo,
   };
+
+  // skriv orgnr på det fält som faktiskt finns (om vi kunde verifiera)
+  ccFields[keyWorks ? keyUsed : "Org_Nummer"] = orgNo;
 
   if (email) ccFields.Email = email;
 
