@@ -307,15 +307,18 @@ async function bubbleFindOne(type, constraints) {
   return Array.isArray(arr) && arr.length ? arr[0] : null;
 }
 // ────────────────────────────────────────────────────────────
+// Helpers (deklarera EN gång i hela filen)
 const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
-
+// Telefon/orgnr: plocka siffror ur sträng (+46, mellanslag, bindestreck osv)
+const asDigitsNumberOrNull = (v) => {
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   if (!s) return null;
-  // plocka ut siffror (funkar ok även om +46, mellanslag, bindestreck etc)
+
   const digits = s.replace(/[^\d]/g, "");
   if (!digits) return null;
+
   const n = Number(digits);
   return Number.isFinite(n) ? n : null;
 };
