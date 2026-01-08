@@ -333,9 +333,9 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
   // Utan orgnr blir det lätt dubbletter, så vi skapar bara om orgnr finns.
   if (!orgNo) return null;
 
-  // 1) hitta befintligt ClientCompany på Org_Nummer
+  // 1) hitta befintligt ClientCompany på Org_Nummbr
   const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
+    { key: "Org_Number", constraint_type: "equals", value: orgNo }
   ]);
 
   if (existing?._id) return existing._id;
