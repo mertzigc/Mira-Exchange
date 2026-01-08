@@ -739,11 +739,9 @@ function getNightlyStatus() {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // ────────────────────────────────────────────────────────────
-const SELF_BASE_URL = pick(
-  process.env.SELF_BASE_URL,          // sätt denna i Render till https://api.mira-fm.com
-  process.env.RENDER_EXTERNAL_URL,     // om Render har den
-  "https://api.mira-fm.com"
-);
+// Internal self-calls: använd localhost by default (stabilt, snabbt)
+const SELF_BASE_URL = pick(process.env.SELF_BASE_URL) || `http://127.0.0.1:${PORT}`;
+console.log("[BOOT] SELF_BASE_URL =", SELF_BASE_URL);
 
 async function renderPostJson(path, body) {
   const url = SELF_BASE_URL.replace(/\/$/, "") + path;
