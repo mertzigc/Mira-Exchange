@@ -1291,67 +1291,6 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────
-// Skapa/hitta ClientCompany baserat på orgnr (Org_Nummer)
-async function ensureClientCompanyForFortnoxCustomer(cust) {
-  const orgNo = asTextOrEmpty(cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber).trim();
-  if (!orgNo) return null;
-
-  const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
-  ]);
-  if (existing?._id) return existing._id;
-
-  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
-  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
-  const phone = cust?.Phone || cust?.phone;
-
-  const ccFields = {
-    Name_company: name || orgNo,
-    Org_Nummer: orgNo
-  };
-
-  if (email) ccFields.Email = email;
-
-  const phoneNum = asNumberOrNull(phone);
-  if (phoneNum !== null) ccFields.Telefon = phoneNum;
-
-  const ccId = await bubbleCreate("ClientCompany", ccFields);
-  return ccId || null;
-}
-
-// ────────────────────────────────────────────────────────────
-// Skapa/hitta ClientCompany baserat på orgnr (Org_Nummer)
-async function ensureClientCompanyForFortnoxCustomer(cust) {
-  const orgNo = asTextOrEmpty(
-    cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber
-  ).trim();
-  if (!orgNo) return null;
-
-  const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
-  ]);
-  if (existing?._id) return existing._id;
-
-  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
-  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
-  const phone = cust?.Phone || cust?.phone;
-
-  const ccFields = {
-    Name_company: name || orgNo,
-    Org_Nummer: orgNo
-  };
-
-  if (email) ccFields.Email = email;
-
-  const phoneNum = asNumberOrNull(phone);
-  if (phoneNum !== null) ccFields.Telefon = phoneNum;
-
-  const ccId = await bubbleCreate("ClientCompany", ccFields);
-  return ccId || null;
-}
-
-// ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
   const {
