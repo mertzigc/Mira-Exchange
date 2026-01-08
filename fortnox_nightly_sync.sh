@@ -3,86 +3,54 @@ set -euo pipefail
 
 HOST="${HOST:-https://mira-exchange.onrender.com}"
 API_KEY="${API_KEY:?Missing API_KEY}"
-CONN_ID="${CONN_ID:?Missing CONN_ID}"
 
-# Första natten: 12 månader. Efter första natten: sätt MONTHS_BACK=2 (eller 1) i Cron-jobbets env.
+# Första natten: 12. Efter första natten: ändra i Render env till t.ex. 2 (eller 1).
 MONTHS_BACK="${MONTHS_BACK:-12}"
 
-# Tempo – invoices i portioner (undviker timeout)
-INVOICE_LIMIT="${INVOICE_LIMIT:-200}"              # 200 fakturor per sida
-INVOICE_PAGES_PER_CALL="${INVOICE_PAGES_PER_CALL:-5}"  # 5 sidor per request
+# Tempo – invoices i portioner
+INVOICE_LIMIT="${INVOICE_LIMIT:-200}"
+INVOICE_PAGES_PER_CALL="${INVOICE_PAGES_PER_CALL:-5}"
 INVOICE_PAUSE_MS="${INVOICE_PAUSE_MS:-150}"
 
-# Tempo – orders i portioner (undviker timeout)
-ORDER_LIMIT="${ORDER_LIMIT:-100}"                  # 100 orders per sida
-ORDER_PAGES_PER_CALL="${ORDER_PAGES_PER_CALL:-5}"  # 5 sidor per request
-ORDER_PAUSE_MS="${ORDER_PAUSE_MS:-150}"
-
-# Tempo – offers i portioner (undviker timeout)
-OFFER_LIMIT="${OFFER_LIMIT:-100}"                  # 100 offers per sida
-OFFER_PAGES_PER_CALL="${OFFER_PAGES_PER_CALL:-5}"  # 5 sidor per request
-OFFER_PAUSE_MS="${OFFER_PAUSE_MS:-150}"
-
-# Customers – kör hela varje natt (med hög limit blir det få sidor)
-CUSTOMER_LIMIT="${CUSTOMER_LIMIT:-500}"            # max 500
+# Customers – masterdata
+CUSTOMER_LIMIT="${CUSTOMER_LIMIT:-500}"
 CUSTOMER_MAX_PAGES="${CUSTOMER_MAX_PAGES:-30}"
 CUSTOMER_PAUSE_MS="${CUSTOMER_PAUSE_MS:-50}"
 
-echo "=== Fortnox nightly sync START ==="
-echo "HOST=$HOST CONN_ID=$CONN_ID MONTHS_BACK=$MONTHS_BACK"
+# Orders
+ORDER_LIMIT="${ORDER_LIMIT:-200}"
+ORDER_PAGES_PER_CALL="${ORDER_PAGES_PER_CALL:-5}"
+ORDER_PAUSE_MS="${ORDER_PAUSE_MS:-150}"
 
-# 1) Customers (hela listan varje natt)
-echo "=== Customers/all ==="
-curl -sS --max-time 1800 \
-  "$HOST/fortnox/upsert/customers/all" \
+# Offers
+OFFER_LIMIT="${OFFER_LIMIT:-200}"
+OFFER_PAGES_PER_CALL="${OFFER_PAGES_PER_CALL:-5}"
+OFFER_PAUSE_MS="${OFFER_PAUSE_MS:-150}"
+
+# Rows (flagged)
+ROWS_LIMIT="${ROWS_LIMIT:-30}"
+ROWS_PASSES="${ROWS_PASSES:-20}"
+ROWS_PAUSE_MS="${ROWS_PAUSE_MS:-250}"
+
+echo "=== Fortnox nightly sync START ==="
+echo "HOST=$HOST MONTHS_BACK=$MONTHS_BACK"
+
+curl -sS --max-time 43200 \
+  "$HOST/fortnox/nightly/run" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"connection_id\":\"$CONN_ID\",\"start_page\":1,\"limit\":$CUSTOMER_LIMIT,\"max_pages\":$CUSTOMER_MAX_PAGES,\"pause_ms\":$CUSTOMER_PAUSE_MS,\"skip_without_orgnr\":true,\"link_company\":true}" \
-| tee /tmp/customers.json
+  -d "{
+    \"months_back\": $MONTHS_BACK,
+
+    \"customers\": {\"limit\": $CUSTOMER_LIMIT, \"max_pages\": $CUSTOMER_MAX_PAGES, \"pause_ms\": $CUSTOMER_PAUSE_MS},
+
+    \"orders\": {\"limit\": $ORDER_LIMIT, \"max_pages\": $ORDER_PAGES_PER_CALL, \"pause_ms\": $ORDER_PAUSE_MS},
+    \"offers\": {\"limit\": $OFFER_LIMIT, \"max_pages\": $OFFER_PAGES_PER_CALL, \"pause_ms\": $OFFER_PAUSE_MS},
+
+    \"invoices\": {\"limit\": $INVOICE_LIMIT, \"max_pages\": $INVOICE_PAGES_PER_CALL, \"pause_ms\": $INVOICE_PAUSE_MS},
+
+    \"rows\": {\"limit\": $ROWS_LIMIT, \"passes\": $ROWS_PASSES, \"pause_ms\": $ROWS_PAUSE_MS}
+  }" | cat
+
 echo
-
-# 2) Orders (portioner)
-curl -sS --max-time 1800 "$HOST/fortnox/upsert/orders/all" \
-  -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
-  -d "{\"connection_id\":\"$CONN_ID\",\"start_page\":1,\"limit\":$ORDER_LIMIT,\"months_back\":$MONTHS_BACK,\"max_pages\":$ORDER_PAGES_PER_CALL,\"pause_ms\":$ORDER_PAUSE_MS}"
-
-# 3) Offers (portioner)
-curl -sS --max-time 1800 "$HOST/fortnox/upsert/offers/all" \
-  -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
-  -d "{\"connection_id\":\"$CONN_ID\",\"start_page\":1,\"limit\":$OFFER_LIMIT,\"months_back\":$MONTHS_BACK,\"max_pages\":$OFFER_PAGES_PER_CALL,\"pause_ms\":$OFFER_PAUSE_MS}"
-# 2) Invoices (loopa tills done=true)
-echo "=== Invoices/all loop ==="
-start_page=1
-safety=0
-
-while true; do
-  resp="$(curl -sS --max-time 1800 \
-    "$HOST/fortnox/upsert/invoices/all" \
-    -H "x-api-key: $API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"connection_id\":\"$CONN_ID\",\"start_page\":$start_page,\"limit\":$INVOICE_LIMIT,\"months_back\":$MONTHS_BACK,\"max_pages\":$INVOICE_PAGES_PER_CALL,\"pause_ms\":$INVOICE_PAUSE_MS}")"
-
-  echo "$resp" | tee /tmp/invoices_last.json
-  echo
-
-  doneFlag="$(node -e 'const j=JSON.parse(process.argv[1]); process.stdout.write(String(!!j.done));' "$resp")"
-  if [ "$doneFlag" = "true" ]; then
-    echo "✅ Invoices done."
-    break
-  fi
-
-  nextPage="$(node -e 'const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.next_page||0));' "$resp")"
-  if [ "$nextPage" = "0" ]; then
-    echo "⚠️ No next_page returned. Stopping."
-    break
-  fi
-
-  start_page="$nextPage"
-  safety=$((safety+1))
-  if [ "$safety" -ge 500 ]; then
-    echo "⚠️ Safety stop (too many loops)."
-    break
-  fi
-done
-
 echo "=== Fortnox nightly sync END ==="
