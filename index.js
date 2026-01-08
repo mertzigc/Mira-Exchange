@@ -340,9 +340,9 @@ async function ensureClientCompanyForFortnoxCustomer(cust, { connection_id, cust
   // Utan orgnr blir det lätt dubbletter
   if (!orgNo) return null;
 
-  // 1) hitta befintligt ClientCompany på Org_Nummer
+  // 1) hitta befintligt ClientCompany på Org_Number
   const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
+    { key: "Org_Number", constraint_type: "equals", value: orgNo }
   ]);
 
   // fält vi vill säkerställa på ClientCompany
@@ -365,7 +365,7 @@ async function ensureClientCompanyForFortnoxCustomer(cust, { connection_id, cust
   // 2) skapa nytt ClientCompany (minimalt & säkert)
   const ccFields = {
     Name_company: name || orgNo,
-    Org_Nummer: orgNo,
+    Org_Number: orgNo,
     ...(customerNumber ? { ft_customer_number: String(customerNumber) } : {})
   };
 
