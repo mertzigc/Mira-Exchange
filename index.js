@@ -1289,17 +1289,6 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
-// Helpers (customers)
-
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const digits = s.replace(/[^\d]/g, "");
-  if (!digits) return null;
-  const n = Number(digits);
-  return Number.isFinite(n) ? n : null;
-};
-
 // Skapa/hitta ClientCompany baserat på orgnr (Org_Nummer)
 async function ensureClientCompanyForFortnoxCustomer(cust) {
   const orgNo = asTextOrEmpty(cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber).trim();
@@ -1329,20 +1318,6 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
 }
 
 // ────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────
-// Helpers (customers)
-// OBS: asTextOrEmpty finns redan globalt i din fil -> deklarera INTE igen här.
-
-const asNumberOrNull = (v) => {
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const digits = s.replace(/[^\d]/g, "");
-  if (!digits) return null;
-  const n = Number(digits);
-  return Number.isFinite(n) ? n : null;
-};
-
 // Skapa/hitta ClientCompany baserat på orgnr (Org_Nummer)
 async function ensureClientCompanyForFortnoxCustomer(cust) {
   const orgNo = asTextOrEmpty(
