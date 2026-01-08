@@ -307,6 +307,51 @@ async function bubbleFindOne(type, constraints) {
   return Array.isArray(arr) && arr.length ? arr[0] : null;
 }
 // ────────────────────────────────────────────────────────────
+const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
+
+const asNumberOrNull = (v) => {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  // plocka ut siffror (funkar ok även om +46, mellanslag, bindestreck etc)
+  const digits = s.replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
+async function ensureClientCompanyForFortnoxCustomer(cust) {
+  const orgNo = asTextOrEmpty(cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber).trim();
+  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
+  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
+  const phone = cust?.Phone || cust?.phone;
+
+  // Utan orgnr blir det lätt dubbletter, så vi skapar bara om orgnr finns.
+  if (!orgNo) return null;
+
+  // 1) hitta befintligt ClientCompany på Org_Nummer
+  const existing = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
+  ]);
+
+  if (existing?._id) return existing._id;
+
+  // 2) skapa nytt ClientCompany (minimalt & säkert)
+  const ccFields = {
+    Name_company: name || orgNo,
+    Org_Nummer: orgNo,
+  };
+
+  if (email) ccFields.Email = email;
+
+  const phoneNum = asNumberOrNull(phone);
+  if (phoneNum !== null) ccFields.Telefon = phoneNum;
+
+  const ccId = await bubbleCreate("ClientCompany", ccFields);
+  return ccId || null;
+}
+// ────────────────────────────────────────────────────────────
 // B) Fetch all FortnoxConnections (version-test)
 async function getAllFortnoxConnections() {
   const results = await bubbleFind("FortnoxConnection", {
@@ -1243,24 +1288,75 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// Helpers (customers)
+const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
+
+const asNumberOrNull = (v) => {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const digits = s.replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const n = Number(digits);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Skapa/hitta ClientCompany baserat på orgnr (Org_Nummer)
+async function ensureClientCompanyForFortnoxCustomer(cust) {
+  const orgNo = asTextOrEmpty(cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber).trim();
+  if (!orgNo) return null;
+
+  const existing = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Nummer", constraint_type: "equals", value: orgNo }
+  ]);
+  if (existing?._id) return existing._id;
+
+  const name  = asTextOrEmpty(cust?.Name || cust?.name).trim();
+  const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
+  const phone = cust?.Phone || cust?.phone;
+
+  const ccFields = {
+    Name_company: name || orgNo,
+    Org_Nummer: orgNo
+  };
+
+  if (email) ccFields.Email = email;
+
+  const phoneNum = asNumberOrNull(phone);
+  if (phoneNum !== null) ccFields.Telefon = phoneNum;
+
+  const ccId = await bubbleCreate("ClientCompany", ccFields);
+  return ccId || null;
+}
+
+// ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
-app.post("/fortnox/upsert/customers", async (req, res) => {
-  const { connection_id, page = 1, limit = 100, skip_without_orgnr = true } = req.body || {};
+app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    skip_without_orgnr = true,
+    link_company = true // <- stäng av om du vill testa utan ClientCompany-länkning
+  } = req.body || {};
+
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   let created = 0, updated = 0, skipped = 0, errors = 0;
-  let firstError = null;
+  let first_error = null;
 
   try {
-    const r = await fetch("https://mira-exchange.onrender.com/fortnox/sync/customers", {
+    const r = await fetch(`${SELF_BASE_URL}/fortnox/sync/customers`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
       body: JSON.stringify({ connection_id, page, limit })
     });
 
-    const text = await r.text();
-    let j = {};
-    try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+    const j = await r.json().catch(() => ({}));
 
     if (!r.ok || !j.ok) {
       return res.status(400).json({ ok: false, error: "sync/customers failed", http_status: r.status, detail: j });
@@ -1269,26 +1365,29 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
     const list = Array.isArray(j.customers) ? j.customers : [];
 
     for (const c of list) {
-      const customerNumber = String(c?.CustomerNumber || "").trim();
-      const orgnr = String(c?.OrganisationNumber || "").trim();
+      const customerNumber = asTextOrEmpty(c?.CustomerNumber).trim();
+      const orgnr = asTextOrEmpty(c?.OrganisationNumber).trim();
 
       if (!customerNumber) { skipped++; continue; }
       if (skip_without_orgnr && !orgnr) { skipped++; continue; }
 
-      const payload = {
-        connection_id,
+      // FortnoxCustomer-fält (matchar din Bubble-typ)
+      const basePayload = {
+        connection_id: asTextOrEmpty(connection_id),
         customer_number: customerNumber,
-        name: String(c?.Name || ""),
-        organisation_number: orgnr || "",
-        email: String(c?.Email || ""),
-        phone: String(c?.Phone || ""),
-        address1: String(c?.Address1 || ""),
-        address2: String(c?.Address2 || ""),
-        zip: String(c?.ZipCode || ""),
-        city: String(c?.City || ""),
-        ft_url: String(c?.["@url"] || ""),
+        name: asTextOrEmpty(c?.Name),
+        organisation_number: orgnr,
+        email: asTextOrEmpty(c?.Email),
+        phone: asTextOrEmpty(c?.Phone),
+        address1: asTextOrEmpty(c?.Address1),
+        address2: asTextOrEmpty(c?.Address2),
+        zip: asTextOrEmpty(c?.ZipCode),
+        city: asTextOrEmpty(c?.City),
+        ft_url: asTextOrEmpty(c?.["@url"]),
+        // Bubble date-fält -> ISO funkar
         last_seen_at: new Date().toISOString(),
-        raw_json: JSON.stringify(c || {})
+        raw_json: JSON.stringify(c || {}),
+        fortnox_json: JSON.stringify(c || {})
       };
 
       try {
@@ -1297,20 +1396,39 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
           { key: "customer_number", constraint_type: "equals", value: customerNumber }
         ]);
 
+        // Länka/Backfill ClientCompany om önskat och om orgnr finns
+        let ccId = null;
+        const hasLinkedAlready = !!(existing && (existing.linked_company || existing.linked_company?._id));
+
+        if (link_company && orgnr && (!existing?._id || !hasLinkedAlready)) {
+          ccId = await ensureClientCompanyForFortnoxCustomer(c);
+        }
+
         if (existing?._id) {
-          await bubblePatch("FortnoxCustomer", existing._id, payload);
+          const patchPayload = { ...basePayload };
+          if (ccId && !hasLinkedAlready) patchPayload.linked_company = ccId;
+
+          await bubblePatch("FortnoxCustomer", existing._id, patchPayload);
           updated++;
         } else {
-          const id = await bubbleCreate("FortnoxCustomer", payload);
+          const createPayload = { ...basePayload };
+          if (ccId) createPayload.linked_company = ccId;
+
+          const id = await bubbleCreate("FortnoxCustomer", createPayload);
           if (id) created++;
           else {
             errors++;
-            if (!firstError) firstError = { customerNumber, message: "bubbleCreate returned null id" };
+            if (!first_error) first_error = { step: "bubbleCreate", customerNumber, message: "bubbleCreate returned null id" };
           }
         }
       } catch (e) {
         errors++;
-        if (!firstError) firstError = { customerNumber, message: e?.message || String(e), detail: e?.detail || null };
+        if (!first_error) first_error = {
+          step: "bubbleUpsert",
+          customerNumber,
+          message: e?.message || String(e),
+          detail: e?.detail || null
+        };
       }
     }
 
@@ -1320,41 +1438,45 @@ app.post("/fortnox/upsert/customers", async (req, res) => {
       page,
       limit,
       skip_without_orgnr,
+      link_company,
       meta: j.meta || null,
       counts: { created, updated, skipped, errors },
-      first_error: firstError
+      first_error
     });
 
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert customers - batch loop (N pages per run)
-app.post("/fortnox/upsert/customers/all", async (req, res) => {
+app.post("/fortnox/upsert/customers/all", requireApiKey, async (req, res) => {
   const {
     connection_id,
     start_page = 1,
     limit = 100,
     max_pages = 10,
-    skip_without_orgnr = true
+    pause_ms = 0,
+    skip_without_orgnr = true,
+    link_company = true
   } = req.body || {};
 
-  if (!connection_id) {
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
-  }
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   const start = Number(start_page) || 1;
   const maxP  = Math.max(1, Number(max_pages) || 10);
   const lim   = Math.max(1, Math.min(500, Number(limit) || 100));
+  const pause = Math.max(0, Number(pause_ms) || 0);
 
   let created = 0, updated = 0, skipped = 0, errors = 0;
   let page = start;
   let totalPages = null;
+  let first_error = null;
 
   try {
     for (let i = 0; i < maxP; i++) {
-      const r = await fetch("https://mira-exchange.onrender.com/fortnox/upsert/customers", {
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/customers`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1364,7 +1486,8 @@ app.post("/fortnox/upsert/customers/all", async (req, res) => {
           connection_id,
           page,
           limit: lim,
-          skip_without_orgnr
+          skip_without_orgnr,
+          link_company
         })
       });
 
@@ -1378,13 +1501,13 @@ app.post("/fortnox/upsert/customers/all", async (req, res) => {
       skipped += j.counts?.skipped || 0;
       errors  += j.counts?.errors  || 0;
 
+      if (!first_error && j.first_error) first_error = j.first_error;
+
       const meta = j.meta || null;
       const cur  = Number(meta?.["@CurrentPage"] || page);
       const tot  = Number(meta?.["@TotalPages"] || 0);
-
       if (tot) totalPages = tot;
 
-      // om vi nått sista sidan – klart
       if (tot && cur >= tot) {
         return res.json({
           ok: true,
@@ -1394,15 +1517,16 @@ app.post("/fortnox/upsert/customers/all", async (req, res) => {
           end_page: cur,
           total_pages: tot,
           counts: { created, updated, skipped, errors },
+          first_error,
           next_page: null
         });
       }
 
-      // annars vidare
       page = cur + 1;
+
+      if (pause) await sleep(pause);
     }
 
-    // inte klar ännu → returnera nästa sida att fortsätta på
     return res.json({
       ok: true,
       connection_id,
@@ -1411,15 +1535,15 @@ app.post("/fortnox/upsert/customers/all", async (req, res) => {
       end_page: page - 1,
       total_pages: totalPages,
       counts: { created, updated, skipped, errors },
+      first_error,
       next_page: page
     });
 
   } catch (e) {
     console.error("[/fortnox/upsert/customers/all] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-
 // ────────────────────────────────────────────────────────────
 // Fortnox: refresh + spara token (legacy to User)
 app.post("/fortnox/refresh-save", async (req, res) => {
