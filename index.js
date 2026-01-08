@@ -1856,7 +1856,6 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
 
     const invoices = Array.isArray(syncJson.invoices) ? syncJson.invoices : [];
     const TYPE = "FortnoxInvoice";
-    const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
     let created = 0, updated = 0, skipped = 0, errors = 0;
     let first_error = null;
