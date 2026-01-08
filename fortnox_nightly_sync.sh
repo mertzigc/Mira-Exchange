@@ -13,6 +13,16 @@ INVOICE_LIMIT="${INVOICE_LIMIT:-200}"              # 200 fakturor per sida
 INVOICE_PAGES_PER_CALL="${INVOICE_PAGES_PER_CALL:-5}"  # 5 sidor per request
 INVOICE_PAUSE_MS="${INVOICE_PAUSE_MS:-150}"
 
+# Tempo – orders i portioner (undviker timeout)
+ORDER_LIMIT="${ORDER_LIMIT:-100}"                  # 100 orders per sida
+ORDER_PAGES_PER_CALL="${ORDER_PAGES_PER_CALL:-5}"  # 5 sidor per request
+ORDER_PAUSE_MS="${ORDER_PAUSE_MS:-150}"
+
+# Tempo – offers i portioner (undviker timeout)
+OFFER_LIMIT="${OFFER_LIMIT:-100}"                  # 100 offers per sida
+OFFER_PAGES_PER_CALL="${OFFER_PAGES_PER_CALL:-5}"  # 5 sidor per request
+OFFER_PAUSE_MS="${OFFER_PAUSE_MS:-150}"
+
 # Customers – kör hela varje natt (med hög limit blir det få sidor)
 CUSTOMER_LIMIT="${CUSTOMER_LIMIT:-500}"            # max 500
 CUSTOMER_MAX_PAGES="${CUSTOMER_MAX_PAGES:-30}"
@@ -31,6 +41,15 @@ curl -sS --max-time 1800 \
 | tee /tmp/customers.json
 echo
 
+# 2) Orders (portioner)
+curl -sS --max-time 1800 "$HOST/fortnox/upsert/orders/all" \
+  -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+  -d "{\"connection_id\":\"$CONN_ID\",\"start_page\":1,\"limit\":$ORDER_LIMIT,\"months_back\":$MONTHS_BACK,\"max_pages\":$ORDER_PAGES_PER_CALL,\"pause_ms\":$ORDER_PAUSE_MS}"
+
+# 3) Offers (portioner)
+curl -sS --max-time 1800 "$HOST/fortnox/upsert/offers/all" \
+  -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+  -d "{\"connection_id\":\"$CONN_ID\",\"start_page\":1,\"limit\":$OFFER_LIMIT,\"months_back\":$MONTHS_BACK,\"max_pages\":$OFFER_PAGES_PER_CALL,\"pause_ms\":$OFFER_PAUSE_MS}"
 # 2) Invoices (loopa tills done=true)
 echo "=== Invoices/all loop ==="
 start_page=1
