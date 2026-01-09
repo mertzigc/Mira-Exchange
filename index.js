@@ -2834,7 +2834,7 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
         const startOffers = await getConnNextPage(cid, "offers_next_page", 1);
         const offersJ = await postInternalJson("/fortnox/upsert/offers/all", {
           connection_id: cid, start_page: startOffers, limit: 100, max_pages: 5
-        }, 180000);
+        }, 15 * 60 * 1000);
 
         one.steps.offers = { ok: true, done: !!offersJ.done, next_page: offersJ.next_page ?? null, counts: offersJ.counts || null };
 
@@ -2857,7 +2857,7 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
         const startInv = await getConnNextPage(cid, "invoices_next_page", 1);
         const invoicesJ = await postInternalJson("/fortnox/upsert/invoices/all", {
           connection_id: cid, start_page: startInv, limit: 50, max_pages: 5, months_back: mb
-        }, 180000);
+        }, 15 * 60 * 1000);
 
         one.steps.invoices = { ok: true, done: !!invoicesJ.done, next_page: invoicesJ.next_page ?? null, counts: invoicesJ.counts || null };
 
