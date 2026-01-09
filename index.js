@@ -2395,6 +2395,7 @@ app.post("/fortnox/upsert/offer-rows", async (req,res)=>{
       ft_row_index: i+1,
       ft_article_number: row.ArticleNumber || "",
       ft_description: row.Description || "",
+      ft_delivery_date: toIsoDate(o?.DeliveryDate),
       ft_quantity: row.Quantity ?? null,
       ft_unit: row.Unit || "",
       ft_price: toNumOrNull(row?.Price),
