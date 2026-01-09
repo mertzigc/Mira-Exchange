@@ -84,7 +84,9 @@ if (!BASE_URL) {
 if (!BUBBLE_API_KEY) {
   console.warn("[BOOT] No BUBBLE_API_KEY resolved. Bubble calls will fail.");
 }
-
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 // ────────────────────────────────────────────────────────────
 // Helpers
 const log = (msg, data) =>
