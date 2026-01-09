@@ -5,7 +5,7 @@ HOST="${HOST:-https://mira-exchange.onrender.com}"
 API_KEY="${API_KEY:?Missing API_KEY}"
 
 # Första natten: 12. Efter första natten: ändra i Render env till t.ex. 2 (eller 1).
-MONTHS_BACK="${MONTHS_BACK:-12}"
+MONTHS_BACK="${MONTHS_BACK:-1}"
 
 # Tempo – invoices i portioner
 INVOICE_LIMIT="${INVOICE_LIMIT:-200}"
