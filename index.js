@@ -696,6 +696,10 @@ const getLock = () => {
   }
   return globalThis.__miraNightlyLock;
 };
+
+// ✅ alias så dina routes funkar (du kan använda båda namnen)
+const getNightlyLock = getLock;
+
 app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
   const lock = getNightlyLock();
   return res.json({ ok: true, lock });
@@ -710,34 +714,6 @@ app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
   lock.run_id = null;
   return res.json({ ok: true, unlocked: true, was });
 });
-// ────────────────────────────────────────────────────────────
-// Nightly lock (process-local, per Render instance)
-
-let _nightlyRunning = false;
-let _nightlyStartedAt = null;
-
-function isNightlyRunning() {
-  return _nightlyRunning === true;
-}
-
-function startNightly() {
-  _nightlyRunning = true;
-  _nightlyStartedAt = new Date().toISOString();
-}
-
-function stopNightly() {
-  _nightlyRunning = false;
-  _nightlyStartedAt = null;
-}
-
-function getNightlyStatus() {
-  return {
-    running: _nightlyRunning,
-    started_at: _nightlyStartedAt
-  };
-}
-
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // ────────────────────────────────────────────────────────────
 // Internal self-calls: använd localhost by default (stabilt, snabbt)
 const SELF_BASE_URL = pick(process.env.SELF_BASE_URL) || `http://127.0.0.1:${PORT}`;
@@ -3049,7 +3025,38 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Fortnox: Nightly orchestrator – kör ALLA connections i rätt ordning
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
+  const lock = getLock();
+  const now = Date.now();
+  const LOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6 timmar
+
+  let acquired = false;
+  let myRunId = null;
+
   try {
+    // rensa stale lock om den hängt sig
+    if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
+      console.warn("[nightly/run] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
+      lock.running = false;
+      lock.started_at = 0;
+      lock.finished_at = 0;
+      lock.connection_id = null;
+      lock.run_id = null;
+    }
+
+    // om nån annan kör: returnera 409 (OBS: släpp INTE låset i finally)
+    if (lock.running) {
+      return res.status(409).json({ ok: false, error: "Nightly already running", lock });
+    }
+
+    // ta låset
+    myRunId = `${now}-${Math.random().toString(16).slice(2)}`;
+    lock.running = true;
+    lock.started_at = now;
+    lock.finished_at = 0;
+    lock.connection_id = null; // (du kör ALLA)
+    lock.run_id = myRunId;
+    acquired = true;
+
     const body = req.body || {};
 
     const months_back = Number(body.months_back ?? 12) || 12;
@@ -3093,15 +3100,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
     const conns = await getAllFortnoxConnections();
     const results = [];
-    let totals = {
-      connections: conns.length,
-      customers: { created: 0, updated: 0, skipped: 0, errors: 0 },
-      orders:    { created: 0, updated: 0, skipped: 0, errors: 0 },
-      offers:    { created: 0, updated: 0, skipped: 0, errors: 0 },
-      invoices:  { created: 0, updated: 0, skipped: 0, errors: 0 },
-      order_rows: { ok: 0, fail: 0 },
-      offer_rows: { ok: 0, fail: 0 }
-    };
 
     const postInternal = async (path, payload) => {
       const r = await fetch(`${SELF_BASE_URL}${path}`, {
@@ -3129,7 +3127,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
       while (true) {
         safetyCalls++;
         if (safetyCalls > 500) {
-          // skydd mot oändliga loopar
           return { done: false, next_page: start_page, safety_stop: true };
         }
 
@@ -3139,16 +3136,16 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           max_pages: pagesPerCall
         });
 
-        // om endpointen returnerar next_page: använd den
         if (j.done === true) return { done: true, next_page: j.next_page ?? null, last: j };
-        start_page = Number(j.next_page ?? (start_page + pagesPerCall)) || (start_page + pagesPerCall);
 
+        start_page = Number(j.next_page ?? (start_page + pagesPerCall)) || (start_page + pagesPerCall);
         if (pauseMs) await sleep(Number(pauseMs));
       }
     };
 
     for (const c of conns) {
       const connection_id = c._id;
+
       const one = {
         connection_id,
         customers: null,
@@ -3176,7 +3173,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           cfg.customers.pause_ms
         );
 
-        // 2) Orders (12 mån bakåt) + flagga needs_rows_sync=true i dina orders
+        // 2) Orders + rows
         one.orders = await runAllPaged(
           "/fortnox/upsert/orders/all",
           {
@@ -3189,7 +3186,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           cfg.orders.pause_ms
         );
 
-        // 2b) Order rows (flagged) – kör några varv tills inga flaggade kvar
         for (let p = 0; p < cfg.rows.passes; p++) {
           const j = await postInternal("/fortnox/upsert/order-rows/flagged", {
             connection_id,
@@ -3222,7 +3218,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
         }
 
-        // 4) Invoices (12 mån bakåt)
+        // 4) Invoices
         one.invoices = await runAllPaged(
           "/fortnox/upsert/invoices/all",
           {
@@ -3248,13 +3244,22 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
     return res.json({
       ok: true,
+      run_id: myRunId,
       months_back,
       config: cfg,
       connections: conns.length,
       results
     });
+
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  } finally {
+    // släpp bara om vi faktiskt tog låset i den här requesten
+    if (acquired && lock.run_id === myRunId) {
+      lock.running = false;
+      lock.finished_at = Date.now();
+      console.log("[nightly/run] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
+    }
   }
 });
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
