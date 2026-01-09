@@ -1984,22 +1984,53 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// Fortnox: upsert order rows (per order docno)
-app.post("/fortnox/upsert/order-rows", async (req, res) => {
+// ────────────────────────────────────────────────────────────
+const bubbleFindAllCursor = async (type, constraints, pageSize = 100) => {
+  const out = [];
+  let cursor = 0;
+  let safety = 0;
+
+  while (true) {
+    safety++;
+    if (safety > 500) break; // skydd
+
+    const resp = await bubbleFind(type, {
+      constraints,
+      limit: pageSize,
+      cursor
+    });
+
+    const list = Array.isArray(resp) ? resp : (resp?.results || []);
+    if (!Array.isArray(list) || list.length === 0) break;
+
+    out.push(...list);
+
+    if (list.length < pageSize) break;
+    cursor += pageSize;
+  }
+
+  return out;
+};
+
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert order rows (per order docno)  ✅ WU-optimerad
+app.post("/fortnox/upsert/order-rows", requireApiKey, async (req, res) => {
   const { connection_id, order_docno } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
   if (!order_docno) return res.status(400).json({ ok: false, error: "Missing order_docno" });
 
   try {
+    // 0) Connection + paused?
     const conn = await bubbleGet("FortnoxConnection", connection_id);
     if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
     if (conn.is_active === false) return res.json({ ok: true, paused: true, connection_id });
 
+    // 1) Access token (behåll ditt befintliga refresh-mönster, men utan hardcoded onrender)
     let accessToken = conn.access_token || null;
     const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
 
     if (!accessToken || Date.now() > expiresAt - 60_000) {
-      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
+      const ref = await fetch(`${SELF_BASE_URL}/fortnox/connection/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id })
@@ -2007,12 +2038,15 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
       const refJson = await ref.json().catch(() => ({}));
       if (!ref.ok) return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
 
-      const updated = await bubbleGet("FortnoxConnection", connection_id);
-      accessToken = updated?.access_token || null;
+      const updatedConn = await bubbleGet("FortnoxConnection", connection_id);
+      accessToken = updatedConn?.access_token || null;
     }
     if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
 
-    const url = `https://api.fortnox.se/3/orders/${encodeURIComponent(String(order_docno))}`;
+    // 2) Hämta order från Fortnox
+    const docNoReq = String(order_docno).trim();
+    const url = `https://api.fortnox.se/3/orders/${encodeURIComponent(docNoReq)}`;
+
     const r = await fetch(url, {
       headers: {
         Authorization: "Bearer " + accessToken,
@@ -2020,14 +2054,19 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
         Accept: "application/json"
       }
     });
+
     const data = await r.json().catch(() => ({}));
     if (!r.ok) return res.status(r.status).json({ ok: false, error: "Fortnox API error", detail: data });
 
     const order = data?.Order || data?.order || null;
     const rows = Array.isArray(order?.OrderRows) ? order.OrderRows : [];
 
-    const ordDocNo = String(order?.DocumentNumber || order_docno).trim();
+    const ordDocNo = String(order?.DocumentNumber || docNoReq).trim();
 
+    // ✅ Fix: YourReference kommer från ORDER, inte "o" (som inte finns här)
+    const orderYourRef = String(order?.YourReference || order?.YourReferenceNumber || "");
+
+    // 3) Hitta parent order i Bubble
     const searchOrd = await bubbleFind("FortnoxOrder", {
       constraints: [
         { key: "connection", constraint_type: "equals", value: connection_id },
@@ -2035,112 +2074,127 @@ app.post("/fortnox/upsert/order-rows", async (req, res) => {
       ],
       limit: 1
     });
+
     const ordObj = Array.isArray(searchOrd) && searchOrd.length ? searchOrd[0] : null;
     if (!ordObj?._id) {
       return res.status(404).json({ ok: false, error: "Parent FortnoxOrder not found in Bubble", ordDocNo });
     }
 
-// 5) Upsert rows med säker identifiering
-let created = 0, updated = 0, errors = 0;
-let firstError = null;
+    // 4) ✅ NYTT: Hämta alla befintliga rader för just denna order (1 gång) och indexera på ft_unique_key
+    const existingRows = await bubbleFindAllCursor(
+      "FortnoxOrderRow",
+      [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "order", constraint_type: "equals", value: ordObj._id }
+      ],
+      100
+    );
 
-const debug = [];
+    const existingByKey = {};
+    for (const er of existingRows) {
+      if (er?.ft_unique_key && er?._id) existingByKey[String(er.ft_unique_key)] = er._id;
+    }
 
-for (let i = 0; i < rows.length; i++) {
-  const row = rows[i];
-  const rowIndex = i + 1;
+    // 5) Upsert rows utan bubbleFind per rad
+    let created = 0, updated = 0, errors = 0;
+    let firstError = null;
+    const debug = [];
 
-  const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowIndex = i + 1;
 
-  // ✅ OBS: ORD + ordDocNo + rowIndex
-  const rowId = row?.RowId ?? row?.rowId ?? null;
+      const rowNo = Number(row?.RowNumber ?? row?.RowNo ?? row?.Row ?? rowIndex);
+      const rowId = row?.RowId ?? row?.rowId ?? null;
 
-// Bara URL-säkra tecken (ingen : / backticks / etc)
-const uniqueKey = rowId
-  ? `ROWID_${rowId}__CONN_${connection_id}__ORDDOC_${ordDocNo}`
-  : `FALLBACK__CONN_${connection_id}__ORDDOC_${ordDocNo}__IDX_${String(rowIndex).padStart(3, "0")}`;
+      // Samma “säker” uniqueKey som du redan kör (för kompatibilitet)
+      const uniqueKey = rowId
+        ? `ROWID_${rowId}__CONN_${connection_id}__ORDDOC_${ordDocNo}`
+        : `FALLBACK__CONN_${connection_id}__ORDDOC_${ordDocNo}__IDX_${String(rowIndex).padStart(3, "0")}`;
 
-  const payload = {
-    connection: connection_id,
-    order: ordObj._id,
-    ft_order_document_number: ordDocNo,
-    ft_row_index: rowIndex,
-    ft_row_no: rowNo,
-    ft_article_number: String(row?.ArticleNumber || ""),
-    ft_description: String(row?.Description || ""),
-    ft_your_reference: String(o?.YourReference || ""),
-    ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
-    ft_unit: String(row?.Unit || ""),
-    ft_price: row?.Price == null ? "" : String(row.Price),
-    ft_discount: row?.Discount == null ? "" : String(row.Discount),
-    ft_vat: row?.VAT == null ? "" : String(row.VAT),
-    ft_total: row?.Total == null ? "" : String(row.Total),
-    ft_unique_key: uniqueKey,
-    ft_raw_json: JSON.stringify(row || {})
-  };
+      const payload = {
+        connection: connection_id,
+        order: ordObj._id,
 
-  try {
-    const found = await bubbleFind("FortnoxOrderRow", {
-  constraints: [
-    { key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }
-  ],
-  limit: 1
-});
+        ft_order_document_number: ordDocNo,
+        ft_row_index: rowIndex,
+        ft_row_no: rowNo,
 
-    const existing = Array.isArray(found) && found.length ? found[0] : null;
+        ft_article_number: String(row?.ArticleNumber || ""),
+        ft_description: String(row?.Description || ""),
 
-    // debug (syns i response så vi slipper Render logs)
-    if (debug.length < 5) {
-      debug.push({
-        rowIndex,
-        uniqueKey,
-        found_id: existing?._id || null,
-        found_key: existing?.ft_unique_key || null,
-        found_row_index: existing?.ft_row_index || null
+        // ✅ fix: använd orderns YourReference (inte o?.)
+        ft_your_reference: orderYourRef,
+
+        ft_quantity: row?.DeliveredQuantity ?? row?.Quantity ?? null,
+        ft_unit: String(row?.Unit || ""),
+
+        // Behåll samma “string/empty” typ som din befintliga kod för att inte riskera Bubble field-type errors
+        ft_price: row?.Price == null ? "" : String(row.Price),
+        ft_discount: row?.Discount == null ? "" : String(row.Discount),
+        ft_vat: row?.VAT == null ? "" : String(row.VAT),
+        ft_total: row?.Total == null ? "" : String(row.Total),
+
+        ft_unique_key: uniqueKey,
+        ft_raw_json: JSON.stringify(row || {})
+      };
+
+      try {
+        const existingId = existingByKey[uniqueKey];
+
+        if (debug.length < 5) {
+          debug.push({
+            rowIndex,
+            uniqueKey,
+            existing_id: existingId || null
+          });
+        }
+
+        if (existingId) {
+          await bubblePatch("FortnoxOrderRow", existingId, payload);
+          updated++;
+        } else {
+          await bubbleCreate("FortnoxOrderRow", payload);
+          created++;
+        }
+      } catch (e) {
+        errors++;
+        if (!firstError) firstError = { uniqueKey, message: e?.message || String(e), detail: e?.detail || null };
+      }
+    }
+
+    // 6) Markera parent som synkad (samma som du gör idag)
+    if (errors === 0) {
+      await bubblePatch("FortnoxOrder", ordObj._id, {
+        needs_rows_sync: false,
+        rows_last_synced_at: new Date().toISOString()
       });
     }
 
-    if (existing?._id) {
-      await bubblePatch("FortnoxOrderRow", existing._id, payload);
-      updated++;
-    } else {
-      await bubbleCreate("FortnoxOrderRow", payload);
-      created++;
-    }
+    return res.json({
+      ok: true,
+      connection_id,
+      order_docno: ordDocNo,
+      rows_count: rows.length,
+      existing_rows_in_bubble: existingRows.length,
+      counts: { created, updated, errors },
+      first_error: firstError,
+      debug_samples: debug
+    });
 
   } catch (e) {
-    errors++;
-    if (!firstError) firstError = { uniqueKey, message: e.message, detail: e.detail || null };
-  }
-}
-// ✅ efter rows lyckats utan errors: markera parent som synkad
-if (errors === 0) {
-  await bubblePatch("FortnoxOrder", ordObj._id, {
-    needs_rows_sync: false,
-    rows_last_synced_at: new Date().toISOString()
-  });
-}
-return res.json({
-  ok: true,
-  connection_id,
-  order_docno: ordDocNo,
-  counts: { created, updated, errors },
-  first_error: firstError,
-  debug_samples: debug
-});
-      } catch (e) {
     console.error("[/fortnox/upsert/order-rows] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert order rows for FLAGGED orders (needs_rows_sync=true)
-app.post("/fortnox/upsert/order-rows/flagged", async (req, res) => {
+app.post("/fortnox/upsert/order-rows/flagged", requireApiKey, async (req, res) => {
   try {
     const { connection_id, limit = 30, pause_ms = 250 } = req.body || {};
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-    // 1) Hämta flaggade orders i Bubble
     const flagged = await bubbleFind("FortnoxOrder", {
       constraints: [
         { key: "connection", constraint_type: "equals", value: connection_id },
@@ -2153,51 +2207,56 @@ app.post("/fortnox/upsert/order-rows/flagged", async (req, res) => {
     const results = [];
     let ok_count = 0, fail_count = 0;
 
-    // 2) Kör rows per order (docno)
     for (const o of orders) {
       const docNo = String(o?.ft_document_number || "").trim();
       if (!docNo) continue;
 
-      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows`, {
+      const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id, order_docno: docNo })
       });
 
-      const j = await r.json().catch(() => ({}));
+      const j = await rr.json().catch(() => ({}));
       const ok = !!j.ok;
 
-results.push({
-  docNo,
-  ok,
-  http_status: r.status,
-  counts: j.counts || null,
-  first_error: j.first_error || j.error || j.detail || null
-});      ok ? ok_count++ : fail_count++;
+      results.push({
+        docNo,
+        ok,
+        http_status: rr.status,
+        counts: j.counts || null,
+        first_error: j.first_error || j.error || j.detail || null
+      });
 
+      ok ? ok_count++ : fail_count++;
       if (pause_ms) await sleep(Number(pause_ms));
     }
 
     return res.json({ ok: true, connection_id, flagged_found: orders.length, ok_count, fail_count, results });
   } catch (e) {
     console.error("[/fortnox/upsert/order-rows/flagged] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert order rows for ALL orders on one orders page
-app.post("/fortnox/upsert/order-rows/page", async (req, res) => {
+app.post("/fortnox/upsert/order-rows/page", requireApiKey, async (req, res) => {
   try {
     const { connection_id, page = 1, limit = 50, months_back = 12, pause_ms = 250 } = req.body || {};
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-    const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/orders", {
+    // ✅ Byt bort hardcoded onrender och kör mot SELF_BASE_URL (rätt miljö alltid)
+    const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
       body: JSON.stringify({ connection_id, page, limit, months_back })
     });
+
     const syncJson = await syncRes.json().catch(() => ({}));
-    if (!syncRes.ok || !syncJson.ok) return res.status(400).json({ ok: false, error: "sync/orders failed", detail: syncJson });
+    if (!syncRes.ok || !syncJson.ok) {
+      return res.status(400).json({ ok: false, error: "sync/orders failed", detail: syncJson });
+    }
 
     const docs = Array.isArray(syncJson.orders) ? syncJson.orders : [];
     const results = [];
@@ -2207,24 +2266,25 @@ app.post("/fortnox/upsert/order-rows/page", async (req, res) => {
       const docNo = String(docs[i]?.DocumentNumber || "").trim();
       if (!docNo) continue;
 
-      const r = await fetch("https://mira-exchange.onrender.com/fortnox/upsert/order-rows", {
+      const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/order-rows`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
         body: JSON.stringify({ connection_id, order_docno: docNo })
       });
-      const j = await r.json().catch(() => ({}));
+
+      const j = await rr.json().catch(() => ({}));
       const ok = !!j.ok;
 
-      results.push({ docNo, ok, counts: j.counts || null, first_error: j.first_error || null });
+      results.push({ docNo, ok, counts: j.counts || null, first_error: j.first_error || j.error || null });
       ok ? ok_count++ : fail_count++;
 
-      if (pause_ms) await new Promise(r => setTimeout(r, pause_ms));
+      if (pause_ms) await sleep(Number(pause_ms));
     }
 
     return res.json({ ok: true, connection_id, page, limit, months_back, docs: docs.length, ok_count, fail_count, results });
   } catch (e) {
     console.error("[/fortnox/upsert/order-rows/page] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
