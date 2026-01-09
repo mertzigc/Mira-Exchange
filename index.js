@@ -1152,7 +1152,7 @@ app.post("/fortnox/sync/orders", async (req, res) => {
 
     const list = Array.isArray(data?.Orders) ? data.Orders : [];
 
-    // 5) Render-side filter: DeliveryDate >= cutoff
+    // 5) Render-side filter:  >= cutoff
     const cutoff = new Date(fromDate + "T00:00:00Z").getTime();
 
     const filtered = list.filter(o => {
