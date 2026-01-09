@@ -2725,41 +2725,6 @@ app.post("/fortnox/upsert/offers/all", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────
-// Nightly lock (process-local, survives within same Node process)
-const getLock = () => {
-  if (!globalThis.__miraNightlyLock) {
-    globalThis.__miraNightlyLock = {
-      running: false,
-      started_at: 0,
-      finished_at: 0,
-      connection_id: null,
-      run_id: null
-    };
-  }
-  return globalThis.__miraNightlyLock;
-};
-
-// Backward compat: du kan fortsätta kalla getNightlyLock()
-const getNightlyLock = getLock;
-
-app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
-  const lock = getNightlyLock();
-  return res.json({ ok: true, lock });
-});
-
-app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
-  const lock = getNightlyLock();
-  const was = { ...lock };
-  lock.running = false;
-  lock.started_at = 0;
-  lock.finished_at = 0;
-  lock.connection_id = null;
-  lock.run_id = null;
-  return res.json({ ok: true, unlocked: true, was });
-});
-
-// ────────────────────────────────────────────────────────────
 // C) Nightly delta sync – ALL FortnoxConnections (eller en specifik)
 // OBS: "delta" = små chunkar, men här gör vi INTE while-loops som kan hänga.
 app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
