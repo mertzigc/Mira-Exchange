@@ -1344,6 +1344,44 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: sync ONE order (fetch order detail incl YourReference)
+app.post("/fortnox/sync/orders/one", requireApiKey, async (req, res) => {
+  try {
+    const { connection_id, order_docno } = req.body || {};
+    const docNo = String(order_docno || "").trim();
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    if (!docNo) return res.status(400).json({ ok: false, error: "Missing order_docno" });
+
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok?.ok) {
+      return res.status(401).json({ ok: false, error: tok?.error || "Token error", detail: tok?.detail || null });
+    }
+
+    const r = await fortnoxGet("/orders/" + encodeURIComponent(docNo), tok.access_token);
+    if (!r.ok) {
+      return res.status(r.status || 500).json({ ok: false, status: r.status || 500, data: r.data || null, url: r.url || null });
+    }
+
+    const order = r.data?.Order || r.data?.order || null;
+    return res.json({ ok: true, connection_id, order_docno: docNo, order });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// Alias (valfritt, men nice)
+app.post("/fortnox/sync/order", requireApiKey, async (req, res) => {
+  const r = await fetch(`${SELF_BASE_URL.replace(/\/$/, "")}/fortnox/sync/orders/one`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
+    body: JSON.stringify(req.body || {})
+  });
+  const text = await r.text();
+  let j = {};
+  try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+  return res.status(r.status).json(j);
+});
+// ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
   const {
