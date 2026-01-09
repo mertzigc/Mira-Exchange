@@ -2348,7 +2348,7 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
         ft_offer_date: toIsoDate(o?.OfferDate),
         ft_delivery_date: toIsoDate(o?.DeliveryDate),
         ft_valid_until: toIsoDate(o?.ValidUntil),
-        ft_total: toNumOrNull(o?.Total), // ✅ FIX
+        ft_total: toNumOrNull(o?.Total),
         ft_currency: String(o?.Currency || ""),
         ft_sent: !!o?.Sent,
         ft_cancelled: !!o?.Cancelled,
@@ -2405,8 +2405,10 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
     });
   }
 });
+
+
 // ────────────────────────────────────────────────────────────
-// /fortnox/upsert/offer-rows
+// /fortnox/upsert/offer-rows  (WU-optimerad: bulk fetch av befintliga rows)
 app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
   const t0 = Date.now();
 
@@ -2420,7 +2422,9 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
 
     const tok = await ensureFortnoxAccessToken(connection_id);
     const r = await fortnoxGet(`/offers/${encodeURIComponent(docNo)}`, tok.access_token);
-    if (!r.ok) return res.status(r.status || 500).json({ ok: false, error: "fortnoxGet failed", detail: r });
+    if (!r.ok) {
+      return res.status(r.status || 500).json({ ok: false, error: "fortnoxGet failed", detail: r });
+    }
 
     const offer = r.data?.Offer;
     const rows = Array.isArray(offer?.OfferRows) ? offer.OfferRows : [];
@@ -2437,6 +2441,54 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
         connection_id,
         offer_docno: docNo
       });
+    }
+
+    // ---- NEW: Bulk-hämta alla befintliga rows för den här offerten ----
+    // Detta ersätter N st bubbleFind(ft_unique_key=...) (dyrt i WU).
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 2000; // safety
+    const existingByKey = {};
+    let bulk_ok = false;
+
+    try {
+      let cursor = 0;
+      let pages = 0;
+      let prevFirstId = null;
+
+      while (pages < MAX_PAGES) {
+        pages++;
+
+        // OBS: om din bubbleFind inte stödjer cursor så kan den ignorera cursor,
+        // därför har vi "repeat detection" nedan som breaks.
+        const page = await bubbleFind("FortnoxOfferRow", {
+          constraints: [{ key: "offer", constraint_type: "equals", value: parent._id }],
+          limit: PAGE_SIZE,
+          cursor
+        });
+
+        if (!Array.isArray(page) || page.length === 0) break;
+
+        const firstId = page?.[0]?._id || null;
+        if (prevFirstId && firstId && firstId === prevFirstId) {
+          // cursor verkar ignoreras → bryt och fall tillbaka till legacy-metod
+          throw new Error("bubbleFind cursor seems unsupported (repeated first record)");
+        }
+        prevFirstId = firstId;
+
+        for (const it of page) {
+          if (it?.ft_unique_key && it?._id) {
+            existingByKey[String(it.ft_unique_key)] = it._id;
+          }
+        }
+
+        if (page.length < PAGE_SIZE) break;
+        cursor += PAGE_SIZE;
+      }
+
+      bulk_ok = true;
+    } catch (e) {
+      bulk_ok = false;
+      console.warn("[/fortnox/upsert/offer-rows] bulk prefetch failed, fallback to per-row find:", e?.message || e);
     }
 
     let created = 0, updated = 0, errors = 0;
@@ -2462,13 +2514,21 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
       };
 
       try {
-        const found = await bubbleFind("FortnoxOfferRow", {
-          constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
-          limit: 1
-        });
+        let existingId = null;
 
-        if (found?.[0]?._id) {
-          await bubblePatch("FortnoxOfferRow", found[0]._id, payload);
+        if (bulk_ok) {
+          existingId = existingByKey[uniqueKey] || null;
+        } else {
+          // legacy fallback (exakt som tidigare beteende)
+          const found = await bubbleFind("FortnoxOfferRow", {
+            constraints: [{ key: "ft_unique_key", constraint_type: "equals", value: uniqueKey }],
+            limit: 1
+          });
+          if (found?.[0]?._id) existingId = found[0]._id;
+        }
+
+        if (existingId) {
+          await bubblePatch("FortnoxOfferRow", existingId, payload);
           updated++;
         } else {
           await bubbleCreate("FortnoxOfferRow", payload);
@@ -2476,8 +2536,13 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
         }
       } catch (e) {
         errors++;
-        if (!first_error) first_error = { row_index: i + 1, message: e?.message || String(e), detail: e?.detail || null };
-        // fortsätt ändå
+        if (!first_error) {
+          first_error = {
+            row_index: i + 1,
+            message: e?.message || String(e),
+            detail: e?.detail || null
+          };
+        }
       }
     }
 
@@ -2498,6 +2563,7 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
       rows_count: rows.length,
       counts: { created, updated, errors },
       first_error,
+      bulk_prefetch: { ok: bulk_ok, keys: bulk_ok ? Object.keys(existingByKey).length : 0 },
       ms: Date.now() - t0
     });
   } catch (e) {
@@ -2505,6 +2571,8 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+
+
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync ONE offer (fetch offer + OfferRows)
 app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
@@ -2512,14 +2580,9 @@ app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
     const { connection_id, offer_docno } = req.body || {};
     const docNo = String(offer_docno || "").trim();
 
-    if (!connection_id) {
-      return res.status(400).json({ ok: false, error: "Missing connection_id" });
-    }
-    if (!docNo) {
-      return res.status(400).json({ ok: false, error: "Missing offer_docno" });
-    }
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    if (!docNo) return res.status(400).json({ ok: false, error: "Missing offer_docno" });
 
-    // token via din befintliga helper
     const tok = await ensureFortnoxAccessToken(connection_id);
     if (!tok.ok) {
       return res.status(401).json({
@@ -2529,7 +2592,6 @@ app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
       });
     }
 
-    // hämta enskild offert (innehåller OfferRows)
     const r = await fortnoxGet("/offers/" + encodeURIComponent(docNo), tok.access_token);
     if (!r.ok) {
       return res.status(r.status || 500).json({
@@ -2559,10 +2621,6 @@ app.post("/fortnox/sync/offers/one", requireApiKey, async (req, res) => {
 // Alias så att dina gamla kommandon funkar
 app.post("/fortnox/sync/offer", requireApiKey, async (req, res) => {
   try {
-    // OBS: vi behöver INTE anropa via HTTP internt.
-    // Det räcker att kalla samma logik genom att proxy:a requesten
-    // med en vanlig fetch till din egen service — men då måste det vara "riktig" fetch utan "rr/break".
-
     const r = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers/one`, {
       method: "POST",
       headers: {
