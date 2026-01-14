@@ -42,7 +42,7 @@ const REDIRECT_URI = pick(
 
 const MS_SCOPE  = pick(
   process.env.MS_SCOPE,
-  "User.Read Calendars.ReadWrite offline_access openid profile email"
+  "User.Read Calendars.ReadWrite Mail.Read Mail.Read.Shared offline_access openid profile email"
 );
 const MS_TENANT = pick(process.env.MS_TENANT, "common");
 
@@ -245,7 +245,57 @@ async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri 
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok && !!j.access_token, status: r.status, data: j };
 }
+// ────────────────────────────────────────────────────────────
+// Delegated MS token helpers (for Mail polling)
+// We store tokens on Bubble User (same as your calendar delegated flow)
 
+async function getDelegatedTokenForUser(user_unique_id, { tenant = null, scope = null } = {}) {
+  if (!user_unique_id) throw new Error("Missing user_unique_id for delegated token");
+
+  const u = await fetchBubbleUser(user_unique_id);
+  if (!u) throw new Error("Bubble user not found: " + user_unique_id);
+
+  // Support both naming schemes (your create-event reads ms_access_token/ms_refresh_token)
+  let accessToken =
+    u?.ms_access_token ||
+    u?.access_token ||
+    null;
+
+  let refreshToken =
+    u?.ms_refresh_token ||
+    u?.refresh_token ||
+    null;
+
+  const dbScope =
+    u?.ms_scope ||
+    u?.scope ||
+    null;
+
+  // If no access token, try refresh
+  if (!accessToken && refreshToken) {
+    const ref = await tokenExchange({
+      refresh_token: refreshToken,
+      scope: scope || dbScope || MS_SCOPE,
+      tenant: tenant || MS_TENANT
+    });
+
+    if (ref.ok) {
+      accessToken = ref.data.access_token;
+      const newRefresh = ref.data.refresh_token || refreshToken;
+
+      // Persist back to Bubble (your WF maps this to ms_access_token etc)
+      await upsertTokensToBubble(user_unique_id, ref.data, newRefresh);
+      refreshToken = newRefresh;
+    }
+  }
+
+  // If we have access token but want to be safer, you can still refresh on demand later.
+  if (!accessToken) {
+    throw new Error("No delegated ms_access_token available (and refresh missing/failed) for user: " + user_unique_id);
+  }
+
+  return { access_token: accessToken, refresh_token: refreshToken, scope: dbScope || scope || null };
+}
 // ────────────────────────────────────────────────────────────
 // Helpers (deklarera EN gång)
 const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
@@ -3407,12 +3457,20 @@ async function upsertLead(fields) {
 }
 
 // -------------------------
-// Graph: delta fetch (with pagination)
-async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25 }) {
-  const token = await getAppToken(tenant);
-
+// -------------------------
+// Graph: delta fetch (delegated) with pagination
+async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25, auth_user_id }) {
   const mailbox = normEmail(mailbox_upn);
   if (!mailbox) throw new Error("mailbox_upn is required");
+  if (!auth_user_id) throw new Error("auth_user_id is required for delegated mail polling");
+
+  // ✅ DELEGATED token (from Bubble user)
+  const tok = await getDelegatedTokenForUser(auth_user_id, {
+    tenant: tenant || MS_TENANT,
+    scope: MS_SCOPE
+  });
+
+  const token = tok.access_token;
 
   let url = delta_link && String(delta_link).trim()
     ? String(delta_link).trim()
@@ -3438,9 +3496,8 @@ async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25 })
     break;
   }
 
-  return { messages: all, delta_link: finalDelta || (next ? null : null) };
+  return { messages: all, delta_link: finalDelta || "" };
 }
-
 // ────────────────────────────────────────────────────────────
 // Routes: Jobs
 
@@ -3450,11 +3507,19 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
   const t0 = Date.now();
 
   const mailbox_upn = normEmail(req.body?.mailbox_upn);
+    const auth_user_id =
+    req.body?.auth_user_id ||
+    req.body?.user_unique_id ||
+    req.body?.u ||
+    null;
   const top = Number(req.body?.top || 25);
   const tenant = resolveTenantFromBodyOrReq(req);
 
   if (!mailbox_upn) {
     return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
+  }
+    if (!auth_user_id) {
+    return res.status(400).json({ ok: false, error: "auth_user_id is required (Bubble user id that owns delegated token)" });
   }
 
   let state = null;
@@ -3476,7 +3541,8 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
         tenant,
         mailbox_upn,
         delta_link: state?.delta_link || "",
-        top: Number.isFinite(top) && top > 0 ? top : 25
+        top: Number.isFinite(top) && top > 0 ? top : 25,
+        auth_user_id
       });
     } catch (e) {
       // Om delta state är invalid (Graph 410 m.fl.) → reset delta och fail denna körning
@@ -3535,6 +3601,7 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
       ok: true,
       mailbox_upn,
       tenant,
+      auth_user_id,
       processed: messages.length,
       counts: {
         inbound_created: createdInbound,
