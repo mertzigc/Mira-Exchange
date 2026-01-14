@@ -3220,6 +3220,378 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
     }
   }
 });
+// ────────────────────────────────────────────────────────────
+// Render-first Mail Polling (Graph delta) → Bubble Data API
+// Bubble types (EXACT):
+//  - MailPollState: mailbox_upn (text), delta_link (text), last_run_at (date), last_error (text)
+//  - InboundEmail : graph_message_id (text), mailbox_upn (text), from_email (text), received_at (date), subject (text), lead (Lead)
+//  - Lead         : Name (text), Email (text), Phone (text), Company (text), Description (text)
+
+// Small helpers
+const normEmail = (s) => String(s || "").trim().toLowerCase();
+const safeText = (s, max = 5000) => {
+  const t = String(s || "").replace(/\u0000/g, "").trim();
+  return t.length > max ? t.slice(0, max) : t;
+};
+
+function resolveTenantFromBodyOrReq(req) {
+  // Prefer body.tenant, then header/query, else your existing DEFAULT_TENANT
+  return pick(
+    req.body?.tenant,
+    req.query?.tenant,
+    req.headers["x-tenant-id"],
+    DEFAULT_TENANT
+  );
+}
+
+// -------------------------
+// Bubble: MailPollState
+async function getOrCreateMailPollState(mailbox_upn) {
+  const mb = normEmail(mailbox_upn);
+  if (!mb) throw new Error("mailbox_upn is required");
+
+  const existing = await bubbleFindOne("MailPollState", [
+    { key: "mailbox_upn", constraint_type: "equals", value: mb }
+  ]);
+
+  if (existing?._id) return existing;
+
+  const id = await bubbleCreate("MailPollState", {
+    mailbox_upn: mb,
+    delta_link: "",
+    last_run_at: new Date().toISOString(),
+    last_error: ""
+  });
+
+  const created = await bubbleGet("MailPollState", id);
+  return created;
+}
+
+async function updateMailPollState(id, patch) {
+  await bubblePatch("MailPollState", id, patch);
+  return true;
+}
+
+// -------------------------
+// Bubble: InboundEmail (idempotens)
+async function findInboundEmailByMessageId(mailbox_upn, graph_message_id) {
+  const mb = normEmail(mailbox_upn);
+  const mid = String(graph_message_id || "").trim();
+  if (!mb || !mid) return null;
+
+  const existing = await bubbleFindOne("InboundEmail", [
+    { key: "mailbox_upn", constraint_type: "equals", value: mb },
+    { key: "graph_message_id", constraint_type: "equals", value: mid }
+  ]);
+
+  return existing || null;
+}
+
+async function createInboundEmail(mailbox_upn, msg) {
+  const mb = normEmail(mailbox_upn);
+  const graphId = String(msg?.id || "").trim();
+
+  const fromEmail =
+    normEmail(msg?.from?.emailAddress?.address) ||
+    normEmail(msg?.sender?.emailAddress?.address) ||
+    "";
+
+  const receivedAt = msg?.receivedDateTime
+    ? new Date(msg.receivedDateTime).toISOString()
+    : new Date().toISOString();
+
+  const subject = safeText(msg?.subject || "", 500);
+
+  const id = await bubbleCreate("InboundEmail", {
+    graph_message_id: graphId,
+    mailbox_upn: mb,
+    from_email: fromEmail,
+    received_at: receivedAt,
+    subject
+    // lead sätts senare (PATCH)
+  });
+
+  return id;
+}
+
+// -------------------------
+// Lead parsing (enkelt men robust)
+function extractLeadFieldsFromMessage(msg) {
+  const fromName = safeText(msg?.from?.emailAddress?.name || "", 200);
+  const fromEmail = normEmail(msg?.from?.emailAddress?.address || "");
+  const subject = safeText(msg?.subject || "", 500);
+
+  // Prefer bodyPreview (snabbt). Fallback: body.content
+  const preview = safeText(msg?.bodyPreview || "", 5000);
+  const bodyHtmlOrText = safeText(msg?.body?.content || "", 8000);
+
+  const blob = `${subject}\n\n${preview}\n\n${bodyHtmlOrText}`.trim();
+
+  // Email (först i blob om finns)
+  const emailMatch = blob.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const email = normEmail(emailMatch?.[0] || fromEmail);
+
+  // Phone (väldigt tolerant; EU/SE)
+  const phoneMatch = blob.match(/(\+?\d[\d\s().-]{7,}\d)/);
+  const phone = safeText(phoneMatch?.[1] || "", 100);
+
+  // Company (försök: "Company:", "Företag:", signaturrad med AB, etc)
+  let company = "";
+  const companyLine =
+    blob.match(/(?:company|företag|organisation|bolag)\s*[:\-]\s*(.+)/i) ||
+    blob.match(/\b([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&().,\- ]{2,}?\s(?:AB|AS|OY|A\/S|Ltd|Limited|Inc|GmbH|AG|BV))\b/);
+
+  if (companyLine) company = safeText(companyLine[1] || companyLine[0], 200);
+
+  // Name: från "from" är oftast bäst
+  const name = fromName || "";
+
+  // Description: allt (men begränsa)
+  const description = safeText(blob, 5000);
+
+  return {
+    Name: name,
+    Email: email,
+    Phone: phone,
+    Company: company,
+    Description: description
+  };
+}
+
+// -------------------------
+// Bubble: Lead upsert by Email (patch only if empty)
+async function upsertLead(fields) {
+  const email = normEmail(fields?.Email);
+  if (!email) return { ok: false, error: "Lead Email missing" };
+
+  const existing = await bubbleFindOne("Lead", [
+    { key: "Email", constraint_type: "equals", value: email }
+  ]);
+
+  const base = {
+    Name: safeText(fields?.Name || "", 200),
+    Email: email,
+    Phone: safeText(fields?.Phone || "", 100),
+    Company: safeText(fields?.Company || "", 200),
+    Description: safeText(fields?.Description || "", 5000)
+  };
+
+  if (existing?._id) {
+    const patch = {};
+
+    // Patcha bara om tomt (så du inte skriver över CRM-data)
+    if (base.Name && !existing.Name) patch.Name = base.Name;
+    if (base.Phone && !existing.Phone) patch.Phone = base.Phone;
+    if (base.Company && !existing.Company) patch.Company = base.Company;
+
+    // Description: om tom -> sätt, annars append (valfritt men ofta bäst)
+    if (base.Description) {
+      if (!existing.Description) {
+        patch.Description = base.Description;
+      } else {
+        // Append med separator men håll den rimlig
+        const appended = safeText(existing.Description + "\n\n---\n\n" + base.Description, 8000);
+        patch.Description = appended;
+      }
+    }
+
+    if (Object.keys(patch).length) {
+      await bubblePatch("Lead", existing._id, patch);
+    }
+
+    return { ok: true, lead_id: existing._id, created: false };
+  }
+
+  const id = await bubbleCreate("Lead", base);
+  return { ok: true, lead_id: id, created: true };
+}
+
+// -------------------------
+// Graph: delta fetch (with pagination)
+async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25 }) {
+  const token = await getAppToken(tenant);
+
+  const mailbox = normEmail(mailbox_upn);
+  if (!mailbox) throw new Error("mailbox_upn is required");
+
+  let url = delta_link && String(delta_link).trim()
+    ? String(delta_link).trim()
+    : `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/mailFolders/Inbox/messages/delta?$top=${encodeURIComponent(top)}&$select=id,receivedDateTime,subject,from,sender,bodyPreview,body`;
+
+  const all = [];
+  let next = null;
+  let finalDelta = null;
+
+  while (true) {
+    const data = await graphFetch("GET", url, token);
+
+    const value = Array.isArray(data?.value) ? data.value : [];
+    all.push(...value);
+
+    next = data?.["@odata.nextLink"] || null;
+    finalDelta = data?.["@odata.deltaLink"] || finalDelta;
+
+    if (next) {
+      url = next;
+      continue;
+    }
+    break;
+  }
+
+  return { messages: all, delta_link: finalDelta || (next ? null : null) };
+}
+
+// ────────────────────────────────────────────────────────────
+// Routes: Jobs
+
+// POST /jobs/mail/poll
+// Body: { mailbox_upn: "info@carotte.se", top?: 25, tenant?: "<tenant-id>" }
+app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
+  const t0 = Date.now();
+
+  const mailbox_upn = normEmail(req.body?.mailbox_upn);
+  const top = Number(req.body?.top || 25);
+  const tenant = resolveTenantFromBodyOrReq(req);
+
+  if (!mailbox_upn) {
+    return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
+  }
+
+  let state = null;
+  let createdInbound = 0;
+  let skippedInbound = 0;
+  let createdLeads = 0;
+  let updatedLeads = 0;
+  let linked = 0;
+  let errors = 0;
+  let first_error = null;
+
+  try {
+    state = await getOrCreateMailPollState(mailbox_upn);
+
+    // 1) Hämta delta
+    let deltaRes = null;
+    try {
+      deltaRes = await graphDeltaFetchAll({
+        tenant,
+        mailbox_upn,
+        delta_link: state?.delta_link || "",
+        top: Number.isFinite(top) && top > 0 ? top : 25
+      });
+    } catch (e) {
+      // Om delta state är invalid (Graph 410 m.fl.) → reset delta och fail denna körning
+      await updateMailPollState(state._id, {
+        last_run_at: new Date().toISOString(),
+        last_error: "Delta fetch failed: " + (e?.message || String(e))
+      });
+      throw e;
+    }
+
+    const messages = Array.isArray(deltaRes?.messages) ? deltaRes.messages : [];
+
+    // 2) Processa varje message idempotent via InboundEmail
+    for (const msg of messages) {
+      try {
+        const graphId = String(msg?.id || "").trim();
+        if (!graphId) { skippedInbound++; continue; }
+
+        const existingInbound = await findInboundEmailByMessageId(mailbox_upn, graphId);
+        if (existingInbound?._id) {
+          skippedInbound++;
+          continue;
+        }
+
+        const inboundId = await createInboundEmail(mailbox_upn, msg);
+        createdInbound++;
+
+        // Lead upsert
+        const leadFields = extractLeadFieldsFromMessage(msg);
+        if (leadFields?.Email) {
+          const up = await upsertLead(leadFields);
+          if (up.ok && up.lead_id) {
+            if (up.created) createdLeads++;
+            else updatedLeads++;
+
+            // Linka InboundEmail → Lead
+            await bubblePatch("InboundEmail", inboundId, { lead: up.lead_id });
+            linked++;
+          }
+        }
+      } catch (e) {
+        errors++;
+        if (!first_error) first_error = { message: e?.message || String(e), detail: e?.detail || null };
+      }
+    }
+
+    // 3) Spara ny delta_link + last_run_at
+    const newDelta = String(deltaRes?.delta_link || "").trim();
+    await updateMailPollState(state._id, {
+      delta_link: newDelta || state?.delta_link || "",
+      last_run_at: new Date().toISOString(),
+      last_error: errors ? (state?.last_error || "") : ""
+    });
+
+    return res.json({
+      ok: true,
+      mailbox_upn,
+      tenant,
+      processed: messages.length,
+      counts: {
+        inbound_created: createdInbound,
+        inbound_skipped_existing: skippedInbound,
+        leads_created: createdLeads,
+        leads_updated_or_appended: updatedLeads,
+        inbound_linked_to_lead: linked,
+        errors
+      },
+      first_error,
+      ms: Date.now() - t0
+    });
+
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      mailbox_upn,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
+
+// GET /jobs/mail/status?mailbox_upn=info@carotte.se
+app.get("/jobs/mail/status", requireApiKey, async (req, res) => {
+  try {
+    const mailbox_upn = normEmail(req.query?.mailbox_upn);
+    if (!mailbox_upn) return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
+
+    const existing = await bubbleFindOne("MailPollState", [
+      { key: "mailbox_upn", constraint_type: "equals", value: mailbox_upn }
+    ]);
+
+    return res.json({ ok: true, mailbox_upn, state: existing || null });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// POST /jobs/mail/reset { mailbox_upn: "info@carotte.se" }
+app.post("/jobs/mail/reset", requireApiKey, async (req, res) => {
+  try {
+    const mailbox_upn = normEmail(req.body?.mailbox_upn);
+    if (!mailbox_upn) return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
+
+    const st = await getOrCreateMailPollState(mailbox_upn);
+    await updateMailPollState(st._id, {
+      delta_link: "",
+      last_run_at: new Date().toISOString(),
+      last_error: ""
+    });
+
+    return res.json({ ok: true, mailbox_upn, reset: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
 // Microsoft helpers / routes (din befintliga kod – oförändrad)
 function buildAuthorizeUrl({ user_id, redirect }) {
   const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
