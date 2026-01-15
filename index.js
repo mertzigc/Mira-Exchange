@@ -3496,36 +3496,53 @@ async function createInboundEmail(mailbox_upn, msg) {
 // -------------------------
 // Lead parsing (enkelt men robust)
 function extractLeadFieldsFromMessage(msg) {
-  const bodyText = getMessageBodyText(msg);
+  const from =
+    normEmail(msg?.from?.emailAddress?.address) ||
+    normEmail(msg?.sender?.emailAddress?.address) ||
+    "";
 
-  // Hjälpare: plocka fält efter "Label:" från bodyText
-  const pick = (label) => {
-    const re = new RegExp(`(?:^|\\n)\\s*${label}\\s*:\\s*(.+?)(?=\\n\\s*\\w+\\s*:|$)`, "i");
-    const m = bodyText.match(re);
+  const subject = safeText(msg?.subject || "", 200);
+
+  const bodyType = String(msg?.body?.contentType || "").toLowerCase();
+  const bodyRaw = msg?.body?.content || msg?.bodyPreview || "";
+  const plain = bodyType === "html" ? htmlToText(bodyRaw) : String(bodyRaw || "").trim();
+
+  // Hjälpare: plocka "Fält: värde" per rad
+  const pickLine = (label) => {
+    const re = new RegExp(`^\\s*${label}\\s*:\\s*([^\\n\\r]+)`, "im");
+    const m = plain.match(re);
     return m ? m[1].trim() : "";
   };
 
-  const firstName = pick("Förnamn");
-  const lastName  = pick("Efternamn");
-  const company   = pick("Företag");
-  const phone     = pick("Telefon");
-  const email     = pick("Email");
-  const message   = pick("Meddelande");
-  const date      = pick("Datum");
-  const city      = pick("Stad");
+  const date = pickLine("Datum");
+  const city = pickLine("Stad");
+  const company = pickLine("Företag");
+  const phone = pickLine("Telefon");
+  const email = normEmail(pickLine("Email")) || from;
 
-  // Din “rena” description (utan rå HTML)
-  const descParts = [];
-  if (date) descParts.push(`Datum: ${date}`);
-  if (city) descParts.push(`Stad: ${city}`);
-  if (message) descParts.push(`Meddelande: ${message}`);
+  const first = pickLine("Förnamn");
+  const last  = pickLine("Efternamn");
+  const name  = safeText((first + " " + last).trim(), 200);
+
+  // Meddelande-raden kan vara lång – ta hela raden efter "Meddelande:"
+  const messageLine = pickLine("Meddelande");
+
+  // Bygg en ren, läsbar Description
+  const parts = [];
+  if (subject) parts.push(`Förfrågan: ${subject}`);
+  if (date) parts.push(`Datum: ${date}`);
+  if (city) parts.push(`Stad: ${city}`);
+  if (company) parts.push(`Företag: ${company}`);
+  if (phone) parts.push(`Telefon: ${phone}`);
+  if (email) parts.push(`Email: ${email}`);
+  if (messageLine) parts.push(`\nMeddelande:\n${messageLine}`);
 
   return {
-    Name: safeText(`${firstName} ${lastName}`.trim(), 200),
-    Email: normEmail(email) || normEmail(msg?.from?.emailAddress?.address) || "",
-    Phone: safeText(phone, 100),
-    Company: safeText(company, 200),
-    Description: safeText(descParts.join("\n"), 5000),
+    Name: name,
+    Email: email,
+    Phone: phone,
+    Company: company,
+    Description: safeText(parts.join("\n"), 20000)
   };
 }
 
