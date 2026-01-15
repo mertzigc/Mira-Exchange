@@ -87,7 +87,53 @@ if (!BUBBLE_API_KEY) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-// ────────────────────────────────────────────────────────────
+// Helpers ────────────────────────────────────────────────────────────
+function decodeHtmlEntities(s = "") {
+  return String(s)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function stripHtmlToText(html = "") {
+  let s = String(html);
+
+  // Byt vanliga radbrytare till \n innan vi strippar taggar
+  s = s.replace(/<br\s*\/?>/gi, "\n");
+  s = s.replace(/<\/p>/gi, "\n");
+  s = s.replace(/<\/tr>/gi, "\n");
+  s = s.replace(/<\/td>/gi, " ");
+  s = s.replace(/<\/div>/gi, "\n");
+
+  // Ta bort head/style/script helt
+  s = s.replace(/<head[\s\S]*?<\/head>/gi, "");
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
+
+  // Strip alla resterande taggar
+  s = s.replace(/<[^>]+>/g, "");
+
+  // Decode entities + städa whitespace
+  s = decodeHtmlEntities(s);
+  s = s.replace(/\r/g, "");
+  s = s.replace(/[ \t]+\n/g, "\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  s = s.replace(/[ \t]{2,}/g, " ");
+  return s.trim();
+}
+
+// Plocka "bästa" body-texten från Graph message
+function getMessageBodyText(msg) {
+  const ct = String(msg?.body?.contentType || "").toLowerCase();
+  const content = msg?.body?.content || "";
+  if (content) {
+    return ct === "html" ? stripHtmlToText(content) : String(content).trim();
+  }
+  return String(msg?.bodyPreview || "").trim();
+}
 // Helpers
 const log = (msg, data) =>
   console.log(msg, data ? JSON.stringify(data, null, 2) : "");
@@ -3450,44 +3496,36 @@ async function createInboundEmail(mailbox_upn, msg) {
 // -------------------------
 // Lead parsing (enkelt men robust)
 function extractLeadFieldsFromMessage(msg) {
-  const fromName = safeText(msg?.from?.emailAddress?.name || "", 200);
-  const fromEmail = normEmail(msg?.from?.emailAddress?.address || "");
-  const subject = safeText(msg?.subject || "", 500);
+  const bodyText = getMessageBodyText(msg);
 
-  // Prefer bodyPreview (snabbt). Fallback: body.content
-  const preview = safeText(msg?.bodyPreview || "", 5000);
-  const bodyHtmlOrText = safeText(msg?.body?.content || "", 8000);
+  // Hjälpare: plocka fält efter "Label:" från bodyText
+  const pick = (label) => {
+    const re = new RegExp(`(?:^|\\n)\\s*${label}\\s*:\\s*(.+?)(?=\\n\\s*\\w+\\s*:|$)`, "i");
+    const m = bodyText.match(re);
+    return m ? m[1].trim() : "";
+  };
 
-  const blob = `${subject}\n\n${preview}\n\n${bodyHtmlOrText}`.trim();
+  const firstName = pick("Förnamn");
+  const lastName  = pick("Efternamn");
+  const company   = pick("Företag");
+  const phone     = pick("Telefon");
+  const email     = pick("Email");
+  const message   = pick("Meddelande");
+  const date      = pick("Datum");
+  const city      = pick("Stad");
 
-  // Email (först i blob om finns)
-  const emailMatch = blob.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  const email = normEmail(emailMatch?.[0] || fromEmail);
-
-  // Phone (väldigt tolerant; EU/SE)
-  const phoneMatch = blob.match(/(\+?\d[\d\s().-]{7,}\d)/);
-  const phone = safeText(phoneMatch?.[1] || "", 100);
-
-  // Company (försök: "Company:", "Företag:", signaturrad med AB, etc)
-  let company = "";
-  const companyLine =
-    blob.match(/(?:company|företag|organisation|bolag)\s*[:\-]\s*(.+)/i) ||
-    blob.match(/\b([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9&().,\- ]{2,}?\s(?:AB|AS|OY|A\/S|Ltd|Limited|Inc|GmbH|AG|BV))\b/);
-
-  if (companyLine) company = safeText(companyLine[1] || companyLine[0], 200);
-
-  // Name: från "from" är oftast bäst
-  const name = fromName || "";
-
-  // Description: allt (men begränsa)
-  const description = safeText(blob, 5000);
+  // Din “rena” description (utan rå HTML)
+  const descParts = [];
+  if (date) descParts.push(`Datum: ${date}`);
+  if (city) descParts.push(`Stad: ${city}`);
+  if (message) descParts.push(`Meddelande: ${message}`);
 
   return {
-    Name: name,
-    Email: email,
-    Phone: phone,
-    Company: company,
-    Description: description
+    Name: safeText(`${firstName} ${lastName}`.trim(), 200),
+    Email: normEmail(email) || normEmail(msg?.from?.emailAddress?.address) || "",
+    Phone: safeText(phone, 100),
+    Company: safeText(company, 200),
+    Description: safeText(descParts.join("\n"), 5000),
   };
 }
 
