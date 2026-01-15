@@ -188,36 +188,34 @@ async function fetchBubbleUser(user_unique_id) {
   return null;
 }
 
-async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) {
-  const payload = {
-    bubble_user_id: user_unique_id,
-    access_token: tokenJson.access_token,
-    refresh_token: tokenJson.refresh_token || fallbackRefresh || null,
-    expires_in: tokenJson.expires_in,
-    token_type: tokenJson.token_type,
-    scope: tokenJson.scope,
-    server_now_iso: new Date().toISOString(),
+async function upsertTokensToBubble(userId, msTokenData, refreshTokenFallback = null) {
+  // Fortnox-style: skriv direkt till Bubble Data API (ingen Bubble backend workflow)
+  if (!userId) throw new Error("upsertTokensToBubble: missing userId");
+  if (!msTokenData) throw new Error("upsertTokensToBubble: missing token data");
+
+  const access = msTokenData.access_token || null;
+  const refresh = msTokenData.refresh_token || refreshTokenFallback || null;
+  const scope = msTokenData.scope || null;
+  const token_type = msTokenData.token_type || "Bearer";
+
+  // (valfritt) spara expiry som ISO om du har ett fält för det senare.
+  // const expires_in = Number(msTokenData.expires_in || 0) || 0;
+  // const expires_at_iso = expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null;
+
+  const patch = {
+    ms_access_token: access,
+    ms_refresh_token: refresh,
+    ms_scope: scope,
+    ms_token_type: token_type
+    // ms_expires_at: expires_at_iso, // <— bara om du skapat detta fält i Bubble
   };
 
-  for (const base of BUBBLE_BASES) {
-    try {
-      const wf = base + "/api/1.1/wf/ms_token_upsert";
-      const r = await fetch(wf, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY,
-        },
-        body: JSON.stringify(payload),
-      });
-      const ok = r.ok;
-      log("[save] try WF", { base, status: r.status, ok });
-      if (ok) return true;
-    } catch (e) {
-      log("[save] WF error", { base, e: String(e) });
-    }
-  }
-  return false;
+  // Rensa null-värden så Bubble inte får onödiga keys
+  Object.keys(patch).forEach(k => patch[k] === null && delete patch[k]);
+
+  const r = await bubblePatch("user", userId, patch);
+  if (!r?.ok) return false;
+  return true;
 }
 
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
@@ -3318,8 +3316,27 @@ async function getOrCreateMailPollState(mailbox_upn) {
 }
 
 async function updateMailPollState(id, patch) {
-  await bubblePatch("MailPollState", id, patch);
-  return true;
+  if (!id) throw new Error("updateMailPollState: missing id");
+  if (!patch || typeof patch !== "object") return;
+
+  // Bubble kan ge 400 "Unrecognized field: X" om datatypen saknar fältet.
+  // Vi gör därför en liten "self-heal": droppa okända fält och försök igen 1 gång.
+  const attempt = async (p) => bubblePatch("MailPollState", id, p);
+
+  let r = await attempt(patch);
+  if (r?.ok) return r;
+
+  const msg = r?.detail?.body?.body?.message || r?.detail?.body?.message || "";
+  const m = String(msg).match(/Unrecognized field:\s*([A-Za-z0-9_]+)/);
+  if (m?.[1]) {
+    const bad = m[1];
+    const p2 = { ...patch };
+    delete p2[bad];
+    if (Object.keys(p2).length === 0) return r;
+    const r2 = await attempt(p2);
+    return r2;
+  }
+  return r;
 }
 
 // -------------------------
@@ -3692,6 +3709,91 @@ app.post("/ms/auth", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+// ────────────────────────────────────────────────────────────
+// Fortnox-lik OAuth-flöde (Render äger callbacken)
+// - /ms/authorize redirectar till Microsoft
+// - /ms/callback tar emot code, växlar token och sparar direkt i Bubble (User)
+// OBS: du måste lägga till redirect URI i Azure App Registration:
+//      https://mira-exchange.onrender.com/ms/callback   (och ev din api-subdomän senare)
+function publicBaseFromReq(req) {
+  // Render/Cloudflare kan sätta X-Forwarded-*; vi bygger en stabil "public base"
+  const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").toString().split(",")[0].trim();
+  const host  = (req.headers["x-forwarded-host"]  || req.get("host") || "").toString().split(",")[0].trim();
+  if (!host) return null;
+  return `${proto}://${host}`;
+}
+
+app.get("/ms/authorize", async (req, res) => {
+  try {
+    const userId = pick(req.query.user_unique_id, req.query.u, req.query.user_id);
+    if (!userId) return res.status(400).send("Missing user id (?u=... or ?user_unique_id=...)");
+
+    const base = publicBaseFromReq(req) || pick(process.env.PUBLIC_BASE_URL, process.env.RENDER_EXTERNAL_URL);
+    if (!base) return res.status(500).send("Could not determine public base url");
+
+    const redirectUri = normalizeRedirect(`${base}/ms/callback`);
+
+    // stöd även custom scopes om du vill, annars tar vi MS_SCOPE (som du redan använder)
+    const scope = pick(req.query.scope, MS_SCOPE);
+
+    const authBase = "https://login.microsoftonline.com/" + MS_TENANT + "/oauth2/v2.0/authorize";
+    const url = new URL(authBase);
+    url.searchParams.set("client_id", CLIENT_ID);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("response_mode", "query");
+    url.searchParams.set("scope", scope);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("state", "u:" + userId);
+
+    // valfritt: efter success kan du skicka användaren tillbaka till Bubble
+    const next = pick(req.query.next, req.query.redirect_after);
+    if (next) url.searchParams.set("state", "u:" + userId + "|next:" + encodeURIComponent(next));
+
+    return res.redirect(url.toString());
+  } catch (e) {
+    console.error("[/ms/authorize] error", e);
+    res.status(500).send(e.message || "error");
+  }
+});
+
+app.get("/ms/callback", async (req, res) => {
+  try {
+    const code  = req.query.code;
+    const state = String(req.query.state || "");
+    if (!code) return res.status(400).send("Missing code");
+
+    // state: "u:<bubbleUserId>" eller "u:<id>|next:<urlencoded>"
+    const m = state.match(/^u:([^|]+)(?:\|next:(.+))?$/);
+    const userId = m?.[1] || null;
+    const next = m?.[2] ? decodeURIComponent(m[2]) : null;
+    if (!userId) return res.status(400).send("Missing/invalid state");
+
+    const base = publicBaseFromReq(req) || pick(process.env.PUBLIC_BASE_URL, process.env.RENDER_EXTERNAL_URL);
+    const redirectUri = normalizeRedirect(`${base}/ms/callback`);
+
+    const result = await tokenExchange({ code, redirect_uri: redirectUri });
+
+    if (!result.ok) {
+      return res.status(400).send("Token exchange failed: " + (result.data?.error_description || result.data?.error || "unknown"));
+    }
+
+    const saved = await upsertTokensToBubble(userId, result.data, null);
+    if (!saved) return res.status(502).send("Bubble save failed");
+
+    // Om du skickar ?next=... kan du landa tillbaka i Bubble
+    if (next) return res.redirect(next);
+
+    // annars visa en enkel OK-sida
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(`<html><body><h3>Microsoft connected ✅</h3><p>User: ${escapeHtml(userId)}</p><p>Du kan stänga detta fönster.</p></body></html>`);
+  } catch (e) {
+    console.error("[/ms/callback] error", e);
+    res.status(500).send(e.message || "error");
+  }
+});
+
 
 /** Exchange CODE or REFRESH TOKEN and save to Bubble */
 app.post("/ms/refresh-save", async (req, res) => {
