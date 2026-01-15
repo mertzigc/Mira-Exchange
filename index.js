@@ -155,19 +155,30 @@ function normalizeRedirect(u) {
 function requireApiKey(req, res, next) {
   const openPaths = [
     "/health",
+
+    // Fortnox OAuth (browser/callback måste vara publik)
     "/fortnox/authorize",
-    "/fortnox/callback"
+    "/fortnox/callback",
+
+    // Microsoft OAuth (browser/callback måste vara publik)
+    "/ms/authorize",
+    "/ms/callback",
   ];
 
-  if (openPaths.includes(req.path)) return next();
+  // matcha även om trailing slash råkar förekomma
+  const path = String(req.path || "").replace(/\/+$/, "") || "/";
+
+  if (openPaths.includes(path)) return next();
 
   if (!RENDER_API_KEY) {
     return res.status(500).json({ ok: false, error: "Missing MIRA_RENDER_API_KEY on server" });
   }
+
   const key = req.headers["x-api-key"];
   if (!key || String(key).trim() !== String(RENDER_API_KEY).trim()) {
     return res.status(401).json({ ok: false, error: "Unauthorized (bad x-api-key)" });
   }
+
   next();
 }
 app.use(requireApiKey);
