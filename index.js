@@ -151,27 +151,34 @@ function normalizeRedirect(u) {
 }
 
 // ────────────────────────────────────────────────────────────
-// API key guard – allow health + OAuth endpoints without key
+// API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
-  const openPaths = [
+  // Exakta paths (utan querystring)
+  const openPaths = new Set([
     "/health",
 
-    // Fortnox OAuth (browser/callback måste vara publik)
+    // Fortnox OAuth
     "/fortnox/authorize",
     "/fortnox/callback",
 
-    // Microsoft OAuth (browser/callback måste vara publik)
+    // Microsoft OAuth (browser hits these WITHOUT x-api-key)
     "/ms/authorize",
     "/ms/callback",
+  ]);
+
+  // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
+  const openPrefixes = [
+    // ex: om du senare lägger /ms/callback/...
   ];
 
-  // matcha även om trailing slash råkar förekomma
-  const path = String(req.path || "").replace(/\/+$/, "") || "/";
-
-  if (openPaths.includes(path)) return next();
+  if (openPaths.has(req.path) || openPrefixes.some(p => req.path.startsWith(p))) {
+    return next();
+  }
 
   if (!RENDER_API_KEY) {
-    return res.status(500).json({ ok: false, error: "Missing MIRA_RENDER_API_KEY on server" });
+    return res
+      .status(500)
+      .json({ ok: false, error: "Missing MIRA_RENDER_API_KEY on server" });
   }
 
   const key = req.headers["x-api-key"];
@@ -179,10 +186,10 @@ function requireApiKey(req, res, next) {
     return res.status(401).json({ ok: false, error: "Unauthorized (bad x-api-key)" });
   }
 
-  next();
+  return next();
 }
-app.use(requireApiKey);
 
+app.use(requireApiKey);
 // ────────────────────────────────────────────────────────────
 // Bubble helpers (User + Data API)
 async function fetchBubbleUser(user_unique_id) {
@@ -199,36 +206,71 @@ async function fetchBubbleUser(user_unique_id) {
   return null;
 }
 
-async function upsertTokensToBubble(userId, msTokenData, refreshTokenFallback = null) {
-  // Fortnox-style: skriv direkt till Bubble Data API (ingen Bubble backend workflow)
-  if (!userId) throw new Error("upsertTokensToBubble: missing userId");
-  if (!msTokenData) throw new Error("upsertTokensToBubble: missing token data");
+async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) {
+  const refresh = tokenJson.refresh_token || fallbackRefresh || null;
+  const expiresIn = Number(tokenJson.expires_in || 0);
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
 
-  const access = msTokenData.access_token || null;
-  const refresh = msTokenData.refresh_token || refreshTokenFallback || null;
-  const scope = msTokenData.scope || null;
-  const token_type = msTokenData.token_type || "Bearer";
-
-  // (valfritt) spara expiry som ISO om du har ett fält för det senare.
-  // const expires_in = Number(msTokenData.expires_in || 0) || 0;
-  // const expires_at_iso = expires_in ? new Date(Date.now() + expires_in * 1000).toISOString() : null;
-
-  const patch = {
-    ms_access_token: access,
+  const patchPayload = {
+    ms_access_token: tokenJson.access_token || null,
     ms_refresh_token: refresh,
-    ms_scope: scope,
-    ms_token_type: token_type
-    // ms_expires_at: expires_at_iso, // <— bara om du skapat detta fält i Bubble
+    ms_scope: tokenJson.scope || "",
+    ms_token_type: tokenJson.token_type || "Bearer",
+    ms_expires_at: expiresAt,
+    ms_last_refresh_at: new Date().toISOString(),
+    ms_last_error: ""
   };
 
-  // Rensa null-värden så Bubble inte får onödiga keys
-  Object.keys(patch).forEach(k => patch[k] === null && delete patch[k]);
+  // 1) Primary: Data API patch user (Fortnox-lik metodik)
+  try {
+    const patched = await bubblePatch("user", user_unique_id, patchPayload);
+    log("[save] user patch OK", { user_unique_id, patched: !!patched });
+    return { ok: true, method: "data_api_patch" };
+  } catch (e) {
+    log("[save] user patch FAILED", {
+      user_unique_id,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
 
-  const r = await bubblePatch("user", userId, patch);
-  if (!r?.ok) return false;
-  return true;
+  // 2) Fallback: WF ms_token_upsert (din befintliga väg)
+  const wfPayload = {
+    bubble_user_id: user_unique_id,
+    access_token: tokenJson.access_token,
+    refresh_token: refresh,
+    expires_in: tokenJson.expires_in,
+    token_type: tokenJson.token_type,
+    scope: tokenJson.scope,
+    server_now_iso: new Date().toISOString(),
+  };
+
+  for (const base of BUBBLE_BASES) {
+    const wf = base + "/api/1.1/wf/ms_token_upsert";
+    try {
+      const r = await fetch(wf, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + BUBBLE_API_KEY,
+        },
+        body: JSON.stringify(wfPayload),
+      });
+
+      const text = await r.text().catch(() => "");
+      let body = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
+
+      log("[save] try WF", { base, status: r.status, ok: r.ok, body });
+
+      if (r.ok) return { ok: true, method: "wf_ms_token_upsert", base };
+    } catch (e) {
+      log("[save] WF error", { base, e: e?.message || String(e), detail: e?.detail || null });
+    }
+  }
+
+  return { ok: false, method: "none" };
 }
-
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
   const tokenEndpoint = "https://login.microsoftonline.com/" + (tenant || MS_TENANT) + "/oauth2/v2.0/token";
   const form = new URLSearchParams();
@@ -3876,7 +3918,7 @@ app.post("/ms/refresh-save", async (req, res) => {
     }
 
     const saved = await upsertTokensToBubble(userId, result.data, result.data.refresh_token || refresh_token);
-    if (!saved) return res.status(502).json({ error: "Bubble save failed" });
+if (!saved?.ok) return res.status(502).json({ ok: false, error: "Bubble save failed", detail: saved });
 
     return res.json({
       ok: true,
