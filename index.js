@@ -3506,7 +3506,11 @@ async function upsertLead(fields) {
     Email: email,
     Phone: safeText(fields?.Phone || "", 100),
     Company: safeText(fields?.Company || "", 200),
-    Description: safeText(fields?.Description || "", 5000)
+    Description: safeText(fields?.Description || "", 5000),
+
+    // ✅ Source (Option set lead_source)
+    // Sätt alltid för nya leads. För befintliga patchar vi bara om tomt (nedan).
+    "Source": "info@carotte.se"
   };
 
   if (existing?._id) {
@@ -3517,12 +3521,17 @@ async function upsertLead(fields) {
     if (base.Phone && !existing.Phone) patch.Phone = base.Phone;
     if (base.Company && !existing.Company) patch.Company = base.Company;
 
-    // Description: om tom -> sätt, annars append (valfritt men ofta bäst)
+    // ✅ Source: sätt bara om tomt
+    // (Bubble brukar exponera option set-fält som text i API:t, så detta funkar normalt.)
+    if (base["Source"] && !existing["Source"]) {
+      patch["Source"] = base["Source"];
+    }
+
+    // Description: om tom -> sätt, annars append
     if (base.Description) {
       if (!existing.Description) {
         patch.Description = base.Description;
       } else {
-        // Append med separator men håll den rimlig
         const appended = safeText(existing.Description + "\n\n---\n\n" + base.Description, 8000);
         patch.Description = appended;
       }
@@ -3535,6 +3544,7 @@ async function upsertLead(fields) {
     return { ok: true, lead_id: existing._id, created: false };
   }
 
+  // Ny lead
   const id = await bubbleCreate("Lead", base);
   return { ok: true, lead_id: id, created: true };
 }
