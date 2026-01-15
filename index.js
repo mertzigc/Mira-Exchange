@@ -149,7 +149,20 @@ function normalizeRedirect(u) {
     return u;
   }
 }
-
+// ────────────────────────────────────────────────────────────
+// HTML-escape helper (för att säkert kunna skriva värden i en liten callback-HTML)
+function escapeHtml(input = "") {
+  const s = String(input);
+  const map = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+    "`": "&#x60;"
+  };
+  return s.replace(/[&<>"'`]/g, (ch) => map[ch] || ch);
+}
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
