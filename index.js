@@ -3583,25 +3583,108 @@ async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25, a
 }
 // ────────────────────────────────────────────────────────────
 // Routes: Jobs
+function isMsTokenExpiredError(e) {
+  const msg = String(e?.message || "").toLowerCase();
+  const innerMsg = String(e?.detail?.error?.message || "").toLowerCase();
+  return (
+    e?.status === 401 ||
+    msg.includes("failed 401") ||
+    msg.includes("token is expired") ||
+    innerMsg.includes("token is expired") ||
+    innerMsg.includes("lifetime validation failed") ||
+    innerMsg.includes("invalidauthenticationtoken")
+  );
+}
 
+// Hämtar delegated token för auth_user_id från Bubble och refreshar vid behov
+async function getDelegatedAccessTokenForUser({ auth_user_id, tenant, force_refresh = false }) {
+  const u = await fetchBubbleUser(auth_user_id);
+  const accessToken = u?.ms_access_token || null;
+  const refreshToken = u?.ms_refresh_token || null;
+  const scope = u?.ms_scope || u?.scope || null;
+
+  if (!refreshToken) {
+    const err = new Error("User has no ms_refresh_token in Bubble (cannot refresh)");
+    err.status = 401;
+    throw err;
+  }
+
+  if (accessToken && !force_refresh) {
+    return { access_token: accessToken, refresh_token: refreshToken, scope };
+  }
+
+  const ref = await tokenExchange({ refresh_token: refreshToken, scope, tenant });
+  if (!ref.ok) {
+    const err = new Error("Delegated refresh failed");
+    err.status = ref.status || 401;
+    err.detail = ref.data || null;
+    throw err;
+  }
+
+  const newRefresh = ref.data.refresh_token || refreshToken;
+  await upsertTokensToBubble(auth_user_id, ref.data, newRefresh);
+
+  return { access_token: ref.data.access_token, refresh_token: newRefresh, scope: ref.data.scope || scope };
+}
+
+// Hämtar inbox-messages via delta och följer ev. paging (nextLink)
+async function graphMailDeltaFetchAll({ mailbox_upn, top, delta_link, access_token }) {
+  const mailboxEnc = encodeURIComponent(String(mailbox_upn).trim().toLowerCase());
+
+  // Start-URL: antingen delta_link (om vi har) eller första delta-call
+  let url = (delta_link && String(delta_link).trim())
+    ? String(delta_link).trim()
+    : `${GRAPH_BASE}/users/${mailboxEnc}/mailFolders('Inbox')/messages/delta?$top=${encodeURIComponent(String(top || 25))}`
+      + `&$select=id,receivedDateTime,subject,from,sender,bodyPreview,body`;
+
+  const messages = [];
+  let safety = 0;
+  let finalDelta = "";
+
+  while (url && safety < 20) { // säkerhetsbälte
+    safety++;
+
+    const r = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + access_token }
+    });
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      const err = new Error(`Graph GET ${url} failed ${r.status}`);
+      err.status = r.status;
+      err.detail = j;
+      throw err;
+    }
+
+    if (Array.isArray(j?.value)) messages.push(...j.value);
+
+    // nästa sida eller deltaLink
+    url = j["@odata.nextLink"] || "";
+    finalDelta = j["@odata.deltaLink"] || finalDelta || "";
+  }
+
+  return { messages, delta_link: finalDelta };
+}
 // POST /jobs/mail/poll
-// Body: { mailbox_upn: "info@carotte.se", top?: 25, tenant?: "<tenant-id>" }
+// Body: { mailbox_upn:"info@carotte.se", auth_user_id:"<Bubble user id>", top?:25 }
 app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
   const t0 = Date.now();
 
   const mailbox_upn = normEmail(req.body?.mailbox_upn);
-    const auth_user_id =
+  const auth_user_id =
     req.body?.auth_user_id ||
     req.body?.user_unique_id ||
     req.body?.u ||
     null;
+
   const top = Number(req.body?.top || 25);
   const tenant = resolveTenantFromBodyOrReq(req);
 
   if (!mailbox_upn) {
     return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
   }
-    if (!auth_user_id) {
+  if (!auth_user_id) {
     return res.status(400).json({ ok: false, error: "auth_user_id is required (Bubble user id that owns delegated token)" });
   }
 
@@ -3617,23 +3700,34 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
   try {
     state = await getOrCreateMailPollState(mailbox_upn);
 
-    // 1) Hämta delta
+    // 1) Hämta delta (med auto-refresh + retry på 401 expired)
     let deltaRes = null;
-    try {
-      deltaRes = await graphDeltaFetchAll({
+
+    const runDelta = async ({ force_refresh = false } = {}) => {
+      const tok = await getDelegatedAccessTokenForUser({ auth_user_id, tenant, force_refresh });
+      return await graphMailDeltaFetchAll({
         tenant,
         mailbox_upn,
         delta_link: state?.delta_link || "",
         top: Number.isFinite(top) && top > 0 ? top : 25,
-        auth_user_id
+        access_token: tok.access_token
       });
+    };
+
+    try {
+      deltaRes = await runDelta({ force_refresh: false });
     } catch (e) {
-      // Om delta state är invalid (Graph 410 m.fl.) → reset delta och fail denna körning
-      await updateMailPollState(state._id, {
-        last_run_at: new Date().toISOString(),
-        last_error: "Delta fetch failed: " + (e?.message || String(e))
-      });
-      throw e;
+      // om expired → refresh + retry EN gång
+      if (isMsTokenExpiredError(e)) {
+        deltaRes = await runDelta({ force_refresh: true });
+      } else {
+        // om delta-state invalid (Graph 410 m.fl.) → spara fel och fail denna körning
+        await updateMailPollState(state._id, {
+          last_run_at: new Date().toISOString(),
+          last_error: "Delta fetch failed: " + (e?.message || String(e))
+        });
+        throw e;
+      }
     }
 
     const messages = Array.isArray(deltaRes?.messages) ? deltaRes.messages : [];
@@ -3661,7 +3755,6 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
             if (up.created) createdLeads++;
             else updatedLeads++;
 
-            // Linka InboundEmail → Lead
             await bubblePatch("InboundEmail", inboundId, { lead: up.lead_id });
             linked++;
           }
