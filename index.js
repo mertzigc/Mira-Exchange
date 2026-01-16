@@ -3715,59 +3715,30 @@ function extractLeadFieldsFromMessage(msg, mailbox_upn) {
   };
 }
 
-// Bubble: Lead upsert by Email (patch only if empty)
-async function upsertLead(fields) {
+// Bubble: Create NEW Lead for every inbound (no upsert)
+async function createLeadAlways(fields) {
   const email = normEmail(fields?.Email);
   if (!email) return { ok: false, error: "Lead Email missing" };
-
-  const existing = await bubbleFindOne("Lead", [
-    { key: "Email", constraint_type: "equals", value: email }
-  ]);
 
   const base = {
     Name: safeText(fields?.Name || "", 200),
     Email: email,
     Phone: safeText(fields?.Phone || "", 100),
     Company: safeText(fields?.Company || "", 200),
-    Description: safeText(fields?.Description || "", 20000),
+
+    // Långa beskrivningen (som du redan bygger)
+    Description: safeText(fields?.Description || "", 8000),
+
+    // Kort beskrivning (du bad om body_preview -> Description_short)
     Description_short: safeText(fields?.Description_short || "", 500),
-    // Lead Source option set (Display)
-    Source: safeText(fields?.Source || "info@carotte.se", 200)
+
+    // Option set "lead_source" - sätt displayvärdet exakt som i option set
+    Source: safeText(fields?.Source || "info@carotte.se", 200),
   };
-
-  if (existing?._id) {
-    const patch = {};
-
-    // Patcha bara om tomt (så du inte skriver över CRM-data)
-    if (base.Name && !existing.Name) patch.Name = base.Name;
-    if (base.Phone && !existing.Phone) patch.Phone = base.Phone;
-    if (base.Company && !existing.Company) patch.Company = base.Company;
-    if (base.Source && !existing.Source) patch.Source = base.Source;
-    if (base.Description_short && !existing.Description_short) patch.Description_short = base.Description_short;
-
-    // Description: om tom -> sätt, annars append (med rimlig max)
-    if (base.Description) {
-      if (!existing.Description) {
-        patch.Description = base.Description;
-      } else {
-        const appended = safeText(String(existing.Description) + "\n\n---\n\n" + base.Description, 30000);
-        patch.Description = appended;
-      }
-    }
-
-    if (Object.keys(patch).length) {
-      await bubblePatch("Lead", existing._id, patch);
-    }
-
-    return { ok: true, lead_id: existing._id, created: false };
-  }
 
   const id = await bubbleCreate("Lead", base);
   return { ok: true, lead_id: id, created: true };
 }
-
-
-// -------------------------
 // -------------------------
 // Graph: delta fetch (delegated) with pagination
 async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25, auth_user_id }) {
@@ -4044,14 +4015,12 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
         // Lead upsert
         const leadFields = extractLeadFieldsFromMessage(fullMsg, mailbox_upn);
         if (leadFields?.Email) {
-          const up = await upsertLead(leadFields);
-          if (up.ok && up.lead_id) {
-            if (up.created) createdLeads++;
-            else updatedLeads++;
-
-            await bubblePatch("InboundEmail", inboundId, { lead: up.lead_id });
-            linked++;
-          }
+          const up = await createLeadAlways(leadFields);
+if (up.ok && up.lead_id) {
+  createdLeads++; // alltid ny
+  await bubblePatch("InboundEmail", inboundId, { lead: up.lead_id });
+  linked++;
+}
         }
       } catch (e) {
         errors++;
