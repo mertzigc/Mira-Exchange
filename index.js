@@ -3645,62 +3645,36 @@ function pickFirstRealEmail(text, mailbox_upn) {
   return null;
 }
 
-function extractLeadFieldsFromMessage(msg, mailbox_upn) {
-  // Graph message fields
-  const subject = safeText(msg?.subject || "", 200);
-  const from = normEmail(msg?.from?.emailAddress?.address || msg?.sender?.emailAddress?.address || "");
-  const fromName = safeText(msg?.from?.emailAddress?.name || msg?.sender?.emailAddress?.name || "", 200);
-  const received = safeText(msg?.receivedDateTime || "", 40);
+// ────────────────────────────────────────────────────────────
+// Extract fields for new Lead based on inbound email
+function extractLeadFieldsFromMessage(msg) {
+  if (!msg) return {};
 
-  const contentType = String(msg?.body?.contentType || "").toLowerCase();
-  const bodyContent = String(msg?.body?.content || "");
-  const bodyPreview = String(msg?.bodyPreview || "");
+  const subject = safeText(msg?.subject || "", 300);
+  const bodyPreview = msg?.bodyPreview || "";
+  const bodyContent = msg?.body?.content || "";
+  const bodyType = msg?.body?.contentType || "";
+  const fromEmail = normEmail(msg?.from?.emailAddress?.address);
+  const fromName = safeText(msg?.from?.emailAddress?.name || "", 200);
 
-  // Plain text body (not too trimmed)
-  const textBody = normalizeMailBodyToText({
-    contentType,
-    content: bodyContent,
-    fallbackPreview: bodyPreview
-  });
+  // Clean up the HTML body to readable text
+  const core =
+    bodyType === "html"
+      ? decodeHtmlEntities(
+          bodyContent
+            .replace(/<style[\s\S]*?<\/style>/gi, "")
+            .replace(/<script[\s\S]*?<\/script>/gi, "")
+            .replace(/<\/?[^>]+(>|$)/g, " ")
+        )
+      : decodeHtmlEntities(bodyContent || bodyPreview || "");
 
-  // Prefer explicit form fields if email seems like a form/table
-  const pickLine = (label) => {
-    const re = new RegExp(label + "\\s*:\\s*([^\\n]+)", "i");
-    const m = textBody.match(re);
-    return m ? safeText(m[1].trim(), 500) : "";
-  };
+  const description = safeText(core, 8000);
+  const name = fromName || fromEmail?.split("@")[0] || "Okänd";
+  const company = guessCompanyFromEmail(fromEmail);
+  const leadEmail = fromEmail || "";
+  const phone = extractPhoneNumber(core);
 
-  const emailFromForm = normEmail(pickLine("Email"));
-  const phone = safeText(pickLine("Telefon") || pickLine("Phone"), 100);
-  const company = safeText(pickLine("Företag") || pickLine("Company"), 200);
-  const firstName = safeText(pickLine("Förnamn") || pickLine("First name"), 120);
-  const lastName = safeText(pickLine("Efternamn") || pickLine("Last name") || pickLine("Surname"), 120);
-
-  // If not a form, try to find a reasonable email in the body (exclude mailbox)
-  const emailFromBody = pickFirstRealEmail(textBody, mailbox_upn);
-
-  const leadEmail = emailFromForm || emailFromBody || from;
-
-  const name = safeText(
-    (firstName || lastName) ? (firstName + " " + lastName).trim() : (fromName || ""),
-    200
-  );
-
-  // Build Description (human readable)
-  let description = "";
-  if (subject) description += subject + "\n";
-  if (received) description += "Datum: " + received + "\n";
-  if (from) description += "Från: " + from + "\n";
-  description += "\n";
-
-  // Strip signature but keep the core message
-  const core = stripCommonSignature(textBody);
-  description += core;
-
-  // Keep a generous limit (Bubble field can handle, but stay sane)
-  description = safeText(description, 20000);
-
-  // Short description = body_preview (or fallback)
+  // Short description = body_preview (or fallback) – tightened & clean
   const description_short = tightenShort(bodyPreview || core, 220);
 
   return {
@@ -3714,20 +3688,19 @@ function extractLeadFieldsFromMessage(msg, mailbox_upn) {
     Source: "info@carotte.se"
   };
 }
-leadFields.Description_short = tightenShort(
-  leadFields.Description_short || msg?.bodyPreview || "",
-  220
-);
-  function tightenShort(str, maxLen = 220) {
-    if (!str) return "";
-    return safeText(String(str), maxLen * 3)
-      .replace(/<br\s*\/?>/gi, " ")
-      .replace(/<\/?p[^>]*>/gi, " ")
-      .replace(/\r?\n+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, maxLen);
-  }
+
+// ────────────────────────────────────────────────────────────
+// Helper: clean up and shorten description text
+function tightenShort(str, maxLen = 220) {
+  if (!str) return "";
+  return safeText(String(str), maxLen * 3)
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?p[^>]*>/gi, " ")
+    .replace(/\r?\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen);
+}
 // Bubble: Create NEW Lead for every inbound (no upsert)
 async function createLeadAlways(fields) {
   const email = normEmail(fields?.Email);
