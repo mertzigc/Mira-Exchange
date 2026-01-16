@@ -3424,13 +3424,13 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
 // HTML → text (för Lead.Description m.m.)
-// (Ingen extern dependency)
+// (Använder befintlig decodeHtmlEntities() som redan finns i din fil)
 function htmlToText(input, { maxLen = 8000 } = {}) {
   if (input == null) return "";
   let s = String(input);
 
-  // Normalisera radbrytningar + vanliga blocktaggar
   s = s.replace(/\r\n/g, "\n");
 
   // Ta bort Outlook mobile signature-block om det finns
@@ -3440,7 +3440,7 @@ function htmlToText(input, { maxLen = 8000 } = {}) {
   s = s
     .replace(/<(br|br\/)\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|tr|li|h1|h2|h3|h4|h5|h6)>/gi, "\n")
-    .replace(/<\/td>/gi, "  "); // lite spacing i tabeller
+    .replace(/<\/td>/gi, "  ");
 
   // Ta bort scripts/styles
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
@@ -3449,7 +3449,7 @@ function htmlToText(input, { maxLen = 8000 } = {}) {
   // Ta bort alla övriga taggar
   s = s.replace(/<[^>]+>/g, "");
 
-  // Decode basic HTML entities (tillräckligt för mail)
+  // Decode entities (din befintliga funktion)
   s = decodeHtmlEntities(s);
 
   // Städa whitespace
@@ -3461,26 +3461,6 @@ function htmlToText(input, { maxLen = 8000 } = {}) {
   // Klipp längd
   if (maxLen && s.length > maxLen) s = s.slice(0, maxLen - 1).trim() + "…";
   return s;
-}
-
-function decodeHtmlEntities(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    // numeriska entities
-    .replace(/&#(\d+);/g, (_, n) => {
-      const code = parseInt(n, 10);
-      return Number.isFinite(code) ? String.fromCharCode(code) : _;
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_, hx) => {
-      const code = parseInt(hx, 16);
-      return Number.isFinite(code) ? String.fromCharCode(code) : _;
-    });
 }
 // ────────────────────────────────────────────────────────────
 // Render-first Mail Polling (Graph delta) → Bubble Data API
