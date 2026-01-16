@@ -3701,7 +3701,7 @@ function extractLeadFieldsFromMessage(msg, mailbox_upn) {
   description = safeText(description, 20000);
 
   // Short description = body_preview (or fallback)
-  const description_short = safeText(bodyPreview || core, 500);
+  const description_short = tightenShort(bodyPreview || core, 220);
 
   return {
     Name: name,
@@ -3718,16 +3718,16 @@ leadFields.Description_short = tightenShort(
   leadFields.Description_short || msg?.bodyPreview || "",
   220
 );
-function tightenShort(str, maxLen = 220) {
-  if (!str) return "";
-  return safeText(String(str), maxLen * 3)          // först lite buffert
-    .replace(/<br\s*\/?>/gi, " ")                   // br -> space
-    .replace(/<\/?p[^>]*>/gi, " ")                  // p -> space (valfritt men bra)
-    .replace(/\r?\n+/g, " ")                        // newlines -> space
-    .replace(/\s+/g, " ")                           // collapse whitespace
-    .trim()
-    .slice(0, maxLen);
-}
+  function tightenShort(str, maxLen = 220) {
+    if (!str) return "";
+    return safeText(String(str), maxLen * 3)
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<\/?p[^>]*>/gi, " ")
+      .replace(/\r?\n+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, maxLen);
+  }
 // Bubble: Create NEW Lead for every inbound (no upsert)
 async function createLeadAlways(fields) {
   const email = normEmail(fields?.Email);
