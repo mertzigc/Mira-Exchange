@@ -3517,6 +3517,33 @@ function guessCompanyFromEmail(email) {
 
   return pretty ? (pretty.charAt(0).toUpperCase() + pretty.slice(1)) : "";
 }
+function extractPhoneNumber(input) {
+  const s = String(input || "");
+  if (!s) return "";
+
+  // Leta efter något som liknar ett telefonnummer (svenskt + internationellt)
+  // Ex: 070-123 45 67, +46 70 123 45 67, 08-123456, 031 840850
+  const m = s.match(/(\+?\d[\d\s().-]{6,}\d)/);
+  if (!m) return "";
+
+  let raw = m[1];
+
+  // Rensa bort allt utom siffror och + i början
+  raw = raw.replace(/[^\d+]/g, "");
+
+  // Normalisera "00" -> "+"
+  if (raw.startsWith("00")) raw = "+" + raw.slice(2);
+
+  // Om den börjar med +, behåll + och siffror
+  if (raw.startsWith("+")) {
+    // säkerhetsklipp
+    return raw.slice(0, 20);
+  }
+
+  // Annars: bara siffror, klipp rimligt
+  const digits = raw.replace(/\D/g, "");
+  return digits.slice(0, 20);
+}
 // -------------------------
 // Bubble: MailPollState
 async function getOrCreateMailPollState(mailbox_upn) {
