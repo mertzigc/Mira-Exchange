@@ -3485,7 +3485,38 @@ function resolveTenantFromBodyOrReq(req) {
     DEFAULT_TENANT
   );
 }
+function guessCompanyFromEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e || !e.includes("@")) return "";
 
+  // plocka domän
+  let domain = e.split("@").pop() || "";
+  domain = domain.replace(/^mail\./, "").replace(/^m\./, "").replace(/^smtp\./, "");
+
+  // om det är en vanlig privat maildomän -> lämna tomt
+  const publicDomains = new Set([
+    "gmail.com","googlemail.com","icloud.com","me.com",
+    "outlook.com","hotmail.com","live.com","msn.com",
+    "yahoo.com","yahoo.se",
+    "proton.me","protonmail.com",
+    "aol.com",
+    "telia.com","telia.se","comhem.se","bahnhof.se",
+    "bredband.net","ownit.se"
+  ]);
+  if (publicDomains.has(domain)) return "";
+
+  // ta "företagsnamn" från domänen (första labeln)
+  const label = (domain.split(".")[0] || "").trim();
+  if (!label) return "";
+
+  // lite snyggare display
+  const pretty = label
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return pretty ? (pretty.charAt(0).toUpperCase() + pretty.slice(1)) : "";
+}
 // -------------------------
 // Bubble: MailPollState
 async function getOrCreateMailPollState(mailbox_upn) {
