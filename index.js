@@ -3714,7 +3714,20 @@ function extractLeadFieldsFromMessage(msg, mailbox_upn) {
     Source: "info@carotte.se"
   };
 }
-
+leadFields.Description_short = tightenShort(
+  leadFields.Description_short || msg?.bodyPreview || "",
+  220
+);
+function tightenShort(str, maxLen = 220) {
+  if (!str) return "";
+  return safeText(String(str), maxLen * 3)          // först lite buffert
+    .replace(/<br\s*\/?>/gi, " ")                   // br -> space
+    .replace(/<\/?p[^>]*>/gi, " ")                  // p -> space (valfritt men bra)
+    .replace(/\r?\n+/g, " ")                        // newlines -> space
+    .replace(/\s+/g, " ")                           // collapse whitespace
+    .trim()
+    .slice(0, maxLen);
+}
 // Bubble: Create NEW Lead for every inbound (no upsert)
 async function createLeadAlways(fields) {
   const email = normEmail(fields?.Email);
