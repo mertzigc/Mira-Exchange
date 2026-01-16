@@ -399,12 +399,57 @@ async function getDelegatedTokenForUser(user_unique_id, { tenant = null, scope =
     }
   }
 
+
+  // If access token exists but is expired (JWT exp), refresh it
+  if (accessToken && refreshToken && isJwtExpired(accessToken)) {
+    const ref = await tokenExchange({
+      refresh_token: refreshToken,
+      scope: scope || dbScope || MS_SCOPE,
+      tenant: tenant || MS_TENANT
+    });
+
+    if (ref.ok) {
+      accessToken = ref.data.access_token;
+      const newRefresh = ref.data.refresh_token || refreshToken;
+      await upsertTokensToBubble(user_unique_id, ref.data, newRefresh);
+      refreshToken = newRefresh;
+    }
+  }
+
   // If we have access token but want to be safer, you can still refresh on demand later.
   if (!accessToken) {
     throw new Error("No delegated ms_access_token available (and refresh missing/failed) for user: " + user_unique_id);
   }
 
   return { access_token: accessToken, refresh_token: refreshToken, scope: dbScope || scope || null };
+}
+
+// JWT helpers (to refresh delegated tokens proactively)
+function _b64urlToStr(b64url) {
+  try {
+    const pad = "=".repeat((4 - (b64url.length % 4)) % 4);
+    const b64 = (b64url + pad).replace(/-/g, "+").replace(/_/g, "/");
+    return Buffer.from(b64, "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function jwtPayload(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  const json = _b64urlToStr(parts[1]);
+  if (!json) return null;
+  try { return JSON.parse(json); } catch { return null; }
+}
+
+function isJwtExpired(token, skewSeconds = 60) {
+  const p = jwtPayload(token);
+  const exp = Number(p?.exp || 0);
+  if (!exp) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return (exp - skewSeconds) <= now;
 }
 // ────────────────────────────────────────────────────────────
 // Helpers (deklarera EN gång)
@@ -3467,29 +3512,28 @@ async function findInboundEmailByMessageId(mailbox_upn, graph_message_id) {
 }
 
 async function createInboundEmail(mailbox_upn, msg) {
-  const mb = normEmail(mailbox_upn);
-  const graphId = String(msg?.id || "").trim();
-
-  const fromEmail =
-    normEmail(msg?.from?.emailAddress?.address) ||
-    normEmail(msg?.sender?.emailAddress?.address) ||
-    "";
-
-  const receivedAt = msg?.receivedDateTime
-    ? new Date(msg.receivedDateTime).toISOString()
-    : new Date().toISOString();
-
+  const from_email = normEmail(msg?.from?.emailAddress?.address || msg?.sender?.emailAddress?.address || "");
   const subject = safeText(msg?.subject || "", 500);
+  const received_at = msg?.receivedDateTime || null;
+  const graph_message_id = String(msg?.id || "");
 
-  const id = await bubbleCreate("InboundEmail", {
-    graph_message_id: graphId,
-    mailbox_upn: mb,
-    from_email: fromEmail,
-    received_at: receivedAt,
-    subject
-    // lead sätts senare (PATCH)
-  });
+  // Raw body fields (for debugging + better parsing later)
+  const body_preview = safeText(msg?.bodyPreview || "", 5000);
+  const body_type = safeText(msg?.body?.contentType || "", 50);
+  const body_content = safeText(msg?.body?.content || "", 50000);
 
+  const payload = {
+    mailbox_upn: normEmail(mailbox_upn),
+    from_email,
+    subject,
+    received_at,
+    graph_message_id,
+    body_preview,
+    body_type,
+    body_content
+  };
+
+  const id = await bubbleCreate("InboundEmail", payload);
   return id;
 }
 
@@ -3645,6 +3689,63 @@ async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25, a
   }
 
   return { messages: all, delta_link: finalDelta || "" };
+}
+
+// Fetch a single message (full body) by Graph message id
+async function graphGetMessageById({ tenant, mailbox_upn, message_id, auth_user_id }) {
+  const mb = encodeURIComponent(String(mailbox_upn || "").trim());
+  const mid = encodeURIComponent(String(message_id || "").trim());
+  if (!mb) throw new Error("mailbox_upn required");
+  if (!mid) throw new Error("message_id required");
+
+  const url = `https://graph.microsoft.com/v1.0/users/${mb}/messages/${mid}?$select=id,receivedDateTime,subject,from,sender,bodyPreview,body`;
+  return await graphDelegatedFetchJson({ tenant, auth_user_id, url });
+}
+
+// Delegated Graph fetch with one refresh+retry on 401
+async function graphDelegatedFetchJson({ tenant, auth_user_id, url, method = "GET", headers = {}, body = null }) {
+  const tok = await getDelegatedTokenForUser(auth_user_id, { tenant });
+  const doFetch = async (accessToken) => {
+    const r = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        ...headers
+      },
+      body
+    });
+    const text = await r.text().catch(() => "");
+    let j = null
+    try { j = text ? JSON.parse(text) : null; } catch { j = { raw: text }; }
+    return { r, j };
+  };
+
+  // First try
+  let out = await doFetch(tok.access_token);
+
+  // If token expired/invalid, try refresh once and retry
+  if (out.r.status === 401 && tok.refresh_token) {
+    const ref = await tokenExchange({
+      refresh_token: tok.refresh_token,
+      scope: tok.scope || MS_SCOPE,
+      tenant: tenant || MS_TENANT
+    });
+
+    if (ref.ok) {
+      const newRefresh = ref.data.refresh_token || tok.refresh_token;
+      await upsertTokensToBubble(auth_user_id, ref.data, newRefresh);
+      out = await doFetch(ref.data.access_token);
+    }
+  }
+
+  if (!out.r.ok) {
+    const err = new Error(`Graph ${method} ${url} failed ${out.r.status}`);
+    err.detail = out.j;
+    throw err;
+  }
+
+  return out.j;
 }
 // ────────────────────────────────────────────────────────────
 // Routes: Jobs
@@ -3809,11 +3910,20 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
           continue;
         }
 
-        const inboundId = await createInboundEmail(mailbox_upn, msg);
+        // (Optional but recommended) fetch full message body again by id (delta can be truncated)
+        let fullMsg = msg;
+        try {
+          fullMsg = await graphGetMessageById({ tenant, mailbox_upn, message_id: graphId, auth_user_id });
+        } catch (e) {
+          // If this fails, we still create the inbound from delta payload
+          fullMsg = msg;
+        }
+
+        const inboundId = await createInboundEmail(mailbox_upn, fullMsg);
         createdInbound++;
 
         // Lead upsert
-        const leadFields = extractLeadFieldsFromMessage(msg);
+        const leadFields = extractLeadFieldsFromMessage(fullMsg);
         if (leadFields?.Email) {
           const up = await upsertLead(leadFields);
           if (up.ok && up.lead_id) {
@@ -3863,6 +3973,52 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
       error: e?.message || String(e),
       detail: e?.detail || null
     });
+  }
+});
+
+
+// POST /jobs/mail/message
+// Body: { mailbox_upn, auth_user_id, graph_message_id, inbound_id?: "<Bubble InboundEmail id>" }
+// Fetches a single message from Graph and (optionally) patches the Bubble InboundEmail with raw body fields.
+app.post("/jobs/mail/message", requireApiKey, async (req, res) => {
+  const mailbox_upn = normEmail(req.body?.mailbox_upn);
+  const auth_user_id = req.body?.auth_user_id || req.body?.user_unique_id || req.body?.u || null;
+  const graph_message_id = String(req.body?.graph_message_id || "").trim();
+  const inbound_id = String(req.body?.inbound_id || "").trim();
+  const tenant = resolveTenantFromBodyOrReq(req);
+
+  if (!mailbox_upn) return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
+  if (!auth_user_id) return res.status(400).json({ ok: false, error: "auth_user_id is required" });
+  if (!graph_message_id) return res.status(400).json({ ok: false, error: "graph_message_id is required" });
+
+  try {
+    const msg = await graphGetMessageById({ tenant, mailbox_upn, message_id: graph_message_id, auth_user_id });
+
+    const patch = {
+      body_preview: safeText(msg?.bodyPreview || "", 5000),
+      body_type: safeText(msg?.body?.contentType || "", 50),
+      body_content: safeText(msg?.body?.content || "", 50000)
+    };
+
+    if (inbound_id) {
+      await bubblePatch("InboundEmail", inbound_id, patch);
+    }
+
+    return res.json({
+      ok: true,
+      mailbox_upn,
+      auth_user_id,
+      graph_message_id,
+      inbound_id: inbound_id || null,
+      patch,
+      sample: {
+        subject: safeText(msg?.subject || "", 500),
+        receivedDateTime: msg?.receivedDateTime || null,
+        from: msg?.from?.emailAddress?.address || null
+      }
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, mailbox_upn, graph_message_id, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 
