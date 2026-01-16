@@ -276,9 +276,7 @@ async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) 
     ms_scope: tokenJson.scope || "",
     ms_token_type: tokenJson.token_type || "Bearer",
     ms_expires_at: expiresAt,
-    ms_last_refresh_at: new Date().toISOString(),
-    ms_last_error: ""
-  };
+    ms_last_refresh_at: new Date().toISOString(),};
 
   // 1) Primary: Data API patch user (Fortnox-lik metodik)
   try {
@@ -3539,58 +3537,145 @@ async function createInboundEmail(mailbox_upn, msg) {
 
 // -------------------------
 // Lead parsing (enkelt men robust)
-function extractLeadFieldsFromMessage(msg) {
-  const from =
-    normEmail(msg?.from?.emailAddress?.address) ||
-    normEmail(msg?.sender?.emailAddress?.address) ||
-    "";
+// ---- Lead extraction + normalization (email -> Lead)
 
+// Convert raw HTML/text body into readable plain text (keep it robust and not too aggressive)
+function normalizeMailBodyToText({ contentType, content, fallbackPreview }) {
+  const ct = String(contentType || "").toLowerCase();
+  let raw = String(content || "");
+
+  // Prefer full body if present, else fallback to preview
+  if (!raw.trim()) raw = String(fallbackPreview || "");
+
+  let txt = raw;
+  if (ct === "html" || /<\w+[^>]*>/.test(raw)) {
+    txt = htmlToText(raw);
+  }
+
+  // Normalize whitespace
+  txt = txt.replace(/\r\n/g, "\n");
+  txt = txt.replace(/[\t\f\v]+/g, " ");
+  txt = txt.replace(/\n{3,}/g, "\n\n");
+  return txt.trim();
+}
+
+function stripCommonSignature(text) {
+  const t = String(text || "");
+  if (!t) return "";
+
+  const markers = [
+    "Vänliga hälsningar",
+    "Med vänlig hälsning",
+    "Med vänliga hälsningar",
+    "Mvh",
+    "MVH",
+    "Regards",
+    "Best regards",
+    "Kind regards",
+    "Sent from my",
+    "Skickat från",
+    "--"
+  ];
+
+  // Cut at first marker occurrence that is not too early
+  let cutAt = -1;
+  for (const mk of markers) {
+    const i = t.indexOf(mk);
+    if (i >= 0) {
+      if (cutAt === -1 || i < cutAt) cutAt = i;
+    }
+  }
+
+  if (cutAt >= 0 && cutAt > 40) {
+    return t.slice(0, cutAt).trim();
+  }
+  return t.trim();
+}
+
+function pickFirstRealEmail(text, mailbox_upn) {
+  const hay = String(text || "");
+  const mb = normEmail(mailbox_upn);
+  const matches = hay.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  for (const e of matches) {
+    const ne = normEmail(e);
+    if (!ne) continue;
+    // Avoid picking the shared mailbox address itself
+    if (mb && ne === mb) continue;
+    return ne;
+  }
+  return null;
+}
+
+function extractLeadFieldsFromMessage(msg, mailbox_upn) {
+  // Graph message fields
   const subject = safeText(msg?.subject || "", 200);
+  const from = normEmail(msg?.from?.emailAddress?.address || msg?.sender?.emailAddress?.address || "");
+  const fromName = safeText(msg?.from?.emailAddress?.name || msg?.sender?.emailAddress?.name || "", 200);
+  const received = safeText(msg?.receivedDateTime || "", 40);
 
-  const bodyType = String(msg?.body?.contentType || "").toLowerCase();
-  const bodyRaw = msg?.body?.content || msg?.bodyPreview || "";
-  const plain = bodyType === "html" ? htmlToText(bodyRaw) : String(bodyRaw || "").trim();
+  const contentType = String(msg?.body?.contentType || "").toLowerCase();
+  const bodyContent = String(msg?.body?.content || "");
+  const bodyPreview = String(msg?.bodyPreview || "");
 
-  // Hjälpare: plocka "Fält: värde" per rad
+  // Plain text body (not too trimmed)
+  const textBody = normalizeMailBodyToText({
+    contentType,
+    content: bodyContent,
+    fallbackPreview: bodyPreview
+  });
+
+  // Prefer explicit form fields if email seems like a form/table
   const pickLine = (label) => {
-    const re = new RegExp(`^\\s*${label}\\s*:\\s*([^\\n\\r]+)`, "im");
-    const m = plain.match(re);
-    return m ? m[1].trim() : "";
+    const re = new RegExp(label + "\\s*:\\s*([^\\n]+)", "i");
+    const m = textBody.match(re);
+    return m ? safeText(m[1].trim(), 500) : "";
   };
 
-  const date = pickLine("Datum");
-  const city = pickLine("Stad");
-  const company = pickLine("Företag");
-  const phone = pickLine("Telefon");
-  const email = normEmail(pickLine("Email")) || from;
+  const emailFromForm = normEmail(pickLine("Email"));
+  const phone = safeText(pickLine("Telefon") || pickLine("Phone"), 100);
+  const company = safeText(pickLine("Företag") || pickLine("Company"), 200);
+  const firstName = safeText(pickLine("Förnamn") || pickLine("First name"), 120);
+  const lastName = safeText(pickLine("Efternamn") || pickLine("Last name") || pickLine("Surname"), 120);
 
-  const first = pickLine("Förnamn");
-  const last  = pickLine("Efternamn");
-  const name  = safeText((first + " " + last).trim(), 200);
+  // If not a form, try to find a reasonable email in the body (exclude mailbox)
+  const emailFromBody = pickFirstRealEmail(textBody, mailbox_upn);
 
-  // Meddelande-raden kan vara lång – ta hela raden efter "Meddelande:"
-  const messageLine = pickLine("Meddelande");
+  const leadEmail = emailFromForm || emailFromBody || from;
 
-  // Bygg en ren, läsbar Description
-  const parts = [];
-  if (subject) parts.push(`Förfrågan: ${subject}`);
-  if (date) parts.push(`Datum: ${date}`);
-  if (city) parts.push(`Stad: ${city}`);
-  if (company) parts.push(`Företag: ${company}`);
-  if (phone) parts.push(`Telefon: ${phone}`);
-  if (email) parts.push(`Email: ${email}`);
-  if (messageLine) parts.push(`\nMeddelande:\n${messageLine}`);
+  const name = safeText(
+    (firstName || lastName) ? (firstName + " " + lastName).trim() : (fromName || ""),
+    200
+  );
+
+  // Build Description (human readable)
+  let description = "";
+  if (subject) description += subject + "\n";
+  if (received) description += "Datum: " + received + "\n";
+  if (from) description += "Från: " + from + "\n";
+  description += "\n";
+
+  // Strip signature but keep the core message
+  const core = stripCommonSignature(textBody);
+  description += core;
+
+  // Keep a generous limit (Bubble field can handle, but stay sane)
+  description = safeText(description, 20000);
+
+  // Short description = body_preview (or fallback)
+  const description_short = safeText(bodyPreview || core, 500);
 
   return {
     Name: name,
-    Email: email,
+    Email: leadEmail,
     Phone: phone,
     Company: company,
-    Description: safeText(parts.join("\n"), 20000)
+    Description: description,
+    Description_short: description_short,
+    // Option set value (Display) – assumes Lead has field "Source" (type: lead_source)
+    Source: "info@carotte.se"
   };
 }
 
-// -------------------------
 // Bubble: Lead upsert by Email (patch only if empty)
 async function upsertLead(fields) {
   const email = normEmail(fields?.Email);
@@ -3605,11 +3690,10 @@ async function upsertLead(fields) {
     Email: email,
     Phone: safeText(fields?.Phone || "", 100),
     Company: safeText(fields?.Company || "", 200),
-    Description: safeText(fields?.Description || "", 5000),
-
-    // ✅ Source (Option set lead_source)
-    // Sätt alltid för nya leads. För befintliga patchar vi bara om tomt (nedan).
-    "Source": "info@carotte.se"
+    Description: safeText(fields?.Description || "", 20000),
+    Description_short: safeText(fields?.Description_short || "", 500),
+    // Lead Source option set (Display)
+    Source: safeText(fields?.Source || "info@carotte.se", 200)
   };
 
   if (existing?._id) {
@@ -3619,19 +3703,15 @@ async function upsertLead(fields) {
     if (base.Name && !existing.Name) patch.Name = base.Name;
     if (base.Phone && !existing.Phone) patch.Phone = base.Phone;
     if (base.Company && !existing.Company) patch.Company = base.Company;
+    if (base.Source && !existing.Source) patch.Source = base.Source;
+    if (base.Description_short && !existing.Description_short) patch.Description_short = base.Description_short;
 
-    // ✅ Source: sätt bara om tomt
-    // (Bubble brukar exponera option set-fält som text i API:t, så detta funkar normalt.)
-    if (base["Source"] && !existing["Source"]) {
-      patch["Source"] = base["Source"];
-    }
-
-    // Description: om tom -> sätt, annars append
+    // Description: om tom -> sätt, annars append (med rimlig max)
     if (base.Description) {
       if (!existing.Description) {
         patch.Description = base.Description;
       } else {
-        const appended = safeText(existing.Description + "\n\n---\n\n" + base.Description, 8000);
+        const appended = safeText(String(existing.Description) + "\n\n---\n\n" + base.Description, 30000);
         patch.Description = appended;
       }
     }
@@ -3643,10 +3723,10 @@ async function upsertLead(fields) {
     return { ok: true, lead_id: existing._id, created: false };
   }
 
-  // Ny lead
   const id = await bubbleCreate("Lead", base);
   return { ok: true, lead_id: id, created: true };
 }
+
 
 // -------------------------
 // -------------------------
@@ -3923,7 +4003,7 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
         createdInbound++;
 
         // Lead upsert
-        const leadFields = extractLeadFieldsFromMessage(fullMsg);
+        const leadFields = extractLeadFieldsFromMessage(fullMsg, mailbox_upn);
         if (leadFields?.Email) {
           const up = await upsertLead(leadFields);
           if (up.ok && up.lead_id) {
