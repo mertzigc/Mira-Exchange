@@ -4835,9 +4835,7 @@ function redacted(str, keep = 4) {
 }
 
 // ────────────────────────────────────────────────────────────
-// Tengella fetch + login (fixed)
-// - tengellaFetch stödjer extra headers
-// - login skickar orgNo som JSON-string i body (enligt swagger/bild du visade)
+// Tengella fetch + login (robust)
 // ────────────────────────────────────────────────────────────
 
 async function tengellaFetch(
@@ -4847,7 +4845,7 @@ async function tengellaFetch(
     token = null,
     query = null,
     body = null,
-    headers: extraHeaders = null, // ✅ NYTT: låter dig skicka extra headers om du vill
+    headers: extraHeaders = null,
   } = {}
 ) {
   if (!TENGELLA_APP_KEY) throw new Error("Missing env TENGELLA_APP_KEY (X-TengellaApp)");
@@ -4869,16 +4867,8 @@ async function tengellaFetch(
 
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  // ✅ Body-hantering:
-  // - om body är string => skicka som JSON-string (dvs med quotes) via JSON.stringify(body)
-  // - om body är objekt => skicka som JSON via JSON.stringify(obj)
-  // - om body är null/undefined => ingen body
   const hasBody = !(body === null || body === undefined);
-  const finalBody = !hasBody
-    ? undefined
-    : typeof body === "string"
-      ? JSON.stringify(body)
-      : JSON.stringify(body);
+  const finalBody = !hasBody ? undefined : JSON.stringify(body);
 
   const res = await fetch(url.toString(), {
     method,
@@ -4894,49 +4884,49 @@ async function tengellaFetch(
     // ignore parse errors; details will fall back to text below
   }
 
-if (!res.ok) {
-  const details = json ?? text ?? null;
+  if (!res.ok) {
+    const details = json ?? (text || null);
 
-  const errPayload = {
-    status: res.status,
-    statusText: res.statusText,
-    url: url.toString(),
-    path: url.pathname,
-    // ta med lite headers som ibland berättar vad som hänt
-    contentType: res.headers.get("content-type"),
-    cfRay: res.headers.get("cf-ray"),
-    // body (kan vara tom)
-    bodyText: text || null,
-    bodyJson: json || null,
-  };
+    const errPayload = {
+      status: res.status,
+      statusText: res.statusText,
+      url: url.toString(),
+      path: url.pathname,
+      contentType: res.headers.get("content-type"),
+      cfRay: res.headers.get("cf-ray"),
+      bodyText: text || null,
+      bodyJson: json || null,
+    };
 
-  const err = new Error(
-    `Tengella ${method} ${url.pathname} failed (${res.status}): ` +
-      (details
-        ? (typeof details === "string" ? details : JSON.stringify(details))
-        : `EMPTY_BODY (${res.statusText || "no statusText"})`)
-  );
+    const err = new Error(
+      `Tengella ${method} ${url.pathname} failed (${res.status}): ` +
+        (details
+          ? (typeof details === "string" ? details : JSON.stringify(details))
+          : `EMPTY_BODY (${res.statusText || "no statusText"})`)
+    );
 
-  err.status = res.status;
-  err.details = details || errPayload;  // ✅ nu får du alltid något användbart
-  throw err;
+    err.status = res.status;
+    err.details = details || errPayload;
+    throw err;
+  }
+
+  return json;
 }
 
 async function tengellaLogin(orgNo, opts = {}) {
   if (!orgNo) throw new Error('Missing orgNo for Tengella login (ex: "746-0509")');
 
-  // Credentials (lägg i Render env):
-  // TENGELLA_USERNAME = 746-0509
-  // TENGELLA_USER_API_KEY = <din långa nyckel>
-  const username = pick(process.env.TENGELLA_USERNAME, process.env.TENGELLA_USER, opts.username) || null;
-  const apiKey = pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
+  const username =
+    pick(process.env.TENGELLA_USERNAME, process.env.TENGELLA_USER, opts.username) || null;
 
-  // Vi provar först "objekt-varianten" (vanligast)
+  const apiKey =
+    pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
+
+  // 1) Försök objektpayload om creds finns (vanligast)
   if (username && apiKey) {
     const payloadA = {
       Username: String(username).trim(),
       ApiKey: String(apiKey).trim(),
-      // vissa behöver detta, vissa ignorerar:
       CompanyNo: String(orgNo).trim(),
     };
 
@@ -4949,16 +4939,21 @@ async function tengellaLogin(orgNo, opts = {}) {
       const tokenA = pick(dataA?.access_token, dataA?.accessToken, dataA?.token, dataA?.Token);
       if (tokenA) return tokenA;
 
-      throw new Error(`Tengella login (object) returned no token. Keys: ${Object.keys(dataA || {}).join(", ")}`);
+      throw new Error(
+        `Tengella login (object) returned no token. Keys: ${Object.keys(dataA || {}).join(", ")}`
+      );
     } catch (e) {
       // Om det INTE är 400, kasta vidare direkt
       if (e?.status && Number(e.status) !== 400) throw e;
-      // annars fall through till string-varianten nedan
-      console.warn("[tengellaLogin] object payload failed, trying string payload. Details:", e?.details || e?.message || e);
+
+      console.warn(
+        "[tengellaLogin] object payload failed, trying string payload. Details:",
+        e?.details || e?.message || e
+      );
     }
   }
 
-  // Fallback: "string-varianten" (om deras swagger faktiskt menade JSON-string)
+  // 2) Fallback: stringpayload
   const dataB = await tengellaFetch(`/v2/Login`, {
     method: "POST",
     body: String(orgNo).trim(),
@@ -4966,7 +4961,9 @@ async function tengellaLogin(orgNo, opts = {}) {
 
   const tokenB = pick(dataB?.access_token, dataB?.accessToken, dataB?.token, dataB?.Token);
   if (!tokenB) {
-    throw new Error(`Tengella login returned no token. Keys present: ${Object.keys(dataB || {}).join(", ")}`);
+    throw new Error(
+      `Tengella login returned no token. Keys present: ${Object.keys(dataB || {}).join(", ")}`
+    );
   }
 
   return tokenB;
