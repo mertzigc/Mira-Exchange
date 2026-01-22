@@ -4912,42 +4912,52 @@ async function tengellaFetch(
 async function tengellaLogin(orgNo, opts = {}) {
   if (!orgNo) throw new Error('Missing orgNo for Tengella login (ex: "746-0509")');
 
-  // ✅ Viktigt: enligt swagger/bild du visade vill /public/v2/Login ha en JSON-string body
-  // dvs body = "746-0509" (som JSON blir "\"746-0509\"")
-  const data = await tengellaFetch(`/v2/Login`, {
+  // Credentials (lägg i Render env):
+  // TENGELLA_USERNAME = 746-0509
+  // TENGELLA_USER_API_KEY = <din långa nyckel>
+  const username = pick(process.env.TENGELLA_USERNAME, process.env.TENGELLA_USER, opts.username) || null;
+  const apiKey = pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
+
+  // Vi provar först "objekt-varianten" (vanligast)
+  if (username && apiKey) {
+    const payloadA = {
+      Username: String(username).trim(),
+      ApiKey: String(apiKey).trim(),
+      // vissa behöver detta, vissa ignorerar:
+      CompanyNo: String(orgNo).trim(),
+    };
+
+    try {
+      const dataA = await tengellaFetch(`/v2/Login`, {
+        method: "POST",
+        body: payloadA,
+      });
+
+      const tokenA = pick(dataA?.access_token, dataA?.accessToken, dataA?.token, dataA?.Token);
+      if (tokenA) return tokenA;
+
+      throw new Error(`Tengella login (object) returned no token. Keys: ${Object.keys(dataA || {}).join(", ")}`);
+    } catch (e) {
+      // Om det INTE är 400, kasta vidare direkt
+      if (e?.status && Number(e.status) !== 400) throw e;
+      // annars fall through till string-varianten nedan
+      console.warn("[tengellaLogin] object payload failed, trying string payload. Details:", e?.details || e?.message || e);
+    }
+  }
+
+  // Fallback: "string-varianten" (om deras swagger faktiskt menade JSON-string)
+  const dataB = await tengellaFetch(`/v2/Login`, {
     method: "POST",
     body: String(orgNo).trim(),
   });
 
-  // Stöd olika token-nycklar
-  const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token);
-  if (!token) {
-    throw new Error(
-      `Tengella login returned no token. Keys present: ${Object.keys(data || {}).join(", ")}`
-    );
+  const tokenB = pick(dataB?.access_token, dataB?.accessToken, dataB?.token, dataB?.Token);
+  if (!tokenB) {
+    throw new Error(`Tengella login returned no token. Keys present: ${Object.keys(dataB || {}).join(", ")}`);
   }
 
-  return token;
+  return tokenB;
 }
-
-function normalizeBool(v) {
-  if (typeof v === "boolean") return v;
-  if (typeof v === "number") return v !== 0;
-  const s = String(v || "").toLowerCase().trim();
-  if (!s) return false;
-  return ["true", "yes", "1"].includes(s);
-}
-
-function safeJsonStringify(obj, maxLen = 250000) {
-  try {
-    const s = JSON.stringify(obj ?? null);
-    if (s && s.length > maxLen) return s.slice(0, maxLen) + "…";
-    return s;
-  } catch {
-    return "";
-  }
-}
-
 async function upsertTengellaWorkorderToBubble(workOrder, { bubbleCompanyId = null, bubbleCommissionId = null, parsedCommissionUid = "", saveRowsJson = true } = {}) {
   // Bubble type: TengellaWorkorder (per your screenshot)
   const type = "TengellaWorkorder";
