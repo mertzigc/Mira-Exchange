@@ -4922,7 +4922,7 @@ async function tengellaLogin(orgNo, opts = {}) {
   const apiKey =
     pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
 
-  // 1) Försök objektpayload om creds finns (vanligast)
+  // 1) Försök objektpayload (om din installation stödjer det)
   if (username && apiKey) {
     const payloadA = {
       Username: String(username).trim(),
@@ -4938,34 +4938,42 @@ async function tengellaLogin(orgNo, opts = {}) {
 
       const tokenA = pick(dataA?.access_token, dataA?.accessToken, dataA?.token, dataA?.Token);
       if (tokenA) return tokenA;
-
-      throw new Error(
-        `Tengella login (object) returned no token. Keys: ${Object.keys(dataA || {}).join(", ")}`
-      );
     } catch (e) {
-      // Om det INTE är 400, kasta vidare direkt
       if (e?.status && Number(e.status) !== 400) throw e;
-
-      console.warn(
-        "[tengellaLogin] object payload failed, trying string payload. Details:",
-        e?.details || e?.message || e
-      );
+      console.warn("[tengellaLogin] object payload failed, trying raw string payload:", e?.details || e?.message || e);
     }
   }
 
-  // 2) Fallback: stringpayload
-  const dataB = await tengellaFetch(`/v2/Login`, {
-    method: "POST",
-    body: String(orgNo).trim(),
-  });
+  // 2) Fallback: text/plain (rå orgNo utan JSON-citat)
+  // OBS: här får vi INTE JSON.stringify, så vi skickar body som raw string.
+  const dataB = await (async () => {
+    const url = `${TENGELLA_BASE_URL}/v2/Login`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain",
+        "X-TengellaApp": TENGELLA_APP_KEY,
+      },
+      body: String(orgNo).trim(),
+    });
+
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch {}
+
+    if (!res.ok) {
+      const err = new Error(`Tengella POST /v2/Login failed (${res.status}): ${text || "EMPTY_BODY"} (${res.statusText})`);
+      err.status = res.status;
+      err.details = { status: res.status, statusText: res.statusText, url, bodyText: text || null, bodyJson: json || null };
+      throw err;
+    }
+    return json;
+  })();
 
   const tokenB = pick(dataB?.access_token, dataB?.accessToken, dataB?.token, dataB?.Token);
   if (!tokenB) {
-    throw new Error(
-      `Tengella login returned no token. Keys present: ${Object.keys(dataB || {}).join(", ")}`
-    );
+    throw new Error(`Tengella login returned no token. Keys present: ${Object.keys(dataB || {}).join(", ")}`);
   }
-
   return tokenB;
 }
 async function upsertTengellaWorkorderToBubble(workOrder, { bubbleCompanyId = null, bubbleCommissionId = null, parsedCommissionUid = "", saveRowsJson = true } = {}) {
