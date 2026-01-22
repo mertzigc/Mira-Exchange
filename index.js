@@ -4914,7 +4914,7 @@ async function tengellaLogin(orgNo, opts = {}) {
 
   // ✅ Viktigt: enligt swagger/bild du visade vill /public/v2/Login ha en JSON-string body
   // dvs body = "746-0509" (som JSON blir "\"746-0509\"")
-  const data = await tengellaFetch(`/public/v2/Login`, {
+  const data = await tengellaFetch(`/v2/Login`, {
     method: "POST",
     body: String(orgNo).trim(),
   });
