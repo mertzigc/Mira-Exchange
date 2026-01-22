@@ -4834,10 +4834,26 @@ function redacted(str, keep = 4) {
   return s.slice(0, keep) + "…" + s.slice(-keep);
 }
 
-async function tengellaFetch(path, { method = "GET", token = null, query = null, body = null } = {}) {
+// ────────────────────────────────────────────────────────────
+// Tengella fetch + login (fixed)
+// - tengellaFetch stödjer extra headers
+// - login skickar orgNo som JSON-string i body (enligt swagger/bild du visade)
+// ────────────────────────────────────────────────────────────
+
+async function tengellaFetch(
+  path,
+  {
+    method = "GET",
+    token = null,
+    query = null,
+    body = null,
+    headers: extraHeaders = null, // ✅ NYTT: låter dig skicka extra headers om du vill
+  } = {}
+) {
   if (!TENGELLA_APP_KEY) throw new Error("Missing env TENGELLA_APP_KEY (X-TengellaApp)");
 
   const url = new URL(path.startsWith("http") ? path : `${TENGELLA_BASE_URL}${path}`);
+
   if (query && typeof query === "object") {
     for (const [k, v] of Object.entries(query)) {
       if (v === null || v === undefined || v === "") continue;
@@ -4847,23 +4863,44 @@ async function tengellaFetch(path, { method = "GET", token = null, query = null,
 
   const headers = {
     "Content-Type": "application/json",
-    "X-TengellaApp": TENGELLA_APP_KEY
+    "X-TengellaApp": TENGELLA_APP_KEY,
+    ...(extraHeaders && typeof extraHeaders === "object" ? extraHeaders : {}),
   };
+
   if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  // ✅ Body-hantering:
+  // - om body är string => skicka som JSON-string (dvs med quotes) via JSON.stringify(body)
+  // - om body är objekt => skicka som JSON via JSON.stringify(obj)
+  // - om body är null/undefined => ingen body
+  const hasBody = !(body === null || body === undefined);
+  const finalBody = !hasBody
+    ? undefined
+    : typeof body === "string"
+      ? JSON.stringify(body)
+      : JSON.stringify(body);
 
   const res = await fetch(url.toString(), {
     method,
     headers,
-    body: body === null || body === undefined ? undefined : JSON.stringify(body)
+    body: finalBody,
   });
 
   const text = await res.text();
   let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // ignore parse errors; details will fall back to text below
+  }
 
   if (!res.ok) {
     const details = json || text || `HTTP ${res.status}`;
-    const err = new Error(`Tengella ${method} ${url.pathname} failed (${res.status}): ${typeof details === "string" ? details : JSON.stringify(details)}`);
+    const err = new Error(
+      `Tengella ${method} ${url.pathname} failed (${res.status}): ${
+        typeof details === "string" ? details : JSON.stringify(details)
+      }`
+    );
     err.status = res.status;
     err.details = details;
     throw err;
@@ -4872,14 +4909,24 @@ async function tengellaFetch(path, { method = "GET", token = null, query = null,
   return json;
 }
 
-async function tengellaLogin(orgNo) {
-  if (!orgNo) throw new Error("Missing orgNo for Tengella login (ex: 746-0509)");
-  // Swagger shows body is a JSON string, not an object.
-  // We pass body as string by using JSON.stringify(body) in tengellaFetch.
-  const data = await tengellaFetch(`/v2/Login`, { method: "POST", body: String(orgNo) });
-  // Some APIs return { access_token }, others { accessToken }. We support both.
-  const token = pick(data?.access_token, data?.accessToken, data?.token);
-  if (!token) throw new Error(`Tengella login returned no token. Keys present: ${Object.keys(data || {}).join(", ")}`);
+async function tengellaLogin(orgNo, opts = {}) {
+  if (!orgNo) throw new Error('Missing orgNo for Tengella login (ex: "746-0509")');
+
+  // ✅ Viktigt: enligt swagger/bild du visade vill /public/v2/Login ha en JSON-string body
+  // dvs body = "746-0509" (som JSON blir "\"746-0509\"")
+  const data = await tengellaFetch(`/public/v2/Login`, {
+    method: "POST",
+    body: String(orgNo).trim(),
+  });
+
+  // Stöd olika token-nycklar
+  const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token);
+  if (!token) {
+    throw new Error(
+      `Tengella login returned no token. Keys present: ${Object.keys(data || {}).join(", ")}`
+    );
+  }
+
   return token;
 }
 
