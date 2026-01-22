@@ -4903,9 +4903,17 @@ async function tengellaFetch(
 
   return json;
 }
-
-// ────────────────────────────────────────────────────────────
-// Tengella login (tries common JSON payload variants)
+app.post("/tengella/auth/test", async (req, res) => {
+  try {
+    const token = await tengellaLogin(req.body?.orgNo, {
+      username: req.body?.username,
+      apiKey: req.body?.apiKey,
+    });
+    res.json({ ok: true, token_preview: token ? token.slice(0, 12) + "..." : null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e), details: e?.details || null });
+  }
+});
 // ────────────────────────────────────────────────────────────
 async function tengellaLogin(orgNo, opts = {}) {
   if (!orgNo) throw new Error('Missing orgNo for Tengella login (ex: "746-0509")');
@@ -4917,52 +4925,96 @@ async function tengellaLogin(orgNo, opts = {}) {
     pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
 
   if (!username || !apiKey) {
-    throw new Error("Missing Tengella credentials. Set TENGELLA_USERNAME and TENGELLA_USER_API_KEY in Render env.");
+    throw new Error(
+      "Missing Tengella credentials. Set TENGELLA_USERNAME + TENGELLA_USER_API_KEY in Render env."
+    );
   }
 
   const u = String(username).trim();
   const k = String(apiKey).trim();
   const c = String(orgNo).trim();
 
-  const candidates = [
+  // Basic auth header (mycket vanligt i “username + apiKey -> jwt” upplägg)
+  const basic = Buffer.from(`${u}:${k}`, "utf8").toString("base64");
+  const authHeader = { Authorization: `Basic ${basic}` };
+
+  // Olika varianter på body (vi provar objekt först; vissa system kräver CompanyNo)
+  const jsonBodies = [
     { Username: u, ApiKey: k, CompanyNo: c },
-    { Username: u, Password: k, CompanyNo: c },
-    { UserName: u, ApiKey: k, CompanyNo: c },
-    { username: u, apiKey: k, companyNo: c },
-    { username: u, password: k, companyNo: c },
     { Username: u, ApiKey: k },
+    { username: u, apiKey: k, companyNo: c },
     { username: u, apiKey: k },
+    { UserName: u, ApiKey: k, CompanyNo: c },
+    { UserName: u, ApiKey: k },
+    // ibland heter nyckeln "Key"
+    { Username: u, Key: k, CompanyNo: c },
+    { Username: u, Key: k },
   ];
 
+  // Viktigt: deras doc hintar “/Identity/*”
+  const paths = [
+    "/Identity/Login",
+    "/Identity/Token",
+    "/Identity/Jwt",
+    "/Identity/GetToken",
+    "/v2/Login",
+  ];
+
+  // För varje path: prova (A) JSON-body, (B) BasicAuth + ev tom body
   let lastErr = null;
 
-  for (let i = 0; i < candidates.length; i++) {
-    const payload = candidates[i];
+  for (const path of paths) {
+    // A) JSON bodies
+    for (let i = 0; i < jsonBodies.length; i++) {
+      try {
+        const data = await tengellaFetch(path, {
+          method: "POST",
+          body: jsonBodies[i],
+        });
+
+        const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token, data?.jwt, data?.Jwt);
+        if (token) return token;
+
+        // ibland ligger token inuti { Data: { Token: ... } }
+        const token2 = pick(data?.Data?.Token, data?.Data?.token, data?.data?.token);
+        if (token2) return token2;
+
+        throw new Error(
+          `Tengella login OK but no token. Keys: ${Object.keys(data || {}).join(", ")}`
+        );
+      } catch (e) {
+        lastErr = e;
+        // 401/403 = helt fel creds/appkey -> avbryt direkt
+        if (e?.status && [401, 403].includes(Number(e.status))) throw e;
+        // annars prova nästa variant
+      }
+    }
+
+    // B) Basic auth (ibland kräver de INGEN body, bara header)
     try {
-      const data = await tengellaFetch(`/v2/Login`, {
+      const data = await tengellaFetch(path, {
         method: "POST",
-        body: payload,
+        body: {}, // skicka tomt JSON-objekt för att undvika 415/text/plain
+        headers: authHeader,
       });
 
-      const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token);
+      const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token, data?.jwt, data?.Jwt);
       if (token) return token;
 
+      const token2 = pick(data?.Data?.Token, data?.Data?.token, data?.data?.token);
+      if (token2) return token2;
+
       throw new Error(
-        `Tengella login candidate #${i + 1} returned no token. Keys: ${Object.keys(data || {}).join(", ")}`
+        `Tengella basic-auth login OK but no token. Keys: ${Object.keys(data || {}).join(", ")}`
       );
     } catch (e) {
       lastErr = e;
-
-      // creds/appkey fel -> ofta 401/403, då är det ingen idé att fortsätta
       if (e?.status && [401, 403].includes(Number(e.status))) throw e;
-
-      console.warn(`[tengellaLogin] candidate #${i + 1} failed`, e?.status || "", e?.message || e);
     }
   }
 
-  throw lastErr || new Error("Tengella login failed for all payload candidates");
+  throw lastErr || new Error("Tengella login failed (no working path/payload found)");
 }
-
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: WorkOrder
 // ────────────────────────────────────────────────────────────
