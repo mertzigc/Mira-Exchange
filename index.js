@@ -4894,19 +4894,32 @@ async function tengellaFetch(
     // ignore parse errors; details will fall back to text below
   }
 
-  if (!res.ok) {
-    const details = json || text || `HTTP ${res.status}`;
-    const err = new Error(
-      `Tengella ${method} ${url.pathname} failed (${res.status}): ${
-        typeof details === "string" ? details : JSON.stringify(details)
-      }`
-    );
-    err.status = res.status;
-    err.details = details;
-    throw err;
-  }
+if (!res.ok) {
+  const details = json ?? text ?? null;
 
-  return json;
+  const errPayload = {
+    status: res.status,
+    statusText: res.statusText,
+    url: url.toString(),
+    path: url.pathname,
+    // ta med lite headers som ibland berättar vad som hänt
+    contentType: res.headers.get("content-type"),
+    cfRay: res.headers.get("cf-ray"),
+    // body (kan vara tom)
+    bodyText: text || null,
+    bodyJson: json || null,
+  };
+
+  const err = new Error(
+    `Tengella ${method} ${url.pathname} failed (${res.status}): ` +
+      (details
+        ? (typeof details === "string" ? details : JSON.stringify(details))
+        : `EMPTY_BODY (${res.statusText || "no statusText"})`)
+  );
+
+  err.status = res.status;
+  err.details = details || errPayload;  // ✅ nu får du alltid något användbart
+  throw err;
 }
 
 async function tengellaLogin(orgNo, opts = {}) {
