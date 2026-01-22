@@ -4826,9 +4826,6 @@ function redacted(str, keep = 4) {
   return s.slice(0, keep) + "…" + s.slice(-keep);
 }
 
-// ────────────────────────────────────────────────────────────
-// Tengella fetch
-// ────────────────────────────────────────────────────────────
 async function tengellaFetch(
   path,
   {
@@ -4837,9 +4834,10 @@ async function tengellaFetch(
     query = null,
     body = null,
     headers: extraHeaders = null,
+    contentType = "application/json",
   } = {}
 ) {
-  if (!TENGELLA_APP_KEY) throw new Error("Missing env TENGELLA_APP_KEY (X-TengellaApp)");
+  if (!TENGELLA_APP_KEY) throw new Error("Missing env TENGELLA_APP_KEY (Tengella ApiKey header)");
 
   const url = new URL(path.startsWith("http") ? path : `${TENGELLA_BASE_URL}${path}`);
 
@@ -4851,169 +4849,68 @@ async function tengellaFetch(
   }
 
   const headers = {
-    "Content-Type": "application/json",
-    "X-TengellaApp": TENGELLA_APP_KEY,
+    "Content-Type": contentType,
+    // ✅ VIKTIGT: exakt som i Bubble
+    "X-TengellaApiKey": TENGELLA_APP_KEY,
     ...(extraHeaders && typeof extraHeaders === "object" ? extraHeaders : {}),
   };
 
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const hasBody = !(body === null || body === undefined);
-  const finalBody = !hasBody ? undefined : JSON.stringify(body);
+  const finalBody = !hasBody ? undefined : (typeof body === "string" ? body : JSON.stringify(body));
 
-  const res = await fetch(url.toString(), {
-    method,
-    headers,
-    body: finalBody,
-  });
+  const res = await fetch(url.toString(), { method, headers, body: finalBody });
 
   const text = await res.text();
   let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // ignore
-  }
+  try { json = text ? JSON.parse(text) : null; } catch {}
 
   if (!res.ok) {
-    const details = json ?? (text || null);
-
-    const errPayload = {
+    const err = new Error(
+      `Tengella ${method} ${url.pathname} failed (${res.status}): ` +
+      (json ? JSON.stringify(json) : (text || `EMPTY_BODY (${res.statusText})`))
+    );
+    err.status = res.status;
+    err.details = {
       status: res.status,
       statusText: res.statusText,
       url: url.toString(),
-      path: url.pathname,
-      contentType: res.headers.get("content-type"),
-      cfRay: res.headers.get("cf-ray"),
+      sentContentType: headers["Content-Type"],
       bodyText: text || null,
       bodyJson: json || null,
     };
-
-    const err = new Error(
-      `Tengella ${method} ${url.pathname} failed (${res.status}): ` +
-        (details
-          ? (typeof details === "string" ? details : JSON.stringify(details))
-          : `EMPTY_BODY (${res.statusText || "no statusText"})`)
-    );
-
-    err.status = res.status;
-    err.details = details || errPayload;
     throw err;
   }
 
-  return json;
+  return json ?? text ?? null;
 }
-app.post("/tengella/auth/test", async (req, res) => {
-  try {
-    const token = await tengellaLogin(req.body?.orgNo, {
-      username: req.body?.username,
-      apiKey: req.body?.apiKey,
-    });
-    res.json({ ok: true, token_preview: token ? token.slice(0, 12) + "..." : null });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || String(e), details: e?.details || null });
-  }
-});
-// ────────────────────────────────────────────────────────────
-async function tengellaLogin(orgNo, opts = {}) {
+
+async function tengellaLogin(orgNo) {
   if (!orgNo) throw new Error('Missing orgNo for Tengella login (ex: "746-0509")');
 
-  const username =
-    pick(process.env.TENGELLA_USERNAME, process.env.TENGELLA_USER, opts.username) || null;
+  // ✅ Exakt som i Bubble: Body är en JSON-string => måste vara med citattecken
+  // dvs skickas som: "746-0509"
+  const body = JSON.stringify(String(orgNo).trim());
 
-  const apiKey =
-    pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
+  // ✅ Exakt path/case som i Bubble
+  const data = await tengellaFetch(`/v2/login`, {
+    method: "POST",
+    // vi skickar redan stringify:ad JSON-string (inkl quotes), så här vill vi INTE stringify:a igen
+    body,
+    contentType: "application/json",
+  });
 
-  if (!username || !apiKey) {
-    throw new Error(
-      "Missing Tengella credentials. Set TENGELLA_USERNAME + TENGELLA_USER_API_KEY in Render env."
-    );
+  // Stöd flera varianter: kan vara {Token:"..."} eller {token:"..."} eller ren string
+  const token =
+    (typeof data === "string" ? data : null) ||
+    pick(data?.Token, data?.token, data?.access_token, data?.accessToken);
+
+  if (!token) {
+    throw new Error(`Tengella login returned no token. Response keys: ${typeof data === "object" && data ? Object.keys(data).join(", ") : typeof data}`);
   }
 
-  const u = String(username).trim();
-  const k = String(apiKey).trim();
-  const c = String(orgNo).trim();
-
-  // Basic auth header (mycket vanligt i “username + apiKey -> jwt” upplägg)
-  const basic = Buffer.from(`${u}:${k}`, "utf8").toString("base64");
-  const authHeader = { Authorization: `Basic ${basic}` };
-
-  // Olika varianter på body (vi provar objekt först; vissa system kräver CompanyNo)
-  const jsonBodies = [
-    { Username: u, ApiKey: k, CompanyNo: c },
-    { Username: u, ApiKey: k },
-    { username: u, apiKey: k, companyNo: c },
-    { username: u, apiKey: k },
-    { UserName: u, ApiKey: k, CompanyNo: c },
-    { UserName: u, ApiKey: k },
-    // ibland heter nyckeln "Key"
-    { Username: u, Key: k, CompanyNo: c },
-    { Username: u, Key: k },
-  ];
-
-  // Viktigt: deras doc hintar “/Identity/*”
-  const paths = [
-    "/Identity/Login",
-    "/Identity/Token",
-    "/Identity/Jwt",
-    "/Identity/GetToken",
-    "/v2/Login",
-  ];
-
-  // För varje path: prova (A) JSON-body, (B) BasicAuth + ev tom body
-  let lastErr = null;
-
-  for (const path of paths) {
-    // A) JSON bodies
-    for (let i = 0; i < jsonBodies.length; i++) {
-      try {
-        const data = await tengellaFetch(path, {
-          method: "POST",
-          body: jsonBodies[i],
-        });
-
-        const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token, data?.jwt, data?.Jwt);
-        if (token) return token;
-
-        // ibland ligger token inuti { Data: { Token: ... } }
-        const token2 = pick(data?.Data?.Token, data?.Data?.token, data?.data?.token);
-        if (token2) return token2;
-
-        throw new Error(
-          `Tengella login OK but no token. Keys: ${Object.keys(data || {}).join(", ")}`
-        );
-      } catch (e) {
-        lastErr = e;
-        // 401/403 = helt fel creds/appkey -> avbryt direkt
-        if (e?.status && [401, 403].includes(Number(e.status))) throw e;
-        // annars prova nästa variant
-      }
-    }
-
-    // B) Basic auth (ibland kräver de INGEN body, bara header)
-    try {
-      const data = await tengellaFetch(path, {
-        method: "POST",
-        body: {}, // skicka tomt JSON-objekt för att undvika 415/text/plain
-        headers: authHeader,
-      });
-
-      const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token, data?.jwt, data?.Jwt);
-      if (token) return token;
-
-      const token2 = pick(data?.Data?.Token, data?.Data?.token, data?.data?.token);
-      if (token2) return token2;
-
-      throw new Error(
-        `Tengella basic-auth login OK but no token. Keys: ${Object.keys(data || {}).join(", ")}`
-      );
-    } catch (e) {
-      lastErr = e;
-      if (e?.status && [401, 403].includes(Number(e.status))) throw e;
-    }
-  }
-
-  throw lastErr || new Error("Tengella login failed (no working path/payload found)");
+  return token;
 }
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: WorkOrder
