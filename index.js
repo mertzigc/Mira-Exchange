@@ -4798,35 +4798,27 @@ app.get("/ms/routes", (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Tengella – WorkOrders sync (Render → Tengella → Bubble Data API)
 //
-// Env:
-//   TENGELLA_APP_KEY   (header: X-TengellaApp)  [required]
+// Env (required):
+//   TENGELLA_APP_KEY          (header: X-TengellaApp)
+//   TENGELLA_USERNAME         (ex: 746-0509)
+//   TENGELLA_USER_API_KEY     (din långa API-nyckel)
+//
 // Optional:
-//   TENGELLA_BASE_URL  (default: https://api.tengella.se/public)
+//   TENGELLA_BASE_URL         (default: https://api.tengella.se/public)
 //
 // Notes:
-// - Tengella "Login" uses orgNo as a JSON string body (ex: "746-0509").
+// - Login endpoint: POST /v2/Login (requires application/json)
 // - List endpoints return { Data: [...], Next: "cursor", ExistsMoreData: true/false }.
-// - This implementation logs in per sync run (simple + robust). If you later want caching,
-//   we can store access_token in Bubble and reuse until 401.
+// - This implementation logs in per sync run.
 //
 // Routes:
+//   GET  /tengella/debug-env
 //   POST /tengella/workorders/sync
-//     Body: {
-//       orgNo: "746-0509",
-//       limit?: 100,
-//       cursor?: "....",
-//       customerId?: 123,
-//       projectId?: 456,
-//       maxPages?: 50,
-//       saveRowsJson?: true
-//     }
-//     Returns: { ok, pages, fetched, upserted, nextCursor, existsMoreData }
 // ────────────────────────────────────────────────────────────
 
 const TENGELLA_BASE_URL = pick(process.env.TENGELLA_BASE_URL, "https://api.tengella.se/public");
 const TENGELLA_APP_KEY  = pick(process.env.TENGELLA_APP_KEY);
 
-// Tiny helper: avoid accidentally logging secrets
 function redacted(str, keep = 4) {
   const s = String(str || "");
   if (!s) return "";
@@ -4835,9 +4827,8 @@ function redacted(str, keep = 4) {
 }
 
 // ────────────────────────────────────────────────────────────
-// Tengella fetch + login (robust)
+// Tengella fetch
 // ────────────────────────────────────────────────────────────
-
 async function tengellaFetch(
   path,
   {
@@ -4881,7 +4872,7 @@ async function tengellaFetch(
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    // ignore parse errors; details will fall back to text below
+    // ignore
   }
 
   if (!res.ok) {
@@ -4913,6 +4904,9 @@ async function tengellaFetch(
   return json;
 }
 
+// ────────────────────────────────────────────────────────────
+// Tengella login (tries common JSON payload variants)
+// ────────────────────────────────────────────────────────────
 async function tengellaLogin(orgNo, opts = {}) {
   if (!orgNo) throw new Error('Missing orgNo for Tengella login (ex: "746-0509")');
 
@@ -4922,29 +4916,22 @@ async function tengellaLogin(orgNo, opts = {}) {
   const apiKey =
     pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY, opts.apiKey) || null;
 
-  // Om du INTE har creds i env: kasta tydligt (så vi inte hamnar i 400-guessing)
   if (!username || !apiKey) {
     throw new Error("Missing Tengella credentials. Set TENGELLA_USERNAME and TENGELLA_USER_API_KEY in Render env.");
   }
 
+  const u = String(username).trim();
+  const k = String(apiKey).trim();
+  const c = String(orgNo).trim();
+
   const candidates = [
-    // A) PascalCase (vår första variant)
-    { Username: String(username).trim(), ApiKey: String(apiKey).trim(), CompanyNo: String(orgNo).trim() },
-
-    // B) PascalCase men Password istället för ApiKey
-    { Username: String(username).trim(), Password: String(apiKey).trim(), CompanyNo: String(orgNo).trim() },
-
-    // C) PascalCase men UserName istället för Username
-    { UserName: String(username).trim(), ApiKey: String(apiKey).trim(), CompanyNo: String(orgNo).trim() },
-
-    // D) camelCase
-    { username: String(username).trim(), apiKey: String(apiKey).trim(), companyNo: String(orgNo).trim() },
-
-    // E) camelCase med password
-    { username: String(username).trim(), password: String(apiKey).trim(), companyNo: String(orgNo).trim() },
-
-    // F) Minimal (utan companyNo)
-    { Username: String(username).trim(), ApiKey: String(apiKey).trim() },
+    { Username: u, ApiKey: k, CompanyNo: c },
+    { Username: u, Password: k, CompanyNo: c },
+    { UserName: u, ApiKey: k, CompanyNo: c },
+    { username: u, apiKey: k, companyNo: c },
+    { username: u, password: k, companyNo: c },
+    { Username: u, ApiKey: k },
+    { username: u, apiKey: k },
   ];
 
   let lastErr = null;
@@ -4960,35 +4947,34 @@ async function tengellaLogin(orgNo, opts = {}) {
       const token = pick(data?.access_token, data?.accessToken, data?.token, data?.Token);
       if (token) return token;
 
-      // om inget token men 200 – kasta med keys så vi ser vad som kom
       throw new Error(
         `Tengella login candidate #${i + 1} returned no token. Keys: ${Object.keys(data || {}).join(", ")}`
       );
     } catch (e) {
-      // spara sista fel så vi kan returnera något meningsfullt
       lastErr = e;
 
-      // Om det är 401/403 är creds/appkey fel → då är det ingen idé att prova fler payloads
-      if (e?.status && [401, 403].includes(Number(e.status))) {
-        throw e;
-      }
+      // creds/appkey fel -> ofta 401/403, då är det ingen idé att fortsätta
+      if (e?.status && [401, 403].includes(Number(e.status))) throw e;
 
-      // Annars prova nästa variant
-      console.warn(`[tengellaLogin] candidate #${i + 1} failed:`, e?.status || "", e?.message || e);
+      console.warn(`[tengellaLogin] candidate #${i + 1} failed`, e?.status || "", e?.message || e);
     }
   }
 
-  // Om alla varianter failade:
   throw lastErr || new Error("Tengella login failed for all payload candidates");
 }
-async function upsertTengellaWorkorderToBubble(workOrder, { bubbleCompanyId = null, bubbleCommissionId = null, parsedCommissionUid = "", saveRowsJson = true } = {}) {
-  // Bubble type: TengellaWorkorder (per your screenshot)
+
+// ────────────────────────────────────────────────────────────
+// Bubble upsert: WorkOrder
+// ────────────────────────────────────────────────────────────
+async function upsertTengellaWorkorderToBubble(
+  workOrder,
+  { bubbleCompanyId = null, bubbleCommissionId = null, parsedCommissionUid = "", saveRowsJson = true } = {}
+) {
   const type = "TengellaWorkorder";
 
   const workorder_id = Number(workOrder?.WorkOrderId ?? 0) || null;
   if (!workorder_id) return { ok: false, reason: "Missing WorkOrderId" };
 
-  // Find existing by workorder_id
   const existing = await bubbleFindOne(type, [
     { key: "workorder_id", constraint_type: "equals", value: workorder_id }
   ]);
@@ -4999,23 +4985,17 @@ async function upsertTengellaWorkorderToBubble(workOrder, { bubbleCompanyId = nu
     customer_id: Number(workOrder?.CustomerId ?? 0) || null,
     workorder_no: workOrder?.WorkOrderNo ?? "",
     description: workOrder?.WorkOrderDescription ?? "",
+    invoice_address_id: Number(workOrder?.InvoiceAddressId ?? 0) || null,
     work_address_id: Number(workOrder?.WorkAddressId ?? 0) || null,
     order_date: toBubbleDate(workOrder?.OrderDate),
     is_deleted: normalizeBool(workOrder?.IsDeleted),
-    internal_note: workOrder?.InternalNote ?? "",
-    // optional extras if you've created them:
     note: workOrder?.Note ?? "",
+    internal_note: workOrder?.InternalNote ?? "",
     note_for_schedule: workOrder?.NoteForSchedule ?? "",
     desired_schedule_note: workOrder?.DesiredScheduleNote ?? "",
     general_schedule_note: workOrder?.GeneralScheduleNote ?? "",
-    invoice_address_id: Number(workOrder?.InvoiceAddressId ?? 0) || null,
-    // keep rows as json text (recommended)
     workorder_rows_json: saveRowsJson ? safeJsonStringify(workOrder?.WorkOrderRows ?? []) : ""
   };
-
-  // Remove keys that don't exist in your Bubble type if needed:
-  // (Bubble Data API will reject unknown fields.)
-  // If you haven't created the optional fields, comment them out above.
 
   if (existing?.id) {
     await bubbleUpdate(type, existing.id, payload);
@@ -5026,22 +5006,17 @@ async function upsertTengellaWorkorderToBubble(workOrder, { bubbleCompanyId = nu
   }
 }
 
-// Convert Tengella ISO date string → Bubble date (JS Date)
-// Bubble accepts ISO strings via Data API, but when writing via server,
-// we keep Date objects; bubbleUpdate/bubbleCreate handles JSON serialization.
+// Bubble date helper
 function toBubbleDate(v) {
   if (!v) return null;
-  // Tengella returns ISO timestamps like "2026-01-22T13:00:55.537Z"
   const d = new Date(String(v));
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
 
-
 // ────────────────────────────────────────────────────────────
-// Tengella WorkOrderRows → Bubble upsert (real rows, not bara JSON)
-// Requires Bubble data type: TengellaWorkorderRow
-// Suggested field schema is in the chat response (match names/types).
+// Bubble upsert: WorkOrderRow
+// ────────────────────────────────────────────────────────────
 async function upsertTengellaWorkorderRowToBubble(
   row,
   { workorderBubbleId = null, workorderId = null, projectId = null, customerId = null, company = null, commission = null } = {}
@@ -5052,7 +5027,6 @@ async function upsertTengellaWorkorderRowToBubble(
   const workOrderRowId = Number(row.WorkOrderRowId ?? row.workOrderRowId ?? 0) || null;
   if (!workOrderRowId) return { ok: false, reason: "missing_workOrderRowId" };
 
-  // Unique key: workorder_row_id
   const existing = await bubbleFindOne(type, [
     { key: "workorder_row_id", constraint_type: "equals", value: workOrderRowId },
   ]);
@@ -5060,48 +5034,44 @@ async function upsertTengellaWorkorderRowToBubble(
   const payload = {
     workorder_row_id: workOrderRowId,
     workorder_id: Number(row.WorkOrderId ?? row.workOrderId ?? workorderId ?? 0) || null,
-    // Optional reference to parent workorder (field type: TengellaWorkorder)
     ...(workorderBubbleId ? { workorder: workorderBubbleId } : {}),
-    project_id: Number(projectId ?? row.ProjectId ?? row.projectId ?? 0) || null,
-    customer_id: Number(customerId ?? row.CustomerId ?? row.customerId ?? 0) || null,
+    project_id: Number(projectId ?? 0) || null,
+    customer_id: Number(customerId ?? 0) || null,
 
-    item_id: Number(row.ItemId ?? row.itemId ?? 0) || null,
-    item_no: row.ItemNo ?? row.itemNo ?? null,
-    item_name: row.ItemName ?? row.itemName ?? null,
+    item_id: Number(row.ItemId ?? 0) || null,
+    item_no: row.ItemNo ?? null,
+    item_name: row.ItemName ?? null,
 
-    quantity: Number(row.Quantity ?? row.quantity ?? 0) || null,
-    note: row.Note ?? row.note ?? null,
+    quantity: Number(row.Quantity ?? 0) || null,
+    note: row.Note ?? null,
 
-    price: Number(row.Price ?? row.price ?? 0) || null,
-    cost_price: Number(row.CostPrice ?? row.costPrice ?? 0) || null,
-    total_cost_price: Number(row.TotalCostPrice ?? row.totalCostPrice ?? 0) || null,
+    price: Number(row.Price ?? 0) || null,
+    cost_price: Number(row.CostPrice ?? 0) || null,
+    total_cost_price: Number(row.TotalCostPrice ?? 0) || null,
 
-    invoiced: normalizeBool(row.Invoiced ?? row.invoiced),
-    workorder_row_invoice_status_id: Number(row.WorkOrderRowInvoiceStatusId ?? row.workOrderRowInvoiceStatusId ?? 0) || null,
-    approx_working_time: Number(row.ApproxWorkingTime ?? row.approxWorkingTime ?? 0) || null,
-    material_to_project_row_id: Number(row.MaterialToProjectRowId ?? row.materialToProjectRowId ?? 0) || null,
-    desired_schedule_is_handled: normalizeBool(row.DesiredScheduleIsHandled ?? row.desiredScheduleIsHandled),
-    item_invoice_type_id: Number(row.ItemInvoiceTypeId ?? row.itemInvoiceTypeId ?? 0) || null,
-    invoice_status_change_datetime: toBubbleDate(row.WorkOrderRowInvoiceStatusChangeDatetime ?? row.workOrderRowInvoiceStatusChangeDatetime),
-    cant_be_scheduled: normalizeBool(row.CantBeScheduled ?? row.cantBeScheduled),
-    time_spent_for_tax_reduction: Number(row.TimeSpentForTaxReduction ?? row.timeSpentForTaxReduction ?? 0) || null,
-    unit_of_measure_id: Number(row.UnitOfMeasureId ?? row.unitOfMeasureId ?? 0) || null,
-    allowed_minutes: Number(row.AllowedMinutes ?? row.allowedMinutes ?? 0) || null,
-    order_by: Number(row.OrderBy ?? row.orderBy ?? 0) || null,
-    workorder_rounding_id: Number(row.WorkOrderRoundingId ?? row.workOrderRoundingId ?? 0) || null,
-    approved_working_time: Number(row.ApprovedWorkingTime ?? row.approvedWorkingTime ?? 0) || null,
-    first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart ?? row.firstTimeTableEventStart),
-    last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart ?? row.lastTimeTableEventStart),
+    invoiced: normalizeBool(row.Invoiced),
+    workorder_row_invoice_status_id: Number(row.WorkOrderRowInvoiceStatusId ?? 0) || null,
+    approx_working_time: Number(row.ApproxWorkingTime ?? 0) || null,
+    material_to_project_row_id: Number(row.MaterialToProjectRowId ?? 0) || null,
+    desired_schedule_is_handled: normalizeBool(row.DesiredScheduleIsHandled),
+    item_invoice_type_id: Number(row.ItemInvoiceTypeId ?? 0) || null,
+    invoice_status_change_datetime: toBubbleDate(row.WorkOrderRowInvoiceStatusChangeDatetime),
+    cant_be_scheduled: normalizeBool(row.CantBeScheduled),
+    time_spent_for_tax_reduction: Number(row.TimeSpentForTaxReduction ?? 0) || null,
+    unit_of_measure_id: Number(row.UnitOfMeasureId ?? 0) || null,
+    allowed_minutes: Number(row.AllowedMinutes ?? 0) || null,
+    order_by: Number(row.OrderBy ?? 0) || null,
+    workorder_rounding_id: Number(row.WorkOrderRoundingId ?? 0) || null,
+    approved_working_time: Number(row.ApprovedWorkingTime ?? 0) || null,
+    first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart),
+    last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart),
 
-    // Optional links
     ...(company ? { company } : {}),
     ...(commission ? { commission } : {}),
 
-    // Debug
     raw_json: safeJsonStringify(row),
   };
 
-  // Remove undefined (Bubble gillar null men inte undefined)
   Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
   if (existing?.id) {
@@ -5113,6 +5083,9 @@ async function upsertTengellaWorkorderRowToBubble(
   }
 }
 
+// ────────────────────────────────────────────────────────────
+// Tengella list WorkOrders
+// ────────────────────────────────────────────────────────────
 async function listTengellaWorkOrders({ token, limit = 100, cursor = null, customerId = null, projectId = null } = {}) {
   return tengellaFetch(`/v2/WorkOrders`, {
     method: "GET",
@@ -5121,15 +5094,23 @@ async function listTengellaWorkOrders({ token, limit = 100, cursor = null, custo
   });
 }
 
+// ────────────────────────────────────────────────────────────
+// Debug env
+// ────────────────────────────────────────────────────────────
 app.get("/tengella/debug-env", (req, res) => {
   res.json({
     ok: true,
+    base_url: TENGELLA_BASE_URL,
     has_app_key: !!TENGELLA_APP_KEY,
     app_key_preview: TENGELLA_APP_KEY ? redacted(TENGELLA_APP_KEY, 6) : null,
-    base_url: TENGELLA_BASE_URL
+    has_username: !!pick(process.env.TENGELLA_USERNAME, process.env.TENGELLA_USER),
+    has_user_api_key: !!pick(process.env.TENGELLA_USER_API_KEY, process.env.TENGELLA_API_KEY),
   });
 });
 
+// ────────────────────────────────────────────────────────────
+// Sync endpoint
+// ────────────────────────────────────────────────────────────
 app.post("/tengella/workorders/sync", async (req, res) => {
   try {
     const orgNo = req.body?.orgNo;
@@ -5138,18 +5119,21 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     const customerId = req.body?.customerId ?? null;
     const projectId = req.body?.projectId ?? null;
     const maxPages = Number(req.body?.maxPages ?? 50) || 50;
-    const saveRowsJson = req.body?.saveRowsJson === undefined ? true : normalizeBool(req.body?.saveRowsJson);
-    const upsertRows = req.body?.upsertRows === undefined ? true : normalizeBool(req.body?.upsertRows);
 
-    // Optional Bubble references (only used if fields exist on TengellaWorkorder)
-    const bubbleCompanyId = req.body?.bubbleCompanyId ?? null; // ex: Bubble thing id of ClientCompany
-    const bubbleCommissionId = req.body?.bubbleCommissionId ?? null; // ex: Bubble thing id of Commission
+    const saveRowsJson =
+      req.body?.saveRowsJson === undefined ? true : normalizeBool(req.body?.saveRowsJson);
+
+    const upsertRows =
+      req.body?.upsertRows === undefined ? true : normalizeBool(req.body?.upsertRows);
+
+    const bubbleCompanyId = req.body?.bubbleCompanyId ?? null;
+    const bubbleCommissionId = req.body?.bubbleCommissionId ?? null;
     const parsedCommissionUid = req.body?.parsedCommissionUid ?? "";
 
     const token = await tengellaLogin(orgNo, {
-  username: req.body?.username,
-  apiKey: req.body?.apiKey,
-});
+      username: req.body?.username,
+      apiKey: req.body?.apiKey,
+    });
 
     let page = 0;
     let nextCursor = cursor;
@@ -5164,13 +5148,25 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     while (existsMoreData && page < maxPages) {
       page += 1;
 
-      const resp = await listTengellaWorkOrders({ token, limit, cursor: nextCursor, customerId, projectId });
+      const resp = await listTengellaWorkOrders({
+        token,
+        limit,
+        cursor: nextCursor,
+        customerId,
+        projectId
+      });
 
       const data = Array.isArray(resp?.Data) ? resp.Data : [];
       fetched += data.length;
 
       for (const wo of data) {
-        const result = await upsertTengellaWorkorderToBubble(wo, { bubbleCompanyId, bubbleCommissionId, parsedCommissionUid, saveRowsJson });
+        const result = await upsertTengellaWorkorderToBubble(wo, {
+          bubbleCompanyId,
+          bubbleCommissionId,
+          parsedCommissionUid,
+          saveRowsJson
+        });
+
         if (result?.ok) {
           upserted += 1;
 
@@ -5185,6 +5181,7 @@ app.post("/tengella/workorders/sync", async (req, res) => {
                   company: bubbleCompanyId,
                   commission: bubbleCommissionId,
                 });
+
                 if (rr?.ok) workorderRowsUpserted += 1;
                 else {
                   workorderRowsErrors += 1;
@@ -5228,5 +5225,4 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     });
   }
 });
-
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
