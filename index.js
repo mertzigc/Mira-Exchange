@@ -5133,7 +5133,10 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     const bubbleCommissionId = req.body?.bubbleCommissionId ?? null; // ex: Bubble thing id of Commission
     const parsedCommissionUid = req.body?.parsedCommissionUid ?? "";
 
-    const token = await tengellaLogin(orgNo);
+    const token = await tengellaLogin(orgNo, {
+  username: req.body?.username,
+  apiKey: req.body?.apiKey,
+});
 
     let page = 0;
     let nextCursor = cursor;
