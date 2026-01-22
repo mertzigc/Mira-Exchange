@@ -4957,6 +4957,82 @@ function toBubbleDate(v) {
   return d.toISOString();
 }
 
+
+// ────────────────────────────────────────────────────────────
+// Tengella WorkOrderRows → Bubble upsert (real rows, not bara JSON)
+// Requires Bubble data type: TengellaWorkorderRow
+// Suggested field schema is in the chat response (match names/types).
+async function upsertTengellaWorkorderRowToBubble(
+  row,
+  { workorderBubbleId = null, workorderId = null, projectId = null, customerId = null, company = null, commission = null } = {}
+) {
+  const type = "TengellaWorkorderRow";
+  if (!row) return { ok: false, reason: "missing_row" };
+
+  const workOrderRowId = Number(row.WorkOrderRowId ?? row.workOrderRowId ?? 0) || null;
+  if (!workOrderRowId) return { ok: false, reason: "missing_workOrderRowId" };
+
+  // Unique key: workorder_row_id
+  const existing = await bubbleFindOne(type, [
+    { key: "workorder_row_id", constraint_type: "equals", value: workOrderRowId },
+  ]);
+
+  const payload = {
+    workorder_row_id: workOrderRowId,
+    workorder_id: Number(row.WorkOrderId ?? row.workOrderId ?? workorderId ?? 0) || null,
+    // Optional reference to parent workorder (field type: TengellaWorkorder)
+    ...(workorderBubbleId ? { workorder: workorderBubbleId } : {}),
+    project_id: Number(projectId ?? row.ProjectId ?? row.projectId ?? 0) || null,
+    customer_id: Number(customerId ?? row.CustomerId ?? row.customerId ?? 0) || null,
+
+    item_id: Number(row.ItemId ?? row.itemId ?? 0) || null,
+    item_no: row.ItemNo ?? row.itemNo ?? null,
+    item_name: row.ItemName ?? row.itemName ?? null,
+
+    quantity: Number(row.Quantity ?? row.quantity ?? 0) || null,
+    note: row.Note ?? row.note ?? null,
+
+    price: Number(row.Price ?? row.price ?? 0) || null,
+    cost_price: Number(row.CostPrice ?? row.costPrice ?? 0) || null,
+    total_cost_price: Number(row.TotalCostPrice ?? row.totalCostPrice ?? 0) || null,
+
+    invoiced: normalizeBool(row.Invoiced ?? row.invoiced),
+    workorder_row_invoice_status_id: Number(row.WorkOrderRowInvoiceStatusId ?? row.workOrderRowInvoiceStatusId ?? 0) || null,
+    approx_working_time: Number(row.ApproxWorkingTime ?? row.approxWorkingTime ?? 0) || null,
+    material_to_project_row_id: Number(row.MaterialToProjectRowId ?? row.materialToProjectRowId ?? 0) || null,
+    desired_schedule_is_handled: normalizeBool(row.DesiredScheduleIsHandled ?? row.desiredScheduleIsHandled),
+    item_invoice_type_id: Number(row.ItemInvoiceTypeId ?? row.itemInvoiceTypeId ?? 0) || null,
+    invoice_status_change_datetime: toBubbleDate(row.WorkOrderRowInvoiceStatusChangeDatetime ?? row.workOrderRowInvoiceStatusChangeDatetime),
+    cant_be_scheduled: normalizeBool(row.CantBeScheduled ?? row.cantBeScheduled),
+    time_spent_for_tax_reduction: Number(row.TimeSpentForTaxReduction ?? row.timeSpentForTaxReduction ?? 0) || null,
+    unit_of_measure_id: Number(row.UnitOfMeasureId ?? row.unitOfMeasureId ?? 0) || null,
+    allowed_minutes: Number(row.AllowedMinutes ?? row.allowedMinutes ?? 0) || null,
+    order_by: Number(row.OrderBy ?? row.orderBy ?? 0) || null,
+    workorder_rounding_id: Number(row.WorkOrderRoundingId ?? row.workOrderRoundingId ?? 0) || null,
+    approved_working_time: Number(row.ApprovedWorkingTime ?? row.approvedWorkingTime ?? 0) || null,
+    first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart ?? row.firstTimeTableEventStart),
+    last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart ?? row.lastTimeTableEventStart),
+
+    // Optional links
+    ...(company ? { company } : {}),
+    ...(commission ? { commission } : {}),
+
+    // Debug
+    raw_json: safeJsonStringify(row),
+  };
+
+  // Remove undefined (Bubble gillar null men inte undefined)
+  Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+
+  if (existing?.id) {
+    await bubbleUpdate(type, existing.id, payload);
+    return { ok: true, mode: "update", id: existing.id };
+  } else {
+    const created = await bubbleCreate(type, payload);
+    return { ok: true, mode: "create", id: created?.id || null };
+  }
+}
+
 async function listTengellaWorkOrders({ token, limit = 100, cursor = null, customerId = null, projectId = null } = {}) {
   return tengellaFetch(`/v2/WorkOrders`, {
     method: "GET",
@@ -4983,6 +5059,7 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     const projectId = req.body?.projectId ?? null;
     const maxPages = Number(req.body?.maxPages ?? 50) || 50;
     const saveRowsJson = req.body?.saveRowsJson === undefined ? true : normalizeBool(req.body?.saveRowsJson);
+    const upsertRows = req.body?.upsertRows === undefined ? true : normalizeBool(req.body?.upsertRows);
 
     // Optional Bubble references (only used if fields exist on TengellaWorkorder)
     const bubbleCompanyId = req.body?.bubbleCompanyId ?? null; // ex: Bubble thing id of ClientCompany
@@ -4997,6 +5074,9 @@ app.post("/tengella/workorders/sync", async (req, res) => {
 
     let fetched = 0;
     let upserted = 0;
+    let workorderRowsUpserted = 0;
+    let workorderRowsErrors = 0;
+    let errors = [];
 
     while (existsMoreData && page < maxPages) {
       page += 1;
@@ -5008,7 +5088,32 @@ app.post("/tengella/workorders/sync", async (req, res) => {
 
       for (const wo of data) {
         const result = await upsertTengellaWorkorderToBubble(wo, { bubbleCompanyId, bubbleCommissionId, parsedCommissionUid, saveRowsJson });
-        if (result?.ok) upserted += 1;
+        if (result?.ok) {
+          upserted += 1;
+
+          if (upsertRows && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+            for (const row of wo.WorkOrderRows) {
+              try {
+                const rr = await upsertTengellaWorkorderRowToBubble(row, {
+                  workorderBubbleId: result.id,
+                  workorderId: wo.WorkOrderId,
+                  projectId: wo.ProjectId,
+                  customerId: wo.CustomerId,
+                  company: bubbleCompanyId,
+                  commission: bubbleCommissionId,
+                });
+                if (rr?.ok) workorderRowsUpserted += 1;
+                else {
+                  workorderRowsErrors += 1;
+                  errors.push({ workOrderRowId: row?.WorkOrderRowId, reason: rr?.reason || "row_upsert_failed" });
+                }
+              } catch (e) {
+                workorderRowsErrors += 1;
+                errors.push({ workOrderRowId: row?.WorkOrderRowId, reason: e?.message || String(e) });
+              }
+            }
+          }
+        }
       }
 
       nextCursor = resp?.Next || null;
@@ -5025,8 +5130,11 @@ app.post("/tengella/workorders/sync", async (req, res) => {
       pages: page,
       fetched,
       upserted,
+      workorderRowsUpserted,
+      workorderRowsErrors,
       nextCursor,
-      existsMoreData
+      existsMoreData,
+      errors: Array.isArray(errors) ? errors.slice(0, 50) : []
     });
   } catch (e) {
     console.error("[tengella/workorders/sync] error:", e?.message || e, e?.details || "");
