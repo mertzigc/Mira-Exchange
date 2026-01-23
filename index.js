@@ -5170,9 +5170,13 @@ app.post("/tengella/workorders/sync", async (req, res) => {
                   errors.push({ workOrderRowId: row?.WorkOrderRowId, reason: rr?.reason || "row_upsert_failed" });
                 }
               } catch (e) {
-                workorderRowsErrors += 1;
-                errors.push({ workOrderRowId: row?.WorkOrderRowId, reason: e?.message || String(e) });
-              }
+  workorderRowsErrors += 1;
+  errors.push({
+    workOrderRowId: row?.WorkOrderRowId,
+    reason: e?.message || String(e),
+    detail: e?.detail || e?.details || null
+  });
+}
             }
           }
         }
