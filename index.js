@@ -550,16 +550,30 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
   const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
   const phone = cust?.Phone || cust?.phone;
 
-  // 1) hitta befintligt ClientCompany på Org_Number
-  const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: orgNo }
+    // 1) hitta befintligt ClientCompany på Org_Number
+  // Viktigt: normalisera orgnr (bara siffror) så vi matchar oavsett bindestreck/spaces
+  const orgNoNorm = normalizeOrgNo(orgNo);
+
+  // a) prova normaliserat värde (rekommenderat)
+  let existing = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Number", constraint_type: "equals", value: orgNoNorm }
   ]);
+
+  // b) fallback: prova exakt raw om Bubble råkar ha sparat med bindestreck
+  if (!existing?._id && orgNo) {
+    existing = await bubbleFindOne("ClientCompany", [
+      { key: "Org_Number", constraint_type: "equals", value: orgNo }
+    ]);
+  }
 
   if (existing?._id) {
     // Patcha bara om fält saknas (så vi inte skriver över manuellt CRM-data)
     const patch = {};
 
-    if (customerNoNum !== null && (existing.ft_customer_number === undefined || existing.ft_customer_number === null)) {
+    if (
+      customerNoNum !== null &&
+      (existing.ft_customer_number === undefined || existing.ft_customer_number === null)
+    ) {
       patch.ft_customer_number = customerNoNum;
     }
 
@@ -567,9 +581,19 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
     if (email && !existing.Email) patch.Email = email;
 
     const phoneNum = asNumberOrNull(phone);
-    if (phoneNum !== null && (existing.Telefon === undefined || existing.Telefon === null)) {
+    if (
+      phoneNum !== null &&
+      (existing.Telefon === undefined || existing.Telefon === null)
+    ) {
       patch.Telefon = phoneNum;
     }
+
+    // (valfritt) spara normaliserat orgnr i samma fält om du vill “stabilisera” databasen
+    // Men bara om fältet är tomt eller icke-normaliserat.
+    // OBS: detta skriver till Org_Number (som du sa är kritiskt) – kommentera bort om du inte vill.
+    // if (orgNoNorm && (!existing.Org_Number || normalizeOrgNo(existing.Org_Number) !== orgNoNorm)) {
+    //   patch.Org_Number = orgNoNorm;
+    // }
 
     if (Object.keys(patch).length) {
       await bubblePatch("ClientCompany", existing._id, patch);
@@ -577,7 +601,6 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
 
     return existing._id;
   }
-
   // 2) skapa nytt ClientCompany
   const ccFields = {
     Name_company: name || orgNo,
@@ -4859,9 +4882,9 @@ const regNoNorm = normalizeOrgNo(customer?.RegNo);
 let matchedCompanyId = null;
 
 if (regNoNorm) {
-  // Byt "org_no" nedan till exakt fältnamn på ClientCompany i Bubble
+  // Byt "Org_Number" nedan till exakt fältnamn på ClientCompany i Bubble
   const cc = await bubbleFindOne("ClientCompany", [
-    { key: "org_no", constraint_type: "equals", value: regNoNorm }
+    { key: "Org_Number", constraint_type: "equals", value: regNoNorm }
   ]);
   if (cc?.id) matchedCompanyId = cc.id;
 }
@@ -4871,7 +4894,7 @@ const payload = {
 tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
   // Core
   name: customer?.CustomerName ?? customer?.Name ?? "",
-  org_no: regNoNorm,
+  Org_Number: regNoNorm,
   vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
   
 
@@ -4919,7 +4942,7 @@ app.post("/tengella/customers/sync", async (req, res) => {
     const cursor = req.body?.cursor ?? null;
     const maxPages = Number(req.body?.maxPages ?? 50) || 50;
 
-    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
+    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing Org_Number" });
 
     const token = await tengellaLogin(orgNo);
 
