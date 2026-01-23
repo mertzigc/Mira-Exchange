@@ -5084,13 +5084,7 @@ async function listTengellaWorkOrders({ token, limit = 100, cursor = null, custo
   });
 }
 
-async function listTengellaCustomers({ token, limit = 100, cursor = null } = {}) {
-  return tengellaFetch(`/v2/Customers`, {
-    method: "GET",
-    token,
-    query: { limit, cursor },
-  });
-}
+// (listTengellaCustomers defined earlier)
 
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: WorkOrder
