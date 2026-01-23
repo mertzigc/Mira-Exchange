@@ -4833,6 +4833,84 @@ function safeJsonStringify(obj, maxLen = 250000) {
     return "";
   }
 }
+function normalizeOrgNoDigits(v) {
+  return String(v || "").replace(/\D+/g, "").trim();
+}
+
+// Cachea så vi bara detekterar en gång per process
+let CLIENTCOMPANY_ORG_KEY = null;
+
+// Detektera vilken field-key som faktiskt finns i Bubble Data API för ClientCompany orgnr
+async function detectClientCompanyOrgKey() {
+  if (CLIENTCOMPANY_ORG_KEY) return CLIENTCOMPANY_ORG_KEY;
+
+  const candidates = [
+    "Org_Number",
+    "Org_number",
+    "org_number",
+    "OrgNo",
+    "orgNo",
+    "orgno",
+    "OrgNr",
+    "orgnr",
+    "OrganisationNumber",
+    "organisation_number"
+  ];
+
+  for (const key of candidates) {
+    try {
+      // Tricket: om key inte finns -> Bubble svarar 404 "Field not found ..."
+      // om key finns men ingen match -> 200 med tom response (eller 200 med response.results=[])
+      await bubbleFindOne("ClientCompany", [
+        { key, constraint_type: "equals", value: "__probe__" }
+      ]);
+
+      CLIENTCOMPANY_ORG_KEY = key;
+      console.log("[detectClientCompanyOrgKey] Using key:", CLIENTCOMPANY_ORG_KEY);
+      return CLIENTCOMPANY_ORG_KEY;
+    } catch (e) {
+      const msg =
+        e?.detail?.body?.body?.message ||
+        e?.detail?.body?.message ||
+        e?.message ||
+        "";
+
+      // bara ignorera "Field not found" och prova nästa
+      if (String(msg).toLowerCase().includes("field not found")) continue;
+
+      // annat fel -> kasta (då är det något annat som spökar)
+      throw e;
+    }
+  }
+
+  throw new Error("Could not detect ClientCompany org field key in Bubble Data API (none of the candidates worked).");
+}
+
+// Hitta ClientCompany via orgnr – provar både raw och digits
+async function findClientCompanyByOrgNo(orgNoRaw) {
+  const key = await detectClientCompanyOrgKey();
+
+  const raw = String(orgNoRaw || "").trim();
+  const digits = normalizeOrgNoDigits(raw);
+
+  // prova först raw (om ni sparar med bindestreck)
+  if (raw) {
+    const a = await bubbleFindOne("ClientCompany", [
+      { key, constraint_type: "equals", value: raw }
+    ]);
+    if (a?._id) return a;
+  }
+
+  // prova digits (om ni sparar utan bindestreck)
+  if (digits) {
+    const b = await bubbleFindOne("ClientCompany", [
+      { key, constraint_type: "equals", value: digits }
+    ]);
+    if (b?._id) return b;
+  }
+
+  return null;
+}
 // ────────────────────────────────────────────────────────────
 // Tengella – Customers sync (Render → Tengella → Bubble Data API)
 // ────────────────────────────────────────────────────────────
@@ -4888,13 +4966,16 @@ if (regNoNorm) {
   ]);
   if (cc?.id) matchedCompanyId = cc.id;
 }
+const regNoRaw = String(customer?.RegNo ?? "").trim();
+const regNoDigits = normalizeOrgNoDigits(regNoRaw);  
 const payload = {
   // IDs
   tengella_customer_id,
 tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
   // Core
   name: customer?.CustomerName ?? customer?.Name ?? "",
-  Org_Number: regNoNorm,
+  Org_Number: regNoDigits,
+  org_no_raw: regNoRaw, // bara om du faktiskt har skapat fältet i Bubble
   vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
   
 
@@ -4962,18 +5043,29 @@ app.post("/tengella/customers/sync", async (req, res) => {
       const data = Array.isArray(resp?.Data) ? resp.Data : [];
       fetched += data.length;
 
-      for (const c of data) {
-        try {
-          const r = await upsertTengellaCustomerToBubble(c);
-          if (r?.ok) upserted += 1;
-        } catch (e) {
-          errors.push({
-            customerId: c?.CustomerId,
-            reason: e?.message || String(e),
-            detail: e?.detail || e?.details || null,
-          });
+      for (const customer of data) {
+  try {
+    const r = await upsertTengellaCustomerToBubble(customer);
+    if (r?.ok) upserted += 1;
+
+    // ✅ Steg 3: koppla till ClientCompany via orgnr
+    if (r?.ok && r?.id) {
+      const regDigits = normalizeOrgNoDigits(customer?.RegNo || "");
+      if (regDigits) {
+        const cc = await findClientCompanyByOrgNo(regDigits); // använder auto-detect av rätt key
+        if (cc?._id) {
+          await bubbleUpdate("TengellaCustomer", r.id, { company: cc._id });
         }
       }
+    }
+  } catch (e) {
+    errors.push({
+      customerId: customer?.CustomerId,
+      reason: e?.message || String(e),
+      detail: e?.detail || e?.details || null
+    });
+  }
+}
 
       nextCursor = resp?.Next || null;
       existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
@@ -5372,47 +5464,25 @@ app.post("/tengella/workorders/sync", async (req, res) => {
 let resolvedCompanyId = bubbleCompanyId || null;
 let resolvedTengellaCustomerId = null;
 
-const woCustomerId = Number(wo?.CustomerId ?? 0) || null;
-
-if (woCustomerId) {
-  const tengellaCustomer = await bubbleFindOne("TengellaCustomer", [
-    { key: "tengella_customer_id", constraint_type: "equals", value: woCustomerId }
+if (wo?.CustomerId) {
+  const tc = await bubbleFindOne("TengellaCustomer", [
+    { key: "tengella_customer_id", constraint_type: "equals", value: Number(wo.CustomerId) }
   ]);
 
-  if (tengellaCustomer?.id) {
-    resolvedTengellaCustomerId = tengellaCustomer.id;
+  if (tc?._id) {
+    resolvedTengellaCustomerId = tc._id;
 
-    // 1) Om kund redan är mappad till ClientCompany
-    if (tengellaCustomer?.company) {
-      resolvedCompanyId = tengellaCustomer.company;
+    if (tc?.company) {
+      resolvedCompanyId = tc.company;
     } else {
-      // 2) Försök orgnr-matcha mot ClientCompany och skriv tillbaka mappingen
-      const orgDigits = normalizeOrgNo(tengellaCustomer?.org_no);
-      if (orgDigits) {
-        // Först: testa fältet du använder i ClientCompany (byt "org_no" om ditt fält heter annat)
-        // OBS: Bubble "equals" kräver exakt match – därför kan du ha två varianter:
-        // - org_no = "556233-9266"
-        // - org_no_digits = "5562339266" (om du har ett digits-fält)
-        let cc = await bubbleFindOne("ClientCompany", [
-          { key: "org_no_digits", constraint_type: "equals", value: orgDigits }
-        ]);
+      const regDigits = normalizeOrgNoDigits(tc?.org_no || tc?.org_no_raw || "");
+      if (regDigits) {
+        const cc = await findClientCompanyByOrgNo(regDigits);
+        if (cc?._id) {
+          resolvedCompanyId = cc._id;
 
-        // Fallback om du inte har org_no_digits (eller den är tom):
-        if (!cc?.id) {
-          cc = await bubbleFindOne("ClientCompany", [
-            { key: "org_no", constraint_type: "equals", value: orgDigits }
-          ]);
-        }
-
-        if (cc?.id) {
-          resolvedCompanyId = cc.id;
-
-          // Spara kopplingen på kunden så nästa WorkOrder går snabbare
-          try {
-            await bubbleUpdate("TengellaCustomer", tengellaCustomer.id, { company: cc.id });
-          } catch (e) {
-            console.warn("[tengella resolve] failed to backfill company on TengellaCustomer:", e?.message || e);
-          }
+          // cachea kopplingen för framtiden
+          await bubbleUpdate("TengellaCustomer", tc._id, { company: cc._id });
         }
       }
     }
