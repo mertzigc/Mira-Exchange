@@ -4794,7 +4794,31 @@ app.get("/ms/routes", (req, res) => {
   });
   res.json({ routes });
 });
-
+function normalizeBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  const s = String(v ?? "").toLowerCase().trim();
+  if (!s) return false;
+  return ["true", "yes", "1", "y"].includes(s);
+}
+app.post("/tengella/auth/test", async (req, res) => {
+  try {
+    const orgNo = req.body?.orgNo;
+    const token = await tengellaLogin(orgNo);
+    res.json({
+      ok: true,
+      orgNo,
+      token_preview: token ? token.slice(0, 6) + "..." + token.slice(-6) : null,
+    });
+  } catch (e) {
+    console.error("[tengella/auth/test] error:", e?.message || e, e?.details || "");
+    res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      details: e?.details || null,
+    });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // Tengella – WorkOrders sync (Render → Tengella → Bubble Data API)
 //
