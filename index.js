@@ -4968,23 +4968,6 @@ function redacted(str, keep = 4) {
   return s.slice(0, keep) + "…" + s.slice(-keep);
 }
 
-function normalizeBool(v) {
-  if (typeof v === "boolean") return v;
-  if (typeof v === "number") return v !== 0;
-  const s = String(v ?? "").toLowerCase().trim();
-  if (!s) return false;
-  return ["true", "yes", "1"].includes(s);
-}
-
-function safeJsonStringify(obj, maxLen = 250000) {
-  try {
-    const s = JSON.stringify(obj ?? null);
-    if (s && s.length > maxLen) return s.slice(0, maxLen) + "…";
-    return s;
-  } catch {
-    return "";
-  }
-}
 
 function toBubbleDate(v) {
   if (!v) return null;
