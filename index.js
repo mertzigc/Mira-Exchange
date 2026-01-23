@@ -5003,7 +5003,12 @@ function redacted(str, keep = 4) {
   if (s.length <= keep) return "***";
   return s.slice(0, keep) + "…" + s.slice(-keep);
 }
-
+function normalizeOrgNo(v) {
+  // Tar bort ALLT som inte är en siffra:
+  // "556233-9266" -> "5562339266"
+  // "556 233 9266" -> "5562339266"
+  return String(v || "").replace(/\D/g, "").trim() || "";
+}
 
 function toBubbleDate(v) {
   if (!v) return null;
@@ -5133,7 +5138,7 @@ async function upsertTengellaWorkorderToBubble(
     bubbleCommissionId = null,
     parsedCommissionUid = "",
     saveRowsJson = true,
-    tengellaCustomerId = null, // optional: bubble id for TengellaCustomer relation if you created field
+    tengellaCustomerId = null, // ✅ NYTT
   } = {}
 ) {
   const type = "TengellaWorkorder";
@@ -5147,6 +5152,9 @@ async function upsertTengellaWorkorderToBubble(
 
   const payload = {
     workorder_id,
+     // ✅ Kopplingar (Bubble "field type = Thing")
+  ...(tengellaCustomerId ? { tengella_customer: tengellaCustomerId } : {}),
+  ...(bubbleCompanyId ? { company: bubbleCompanyId } : {}),
     project_id: Number(workOrder?.ProjectId ?? 0) || null,
     customer_id: Number(workOrder?.CustomerId ?? 0) || null,
     workorder_no: workOrder?.WorkOrderNo ?? "",
@@ -5324,41 +5332,67 @@ app.post("/tengella/workorders/sync", async (req, res) => {
 
       for (const wo of data) {
         // ─────────────────────────────────────────
-        // Resolve TengellaCustomer → Company
-        // ─────────────────────────────────────────
-        let resolvedCompanyId = bubbleCompanyId || null;
-        let resolvedTengellaCustomerId = null;
+// Resolve TengellaCustomer → Company (ClientCompany)
+// ─────────────────────────────────────────
+let resolvedCompanyId = bubbleCompanyId || null;
+let resolvedTengellaCustomerId = null;
 
-        if (wo?.CustomerId) {
-          const tengellaCustomer = await bubbleFindOne("TengellaCustomer", [
-            {
-              key: "tengella_customer_id",
-              constraint_type: "equals",
-              value: Number(wo.CustomerId),
-            },
+const woCustomerId = Number(wo?.CustomerId ?? 0) || null;
+
+if (woCustomerId) {
+  const tengellaCustomer = await bubbleFindOne("TengellaCustomer", [
+    { key: "tengella_customer_id", constraint_type: "equals", value: woCustomerId }
+  ]);
+
+  if (tengellaCustomer?.id) {
+    resolvedTengellaCustomerId = tengellaCustomer.id;
+
+    // 1) Om kund redan är mappad till ClientCompany
+    if (tengellaCustomer?.company) {
+      resolvedCompanyId = tengellaCustomer.company;
+    } else {
+      // 2) Försök orgnr-matcha mot ClientCompany och skriv tillbaka mappingen
+      const orgDigits = normalizeOrgNo(tengellaCustomer?.org_no);
+      if (orgDigits) {
+        // Först: testa fältet du använder i ClientCompany (byt "org_no" om ditt fält heter annat)
+        // OBS: Bubble "equals" kräver exakt match – därför kan du ha två varianter:
+        // - org_no = "556233-9266"
+        // - org_no_digits = "5562339266" (om du har ett digits-fält)
+        let cc = await bubbleFindOne("ClientCompany", [
+          { key: "org_no_digits", constraint_type: "equals", value: orgDigits }
+        ]);
+
+        // Fallback om du inte har org_no_digits (eller den är tom):
+        if (!cc?.id) {
+          cc = await bubbleFindOne("ClientCompany", [
+            { key: "org_no", constraint_type: "equals", value: orgDigits }
           ]);
-
-          if (tengellaCustomer?.id) {
-            resolvedTengellaCustomerId = tengellaCustomer.id;
-
-            // Om TengellaCustomer har fältet "company" (ClientCompany) och det är satt
-            if (tengellaCustomer?.company) {
-              resolvedCompanyId = tengellaCustomer.company;
-            }
-          }
         }
 
+        if (cc?.id) {
+          resolvedCompanyId = cc.id;
+
+          // Spara kopplingen på kunden så nästa WorkOrder går snabbare
+          try {
+            await bubbleUpdate("TengellaCustomer", tengellaCustomer.id, { company: cc.id });
+          } catch (e) {
+            console.warn("[tengella resolve] failed to backfill company on TengellaCustomer:", e?.message || e);
+          }
+        }
+      }
+    }
+  }
+}
         // ─────────────────────────────────────────
         // Upsert WorkOrder
         // ─────────────────────────────────────────
         const result = await upsertTengellaWorkorderToBubble(wo, {
-          bubbleCompanyId: resolvedCompanyId,
-          bubbleCommissionId,
-          parsedCommissionUid,
-          saveRowsJson,
-          // om du lagt till fält på TengellaWorkorder:
-          tengella_customer: resolvedTengellaCustomerId, // OBS: kräver att fältet finns i Bubble
-        });
+  bubbleCompanyId: resolvedCompanyId,
+  bubbleCommissionId,
+  parsedCommissionUid,
+  saveRowsJson,
+  tengellaCustomerId: resolvedTengellaCustomerId
+});
 
         if (result?.ok) {
           upserted += 1;
