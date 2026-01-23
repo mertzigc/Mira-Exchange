@@ -5037,7 +5037,7 @@ const payload = {
 tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
   // Core
   name: customer?.CustomerName ?? customer?.Name ?? "",
-  Org_Number: regNoDigits,
+  org_no: regNoDigits,
   org_no_raw: regNoRaw, // bara om du faktiskt har skapat fältet i Bubble
   vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
   
@@ -5086,7 +5086,7 @@ app.post("/tengella/customers/sync", async (req, res) => {
     const cursor = req.body?.cursor ?? null;
     const maxPages = Number(req.body?.maxPages ?? 50) || 50;
 
-    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing Org_Number" });
+    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
 
     const token = await tengellaLogin(orgNo);
 
