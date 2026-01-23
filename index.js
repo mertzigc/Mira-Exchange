@@ -4801,7 +4801,8 @@ function normalizeBool(v) {
   if (!s) return false;
   return ["true", "yes", "1", "y"].includes(s);
 }
-app.post("/tengella/auth/test", async (req, res) => {
+// ────────────────────────────────────────────────────────────
+// Tengella – HELPERS
   try {
     const orgNo = req.body?.orgNo;
     const token = await tengellaLogin(orgNo);
@@ -4828,6 +4829,93 @@ function safeJsonStringify(obj, maxLen = 250000) {
     return "";
   }
 }
+// ────────────────────────────────────────────────────────────
+// Tengella – CUSTOMERS
+async function listTengellaCustomers({ token, limit = 100, cursor = null } = {}) {
+  return tengellaFetch(`/v2/Customers`, {
+    method: "GET",
+    token,
+    query: { limit, cursor }
+  });
+}
+async function upsertTengellaCustomerToBubble(customer) {
+  const type = "TengellaCustomer";
+
+  const tengella_customer_id = Number(customer?.CustomerId ?? 0) || null;
+  if (!tengella_customer_id) {
+    return { ok: false, reason: "missing_customer_id" };
+  }
+
+  const existing = await bubbleFindOne(type, [
+    { key: "tengella_customer_id", constraint_type: "equals", value: tengella_customer_id }
+  ]);
+
+  const payload = {
+    tengella_customer_id,
+    tengella_customer_no: customer?.CustomerNo ?? "",
+    name: customer?.Name ?? "",
+    org_no: customer?.OrgNo ?? "",
+    vat_no: customer?.VatNo ?? "",
+    email: customer?.Email ?? "",
+    phone: customer?.Phone ?? "",
+    website: customer?.Website ?? "",
+
+    invoice_address: customer?.InvoiceAddress?.Street ?? "",
+    invoice_zip: customer?.InvoiceAddress?.Zip ?? "",
+    invoice_city: customer?.InvoiceAddress?.City ?? "",
+
+    work_address: customer?.WorkAddress?.Street ?? "",
+
+    raw_json: safeJsonStringify(customer)
+  };
+
+  Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+
+  if (existing?.id) {
+    await bubbleUpdate(type, existing.id, payload);
+    return { ok: true, mode: "update", id: existing.id };
+  } else {
+    const created = await bubbleCreate(type, payload);
+    return { ok: true, mode: "create", id: created?.id || null };
+  }
+}
+app.post("/tengella/customers/sync", async (req, res) => {
+  try {
+    const orgNo = req.body?.orgNo;
+    const limit = Number(req.body?.limit ?? 100) || 100;
+    const maxPages = Number(req.body?.maxPages ?? 50) || 50;
+
+    const token = await tengellaLogin(orgNo);
+
+    let cursor = null;
+    let page = 0;
+    let fetched = 0;
+    let upserted = 0;
+
+    while (page < maxPages) {
+      page += 1;
+
+      const resp = await listTengellaCustomers({ token, limit, cursor });
+      const data = Array.isArray(resp?.Data) ? resp.Data : [];
+
+      fetched += data.length;
+
+      for (const customer of data) {
+        const r = await upsertTengellaCustomerToBubble(customer);
+        if (r?.ok) upserted += 1;
+      }
+
+      cursor = resp?.Next || null;
+      if (!resp?.ExistsMoreData || !cursor) break;
+    }
+
+    res.json({ ok: true, fetched, upserted });
+
+  } catch (e) {
+    console.error("[tengella/customers/sync]", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // Tengella – WorkOrders sync (Render → Tengella → Bubble Data API)
 //
@@ -5138,50 +5226,141 @@ app.post("/tengella/workorders/sync", async (req, res) => {
         projectId
       });
 
+     const data = Array.isArray(resp?.Data) ? resp.Data : [];
+fetched += data.length;
+
+for (const wo of data) {
+
+  // ─────────────────────────────────────────
+  // Resolve TengellaCustomer → Company
+  // ─────────────────────────────────────────
+  let resolvedCompanyId = bubbleCompanyId || null;
+  let resolvedTengellaCustomerId = null;
+
+  if (wo?.CustomerId) {
+    const tengellaCustomer = await bubbleFindOne("TengellaCustomer", [
+      {
+        key: "tengella_customer_id",
+        constraint_type: "equals",
+        value: Number(wo.CustomerId)
+      }
+    ]);
+
+    if (tengellaCustomer?.id) {
+      resolvedTengellaCustomerId = tengellaCustomer.id;
+
+      // Om kunden redan är mappad till ClientCompany
+      if (tengellaCustomer?.company) {
+        resolvedCompanyId = tengellaCustomer.company;
+      }
+    }
+  }
+app.post("/tengella/customers/sync", async (req, res) => {
+  try {
+    const orgNo = req.body?.orgNo;
+    const limit = Number(req.body?.limit ?? 100) || 100;
+    const maxPages = Number(req.body?.maxPages ?? 50) || 50;
+
+    const token = await tengellaLogin(orgNo);
+
+    let page = 0;
+    let nextCursor = null;
+    let existsMoreData = true;
+
+    let fetched = 0;
+    let upserted = 0;
+    let errors = [];
+
+    while (existsMoreData && page < maxPages) {
+      page += 1;
+
+      const resp = await listTengellaCustomers({
+        token,
+        limit,
+        cursor: nextCursor
+      });
+
       const data = Array.isArray(resp?.Data) ? resp.Data : [];
       fetched += data.length;
 
-      for (const wo of data) {
-        const result = await upsertTengellaWorkorderToBubble(wo, {
-          bubbleCompanyId,
-          bubbleCommissionId,
-          parsedCommissionUid,
-          saveRowsJson
-        });
-
-        if (result?.ok) {
-          upserted += 1;
-
-          if (upsertRows && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
-            for (const row of wo.WorkOrderRows) {
-              try {
-                const rr = await upsertTengellaWorkorderRowToBubble(row, {
-                  workorderBubbleId: result.id,
-                  workorderId: wo.WorkOrderId,
-                  projectId: wo.ProjectId,
-                  customerId: wo.CustomerId,
-                  company: bubbleCompanyId,
-                  commission: bubbleCommissionId,
-                });
-
-                if (rr?.ok) workorderRowsUpserted += 1;
-                else {
-                  workorderRowsErrors += 1;
-                  errors.push({ workOrderRowId: row?.WorkOrderRowId, reason: rr?.reason || "row_upsert_failed" });
-                }
-              } catch (e) {
-  workorderRowsErrors += 1;
-  errors.push({
-    workOrderRowId: row?.WorkOrderRowId,
-    reason: e?.message || String(e),
-    detail: e?.detail || e?.details || null
-  });
-}
-            }
-          }
+      for (const customer of data) {
+        try {
+          const r = await upsertTengellaCustomerToBubble(customer);
+          if (r?.ok) upserted += 1;
+        } catch (e) {
+          errors.push({
+            customerId: customer?.CustomerId,
+            reason: e?.message || String(e)
+          });
         }
       }
 
+      nextCursor = resp?.Next || null;
+      existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
+    }
+
+    res.json({
+      ok: true,
+      pages: page,
+      fetched,
+      upserted,
+      nextCursor,
+      existsMoreData,
+      errors: errors.slice(0, 50)
+    });
+  } catch (e) {
+    console.error("[tengella/customers/sync]", e?.message || e);
+    res.status(500).json({
+      ok: false,
+      error: e?.message || String(e)
+    });
+  }
+});
+  // ─────────────────────────────────────────
+  // Upsert WorkOrder
+  // ─────────────────────────────────────────
+  const result = await upsertTengellaWorkorderToBubble(wo, {
+    bubbleCompanyId: resolvedCompanyId,
+    bubbleCommissionId,
+    parsedCommissionUid,
+    saveRowsJson,
+    tengellaCustomerId: resolvedTengellaCustomerId
+  });
+
+  if (result?.ok) {
+    upserted += 1;
+
+    if (upsertRows && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+      for (const row of wo.WorkOrderRows) {
+        try {
+          const rr = await upsertTengellaWorkorderRowToBubble(row, {
+            workorderBubbleId: result.id,
+            workorderId: wo.WorkOrderId,
+            projectId: wo.ProjectId,
+            customerId: wo.CustomerId,
+            company: resolvedCompanyId, // 👈 VIKTIGT
+            commission: bubbleCommissionId,
+          });
+
+          if (rr?.ok) workorderRowsUpserted += 1;
+          else {
+            workorderRowsErrors += 1;
+            errors.push({
+              workOrderRowId: row?.WorkOrderRowId,
+              reason: rr?.reason || "row_upsert_failed"
+            });
+          }
+        } catch (e) {
+          workorderRowsErrors += 1;
+          errors.push({
+            workOrderRowId: row?.WorkOrderRowId,
+            reason: e?.message || String(e)
+          });
+        }
+      }
+    }
+  }
+}
       nextCursor = resp?.Next || null;
       existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
 
@@ -5214,4 +5393,55 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     });
   }
 });
+  // ─────────────────────────────────────────
+  // Get+Upsert TengellaCustomer
+  // ─────────────────────────────────────────
+async function listTengellaCustomers({ token, limit = 100, cursor = null } = {}) {
+  return tengellaFetch(`/v2/Customers`, {
+    method: "GET",
+    token,
+    query: { limit, cursor }
+  });
+}
+async function upsertTengellaCustomerToBubble(customer) {
+  const type = "TengellaCustomer";
+
+  const tengella_customer_id = Number(customer?.CustomerId ?? 0) || null;
+  if (!tengella_customer_id) {
+    return { ok: false, reason: "missing_customer_id" };
+  }
+
+  const existing = await bubbleFindOne(type, [
+    { key: "tengella_customer_id", constraint_type: "equals", value: tengella_customer_id }
+  ]);
+
+  const payload = {
+    tengella_customer_id,
+    customer_no: Number(customer?.CustomerNo ?? 0) || null,
+    name: customer?.Name ?? "",
+    org_no: customer?.OrganisationNumber ?? "",
+    vat_no: customer?.VatNumber ?? "",
+    email: customer?.Email ?? "",
+    phone: customer?.Phone ?? "",
+    website: customer?.Website ?? "",
+
+    address: customer?.Address ?? "",
+    zip: customer?.ZipCode ?? "",
+    city: customer?.City ?? "",
+    country: customer?.Country ?? "",
+
+    is_active: !normalizeBool(customer?.IsDeleted),
+    raw_json: safeJsonStringify(customer)
+  };
+
+  Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+
+  if (existing?.id) {
+    await bubbleUpdate(type, existing.id, payload);
+    return { ok: true, mode: "update", id: existing.id };
+  } else {
+    const created = await bubbleCreate(type, payload);
+    return { ok: true, mode: "create", id: created?.id || null };
+  }
+}
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
