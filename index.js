@@ -5203,7 +5203,10 @@ app.post("/tengella/workorders/sync", async (req, res) => {
     res.status(500).json({
       ok: false,
       error: e?.message || String(e),
-      details: e?.details || null
+      details: {
+  details: e?.details || null,
+  detail: e?.detail || null
+}
     });
   }
 });
