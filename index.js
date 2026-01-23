@@ -4853,15 +4853,27 @@ const defContact =
   contacts.find(c => !!c?.IsDefaultCustomerContact) ||
   contacts[0] ||
   null;
+const regNoNorm = normalizeOrgNo(customer?.RegNo);
 
+// Försök hitta ClientCompany med samma orgnr (du måste ha ett fält där, ex: org_no / orgnr / org_number)
+let matchedCompanyId = null;
+
+if (regNoNorm) {
+  // Byt "org_no" nedan till exakt fältnamn på ClientCompany i Bubble
+  const cc = await bubbleFindOne("ClientCompany", [
+    { key: "org_no", constraint_type: "equals", value: regNoNorm }
+  ]);
+  if (cc?.id) matchedCompanyId = cc.id;
+}
 const payload = {
   // IDs
   tengella_customer_id,
 tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
   // Core
   name: customer?.CustomerName ?? customer?.Name ?? "",
-  org_no: customer?.RegNo ?? customer?.OrganisationNumber ?? customer?.OrganisationNo ?? "",
+  org_no: regNoNorm,
   vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
+  
 
   // Contact (fallback: default contact)
   phone: customer?.Phone ?? defContact?.Phone ?? defContact?.Mobile ?? "",
@@ -4880,7 +4892,7 @@ tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo)
 
   // Optional: work_address (om du vill använda Street2 som extra rad)
   // work_address: visitAddr?.Street2 ?? "",
-
+...(matchedCompanyId ? { company: matchedCompanyId } : {}),
   // Status
   is_deleted: normalizeBool(customer?.IsDeleted),
 
