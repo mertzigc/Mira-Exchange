@@ -4832,82 +4832,60 @@ async function upsertTengellaCustomerToBubble(customer) {
     { key: "tengella_customer_id", constraint_type: "equals", value: tengella_customer_id },
   ]);
 
-  // Anpassa fältnamn exakt till Bubble (du sa att du redan skapat enligt listan)
- const payload = {
+  // Helpers för Addresses/Contacts (Tengella skickar listor)
+const addresses = Array.isArray(customer?.Addresses) ? customer.Addresses : [];
+const contacts  = Array.isArray(customer?.Contacts) ? customer.Contacts : [];
+
+// AddressType (vanligt i Tengella):
+// 1 = Invoice, 4 = Visiting (utifrån din data: 1 ser ut som efakt/FE-adress, 4 som fysisk adress)
+const invAddr =
+  addresses.find(a => Number(a?.AddressType) === 1 && !!a?.IsDefaultAddressforType) ||
+  addresses.find(a => Number(a?.AddressType) === 1) ||
+  null;
+
+const visitAddr =
+  addresses.find(a => Number(a?.AddressType) === 4 && !!a?.IsDefaultAddressforType) ||
+  addresses.find(a => Number(a?.AddressType) === 4) ||
+  null;
+
+// Default contact
+const defContact =
+  contacts.find(c => !!c?.IsDefaultCustomerContact) ||
+  contacts[0] ||
+  null;
+
+const payload = {
   // IDs
   tengella_customer_id,
-  tengella_customer_no: Number(customer?.CustomerNo ?? customer?.customerNo ?? 0) || null,
+  tengella_customer_no: Number(customer?.CustomerNo ?? 0) || null,
 
   // Core
-  name: customer?.Name ?? customer?.name ?? "",
+  name: customer?.CustomerName ?? customer?.Name ?? "",
+  org_no: customer?.RegNo ?? customer?.OrganisationNumber ?? customer?.OrganisationNo ?? "",
+  vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
 
-  org_no:
-    customer?.OrganisationNumber ??
-    customer?.OrganisationNo ??
-    customer?.OrgNo ??
-    customer?.orgNo ??
-    "",
+  // Contact (fallback: default contact)
+  phone: customer?.Phone ?? defContact?.Phone ?? defContact?.Mobile ?? "",
+  email: customer?.EMail ?? customer?.Email ?? defContact?.Email ?? "",
+  website: customer?.Www ?? customer?.Website ?? "",
 
-  vat_no:
-    customer?.VatNumber ??
-    customer?.VatNo ??
-    customer?.vatNo ??
-    "",
+  // Visiting address (AddressType 4)
+  address: visitAddr?.Street ?? "",
+  city: visitAddr?.City ?? "",
+  zip: visitAddr?.ZipCode ?? "",
 
-  email: customer?.Email ?? customer?.email ?? "",
-  phone: customer?.Phone ?? customer?.phone ?? "",
-  website: customer?.Website ?? customer?.website ?? "",
+  // Invoice address (AddressType 1)
+  invoice_address: invAddr?.Street ?? "",
+  invoice_city: invAddr?.City ?? "",
+  invoice_zip: invAddr?.ZipCode ?? "",
 
-  // Visiting/primary address
-  address:
-    customer?.Address ??
-    customer?.AdrStreet ??
-    customer?.address ??
-    "",
-
-  zip:
-    customer?.ZipCode ??
-    customer?.AdrZipCode ??
-    customer?.zip ??
-    "",
-
-  city:
-    customer?.City ??
-    customer?.AdrCity ??
-    customer?.city ??
-    "",
-
-  // Invoice address (om Tengella skickar)
-  invoice_address:
-    customer?.InvoiceAddress ??
-    customer?.InvoiceStreet ??
-    customer?.invoiceAddress ??
-    "",
-
-  invoice_zip:
-    customer?.InvoiceZipCode ??
-    customer?.InvoiceZip ??
-    customer?.invoiceZip ??
-    "",
-
-  invoice_city:
-    customer?.InvoiceCity ??
-    customer?.invoiceCity ??
-    "",
-
-  // Work address / site (om Tengella skickar)
-  work_address:
-    customer?.WorkAddress ??
-    customer?.WorkStreet ??
-    customer?.workAddress ??
-    "",
+  // Optional: work_address (om du vill använda Street2 som extra rad)
+  // work_address: visitAddr?.Street2 ?? "",
 
   // Status
-  is_deleted: normalizeBool(customer?.IsDeleted ?? customer?.isDeleted),
+  is_deleted: normalizeBool(customer?.IsDeleted),
 
-  // Optional relation (om du vill sätta senare via matchning)
-  // company: <Bubble thing id för ClientCompany>,
-
+  // Debug
   raw_json: safeJsonStringify(customer),
 };
 
