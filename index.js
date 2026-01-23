@@ -4819,6 +4819,15 @@ app.post("/tengella/auth/test", async (req, res) => {
     });
   }
 });
+function safeJsonStringify(obj, maxLen = 250000) {
+  try {
+    const s = JSON.stringify(obj ?? null);
+    if (s && s.length > maxLen) return s.slice(0, maxLen) + "…";
+    return s;
+  } catch {
+    return "";
+  }
+}
 // ────────────────────────────────────────────────────────────
 // Tengella – WorkOrders sync (Render → Tengella → Bubble Data API)
 //
