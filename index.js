@@ -5216,47 +5216,11 @@ async function upsertTengellaWorkorderRowToBubble(
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
 // ────────────────────────────────────────────────────────────
-async function upsertTengellaCustomerToBubble(customer) {
-  const type = "TengellaCustomer";
 
-  const tengella_customer_id = Number(customer?.CustomerId ?? 0) || null;
-  if (!tengella_customer_id) return { ok: false, reason: "missing_customer_id" };
 
-  const existing = await bubbleFindOne(type, [
-    { key: "tengella_customer_id", constraint_type: "equals", value: tengella_customer_id },
-  ]);
+// (dedup) removed duplicate upsertTengellaCustomerToBubble
 
-  const payload = {
-    tengella_customer_id,
-    customer_no: customer?.CustomerNo ?? customer?.CustomerNumber ?? "",
-    name: customer?.Name ?? customer?.CustomerName ?? "",
 
-    org_no: customer?.OrganisationNumber ?? customer?.OrganizationNumber ?? customer?.OrgNo ?? "",
-    vat_no: customer?.VatNumber ?? "",
-
-    email: customer?.Email ?? "",
-    phone: customer?.Phone ?? "",
-    website: customer?.Website ?? "",
-
-    address: customer?.Address ?? customer?.AdrStreet ?? "",
-    zip: customer?.ZipCode ?? customer?.AdrZipCode ?? "",
-    city: customer?.City ?? customer?.AdrCity ?? "",
-    country: customer?.Country ?? "",
-
-    is_active: !normalizeBool(customer?.IsDeleted),
-    raw_json: safeJsonStringify(customer),
-  };
-
-  Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
-
-  if (existing?.id) {
-    await bubbleUpdate(type, existing.id, payload);
-    return { ok: true, mode: "update", id: existing.id };
-  } else {
-    const createdId = await bubbleCreate(type, payload);
-    return { ok: true, mode: "create", id: createdId || null };
-  }
-}
 
 // ────────────────────────────────────────────────────────────
 // Debug endpoints
