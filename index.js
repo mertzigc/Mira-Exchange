@@ -4857,8 +4857,7 @@ const defContact =
 const payload = {
   // IDs
   tengella_customer_id,
-  tengella_customer_no: Number(customer?.CustomerNo ?? 0) || null,
-
+tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
   // Core
   name: customer?.CustomerName ?? customer?.Name ?? "",
   org_no: customer?.RegNo ?? customer?.OrganisationNumber ?? customer?.OrganisationNo ?? "",
