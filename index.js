@@ -4833,27 +4833,86 @@ async function upsertTengellaCustomerToBubble(customer) {
   ]);
 
   // Anpassa fältnamn exakt till Bubble (du sa att du redan skapat enligt listan)
-  const payload = {
-    tengella_customer_id,
-    tengella_customer_no: customer?.CustomerNo ?? null,
-    name: customer?.Name ?? "",
+ const payload = {
+  // IDs
+  tengella_customer_id,
+  tengella_customer_no: Number(customer?.CustomerNo ?? customer?.customerNo ?? 0) || null,
 
-    org_no: customer?.OrganisationNumber ?? customer?.OrganisationNo ?? customer?.OrgNo ?? "",
-    vat_no: customer?.VatNumber ?? "",
+  // Core
+  name: customer?.Name ?? customer?.name ?? "",
 
-    email: customer?.Email ?? "",
-    phone: customer?.Phone ?? "",
+  org_no:
+    customer?.OrganisationNumber ??
+    customer?.OrganisationNo ??
+    customer?.OrgNo ??
+    customer?.orgNo ??
+    "",
 
-    // adressfält kan skilja i Tengella, så vi tar flera fallbacks
-    address: customer?.Address ?? customer?.AdrStreet ?? customer?.WorkAdrStreet ?? "",
-    zip: customer?.ZipCode ?? customer?.AdrZipCode ?? customer?.WorkAdrZipCode ?? "",
-    city: customer?.City ?? customer?.AdrCity ?? customer?.WorkAdrCity ?? "",
+  vat_no:
+    customer?.VatNumber ??
+    customer?.VatNo ??
+    customer?.vatNo ??
+    "",
 
-    is_deleted: normalizeBool(customer?.IsDeleted),
-    raw_json: safeJsonStringify(customer),
-  };
+  email: customer?.Email ?? customer?.email ?? "",
+  phone: customer?.Phone ?? customer?.phone ?? "",
+  website: customer?.Website ?? customer?.website ?? "",
 
-  Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+  // Visiting/primary address
+  address:
+    customer?.Address ??
+    customer?.AdrStreet ??
+    customer?.address ??
+    "",
+
+  zip:
+    customer?.ZipCode ??
+    customer?.AdrZipCode ??
+    customer?.zip ??
+    "",
+
+  city:
+    customer?.City ??
+    customer?.AdrCity ??
+    customer?.city ??
+    "",
+
+  // Invoice address (om Tengella skickar)
+  invoice_address:
+    customer?.InvoiceAddress ??
+    customer?.InvoiceStreet ??
+    customer?.invoiceAddress ??
+    "",
+
+  invoice_zip:
+    customer?.InvoiceZipCode ??
+    customer?.InvoiceZip ??
+    customer?.invoiceZip ??
+    "",
+
+  invoice_city:
+    customer?.InvoiceCity ??
+    customer?.invoiceCity ??
+    "",
+
+  // Work address / site (om Tengella skickar)
+  work_address:
+    customer?.WorkAddress ??
+    customer?.WorkStreet ??
+    customer?.workAddress ??
+    "",
+
+  // Status
+  is_deleted: normalizeBool(customer?.IsDeleted ?? customer?.isDeleted),
+
+  // Optional relation (om du vill sätta senare via matchning)
+  // company: <Bubble thing id för ClientCompany>,
+
+  raw_json: safeJsonStringify(customer),
+};
+
+// Bubble gillar null men inte undefined
+Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
   if (existing?.id) {
     await bubbleUpdate(type, existing.id, payload);
