@@ -531,6 +531,67 @@ async function bubbleFindOne(type, constraints) {
 }
 
 // ────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────
+// ClientCompany orgnr field resolver (handles schema drift between apps/versions)
+// Bubble Data API uses internal field keys; in some apps the org number field is not exactly "Org_Number".
+// We probe a shortlist of candidates once and cache the first one that exists.
+// ────────────────────────────────────────────────────────────
+let _CLIENTCOMPANY_ORG_FIELD_CACHE = null;
+
+async function resolveClientCompanyOrgField(sampleOrgNo) {
+  if (_CLIENTCOMPANY_ORG_FIELD_CACHE) return _CLIENTCOMPANY_ORG_FIELD_CACHE;
+
+  const candidates = [
+    // Most likely (your UI name)
+    "Org_Number",
+    // Common variants
+    "Org_number",
+    "org_number",
+    "OrgNo",
+    "orgNo",
+    "org_no",
+    "OrgNr",
+    "orgnr",
+    "OrgNumber",
+    "organisation_number",
+    "OrganisationNumber",
+    // Some teams suffix types
+    "Org_Number_text",
+    "OrgNr_text",
+  ];
+
+  const probeValue = String(sampleOrgNo || "556233-9266");
+
+  for (const key of candidates) {
+    try {
+      // We just need Bubble to accept the field name in constraints; result may be null.
+      await bubbleFindOne("ClientCompany", [
+        { key, constraint_type: "equals", value: probeValue }
+      ]);
+      _CLIENTCOMPANY_ORG_FIELD_CACHE = key;
+      console.log("[resolveClientCompanyOrgField] using field:", key);
+      return key;
+    } catch (e) {
+      const msg =
+        e?.detail?.body?.body?.message ||
+        e?.details?.body?.body?.message ||
+        e?.message ||
+        "";
+      // Keep probing on typical schema errors; otherwise still continue (safe).
+      if (String(msg).toLowerCase().includes("field not found") || String(msg).toLowerCase().includes("unrecognized field")) {
+        continue;
+      }
+      continue;
+    }
+  }
+
+  // Fallback to the UI name so errors are at least explicit.
+  _CLIENTCOMPANY_ORG_FIELD_CACHE = "Org_Number";
+  console.warn("[resolveClientCompanyOrgField] could not probe field; falling back to Org_Number");
+  return _CLIENTCOMPANY_ORG_FIELD_CACHE;
+}
+
 // Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
 // + sätter/patchar ft_customer_number (number) från Fortnox CustomerNumber
 async function ensureClientCompanyForFortnoxCustomer(cust) {
@@ -554,15 +615,17 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
   // Viktigt: normalisera orgnr (bara siffror) så vi matchar oavsett bindestreck/spaces
   const orgNoNorm = normalizeOrgNo(orgNo);
 
+  const orgField = await resolveClientCompanyOrgField(orgNoNorm || orgNo);
+
   // a) prova normaliserat värde (rekommenderat)
   let existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: orgNoNorm }
+    { key: orgField, constraint_type: "equals", value: orgNoNorm }
   ]);
 
   // b) fallback: prova exakt raw om Bubble råkar ha sparat med bindestreck
   if (!existing?._id && orgNo) {
     existing = await bubbleFindOne("ClientCompany", [
-      { key: "Org_Number", constraint_type: "equals", value: orgNo }
+      { key: orgField, constraint_type: "equals", value: orgNo }
     ]);
   }
 
@@ -604,7 +667,7 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
   // 2) skapa nytt ClientCompany
   const ccFields = {
     Name_company: name || orgNo,
-    Org_Number: orgNo
+    [orgField]: orgNo
   };
 
   if (email) ccFields.Email = email;
@@ -4960,9 +5023,9 @@ const regNoNorm = normalizeOrgNo(customer?.RegNo);
 let matchedCompanyId = null;
 
 if (regNoNorm) {
-  // Byt "Org_Number" nedan till exakt fältnamn på ClientCompany i Bubble
+  const orgField = await resolveClientCompanyOrgField(regNoNorm);
   const cc = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: regNoNorm }
+    { key: orgField, constraint_type: "equals", value: regNoNorm }
   ]);
   if (cc?.id) matchedCompanyId = cc.id;
 }
