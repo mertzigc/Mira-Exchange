@@ -5469,6 +5469,8 @@ async function upsertTengellaWorkorderRowToBubble(
     const createdId = await bubbleCreate(type, payload);
     return { ok: true, mode: "create", id: createdId || null };
   }
+    }
+}
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
