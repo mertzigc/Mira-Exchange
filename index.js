@@ -5350,7 +5350,45 @@ async function upsertTengellaWorkorderToBubble(
 
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: WorkOrderRow
+// - använder bubblePatch (inte bubbleUpdate)
+// - skickar company/workorder bara om de finns (så du slipper 400 om schema inte är klart)
 // ────────────────────────────────────────────────────────────
+
+let _TWO_ROW_FIELD_CACHE = null;
+
+async function canWriteTengellaWorkorderRowFields() {
+  if (_TWO_ROW_FIELD_CACHE) return _TWO_ROW_FIELD_CACHE;
+
+  const probe = async (field) => {
+    try {
+      // Bubble validerar fältet i constraints; resultat spelar ingen roll.
+      await bubbleFindOne("TengellaWorkorderRow", [
+        { key: field, constraint_type: "equals", value: "__probe__" }
+      ]);
+      return true;
+    } catch (e) {
+      const msg =
+        e?.detail?.body?.body?.message ||
+        e?.details?.body?.body?.message ||
+        e?.message ||
+        "";
+      if (String(msg).toLowerCase().includes("field not found") || String(msg).toLowerCase().includes("unrecognized field")) {
+        return false;
+      }
+      // andra fel: anta false för säkerhet
+      return false;
+    }
+  };
+
+  const hasCompany  = await probe("company");
+  const hasWorkorder = await probe("workorder");
+  const hasCommission = await probe("commission");
+
+  _TWO_ROW_FIELD_CACHE = { hasCompany, hasWorkorder, hasCommission };
+  console.log("[TengellaWorkorderRow fields]", _TWO_ROW_FIELD_CACHE);
+  return _TWO_ROW_FIELD_CACHE;
+}
+
 async function upsertTengellaWorkorderRowToBubble(
   row,
   { workorderBubbleId = null, workorderId = null, projectId = null, customerId = null, company = null, commission = null } = {}
@@ -5365,10 +5403,11 @@ async function upsertTengellaWorkorderRowToBubble(
     { key: "workorder_row_id", constraint_type: "equals", value: workOrderRowId },
   ]);
 
+  const { hasCompany, hasWorkorder, hasCommission } = await canWriteTengellaWorkorderRowFields();
+
   const payload = {
     workorder_row_id: workOrderRowId,
     workorder_id: Number(row.WorkOrderId ?? row.workOrderId ?? workorderId ?? 0) || null,
-    ...(workorderBubbleId ? { workorder: workorderBubbleId } : {}),
     project_id: Number(projectId ?? 0) || null,
     customer_id: Number(customerId ?? 0) || null,
 
@@ -5400,23 +5439,24 @@ async function upsertTengellaWorkorderRowToBubble(
     first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart),
     last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart),
 
-    ...(company ? { company } : {}),
-    ...(commission ? { commission } : {}),
-
     raw_json: safeJsonStringify(row),
   };
 
+  // relations (endast om fälten finns i Bubble)
+  if (hasWorkorder && workorderBubbleId) payload.workorder = workorderBubbleId;
+  if (hasCompany && company) payload.company = company;
+  if (hasCommission && commission) payload.commission = commission;
+
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
-  if (existing?.id) {
-    await bubbleUpdate(type, existing.id, payload);
-    return { ok: true, mode: "update", id: existing.id };
+  if (existing?._id) {
+    await bubblePatch(type, existing._id, payload);
+    return { ok: true, mode: "update", id: existing._id };
   } else {
     const createdId = await bubbleCreate(type, payload);
     return { ok: true, mode: "create", id: createdId || null };
   }
 }
-
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
