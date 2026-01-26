@@ -5460,21 +5460,34 @@ const rowFieldCaps = await canWriteTengellaWorkorderRowFields();
   // Bubble gillar null men inte undefined
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
-  // UPDATE vs CREATE (Bubble använder _id)
-    if (existing?.id) {
+  // UPDATE vs CREATE
+  if (existing?.id) {
     // PATCH är säkrare för relationer (company/workorder)
     await bubblePatch(type, existing.id, payload);
+
+    console.log("[row upsert]", {
+      mode: "update",
+      workOrderRowId,
+      sendingCompany: rowFieldCaps?.hasCompany ? company : null,
+      hasCompanyField: rowFieldCaps?.hasCompany,
+      bubbleId: existing.id,
+    });
+
     return { ok: true, mode: "update", id: existing.id };
   } else {
     const createdId = await bubbleCreate(type, payload);
+
+    console.log("[row upsert]", {
+      mode: "create",
+      workOrderRowId,
+      sendingCompany: rowFieldCaps?.hasCompany ? company : null,
+      hasCompanyField: rowFieldCaps?.hasCompany,
+      bubbleId: createdId || null,
+    });
+
     return { ok: true, mode: "create", id: createdId || null };
   }
-    }
-console.log("[row upsert]", {
-  workOrderRowId,
-  sendingCompany: rowFieldCaps?.hasCompany ? company : null,
-  hasCompanyField: rowFieldCaps?.hasCompany
-});
+}
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
