@@ -5389,9 +5389,19 @@ async function canWriteTengellaWorkorderRowFields() {
   return _TWO_ROW_FIELD_CACHE;
 }
 
+// ────────────────────────────────────────────────────────────
+// Bubble upsert: WorkOrderRow
+// ────────────────────────────────────────────────────────────
 async function upsertTengellaWorkorderRowToBubble(
   row,
-  { workorderBubbleId = null, workorderId = null, projectId = null, customerId = null, company = null, commission = null } = {}
+  {
+    workorderBubbleId = null,
+    workorderId = null,
+    projectId = null,
+    customerId = null,
+    company = null,
+    commission = null
+  } = {}
 ) {
   const type = "TengellaWorkorderRow";
   if (!row) return { ok: false, reason: "missing_row" };
@@ -5403,55 +5413,60 @@ async function upsertTengellaWorkorderRowToBubble(
     { key: "workorder_row_id", constraint_type: "equals", value: workOrderRowId },
   ]);
 
-  const { hasCompany, hasWorkorder, hasCommission } = await canWriteTengellaWorkorderRowFields();
-
   const payload = {
     workorder_row_id: workOrderRowId,
+
     workorder_id: Number(row.WorkOrderId ?? row.workOrderId ?? workorderId ?? 0) || null,
+    ...(workorderBubbleId ? { workorder: workorderBubbleId } : {}),
+
     project_id: Number(projectId ?? 0) || null,
     customer_id: Number(customerId ?? 0) || null,
 
     item_id: Number(row.ItemId ?? 0) || null,
-    item_no: row.ItemNo ?? null,
+    item_no: row.ItemNo != null ? String(row.ItemNo) : null,
     item_name: row.ItemName ?? null,
 
-    quantity: Number(row.Quantity ?? 0) || null,
+    quantity: row.Quantity != null ? Number(row.Quantity) : null,
     note: row.Note ?? null,
 
-    price: Number(row.Price ?? 0) || null,
-    cost_price: Number(row.CostPrice ?? 0) || null,
-    total_cost_price: Number(row.TotalCostPrice ?? 0) || null,
+    price: row.Price != null ? Number(row.Price) : null,
+    cost_price: row.CostPrice != null ? Number(row.CostPrice) : null,
+    total_cost_price: row.TotalCostPrice != null ? Number(row.TotalCostPrice) : null,
 
     invoiced: normalizeBool(row.Invoiced),
     workorder_row_invoice_status_id: Number(row.WorkOrderRowInvoiceStatusId ?? 0) || null,
-    approx_working_time: Number(row.ApproxWorkingTime ?? 0) || null,
+    approx_working_time: row.ApproxWorkingTime != null ? Number(row.ApproxWorkingTime) : null,
     material_to_project_row_id: Number(row.MaterialToProjectRowId ?? 0) || null,
     desired_schedule_is_handled: normalizeBool(row.DesiredScheduleIsHandled),
     item_invoice_type_id: Number(row.ItemInvoiceTypeId ?? 0) || null,
     invoice_status_change_datetime: toBubbleDate(row.WorkOrderRowInvoiceStatusChangeDatetime),
     cant_be_scheduled: normalizeBool(row.CantBeScheduled),
-    time_spent_for_tax_reduction: Number(row.TimeSpentForTaxReduction ?? 0) || null,
+    time_spent_for_tax_reduction: row.TimeSpentForTaxReduction != null ? Number(row.TimeSpentForTaxReduction) : null,
     unit_of_measure_id: Number(row.UnitOfMeasureId ?? 0) || null,
-    allowed_minutes: Number(row.AllowedMinutes ?? 0) || null,
-    order_by: Number(row.OrderBy ?? 0) || null,
+    allowed_minutes: row.AllowedMinutes != null ? Number(row.AllowedMinutes) : null,
+    order_by: row.OrderBy != null ? Number(row.OrderBy) : null,
     workorder_rounding_id: Number(row.WorkOrderRoundingId ?? 0) || null,
-    approved_working_time: Number(row.ApprovedWorkingTime ?? 0) || null,
+    approved_working_time: row.ApprovedWorkingTime != null ? Number(row.ApprovedWorkingTime) : null,
     first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart),
     last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart),
+
+    ...(company ? { company } : {}),
+    ...(commission ? { commission } : {}),
 
     raw_json: safeJsonStringify(row),
   };
 
-  // relations (endast om fälten finns i Bubble)
-  if (hasWorkorder && workorderBubbleId) payload.workorder = workorderBubbleId;
-  if (hasCompany && company) payload.company = company;
-  if (hasCommission && commission) payload.commission = commission;
-
+  // Bubble gillar null men inte undefined
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
+  // UPDATE vs CREATE (Bubble använder _id)
   if (existing?._id) {
     await bubblePatch(type, existing._id, payload);
     return { ok: true, mode: "update", id: existing._id };
+  } else if (existing?.id) {
+    // fallback om din bubbleFind råkar returnera id
+    await bubblePatch(type, existing.id, payload);
+    return { ok: true, mode: "update", id: existing.id };
   } else {
     const createdId = await bubbleCreate(type, payload);
     return { ok: true, mode: "create", id: createdId || null };
