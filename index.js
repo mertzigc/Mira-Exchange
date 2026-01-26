@@ -537,10 +537,6 @@ async function bubbleFindOne(type, constraints) {
 
 const CLIENTCOMPANY_ORG_FIELD = "Org_Number";
 
-function normalizeOrgNo(v) {
-  return String(v || "").replace(/\D+/g, "").trim();
-}
-
 // Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
 // + sätter/patchar ft_customer_number (number) från Fortnox CustomerNumber
 async function ensureClientCompanyForFortnoxCustomer(cust) {
