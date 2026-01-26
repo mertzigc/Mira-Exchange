@@ -5340,12 +5340,12 @@ async function upsertTengellaWorkorderToBubble(
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
   if (existing?.id) {
-    await bubbleUpdate(type, existing.id, payload);
-    return { ok: true, mode: "update", id: existing.id };
-  } else {
-    const createdId = await bubbleCreate(type, payload);
-    return { ok: true, mode: "create", id: createdId || null };
-  }
+  // PATCH är säkrare för relationer (company/workorder)
+  await bubblePatch(type, existing.id, payload);
+  return { ok: true, mode: "update", id: existing.id };
+} else {
+  const createdId = await bubbleCreate(type, payload);
+  return { ok: true, mode: "create", id: createdId || null };
 }
 
 // ────────────────────────────────────────────────────────────
