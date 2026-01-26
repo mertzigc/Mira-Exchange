@@ -5470,7 +5470,6 @@ async function upsertTengellaWorkorderRowToBubble(
     return { ok: true, mode: "create", id: createdId || null };
   }
     }
-}
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
