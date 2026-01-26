@@ -529,77 +529,27 @@ async function bubbleFindOne(type, constraints) {
   });
   return Array.isArray(arr) && arr.length ? arr[0] : null;
 }
-
+// ────────────────────────────────────────────────────────────
+// ClientCompany orgnr mapping (STABLE)
+// Bubble Data API confirms the field key is exactly: Org_Number (text)
+// We also normalize org numbers to digits-only to match stored values.
 // ────────────────────────────────────────────────────────────
 
-// ────────────────────────────────────────────────────────────
-// ClientCompany orgnr field resolver (handles schema drift between apps/versions)
-// Bubble Data API uses internal field keys; in some apps the org number field is not exactly "Org_Number".
-// We probe a shortlist of candidates once and cache the first one that exists.
-// ────────────────────────────────────────────────────────────
-let _CLIENTCOMPANY_ORG_FIELD_CACHE = null;
+const CLIENTCOMPANY_ORG_FIELD = "Org_Number";
 
-async function resolveClientCompanyOrgField(sampleOrgNo) {
-  if (_CLIENTCOMPANY_ORG_FIELD_CACHE) return _CLIENTCOMPANY_ORG_FIELD_CACHE;
-
-  const candidates = [
-    // Most likely (your UI name)
-    "Org_Number",
-    // Common variants
-    "Org_number",
-    "org_number",
-    "OrgNo",
-    "orgNo",
-    "org_no",
-    "OrgNr",
-    "orgnr",
-    "OrgNumber",
-    "organisation_number",
-    "OrganisationNumber",
-    // Some teams suffix types
-    "Org_Number_text",
-    "OrgNr_text",
-  ];
-
-  const probeValue = String(sampleOrgNo || "556233-9266");
-
-  for (const key of candidates) {
-    try {
-      // We just need Bubble to accept the field name in constraints; result may be null.
-      await bubbleFindOne("ClientCompany", [
-        { key, constraint_type: "equals", value: probeValue }
-      ]);
-      _CLIENTCOMPANY_ORG_FIELD_CACHE = key;
-      console.log("[resolveClientCompanyOrgField] using field:", key);
-      return key;
-    } catch (e) {
-      const msg =
-        e?.detail?.body?.body?.message ||
-        e?.details?.body?.body?.message ||
-        e?.message ||
-        "";
-      // Keep probing on typical schema errors; otherwise still continue (safe).
-      if (String(msg).toLowerCase().includes("field not found") || String(msg).toLowerCase().includes("unrecognized field")) {
-        continue;
-      }
-      continue;
-    }
-  }
-
-  // Fallback to the UI name so errors are at least explicit.
-  _CLIENTCOMPANY_ORG_FIELD_CACHE = "Org_Number";
-  console.warn("[resolveClientCompanyOrgField] could not probe field; falling back to Org_Number");
-  return _CLIENTCOMPANY_ORG_FIELD_CACHE;
+function normalizeOrgNo(v) {
+  return String(v || "").replace(/\D+/g, "").trim();
 }
 
 // Skapa (eller hitta) ClientCompany baserat på orgnr (primärt)
 // + sätter/patchar ft_customer_number (number) från Fortnox CustomerNumber
 async function ensureClientCompanyForFortnoxCustomer(cust) {
-  const orgNo = asTextOrEmpty(
+  const orgNoRaw = asTextOrEmpty(
     cust?.OrganisationNumber || cust?.organisation_number || cust?.organisationNumber
   ).trim();
 
-  if (!orgNo) return null;
+  const orgNoNorm = normalizeOrgNo(orgNoRaw);
+  if (!orgNoNorm) return null;
 
   const customerNoText = asTextOrEmpty(
     cust?.CustomerNumber || cust?.customer_number || cust?.customerNumber
@@ -611,32 +561,22 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
   const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
   const phone = cust?.Phone || cust?.phone;
 
-    // 1) hitta befintligt ClientCompany på Org_Number
-  // Viktigt: normalisera orgnr (bara siffror) så vi matchar oavsett bindestreck/spaces
-  const orgNoNorm = normalizeOrgNo(orgNo);
-
-  const orgField = await resolveClientCompanyOrgField(orgNoNorm || orgNo);
-
-  // a) prova normaliserat värde (rekommenderat)
+  // 1) hitta befintligt ClientCompany på Org_Number (digits-only)
   let existing = await bubbleFindOne("ClientCompany", [
-    { key: orgField, constraint_type: "equals", value: orgNoNorm }
+    { key: CLIENTCOMPANY_ORG_FIELD, constraint_type: "equals", value: orgNoNorm }
   ]);
 
-  // b) fallback: prova exakt raw om Bubble råkar ha sparat med bindestreck
-  if (!existing?._id && orgNo) {
+  // fallback: om någon gammal post råkat ligga med bindestreck (ovanligt)
+  if (!existing?._id && orgNoRaw) {
     existing = await bubbleFindOne("ClientCompany", [
-      { key: orgField, constraint_type: "equals", value: orgNo }
+      { key: CLIENTCOMPANY_ORG_FIELD, constraint_type: "equals", value: orgNoRaw }
     ]);
   }
 
   if (existing?._id) {
-    // Patcha bara om fält saknas (så vi inte skriver över manuellt CRM-data)
     const patch = {};
 
-    if (
-      customerNoNum !== null &&
-      (existing.ft_customer_number === undefined || existing.ft_customer_number === null)
-    ) {
+    if (customerNoNum !== null && (existing.ft_customer_number === undefined || existing.ft_customer_number === null)) {
       patch.ft_customer_number = customerNoNum;
     }
 
@@ -644,19 +584,9 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
     if (email && !existing.Email) patch.Email = email;
 
     const phoneNum = asNumberOrNull(phone);
-    if (
-      phoneNum !== null &&
-      (existing.Telefon === undefined || existing.Telefon === null)
-    ) {
+    if (phoneNum !== null && (existing.Telefon === undefined || existing.Telefon === null)) {
       patch.Telefon = phoneNum;
     }
-
-    // (valfritt) spara normaliserat orgnr i samma fält om du vill “stabilisera” databasen
-    // Men bara om fältet är tomt eller icke-normaliserat.
-    // OBS: detta skriver till Org_Number (som du sa är kritiskt) – kommentera bort om du inte vill.
-    // if (orgNoNorm && (!existing.Org_Number || normalizeOrgNo(existing.Org_Number) !== orgNoNorm)) {
-    //   patch.Org_Number = orgNoNorm;
-    // }
 
     if (Object.keys(patch).length) {
       await bubblePatch("ClientCompany", existing._id, patch);
@@ -664,10 +594,12 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
 
     return existing._id;
   }
+
   // 2) skapa nytt ClientCompany
+  // VIKTIGT: spara orgnr normaliserat (digits-only) i Org_Number
   const ccFields = {
-    Name_company: name || orgNo,
-    [orgField]: orgNo
+    Name_company: name || orgNoNorm,
+    [CLIENTCOMPANY_ORG_FIELD]: orgNoNorm
   };
 
   if (email) ccFields.Email = email;
