@@ -5413,7 +5413,7 @@ async function upsertTengellaWorkorderRowToBubble(
   const existing = await bubbleFindOne(type, [
     { key: "workorder_row_id", constraint_type: "equals", value: workOrderRowId },
   ]);
-
+const rowFieldCaps = await canWriteTengellaWorkorderRowFields();
   const payload = {
     workorder_row_id: workOrderRowId,
 
@@ -5451,8 +5451,8 @@ async function upsertTengellaWorkorderRowToBubble(
     first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart),
     last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart),
 
-    ...(company ? { company } : {}),
-    ...(commission ? { commission } : {}),
+    ...(rowFieldCaps?.hasCompany && company ? { company } : {}),
+...(rowFieldCaps?.hasCommission && commission ? { commission } : {}),
 
     raw_json: safeJsonStringify(row),
   };
@@ -5470,6 +5470,11 @@ async function upsertTengellaWorkorderRowToBubble(
     return { ok: true, mode: "create", id: createdId || null };
   }
     }
+console.log("[row upsert]", {
+  workOrderRowId,
+  sendingCompany: rowFieldCaps?.hasCompany ? company : null,
+  hasCompanyField: rowFieldCaps?.hasCompany
+});
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
