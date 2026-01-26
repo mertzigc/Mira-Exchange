@@ -4951,7 +4951,7 @@ const regNoNorm = normalizeOrgNo(customer?.RegNo);
 let matchedCompanyId = null;
 
 if (regNoNorm) {
-  const orgField = await resolveClientCompanyOrgField(regNoNorm);
+  const orgField = "Org_Number";
   const cc = await bubbleFindOne("ClientCompany", [
     { key: orgField, constraint_type: "equals", value: regNoNorm }
   ]);
