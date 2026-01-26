@@ -5036,26 +5036,38 @@ app.post("/tengella/customers/sync", async (req, res) => {
 
       for (const customer of data) {
   try {
-    const r = await upsertTengellaCustomerToBubble(customer);
-    if (r?.ok) upserted += 1;
+  // 1) Upsert TengellaCustomer
+  const r = await upsertTengellaCustomerToBubble(customer);
+  if (r?.ok) upserted += 1;
 
-    // ✅ Steg 3: koppla till ClientCompany via orgnr
-    if (r?.ok && r?.id) {
-      const regDigits = normalizeOrgNoDigits(customer?.RegNo || "");
-      if (regDigits) {
-        const cc = await findClientCompanyByOrgNo(regDigits); // använder auto-detect av rätt key
-        if (cc?._id) {
-          await bubbleUpdate("TengellaCustomer", r.id, { company: cc._id });
-        }
+  // 2) Find the created/updated TengellaCustomer (need Bubble id)
+  const tRec = await bubbleFindOne("TengellaCustomer", [
+    { key: "tengella_customer_id", constraint_type: "equals", value: Number(customer?.CustomerId) }
+  ]);
+
+  // 3) Ensure ClientCompany and link it back to TengellaCustomer.company
+  if (tRec?._id) {
+    const ccId = await ensureClientCompanyForTengellaCustomer(customer);
+
+    if (ccId) {
+      // Set company on TengellaCustomer if missing
+      if (!tRec.company) {
+        await bubblePatch("TengellaCustomer", tRec._id, { company: ccId });
+      }
+
+      // Optional: also store tengella_customer_id on ClientCompany (you already have that field)
+      // Only patch if missing to avoid overwriting
+      if (!tRec?.tengella_customer_id) {
+        await bubblePatch("ClientCompany", ccId, { tengella_customer_id: Number(customer?.CustomerId) });
       }
     }
-  } catch (e) {
-    errors.push({
-      customerId: customer?.CustomerId,
-      reason: e?.message || String(e),
-      detail: e?.detail || e?.details || null
-    });
   }
+} catch (e) {
+  errors.push({
+    customerId: customer?.CustomerId,
+    reason: e?.message || String(e),
+    detail: e?.detail || e?.details || null
+  });
 }
 
       nextCursor = resp?.Next || null;
@@ -5127,7 +5139,41 @@ function normalizeOrgNo(v) {
   // "556 233 9266" -> "5562339266"
   return String(v || "").replace(/\D/g, "").trim() || "";
 }
+// ────────────────────────────────────────────────────────────
+// Ensure ClientCompany from Tengella Customer (RegNo)
+// Uses ClientCompany field: Org_Number (text)
+// ────────────────────────────────────────────────────────────
+async function ensureClientCompanyForTengellaCustomer(tCustomer) {
+  // Tengella: RegNo ex "556233-9266"
+  const regNoRaw = String(
+    tCustomer?.RegNo ||
+    tCustomer?.OrganisationNumber ||
+    tCustomer?.OrganisationNo ||
+    tCustomer?.org_no ||
+    ""
+  ).trim();
 
+  const orgNoNorm = normalizeOrgNo(regNoRaw);
+  if (!orgNoNorm) return null;
+
+  // 1) Find by Org_Number
+  const existing = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Number", constraint_type: "equals", value: orgNoNorm }
+  ]);
+
+  if (existing?._id) return existing._id;
+
+  // 2) Create minimal ClientCompany (don’t overwrite CRM)
+  const name = String(tCustomer?.CustomerName || tCustomer?.Name || "").trim() || orgNoNorm;
+
+  const payload = {
+    Name_company: name,
+    Org_Number: orgNoNorm,
+  };
+
+  const createdId = await bubbleCreate("ClientCompany", payload);
+  return createdId || null;
+}
 function toBubbleDate(v) {
   if (!v) return null;
   const d = new Date(String(v));
