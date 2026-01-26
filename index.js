@@ -5460,18 +5460,15 @@ async function upsertTengellaWorkorderRowToBubble(
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
   // UPDATE vs CREATE (Bubble använder _id)
-  if (existing?._id) {
-    await bubblePatch(type, existing._id, payload);
-    return { ok: true, mode: "update", id: existing._id };
-  } else if (existing?.id) {
-    // fallback om din bubbleFind råkar returnera id
+    if (existing?.id) {
+    // PATCH är säkrare för relationer (company/workorder)
     await bubblePatch(type, existing.id, payload);
     return { ok: true, mode: "update", id: existing.id };
   } else {
     const createdId = await bubbleCreate(type, payload);
     return { ok: true, mode: "create", id: createdId || null };
   }
-}
+} // ✅ <-- DENNA saknades: stänger upsertTengellaWorkorderToBubble
 // ────────────────────────────────────────────────────────────
 // Bubble upsert: Customer
 // (Match your Bubble fields – adjust keys if needed)
