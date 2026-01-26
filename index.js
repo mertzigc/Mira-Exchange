@@ -4924,83 +4924,89 @@ async function upsertTengellaCustomerToBubble(customer) {
     { key: "tengella_customer_id", constraint_type: "equals", value: tengella_customer_id },
   ]);
 
-  // Helpers för Addresses/Contacts (Tengella skickar listor)
-const addresses = Array.isArray(customer?.Addresses) ? customer.Addresses : [];
-const contacts  = Array.isArray(customer?.Contacts) ? customer.Contacts : [];
+  const existingId = existing?._id || existing?.id || null;
 
-// AddressType (vanligt i Tengella):
-// 1 = Invoice, 4 = Visiting (utifrån din data: 1 ser ut som efakt/FE-adress, 4 som fysisk adress)
-const invAddr =
-  addresses.find(a => Number(a?.AddressType) === 1 && !!a?.IsDefaultAddressforType) ||
-  addresses.find(a => Number(a?.AddressType) === 1) ||
-  null;
+  // Tengella skickar listor
+  const addresses = Array.isArray(customer?.Addresses) ? customer.Addresses : [];
+  const contacts  = Array.isArray(customer?.Contacts) ? customer.Contacts : [];
 
-const visitAddr =
-  addresses.find(a => Number(a?.AddressType) === 4 && !!a?.IsDefaultAddressforType) ||
-  addresses.find(a => Number(a?.AddressType) === 4) ||
-  null;
+  // AddressType (typiskt i Tengella):
+  // 1 = Invoice, 4 = Visiting (utifrån din data)
+  const invAddr =
+    addresses.find(a => Number(a?.AddressType) === 1 && !!a?.IsDefaultAddressforType) ||
+    addresses.find(a => Number(a?.AddressType) === 1) ||
+    null;
 
-// Default contact
-const defContact =
-  contacts.find(c => !!c?.IsDefaultCustomerContact) ||
-  contacts[0] ||
-  null;
-const regNoNorm = normalizeOrgNo(customer?.RegNo);
+  const visitAddr =
+    addresses.find(a => Number(a?.AddressType) === 4 && !!a?.IsDefaultAddressforType) ||
+    addresses.find(a => Number(a?.AddressType) === 4) ||
+    null;
 
-// Försök hitta ClientCompany med samma orgnr (du måste ha ett fält där, ex: org_no / orgnr / org_number)
-let matchedCompanyId = null;
+  // Default contact
+  const defContact =
+    contacts.find(c => !!c?.IsDefaultCustomerContact) ||
+    contacts[0] ||
+    null;
 
-if (regNoNorm) {
-  const orgField = "Org_Number";
-  const cc = await bubbleFindOne("ClientCompany", [
-    { key: orgField, constraint_type: "equals", value: regNoNorm }
-  ]);
-  if (cc?.id) matchedCompanyId = cc.id;
-}
-const regNoRaw = String(customer?.RegNo ?? "").trim();
-const regNoDigits = normalizeOrgNoDigits(regNoRaw);  
-const payload = {
-  // IDs
-  tengella_customer_id,
-tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
-  // Core
-  name: customer?.CustomerName ?? customer?.Name ?? "",
-  org_no: regNoDigits,
-  org_no_raw: regNoRaw, // bara om du faktiskt har skapat fältet i Bubble
-  vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
-  
+  const regNoRaw   = String(customer?.RegNo ?? "").trim();
+  const regNoDigits = normalizeOrgNo(regNoRaw); // <-- använder din helper (bara siffror)
 
-  // Contact (fallback: default contact)
-  phone: customer?.Phone ?? defContact?.Phone ?? defContact?.Mobile ?? "",
-  email: customer?.EMail ?? customer?.Email ?? defContact?.Email ?? "",
-  website: customer?.Www ?? customer?.Website ?? "",
+  // Försök matcha ClientCompany på Org_Number (safe: om schema inte matchar, skippa bara)
+  let matchedCompanyId = null;
+  if (regNoDigits) {
+    try {
+      const cc = await bubbleFindOne("ClientCompany", [
+        { key: "Org_Number", constraint_type: "equals", value: regNoDigits }
+      ]);
+      matchedCompanyId = cc?._id || cc?.id || null;
+    } catch (e) {
+      // Skippa matchning om Bubble klagar på fält/schemat
+      matchedCompanyId = null;
+    }
+  }
 
-  // Visiting address (AddressType 4)
-  address: visitAddr?.Street ?? "",
-  city: visitAddr?.City ?? "",
-  zip: visitAddr?.ZipCode ?? "",
+  const payload = {
+    // IDs
+    tengella_customer_id,
+    tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
 
-  // Invoice address (AddressType 1)
-  invoice_address: invAddr?.Street ?? "",
-  invoice_city: invAddr?.City ?? "",
-  invoice_zip: invAddr?.ZipCode ?? "",
+    // Core
+    name: customer?.CustomerName ?? customer?.Name ?? "",
+    org_no: regNoDigits,
+    org_no_raw: regNoRaw, // OBS: bara om fältet finns i Bubble
+    vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
 
-  // Optional: work_address (om du vill använda Street2 som extra rad)
-  // work_address: visitAddr?.Street2 ?? "",
-...(matchedCompanyId ? { company: matchedCompanyId } : {}),
-  // Status
-  is_deleted: normalizeBool(customer?.IsDeleted),
+    // Contact
+    phone: customer?.Phone ?? defContact?.Phone ?? defContact?.Mobile ?? "",
+    email: customer?.EMail ?? customer?.Email ?? defContact?.Email ?? "",
+    website: customer?.Www ?? customer?.Website ?? "",
 
-  // Debug
-  raw_json: safeJsonStringify(customer),
-};
+    // Visiting address (AddressType 4)
+    address: visitAddr?.Street ?? "",
+    city: visitAddr?.City ?? "",
+    zip: visitAddr?.ZipCode ?? "",
 
-// Bubble gillar null men inte undefined
-Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+    // Invoice address (AddressType 1)
+    invoice_address: invAddr?.Street ?? "",
+    invoice_city: invAddr?.City ?? "",
+    invoice_zip: invAddr?.ZipCode ?? "",
 
-  if (existing?.id) {
-    await bubbleUpdate(type, existing.id, payload);
-    return { ok: true, mode: "update", id: existing.id };
+    // Link
+    ...(matchedCompanyId ? { company: matchedCompanyId } : {}),
+
+    // Status
+    is_deleted: normalizeBool(customer?.IsDeleted),
+
+    // Debug
+    raw_json: safeJsonStringify(customer),
+  };
+
+  // Bubble gillar null men inte undefined
+  Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+
+  if (existingId) {
+    await bubbleUpdate(type, existingId, payload);
+    return { ok: true, mode: "update", id: existingId };
   } else {
     const createdId = await bubbleCreate(type, payload);
     return { ok: true, mode: "create", id: createdId || null };
@@ -5030,45 +5036,50 @@ app.post("/tengella/customers/sync", async (req, res) => {
       page += 1;
 
       const resp = await listTengellaCustomers({ token, limit, cursor: nextCursor });
-
       const data = Array.isArray(resp?.Data) ? resp.Data : [];
+
       fetched += data.length;
 
       for (const customer of data) {
-  try {
-  // 1) Upsert TengellaCustomer
-  const r = await upsertTengellaCustomerToBubble(customer);
-  if (r?.ok) upserted += 1;
+        try {
+          // 1) Upsert TengellaCustomer (inkl ev "company" match om den redan finns)
+          const r = await upsertTengellaCustomerToBubble(customer);
+          if (r?.ok) upserted += 1;
 
-  // 2) Find the created/updated TengellaCustomer (need Bubble id)
-  const tRec = await bubbleFindOne("TengellaCustomer", [
-    { key: "tengella_customer_id", constraint_type: "equals", value: Number(customer?.CustomerId) }
-  ]);
+          // 2) Hämta TengellaCustomer igen (för Bubble id + nuvarande company)
+          const tRec = await bubbleFindOne("TengellaCustomer", [
+            { key: "tengella_customer_id", constraint_type: "equals", value: Number(customer?.CustomerId) }
+          ]);
+          const tId = tRec?._id || tRec?.id || null;
 
-  // 3) Ensure ClientCompany and link it back to TengellaCustomer.company
-  if (tRec?._id) {
-    const ccId = await ensureClientCompanyForTengellaCustomer(customer);
+          // 3) Om vi vill auto-skapa/ensura ClientCompany och länka:
+          // (förutsätter att ensureClientCompanyForTengellaCustomer finns i filen)
+          if (tId && typeof ensureClientCompanyForTengellaCustomer === "function") {
+            const ccId = await ensureClientCompanyForTengellaCustomer(customer);
 
-    if (ccId) {
-      // Set company on TengellaCustomer if missing
-      if (!tRec.company) {
-        await bubblePatch("TengellaCustomer", tRec._id, { company: ccId });
+            if (ccId && !tRec?.company) {
+              await bubblePatch("TengellaCustomer", tId, { company: ccId });
+            }
+
+            // (valfritt) spara tengella_customer_id på ClientCompany om fältet finns
+            // - gör safe: patcha bara om fältet saknas
+            try {
+              const ccRec = await bubbleFindOne("ClientCompany", [
+                { key: "_id", constraint_type: "equals", value: ccId }
+              ]);
+              if (ccRec && (ccRec.tengella_customer_id === undefined || ccRec.tengella_customer_id === null)) {
+                await bubblePatch("ClientCompany", ccId, { tengella_customer_id: Number(customer?.CustomerId) });
+              }
+            } catch (_) {}
+          }
+        } catch (e) {
+          errors.push({
+            customerId: customer?.CustomerId,
+            reason: e?.message || String(e),
+            detail: e?.detail || e?.details || null
+          });
+        }
       }
-
-      // Optional: also store tengella_customer_id on ClientCompany (you already have that field)
-      // Only patch if missing to avoid overwriting
-      if (!tRec?.tengella_customer_id) {
-        await bubblePatch("ClientCompany", ccId, { tengella_customer_id: Number(customer?.CustomerId) });
-      }
-    }
-  }
-} catch (e) {
-  errors.push({
-    customerId: customer?.CustomerId,
-    reason: e?.message || String(e),
-    detail: e?.detail || e?.details || null
-  });
-}
 
       nextCursor = resp?.Next || null;
       existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
