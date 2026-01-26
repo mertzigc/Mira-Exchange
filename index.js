@@ -4930,8 +4930,6 @@ async function upsertTengellaCustomerToBubble(customer) {
   const addresses = Array.isArray(customer?.Addresses) ? customer.Addresses : [];
   const contacts  = Array.isArray(customer?.Contacts) ? customer.Contacts : [];
 
-  // AddressType (typiskt i Tengella):
-  // 1 = Invoice, 4 = Visiting (utifrån din data)
   const invAddr =
     addresses.find(a => Number(a?.AddressType) === 1 && !!a?.IsDefaultAddressforType) ||
     addresses.find(a => Number(a?.AddressType) === 1) ||
@@ -4942,16 +4940,15 @@ async function upsertTengellaCustomerToBubble(customer) {
     addresses.find(a => Number(a?.AddressType) === 4) ||
     null;
 
-  // Default contact
   const defContact =
     contacts.find(c => !!c?.IsDefaultCustomerContact) ||
     contacts[0] ||
     null;
 
-  const regNoRaw   = String(customer?.RegNo ?? "").trim();
-  const regNoDigits = normalizeOrgNo(regNoRaw); // <-- använder din helper (bara siffror)
+  const regNoRaw    = String(customer?.RegNo ?? "").trim();
+  const regNoDigits = normalizeOrgNo(regNoRaw);
 
-  // Försök matcha ClientCompany på Org_Number (safe: om schema inte matchar, skippa bara)
+  // Matcha ClientCompany på Org_Number (safe)
   let matchedCompanyId = null;
   if (regNoDigits) {
     try {
@@ -4959,60 +4956,49 @@ async function upsertTengellaCustomerToBubble(customer) {
         { key: "Org_Number", constraint_type: "equals", value: regNoDigits }
       ]);
       matchedCompanyId = cc?._id || cc?.id || null;
-    } catch (e) {
-      // Skippa matchning om Bubble klagar på fält/schemat
+    } catch (_) {
       matchedCompanyId = null;
     }
   }
 
   const payload = {
-    // IDs
     tengella_customer_id,
     tengella_customer_no: customer?.CustomerNo != null ? String(customer.CustomerNo) : "",
 
-    // Core
     name: customer?.CustomerName ?? customer?.Name ?? "",
     org_no: regNoDigits,
-    org_no_raw: regNoRaw, // OBS: bara om fältet finns i Bubble
+    org_no_raw: regNoRaw, // bara om fältet finns i Bubble
     vat_no: customer?.VatNumber ?? customer?.VatNo ?? "",
 
-    // Contact
     phone: customer?.Phone ?? defContact?.Phone ?? defContact?.Mobile ?? "",
     email: customer?.EMail ?? customer?.Email ?? defContact?.Email ?? "",
     website: customer?.Www ?? customer?.Website ?? "",
 
-    // Visiting address (AddressType 4)
     address: visitAddr?.Street ?? "",
     city: visitAddr?.City ?? "",
     zip: visitAddr?.ZipCode ?? "",
 
-    // Invoice address (AddressType 1)
     invoice_address: invAddr?.Street ?? "",
     invoice_city: invAddr?.City ?? "",
     invoice_zip: invAddr?.ZipCode ?? "",
 
-    // Link
     ...(matchedCompanyId ? { company: matchedCompanyId } : {}),
 
-    // Status
     is_deleted: normalizeBool(customer?.IsDeleted),
-
-    // Debug
     raw_json: safeJsonStringify(customer),
   };
 
-  // Bubble gillar null men inte undefined
   Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
   if (existingId) {
-    await bubbleUpdate(type, existingId, payload);
+    // ✅ Bubble PATCH
+    await bubblePatch(type, existingId, payload);
     return { ok: true, mode: "update", id: existingId };
   } else {
     const createdId = await bubbleCreate(type, payload);
     return { ok: true, mode: "create", id: createdId || null };
   }
 }
-
 app.post("/tengella/customers/sync", async (req, res) => {
   try {
     const orgNo = req.body?.orgNo;
