@@ -4821,7 +4821,7 @@ function safeJsonStringify(obj, maxLen = 250000) {
     return "";
   }
 }
-function normalizeOrgNoDigits(v) {
+function normalizeOrgNo(v) {
   return String(v || "").replace(/\D+/g, "").trim();
 }
 
@@ -4879,7 +4879,7 @@ async function findClientCompanyByOrgNo(orgNoRaw) {
   const key = await detectClientCompanyOrgKey();
 
   const raw = String(orgNoRaw || "").trim();
-  const digits = normalizeOrgNoDigits(raw);
+  const digits = normalizeOrgNo(raw);
 
   // prova först raw (om ni sparar med bindestreck)
   if (raw) {
@@ -4899,6 +4899,18 @@ async function findClientCompanyByOrgNo(orgNoRaw) {
 
   return null;
 }
+const SYNC_SECRET = pick(process.env.SYNC_SECRET);
+
+function requireSyncSecret(req, res, next) {
+  // Om du inte satt env än, faila hårt så du märker det
+  if (!SYNC_SECRET) return res.status(500).json({ ok: false, error: "Missing env SYNC_SECRET" });
+
+  const got = req.headers["x-sync-secret"];
+  if (!got || String(got) !== String(SYNC_SECRET)) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+  return next();
+}
 // ────────────────────────────────────────────────────────────
 // Tengella – Customers sync (Render → Tengella → Bubble Data API)
 // ────────────────────────────────────────────────────────────
@@ -4910,7 +4922,12 @@ async function listTengellaCustomers({ token, limit = 100, cursor = null } = {})
     query: { limit, cursor },
   });
 }
-
+async function findClientCompanyByOrgNo(orgNoDigits) {
+  if (!orgNoDigits) return null;
+  return bubbleFindOne("ClientCompany", [
+    { key: "Org_Number", constraint_type: "equals", value: String(orgNoDigits) }
+  ]);
+}
 async function upsertTengellaCustomerToBubble(customer) {
   const type = "TengellaCustomer";
 
@@ -4996,7 +5013,7 @@ async function upsertTengellaCustomerToBubble(customer) {
     return { ok: true, mode: "create", id: createdId || null };
   }
 }
-app.post("/tengella/customers/sync", async (req, res) => {
+app.post("/tengella/customers/sync", requireSyncSecret, async (req, res) => {
   try {
     const orgNo = req.body?.orgNo;
     const limit = Number(req.body?.limit ?? 100) || 100;
@@ -5117,7 +5134,7 @@ app.post("/tengella/customers/sync", async (req, res) => {
 
 const TENGELLA_BASE_URL = pick(process.env.TENGELLA_BASE_URL, "https://api.tengella.se/public");
 const TENGELLA_APP_KEY = pick(process.env.TENGELLA_APP_KEY);
-
+const TENGELLA_DEFAULT_ORGNO = "746-0509";
 // ────────────────────────────────────────────────────────────
 // Tiny helpers (kept here so you don’t get “not defined” again)
 // ────────────────────────────────────────────────────────────
@@ -5336,14 +5353,16 @@ async function upsertTengellaWorkorderToBubble(
 
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
-  if (existing?.id) {
-  // PATCH är säkrare för relationer (company/workorder)
-  await bubblePatch(type, existing.id, payload);
-  return { ok: true, mode: "update", id: existing.id };
-} else {
-  const createdId = await bubbleCreate(type, payload);
-  return { ok: true, mode: "create", id: createdId || null };
-}
+    const existingId = existing?._id || existing?.id || null;
+
+  if (existingId) {
+    // PATCH är säkrare för relationer (company/workorder)
+    await bubblePatch(type, existingId, payload);
+    return { ok: true, mode: "update", id: existingId };
+  } else {
+    const createdId = await bubbleCreate(type, payload);
+    return { ok: true, mode: "create", id: createdId || null };
+  }
 } // ✅ stänger upsertTengellaWorkorderToBubble
 
 // ────────────────────────────────────────────────────────────
@@ -5509,9 +5528,16 @@ app.get("/tengella/debug-env", (req, res) => {
 
 app.post("/tengella/auth/test", async (req, res) => {
   try {
-    const orgNo = req.body?.orgNo;
+    const orgNo = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
+    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
+
     const token = await tengellaLogin(orgNo);
-    return res.json({ ok: true, orgNo, token_preview: token ? `${String(token).slice(0, 6)}...${String(token).slice(-5)}` : null });
+
+    return res.json({
+      ok: true,
+      orgNo,
+      token_preview: token ? `${String(token).slice(0, 6)}...${String(token).slice(-5)}` : null
+    });
   } catch (e) {
     console.error("[tengella/auth/test]", e?.message || e, e?.details || "");
     return res.status(500).json({ ok: false, error: e?.message || String(e), details: e?.details || null });
@@ -5521,9 +5547,10 @@ app.post("/tengella/auth/test", async (req, res) => {
 // WorkOrders sync route (TOP-LEVEL, not nested)
 // Also resolves TengellaCustomer → company if customer has field `company`
 // ────────────────────────────────────────────────────────────
-app.post("/tengella/workorders/sync", async (req, res) => {
+app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
   try {
-    const orgNo = req.body?.orgNo;
+    const orgNo = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
+if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
     const limit = Number(req.body?.limit ?? 100) || 100;
     const cursor = req.body?.cursor ?? null;
     const customerId = req.body?.customerId ?? null;
@@ -5577,14 +5604,14 @@ if (wo?.CustomerId) {
     if (tc?.company) {
       resolvedCompanyId = tc.company;
     } else {
-      const regDigits = normalizeOrgNoDigits(tc?.org_no || tc?.org_no_raw || "");
+      const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
       if (regDigits) {
         const cc = await findClientCompanyByOrgNo(regDigits);
         if (cc?._id) {
           resolvedCompanyId = cc._id;
 
           // cachea kopplingen för framtiden
-          await bubbleUpdate("TengellaCustomer", tc._id, { company: cc._id });
+          await bubblePatch("TengellaCustomer", tc._id, { company: cc._id });
         }
       }
     }
