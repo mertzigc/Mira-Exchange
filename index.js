@@ -4922,12 +4922,6 @@ async function listTengellaCustomers({ token, limit = 100, cursor = null } = {})
     query: { limit, cursor },
   });
 }
-async function findClientCompanyByOrgNo(orgNoDigits) {
-  if (!orgNoDigits) return null;
-  return bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: String(orgNoDigits) }
-  ]);
-}
 async function upsertTengellaCustomerToBubble(customer) {
   const type = "TengellaCustomer";
 
