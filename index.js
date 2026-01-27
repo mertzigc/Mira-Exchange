@@ -4914,7 +4914,14 @@ function requireSyncSecret(req, res, next) {
 // ────────────────────────────────────────────────────────────
 // Tengella – Customers sync (Render → Tengella → Bubble Data API)
 // ────────────────────────────────────────────────────────────
-
+// Tengella ENV (robust mot olika namn)
+const TENGELLA_ORGNO = pick(
+  process.env.TENGELLA_ORGNO,
+  process.env.TENGELLA_ORG_NO,
+  process.env.TENGELLA_ORGNR,
+  process.env.TENGELLA_DEFAULT_ORGNO,
+  "746-0509" // sista fallback (safe för dig eftersom du har EN tenant)
+);
 async function listTengellaCustomers({ token, limit = 100, cursor = null } = {}) {
   return tengellaFetch(`/v2/Customers`, {
     method: "GET",
@@ -5677,6 +5684,208 @@ if (wo?.CustomerId) {
       error: e?.message || String(e),
       details: e?.details || e?.detail || null,
     });
+  }
+});
+// ────────────────────────────────────────────────────────────
+// Tengella SyncState (Bubble) helpers
+// ────────────────────────────────────────────────────────────
+const SYNC_STATE_TYPE = "TengellaSyncState";
+
+const bubbleId = (obj) => obj?._id || obj?.id || null;
+
+async function getOrCreateTengellaSyncState(orgNo) {
+  const org = String(orgNo || TENGELLA_ORGNO).trim();
+  let s = await bubbleFindOne(SYNC_STATE_TYPE, [
+    { key: "org_no", constraint_type: "equals", value: org }
+  ]);
+
+  if (bubbleId(s)) return s;
+
+  const createdId = await bubbleCreate(SYNC_STATE_TYPE, {
+    org_no: org,
+    customers_cursor: "",
+    workorders_cursor: "",
+    last_ok: true
+  });
+
+  s = await bubbleFindOne(SYNC_STATE_TYPE, [
+    { key: "org_no", constraint_type: "equals", value: org }
+  ]);
+
+  return s || { _id: createdId, org_no: org };
+}
+
+function isLocked(locked_until) {
+  if (!locked_until) return false;
+  const t = new Date(locked_until).getTime();
+  if (Number.isNaN(t)) return false;
+  return t > Date.now();
+}
+
+async function acquireLockOrFail(stateId, minutes = 8) {
+  const until = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+  await bubblePatch(SYNC_STATE_TYPE, stateId, { locked_until: until });
+  return until;
+}
+
+async function releaseLock(stateId) {
+  await bubblePatch(SYNC_STATE_TYPE, stateId, { locked_until: null });
+}
+// ────────────────────────────────────────────────────────────
+// Tengella Cron Sync (single-tenant default)
+// ────────────────────────────────────────────────────────────
+app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
+  const orgNo = String(req.body?.orgNo || TENGELLA_ORGNO).trim();
+
+  // hur mycket vi gör per cron-körning (tune)
+  const customersMaxPages  = Number(req.body?.customersMaxPages ?? 2) || 2;
+  const workordersMaxPages = Number(req.body?.workordersMaxPages ?? 2) || 2;
+  const limit = Number(req.body?.limit ?? 100) || 100;
+
+  try {
+    // 1) Hämta state
+    const state = await getOrCreateTengellaSyncState(orgNo);
+    const stateId = bubbleId(state);
+    if (!stateId) throw new Error("Could not resolve TengellaSyncState id");
+
+    // 2) Stoppa om låst
+    if (isLocked(state.locked_until)) {
+      return res.json({ ok: true, skipped: "locked", locked_until: state.locked_until, orgNo });
+    }
+
+    // 3) Lock
+    const locked_until = await acquireLockOrFail(stateId, 8);
+
+    // 4) Login Tengella
+    const token = await tengellaLogin(orgNo);
+
+    // ── A) Customers sync (cursor-driven)
+    let customersCursor = state.customers_cursor || null;
+    let customersPages = 0;
+    let customersFetched = 0;
+    let customersUpserted = 0;
+
+    while (customersPages < customersMaxPages) {
+      customersPages += 1;
+
+      const resp = await listTengellaCustomers({ token, limit, cursor: customersCursor });
+      const data = Array.isArray(resp?.Data) ? resp.Data : [];
+      customersFetched += data.length;
+
+      for (const c of data) {
+        const r = await upsertTengellaCustomerToBubble(c);
+        if (r?.ok) customersUpserted += 1;
+      }
+
+      const nextCursor = resp?.Next || null;
+      const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
+
+      customersCursor = nextCursor;
+
+      // spara cursor efter varje page (så vi aldrig tappar läge)
+      await bubblePatch(SYNC_STATE_TYPE, stateId, {
+        customers_cursor: customersCursor || "",
+        last_run: new Date().toISOString(),
+        last_ok: true
+      });
+
+      if (!more) break;
+    }
+
+    // ── B) WorkOrders sync (cursor-driven)
+    // (OBS: här använder vi din befintliga workorders-logik inklusive company-resolve)
+    let workordersCursor = state.workorders_cursor || null;
+    let workordersPages = 0;
+    let workordersFetched = 0;
+    let workordersUpserted = 0;
+    let rowsUpserted = 0;
+
+    while (workordersPages < workordersMaxPages) {
+      workordersPages += 1;
+
+      const resp = await listTengellaWorkOrders({ token, limit, cursor: workordersCursor });
+      const data = Array.isArray(resp?.Data) ? resp.Data : [];
+      workordersFetched += data.length;
+
+      for (const wo of data) {
+        // Resolve TengellaCustomer → company (ClientCompany)
+        let resolvedCompanyId = null;
+        let resolvedTengellaCustomerBubbleId = null;
+
+        if (wo?.CustomerId) {
+          const tc = await bubbleFindOne("TengellaCustomer", [
+            { key: "tengella_customer_id", constraint_type: "equals", value: Number(wo.CustomerId) }
+          ]);
+
+          const tcId = bubbleId(tc);
+          if (tcId) {
+            resolvedTengellaCustomerBubbleId = tcId;
+
+            if (tc?.company) {
+              resolvedCompanyId = tc.company;
+            } else {
+              const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
+              if (regDigits) {
+                const cc = await bubbleFindOne("ClientCompany", [
+                  { key: "Org_Number", constraint_type: "equals", value: String(regDigits) }
+                ]);
+                const ccId = bubbleId(cc);
+                if (ccId) {
+                  resolvedCompanyId = ccId;
+                  await bubblePatch("TengellaCustomer", tcId, { company: ccId });
+                }
+              }
+            }
+          }
+        }
+
+        const wr = await upsertTengellaWorkorderToBubble(wo, {
+          bubbleCompanyId: resolvedCompanyId,
+          tengellaCustomerId: resolvedTengellaCustomerBubbleId
+        });
+        if (wr?.ok) workordersUpserted += 1;
+
+        // Rows
+        if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+          for (const row of wo.WorkOrderRows) {
+            const rr = await upsertTengellaWorkorderRowToBubble(row, {
+              workorderBubbleId: wr.id,
+              workorderId: wo.WorkOrderId,
+              projectId: wo.ProjectId,
+              customerId: wo.CustomerId,
+              company: resolvedCompanyId
+            });
+            if (rr?.ok) rowsUpserted += 1;
+          }
+        }
+      }
+
+      const nextCursor = resp?.Next || null;
+      const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
+      workordersCursor = nextCursor;
+
+      await bubblePatch(SYNC_STATE_TYPE, stateId, {
+        workorders_cursor: workordersCursor || "",
+        last_run: new Date().toISOString(),
+        last_ok: true
+      });
+
+      if (!more) break;
+    }
+
+    // 5) Release lock
+    await releaseLock(stateId);
+
+    return res.json({
+      ok: true,
+      orgNo,
+      locked_until,
+      customers: { pages: customersPages, fetched: customersFetched, upserted: customersUpserted, cursor: customersCursor || "" },
+      workorders: { pages: workordersPages, fetched: workordersFetched, upserted: workordersUpserted, rowsUpserted, cursor: workordersCursor || "" }
+    });
+  } catch (e) {
+    console.error("[tengella/cron] error:", e?.message || e, e?.details || e?.detail || "");
+    return res.status(500).json({ ok: false, error: e?.message || String(e), details: e?.details || e?.detail || null });
   }
 });
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
