@@ -5138,12 +5138,6 @@ function redacted(str, keep = 4) {
   if (s.length <= keep) return "***";
   return s.slice(0, keep) + "…" + s.slice(-keep);
 }
-function normalizeOrgNo(v) {
-  // Tar bort ALLT som inte är en siffra:
-  // "556233-9266" -> "5562339266"
-  // "556 233 9266" -> "5562339266"
-  return String(v || "").replace(/\D/g, "").trim() || "";
-}
 // ────────────────────────────────────────────────────────────
 // Ensure ClientCompany from Tengella Customer (RegNo)
 // Uses ClientCompany field: Org_Number (text)
