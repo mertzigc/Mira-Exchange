@@ -746,9 +746,6 @@ async function fortnoxTokenExchange(code) {
 
 async function upsertFortnoxTokensToBubble(bubble_user_id, tokenJson) {
   const payload = {
-    // Keys that exist in your Bubble type TengellaWorkorder (per your screenshot)
-    workorder_id,
-    workorder_no: workOrder?.WorkOrderNo ?? "",
     customer_id: Number(workOrder?.CustomerId ?? 0) || null,
     project_id: Number(workOrder?.ProjectId ?? 0) || null,
 
