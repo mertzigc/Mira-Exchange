@@ -31,6 +31,12 @@ curl -sS --max-time 60 \
 echo
 echo
 
+# Tune per natt (säkra defaults)
+LIMIT="${LIMIT:-50}"                       # workorders per page
+CUSTOMERS_LIMIT="${CUSTOMERS_LIMIT:-100}"  # customers per page
+CUSTOMERS_MAX_PAGES="${CUSTOMERS_MAX_PAGES:-20}"
+WORKORDERS_MAX_PAGES="${WORKORDERS_MAX_PAGES:-40}"
+
 echo "--- Run: /tengella/cron (x-api-key + X-Sync-Secret) ---"
 curl -sS --max-time 43200 \
   -X POST "$HOST/tengella/cron" \
@@ -38,8 +44,13 @@ curl -sS --max-time 43200 \
   -H "X-Sync-Secret: $SYNC_SECRET" \
   -H "Content-Type: application/json" \
   -d "{
-    \"orgNo\": \"$ORGNO\"
-  }" \
-  | cat
+    \"orgNo\": \"$ORGNO\",
+    \"limit\": $LIMIT,
+    \"customersLimit\": $CUSTOMERS_LIMIT,
+    \"customersMaxPages\": $CUSTOMERS_MAX_PAGES,
+    \"workordersMaxPages\": $WORKORDERS_MAX_PAGES
+  }" | cat
+echo
+echo "=== Tengella nightly sync END ==="
 echo
 echo "=== Tengella nightly sync END ==="
