@@ -6090,10 +6090,6 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
   const customersLimit  = Number(req.body?.customersLimit ?? 100) || 100;
   const workordersLimit = Number(req.body?.limit ?? 50) || 50;
 
-  // separata limits (säkrare)
-  const customersLimit  = Number(req.body?.customersLimit ?? 100) || 100;
-  const workordersLimit = Number(req.body?.limit ?? 50) || 50; // behåll "limit" som workorders-limit
-
   try {
     // 1) Hämta state
     const state = await getOrCreateTengellaSyncState(orgNo);
