@@ -251,6 +251,54 @@ function requireApiKey(req, res, next) {
 app.use(requireApiKey);
 // ────────────────────────────────────────────────────────────
 // Bubble helpers (User + Data API)
+// ────────────────────────────────────────────────────────────
+// Bubble: PATCH helper (Data API)
+// ────────────────────────────────────────────────────────────
+async function bubblePatch(typeName, id, payload) {
+  let lastErr = null;
+
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
+    try {
+      const r = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + BUBBLE_API_KEY
+        },
+        body: JSON.stringify(payload)
+      });
+
+      // Bubble PATCH ger ofta 204 utan body
+      if (r.status === 204) return true;
+
+      const text = await r.text().catch(() => "");
+      let j = null;
+      try { j = text ? JSON.parse(text) : null; } catch { j = null; }
+
+      if (!r.ok) {
+        lastErr = {
+          base,
+          status: r.status,
+          statusText: r.statusText,
+          bodyJson: j,
+          bodyText: text?.slice(0, 2000) || null, // klipp för loggar
+          url
+        };
+        continue;
+      }
+
+      return true;
+    } catch (e) {
+      lastErr = { base, error: String(e?.message || e), url };
+    }
+  }
+
+  console.error("[bubblePatch] failed across all bases", lastErr);
+  const err = new Error("bubblePatch failed");
+  err.detail = lastErr;
+  throw err;
+}
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
     ...BUBBLE_BASES.map(b => b + "/api/1.1/obj/user/" + user_unique_id)
