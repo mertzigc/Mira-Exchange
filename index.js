@@ -6075,12 +6075,12 @@ async function releaseLock(stateId) {
 app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
   const orgNo = String(req.body?.orgNo || TENGELLA_ORGNO).trim();
 
-const customersMaxPages  = Number(req.body?.customersMaxPages ?? 20) || 20;
-const workordersMaxPages = Number(req.body?.workordersMaxPages ?? 40) || 40;
+  const customersMaxPages  = Number(req.body?.customersMaxPages ?? 20) || 20;
+  const workordersMaxPages = Number(req.body?.workordersMaxPages ?? 40) || 40;
 
-// separata limits (säkrare)
-const customersLimit = Number(req.body?.customersLimit ?? 100) || 100;
-const workordersLimit = Number(req.body?.limit ?? 50) || 50; // behåll "limit" som workorders-limit
+  // separata limits (säkrare)
+  const customersLimit  = Number(req.body?.customersLimit ?? 100) || 100;
+  const workordersLimit = Number(req.body?.limit ?? 50) || 50; // behåll "limit" som workorders-limit
 
   try {
     // 1) Hämta state
@@ -6105,112 +6105,133 @@ const workordersLimit = Number(req.body?.limit ?? 50) || 50; // behåll "limit" 
     let customersFetched = 0;
     let customersUpserted = 0;
 
-    while (customersPages < customersMaxPages) {
-      customersPages += 1;
+    if (customersMaxPages > 0) {
+      while (customersPages < customersMaxPages) {
+        customersPages += 1;
 
-      const resp = await listTengellaCustomers({ token, limit: customersLimit, cursor: customersCursor });
-      const data = Array.isArray(resp?.Data) ? resp.Data : [];
-      customersFetched += data.length;
+        const resp = await listTengellaCustomers({
+          token,
+          limit: customersLimit,
+          cursor: customersCursor
+        });
 
-      for (const c of data) {
-        const r = await upsertTengellaCustomerToBubble(c);
-        if (r?.ok) customersUpserted += 1;
+        const data = Array.isArray(resp?.Data) ? resp.Data : [];
+        customersFetched += data.length;
+
+        for (const c of data) {
+          const r = await upsertTengellaCustomerToBubble(c);
+          if (r?.ok) customersUpserted += 1;
+        }
+
+        const nextCursor = resp?.Next || null;
+        const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
+        customersCursor = nextCursor;
+
+        // spara cursor efter varje page (så vi aldrig tappar läge)
+        await bubblePatch(SYNC_STATE_TYPE, stateId, {
+          customers_cursor: customersCursor || "",
+          last_run: new Date().toISOString(),
+          last_ok: true
+        });
+
+        if (!more) break;
       }
-
-      const nextCursor = resp?.Next || null;
-      const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
-
-      customersCursor = nextCursor;
-
-      // spara cursor efter varje page (så vi aldrig tappar läge)
-      await bubblePatch(SYNC_STATE_TYPE, stateId, {
-        customers_cursor: customersCursor || "",
-        last_run: new Date().toISOString(),
-        last_ok: true
-      });
-
-      if (!more) break;
     }
 
     // ── B) WorkOrders sync (cursor-driven)
-    // (OBS: här använder vi din befintliga workorders-logik inklusive company-resolve)
     let workordersCursor = state.workorders_cursor || null;
     let workordersPages = 0;
     let workordersFetched = 0;
     let workordersUpserted = 0;
     let rowsUpserted = 0;
 
-    while (workordersPages < workordersMaxPages) {
-      workordersPages += 1;
+    if (workordersMaxPages > 0) {
+      while (workordersPages < workordersMaxPages) {
+        workordersPages += 1;
 
-      const resp = await listTengellaWorkOrders({ token, limit: workordersLimit, cursor: workordersCursor });
-      const data = Array.isArray(resp?.Data) ? resp.Data : [];
-      workordersFetched += data.length;
+        const resp = await listTengellaWorkOrders({
+          token,
+          limit: workordersLimit,
+          cursor: workordersCursor
+        });
 
-      for (const wo of data) {
-        // Resolve TengellaCustomer → company (ClientCompany)
-        let resolvedCompanyId = null;
-        let resolvedTengellaCustomerBubbleId = null;
+        const data = Array.isArray(resp?.Data) ? resp.Data : [];
+        workordersFetched += data.length;
 
-        if (wo?.CustomerId) {
-          const tc = await bubbleFindOne("TengellaCustomer", [
-            { key: "tengella_customer_id", constraint_type: "equals", value: Number(wo.CustomerId) }
-          ]);
+        // DEBUG: se exakt vad Tengella svarar om det blir 0
+        console.log("[tengella/cron] workorders page", {
+          workordersPages,
+          sentCursor: workordersCursor,
+          got: data.length,
+          next: resp?.Next || null,
+          existsMoreData: resp?.ExistsMoreData
+        });
 
-          const tcId = bubbleId(tc);
-          if (tcId) {
-            resolvedTengellaCustomerBubbleId = tcId;
+        for (const wo of data) {
+          // Resolve TengellaCustomer → company (ClientCompany)
+          let resolvedCompanyId = null;
+          let resolvedTengellaCustomerBubbleId = null;
 
-            if (tc?.company) {
-              resolvedCompanyId = tc.company;
-            } else {
-              const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
-              if (regDigits) {
-                const cc = await bubbleFindOne("ClientCompany", [
-                  { key: "Org_Number", constraint_type: "equals", value: String(regDigits) }
-                ]);
-                const ccId = bubbleId(cc);
-                if (ccId) {
-                  resolvedCompanyId = ccId;
-                  await bubblePatch("TengellaCustomer", tcId, { company: ccId });
+          if (wo?.CustomerId) {
+            const tc = await bubbleFindOne("TengellaCustomer", [
+              { key: "tengella_customer_id", constraint_type: "equals", value: Number(wo.CustomerId) }
+            ]);
+
+            const tcId = bubbleId(tc);
+            if (tcId) {
+              resolvedTengellaCustomerBubbleId = tcId;
+
+              if (tc?.company) {
+                resolvedCompanyId = tc.company;
+              } else {
+                const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
+                if (regDigits) {
+                  const cc = await bubbleFindOne("ClientCompany", [
+                    { key: "Org_Number", constraint_type: "equals", value: String(regDigits) }
+                  ]);
+                  const ccId = bubbleId(cc);
+                  if (ccId) {
+                    resolvedCompanyId = ccId;
+                    await bubblePatch("TengellaCustomer", tcId, { company: ccId });
+                  }
                 }
               }
             }
           }
-        }
 
-        const wr = await upsertTengellaWorkorderToBubble(wo, {
-          bubbleCompanyId: resolvedCompanyId,
-          tengellaCustomerId: resolvedTengellaCustomerBubbleId
-        });
-        if (wr?.ok) workordersUpserted += 1;
+          const wr = await upsertTengellaWorkorderToBubble(wo, {
+            bubbleCompanyId: resolvedCompanyId,
+            tengellaCustomerId: resolvedTengellaCustomerBubbleId
+          });
+          if (wr?.ok) workordersUpserted += 1;
 
-        // Rows
-        if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
-          for (const row of wo.WorkOrderRows) {
-            const rr = await upsertTengellaWorkorderRowToBubble(row, {
-              workorderBubbleId: wr.id,
-              workorderId: wo.WorkOrderId,
-              projectId: wo.ProjectId,
-              customerId: wo.CustomerId,
-              company: resolvedCompanyId
-            });
-            if (rr?.ok) rowsUpserted += 1;
+          // Rows
+          if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+            for (const row of wo.WorkOrderRows) {
+              const rr = await upsertTengellaWorkorderRowToBubble(row, {
+                workorderBubbleId: wr.id,
+                workorderId: wo.WorkOrderId,
+                projectId: wo.ProjectId,
+                customerId: wo.CustomerId,
+                company: resolvedCompanyId
+              });
+              if (rr?.ok) rowsUpserted += 1;
+            }
           }
         }
+
+        const nextCursor = resp?.Next || null;
+        const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
+        workordersCursor = nextCursor;
+
+        await bubblePatch(SYNC_STATE_TYPE, stateId, {
+          workorders_cursor: workordersCursor || "",
+          last_run: new Date().toISOString(),
+          last_ok: true
+        });
+
+        if (!more) break;
       }
-
-      const nextCursor = resp?.Next || null;
-      const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
-      workordersCursor = nextCursor;
-
-      await bubblePatch(SYNC_STATE_TYPE, stateId, {
-        workorders_cursor: workordersCursor || "",
-        last_run: new Date().toISOString(),
-        last_ok: true
-      });
-
-      if (!more) break;
     }
 
     // 5) Release lock
@@ -6220,12 +6241,27 @@ const workordersLimit = Number(req.body?.limit ?? 50) || 50; // behåll "limit" 
       ok: true,
       orgNo,
       locked_until,
-      customers: { pages: customersPages, fetched: customersFetched, upserted: customersUpserted, cursor: customersCursor || "" },
-      workorders: { pages: workordersPages, fetched: workordersFetched, upserted: workordersUpserted, rowsUpserted, cursor: workordersCursor || "" }
+      customers: {
+        pages: customersPages,
+        fetched: customersFetched,
+        upserted: customersUpserted,
+        cursor: customersCursor || ""
+      },
+      workorders: {
+        pages: workordersPages,
+        fetched: workordersFetched,
+        upserted: workordersUpserted,
+        rowsUpserted,
+        cursor: workordersCursor || ""
+      }
     });
   } catch (e) {
     console.error("[tengella/cron] error:", e?.message || e, e?.details || e?.detail || "");
-    return res.status(500).json({ ok: false, error: e?.message || String(e), details: e?.details || e?.detail || null });
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      details: e?.details || e?.detail || null
+    });
   }
 });
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
