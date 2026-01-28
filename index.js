@@ -282,7 +282,7 @@ async function bubblePatch(typeName, id, payload) {
           status: r.status,
           statusText: r.statusText,
           bodyJson: j,
-          bodyText: text?.slice(0, 2000) || null, // klipp för loggar
+          bodyText: text?.slice(0, 2000) || null,
           url
         };
         continue;
@@ -293,7 +293,6 @@ async function bubblePatch(typeName, id, payload) {
       lastErr = { base, error: String(e?.message || e), url };
     }
   }
-
   console.error("[bubblePatch] failed across all bases", lastErr);
   const err = new Error("bubblePatch failed");
   err.detail = lastErr;
@@ -724,42 +723,6 @@ async function bubbleCreate(typeName, payload) {
   }
 
   const err = new Error("bubbleCreate failed");
-  err.detail = lastErr;
-  throw err;
-}
-
-async function bubblePatch(typeName, id, payload) {
-  let lastErr = null;
-
-  for (const base of BUBBLE_BASES) {
-    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
-    try {
-      const r = await fetch(url, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY
-        },
-        body: JSON.stringify(payload)
-      });
-
-      // Bubble PATCH ger ofta 204 utan body
-      if (r.status === 204) return true;
-
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        lastErr = { base, status: r.status, body: j };
-        continue;
-      }
-      return true;
-    } catch (e) {
-      lastErr = { base, error: String(e?.message || e) };
-    }
-  }
-  // Om vi kommer hit: alla BUBBLE_BASES misslyckades
-  console.error("[bubblePatch] failed across all bases", lastErr);
-
-  const err = new Error("bubblePatch failed");
   err.detail = lastErr;
   throw err;
 }
