@@ -6079,8 +6079,16 @@ async function releaseLock(stateId) {
 app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
   const orgNo = String(req.body?.orgNo || TENGELLA_ORGNO).trim();
 
-  const customersMaxPages  = Number(req.body?.customersMaxPages ?? 20) || 20;
-  const workordersMaxPages = Number(req.body?.workordersMaxPages ?? 40) || 40;
+  const customersMaxPagesRaw  = Number(req.body?.customersMaxPages ?? 20);
+  const workordersMaxPagesRaw = Number(req.body?.workordersMaxPages ?? 40);
+
+  // Viktigt: 0 ska vara giltigt (=> kör inte)
+  const customersMaxPages  = Number.isFinite(customersMaxPagesRaw)  ? customersMaxPagesRaw  : 20;
+  const workordersMaxPages = Number.isFinite(workordersMaxPagesRaw) ? workordersMaxPagesRaw : 40;
+
+  // separata limits (säkrare)
+  const customersLimit  = Number(req.body?.customersLimit ?? 100) || 100;
+  const workordersLimit = Number(req.body?.limit ?? 50) || 50;
 
   // separata limits (säkrare)
   const customersLimit  = Number(req.body?.customersLimit ?? 100) || 100;
