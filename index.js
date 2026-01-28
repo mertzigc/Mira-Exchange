@@ -5737,10 +5737,12 @@ async function releaseLock(stateId) {
 app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
   const orgNo = String(req.body?.orgNo || TENGELLA_ORGNO).trim();
 
-  // hur mycket vi gör per cron-körning (tune)
-  const customersMaxPages  = Number(req.body?.customersMaxPages ?? 2) || 2;
-  const workordersMaxPages = Number(req.body?.workordersMaxPages ?? 2) || 2;
-  const limit = Number(req.body?.limit ?? 100) || 100;
+const customersMaxPages  = Number(req.body?.customersMaxPages ?? 20) || 20;
+const workordersMaxPages = Number(req.body?.workordersMaxPages ?? 40) || 40;
+
+// separata limits (säkrare)
+const customersLimit = Number(req.body?.customersLimit ?? 100) || 100;
+const workordersLimit = Number(req.body?.limit ?? 50) || 50; // behåll "limit" som workorders-limit
 
   try {
     // 1) Hämta state
@@ -5768,7 +5770,7 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
     while (customersPages < customersMaxPages) {
       customersPages += 1;
 
-      const resp = await listTengellaCustomers({ token, limit, cursor: customersCursor });
+      const resp = await listTengellaCustomers({ token, limit: customersLimit, cursor: customersCursor });
       const data = Array.isArray(resp?.Data) ? resp.Data : [];
       customersFetched += data.length;
 
@@ -5803,7 +5805,7 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
     while (workordersPages < workordersMaxPages) {
       workordersPages += 1;
 
-      const resp = await listTengellaWorkOrders({ token, limit, cursor: workordersCursor });
+      const resp = await listTengellaWorkOrders({ token, limit: workordersLimit, cursor: workordersCursor });
       const data = Array.isArray(resp?.Data) ? resp.Data : [];
       workordersFetched += data.length;
 
