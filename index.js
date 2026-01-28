@@ -5749,8 +5749,8 @@ async function upsertTengellaWorkorderRowToBubble(
     workorderId = null,
     projectId = null,
     customerId = null,
-    company = null,
-    commission = null
+    company = null,        // Bubble ClientCompany ID
+    commission = null      // Bubble Commission ID (type Comission)
   } = {}
 ) {
   const type = "TengellaWorkorderRow";
@@ -5762,16 +5762,23 @@ async function upsertTengellaWorkorderRowToBubble(
   const existing = await bubbleFindOne(type, [
     { key: "workorder_row_id", constraint_type: "equals", value: workOrderRowId },
   ]);
-const rowFieldCaps = await canWriteTengellaWorkorderRowFields();
+
+  const existingId = existing?._id || existing?.id || null;
+
   const payload = {
     workorder_row_id: workOrderRowId,
 
+    // numeric refs
     workorder_id: Number(row.WorkOrderId ?? row.workOrderId ?? workorderId ?? 0) || null,
-    ...(workorderBubbleId ? { workorder: workorderBubbleId } : {}),
-
     project_id: Number(projectId ?? 0) || null,
     customer_id: Number(customerId ?? 0) || null,
 
+    // relations (Thing fields) — ALWAYS send if we have ids
+    ...(workorderBubbleId ? { workorder: workorderBubbleId } : {}),
+    ...(company ? { company } : {}),
+    ...(commission ? { commission } : {}),
+
+    // row data
     item_id: Number(row.ItemId ?? 0) || null,
     item_no: row.ItemNo != null ? String(row.ItemNo) : null,
     item_name: row.ItemName ?? null,
@@ -5800,40 +5807,26 @@ const rowFieldCaps = await canWriteTengellaWorkorderRowFields();
     first_timetable_event_start: toBubbleDate(row.FirstTimeTableEventStart),
     last_timetable_event_start: toBubbleDate(row.LastTimeTableEventStart),
 
-    ...(rowFieldCaps?.hasCompany && company ? { company } : {}),
-...(rowFieldCaps?.hasCommission && commission ? { commission } : {}),
-
     raw_json: safeJsonStringify(row),
   };
 
   // Bubble gillar null men inte undefined
   Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
 
-  // UPDATE vs CREATE
-  if (existing?.id) {
-    // PATCH är säkrare för relationer (company/workorder)
-    await bubblePatch(type, existing.id, payload);
+  // debug (så du ser att vi faktiskt skickar company)
+  console.log("[row payload]", {
+    mode: existingId ? "update" : "create",
+    workOrderRowId,
+    workorderBubbleId: workorderBubbleId || null,
+    company: company || null,
+    commission: commission || null
+  });
 
-    console.log("[row upsert]", {
-      mode: "update",
-      workOrderRowId,
-      sendingCompany: rowFieldCaps?.hasCompany ? company : null,
-      hasCompanyField: rowFieldCaps?.hasCompany,
-      bubbleId: existing.id,
-    });
-
-    return { ok: true, mode: "update", id: existing.id };
+  if (existingId) {
+    await bubblePatch(type, existingId, payload);
+    return { ok: true, mode: "update", id: existingId };
   } else {
     const createdId = await bubbleCreate(type, payload);
-
-    console.log("[row upsert]", {
-      mode: "create",
-      workOrderRowId,
-      sendingCompany: rowFieldCaps?.hasCompany ? company : null,
-      hasCompanyField: rowFieldCaps?.hasCompany,
-      bubbleId: createdId || null,
-    });
-
     return { ok: true, mode: "create", id: createdId || null };
   }
 }
