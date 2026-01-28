@@ -3451,17 +3451,17 @@ async function findMatterByExternalCaseId(external_case_id) {
   const id = safeText(String(external_case_id || "").trim(), 100);
   if (!id) return null;
 
-  return await bubbleFindOne("Ärende - Matter", [
+  return await bubbleFindOne("Matter", [
     { key: "external_case_id", constraint_type: "equals", value: id }
   ]);
 }
 
 async function createMatter(fields) {
-  return await bubbleCreate("Ärende - Matter", fields);
+  return await bubbleCreate("Matter", fields);
 }
 
 async function patchMatter(matterId, fields) {
-  return await bubblePatch("Ärende - Matter", matterId, fields);
+  return await bubblePatch("Matter", matterId, fields);
 }
 
 async function findMatterMessageByGraphId(graph_message_id) {
