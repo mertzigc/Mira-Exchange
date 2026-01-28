@@ -3445,6 +3445,344 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
+// Bubble: Matter + MatterMessage
+
+async function findMatterByExternalCaseId(external_case_id) {
+  const id = safeText(String(external_case_id || "").trim(), 100);
+  if (!id) return null;
+
+  return await bubbleFindOne("Ärende - Matter", [
+    { key: "external_case_id", constraint_type: "equals", value: id }
+  ]);
+}
+
+async function createMatter(fields) {
+  return await bubbleCreate("Ärende - Matter", fields);
+}
+
+async function patchMatter(matterId, fields) {
+  return await bubblePatch("Ärende - Matter", matterId, fields);
+}
+
+async function findMatterMessageByGraphId(graph_message_id) {
+  const gid = safeText(String(graph_message_id || "").trim(), 300);
+  if (!gid) return null;
+
+  return await bubbleFindOne("MatterMessage", [
+    { key: "graph_message_id", constraint_type: "equals", value: gid }
+  ]);
+}
+
+async function createMatterMessage(fields) {
+  return await bubbleCreate("MatterMessage", fields);
+}
+
+async function patchMatterMessage(messageId, fields) {
+  return await bubblePatch("MatterMessage", messageId, fields);
+}
+// ────────────────────────────────────────────────────────────
+// DeDu parsing helpers
+
+function lineValue(body, label) {
+  // Ex: label="Ärende" matchar "Ärende: 925565"
+  const re = new RegExp(`^\\s*${escapeRegExp(label)}\\s*:\\s*(.+?)\\s*$`, "mi");
+  const m = String(body || "").match(re);
+  return m ? m[1].trim() : "";
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parsePropertyLine(s) {
+  // "14170 - Beridarebanan 77" => { code:"14170", name:"Beridarebanan 77" }
+  const txt = String(s || "").trim();
+  const m = txt.match(/^(\d+)\s*-\s*(.+)$/);
+  if (m) return { code: m[1].trim(), name: m[2].trim() };
+  return { code: "", name: txt };
+}
+
+function parseTenantAddressLine(s) {
+  // "Scila AB - Sveavägen 17" => { tenant:"Scila AB", address:"Sveavägen 17" }
+  const txt = String(s || "").trim();
+  const parts = txt.split(" - ").map(x => x.trim()).filter(Boolean);
+  if (parts.length >= 2) return { tenant: parts[0], address: parts.slice(1).join(" - ") };
+  return { tenant: txt, address: "" };
+}
+
+function extractCaseTitleAndDescription(bodyClean) {
+  // Hitta blocket efter "Ärendebeskrivning:" och plocka första raden som title
+  const txt = String(bodyClean || "");
+  const idx = txt.toLowerCase().indexOf("ärendebeskrivning:");
+  if (idx < 0) return { title: "", description: "" };
+
+  const after = txt.slice(idx + "ärendebeskrivning:".length).trim();
+
+  // Skär av vid nästa tydliga sektion (om den finns)
+  const stopRe = /\n\s*(Anmält av|Telefon|Mobil|Epost|Datum|Kvitteringsjournal|Slutkvittering|Delkvittens|Internkommentarer|Kundkommentarer)\s*:/i;
+  const stop = after.search(stopRe);
+  const block = (stop >= 0 ? after.slice(0, stop) : after).trim();
+
+  // title = första icke-tomma raden, description = hela blocket
+  const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const title = lines[0] || "";
+  const description = block;
+
+  return { title, description };
+}
+
+function normalizePhone(s) {
+  return safeText(String(s || "").replace(/[^\d+]/g, ""), 50);
+}
+// ────────────────────────────────────────────────────────────
+// Build Matter + MatterMessage payloads
+
+function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPreview, bodyType, bodyContent }) {
+  const graphId = String(msg?.id || "").trim();
+
+  const fromEmail =
+    normEmail(msg?.from?.emailAddress?.address) ||
+    normEmail(msg?.sender?.emailAddress?.address) ||
+    "";
+
+  const fromName =
+    safeText(msg?.from?.emailAddress?.name || msg?.sender?.emailAddress?.name || "", 200);
+
+  const subject = safeText(msg?.subject || "", 300);
+
+  const receivedAt = msg?.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
+
+  // recipients (valfritt: spara som text)
+  const toRecipients = Array.isArray(msg?.toRecipients)
+    ? msg.toRecipients.map(r => r?.emailAddress?.address).filter(Boolean).join(", ")
+    : "";
+
+  const ccRecipients = Array.isArray(msg?.ccRecipients)
+    ? msg.ccRecipients.map(r => r?.emailAddress?.address).filter(Boolean).join(", ")
+    : "";
+
+  const hasAttachments = !!msg?.hasAttachments;
+
+  return {
+    matter: matterId,
+    graph_message_id: graphId,
+    mailbox_upn: safeText(mailbox_upn || "", 200),
+    received_at: receivedAt,
+    from_email: safeText(fromEmail, 200),
+    sender_name: fromName,
+    subject,
+    body_preview: safeText(bodyPreview || "", 1000),
+    body_type: safeText(bodyType || "", 20),
+    body_content: safeText(bodyContent || "", 50000),
+    body_clean: safeText(bodyClean || "", 50000),
+    to_recipients: safeText(toRecipients, 2000),
+    cc_recipients: safeText(ccRecipients, 2000),
+    has_attachments: hasAttachments
+    // raw_json: safeText(JSON.stringify(msg), 50000) // OM du vill aktivera
+  };
+}
+
+function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg }) {
+  const external_case_id = lineValue(bodyClean, "Ärende"); // "925565"
+
+  const propertyLine = lineValue(bodyClean, "Fastighet");
+  const prop = parsePropertyLine(propertyLine);
+
+  const tenantAddrLine = lineValue(bodyClean, "Hyresgäst - Adress");
+  const ta = parseTenantAddressLine(tenantAddrLine);
+
+  const contractRef = lineValue(bodyClean, "Avtal - Adress");
+  const executor = lineValue(bodyClean, "Utförare");
+  const caseType = lineValue(bodyClean, "Ärendetyp");
+
+  const reportedBy = lineValue(bodyClean, "Anmält av");
+  const phone = lineValue(bodyClean, "Telefon");
+  const mobile = lineValue(bodyClean, "Mobil");
+  const email = lineValue(bodyClean, "Epost");
+  const dateStr = lineValue(bodyClean, "Datum");
+
+  const { title, description } = extractCaseTitleAndDescription(bodyClean);
+
+  // Datum: "2026-01-27 14:50:29" -> Date (best effort)
+  let reportedAt = null;
+  if (dateStr) {
+    const isoish = dateStr.replace(" ", "T");
+    const d = new Date(isoish);
+    if (!isNaN(d.getTime())) reportedAt = d;
+  }
+
+  const receivedAt = msg?.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
+
+  return {
+    external_system: "DeDu",
+    external_case_id: safeText(external_case_id, 100),
+    mailbox_upn: safeText(mailbox_upn || "", 200),
+
+    subject_latest: safeText(subject || "", 300),
+    last_message_at: receivedAt,
+    latest_graph_message_id: safeText(String(msg?.id || ""), 400),
+    ms_conversation_id: safeText(String(msg?.conversationId || ""), 400),
+
+    property_code: safeText(prop.code, 50),
+    property_name: safeText(prop.name, 200),
+    tenant_name: safeText(ta.tenant, 200),
+    tenant_address: safeText(ta.address, 300),
+
+    contract_ref: safeText(contractRef, 200),
+    executor: safeText(executor, 200),
+    case_type: safeText(caseType, 200),
+
+    case_title: safeText(title, 300),
+    case_description_clean: safeText(description, 12000),
+
+    reported_by_name: safeText(reportedBy, 200),
+    reported_by_email: safeText(normEmail(email), 200),
+    reported_by_phone: safeText(phone, 80),
+    reported_by_mobile: safeText(normalizePhone(mobile), 80),
+
+    reported_at: reportedAt || receivedAt,
+
+    raw_body_last: safeText(bodyClean || "", 50000)
+    // raw_html_last: ... (om du vill)
+  };
+}
+// ────────────────────────────────────────────────────────────
+// POST /jobs/matter/poll
+// Body: { mailbox_upn: "test1@carotte.se", auth_user_id: "<bubble user id>", top?: 25, tenant?: "<tenant-id>" }
+app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
+  const t0 = Date.now();
+
+  const mailbox_upn = normEmail(req.body?.mailbox_upn);
+  const auth_user_id = req.body?.auth_user_id || req.body?.u || null;
+  const top = Number(req.body?.top || 25);
+  const tenant = resolveTenantFromBodyOrReq(req);
+
+  if (!mailbox_upn) return res.status(400).json({ ok: false, error: "mailbox_upn is required" });
+  if (!auth_user_id) return res.status(400).json({ ok: false, error: "auth_user_id is required" });
+
+  let state = null;
+  let createdMessages = 0;
+  let skippedExistingMessages = 0;
+  let mattersCreated = 0;
+  let mattersUpdated = 0;
+  let errors = 0;
+  let first_error = null;
+
+  try {
+    // Återanvänd samma state-tabell/typ som du redan har (delta_link per mailbox)
+    state = await getOrCreateMailPollState(mailbox_upn);
+
+    const deltaRes = await graphDeltaFetchAll({
+      tenant,
+      mailbox_upn,
+      delta_link: state?.delta_link || "",
+      top: Number.isFinite(top) && top > 0 ? top : 25,
+      auth_user_id
+    });
+
+    const messages = Array.isArray(deltaRes?.messages) ? deltaRes.messages : [];
+
+    for (const msg of messages) {
+      try {
+        const graphId = String(msg?.id || "").trim();
+        if (!graphId) { skippedExistingMessages++; continue; }
+
+        // 1) Idempotens: skapa inte MatterMessage om den redan finns
+        const existingMM = await findMatterMessageByGraphId(graphId);
+        if (existingMM?._id) { skippedExistingMessages++; continue; }
+
+        // 2) Body: använd Graph body om den finns i delta-payload
+        // (Om din delta-fetch inte inkluderar full body, kan vi senare komplettera med "GET message by id" som ni gjorde för InboundEmail.)
+        const bodyType = String(msg?.body?.contentType || msg?.body?.contentType || "").toLowerCase() || "html";
+        const bodyContent = String(msg?.body?.content || msg?.body?.content || "");
+        const bodyPreview = String(msg?.bodyPreview || "");
+
+        // Du har redan html->text / entities helpers i filen (ni använde dem för lead-bodies).
+        // Här: gör en "clean" version för parsing + visning.
+        const bodyClean = bodyType === "html"
+          ? htmlToText(bodyContent)   // <-- använder din befintliga funktion (som du redan har i lead-flödet)
+          : String(bodyContent || "");
+
+        const subject = safeText(msg?.subject || "", 300);
+
+        // 3) Skapa/uppdatera Matter (per external_case_id)
+        const matterPatch = buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg });
+
+        const caseId = String(matterPatch.external_case_id || "").trim();
+        if (!caseId) {
+          // Om DeDu ibland saknar Ärende i body: vi kan senare lägga fallback till subject.
+          // Just nu: skippa för att inte skapa Matter utan nyckel.
+          skippedExistingMessages++;
+          continue;
+        }
+
+        let matter = await findMatterByExternalCaseId(caseId);
+
+        let matterId = null;
+        if (!matter?._id) {
+          matterId = await createMatter(matterPatch);
+          mattersCreated++;
+        } else {
+          matterId = matter._id;
+          await patchMatter(matterId, matterPatch);
+          mattersUpdated++;
+        }
+
+        // 4) Skapa MatterMessage kopplad till Matter
+        const mmFields = buildMatterMessagePatch({
+          mailbox_upn,
+          matterId,
+          msg,
+          bodyClean,
+          bodyPreview,
+          bodyType,
+          bodyContent
+        });
+
+        await createMatterMessage(mmFields);
+        createdMessages++;
+
+      } catch (e) {
+        errors++;
+        if (!first_error) first_error = { message: e?.message || String(e), detail: e?.detail || null };
+      }
+    }
+
+    // 5) Spara delta_link
+    const newDelta = String(deltaRes?.delta_link || "").trim();
+    await updateMailPollState(state._id, {
+      delta_link: newDelta || state?.delta_link || "",
+      last_run_at: new Date().toISOString(),
+      last_error: errors ? (state?.last_error || "") : ""
+    });
+
+    return res.json({
+      ok: true,
+      mailbox_upn,
+      tenant,
+      auth_user_id,
+      processed: messages.length,
+      counts: {
+        matter_messages_created: createdMessages,
+        matter_messages_skipped_existing: skippedExistingMessages,
+        matters_created: mattersCreated,
+        matters_updated: mattersUpdated,
+        errors
+      },
+      first_error,
+      ms: Date.now() - t0
+    });
+
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      mailbox_upn,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // HTML → text (för Lead.Description m.m.)
 // (Använder befintlig decodeHtmlEntities() som redan finns i din fil)
 function htmlToText(input, { maxLen = 8000 } = {}) {
