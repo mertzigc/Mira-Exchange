@@ -6422,8 +6422,6 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
     detail: e?.detail || null
   });
 }
-          }
-
           // Rows
           if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
             for (const row of wo.WorkOrderRows) {
