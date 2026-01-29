@@ -348,7 +348,7 @@ async function upsertUnifiedOrder(payload) {
     return { ok: true, mode: "create", id: createdId || null };
   }
 }
-function asNumberOrNull(v) {
+function (v) {
   if (v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -363,9 +363,6 @@ function toDateOrNull(v) {
 // Bygg payload till UnifiedOrder från Fortnox-order-data + bubble FortnoxOrder-id
 async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder, connection_id }) {
   const docNo = String(fortnoxOrder?.DocumentNumber || "").trim();
-
-  // Belopp: Fortnox Total kan vara string/number
-  const amount = asNumberOrNull(fortnoxOrder?.Total);
 
   // Company: resolve via ft_customer_number (matchar din ClientCompany)
   const companyId = await resolveCompanyFromFortnoxCustomerNumber(fortnoxOrder?.CustomerNumber);
@@ -623,8 +620,8 @@ function isJwtExpired(token, skewSeconds = 60) {
 // Helpers (deklarera EN gång)
 const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
 
-// Telefon/orgnr: plocka siffror ur sträng (+46, mellanslag, bindestreck osv)
-const asNumberOrNull = (v) => {
+// Telefon/orgnr/id: plocka ENDAST siffror ur sträng (+46, mellanslag, bindestreck osv)
+const asDigitsNumberOrNull = (v) => {
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   if (!s) return null;
@@ -635,7 +632,46 @@ const asNumberOrNull = (v) => {
   const n = Number(digits);
   return Number.isFinite(n) ? n : null;
 };
+// Belopp: försök parsea decimaler (sv/en format). "1 234,50" -> 1234.5
+const asMoneyNumberOrNull = (v) => {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
 
+  const s0 = String(v).trim();
+  if (!s0) return null;
+
+  // ta bort spaces
+  let s = s0.replace(/\s+/g, "");
+
+  // Om både punkt och komma finns: anta att sista tecknet är decimal-separator
+  const hasDot = s.includes(".");
+  const hasComma = s.includes(",");
+
+  if (hasDot && hasComma) {
+    const lastDot = s.lastIndexOf(".");
+    const lastComma = s.lastIndexOf(",");
+    const decIsComma = lastComma > lastDot;
+
+    // ta bort tusentals-separatorn och normalisera decimal till "."
+    if (decIsComma) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  } else if (hasComma && !hasDot) {
+    // "1234,50" -> "1234.50"
+    s = s.replace(",", ".");
+  } else {
+    // bara punkt eller bara siffror: ok
+  }
+
+  // rensa allt utom siffror, minus och punkt
+  s = s.replace(/[^0-9.-]/g, "");
+  if (!s || s === "-" || s === "." || s === "-.") return null;
+
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
 // ────────────────────────────────────────────────────────────
 // Bubble Data API helpers (object-CRUD)
 async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, sort_field = null, descending = false } = {}) {
