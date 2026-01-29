@@ -391,7 +391,7 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     account_manager: null, // kan sättas senare när vi mappar YourReference->User
   };
 }
-async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCompanyId }) {
+async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCompanyId, tengellaCustomer }) {
   const workorderNo = String(wo?.WorkOrderNo || "").trim();
   const workorderId = Number(wo?.WorkOrderId ?? 0) || null;
 
@@ -424,7 +424,7 @@ const amount = rows.reduce((sum, r) => {
     status: "",
     amount: amount || null,
     delivery_date: toDateOrNull(deliveryDate),
-    account_manager_name: tc?.ContactPerson || null,
+    account_manager_name: tengellaCustomer?.ContactPerson || null,
 
     source_url: "",
     account_manager: null,
@@ -6403,26 +6403,25 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
           if (wr?.ok) workordersUpserted += 1;
 
           // ✅ Hook 2: UnifiedOrder cache (per workorder)
-          if (wr?.ok && wr?.id) {
-            try {
-              const unifiedPayload = await buildUnifiedOrderFromTengella({
-                bubbleWorkorderId: wr.id,
-                wo,
-                resolvedCompanyId
-              });
-
-              if (unifiedPayload) {
-                await upsertUnifiedOrder(unifiedPayload);
-              }
-            } catch (e) {
-              console.error("[UnifiedOrder][tengella] failed", {
-                workorderId: wo?.WorkOrderId,
-                workorderNo: wo?.WorkOrderNo,
-                bubbleWorkorderId: wr?.id || null,
-                error: e?.message || String(e),
-                detail: e?.detail || null
-              });
-            }
+          try {
+  if (wr?.ok && wr?.id) {
+    const unifiedPayload = await buildUnifiedOrderFromTengella({
+      bubbleWorkorderId: wr.id,
+      wo,
+      resolvedCompanyId,
+      tengellaCustomer: tc   // 👈 HÄR
+    });
+    await upsertUnifiedOrder(unifiedPayload);
+  }
+} catch (e) {
+  console.error("[UnifiedOrder][tengella] failed", {
+    workorderId: wo?.WorkOrderId,
+    workorderNo: wo?.WorkOrderNo,
+    bubbleWorkorderId: wr?.id || null,
+    error: e?.message || String(e),
+    detail: e?.detail || null
+  });
+}
           }
 
           // Rows
