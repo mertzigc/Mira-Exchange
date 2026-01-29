@@ -397,16 +397,29 @@ async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCo
 
   const orderDate = toDateOrNull(toBubbleDate?.(wo?.OrderDate) || wo?.OrderDate);
 const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
-const deliveryDate =
-  wo?.DesiredScheduleDate ||
-  wo?.FirstTimeTableEventStart ||
-  wo?.LastTimeTableEventStart ||
-  null;
+// 1) Delivery_date: ta tidigaste schemalagda start från raderna
+const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
+
+const deliveryCandidateDates = rows
+  .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
+  .filter(Boolean)
+  .map(d => new Date(d))
+  .filter(d => Number.isFinite(d.getTime()));
+
+const deliveryDateIso =
+  deliveryCandidateDates.length
+    ? new Date(Math.min(...deliveryCandidateDates.map(d => d.getTime()))).toISOString()
+    : null;
 const amount = rows.reduce((sum, r) => {
   const price = Number(r?.Price ?? 0);
   const qty   = Number(r?.Quantity ?? 1);
   return sum + price * qty;
 }, 0);
+  console.log("[UnifiedOrder][tengella] delivery_date computed", {
+  workorderNo: wo?.WorkOrderNo,
+  deliveryDateIso,
+  rowDatesFound: deliveryCandidateDates.length
+});
   return {
     source: "tengella",
     source_thing_id: String(bubbleWorkorderId),
@@ -423,7 +436,7 @@ const amount = rows.reduce((sum, r) => {
     supplier_name: "Carotte Housekeeping",
     status: "",
     amount: amount || null,
-    delivery_date: toDateOrNull(deliveryDate),
+    delivery_date: deliveryDateIso,
 
     source_url: "",
     account_manager: null,
