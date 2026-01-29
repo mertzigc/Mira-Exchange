@@ -396,7 +396,17 @@ async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCo
   const workorderId = Number(wo?.WorkOrderId ?? 0) || null;
 
   const orderDate = toDateOrNull(toBubbleDate?.(wo?.OrderDate) || wo?.OrderDate);
-
+const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
+const deliveryDate =
+  wo?.DesiredScheduleDate ||
+  wo?.FirstTimeTableEventStart ||
+  wo?.LastTimeTableEventStart ||
+  null;
+const amount = rows.reduce((sum, r) => {
+  const price = Number(r?.Price ?? 0);
+  const qty   = Number(r?.Quantity ?? 1);
+  return sum + price * qty;
+}, 0);
   return {
     source: "tengella",
     source_thing_id: String(bubbleWorkorderId),
@@ -412,6 +422,9 @@ async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCo
 
     supplier_name: "Carotte Housekeeping",
     status: "",
+    amount: amount || null,
+    delivery_date: toDateOrNull(deliveryDate),
+    account_manager_name: tc?.ContactPerson || null
 
     source_url: "",
     account_manager: null,
