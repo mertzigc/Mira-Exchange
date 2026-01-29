@@ -424,7 +424,7 @@ const amount = rows.reduce((sum, r) => {
     status: "",
     amount: amount || null,
     delivery_date: toDateOrNull(deliveryDate),
-    account_manager_name: tc?.ContactPerson || null
+    account_manager_name: tc?.ContactPerson || null,
 
     source_url: "",
     account_manager: null,
