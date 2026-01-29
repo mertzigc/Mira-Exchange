@@ -6210,8 +6210,6 @@ if (wo?.CustomerId) {
 // ────────────────────────────────────────────────────────────
 const SYNC_STATE_TYPE = "TengellaSyncState";
 
-const bubbleId = (obj) => obj?._id || obj?.id || null;
-
 async function getOrCreateTengellaSyncState(orgNo) {
   const org = String(orgNo || TENGELLA_ORGNO).trim();
   let s = await bubbleFindOne(SYNC_STATE_TYPE, [
