@@ -415,6 +415,17 @@ const amount = rows.reduce((sum, r) => {
   const qty   = Number(r?.Quantity ?? 1);
   return sum + price * qty;
 }, 0);
+  // Delivery_date: ta tidigaste schemalagda start från raderna
+const deliveryCandidateDates = rows
+  .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
+  .filter(Boolean)
+  .map(d => new Date(d))
+  .filter(d => Number.isFinite(d.getTime()));
+
+const deliveryDateIso =
+  deliveryCandidateDates.length
+    ? new Date(Math.min(...deliveryCandidateDates.map(d => d.getTime()))).toISOString()
+    : null;
   console.log("[UnifiedOrder][tengella] delivery_date computed", {
   workorderNo: wo?.WorkOrderNo,
   deliveryDateIso,
