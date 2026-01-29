@@ -377,11 +377,11 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     order_number: docNo || null,
     raw_title: docNo ? `Fortnox order ${docNo}` : "Fortnox order",
 
-    amount: amount ?? null,
-    company: companyId || null,
+    amount: Number.isFinite(amount) ? amount : 0,
+    company: companyId || undefined,
 
-    order_date: orderDate,
-    delivery_date: deliveryDate,
+    order_date: orderDate || new Date().toISOString(),
+    delivery_date: deliveryDate || new Date().toISOString(),
 
     supplier_name: "Carotte Food & Event", // byt om du vill (eller gör det per connection)
     status: yourRef ? `YourRef: ${yourRef}` : "",
@@ -882,6 +882,13 @@ async function bubbleCreate(typeName, payload) {
       const j = await r.json().catch(() => ({}));
 
       if (!r.ok) {
+        console.error("[bubbleCreate] 400 payload rejected", {
+    base,
+    typeName,
+    payload,
+    status: r.status,
+    body: j
+  });
         lastErr = { base, status: r.status, body: j };
         continue;
       }
