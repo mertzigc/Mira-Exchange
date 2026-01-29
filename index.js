@@ -391,46 +391,47 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     account_manager: null, // kan sättas senare när vi mappar YourReference->User
   };
 }
-async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCompanyId, tengellaCustomer }) {
+async function buildUnifiedOrderFromTengella({
+  bubbleWorkorderId,
+  wo,
+  resolvedCompanyId,
+  tengellaCustomer
+}) {
   const workorderNo = String(wo?.WorkOrderNo || "").trim();
   const workorderId = Number(wo?.WorkOrderId ?? 0) || null;
 
   const orderDate = toDateOrNull(toBubbleDate?.(wo?.OrderDate) || wo?.OrderDate);
-const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
-// 1) Delivery_date: ta tidigaste schemalagda start från raderna
-const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
 
-const deliveryCandidateDates = rows
-  .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
-  .filter(Boolean)
-  .map(d => new Date(d))
-  .filter(d => Number.isFinite(d.getTime()));
+  // Rader (bara EN deklaration)
+  const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
 
-const deliveryDateIso =
-  deliveryCandidateDates.length
-    ? new Date(Math.min(...deliveryCandidateDates.map(d => d.getTime()))).toISOString()
-    : null;
-const amount = rows.reduce((sum, r) => {
-  const price = Number(r?.Price ?? 0);
-  const qty   = Number(r?.Quantity ?? 1);
-  return sum + price * qty;
-}, 0);
   // Delivery_date: ta tidigaste schemalagda start från raderna
-const deliveryCandidateDates = rows
-  .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
-  .filter(Boolean)
-  .map(d => new Date(d))
-  .filter(d => Number.isFinite(d.getTime()));
+  const deliveryCandidateDates = rows
+    .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
+    .filter(Boolean)
+    .map(d => new Date(d))
+    .filter(d => Number.isFinite(d.getTime()));
 
-const deliveryDateIso =
-  deliveryCandidateDates.length
-    ? new Date(Math.min(...deliveryCandidateDates.map(d => d.getTime()))).toISOString()
-    : null;
-  console.log("[UnifiedOrder][tengella] delivery_date computed", {
-  workorderNo: wo?.WorkOrderNo,
-  deliveryDateIso,
-  rowDatesFound: deliveryCandidateDates.length
-});
+  const deliveryDateIso =
+    deliveryCandidateDates.length
+      ? new Date(Math.min(...deliveryCandidateDates.map(d => d.getTime()))).toISOString()
+      : null;
+
+  // Amount: summera Price * Quantity
+  const amount = rows.reduce((sum, r) => {
+    const price = Number(r?.Price ?? 0);
+    const qty   = Number(r?.Quantity ?? 1);
+    return sum + price * qty;
+  }, 0);
+
+  console.log("[UnifiedOrder][tengella] computed", {
+    workorderNo: wo?.WorkOrderNo,
+    bubbleWorkorderId,
+    amount,
+    deliveryDateIso,
+    rowDatesFound: deliveryCandidateDates.length
+  });
+
   return {
     source: "tengella",
     source_thing_id: String(bubbleWorkorderId),
@@ -438,19 +439,17 @@ const deliveryDateIso =
     order_number: workorderNo || (workorderId ? String(workorderId) : null),
     raw_title: workorderNo ? `Tengella WO ${workorderNo}` : "Tengella Workorder",
 
-    amount: null,                 // Tengella WO har ofta inte “total” direkt (vi kan räkna ihop rader senare)
+    amount: amount || null,
     company: resolvedCompanyId || null,
 
     order_date: orderDate,
-    delivery_date: null,          // om du har leverans/schedule datum kan vi fylla det senare
+    delivery_date: deliveryDateIso,
 
     supplier_name: "Carotte Housekeeping",
     status: "",
-    amount: amount || null,
-    delivery_date: deliveryDateIso,
 
     source_url: "",
-    account_manager: null,
+    account_manager: null
   };
 }
 // Fortnox helper: hitta ClientCompany via ft_customer_number (som du redan patchar in i ensureClientCompanyForFortnoxCustomer)
