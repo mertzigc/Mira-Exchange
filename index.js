@@ -311,7 +311,130 @@ async function fetchBubbleUser(user_unique_id) {
   }
   return null;
 }
+// ────────────────────────────────────────────────────────────
+// UnifiedOrder (cache/view) helpers
+// Upsert by (source + source_thing_id)
+// ────────────────────────────────────────────────────────────
+async function upsertUnifiedOrder(payload) {
+  const type = "UnifiedOrder";
 
+  const source = String(payload?.source || "").trim();
+  const sourceThingId = String(payload?.source_thing_id || "").trim();
+  if (!source || !sourceThingId) {
+    return { ok: false, reason: "missing_source_or_source_thing_id" };
+  }
+
+  const existing = await bubbleFindOne(type, [
+    { key: "source", constraint_type: "equals", value: source },
+    { key: "source_thing_id", constraint_type: "equals", value: sourceThingId }
+  ]);
+
+  const existingId = bubbleId(existing);
+
+  // always stamp sync time
+  const patchPayload = {
+    ...payload,
+    last_synced_at: new Date().toISOString()
+  };
+
+  // Bubble: remove undefined (null is OK)
+  Object.keys(patchPayload).forEach((k) => patchPayload[k] === undefined && delete patchPayload[k]);
+
+  if (existingId) {
+    await bubblePatch(type, existingId, patchPayload);
+    return { ok: true, mode: "update", id: existingId };
+  } else {
+    const createdId = await bubbleCreate(type, patchPayload);
+    return { ok: true, mode: "create", id: createdId || null };
+  }
+}
+function asNumberOrNull(v) {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toDateOrNull(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
+// Bygg payload till UnifiedOrder från Fortnox-order-data + bubble FortnoxOrder-id
+async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder, connection_id }) {
+  const docNo = String(fortnoxOrder?.DocumentNumber || "").trim();
+
+  // Belopp: Fortnox Total kan vara string/number
+  const amount = asNumberOrNull(fortnoxOrder?.Total);
+
+  // Company: resolve via ft_customer_number (matchar din ClientCompany)
+  const companyId = await resolveCompanyFromFortnoxCustomerNumber(fortnoxOrder?.CustomerNumber);
+
+  // Datum
+  const orderDate = toDateOrNull(toIsoDate?.(fortnoxOrder?.OrderDate) || fortnoxOrder?.OrderDate);
+  const deliveryDate = toDateOrNull(toIsoDate?.(fortnoxOrder?.DeliveryDate) || fortnoxOrder?.DeliveryDate);
+
+  // Kundansvarig: du har YourReference i Fortnox. Här sparar vi som text i raw_title/status.
+  // (Om du senare vill mappa YourReference -> User, kan vi bygga det.)
+  const yourRef = String(fortnoxOrder?.YourReference || "").trim();
+
+  return {
+    source: "fortnox",
+    source_thing_id: String(bubbleFortnoxOrderId),
+
+    order_number: docNo || null,
+    raw_title: docNo ? `Fortnox order ${docNo}` : "Fortnox order",
+
+    amount: amount ?? null,
+    company: companyId || null,
+
+    order_date: orderDate,
+    delivery_date: deliveryDate,
+
+    supplier_name: "Carotte Food & Event", // byt om du vill (eller gör det per connection)
+    status: yourRef ? `YourRef: ${yourRef}` : "",
+
+    // nice-to-have
+    source_url: String(fortnoxOrder?.["@url"] || ""),
+    account_manager: null, // kan sättas senare när vi mappar YourReference->User
+  };
+}
+async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCompanyId }) {
+  const workorderNo = String(wo?.WorkOrderNo || "").trim();
+  const workorderId = Number(wo?.WorkOrderId ?? 0) || null;
+
+  const orderDate = toDateOrNull(toBubbleDate?.(wo?.OrderDate) || wo?.OrderDate);
+
+  return {
+    source: "tengella",
+    source_thing_id: String(bubbleWorkorderId),
+
+    order_number: workorderNo || (workorderId ? String(workorderId) : null),
+    raw_title: workorderNo ? `Tengella WO ${workorderNo}` : "Tengella Workorder",
+
+    amount: null,                 // Tengella WO har ofta inte “total” direkt (vi kan räkna ihop rader senare)
+    company: resolvedCompanyId || null,
+
+    order_date: orderDate,
+    delivery_date: null,          // om du har leverans/schedule datum kan vi fylla det senare
+
+    supplier_name: "Carotte Housekeeping",
+    status: "",
+
+    source_url: "",
+    account_manager: null,
+  };
+}
+// Fortnox helper: hitta ClientCompany via ft_customer_number (som du redan patchar in i ensureClientCompanyForFortnoxCustomer)
+async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
+  const cn = Number(customerNumber ?? 0) || null;
+  if (!cn) return null;
+
+  const cc = await bubbleFindOne("ClientCompany", [
+    { key: "ft_customer_number", constraint_type: "equals", value: cn }
+  ]);
+  return bubbleId(cc);
+}
 async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) {
   const refresh = tokenJson.refresh_token || fallbackRefresh || null;
   const expiresIn = Number(tokenJson.expires_in || 0);
@@ -568,7 +691,9 @@ async function bubbleFindAll(typeName, { constraints = [], sort_field = null, de
   }
   return out;
 }
-
+function bubbleId(obj) {
+  return obj?._id || obj?.id || obj?.response?._id || obj?.response?.id || null;
+}
 async function bubbleFindOne(type, constraints) {
   const arr = await bubbleFind(type, {
     constraints: Array.isArray(constraints) ? constraints : [],
@@ -1480,13 +1605,34 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
         const existing = Array.isArray(search) && search.length ? search[0] : null;
         const foundDoc = String(existing?.ft_document_number || "").trim();
 
-        if (existing?._id && foundDoc === docNo) {
-          await bubblePatch("FortnoxOrder", existing._id, payload);
-          updated++;
-        } else {
-          await bubbleCreate("FortnoxOrder", payload);
-          created++;
-        }
+        let fortnoxOrderId = null;
+
+if (existing?._id && foundDoc === docNo) {
+  fortnoxOrderId = existing._id;
+  await bubblePatch("FortnoxOrder", fortnoxOrderId, payload);
+  updated++;
+} else {
+  fortnoxOrderId = await bubbleCreate("FortnoxOrder", payload);
+  created++;
+}
+
+// ✅ UnifiedOrder cache
+try {
+  if (fortnoxOrderId) {
+    const unifiedPayload = await buildUnifiedOrderFromFortnox({
+      bubbleFortnoxOrderId: fortnoxOrderId,
+      fortnoxOrder: o,
+      connection_id
+    });
+    await upsertUnifiedOrder(unifiedPayload);
+  }
+} catch (e) {
+  console.error("[UnifiedOrder][fortnox] failed", {
+    docNo,
+    error: e?.message || String(e),
+    detail: e?.detail || null
+  });
+}
       } catch (e) {
         errors++;
         if (!firstError) firstError = { docNo, message: e?.message || String(e), status: e?.status || null, detail: e?.detail || null };
@@ -6208,25 +6354,44 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
           }
 
           const wr = await upsertTengellaWorkorderToBubble(wo, {
-            bubbleCompanyId: resolvedCompanyId,
-            tengellaCustomerId: resolvedTengellaCustomerBubbleId
-          });
-          if (wr?.ok) workordersUpserted += 1;
+  bubbleCompanyId: resolvedCompanyId,
+  tengellaCustomerId: resolvedTengellaCustomerBubbleId
+});
+if (wr?.ok) workordersUpserted += 1;
 
-          // Rows
-          if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
-            for (const row of wo.WorkOrderRows) {
-              const rr = await upsertTengellaWorkorderRowToBubble(row, {
-                workorderBubbleId: wr.id,
-                workorderId: wo.WorkOrderId,
-                projectId: wo.ProjectId,
-                customerId: wo.CustomerId,
-                company: resolvedCompanyId
-              });
-              if (rr?.ok) rowsUpserted += 1;
-            }
-          }
-        }
+// ✅ Hook 2: UnifiedOrder cache (per workorder)
+try {
+  if (wr?.ok && wr?.id) {
+    const unifiedPayload = await buildUnifiedOrderFromTengella({
+      bubbleWorkorderId: wr.id,
+      wo,
+      resolvedCompanyId
+    });
+    await upsertUnifiedOrder(unifiedPayload);
+  }
+} catch (e) {
+  console.error("[UnifiedOrder][tengella] failed", {
+    workorderId: wo?.WorkOrderId,
+    workorderNo: wo?.WorkOrderNo,
+    bubbleWorkorderId: wr?.id || null,
+    error: e?.message || String(e),
+    detail: e?.detail || null
+  });
+}
+
+// Rows
+if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+  for (const row of wo.WorkOrderRows) {
+    const rr = await upsertTengellaWorkorderRowToBubble(row, {
+      workorderBubbleId: wr.id,
+      workorderId: wo.WorkOrderId,
+      projectId: wo.ProjectId,
+      customerId: wo.CustomerId,
+      company: resolvedCompanyId
+    });
+    if (rr?.ok) rowsUpserted += 1;
+  }
+}
 
         const nextCursor = resp?.Next || null;
         const more = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
