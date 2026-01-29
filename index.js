@@ -6365,35 +6365,51 @@ app.post("/tengella/cron", requireSyncSecret, async (req, res) => {
 
         for (const wo of data) {
           // Resolve TengellaCustomer → company (ClientCompany)
-          let resolvedCompanyId = null;
-          let resolvedTengellaCustomerBubbleId = null;
+let resolvedCompanyId = null;
+let resolvedTengellaCustomerBubbleId = null;
+let tc = null; // 👈 VIKTIGT: definierad i rätt scope
 
-          if (wo?.CustomerId) {
-            const tc = await bubbleFindOne("TengellaCustomer", [
-              { key: "tengella_customer_id", constraint_type: "equals", value: Number(wo.CustomerId) }
-            ]);
+if (wo?.CustomerId) {
+  tc = await bubbleFindOne("TengellaCustomer", [
+    {
+      key: "tengella_customer_id",
+      constraint_type: "equals",
+      value: Number(wo.CustomerId)
+    }
+  ]);
 
-            const tcId = bubbleId(tc);
-            if (tcId) {
-              resolvedTengellaCustomerBubbleId = tcId;
+  const tcId = bubbleId(tc);
+  if (tcId) {
+    resolvedTengellaCustomerBubbleId = tcId;
 
-              if (tc?.company) {
-                resolvedCompanyId = tc.company;
-              } else {
-                const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
-                if (regDigits) {
-                  const cc = await bubbleFindOne("ClientCompany", [
-                    { key: "Org_Number", constraint_type: "equals", value: String(regDigits) }
-                  ]);
-                  const ccId = bubbleId(cc);
-                  if (ccId) {
-                    resolvedCompanyId = ccId;
-                    await bubblePatch("TengellaCustomer", tcId, { company: ccId });
-                  }
-                }
-              }
-            }
+    if (tc?.company) {
+      // Redan kopplad → använd direkt
+      resolvedCompanyId = tc.company;
+    } else {
+      // Försök härleda ClientCompany via orgnr
+      const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
+      if (regDigits) {
+        const cc = await bubbleFindOne("ClientCompany", [
+          {
+            key: "Org_Number",
+            constraint_type: "equals",
+            value: String(regDigits)
           }
+        ]);
+
+        const ccId = bubbleId(cc);
+        if (ccId) {
+          resolvedCompanyId = ccId;
+
+          // Cachea kopplingen på TengellaCustomer
+          await bubblePatch("TengellaCustomer", tcId, {
+            company: ccId
+          });
+        }
+      }
+    }
+  }
+}
 
                    const wr = await upsertTengellaWorkorderToBubble(wo, {
             bubbleCompanyId: resolvedCompanyId,
