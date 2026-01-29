@@ -391,45 +391,87 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     account_manager: null, // kan sättas senare när vi mappar YourReference->User
   };
 }
-async function buildUnifiedOrderFromTengella({
-  bubbleWorkorderId,
-  wo,
-  resolvedCompanyId,
-  tengellaCustomer
-}) {
+async function buildUnifiedOrderFromTengella({ bubbleWorkorderId, wo, resolvedCompanyId, tengellaCustomer }) {
   const workorderNo = String(wo?.WorkOrderNo || "").trim();
   const workorderId = Number(wo?.WorkOrderId ?? 0) || null;
 
-  const orderDate = toDateOrNull(toBubbleDate?.(wo?.OrderDate) || wo?.OrderDate);
+  const orderDateIso = toDateOrNull(wo?.OrderDate);
 
-  // Rader (bara EN deklaration)
-  const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
+  // Rows från workorder payload
+  const workorderRows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
 
-  // Delivery_date: ta tidigaste schemalagda start från raderna
-  const deliveryCandidateDates = rows
-    .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
-    .filter(Boolean)
-    .map(d => new Date(d))
-    .filter(d => Number.isFinite(d.getTime()));
+  // Robust date parser (hanterar ISO, /Date(…)/ och ignorerar 0001-01-01)
+  const parseTengellaDateIsoOrNull = (v) => {
+    if (!v) return null;
+
+    // ISO-string
+    if (typeof v === "string") {
+      const s = v.trim();
+      if (!s) return null;
+
+      // vanliga "default" datum från .NET (om det dyker upp)
+      if (s.startsWith("0001-01-01")) return null;
+
+      // /Date(1700000000000)/
+      const m = s.match(/\/Date\((\d+)\)\//);
+      if (m && m[1]) {
+        const ms = Number(m[1]);
+        if (Number.isFinite(ms)) return new Date(ms).toISOString();
+      }
+
+      const t = Date.parse(s);
+      if (Number.isFinite(t)) return new Date(t).toISOString();
+      return null;
+    }
+
+    // Date-objekt
+    if (v instanceof Date) {
+      return Number.isFinite(v.getTime()) ? v.toISOString() : null;
+    }
+
+    // Number (ms)
+    if (typeof v === "number") {
+      return Number.isFinite(v) ? new Date(v).toISOString() : null;
+    }
+
+    return null;
+  };
+
+  // Delivery-date: välj tidigaste start från raderna (First/Last)
+  const deliveryCandidates = [];
+
+  for (const r of workorderRows) {
+    const firstIso = parseTengellaDateIsoOrNull(r?.FirstTimeTableEventStart);
+    const lastIso  = parseTengellaDateIsoOrNull(r?.LastTimeTableEventStart);
+    if (firstIso) deliveryCandidates.push(firstIso);
+    if (lastIso)  deliveryCandidates.push(lastIso);
+  }
 
   const deliveryDateIso =
-    deliveryCandidateDates.length
-      ? new Date(Math.min(...deliveryCandidateDates.map(d => d.getTime()))).toISOString()
+    deliveryCandidates.length
+      ? new Date(Math.min(...deliveryCandidates.map(d => Date.parse(d)))).toISOString()
       : null;
 
-  // Amount: summera Price * Quantity
-  const amount = rows.reduce((sum, r) => {
-    const price = Number(r?.Price ?? 0);
-    const qty   = Number(r?.Quantity ?? 1);
+  // Amount: summa Price * Quantity
+  const amount = workorderRows.reduce((sum, r) => {
+    const price = Number(r?.Price ?? 0) || 0;
+    const qty   = Number(r?.Quantity ?? 1) || 1;
     return sum + price * qty;
   }, 0);
 
+  // Debug: visa varför delivery blir null
   console.log("[UnifiedOrder][tengella] computed", {
-    workorderNo: wo?.WorkOrderNo,
-    bubbleWorkorderId,
-    amount,
-    deliveryDateIso,
-    rowDatesFound: deliveryCandidateDates.length
+    workorderNo,
+    bubbleWorkorderId: String(bubbleWorkorderId),
+    rowsCount: workorderRows.length,
+    sampleRowDates: workorderRows[0]
+      ? {
+          FirstTimeTableEventStart: workorderRows[0]?.FirstTimeTableEventStart ?? null,
+          LastTimeTableEventStart: workorderRows[0]?.LastTimeTableEventStart ?? null
+        }
+      : null,
+    deliveryCandidatesCount: deliveryCandidates.length,
+    deliveryDateIso
   });
 
   return {
@@ -442,14 +484,14 @@ async function buildUnifiedOrderFromTengella({
     amount: amount || null,
     company: resolvedCompanyId || null,
 
-    order_date: orderDate,
-    delivery_date: deliveryDateIso,
+    order_date: orderDateIso,
+    delivery_date: deliveryDateIso, // ✅ här fyller vi
 
     supplier_name: "Carotte Housekeeping",
     status: "",
 
     source_url: "",
-    account_manager: null
+    account_manager: null,
   };
 }
 // Fortnox helper: hitta ClientCompany via ft_customer_number (som du redan patchar in i ensureClientCompanyForFortnoxCustomer)
