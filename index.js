@@ -619,10 +619,10 @@ function isJwtExpired(token, skewSeconds = 60) {
 // ────────────────────────────────────────────────────────────
 // Helpers (deklarera EN gång)
 const asTextOrEmpty = (v) => (v === undefined || v === null) ? "" : String(v);
-
-// Telefon/orgnr/id: plocka ENDAST siffror ur sträng (+46, mellanslag, bindestreck osv)
-const asDigitsNumberOrNull = (v) => {
+// Telefon/orgnr/belopp: plocka siffror ur sträng (+46, mellanslag, bindestreck osv)
+function asNumberOrNull(v) {
   if (v === undefined || v === null) return null;
+
   const s = String(v).trim();
   if (!s) return null;
 
@@ -631,7 +631,7 @@ const asDigitsNumberOrNull = (v) => {
 
   const n = Number(digits);
   return Number.isFinite(n) ? n : null;
-};
+}
 // Belopp: försök parsea decimaler (sv/en format). "1 234,50" -> 1234.5
 const asMoneyNumberOrNull = (v) => {
   if (v === undefined || v === null) return null;
