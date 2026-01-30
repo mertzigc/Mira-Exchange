@@ -3824,7 +3824,15 @@ function normalizePhone(s) {
 // ────────────────────────────────────────────────────────────
 // Build Matter + MatterMessage payloads
 
-function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPreview, bodyType, bodyContent }) {
+function buildMatterMessagePatch({
+  mailbox_upn,
+  matterId,
+  msg,
+  bodyClean,
+  bodyPreview,
+  bodyType,
+  bodyContent
+}) {
   const graphId = String(msg?.id || "").trim();
 
   const fromEmail =
@@ -3832,14 +3840,14 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     normEmail(msg?.sender?.emailAddress?.address) ||
     "";
 
-  const fromName =
-    safeText(msg?.from?.emailAddress?.name || msg?.sender?.emailAddress?.name || "", 200);
+  const fromName = safeText(
+    msg?.from?.emailAddress?.name || msg?.sender?.emailAddress?.name || "",
+    200
+  );
 
   const subject = safeText(msg?.subject || "", 300);
-
   const receivedAt = msg?.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
 
-  // recipients (valfritt: spara som text)
   const toRecipients = Array.isArray(msg?.toRecipients)
     ? msg.toRecipients.map(r => r?.emailAddress?.address).filter(Boolean).join(", ")
     : "";
@@ -3850,39 +3858,41 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
 
   const hasAttachments = !!msg?.hasAttachments;
 
-  // ✅ NYTT: extrahera DeDu action link (kvittera beställning)
+  // ✅ DeDu: extrahera action-link (Kvittera beställning)
   const action = extractActionLink({
-    bodyHtml: bodyType === "html" ? bodyContent : "",
+    bodyHtml: String(bodyType || "").toLowerCase() === "html" ? (bodyContent || "") : "",
     bodyText: bodyClean || bodyPreview || ""
   });
 
-  // ✅ Viktigt: decode:a HTML entities så &amp; blir &
-  const actionUrl = safeText(decodeHtmlEntities(action?.url || ""), 2000).trim();
-  const actionLabel = safeText(action?.label || "", 200);
+  // VIKTIGT: din extractActionLink hittar ofta url med &amp; → gör om till &
+  const actionUrl = decodeHtmlEntities(action?.url || "");
 
   return {
     matter: matterId,
-    graph_message_id: graphId,
+    graph_message_id: safeText(graphId, 400),
     mailbox_upn: safeText(mailbox_upn || "", 200),
     received_at: receivedAt,
+
     from_email: safeText(fromEmail, 200),
     sender_name: fromName,
     subject,
+
     body_preview: safeText(bodyPreview || "", 1000),
     body_type: safeText(bodyType || "", 20),
     body_content: safeText(bodyContent || "", 50000),
     body_clean: safeText(bodyClean || "", 50000),
+
     to_recipients: safeText(toRecipients, 2000),
     cc_recipients: safeText(ccRecipients, 2000),
     has_attachments: hasAttachments,
 
-    // ✅ spara länken per meddelande (ren URL med &)
-    action_link: actionUrl,
-    action_link_label: actionLabel
+    // ✅ spara länken per meddelande
+    action_link: safeText(actionUrl, 2000),
+    action_link_label: safeText(action?.label || "", 200)
 
     // raw_json: safeText(JSON.stringify(msg), 50000)
   };
-
+}
 function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg, bodyType, bodyContent, bodyPreview }) {
   const external_case_id = lineValue(bodyClean, [
   "Ärende",
