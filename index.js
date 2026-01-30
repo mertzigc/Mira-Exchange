@@ -112,6 +112,13 @@ function normalizeActionUrl(url) {
 
   return s;
 }
+function safeUrl(s, maxLen = 2000) {
+  if (!s) return "";
+  return String(s)
+    .trim()
+    .replace(/\s/g, "")     // bort whitespace/newlines i länken
+    .slice(0, maxLen);
+}
 function stripHtmlToText(html = "") {
   let s = String(html);
 
@@ -3849,13 +3856,11 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     bodyText: bodyClean || bodyPreview || ""
   });
 
-  // ✅ Normalisera URL så &amp; -> & (och ev &#38;) + bort med whitespace/newlines
-  const actionUrlRaw = String(action?.url || "").trim();
-  const actionUrlFixed = actionUrlRaw
-    ? String(decodeHtmlEntities(actionUrlRaw))
-        .replace(/&#38;/g, "&")
-        .replace(/\s/g, "")
-    : "";
+  // Decode ev. html-entities (ibland kan den vara dubbel-encodad)
+  const actionUrlFixed = safeUrl(
+    decodeHtmlEntities(decodeHtmlEntities(String(action?.url || "")))
+      .replace(/&#38;/g, "&")
+  );
 
   return {
     matter: matterId,
@@ -3873,9 +3878,10 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     cc_recipients: safeText(ccRecipients, 2000),
     has_attachments: hasAttachments,
 
-    // ✅ NYTT: spara länken även per meddelande (nu med riktiga &-parametrar)
-    action_link: safeText(actionUrlFixed, 2000),
+    // ✅ OBS: action_link går via safeUrl (inte safeText) för att inte bli &amp;
+    action_link: actionUrlFixed,
     action_link_label: safeText(action?.label || "", 200)
+  };
 
     // raw_json: safeText(JSON.stringify(msg), 50000) // OM du vill aktivera
   };
