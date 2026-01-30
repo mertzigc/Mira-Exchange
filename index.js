@@ -209,6 +209,52 @@ function escapeHtml(input = "") {
   };
   return s.replace(/[&<>"'`]/g, (ch) => map[ch] || ch);
 }
+function extractActionLink({ bodyHtml = "", bodyText = "" } = {}) {
+  const html = String(bodyHtml || "");
+  const text = String(bodyText || "");
+
+  // 0) Hård preferens: DeDu-kvittenslänk (oavsett länktext)
+  // Ex: https://www.dedu.se/deduweb/external/direktdelkvittens.aspx?...&guid=...
+  let m = html.match(/<a\b[^>]*href\s*=\s*["'](https?:\/\/www\.dedu\.se\/deduweb\/external\/direktdelkvittens\.aspx\?[^"']+)["'][^>]*>/i);
+  if (m?.[1]) return { url: m[1], label: "Kvittera beställning", foundIn: "html" };
+
+  // 1) Länk med text "Kvittera beställning" (tillåt span/whitespace)
+  m = html.match(
+    /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>[\s\S]*?Kvittera\s+beställning[\s\S]*?<\/a>/i
+  );
+  if (m?.[1]) return { url: m[1], label: "Kvittera beställning", foundIn: "html" };
+
+  // 2) Begränsat fönster runt "Rapportera åtgärd" och plocka första href
+  const idx = html.toLowerCase().indexOf("rapportera åtgärd");
+  if (idx !== -1) {
+    const window = html.slice(idx, idx + 4000);
+    m = window.match(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+    if (m?.[1]) {
+      const inner = (m[2] || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      const label = inner || "Kvittera beställning";
+      return { url: m[1], label, foundIn: "html" };
+    }
+  }
+
+  // 3) Text fallback: leta DeDu-länk direkt i text
+  m = text.match(/https?:\/\/www\.dedu\.se\/deduweb\/external\/direktdelkvittens\.aspx\?\S+/i);
+  if (m?.[0]) return { url: m[0], label: "Kvittera beställning", foundIn: "text" };
+
+  // 4) Text fallback: "Kvittera beställning" + url i närheten
+  const t = text.replace(/\r/g, "");
+  const lines = t.split("\n").map(s => s.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+    if (line.includes("kvittera beställning") || line.includes("rapportera åtgärd")) {
+      for (let j = i; j < Math.min(i + 8, lines.length); j++) {
+        const mm = lines[j].match(/https?:\/\/\S+/i);
+        if (mm?.[0]) return { url: mm[0], label: "Kvittera beställning", foundIn: "text" };
+      }
+    }
+  }
+
+  return { url: "", label: "", foundIn: "" };
+}
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
@@ -3771,6 +3817,12 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
 
   const hasAttachments = !!msg?.hasAttachments;
 
+  // ✅ NYTT: extrahera DeDu action link (kvittera beställning)
+  const action = extractActionLink({
+    bodyHtml: bodyType === "html" ? bodyContent : "",
+    bodyText: bodyClean || bodyPreview || ""
+  });
+
   return {
     matter: matterId,
     graph_message_id: graphId,
@@ -3785,12 +3837,18 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     body_clean: safeText(bodyClean || "", 50000),
     to_recipients: safeText(toRecipients, 2000),
     cc_recipients: safeText(ccRecipients, 2000),
-    has_attachments: hasAttachments
+    has_attachments: hasAttachments,
+
+    // ✅ NYTT: spara länken även per meddelande
+    action_link: safeText(action?.url || "", 1000),
+    action_link_label: safeText(action?.label || "", 200),
+    action_link_found_in: safeText(action?.foundIn || "", 20)
+
     // raw_json: safeText(JSON.stringify(msg), 50000) // OM du vill aktivera
   };
 }
 
-function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg }) {
+function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg, bodyType, bodyContent, bodyPreview }) {
   const external_case_id = lineValue(bodyClean, "Ärende"); // "925565"
 
   const propertyLine = lineValue(bodyClean, "Fastighet");
@@ -3821,6 +3879,12 @@ function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg }) {
 
   const receivedAt = msg?.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
 
+  // ✅ NYTT: extrahera DeDu action link även på Matter-nivå (senaste kända)
+  const action = extractActionLink({
+    bodyHtml: String(bodyType || "").toLowerCase() === "html" ? (bodyContent || "") : "",
+    bodyText: bodyClean || bodyPreview || ""
+  });
+
   return {
     external_system: "DeDu",
     external_case_id: safeText(external_case_id, 100),
@@ -3850,7 +3914,13 @@ function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg }) {
 
     reported_at: reportedAt || receivedAt,
 
-    raw_body_last: safeText(bodyClean || "", 50000)
+    raw_body_last: safeText(bodyClean || "", 50000),
+
+    // ✅ NYTT: action link på Matter (senaste)
+    action_link: safeText(action?.url || "", 1000),
+    action_link_label: safeText(action?.label || "", 200),
+    action_link_found_in: safeText(action?.foundIn || "", 20)
+
     // raw_html_last: ... (om du vill)
   };
 }
@@ -3900,26 +3970,29 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
         if (existingMM?._id) { skippedExistingMessages++; continue; }
 
         // 2) Body: använd Graph body om den finns i delta-payload
-        // (Om din delta-fetch inte inkluderar full body, kan vi senare komplettera med "GET message by id" som ni gjorde för InboundEmail.)
-        const bodyType = String(msg?.body?.contentType || msg?.body?.contentType || "").toLowerCase() || "html";
-        const bodyContent = String(msg?.body?.content || msg?.body?.content || "");
+        const bodyType = String(msg?.body?.contentType || "").toLowerCase() || "html";
+        const bodyContent = String(msg?.body?.content || "");
         const bodyPreview = String(msg?.bodyPreview || "");
 
-        // Du har redan html->text / entities helpers i filen (ni använde dem för lead-bodies).
-        // Här: gör en "clean" version för parsing + visning.
         const bodyClean = bodyType === "html"
-          ? htmlToText(bodyContent)   // <-- använder din befintliga funktion (som du redan har i lead-flödet)
+          ? htmlToText(bodyContent)
           : String(bodyContent || "");
 
         const subject = safeText(msg?.subject || "", 300);
 
         // 3) Skapa/uppdatera Matter (per external_case_id)
-        const matterPatch = buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg });
+        const matterPatch = buildMatterPatchFromBody({
+          mailbox_upn,
+          subject,
+          bodyClean,
+          msg,
+          bodyType,
+          bodyContent,
+          bodyPreview
+        });
 
         const caseId = String(matterPatch.external_case_id || "").trim();
         if (!caseId) {
-          // Om DeDu ibland saknar Ärende i body: vi kan senare lägga fallback till subject.
-          // Just nu: skippa för att inte skapa Matter utan nyckel.
           skippedExistingMessages++;
           continue;
         }
