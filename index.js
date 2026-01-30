@@ -3856,11 +3856,9 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     bodyText: bodyClean || bodyPreview || ""
   });
 
-  // Decode ev. html-entities (ibland kan den vara dubbel-encodad)
-  const actionUrlFixed = safeUrl(
-    decodeHtmlEntities(decodeHtmlEntities(String(action?.url || "")))
-      .replace(/&#38;/g, "&")
-  );
+  // ✅ Viktigt: decode:a HTML entities så &amp; blir &
+  const actionUrl = safeText(decodeHtmlEntities(action?.url || ""), 2000).trim();
+  const actionLabel = safeText(action?.label || "", 200);
 
   return {
     matter: matterId,
@@ -3878,9 +3876,11 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     cc_recipients: safeText(ccRecipients, 2000),
     has_attachments: hasAttachments,
 
-    // ✅ OBS: action_link går via safeUrl (inte safeText) för att inte bli &amp;
-    action_link: actionUrlFixed,
-    action_link_label: safeText(action?.label || "", 200)
+    // ✅ spara länken per meddelande (ren URL med &)
+    action_link: actionUrl,
+    action_link_label: actionLabel
+
+    // raw_json: safeText(JSON.stringify(msg), 50000)
   };
 
 function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg, bodyType, bodyContent, bodyPreview }) {
