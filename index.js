@@ -3945,6 +3945,7 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
   let mattersUpdated = 0;
   let errors = 0;
   let first_error = null;
+  let sample = []; // debug: visar vad delta faktiskt returnerar
 
   try {
     // Återanvänd samma state-tabell/typ som du redan har (delta_link per mailbox)
@@ -3961,13 +3962,35 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
     const messages = Array.isArray(deltaRes?.messages) ? deltaRes.messages : [];
 
     for (const msg of messages) {
+      // sampleItem måste ligga utanför inner try/catch så vi kan skriva i catch också
+      const sampleItem = {
+        graph_message_id: String(msg?.id || "").trim(),
+        subject: String(msg?.subject || ""),
+        receivedDateTime: String(msg?.receivedDateTime || ""),
+        from: String(
+          msg?.from?.emailAddress?.address ||
+          msg?.sender?.emailAddress?.address ||
+          ""
+        ),
+        action: "unknown"
+      };
+
       try {
-        const graphId = String(msg?.id || "").trim();
-        if (!graphId) { skippedExistingMessages++; continue; }
+        const graphId = sampleItem.graph_message_id;
+
+        if (!graphId) {
+          skippedExistingMessages++;
+          if (sample.length < 5) { sampleItem.action = "skipped_no_graph_id"; sample.push(sampleItem); }
+          continue;
+        }
 
         // 1) Idempotens: skapa inte MatterMessage om den redan finns
         const existingMM = await findMatterMessageByGraphId(graphId);
-        if (existingMM?._id) { skippedExistingMessages++; continue; }
+        if (existingMM?._id) {
+          skippedExistingMessages++;
+          if (sample.length < 5) { sampleItem.action = "skipped_existing_mattermessage"; sample.push(sampleItem); }
+          continue;
+        }
 
         // 2) Body: använd Graph body om den finns i delta-payload
         const bodyType = String(msg?.body?.contentType || "").toLowerCase() || "html";
@@ -3975,7 +3998,7 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
         const bodyPreview = String(msg?.bodyPreview || "");
 
         const bodyClean = bodyType === "html"
-          ? htmlToText(bodyContent)
+          ? htmlToText(bodyContent)   // använder din befintliga helper
           : String(bodyContent || "");
 
         const subject = safeText(msg?.subject || "", 300);
@@ -3994,6 +4017,7 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
         const caseId = String(matterPatch.external_case_id || "").trim();
         if (!caseId) {
           skippedExistingMessages++;
+          if (sample.length < 5) { sampleItem.action = "skipped_missing_case_id"; sample.push(sampleItem); }
           continue;
         }
 
@@ -4023,9 +4047,17 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
         await createMatterMessage(mmFields);
         createdMessages++;
 
+        if (sample.length < 5) { sampleItem.action = "created_mattermessage"; sample.push(sampleItem); }
+
       } catch (e) {
         errors++;
         if (!first_error) first_error = { message: e?.message || String(e), detail: e?.detail || null };
+
+        if (sample.length < 5) {
+          sampleItem.action = "error";
+          sampleItem.error = e?.message || String(e);
+          sample.push(sampleItem);
+        }
       }
     }
 
@@ -4051,6 +4083,7 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
         errors
       },
       first_error,
+      sample,
       ms: Date.now() - t0
     });
 
