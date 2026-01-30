@@ -3883,10 +3883,6 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     action_link_label: safeText(action?.label || "", 200)
   };
 
-    // raw_json: safeText(JSON.stringify(msg), 50000) // OM du vill aktivera
-  };
-}
-
 function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg, bodyType, bodyContent, bodyPreview }) {
   const external_case_id = lineValue(bodyClean, [
   "Ärende",
