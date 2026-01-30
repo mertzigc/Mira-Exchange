@@ -3737,11 +3737,23 @@ async function patchMatterMessage(messageId, fields) {
 // ────────────────────────────────────────────────────────────
 // DeDu parsing helpers
 
-function lineValue(body, label) {
-  // Ex: label="Ärende" matchar "Ärende: 925565"
-  const re = new RegExp(`^\\s*${escapeRegExp(label)}\\s*:\\s*(.+?)\\s*$`, "mi");
-  const m = String(body || "").match(re);
-  return m ? m[1].trim() : "";
+function lineValue(body, labelOrLabels) {
+  const labels = Array.isArray(labelOrLabels) ? labelOrLabels : [labelOrLabels];
+
+  // Matchar t.ex.
+  // "Ärende: 925565"
+  // "Ärendenummer: 123456"
+  // "Ärende nr: 123456"
+  // "Ärende nummer - 123456"
+  for (const label of labels) {
+    const re = new RegExp(
+      `^\\s*${escapeRegExp(label)}\\s*(?:[:\\-]|\\s+)\\s*(.+?)\\s*$`,
+      "mi"
+    );
+    const m = String(body || "").match(re);
+    if (m && m[1]) return m[1].trim();
+  }
+  return "";
 }
 
 function escapeRegExp(s) {
@@ -3849,7 +3861,12 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
 }
 
 function buildMatterPatchFromBody({ mailbox_upn, subject, bodyClean, msg, bodyType, bodyContent, bodyPreview }) {
-  const external_case_id = lineValue(bodyClean, "Ärende"); // "925565"
+  const external_case_id = lineValue(bodyClean, [
+  "Ärende",
+  "Ärendenummer",
+  "Ärende nr",
+  "Ärende nummer"
+]);
 
   const propertyLine = lineValue(bodyClean, "Fastighet");
   const prop = parsePropertyLine(propertyLine);
@@ -3992,14 +4009,33 @@ app.post("/jobs/matter/poll", requireApiKey, async (req, res) => {
           continue;
         }
 
-        // 2) Body: använd Graph body om den finns i delta-payload
-        const bodyType = String(msg?.body?.contentType || "").toLowerCase() || "html";
-        const bodyContent = String(msg?.body?.content || "");
-        const bodyPreview = String(msg?.bodyPreview || "");
+// 2) Body: använd Graph body om den finns i delta-payload
+let bodyType = String(msg?.body?.contentType || "").toLowerCase() || "html";
+let bodyContent = String(msg?.body?.content || "");
+let bodyPreview = String(msg?.bodyPreview || "");
 
-        const bodyClean = bodyType === "html"
-          ? htmlToText(bodyContent)   // använder din befintliga helper
-          : String(bodyContent || "");
+// Fallback: delta kan sakna full body (vanligt vid VB/FW eller vissa delta-lägen)
+// → hämta fulla meddelandet via Graph med message-id
+if (!bodyContent && String(msg?.id || "").trim()) {
+  const full = await graphGetMessageById({
+    tenant,
+    mailbox_upn,
+    graph_message_id: String(msg.id).trim(),
+    auth_user_id
+  });
+
+  // Full message kan ha bättre body/preview
+  bodyType = String(full?.body?.contentType || bodyType || "").toLowerCase() || "html";
+  bodyContent = String(full?.body?.content || bodyContent || "");
+  bodyPreview = String(full?.bodyPreview || bodyPreview || "");
+
+  // (Valfritt men bra) ersätt msg så resten av koden använder fulla objektet
+  msg = full || msg;
+}
+
+const bodyClean = bodyType === "html"
+  ? htmlToText(bodyContent)
+  : String(bodyContent || "");
 
         const subject = safeText(msg?.subject || "", 300);
 
