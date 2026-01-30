@@ -97,7 +97,21 @@ function decodeHtmlEntities(s = "") {
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">");
 }
+function normalizeActionUrl(url) {
+  if (!url) return "";
+  let s = String(url).trim();
 
+  // återanvänd din befintliga decoder
+  s = decodeHtmlEntities(s);
+
+  // extra säkerhet (om vissa mails använder numerisk entity för &)
+  s = s.replace(/&#38;/g, "&");
+
+  // ta bort whitespace/newlines som ibland smyger sig in i href
+  s = s.replace(/\s/g, "");
+
+  return s;
+}
 function stripHtmlToText(html = "") {
   let s = String(html);
 
@@ -3835,6 +3849,14 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     bodyText: bodyClean || bodyPreview || ""
   });
 
+  // ✅ Normalisera URL så &amp; -> & (och ev &#38;) + bort med whitespace/newlines
+  const actionUrlRaw = String(action?.url || "").trim();
+  const actionUrlFixed = actionUrlRaw
+    ? String(decodeHtmlEntities(actionUrlRaw))
+        .replace(/&#38;/g, "&")
+        .replace(/\s/g, "")
+    : "";
+
   return {
     matter: matterId,
     graph_message_id: graphId,
@@ -3851,10 +3873,9 @@ function buildMatterMessagePatch({ mailbox_upn, matterId, msg, bodyClean, bodyPr
     cc_recipients: safeText(ccRecipients, 2000),
     has_attachments: hasAttachments,
 
-    // ✅ NYTT: spara länken även per meddelande
-    action_link: safeText(action?.url || "", 1000),
-    action_link_label: safeText(action?.label || "", 200),
-    action_link_found_in: safeText(action?.foundIn || "", 20)
+    // ✅ NYTT: spara länken även per meddelande (nu med riktiga &-parametrar)
+    action_link: safeText(actionUrlFixed, 2000),
+    action_link_label: safeText(action?.label || "", 200)
 
     // raw_json: safeText(JSON.stringify(msg), 50000) // OM du vill aktivera
   };
