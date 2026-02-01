@@ -490,7 +490,7 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     order_date: orderDate,
     delivery_date: deliveryDate,
 
-    supplier_name: "Carotte Food & Event",
+    supplier_name: "Carotte Food & Event AB",
     status: yourRef ? `YourRef: ${yourRef}` : "",
 
     source_url: String(fortnoxOrder?.["@url"] || ""),
@@ -5907,7 +5907,85 @@ function toBubbleDate(v) {
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
 }
+// ────────────────────────────────────────────────────────────
+// UnifiedOrder payload from Tengella WorkOrder
+// ────────────────────────────────────────────────────────────
+async function buildUnifiedOrderFromTengella({
+  bubbleWorkorderId,
+  wo,
+  resolvedCompanyId,
+  tengellaCustomer = null,
+  supplier = "Carotte Housekeeping AB",
+} = {}) {
+  const workorderNo = String(wo?.WorkOrderNo || "").trim();
+  const workorderId = Number(wo?.WorkOrderId ?? 0) || null;
 
+  // Order date
+  const order_date = toBubbleDate(wo?.OrderDate);
+
+  // Rows (amount + delivery_date)
+  const woRows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
+
+  // Amount = sum(Price * Quantity)
+  const amountNum = woRows.reduce((sum, r) => {
+    const price = Number(r?.Price ?? 0);
+    const qty = Number(r?.Quantity ?? 1);
+    const p = Number.isFinite(price) ? price : 0;
+    const q = Number.isFinite(qty) ? qty : 1;
+    return sum + p * q;
+  }, 0);
+
+  const amount = amountNum ? amountNum : null;
+
+  // Delivery date = earliest timetable start from rows
+  const candidateDates = woRows
+    .map(r => r?.FirstTimeTableEventStart || r?.LastTimeTableEventStart || null)
+    .filter(Boolean)
+    .map(d => new Date(d))
+    .filter(d => Number.isFinite(d.getTime()));
+
+  const delivery_date =
+    candidateDates.length
+      ? new Date(Math.min(...candidateDates.map(d => d.getTime()))).toISOString()
+      : null;
+
+  // Optional debug
+  console.log("[UnifiedOrder][tengella] computed", {
+    workorderNo,
+    bubbleWorkorderId,
+    rowsCount: woRows.length,
+    sampleRowDates: woRows[0]
+      ? {
+          FirstTimeTableEventStart: woRows[0]?.FirstTimeTableEventStart ?? null,
+          LastTimeTableEventStart: woRows[0]?.LastTimeTableEventStart ?? null,
+        }
+      : null,
+    deliveryCandidatesCount: candidateDates.length,
+    deliveryDateIso: delivery_date,
+    amount,
+  });
+
+  return {
+    source: "tengella",
+    source_thing_id: String(bubbleWorkorderId),
+
+    order_number: workorderNo || (workorderId ? String(workorderId) : null),
+    raw_title: workorderNo ? `Tengella WO ${workorderNo}` : "Tengella Workorder",
+
+    amount,
+    company: resolvedCompanyId || null,
+
+    order_date,
+    delivery_date,
+
+    // ✅ Detta är fältet du vill få in:
+    supplier_name: String(supplier || "").trim() || "Carotte Housekeeping AB",
+
+    status: "",
+    source_url: "",
+    account_manager: null,
+  };
+}
 // ────────────────────────────────────────────────────────────
 // Tengella fetch + login (matchar din Bubble setup)
 // ────────────────────────────────────────────────────────────
@@ -6600,17 +6678,17 @@ if (wo?.CustomerId) {
 
           if (wr?.ok) workordersUpserted += 1;
 
-          // ✅ Hook 2: UnifiedOrder cache (per workorder)
-          try {
+// ✅ Hook 2: UnifiedOrder cache (per workorder)
+try {
   if (wr?.ok && wr?.id) {
     const unifiedPayload = await buildUnifiedOrderFromTengella({
-      bubbleWorkorderId: wr.id,
-      wo,
-      resolvedCompanyId,
-      tengellaCustomer: tc   // 👈 HÄR
-    });
-    await upsertUnifiedOrder(unifiedPayload);
-  }
+  bubbleWorkorderId: wr.id,
+  wo,
+  resolvedCompanyId,
+  tengellaCustomer: tc,
+  supplier: "Carotte Housekeeping AB",
+});
+await upsertUnifiedOrder(unifiedPayload);
 } catch (e) {
   console.error("[UnifiedOrder][tengella] failed", {
     workorderId: wo?.WorkOrderId,
