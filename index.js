@@ -6682,36 +6682,38 @@ if (wo?.CustomerId) {
 try {
   if (wr?.ok && wr?.id) {
     const unifiedPayload = await buildUnifiedOrderFromTengella({
-  bubbleWorkorderId: wr.id,
-  wo,
-  resolvedCompanyId,
-  tengellaCustomer: tc,
-  supplier: "Carotte Housekeeping AB",
-});
-await upsertUnifiedOrder(unifiedPayload);
+      bubbleWorkorderId: wr.id,
+      wo,
+      resolvedCompanyId,
+      tengellaCustomer: tc,
+      supplier: "Carotte Housekeeping AB",
+    });
+
+    await upsertUnifiedOrder(unifiedPayload);
+  }
 } catch (e) {
   console.error("[UnifiedOrder][tengella] failed", {
     workorderId: wo?.WorkOrderId,
     workorderNo: wo?.WorkOrderNo,
     bubbleWorkorderId: wr?.id || null,
     error: e?.message || String(e),
-    detail: e?.detail || null
+    detail: e?.detail || null,
   });
 }
-          // Rows
-          if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
-            for (const row of wo.WorkOrderRows) {
-              const rr = await upsertTengellaWorkorderRowToBubble(row, {
-                workorderBubbleId: wr.id,
-                workorderId: wo.WorkOrderId,
-                projectId: wo.ProjectId,
-                customerId: wo.CustomerId,
-                company: resolvedCompanyId
-              });
-              if (rr?.ok) rowsUpserted += 1;
-            }
-          }
 
+// Rows
+if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+  for (const row of wo.WorkOrderRows) {
+    const rr = await upsertTengellaWorkorderRowToBubble(row, {
+      workorderBubbleId: wr.id,
+      workorderId: wo.WorkOrderId,
+      projectId: wo.ProjectId,
+      customerId: wo.CustomerId,
+      company: resolvedCompanyId,
+    });
+    if (rr?.ok) rowsUpserted += 1;
+  }
+}
         } // 👈 👈 👈 VIKTIG: STÄNGER for (const wo of data)
 
         const nextCursor = resp?.Next || null;
