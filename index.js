@@ -3374,7 +3374,7 @@ if (!patchOk) {
           const pdfRes = await fetchAndStoreOfferPdf({
             tok,
             connection_id,
-            docNo,
+            offer_docno: docNo,
             bubble_offer_id: bubbleId
           });
 
