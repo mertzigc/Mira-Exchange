@@ -3361,54 +3361,54 @@ if (!patchOk) {
     }
 
     // ────────────────────────────────────────────────────────────
-    // PDF fetch (din befintliga logik)
-    if (wantPdf) {
-      const alreadyHasPdf = !!existing?.item?.ft_pdf || !!payload?.ft_pdf;
-      const shouldTryPdf =
-        pdf_attempted < maxPerPage &&
-        (!missingOnly || !alreadyHasPdf);
+   // ────────────────────────────────────────────────────────────
+// PDF fetch (din befintliga logik, men med KORREKT param-mapping)
+if (wantPdf) {
+  const alreadyHasPdf = !!existing?.item?.ft_pdf;
+  const shouldTryPdf =
+    pdf_attempted < maxPerPage &&
+    (!missingOnly || !alreadyHasPdf);
 
-      if (shouldTryPdf) {
-        pdf_attempted++;
-        try {
-          const pdfRes = await fetchAndStoreOfferPdf({
-            tok,
-            connection_id,
-            offer_docno: docNo,
-            bubble_offer_id: bubbleId
-          });
+  if (shouldTryPdf) {
+    pdf_attempted++;
+    try {
+      const pdfRes = await fetchAndStoreOfferPdf({
+        connection_id,
+        offer_docno: docNo,          // ✅ MÅSTE heta offer_docno
+        bubble_offer_id: bubbleId,   // ✅ MÅSTE heta bubble_offer_id
+        access_token: tok.access_token // ✅ MÅSTE heta access_token (string)
+      });
 
-          if (pdfRes?.ok) {
-            pdf_fetched++;
-          } else {
-            pdf_errors++;
-            if (!firstPdfError) {
-              firstPdfError = {
-                ok: false,
-                stage: "fetchAndStoreOfferPdf_failed",
-                docNo,
-                detail: pdfRes
-              };
-            }
-          }
-
-          if (pauseMs) await sleep(pauseMs);
-        } catch (e) {
-          pdf_errors++;
-          if (!firstPdfError) {
-            firstPdfError = {
-              ok: false,
-              stage: "fetchAndStoreOfferPdf_exception",
-              docNo,
-              detail: String(e?.message || e)
-            };
-          }
-        }
+      if (pdfRes?.ok) {
+        pdf_fetched++;
       } else {
-        pdf_skipped++;
+        pdf_errors++;
+        if (!firstPdfError) {
+          firstPdfError = {
+            ok: false,
+            stage: "fetchAndStoreOfferPdf_failed",
+            docNo,
+            detail: pdfRes
+          };
+        }
+      }
+
+      if (pauseMs) await sleep(pauseMs);
+    } catch (e) {
+      pdf_errors++;
+      if (!firstPdfError) {
+        firstPdfError = {
+          ok: false,
+          stage: "fetchAndStoreOfferPdf_exception",
+          docNo,
+          detail: String(e?.message || e)
+        };
       }
     }
-
+  } else {
+    pdf_skipped++;
+  }
+}
   } catch (e) {
     errors++;
     if (!firstError) {
