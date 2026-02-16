@@ -2860,7 +2860,14 @@ const boolish = (v, def = false) => {
   if (v === false || v === "false" || v === 0 || v === "0") return false;
   return def;
 };
-
+app.get("/debug/fortnox-binary-version", (req, res) => {
+  res.json({
+    ok: true,
+    note: "fortnoxGetBinary should have NO Accept header (or application/json)",
+    hasAcceptInBinary: false,
+    ts: new Date().toISOString()
+  });
+});
 async function fortnoxGetBinary(path, accessToken) {
   const base = "https://api.fortnox.se/3";
   const url = base + path;
@@ -2869,9 +2876,9 @@ async function fortnoxGetBinary(path, accessToken) {
     method: "GET",
     headers: {
       "Authorization": "Bearer " + accessToken,
-      "Client-Secret": String(FORTNOX_CLIENT_SECRET || ""), // ✅ behövs i din setup
-      // VIKTIGT: Fortnox accepterar inte application/pdf här -> ger 1000030
-      "Accept": "application/json"
+      "Client-Secret": String(FORTNOX_CLIENT_SECRET || "")
+      // OBS: INGEN Accept-header här (Fortnox kan kasta 1000030 om den inte gillar värdet)
+      // Vill du ändå ha en: sätt "Accept": "application/json"
     }
   });
 
