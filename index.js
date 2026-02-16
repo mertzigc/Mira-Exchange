@@ -2967,11 +2967,11 @@ async function fetchAndStoreOfferPdf({ connection_id, offer_docno, bubble_offer_
 }
 // ────────────────────────────────────────────────────────────
 // /fortnox/upsert/offers
-// NYTT (valbart):
 // - fetch_pdf: true/false (default false)
 // - pdf_missing_only: true/false (default true)
-// - pdf_max_per_page: max PDF-hämtningar per sida (default 10)
+// - pdf_max_per_page: max PDF-försök per sida (default 10)  <-- throttling på attempted
 // - pdf_pause_ms: paus mellan PDF-hämtningar (default 400ms)
+// Retur: first_pdf_error visar första PDF-felet (Fortnox eller Bubble upload)
 app.post("/fortnox/upsert/offers", async (req, res) => {
   const {
     connection_id,
@@ -2990,10 +2990,17 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
   let firstError = null;
   let meta = null;
 
-  let pdf_attempted = 0, pdf_fetched = 0, pdf_skipped = 0, pdf_errors = 0;
+  // PDF counters
+  let pdf_attempted = 0;
+  let pdf_fetched = 0;
+  let pdf_skipped = 0;
+  let pdf_errors = 0;
+
+  // NEW: capture first PDF error for curl-debug
+  let firstPdfError = null;
 
   try {
-    // 1) Hämta offers via sync-route (du har den redan)
+    // 1) Hämta offers via din befintliga sync-route
     const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
       method: "POST",
       headers: {
@@ -3005,7 +3012,8 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
 
     const syncText = await syncRes.text().catch(() => "");
     let sync = null;
-    try { sync = syncText ? JSON.parse(syncText) : null; } catch { sync = { raw: syncText }; }
+    try { sync = syncText ? JSON.parse(syncText) : null; }
+    catch { sync = { raw: syncText }; }
 
     if (!syncRes.ok || !sync || sync.ok === false) {
       return res.status(400).json({
@@ -3019,12 +3027,18 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
     const offers = Array.isArray(sync?.offers) ? sync.offers : [];
     meta = sync?.meta || null;
 
-    // 2) Om vi ska hämta pdf i samma pass: hämta token EN gång
+    // 2) Om PDF ska hämtas i samma pass: hämta token EN gång
     const wantPdf = boolish(fetch_pdf, false);
     let tok = null;
     if (wantPdf) {
       tok = await ensureFortnoxAccessToken(connection_id);
-      if (!tok.ok) return res.status(401).json(tok);
+      if (!tok?.ok) {
+        return res.status(401).json({
+          ok: false,
+          error: "Token error",
+          detail: tok
+        });
+      }
     }
 
     const maxPerPage = Math.max(0, Number(pdf_max_per_page) || 0);
@@ -3036,6 +3050,8 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
       const docNo = String(o?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
 
+      // OBS: behåll dina befintliga mappningar om du har fler fält.
+      // Jag använder samma “stil” som tidigare: ft_* + raw_json
       const payload = {
         connection: connection_id,
         ft_document_number: docNo,
@@ -3063,14 +3079,13 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
         let bubbleId = existing?._id || null;
 
         if (bubbleId) {
-          // Om PDF saknas: markera needs_pdf_sync = true
+          // markera pdf-sync om ft_pdf saknas
           const patch = { ...payload };
           if (!existing?.ft_pdf) patch.needs_pdf_sync = true;
 
           await bubblePatch("FortnoxOffer", bubbleId, patch);
           updated++;
         } else {
-          // Ny post -> needs_pdf_sync = true (vi har ännu inte PDF)
           bubbleId = await bubbleCreate("FortnoxOffer", {
             ...payload,
             needs_pdf_sync: true
@@ -3078,16 +3093,17 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
           created++;
         }
 
-        // ── Valbar + throttlad PDF-hämtning ──
+        // ── PDF: valbar + throttlad ────────────────────────────
         if (wantPdf && bubbleId) {
+          // Throttle på attempted, inte fetched (så den stoppar även om Fortnox/Bubble failar)
           if (maxPerPage && pdf_attempted >= maxPerPage) {
-  pdf_skipped++;
-  continue;
-}
+            pdf_skipped++;
+            continue;
+          }
 
           // Om vi bara ska hämta när pdf saknas:
           if (missingOnly) {
-            const hasPdf = !!existing?.ft_pdf;
+            const hasPdf = !!existing?.ft_pdf; // ny post -> false
             if (hasPdf) {
               pdf_skipped++;
               continue;
@@ -3095,6 +3111,7 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
           }
 
           pdf_attempted++;
+
           try {
             const r = await fetchAndStoreOfferPdf({
               connection_id,
@@ -3103,15 +3120,32 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
               access_token: tok.access_token
             });
 
-            if (r.ok) {
+            if (r?.ok) {
               pdf_fetched++;
               if (pauseMs) await sleep(pauseMs);
             } else {
               pdf_errors++;
+              if (!firstPdfError) {
+                firstPdfError = {
+                  ok: false,
+                  stage: r?.stage || "fetchAndStoreOfferPdf_failed",
+                  docNo,
+                  detail: r
+                };
+              }
             }
           } catch (e) {
             pdf_errors++;
-            // lämna needs_pdf_sync = true för flagged batch
+            if (!firstPdfError) {
+              firstPdfError = {
+                ok: false,
+                stage: "exception",
+                docNo,
+                message: e?.message || String(e),
+                detail: e?.detail || null
+              };
+            }
+            // lämna needs_pdf_sync=true så flagged batch kan plocka den senare
             try { await bubblePatch("FortnoxOffer", bubbleId, { needs_pdf_sync: true }); } catch {}
           }
         }
@@ -3143,7 +3177,8 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
         errors: pdf_errors,
         cfg: { missingOnly, maxPerPage, pauseMs }
       },
-      first_error: firstError
+      first_error: firstError,
+      first_pdf_error: firstPdfError
     });
 
   } catch (e) {
