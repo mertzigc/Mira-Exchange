@@ -2869,8 +2869,9 @@ async function fortnoxGetBinary(path, accessToken) {
     method: "GET",
     headers: {
       "Authorization": "Bearer " + accessToken,
-      "Client-Secret": String(FORTNOX_CLIENT_SECRET || ""), // ✅ KRITISK (samma som fortnoxGet)
-      "Accept": "application/pdf"
+      "Client-Secret": String(FORTNOX_CLIENT_SECRET || ""), // ✅ behövs i din setup
+      // VIKTIGT: Fortnox accepterar inte application/pdf här -> ger 1000030
+      "Accept": "application/json"
     }
   });
 
@@ -2884,7 +2885,7 @@ async function fortnoxGetBinary(path, accessToken) {
     ok: true,
     status: r.status,
     url,
-    contentType: r.headers.get("content-type") || "application/pdf",
+    contentType: r.headers.get("content-type") || null,
     buf: Buffer.from(ab)
   };
 }
