@@ -3257,7 +3257,11 @@ for (const o of offers) {
       updated++;
     } else {
       const r = await bubbleCreate("FortnoxOffer", payload);
-      if (!r?.ok) throw new Error(`bubbleCreate failed`);
+      if (!r?.ok) {
+  const err = new Error("bubbleCreate failed");
+  err.detail = r;
+  throw err;
+}
       bubbleId = r.id;
       created++;
     }
@@ -3356,11 +3360,12 @@ for (const o of offers) {
   } catch (e) {
     errors++;
     if (!firstError) {
-      firstError = {
-        docNo,
-        message: e?.message || String(e)
-      };
-    }
+  firstError = {
+    docNo,
+    message: e?.message || String(e),
+    detail: e?.detail || null
+  };
+}
   }
 }
 
