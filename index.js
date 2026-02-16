@@ -3322,9 +3322,31 @@ created++;
         };
 
         const pr = await bubblePatch("FortnoxOffer", bubbleId, patch);
-        if (!pr?.ok) throw new Error(`bubblePatch(detail) failed`);
 
-        detail_enriched++;
+const patchOk =
+  pr === true ||
+  typeof pr === "string" ||
+  pr?.ok === true ||
+  pr?.status === "success" ||
+  pr?.status === "SUCCESS" ||
+  pr?.response?.status === "success";
+
+if (!patchOk) {
+  detail_errors++;
+  if (!firstDetailError) {
+    firstDetailError = {
+      ok: false,
+      stage: "bubblePatch(detail) failed",
+      docNo,
+      bubbleId,
+      patch_attempted: patch,
+      detail: pr
+    };
+  }
+  // IMPORTANT: fortsätt utan att kasta
+} else {
+  detail_enriched++;
+}
       } else {
         detail_errors++;
         if (!firstDetailError) {
