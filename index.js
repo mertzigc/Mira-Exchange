@@ -3226,7 +3226,7 @@ for (const o of offers) {
 
   // Bas-payload från LIST (saknar YourReferenceNumber)
   const payload = {
-    connection: connection_id,
+    connection: connection_id, // Bubble reference (FortnoxConnection) = Bubble thing-id
     ft_document_number: docNo,
     ft_customer_number: String(o?.CustomerNumber || ""),
     ft_customer_name: String(o?.CustomerName || ""),
@@ -3243,6 +3243,7 @@ for (const o of offers) {
   };
 
   try {
+    // bubbleFindOne() hos dig returnerar ett Bubble-objekt (med _id) eller null.
     const existing = await bubbleFindOne("FortnoxOffer", [
       { key: "connection", constraint_type: "equals", value: connection_id },
       { key: "ft_document_number", constraint_type: "equals", value: docNo }
@@ -3250,50 +3251,50 @@ for (const o of offers) {
 
     let bubbleId = null;
 
-    if (existing?.ok && existing?.item?._id) {
-      bubbleId = existing.item._id;
-     const r = await bubblePatch("FortnoxOffer", bubbleId, payload);
+    if (existing?._id) {
+      // UPDATE
+      bubbleId = existing._id;
 
-// Tillåt både {ok:true} och {status:"success"} och även raw id-string
-const patchOk =
-  r === true ||
-  typeof r === "string" ||
-  r?.ok === true ||
-  r?.status === "success" ||
-  r?.status === "SUCCESS" ||
-  r?.response?.status === "success";
+      const r = await bubblePatch("FortnoxOffer", bubbleId, payload);
 
-if (!patchOk) {
-  const err = new Error("bubblePatch failed");
-  err.detail = r;
-  throw err;
-}
+      // I din kodbas kan bubblePatch vara boolean true vid OK.
+      // Vi accepterar även några vanliga varianter, men främst true.
+      const patchOk =
+        r === true ||
+        r?.ok === true ||
+        r?.status === "success" ||
+        r?.status === "SUCCESS" ||
+        r?.response?.status === "success";
 
-updated++;
+      if (!patchOk) {
+        const err = new Error("bubblePatch failed");
+        err.detail = r;
+        throw err;
+      }
+
+      updated++;
     } else {
+      // CREATE
       const r = await bubbleCreate("FortnoxOffer", payload);
 
-// bubbleCreate kan returnera:
-//  - { ok:true, id:"..." }
-//  - { id:"..." }
-//  - "1771...x..."
-//  - { response: { id:"..." } }  (varianter)
-const createdId =
-  (typeof r === "string" && r) ||
-  r?.id ||
-  r?._id ||
-  r?.response?.id ||
-  r?.response?._id ||
-  null;
+      // bubbleCreate i din kod brukar returnera id-string vid OK.
+      // Men vi stödjer även några varianter.
+      const createdId =
+        (typeof r === "string" && r) ||
+        r?.id ||
+        r?._id ||
+        r?.response?.id ||
+        r?.response?._id ||
+        null;
 
-if (!createdId) {
-  const err = new Error("bubbleCreate failed");
-  err.detail = r;
-  throw err;
-}
+      if (!createdId) {
+        const err = new Error("bubbleCreate failed");
+        err.detail = r;
+        throw err;
+      }
 
-bubbleId = createdId;
-created++;
+      bubbleId = createdId;
+      created++;
     }
 
     // ────────────────────────────────────────────────────────────
