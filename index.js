@@ -3080,10 +3080,10 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
 
         // ── Valbar + throttlad PDF-hämtning ──
         if (wantPdf && bubbleId) {
-          if (maxPerPage && pdf_fetched >= maxPerPage) {
-            pdf_skipped++;
-            continue;
-          }
+          if (maxPerPage && pdf_attempted >= maxPerPage) {
+  pdf_skipped++;
+  continue;
+}
 
           // Om vi bara ska hämta när pdf saknas:
           if (missingOnly) {
