@@ -3252,18 +3252,48 @@ for (const o of offers) {
 
     if (existing?.ok && existing?.item?._id) {
       bubbleId = existing.item._id;
-      const r = await bubblePatch("FortnoxOffer", bubbleId, payload);
-      if (!r?.ok) throw new Error(`bubblePatch failed`);
-      updated++;
+     const r = await bubblePatch("FortnoxOffer", bubbleId, payload);
+
+// Tillåt både {ok:true} och {status:"success"} och även raw id-string
+const patchOk =
+  r === true ||
+  typeof r === "string" ||
+  r?.ok === true ||
+  r?.status === "success" ||
+  r?.status === "SUCCESS" ||
+  r?.response?.status === "success";
+
+if (!patchOk) {
+  const err = new Error("bubblePatch failed");
+  err.detail = r;
+  throw err;
+}
+
+updated++;
     } else {
       const r = await bubbleCreate("FortnoxOffer", payload);
-      if (!r?.ok) {
+
+// bubbleCreate kan returnera:
+//  - { ok:true, id:"..." }
+//  - { id:"..." }
+//  - "1771...x..."
+//  - { response: { id:"..." } }  (varianter)
+const createdId =
+  (typeof r === "string" && r) ||
+  r?.id ||
+  r?._id ||
+  r?.response?.id ||
+  r?.response?._id ||
+  null;
+
+if (!createdId) {
   const err = new Error("bubbleCreate failed");
   err.detail = r;
   throw err;
 }
-      bubbleId = r.id;
-      created++;
+
+bubbleId = createdId;
+created++;
     }
 
     // ────────────────────────────────────────────────────────────
