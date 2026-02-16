@@ -2993,7 +2993,7 @@ async function ensureDokumentForOffert({ offert_id, fileUrl, docNo }) {
   // Försök hitta befintligt dokument på samma Offert + samma fileUrl
   let existingDoc = null;
   try {
-    existingDoc = await bubbleFindOne("dokument", [
+    existingDoc = await bubbleFindOne("Dokument", [
       { key: "offert", constraint_type: "equals", value: offert_id },
       { key: "file", constraint_type: "equals", value: fileUrl }
     ]);
@@ -3003,7 +3003,7 @@ async function ensureDokumentForOffert({ offert_id, fileUrl, docNo }) {
   const titel = `Offert ${docNo || ""} (Fortnox PDF)`.trim();
 
   if (existingDoc?._id) {
-    await bubblePatch("dokument", existingDoc._id, {
+    await bubblePatch("Dokument", existingDoc._id, {
       titel,
       latest_update: nowIso
     });
@@ -3011,7 +3011,7 @@ async function ensureDokumentForOffert({ offert_id, fileUrl, docNo }) {
   }
 
   // Skapa nytt dokument
-  const dokumentId = await bubbleCreate("dokument", {
+  const dokumentId = await bubbleCreate("Dokument", {
     titel,
     beskrivning: "PDF hämtad från Fortnox (preview)",
     file: fileUrl,
