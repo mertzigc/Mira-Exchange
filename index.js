@@ -3268,7 +3268,7 @@ for (const o of offers) {
     // Fortnox list-offers saknar YourReferenceNumber (deal-koden).
     // Vi hämtar detaljer för ett begränsat antal poster per körning.
     //
-    const shouldEnrich = wantPdf && detail_enriched < maxPerPage;           // återanvänder pdf_max_per_page som throttle
+    const shouldEnrich = wantPdf && detail_enriched < maxPerPage;          // återanvänder pdf_max_per_page som throttle
 
     // Enrich bara om vi saknar deal-kod i Bubble (eller om payload saknade den)
     // Vi använder "missingOnly"-logiken för att undvika onödiga calls.
