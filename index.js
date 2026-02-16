@@ -2868,8 +2868,9 @@ async function fortnoxGetBinary(path, accessToken) {
   const r = await fetch(url, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/pdf"
+      "Authorization": "Bearer " + accessToken,
+      "Client-Secret": String(FORTNOX_CLIENT_SECRET || ""), // ✅ KRITISK (samma som fortnoxGet)
+      "Accept": "application/pdf"
     }
   });
 
@@ -2887,7 +2888,6 @@ async function fortnoxGetBinary(path, accessToken) {
     buf: Buffer.from(ab)
   };
 }
-
 // Uploadar fil till Bubble via /fileupload och returnerar file-URL string
 async function bubbleUploadFile({ filename, contentType, buffer }) {
   let lastErr = null;
