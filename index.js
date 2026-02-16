@@ -3412,12 +3412,13 @@ if (!patchOk) {
   } catch (e) {
     errors++;
     if (!firstError) {
-  firstError = {
-    docNo,
-    message: e?.message || String(e),
-    detail: e?.detail || null
-  };
-}
+      firstError = {
+        docNo,
+        message: e?.message || String(e),
+        stack: e?.stack || null,
+        detail: e?.detail || null
+      };
+    }
   }
 }
 
