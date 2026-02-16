@@ -2948,11 +2948,6 @@ async function bubbleUploadFile({ filename, contentType, buffer }) {
 // ────────────────────────────────────────────────────────────
 // Helpers: skapa/uppdatera Offert + dokument automatiskt för FortnoxOffer PDF
 
-function safeText(v) {
-  const s = (v == null) ? "" : String(v);
-  return s;
-}
-
 async function ensureOffertWrapperForDeal({ deal_id, bubble_offer_id, docNo }) {
   // deal_id = Deal's unique id (som du stoppar i Fortnox "Ert referensnummer" => ft_your_reference)
   const dealId = String(deal_id || "").trim();
