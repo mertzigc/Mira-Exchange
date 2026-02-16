@@ -3395,6 +3395,14 @@ return res.json({
   first_detail_error: firstDetailError,
   first_pdf_error: firstPdfError
 });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // /fortnox/upsert/offer-rows  (WU-optimerad: bulk fetch av befintliga rows)
 app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
