@@ -2945,8 +2945,113 @@ async function bubbleUploadFile({ filename, contentType, buffer }) {
   err.detail = lastErr;
   throw err;
 }
+// ────────────────────────────────────────────────────────────
+// Helpers: skapa/uppdatera Offert + dokument automatiskt för FortnoxOffer PDF
 
-async function fetchAndStoreOfferPdf({ connection_id, offer_docno, bubble_offer_id, access_token }) {
+function safeText(v) {
+  const s = (v == null) ? "" : String(v);
+  return s;
+}
+
+async function ensureOffertWrapperForDeal({ deal_id, bubble_offer_id, docNo }) {
+  // deal_id = Deal's unique id (som du stoppar i Fortnox "Ert referensnummer" => ft_your_reference)
+  const dealId = String(deal_id || "").trim();
+  if (!dealId) return { ok: false, skipped: true, reason: "missing_deal_id" };
+  if (!bubble_offer_id) return { ok: false, skipped: true, reason: "missing_bubble_offer_id" };
+
+  // Finns redan en Offert som både:
+  // - hör till deal
+  // - innehåller denna FortnoxOffer i listan FortnoxOffer
+  let existing = null;
+  try {
+    existing = await bubbleFindOne("Offert", [
+      { key: "deal", constraint_type: "equals", value: dealId },
+      { key: "FortnoxOffer", constraint_type: "contains", value: bubble_offer_id }
+    ]);
+  } catch (e) {
+    // ignore, create new below
+  }
+
+  if (existing?._id) {
+    return { ok: true, offert_id: existing._id, offert_obj: existing, created: false };
+  }
+
+  // Skapa ny Offert-wrapper
+  const titel = `Fortnox offert ${docNo || ""}`.trim() || "Fortnox offert";
+  const offertId = await bubbleCreate("Offert", {
+    deal: dealId,
+    titel,
+    // din field heter "FortnoxOffer" (list of FortnoxOffers) enligt din datatyp-bild
+    FortnoxOffer: [bubble_offer_id],
+    offer_status: false
+  });
+
+  const offertObj = await bubbleGet("Offert", offertId).catch(() => null);
+
+  return { ok: true, offert_id: offertId, offert_obj: offertObj, created: true };
+}
+
+async function ensureDokumentForOffert({ offert_id, fileUrl, docNo }) {
+  if (!offert_id) return { ok: false, skipped: true, reason: "missing_offert_id" };
+  if (!fileUrl) return { ok: false, skipped: true, reason: "missing_fileUrl" };
+
+  // Försök hitta befintligt dokument på samma Offert + samma fileUrl
+  let existingDoc = null;
+  try {
+    existingDoc = await bubbleFindOne("dokument", [
+      { key: "offert", constraint_type: "equals", value: offert_id },
+      { key: "file", constraint_type: "equals", value: fileUrl }
+    ]);
+  } catch (e) {}
+
+  const nowIso = new Date().toISOString();
+  const titel = `Offert ${docNo || ""} (Fortnox PDF)`.trim();
+
+  if (existingDoc?._id) {
+    await bubblePatch("dokument", existingDoc._id, {
+      titel,
+      latest_update: nowIso
+    });
+    return { ok: true, dokument_id: existingDoc._id, created: false };
+  }
+
+  // Skapa nytt dokument
+  const dokumentId = await bubbleCreate("dokument", {
+    titel,
+    beskrivning: "PDF hämtad från Fortnox (preview)",
+    file: fileUrl,
+    latest_update: nowIso,
+    offert: offert_id
+    // author lämnar vi tomt här (du kan sätta senare i Bubble om du vill)
+  });
+
+  return { ok: true, dokument_id: dokumentId, created: true };
+}
+
+async function ensureOffertHasDokument({ offert_obj, offert_id, dokument_id }) {
+  if (!offert_id || !dokument_id) return { ok: false, skipped: true };
+
+  // Offert har fältet "dokument" (list of documents) enligt din datatyp-bild.
+  // Vi patchar listan "dokument" så att den innehåller dokument_id (utan dubletter).
+  let current = offert_obj;
+  if (!current) current = await bubbleGet("Offert", offert_id).catch(() => null);
+
+  const curList = Array.isArray(current?.dokument) ? current.dokument : [];
+  if (curList.includes(dokument_id)) return { ok: true, already: true };
+
+  const next = [...curList, dokument_id];
+  await bubblePatch("Offert", offert_id, { dokument: next });
+  return { ok: true, already: false };
+}
+async function fetchAndStoreOfferPdf({
+  connection_id,
+  offer_docno,
+  bubble_offer_id,
+  access_token,
+
+  // NYTT: så vi kan skapa Offert + dokument kopplat till rätt Deal
+  deal_id
+}) {
   const docNo = String(offer_docno || "").trim();
   if (!docNo) return { ok: false, status: 400, error: "Missing offer_docno" };
 
@@ -2971,7 +3076,46 @@ async function fetchAndStoreOfferPdf({ connection_id, offer_docno, bubble_offer_
     needs_pdf_sync: false
   });
 
-  return { ok: true, ft_pdf: fileUrl, bytes: pdf.buf.length, offer_docno: docNo };
+  // 4) NYTT: skapa/uppdatera Offert-wrapper + dokument (PDF)
+  // - Offert.deal = deal_id (Deal unique id)
+  // - Offert.FortnoxOffer contains bubble_offer_id
+  // - dokument.offert = Offert
+  // - dokument.file = fileUrl
+  let offertWrap = null;
+  let docRes = null;
+
+  try {
+    const wrap = await ensureOffertWrapperForDeal({ deal_id, bubble_offer_id, docNo });
+    offertWrap = wrap;
+
+    if (wrap?.ok && wrap?.offert_id) {
+      docRes = await ensureDokumentForOffert({ offert_id: wrap.offert_id, fileUrl, docNo });
+
+      if (docRes?.ok && docRes?.dokument_id) {
+        await ensureOffertHasDokument({
+          offert_obj: wrap.offert_obj,
+          offert_id: wrap.offert_id,
+          dokument_id: docRes.dokument_id
+        });
+      }
+    }
+  } catch (e) {
+    // Vi vill INTE faila hela PDF-hämtningen om dokument-kopplingen strular.
+    // PDF:en är redan sparad på FortnoxOffer.
+    console.warn("[fetchAndStoreOfferPdf] Offert/dokument linkage failed", e?.message || e);
+  }
+
+  return {
+    ok: true,
+    ft_pdf: fileUrl,
+    bytes: pdf.buf.length,
+    offer_docno: docNo,
+    link: {
+      deal_id: deal_id || null,
+      offert_id: offertWrap?.offert_id || null,
+      dokument_id: docRes?.dokument_id || null
+    }
+  };
 }
 // ────────────────────────────────────────────────────────────
 // /fortnox/upsert/offers
@@ -3122,11 +3266,12 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
 
           try {
             const r = await fetchAndStoreOfferPdf({
-              connection_id,
-              offer_docno: docNo,
-              bubble_offer_id: bubbleId,
-              access_token: tok.access_token
-            });
+  connection_id,
+  offer_docno: docNo,
+  bubble_offer_id: bubbleId,
+  access_token: tok.access_token,
+  deal_id: payload.ft_your_reference
+});
 
             if (r?.ok) {
               pdf_fetched++;
@@ -3715,11 +3860,12 @@ app.post("/fortnox/upsert/offer-pdfs/flagged", requireApiKey, async (req, res) =
       attempted++;
       try {
         const r = await fetchAndStoreOfferPdf({
-          connection_id,
-          offer_docno: docNo,
-          bubble_offer_id: id,
-          access_token: tok.access_token
-        });
+  connection_id,
+  offer_docno: docNo,
+  bubble_offer_id: id,
+  access_token: tok.access_token,
+  deal_id: it?.ft_your_reference
+});
 
         if (r.ok) {
           fetched++;
