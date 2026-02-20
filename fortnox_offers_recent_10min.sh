@@ -10,49 +10,52 @@ echo "[offers-10min] host=$HOST cid=$CID"
 post_json () {
   local path="$1"
   local payload="$2"
+  local attempts="${3:-5}"
+  local sleep_s="${4:-4}"
 
-  # Capture body + status code safely
-  local resp body code
-  resp="$(curl -sS -X POST "$HOST$path" \
-    -H "Content-Type: application/json" \
-    -H "x-api-key: $APIKEY" \
-    -d "$payload" \
-    -w $'\n%{http_code}\n' || true)"
+  local i resp body code
+  for i in $(seq 1 "$attempts"); do
+    resp="$(curl -sS -X POST "$HOST$path" \
+      -H "Content-Type: application/json" \
+      -H "x-api-key: $APIKEY" \
+      -d "$payload" \
+      -w $'\n%{http_code}\n' || true)"
 
-  body="$(printf "%s" "$resp" | sed '$d' | sed '$d')"   # all but last 2 lines
-  code="$(printf "%s" "$resp" | tail -n 1)"
+    body="$(printf "%s" "$resp" | sed '$d' | sed '$d')"
+    code="$(printf "%s" "$resp" | tail -n 1)"
 
-  # If body is empty, show a clear error
-  if [[ -z "${body//[[:space:]]/}" ]]; then
-    echo "❌ [$path] empty response body (http=$code)"
-    exit 1
-  fi
+    # Normalize body check (empty or whitespace only)
+    if [[ -z "${body//[[:space:]]/}" ]]; then
+      echo "⚠️  [$path] attempt $i/$attempts: empty body (http=$code)"
+    elif [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
+      echo "⚠️  [$path] attempt $i/$attempts: http=$code body:"
+      echo "$body"
+    else
+      printf "%s" "$body"
+      return 0
+    fi
 
-  # Non-2xx => print body and fail
-  if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then
-    echo "❌ [$path] http=$code"
-    echo "$body"
-    exit 1
-  fi
+    # Retry if not last attempt
+    if [[ "$i" -lt "$attempts" ]]; then
+      sleep "$sleep_s"
+    fi
+  done
 
-  printf "%s" "$body"
+  echo "❌ [$path] failed after $attempts attempts"
+  exit 1
 }
 
-# 1) Hämta TotalResources (med limit=1)
-offers_list_json="$(post_json "/fortnox/sync/offers" "{\"connection_id\":\"$CID\",\"page\":1,\"limit\":1}")"
+# 1) Hämta TotalResources (limit=1)
+offers_list_json="$(post_json "/fortnox/sync/offers" "{\"connection_id\":\"$CID\",\"page\":1,\"limit\":1}" 6 5)"
 
 TOTAL_RESOURCES="$(
   python3 - <<'PY' "$offers_list_json"
 import sys, json
 raw = sys.argv[1]
 j = json.loads(raw)
-
-# Förvänta ok:true
 if not j.get("ok", False):
-    raise SystemExit(f"API returned ok=false: {j}")
-
+    raise SystemExit(f"API ok=false: {j}")
 meta = j.get("meta") or {}
-# Fortnox brukar ge @TotalResources, men vi tolererar flera varianter
 total = meta.get("@TotalResources") or meta.get("TotalResources") or meta.get("total_resources")
 if total is None:
     raise SystemExit(f"Missing meta total resources. meta={meta}")
@@ -60,7 +63,6 @@ print(int(total))
 PY
 )"
 
-# 2) Räkna ut sista sidan för limit=100
 LAST_PAGE="$(
   python3 - <<PY "$TOTAL_RESOURCES"
 import sys, math
@@ -71,7 +73,7 @@ PY
 
 echo "[offers-10min] total_resources=$TOTAL_RESOURCES last_page=$LAST_PAGE"
 
-# 3) Upsert sista sidan (senaste) + hämta PDF för max 20 saknade
+# 2) Upsert senaste sidan (och ev pdf)
 upsert_payload="$(cat <<JSON
 {
   "connection_id": "$CID",
@@ -85,7 +87,6 @@ upsert_payload="$(cat <<JSON
 JSON
 )"
 
-upsert_json="$(post_json "/fortnox/upsert/offers" "$upsert_payload")"
+upsert_json="$(post_json "/fortnox/upsert/offers" "$upsert_payload" 6 5)"
 echo "$upsert_json"
-echo
 echo "[offers-10min] done"
