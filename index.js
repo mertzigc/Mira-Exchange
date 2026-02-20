@@ -1292,7 +1292,7 @@ app.get("/fortnox/authorize", (req, res) => {
   // ✅ Include invoice + companyinformation, and normalize whitespace
   const FORTNOX_SCOPE = String(
     process.env.FORTNOX_SCOPE ||
-      "customer order offer invoice companyinformation"
+      "customer order offer invoice"
   )
     .trim()
     .replace(/\s+/g, " ");
