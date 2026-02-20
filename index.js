@@ -4279,7 +4279,7 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 });
 // Fortnox: Nightly orchestrator – kör ALLA connections i rätt ordning
 // Policy:
-// - CUSTOMERS: alla connections
+// - CUSTOMERS: alla connections (soft-fail så invoices ändå körs)
 // - INVOICES: alla connections
 // - ORDERS + ORDER ROWS: endast "docs-allowlist" (Food & Event)
 // - OFFERS + OFFER ROWS: endast "docs-allowlist" (Food & Event)
@@ -4380,9 +4380,8 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         errors: []
       };
 
+      // --- CUSTOMERS (ALL) — SOFT FAIL ---
       try {
-        // CUSTOMERS (call once + persist) — ALL connections
-        // NOTE: customers may be denied on some Fortnox users/companies; do NOT let that block invoices.
         const startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
 
         const customersJ = await postInternalJson(
@@ -4411,7 +4410,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
         });
       } catch (e) {
-        // Soft-fail customers so invoices still run for this connection
         const msg = e?.message || String(e);
         const fortnoxInfo =
           e?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
@@ -4425,14 +4423,14 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           message: msg,
           fortnox_error: fortnoxInfo || null
         };
-
         one.errors.push({ message: msg, detail: e?.detail || null });
       }
 
-        // ORDERS + ORDER ROWS — ONLY docs-allowlist (Food & Event)
-        if (!allowDocs) {
-          one.orders = { skipped: true, reason: "not allowed for orders/offers" };
-        } else {
+      // --- ORDERS + ORDER ROWS (DOCS ONLY) ---
+      if (!allowDocs) {
+        one.orders = { skipped: true, reason: "not allowed for orders/offers" };
+      } else {
+        try {
           const startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
           const ordersJ = await postInternalJson(
             "/fortnox/upsert/orders/all",
@@ -4458,7 +4456,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
             ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
           });
 
-          // ORDER ROWS (flagged) — only when orders allowed
           for (let p = 0; p < cfg.rows.passes; p++) {
             const rowsJ = await postInternalJson(
               "/fortnox/upsert/order-rows/flagged",
@@ -4468,12 +4465,16 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
             if (!rowsJ.flagged_found) break;
             if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
           }
+        } catch (e) {
+          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
         }
+      }
 
-        // OFFERS + OFFER ROWS — ONLY docs-allowlist (Food & Event)
-        if (!allowDocs) {
-          one.offers = { skipped: true, reason: "not allowed for orders/offers" };
-        } else {
+      // --- OFFERS + OFFER ROWS (DOCS ONLY) ---
+      if (!allowDocs) {
+        one.offers = { skipped: true, reason: "not allowed for orders/offers" };
+      } else {
+        try {
           const startOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
           const offersJ = await postInternalJson(
             "/fortnox/upsert/offers/all",
@@ -4498,7 +4499,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
             ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
           });
 
-          // OFFER ROWS (flagged) — only when offers allowed
           for (let p = 0; p < cfg.rows.passes; p++) {
             const rowsJ = await postInternalJson(
               "/fortnox/upsert/offer-rows/flagged",
@@ -4508,9 +4508,13 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
             if (!rowsJ.flagged_found) break;
             if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
           }
+        } catch (e) {
+          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
         }
+      }
 
-        // INVOICES (call once + persist) — ALL connections (incl Carotte Group)
+      // --- INVOICES (ALL) ---
+      try {
         const startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
         const invoicesJ = await postInternalJson(
           "/fortnox/upsert/invoices/all",
@@ -4535,7 +4539,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           invoices_last_progress_at: nowIso(),
           ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
         });
-
       } catch (e) {
         one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
       }
@@ -4551,11 +4554,14 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
       run_id: myRunId,
       months_back,
       config: cfg,
-      docs_allowlist: String(process.env.FORTNOX_DOCS_CONNECTION_IDS || process.env.FORTNOX_ORDERS_CONNECTION_IDS || ""),
+      docs_allowlist: String(
+        process.env.FORTNOX_DOCS_CONNECTION_IDS ||
+          process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
+          ""
+      ),
       connections: conns.length,
       results
     });
-
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   } finally {
