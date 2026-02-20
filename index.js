@@ -4261,54 +4261,56 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
         });
 
-  // ORDERS (only for allowed connections)
-const allowOrdersIds = String(process.env.FORTNOX_ORDERS_CONNECTION_IDS || "")
-  .split(",")
-  .map(s => s.trim())
-  .filter(Boolean);
+          // ORDERS (only for allowed connections)
+        const allowOrdersIds = String(process.env.FORTNOX_ORDERS_CONNECTION_IDS || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
 
-const allowOrders = allowOrdersIds.includes(String(connection_id));
+        const allowOrders = allowOrdersIds.includes(String(connection_id));
 
-if (!allowOrders) {
-  one.orders = { skipped: true, reason: "connection_id not allowed for orders" };
-} else {
-  // ORDERS (call once + persist)
-  const startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
+        if (!allowOrders) {
+          one.orders = { skipped: true, reason: "connection_id not allowed for orders" };
+        } else {
+          // ORDERS (call once + persist)
+          const startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
 
-  const ordersJ = await postInternalJson(
-    "/fortnox/upsert/orders/all",
-    {
-      connection_id,
-      start_page: startOrders,
-      limit: cfg.orders.limit,
-      max_pages: cfg.orders.pages_per_call,
-      months_back
-    },
-    180000
-  );
+          const ordersJ = await postInternalJson(
+            "/fortnox/upsert/orders/all",
+            {
+              connection_id,
+              start_page: startOrders,
+              limit: cfg.orders.limit,
+              max_pages: cfg.orders.pages_per_call,
+              months_back
+            },
+            180000
+          );
 
-  one.orders = {
-    done: !!ordersJ.done,
-    next_page: ordersJ.next_page ?? null,
-    counts: ordersJ.counts || null
-  };
+          one.orders = {
+            done: !!ordersJ.done,
+            next_page: ordersJ.next_page ?? null,
+            counts: ordersJ.counts || null
+          };
 
-  await safeSetConnPaging(connection_id, {
-    orders_next_page: ordersJ?.next_page || 1,
-    orders_last_progress_at: nowIso(),
-    ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
-  });
-}
+          await safeSetConnPaging(connection_id, {
+            orders_next_page: ordersJ?.next_page || 1,
+            orders_last_progress_at: nowIso(),
+            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
+          });
 
-        // ORDER ROWS (flagged)
-        for (let p = 0; p < cfg.rows.passes; p++) {
-          const rowsJ = await postInternalJson("/fortnox/upsert/order-rows/flagged", {
-            connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms
-          }, 180000);
-          if (!rowsJ.flagged_found) break;
-          if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+          // ORDER ROWS (flagged) — only when we actually sync orders
+          for (let p = 0; p < cfg.rows.passes; p++) {
+            const rowsJ = await postInternalJson(
+              "/fortnox/upsert/order-rows/flagged",
+              { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
+              180000
+            );
+            if (!rowsJ.flagged_found) break;
+            if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+          }
         }
-
+    
         // OFFERS (call once + persist)
         const startOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
         const offersJ = await postInternalJson("/fortnox/upsert/offers/all", {
