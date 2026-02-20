@@ -4261,7 +4261,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
         });
 
-        // ORDERS (only for allowed connections)
+  // ORDERS (only for allowed connections)
 const allowOrdersIds = String(process.env.FORTNOX_ORDERS_CONNECTION_IDS || "")
   .split(",")
   .map(s => s.trim())
@@ -4298,6 +4298,7 @@ if (!allowOrders) {
     orders_last_progress_at: nowIso(),
     ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
   });
+}
 
         // ORDER ROWS (flagged)
         for (let p = 0; p < cfg.rows.passes; p++) {
