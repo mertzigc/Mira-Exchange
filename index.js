@@ -64,18 +64,21 @@ const FORTNOX_CLIENT_SECRET = process.env.FORTNOX_CLIENT_SECRET;
 const FORTNOX_REDIRECT_URI  =
   process.env.FORTNOX_REDIRECT_URI || "https://api.mira-fm.com/fortnox/callback";
 
-// Bubble: spara till MIRA först, sen version-test
-const BUBBLE_BASES = [
-  "https://mira-fm.com/version-test",
-];
+// Bubble: styr miljö via env (live som default). Ingen tyst fallback till version-test.
+const BUBBLE_PRIMARY_BASE =
+  pick(
+    process.env.BUBBLE_LIVE_BASE,   // ✅ rekommenderad (sätt i Render)
+    process.env.BASE_URL,           // legacy/stöd
+    process.env.BUBBLE_BASE_URL     // legacy/stöd
+  ) || "https://mira-fm.com";       // ✅ hård default = LIVE
+
+const BUBBLE_BASES = [BUBBLE_PRIMARY_BASE];
+
 console.log("[BOOT] BUBBLE_BASES =", BUBBLE_BASES);
 console.log("[BOOT] INDEX_FINGERPRINT = 2025-12-21_15:40_v1");
 
-const BASE_URL =
-  pick(process.env.BASE_URL, process.env.BUBBLE_BASE_URL) ||
-  (Array.isArray(BUBBLE_BASES) && BUBBLE_BASES[0]) ||
-  null;
-
+// Behåll samma semantics i resten av filen
+const BASE_URL = BUBBLE_BASES[0] || null;
 const BUBBLE_BASE_URL = BASE_URL; // ✅ BACKWARD COMPAT
 
 if (!BASE_URL) {
@@ -84,6 +87,7 @@ if (!BASE_URL) {
 if (!BUBBLE_API_KEY) {
   console.warn("[BOOT] No BUBBLE_API_KEY resolved. Bubble calls will fail.");
 }
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
