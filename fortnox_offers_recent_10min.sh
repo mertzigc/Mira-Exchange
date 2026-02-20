@@ -1,3 +1,6 @@
+echo "[offers-10min] SCRIPT_FINGERPRINT=2026-02-20_v4_retry"
+echo "[offers-10min] SCRIPT_PATH=$(pwd)/fortnox_offers_recent_10min.sh"
+head -n 5 ./fortnox_offers_recent_10min.sh | sed 's/.*/[offers-10min] HEAD: &/'
 #!/usr/bin/env bash
 set -euo pipefail
 
