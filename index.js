@@ -4382,7 +4382,9 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
       try {
         // CUSTOMERS (call once + persist) — ALL connections
+        // NOTE: customers may be denied on some Fortnox users/companies; do NOT let that block invoices.
         const startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
+
         const customersJ = await postInternalJson(
           "/fortnox/upsert/customers/all",
           {
@@ -4408,6 +4410,24 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           customers_last_progress_at: nowIso(),
           ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
         });
+      } catch (e) {
+        // Soft-fail customers so invoices still run for this connection
+        const msg = e?.message || String(e);
+        const fortnoxInfo =
+          e?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
+          e?.detail?.body?.detail?.detail?.ErrorInformation ||
+          null;
+
+        one.customers = {
+          ok: false,
+          skipped: true,
+          reason: "customers failed (continuing)",
+          message: msg,
+          fortnox_error: fortnoxInfo || null
+        };
+
+        one.errors.push({ message: msg, detail: e?.detail || null });
+      }
 
         // ORDERS + ORDER ROWS — ONLY docs-allowlist (Food & Event)
         if (!allowDocs) {
