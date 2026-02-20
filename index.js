@@ -1282,42 +1282,63 @@ app.get("/debug/routes", (req, res) => {
   res.json({ ok: true, count: routes.length, routes });
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox OAuth: start authorization (connection-first, supports legacy user flow)
 app.get("/fortnox/authorize", (req, res) => {
-  const u = req.query.u && String(req.query.u).trim();     // legacy: bubble user id
-  const c = req.query.c && String(req.query.c).trim();     // NEW: FortnoxConnection id
+  const u = req.query.u && String(req.query.u).trim(); // legacy: bubble user id
+  const c = req.query.c && String(req.query.c).trim(); // NEW: FortnoxConnection id
 
-  const state =
-    c ? "c:" + c :
-    u ? "u:" + u :
-    crypto.randomUUID();
+  const state = c ? "c:" + c : u ? "u:" + u : crypto.randomUUID();
+
+  // ✅ Include invoice + companyinformation, and normalize whitespace
+  const FORTNOX_SCOPE = String(
+    process.env.FORTNOX_SCOPE ||
+      "customer order offer invoice companyinformation"
+  )
+    .trim()
+    .replace(/\s+/g, " ");
 
   const url =
     "https://apps.fortnox.se/oauth-v1/auth" +
     `?client_id=${encodeURIComponent(FORTNOX_CLIENT_ID)}` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(FORTNOX_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent("customer order  offer")}` +
+    `&scope=${encodeURIComponent(FORTNOX_SCOPE)}` +
     `&state=${encodeURIComponent(state)}`;
 
-  log("[/fortnox/authorize] redirect", { state, have_u: !!u, have_c: !!c, redirect_uri: FORTNOX_REDIRECT_URI });
-  res.redirect(url);
+  log("[/fortnox/authorize] redirect", {
+    state,
+    have_u: !!u,
+    have_c: !!c,
+    redirect_uri: FORTNOX_REDIRECT_URI,
+    scope: FORTNOX_SCOPE
+  });
+
+  return res.redirect(url);
 });
 
 // Callback + token exchange
 app.get("/fortnox/callback", async (req, res) => {
-  const { code, state } = req.query || {};
+  const { code, state, error, error_description } = req.query || {};
 
   const connectionId =
-    typeof state === "string" && state.startsWith("c:")
-      ? state.slice(2)
-      : null;
+    typeof state === "string" && state.startsWith("c:") ? state.slice(2) : null;
 
   const bubbleUserId =
-    typeof state === "string" && state.startsWith("u:")
-      ? state.slice(2)
-      : null;
+    typeof state === "string" && state.startsWith("u:") ? state.slice(2) : null;
 
-  if (!code) return res.status(400).send("Missing code from Fortnox");
+  // ✅ Better error surfacing (Fortnox returns error params instead of code)
+  if (!code) {
+    if (error) {
+      return res
+        .status(400)
+        .send(
+          `Fortnox OAuth error: ${String(error)}${
+            error_description ? " - " + String(error_description) : ""
+          }`
+        );
+    }
+    return res.status(400).send("Missing code from Fortnox");
+  }
 
   try {
     const tokenRes = await fetch("https://apps.fortnox.se/oauth-v1/token", {
@@ -1325,7 +1346,7 @@ app.get("/fortnox/callback", async (req, res) => {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "authorization_code",
-        code,
+        code: String(code),
         redirect_uri: FORTNOX_REDIRECT_URI,
         client_id: FORTNOX_CLIENT_ID,
         client_secret: FORTNOX_CLIENT_SECRET
@@ -1340,7 +1361,9 @@ app.get("/fortnox/callback", async (req, res) => {
     }
 
     const expiresIn = Number(tokenJson.expires_in || 0);
-    const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+    const expiresAt = expiresIn
+      ? new Date(Date.now() + expiresIn * 1000).toISOString()
+      : null;
 
     console.log("[Fortnox OAuth] token OK", {
       has_access_token: !!tokenJson.access_token,
@@ -1350,7 +1373,7 @@ app.get("/fortnox/callback", async (req, res) => {
       raw_scope: tokenJson.scope
     });
 
-    // ✅ NEW: spara på FortnoxConnection om vi har connectionId
+    // ✅ NEW: save on FortnoxConnection when connectionId is present
     if (connectionId) {
       const patched = await bubblePatch("FortnoxConnection", connectionId, {
         access_token: tokenJson.access_token || null,
@@ -1365,24 +1388,24 @@ app.get("/fortnox/callback", async (req, res) => {
 
       log("[Fortnox OAuth] saved to FortnoxConnection", { connectionId, patched });
 
-      if (!patched) return res.status(502).send("Failed to save tokens to FortnoxConnection");
+      if (!patched) {
+        return res.status(502).send("Failed to save tokens to FortnoxConnection");
+      }
     }
 
-    // Legacy: om du fortfarande vill stödja user-flödet parallellt
+    // Legacy: keep supporting user flow if you want
     if (!connectionId && bubbleUserId) {
       const saved = await upsertFortnoxTokensToBubble(bubbleUserId, tokenJson);
       log("[Fortnox OAuth] saved to User legacy", { bubbleUserId, saved });
       if (!saved) return res.status(502).send("Failed to save Fortnox tokens to Bubble user");
     }
 
-    // Redirect tillbaka (lägg gärna med connectionId så du kan visa “connected” per leverantör)
-    const redirectTo =
-      connectionId
-        ? "https://mira-fm.com/fortnox-connected?connection_id=" + encodeURIComponent(connectionId)
-        : "https://mira-fm.com/fortnox-connected";
+    // Redirect back (include connectionId so UI can show “connected” per supplier)
+    const redirectTo = connectionId
+      ? "https://mira-fm.com/fortnox-connected?connection_id=" + encodeURIComponent(connectionId)
+      : "https://mira-fm.com/fortnox-connected";
 
     return res.redirect(redirectTo);
-
   } catch (err) {
     console.error("[Fortnox OAuth] callback error", err);
     return res.status(500).send("Fortnox OAuth failed");
