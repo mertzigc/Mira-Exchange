@@ -3666,7 +3666,69 @@ app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert offer rows for FLAGGED offers (needs_rows_sync=true)
+app.post("/fortnox/upsert/offer-rows/flagged", requireApiKey, async (req, res) => {
+  try {
+    const { connection_id, limit = 30, pause_ms = 250 } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
+    const flagged = await bubbleFind("FortnoxOffer", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "needs_rows_sync", constraint_type: "equals", value: true }
+      ],
+      limit: Number(limit) || 30
+    });
+
+    const offers = Array.isArray(flagged) ? flagged : [];
+    const results = [];
+    let ok_count = 0, fail_count = 0;
+
+    for (const o of offers) {
+      const docNo = String(o?.ft_document_number || "").trim();
+      if (!docNo) continue;
+
+      const rr = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offer-rows`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({ connection_id, offer_docno: docNo })
+      });
+
+      const text = await rr.text();
+      let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+
+      const ok = !!j.ok;
+
+      results.push({
+        docNo,
+        ok,
+        http_status: rr.status,
+        counts: j.counts || null,
+        first_error: j.first_error || j.error || j.detail || null
+      });
+
+      ok ? ok_count++ : fail_count++;
+      if (pause_ms) await sleep(Number(pause_ms));
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      flagged_found: offers.length,
+      ok_count,
+      fail_count,
+      results
+    });
+  } catch (e) {
+    console.error("[/fortnox/upsert/offer-rows/flagged] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync ONE offer (fetch offer + OfferRows)
