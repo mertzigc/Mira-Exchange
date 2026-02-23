@@ -4513,20 +4513,56 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         }
       }
 
-      // --- INVOICES (ALL) ---
+         // --- INVOICES (ALL) ---
       try {
-        const startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
-        const invoicesJ = await postInternalJson(
-          "/fortnox/upsert/invoices/all",
-          {
-            connection_id,
-            start_page: startInv,
-            limit: cfg.invoices.limit,
-            max_pages: cfg.invoices.pages_per_call,
-            months_back
-          },
-          180000
-        );
+        // Start from stored next_page, but recover if the page is out-of-range for current months_back window
+        let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
+
+        const runInvoices = async (start_page) => {
+          return await postInternalJson(
+            "/fortnox/upsert/invoices/all",
+            {
+              connection_id,
+              start_page,
+              limit: cfg.invoices.limit,
+              max_pages: cfg.invoices.pages_per_call,
+              months_back
+            },
+            180000
+          );
+        };
+
+        let invoicesJ;
+
+        try {
+          invoicesJ = await runInvoices(startInv);
+        } catch (e1) {
+          const errInfo =
+            e1?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
+            e1?.detail?.body?.detail?.detail?.ErrorInformation ||
+            null;
+
+          const fortnoxCode = errInfo?.code;
+
+          // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once
+          if (fortnoxCode === 2001889) {
+            console.warn("[nightly/run] invoices page out of range; resetting to page 1", {
+              connection_id,
+              startInv,
+              months_back
+            });
+
+            // Reset stored paging so next runs start sane
+            await safeSetConnPaging(connection_id, {
+              invoices_next_page: 1,
+              invoices_last_progress_at: nowIso()
+            });
+
+            invoicesJ = await runInvoices(1);
+          } else {
+            throw e1;
+          }
+        }
 
         one.invoices = {
           done: !!invoicesJ.done,
@@ -4540,6 +4576,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
         });
       } catch (e) {
+        // Keep your existing pattern: just log into one.errors so nightly continues
         one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
       }
 
