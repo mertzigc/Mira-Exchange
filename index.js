@@ -4513,7 +4513,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         }
       }
 
-      // --- INVOICES (ALL) ---
+         // --- INVOICES (ALL) ---
       try {
         let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
 
@@ -4531,18 +4531,14 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           );
         };
 
-        // Robust extractor for Fortnox ErrorInformation (nested deep inside postInternalJson error)
+        // Walk down nested .detail chains until we find an object with ErrorInformation
         const extractFortnoxErrorInfo = (err) => {
-          const body = err?.detail?.body;
-          // try a few likely paths
-          return (
-            body?.detail?.detail?.detail?.detail?.ErrorInformation ||
-            body?.detail?.detail?.detail?.ErrorInformation ||
-            body?.detail?.detail?.ErrorInformation ||
-            body?.detail?.ErrorInformation ||
-            body?.ErrorInformation ||
-            null
-          );
+          let node = err?.detail?.body;
+          for (let i = 0; i < 10 && node; i++) {
+            if (node?.ErrorInformation) return node.ErrorInformation;
+            node = node?.detail;
+          }
+          return null;
         };
 
         let invoicesJ;
@@ -4586,14 +4582,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
       } catch (e) {
         one.invoices = null; // keep your current output shape
         one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
-      } finally {
-    if (acquired && lock.run_id === myRunId) {
-      lock.running = false;
-      lock.finished_at = Date.now();
-      console.log("[nightly/run] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
-    }
-  }
-});
+      }
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Bubble: Matter + MatterMessage
