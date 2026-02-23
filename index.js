@@ -4513,9 +4513,8 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         }
       }
 
-         // --- INVOICES (ALL) ---
+      // --- INVOICES (ALL) ---
       try {
-        // Start from stored next_page, but recover if the page is out-of-range for current months_back window
         let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
 
         const runInvoices = async (start_page) => {
@@ -4532,16 +4531,26 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           );
         };
 
+        // Robust extractor for Fortnox ErrorInformation (nested deep inside postInternalJson error)
+        const extractFortnoxErrorInfo = (err) => {
+          const body = err?.detail?.body;
+          // try a few likely paths
+          return (
+            body?.detail?.detail?.detail?.detail?.ErrorInformation ||
+            body?.detail?.detail?.detail?.ErrorInformation ||
+            body?.detail?.detail?.ErrorInformation ||
+            body?.detail?.ErrorInformation ||
+            body?.ErrorInformation ||
+            null
+          );
+        };
+
         let invoicesJ;
 
         try {
           invoicesJ = await runInvoices(startInv);
         } catch (e1) {
-          const errInfo =
-            e1?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
-            e1?.detail?.body?.detail?.detail?.ErrorInformation ||
-            null;
-
+          const errInfo = extractFortnoxErrorInfo(e1);
           const fortnoxCode = errInfo?.code;
 
           // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once
@@ -4552,7 +4561,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
               months_back
             });
 
-            // Reset stored paging so next runs start sane
             await safeSetConnPaging(connection_id, {
               invoices_next_page: 1,
               invoices_last_progress_at: nowIso()
@@ -4576,32 +4584,9 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
         });
       } catch (e) {
-        // Keep your existing pattern: just log into one.errors so nightly continues
+        one.invoices = null; // keep your current output shape
         one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
-      }
-
-      results.push(one);
-
-      // Small pause between connections
-      if (cfg.customers.pause_ms) await sleep(Number(cfg.customers.pause_ms));
-    }
-
-    return res.json({
-      ok: true,
-      run_id: myRunId,
-      months_back,
-      config: cfg,
-      docs_allowlist: String(
-        process.env.FORTNOX_DOCS_CONNECTION_IDS ||
-          process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
-          ""
-      ),
-      connections: conns.length,
-      results
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
-  } finally {
+      } finally {
     if (acquired && lock.run_id === myRunId) {
       lock.running = false;
       lock.finished_at = Date.now();
