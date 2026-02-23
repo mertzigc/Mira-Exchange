@@ -4280,7 +4280,7 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 // Fortnox: Nightly orchestrator – kör ALLA connections i rätt ordning
 // Policy:
 // - CUSTOMERS: alla connections (soft-fail så invoices ändå körs)
-// - INVOICES: alla connections
+// - INVOICES: alla connections (self-heal paging på Fortnox code 2001889)
 // - ORDERS + ORDER ROWS: endast "docs-allowlist" (Food & Event)
 // - OFFERS + OFFER ROWS: endast "docs-allowlist" (Food & Event)
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
@@ -4310,17 +4310,34 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
     return allow.includes(id);
   };
 
+  // Helper: robustly extract Fortnox ErrorInformation from nested "internal call failed" structures
+  const extractFortnoxErrorInfo = (err) => {
+    let node = err?.detail?.body;
+    for (let i = 0; i < 12 && node; i++) {
+      if (node?.ErrorInformation) return node.ErrorInformation;
+      node = node?.detail;
+    }
+    return null;
+  };
+
   try {
     // Clear stale lock
     if (lock.running && lock.started_at && now - lock.started_at > LOCK_TTL_MS) {
-      console.warn("[nightly/run] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
+      console.warn("[nightly/run] stale lock cleared", {
+        ...lock,
+        age_ms: now - lock.started_at
+      });
       lock.running = false;
       lock.started_at = 0;
       lock.finished_at = 0;
       lock.connection_id = null;
       lock.run_id = null;
     }
-    if (lock.running) return res.status(409).json({ ok: false, error: "Nightly already running", lock });
+    if (lock.running) {
+      return res
+        .status(409)
+        .json({ ok: false, error: "Nightly already running", lock });
+    }
 
     myRunId = `${now}-${Math.random().toString(16).slice(2)}`;
     lock.running = true;
@@ -4382,7 +4399,11 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
       // --- CUSTOMERS (ALL) — SOFT FAIL ---
       try {
-        const startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
+        const startCustomers = await getConnNextPage(
+          connection_id,
+          "customers_next_page",
+          1
+        );
 
         const customersJ = await postInternalJson(
           "/fortnox/upsert/customers/all",
@@ -4411,10 +4432,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         });
       } catch (e) {
         const msg = e?.message || String(e);
-        const fortnoxInfo =
-          e?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
-          e?.detail?.body?.detail?.detail?.ErrorInformation ||
-          null;
+        const fortnoxInfo = extractFortnoxErrorInfo(e);
 
         one.customers = {
           ok: false,
@@ -4431,7 +4449,12 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         one.orders = { skipped: true, reason: "not allowed for orders/offers" };
       } else {
         try {
-          const startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
+          const startOrders = await getConnNextPage(
+            connection_id,
+            "orders_next_page",
+            1
+          );
+
           const ordersJ = await postInternalJson(
             "/fortnox/upsert/orders/all",
             {
@@ -4475,7 +4498,12 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         one.offers = { skipped: true, reason: "not allowed for orders/offers" };
       } else {
         try {
-          const startOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
+          const startOffers = await getConnNextPage(
+            connection_id,
+            "offers_next_page",
+            1
+          );
+
           const offersJ = await postInternalJson(
             "/fortnox/upsert/offers/all",
             {
@@ -4513,7 +4541,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         }
       }
 
-         // --- INVOICES (ALL) ---
+      // --- INVOICES (ALL) — self-heal paging on Fortnox code 2001889 ---
       try {
         let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
 
@@ -4529,16 +4557,6 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
             },
             180000
           );
-        };
-
-        // Walk down nested .detail chains until we find an object with ErrorInformation
-        const extractFortnoxErrorInfo = (err) => {
-          let node = err?.detail?.body;
-          for (let i = 0; i < 10 && node; i++) {
-            if (node?.ErrorInformation) return node.ErrorInformation;
-            node = node?.detail;
-          }
-          return null;
         };
 
         let invoicesJ;
@@ -4580,9 +4598,47 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
         });
       } catch (e) {
-        one.invoices = null; // keep your current output shape
+        // keep your current output shape on failure
+        one.invoices = null;
         one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
       }
+
+      results.push(one);
+
+      // Small pause between connections
+      if (cfg.customers.pause_ms) await sleep(Number(cfg.customers.pause_ms));
+    }
+
+    return res.json({
+      ok: true,
+      run_id: myRunId,
+      months_back,
+      config: cfg,
+      docs_allowlist: String(
+        process.env.FORTNOX_DOCS_CONNECTION_IDS ||
+          process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
+          ""
+      ),
+      connections: conns.length,
+      results
+    });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  } finally {
+    if (acquired && lock.run_id === myRunId) {
+      lock.running = false;
+      lock.finished_at = Date.now();
+      console.log("[nightly/run] finished", {
+        run_id: lock.run_id,
+        finished_at: lock.finished_at
+      });
+    }
+  }
+});
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Bubble: Matter + MatterMessage
