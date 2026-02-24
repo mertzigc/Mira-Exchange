@@ -441,14 +441,14 @@ function toDateOrNull(v) {
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 }
 
-// Bygg payload till UnifiedOrder från Fortnox-order-data + bubble FortnoxOrder-id
 async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder, connection_id }) {
   const docNo = String(fortnoxOrder?.DocumentNumber || fortnoxOrder?.documentNumber || "").trim();
 
-  // Company: resolve via ft_customer_number (matchar din ClientCompany)
-  const companyId = await resolveCompanyFromFortnoxCustomerNumber(
-    fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber
-  );
+  // ✅ Company: prefer orgnr-match via FortnoxCustomer -> ClientCompany(orgnr)
+  const companyId = await resolveCompanyForUnifiedOrderFortnox({
+    connection_id,
+    customerNumber: fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber
+  });
 
   // ---- Robust money parsing (Fortnox kan ge "1234.50" eller "1 234,50")
   const fnxMoneyOrNull = (v) => {
@@ -456,9 +456,7 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     let s = String(v).trim();
     if (!s) return null;
 
-    // ta bort spaces och byt , -> .
     s = s.replace(/\s+/g, "").replace(",", ".");
-    // behåll bara digits, - och .
     s = s.replace(/[^0-9.\-]/g, "");
     if (!s || s === "." || s === "-" || s === "-.") return null;
 
@@ -466,7 +464,6 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     return Number.isFinite(n) ? n : null;
   };
 
-  // Datum (Fortnox brukar vara YYYY-MM-DD)
   const orderDate = toDateOrNull(toIsoDate?.(fortnoxOrder?.OrderDate) || fortnoxOrder?.OrderDate);
 
   const deliveryRaw =
@@ -477,16 +474,13 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
 
   const deliveryDate = toDateOrNull(toIsoDate?.(deliveryRaw) || deliveryRaw);
 
-  // Belopp: Fortnox Total kan vara string/number (vill INTE använda asNumberOrNull här eftersom den slaktar decimaler)
   const amount =
     fnxMoneyOrNull(fortnoxOrder?.Total ?? fortnoxOrder?.total) ??
     fnxMoneyOrNull(fortnoxOrder?.TotalValue ?? fortnoxOrder?.totalValue) ??
     null;
 
-  // Kundansvarig i Fortnox (om du vill visa)
   const yourRef = String(fortnoxOrder?.YourReference || fortnoxOrder?.yourReference || "").trim();
 
-  // DEBUG (tillfälligt – bra tills du ser data flyta)
   console.log("[UnifiedOrder][fortnox] computed", {
     docNo,
     bubbleFortnoxOrderId,
@@ -516,7 +510,8 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     account_manager: null
   };
 }
-// Fortnox helper: hitta ClientCompany via ft_customer_number (som du redan patchar in i ensureClientCompanyForFortnoxCustomer)
+// Fortnox helper: hitta ClientCompany via ft_customer_number (legacy)
+// (behåll den – den är snabb när den finns)
 async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
   const cn = Number(customerNumber ?? 0) || null;
   if (!cn) return null;
@@ -525,6 +520,55 @@ async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
     { key: "ft_customer_number", constraint_type: "equals", value: cn }
   ]);
   return bubbleId(cc);
+}
+
+/**
+ * Preferred resolver för UnifiedOrder:
+ * 1) snabb match på ft_customer_number
+ * 2) fallback: hämta FortnoxCustomer (connection_id + customer_number)
+ *    -> linked_company om du redan sparar det
+ *    -> annars organisation_number -> matcha ClientCompany på orgnr
+ */
+async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNumber } = {}) {
+  const cn = Number(customerNumber ?? 0) || null;
+  if (!cn) return null;
+
+  // 1) snabb match (om du redan patchat ft_customer_number på ClientCompany)
+  try {
+    const byCustomerNo = await resolveCompanyFromFortnoxCustomerNumber(cn);
+    if (byCustomerNo) return byCustomerNo;
+  } catch (_) {}
+
+  // 2) fallback: slå upp FortnoxCustomer för att få orgnr / linked_company
+  let fc = null;
+  try {
+    fc = await bubbleFindOne("FortnoxCustomer", [
+      { key: "connection_id", constraint_type: "equals", value: String(connection_id) },
+      { key: "customer_number", constraint_type: "equals", value: cn }
+    ]);
+  } catch (_) {
+    fc = null;
+  }
+
+  // 2a) om du redan sparat kopplingen där
+  const linked = fc?.linked_company;
+  if (linked) return String(linked);
+
+  // 2b) matcha på orgnr
+  const orgRaw = String(fc?.organisation_number || "").trim();
+  if (!orgRaw) return null;
+
+  const cc = await findClientCompanyByOrgNo(orgRaw);
+  const ccId = bubbleId(cc);
+  if (!ccId) return null;
+
+  // (valfritt men bra) cachea ft_customer_number på ClientCompany för snabbare match nästa gång
+  // OBS: om ditt fält heter annorlunda i Bubble, ta bort detta block.
+  try {
+    await bubblePatch("ClientCompany", ccId, { ft_customer_number: cn });
+  } catch (_) {}
+
+  return ccId;
 }
 async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) {
   const refresh = tokenJson.refresh_token || fallbackRefresh || null;
@@ -6885,7 +6929,17 @@ async function buildUnifiedOrderFromTengella({
     deliveryDateIso: delivery_date,
     amount,
   });
+  // ✅ Fallback: om resolvedCompanyId saknas, försök matcha via orgnr från TengellaCustomer
+  let companyIdFinal = resolvedCompanyId || null;
 
+  if (!companyIdFinal && tengellaCustomer) {
+    const orgRaw = String(tengellaCustomer?.org_no || tengellaCustomer?.org_no_raw || "").trim();
+    if (orgRaw) {
+      const cc = await findClientCompanyByOrgNo(orgRaw);
+      const ccId = bubbleId(cc);
+      if (ccId) companyIdFinal = ccId;
+    }
+  }
   return {
     source: "tengella",
     source_thing_id: String(bubbleWorkorderId),
@@ -6894,7 +6948,7 @@ async function buildUnifiedOrderFromTengella({
     raw_title: workorderNo ? `Tengella WO ${workorderNo}` : "Tengella Workorder",
 
     amount,
-    company: resolvedCompanyId || null,
+    company: companyIdFinal,
 
     order_date,
     delivery_date,
@@ -7567,27 +7621,19 @@ if (wo?.CustomerId) {
       // Redan kopplad → använd direkt
       resolvedCompanyId = tc.company;
     } else {
-      // Försök härleda ClientCompany via orgnr
-      const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
-      if (regDigits) {
-        const cc = await bubbleFindOne("ClientCompany", [
-          {
-            key: "Org_Number",
-            constraint_type: "equals",
-            value: String(regDigits)
-          }
-        ]);
+// Försök härleda ClientCompany via orgnr (robust: auto-detect rätt orgnr-fält)
+const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
+if (regDigits) {
+  const cc = await findClientCompanyByOrgNo(regDigits);
+  const ccId = bubbleId(cc);
 
-        const ccId = bubbleId(cc);
-        if (ccId) {
-          resolvedCompanyId = ccId;
+  if (ccId) {
+    resolvedCompanyId = ccId;
 
-          // Cachea kopplingen på TengellaCustomer
-          await bubblePatch("TengellaCustomer", tcId, {
-            company: ccId
-          });
-        }
-      }
+    // Cachea kopplingen på TengellaCustomer
+    await bubblePatch("TengellaCustomer", tcId, { company: ccId });
+  }
+}
     }
   }
 }
