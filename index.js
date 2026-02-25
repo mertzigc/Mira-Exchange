@@ -573,32 +573,65 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
   }
 
   // ------------------------------------------------------------
+   // ------------------------------------------------------------
   // 2) Slå upp FortnoxCustomer
-  // OBS: du har INTE connection_id i FortnoxCustomer, så vi kan inte filtrera på det här.
   // ------------------------------------------------------------
   let fc = null;
+
+  const logBubbleFindError = (tag, e) => {
+    const status = e?.detail?.status ?? null;
+    const url = e?.detail?.url ?? null;
+
+    // Bubble fel brukar ligga här (men varierar)
+    const bubbleBody =
+      e?.detail?.body?.body ??
+      e?.detail?.body ??
+      null;
+
+    console.warn(`[UO][resolve] ${tag} bubbleFind failed`, {
+      status,
+      url,
+      bubbleBody
+    });
+  };
+
+  // Viktigt: Bubble kan ha customer_number som TEXT.
+  // Testa därför i denna ordning:
+  //   A) equals number
+  //   B) equals string
+  // (och logga 400-body så du ser exakt varför)
   try {
+    // A) number
     fc = await bubbleFindOne("FortnoxCustomer", [
       { key: "customer_number", constraint_type: "equals", value: cn }
     ]);
   } catch (e) {
-    console.warn("[UO][resolve] FortnoxCustomer lookup error", {
-      error: e?.message || String(e),
-      detail: e?.detail || null
-    });
+    logBubbleFindError("FortnoxCustomer lookup (number)", e);
+    fc = null;
   }
 
-  const orgRaw =
+  if (!fc) {
+    try {
+      // B) string
+      fc = await bubbleFindOne("FortnoxCustomer", [
+        { key: "customer_number", constraint_type: "equals", value: String(cn) }
+      ]);
+    } catch (e) {
+      logBubbleFindError("FortnoxCustomer lookup (string)", e);
+      fc = null;
+    }
+  }
+
+  const orgCandidate =
     fc?.organisation_number ||
     fc?.organisationNumber ||
     fc?.OrganisationNumber ||
     null;
 
-  // ✅ LOG 1: här ser du om FortnoxCustomer faktiskt hittas och vilket orgnr som kommer
-  console.log("[UO][resolve] FortnoxCustomer lookup", {
+  console.log("[UO][resolve] FortnoxCustomer result", {
     found: !!fc,
     fortnoxCustomerId: bubbleId(fc) || null,
-    organisation_number: orgRaw,
+    organisation_number: orgCandidate,
     linked_company: fc?.linked_company || null
   });
 
@@ -606,7 +639,6 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
     console.log("[UO][resolve] abort: no FortnoxCustomer found");
     return null;
   }
-
   // ------------------------------------------------------------
   // 2a) Direkt länk om den finns
   // ------------------------------------------------------------
