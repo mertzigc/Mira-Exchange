@@ -510,8 +510,11 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     account_manager: null
   };
 }
-// Fortnox helper: hitta ClientCompany via ft_customer_number (legacy)
-// (behåll den – den är snabb när den finns)
+// ------------------------------------------------------------
+// UnifiedOrder – Company resolver (Fortnox)
+// ------------------------------------------------------------
+
+// Legacy helper – snabb väg om ft_customer_number redan sitter
 async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
   const cn = Number(customerNumber ?? 0) || null;
   if (!cn) return null;
@@ -519,119 +522,156 @@ async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
   const cc = await bubbleFindOne("ClientCompany", [
     { key: "ft_customer_number", constraint_type: "equals", value: cn }
   ]);
+
   return bubbleId(cc);
 }
 
+// Normalisera orgnr till endast siffror
+function normalizeOrg(org) {
+  if (!org) return null;
+  const s = String(org).replace(/\D/g, "");
+  return s.length >= 6 ? s : null;
+}
+
 /**
- * Preferred resolver för UnifiedOrder:
- * 1) snabb match på ft_customer_number
- * 2) fallback: hämta FortnoxCustomer (connection_id + customer_number)
- *    -> linked_company om du redan sparar det
- *    -> annars organisation_number -> matcha ClientCompany på orgnr
+ * Resolver för UnifiedOrder (Fortnox)
+ * Prioritet:
+ * 1) ClientCompany.ft_customer_number
+ * 2) FortnoxCustomer.linked_company
+ * 3) FortnoxCustomer.organisation_number -> ClientCompany.Org_Number
  */
 async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNumber } = {}) {
   const cn = Number(customerNumber ?? 0) || null;
-  if (!cn) return null;
 
-  // 1) snabb match (om du redan patchat ft_customer_number på ClientCompany)
+  console.log("[UO][resolve] start", {
+    connection_id: String(connection_id || ""),
+    customerNumber: cn
+  });
+
+  if (!cn) {
+    console.log("[UO][resolve] abort: no customerNumber");
+    return null;
+  }
+
+  // ------------------------------------------------------------
+  // 1) Snabb match via ft_customer_number
+  // ------------------------------------------------------------
   try {
     const byCustomerNo = await resolveCompanyFromFortnoxCustomerNumber(cn);
-    if (byCustomerNo) return byCustomerNo;
-  } catch (_) {}
+    if (byCustomerNo) {
+      console.log("[UO][resolve] hit via ft_customer_number", {
+        customerNumber: cn,
+        clientCompanyId: byCustomerNo
+      });
+      return byCustomerNo;
+    }
+  } catch (e) {
+    console.warn("[UO][resolve] ft_customer_number lookup failed", {
+      error: e?.message || String(e)
+    });
+  }
 
-  // 2) fallback: slå upp FortnoxCustomer för att få orgnr / linked_company
+  // ------------------------------------------------------------
+  // 2) Slå upp FortnoxCustomer
+  // ------------------------------------------------------------
   let fc = null;
   try {
     fc = await bubbleFindOne("FortnoxCustomer", [
       { key: "connection_id", constraint_type: "equals", value: String(connection_id) },
       { key: "customer_number", constraint_type: "equals", value: cn }
     ]);
-  } catch (_) {
-    fc = null;
-  }
-
-  // 2a) om du redan sparat kopplingen där
-  const linked = fc?.linked_company;
-  if (linked) return String(linked);
-
-  // 2b) matcha på orgnr
-  const orgRaw = String(fc?.organisation_number || "").trim();
-  if (!orgRaw) return null;
-
-  const cc = await findClientCompanyByOrgNo(orgRaw);
-  const ccId = bubbleId(cc);
-  if (!ccId) return null;
-
-  // (valfritt men bra) cachea ft_customer_number på ClientCompany för snabbare match nästa gång
-  // OBS: om ditt fält heter annorlunda i Bubble, ta bort detta block.
-  try {
-    await bubblePatch("ClientCompany", ccId, { ft_customer_number: cn });
-  } catch (_) {}
-
-  return ccId;
-}
-async function upsertTokensToBubble(user_unique_id, tokenJson, fallbackRefresh) {
-  const refresh = tokenJson.refresh_token || fallbackRefresh || null;
-  const expiresIn = Number(tokenJson.expires_in || 0);
-  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
-
-  const patchPayload = {
-    ms_access_token: tokenJson.access_token || null,
-    ms_refresh_token: refresh,
-    ms_scope: tokenJson.scope || "",
-    ms_token_type: tokenJson.token_type || "Bearer",
-    ms_expires_at: expiresAt,
-    ms_last_refresh_at: new Date().toISOString(),};
-
-  // 1) Primary: Data API patch user (Fortnox-lik metodik)
-  try {
-    const patched = await bubblePatch("user", user_unique_id, patchPayload);
-    log("[save] user patch OK", { user_unique_id, patched: !!patched });
-    return { ok: true, method: "data_api_patch" };
   } catch (e) {
-    log("[save] user patch FAILED", {
-      user_unique_id,
-      error: e?.message || String(e),
-      detail: e?.detail || null
+    console.warn("[UO][resolve] FortnoxCustomer lookup error", {
+      error: e?.message || String(e)
     });
   }
 
-  // 2) Fallback: WF ms_token_upsert (din befintliga väg)
-  const wfPayload = {
-    bubble_user_id: user_unique_id,
-    access_token: tokenJson.access_token,
-    refresh_token: refresh,
-    expires_in: tokenJson.expires_in,
-    token_type: tokenJson.token_type,
-    scope: tokenJson.scope,
-    server_now_iso: new Date().toISOString(),
-  };
+  console.log("[UO][resolve] FortnoxCustomer result", {
+    found: !!fc,
+    fortnoxCustomerId: bubbleId(fc) || null,
+    organisation_number:
+      fc?.organisation_number ||
+      fc?.organisationNumber ||
+      fc?.OrganisationNumber ||
+      null,
+    linked_company: fc?.linked_company || null
+  });
 
-  for (const base of BUBBLE_BASES) {
-    const wf = base + "/api/1.1/wf/ms_token_upsert";
-    try {
-      const r = await fetch(wf, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + BUBBLE_API_KEY,
-        },
-        body: JSON.stringify(wfPayload),
-      });
-
-      const text = await r.text().catch(() => "");
-      let body = null;
-      try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
-
-      log("[save] try WF", { base, status: r.status, ok: r.ok, body });
-
-      if (r.ok) return { ok: true, method: "wf_ms_token_upsert", base };
-    } catch (e) {
-      log("[save] WF error", { base, e: e?.message || String(e), detail: e?.detail || null });
-    }
+  if (!fc) {
+    console.log("[UO][resolve] abort: no FortnoxCustomer found");
+    return null;
   }
 
-  return { ok: false, method: "none" };
+  // ------------------------------------------------------------
+  // 2a) Direkt länk om den finns
+  // ------------------------------------------------------------
+  if (fc.linked_company) {
+    console.log("[UO][resolve] hit via FortnoxCustomer.linked_company", {
+      clientCompanyId: String(fc.linked_company)
+    });
+    return String(fc.linked_company);
+  }
+
+  // ------------------------------------------------------------
+  // 2b) Matcha via orgnr
+  // ------------------------------------------------------------
+  const orgRaw =
+    fc.organisation_number ||
+    fc.organisationNumber ||
+    fc.OrganisationNumber ||
+    null;
+
+  const orgNormalized = normalizeOrg(orgRaw);
+
+  console.log("[UO][resolve] org lookup", {
+    orgRaw,
+    orgNormalized
+  });
+
+  if (!orgNormalized) {
+    console.log("[UO][resolve] abort: no usable orgnr");
+    return null;
+  }
+
+  // Försök 1: normaliserat orgnr
+  let cc = await bubbleFindOne("ClientCompany", [
+    { key: "Org_Number", constraint_type: "equals", value: orgNormalized }
+  ]);
+
+  // Försök 2: raw orgnr (om Bubble lagrar med bindestreck)
+  if (!cc && orgRaw) {
+    cc = await bubbleFindOne("ClientCompany", [
+      { key: "Org_Number", constraint_type: "equals", value: String(orgRaw).trim() }
+    ]);
+  }
+
+  const ccId = bubbleId(cc);
+
+  if (!ccId) {
+    console.log("[UO][resolve] no ClientCompany match", {
+      tried_orgNormalized: orgNormalized,
+      tried_orgRaw: orgRaw
+    });
+    return null;
+  }
+
+  console.log("[UO][resolve] hit via orgnr", {
+    clientCompanyId: ccId,
+    orgNormalized
+  });
+
+  // ------------------------------------------------------------
+  // (valfritt) Cache ft_customer_number på ClientCompany
+  // ------------------------------------------------------------
+  try {
+    await bubblePatch("ClientCompany", ccId, { ft_customer_number: cn });
+    console.log("[UO][resolve] cached ft_customer_number on ClientCompany", {
+      clientCompanyId: ccId,
+      customerNumber: cn
+    });
+  } catch (_) {}
+
+  return ccId;
 }
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
   const tokenEndpoint = "https://login.microsoftonline.com/" + (tenant || MS_TENANT) + "/oauth2/v2.0/token";
