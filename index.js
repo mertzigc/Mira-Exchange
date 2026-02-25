@@ -4597,52 +4597,93 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         errors: []
       };
 
-      // --- CUSTOMERS (ALL) — SOFT FAIL ---
-      try {
-        const startCustomers = await getConnNextPage(
-          connection_id,
-          "customers_next_page",
-          1
-        );
+     // --- CUSTOMERS (ALL) — SOFT FAIL + page-out-of-range reset ---
+try {
+  let startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
 
-        const customersJ = await postInternalJson(
-          "/fortnox/upsert/customers/all",
-          {
-            connection_id,
-            start_page: startCustomers,
-            limit: cfg.customers.limit,
-            max_pages: cfg.customers.max_pages,
-            pause_ms: cfg.customers.pause_ms,
-            skip_without_orgnr: cfg.customers.skip_without_orgnr,
-            link_company: cfg.customers.link_company
-          },
-          180000
-        );
+  const runCustomers = async (start_page) => {
+    return await postInternalJson(
+      "/fortnox/upsert/customers/all",
+      {
+        connection_id,
+        start_page,
+        limit: cfg.customers.limit,
+        max_pages: cfg.customers.max_pages,
+        pause_ms: cfg.customers.pause_ms,
+        skip_without_orgnr: cfg.customers.skip_without_orgnr,
+        link_company: cfg.customers.link_company
+      },
+      180000
+    );
+  };
 
-        one.customers = {
-          done: !!customersJ.done,
-          next_page: customersJ.next_page ?? null,
-          counts: customersJ.counts || null
-        };
+  // Walk down nested .detail chains until we find ErrorInformation
+  const extractFortnoxErrorInfo = (err) => {
+    let node = err?.detail?.body;
+    for (let i = 0; i < 10 && node; i++) {
+      if (node?.ErrorInformation) return node.ErrorInformation;
+      node = node?.detail;
+    }
+    return null;
+  };
 
-        await safeSetConnPaging(connection_id, {
-          customers_next_page: customersJ?.next_page || 1,
-          customers_last_progress_at: nowIso(),
-          ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
-        });
-      } catch (e) {
-        const msg = e?.message || String(e);
-        const fortnoxInfo = extractFortnoxErrorInfo(e);
+  let customersJ;
 
-        one.customers = {
-          ok: false,
-          skipped: true,
-          reason: "customers failed (continuing)",
-          message: msg,
-          fortnox_error: fortnoxInfo || null
-        };
-        one.errors.push({ message: msg, detail: e?.detail || null });
-      }
+  try {
+    customersJ = await runCustomers(startCustomers);
+  } catch (e1) {
+    const errInfo = extractFortnoxErrorInfo(e1);
+    const fortnoxCode = errInfo?.code;
+
+    // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once from page 1
+    if (fortnoxCode === 2001889) {
+      console.warn("[nightly/run] customers page out of range; resetting to page 1", {
+        connection_id,
+        startCustomers,
+        limit: cfg.customers.limit,
+        months_back
+      });
+
+      await safeSetConnPaging(connection_id, {
+        customers_next_page: 1,
+        customers_last_progress_at: nowIso()
+      });
+
+      customersJ = await runCustomers(1);
+    } else {
+      throw e1;
+    }
+  }
+
+  one.customers = {
+    done: !!customersJ.done,
+    next_page: customersJ.next_page ?? null,
+    counts: customersJ.counts || null
+  };
+
+  await safeSetConnPaging(connection_id, {
+    customers_next_page: customersJ?.next_page || 1,
+    customers_last_progress_at: nowIso(),
+    ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
+  });
+} catch (e) {
+  const msg = e?.message || String(e);
+  const fortnoxInfo =
+    e?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
+    e?.detail?.body?.detail?.detail?.ErrorInformation ||
+    e?.detail?.body?.detail?.ErrorInformation ||
+    null;
+
+  one.customers = {
+    ok: false,
+    skipped: true,
+    reason: "customers failed (continuing)",
+    message: msg,
+    fortnox_error: fortnoxInfo || null
+  };
+
+  one.errors.push({ message: msg, detail: e?.detail || null });
+}
 
       // --- ORDERS + ORDER ROWS (DOCS ONLY) ---
       if (!allowDocs) {
