@@ -4597,7 +4597,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         errors: []
       };
 
-     // --- CUSTOMERS (ALL) — SOFT FAIL + page-out-of-range reset ---
+// --- CUSTOMERS (ALL) — SOFT FAIL ---
 try {
   let startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
 
@@ -4617,10 +4617,10 @@ try {
     );
   };
 
-  // Walk down nested .detail chains until we find ErrorInformation
+  // Walk down nested .detail chains until we find an object with ErrorInformation
   const extractFortnoxErrorInfo = (err) => {
     let node = err?.detail?.body;
-    for (let i = 0; i < 10 && node; i++) {
+    for (let i = 0; i < 12 && node; i++) {
       if (node?.ErrorInformation) return node.ErrorInformation;
       node = node?.detail;
     }
@@ -4635,7 +4635,7 @@ try {
     const errInfo = extractFortnoxErrorInfo(e1);
     const fortnoxCode = errInfo?.code;
 
-    // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once from page 1
+    // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once
     if (fortnoxCode === 2001889) {
       console.warn("[nightly/run] customers page out of range; resetting to page 1", {
         connection_id,
@@ -4668,11 +4668,14 @@ try {
   });
 } catch (e) {
   const msg = e?.message || String(e);
-  const fortnoxInfo =
-    e?.detail?.body?.detail?.detail?.detail?.ErrorInformation ||
-    e?.detail?.body?.detail?.detail?.ErrorInformation ||
-    e?.detail?.body?.detail?.ErrorInformation ||
-    null;
+  const fortnoxInfo = (() => {
+    let node = e?.detail?.body;
+    for (let i = 0; i < 12 && node; i++) {
+      if (node?.ErrorInformation) return node.ErrorInformation;
+      node = node?.detail;
+    }
+    return null;
+  })();
 
   one.customers = {
     ok: false,
@@ -4684,55 +4687,6 @@ try {
 
   one.errors.push({ message: msg, detail: e?.detail || null });
 }
-
-      // --- ORDERS + ORDER ROWS (DOCS ONLY) ---
-      if (!allowDocs) {
-        one.orders = { skipped: true, reason: "not allowed for orders/offers" };
-      } else {
-        try {
-          const startOrders = await getConnNextPage(
-            connection_id,
-            "orders_next_page",
-            1
-          );
-
-          const ordersJ = await postInternalJson(
-            "/fortnox/upsert/orders/all",
-            {
-              connection_id,
-              start_page: startOrders,
-              limit: cfg.orders.limit,
-              max_pages: cfg.orders.pages_per_call,
-              months_back
-            },
-            180000
-          );
-
-          one.orders = {
-            done: !!ordersJ.done,
-            next_page: ordersJ.next_page ?? null,
-            counts: ordersJ.counts || null
-          };
-
-          await safeSetConnPaging(connection_id, {
-            orders_next_page: ordersJ?.next_page || 1,
-            orders_last_progress_at: nowIso(),
-            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
-          });
-
-          for (let p = 0; p < cfg.rows.passes; p++) {
-            const rowsJ = await postInternalJson(
-              "/fortnox/upsert/order-rows/flagged",
-              { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-              180000
-            );
-            if (!rowsJ.flagged_found) break;
-            if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
-          }
-        } catch (e) {
-          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
-        }
-      }
 
       // --- OFFERS + OFFER ROWS (DOCS ONLY) ---
       if (!allowDocs) {
