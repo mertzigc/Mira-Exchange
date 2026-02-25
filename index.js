@@ -2278,7 +2278,7 @@ app.post("/fortnox/upsert/customers/all", requireApiKey, async (req, res) => {
 
   const start = Number(start_page) || 1;
   const maxP  = Math.max(1, Number(max_pages) || 10);
-  const lim   = Math.max(1, Math.min(500, Number(limit) || 100));
+  const lim   = Math.max(1, Math.min(200, Number(limit) || 100));
   const pause = Math.max(0, Number(pause_ms) || 0);
 
   let created = 0, updated = 0, skipped = 0, errors = 0;
