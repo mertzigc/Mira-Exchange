@@ -537,41 +537,18 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     source_url: String(fortnoxOrder?.["@url"] || ""),
     account_manager: null
   };
-}
-// UnifiedOrder – Company resolver (Fortnox)
+}// UnifiedOrder – Company resolver (Fortnox)
 // ------------------------------------------------------------
 
-// Legacy helper – snabb väg om ft_customer_number redan sitter
-async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
-  const cnStr = String(customerNumber ?? "").trim();
-  if (!cnStr) return null;
-
-  // OBS: i Bubble verkar ft_customer_number vara "number"-fält (du visade ft_customer_number: 69)
-  // Så vi provar både number och string som fallback.
-  let cc = null;
-
-  // 1) number-lookup
-  const cnNum = Number(cnStr);
-  if (Number.isFinite(cnNum)) {
-    cc = await bubbleFindOne("ClientCompany", [
-      { key: "ft_customer_number", constraint_type: "equals", value: cnNum }
-    ]).catch(() => null);
-    if (cc) return bubbleId(cc);
-  }
-
-  // 2) string-lookup (ifall ditt fält råkar vara text i vissa miljöer)
-  cc = await bubbleFindOne("ClientCompany", [
-    { key: "ft_customer_number", constraint_type: "equals", value: cnStr }
-  ]).catch(() => null);
-
-  return bubbleId(cc);
+// Normalisera "nummer" (customerNumber/orgnr) till bara siffror
+function digitsOnly(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(/\D/g, "").trim();
 }
 
 // Normalisera orgnr till endast siffror (hanterar 556193-8233 => 5561938233)
 function normalizeOrg(org) {
-  if (!org) return null;
-  const s = String(org).replace(/\D/g, "");
-  // Svenskt orgnr: oftast 10 siffror. Men vi tillåter >= 6 för säkerhets skull.
+  const s = digitsOnly(org);
   return s.length >= 6 ? s : null;
 }
 
@@ -581,54 +558,104 @@ function looksLikeOrgNo(v) {
   const raw = String(v).trim();
   if (!raw) return false;
   if (raw.includes("-")) return true;
-  const digits = raw.replace(/\D/g, "");
+  const digits = digitsOnly(raw);
   return digits.length >= 10; // 10 siffror = typiskt orgnr
+}
+
+// ------------------------------------------------------------
+// Legacy helper – snabb väg om ft_customer_number redan sitter
+// OBS: hos dig är ClientCompany.ft_customer_number = number (du visade 69 / 1,123,380)
+// ------------------------------------------------------------
+async function resolveCompanyFromFortnoxCustomerNumber(customerNumber) {
+  const raw = String(customerNumber ?? "").trim();
+  if (!raw) return null;
+
+  // ✅ gör "1,123,380" -> "1123380"
+  const cnDigits = digitsOnly(raw);
+  if (!cnDigits) return null;
+
+  const cnNum = Number(cnDigits);
+  console.log("[UO][resolve][ft] try", { raw, cnDigits, cnNum }); // <-- LOGG 1 (ny)
+
+  // 1) number-lookup (primär)
+  if (Number.isFinite(cnNum)) {
+    const ccNum = await bubbleFindOne("ClientCompany", [
+      { key: "ft_customer_number", constraint_type: "equals", value: cnNum }
+    ]).catch(() => null);
+
+    const idNum = bubbleId(ccNum);
+    console.log("[UO][resolve][ft] result", { mode: "number", found: !!idNum, id: idNum || null }); // <-- LOGG 2 (ny)
+    if (idNum) return idNum;
+  }
+
+  // 2) string-lookup (fallback om någon miljö råkar ha textfält)
+  const ccStr = await bubbleFindOne("ClientCompany", [
+    { key: "ft_customer_number", constraint_type: "equals", value: cnDigits }
+  ]).catch(() => null);
+
+  return bubbleId(ccStr);
+}
+
+// ------------------------------------------------------------
+// Fortnox API fallback helper (skapa om den saknas)
+// använder dina befintliga: ensureFortnoxAccessToken + fortnoxGet
+// ------------------------------------------------------------
+async function fortnoxGetCustomerDetail_SAFE({ connection_id, customerNumber } = {}) {
+  const cnStr = String(customerNumber ?? "").trim();
+  if (!connection_id || !cnStr) return null;
+
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok?.ok || !tok.access_token) return null;
+
+  // Fortnox v3: GET /customers/{customerNumber}
+  const r = await fortnoxGet(`/customers/${encodeURIComponent(cnStr)}`, tok.access_token);
+  if (!r?.ok) return null;
+
+  // Fortnox svarar ofta med { Customer: {...} }
+  return r.data?.Customer || r.data?.customer || r.data || null;
 }
 
 /**
  * Resolver för UnifiedOrder (Fortnox)
  * Prioritet:
  * A) Om input ser ut som orgnr => ClientCompany.Org_Number (direkt)
- * 1) ClientCompany.ft_customer_number (Fortnox CustomerNumber)
- * 2) FortnoxCustomer.organisation_number -> ClientCompany.Org_Number
- * 3) (valfritt) Fortnox API fallback om funktion finns
+ * 1) ClientCompany.ft_customer_number (Fortnox kundnr)
+ * 2) FortnoxCustomer(customer_number TEXT) -> organisation_number -> ClientCompany.Org_Number
+ * 3) Fortnox API fallback -> organisation_number -> ClientCompany.Org_Number (+ cache ft_customer_number)
  */
 async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNumber } = {}) {
-  const cnRaw = customerNumber ?? "";
-  const cnStr = String(cnRaw).trim();
+  const cnStrRaw = String(customerNumber ?? "").trim();
+  const cnDigits = digitsOnly(cnStrRaw);
 
   console.log("[UO][resolve] start", {
     connection_id: String(connection_id || ""),
-    customerNumber: cnStr
+    customerNumber_raw: cnStrRaw,
+    customerNumber_digits: cnDigits
   });
 
-  if (!cnStr) {
+  if (!cnStrRaw) {
     console.log("[UO][resolve] abort: empty customerNumber");
     return null;
   }
 
   // ------------------------------------------------------------
-  // A) Om detta egentligen är ett orgnr => matcha direkt ClientCompany.Org_Number
+  // A) Om input egentligen är orgnr => matcha direkt ClientCompany.Org_Number
   // ------------------------------------------------------------
-  if (looksLikeOrgNo(cnStr)) {
-    const orgNormalized = normalizeOrg(cnStr);
+  if (looksLikeOrgNo(cnStrRaw)) {
+    const orgNormalized = normalizeOrg(cnStrRaw);
     console.log("[UO][resolve] input looks like orgnr -> try ClientCompany.Org_Number", {
-      cnStr,
+      cnStrRaw,
       orgNormalized
     });
 
     if (orgNormalized) {
-      // prova normaliserat
-      let cc = await bubbleFindOne("ClientCompany", [
-        { key: "Org_Number", constraint_type: "equals", value: orgNormalized }
-      ]).catch(() => null);
-
-      // fallback raw
-      if (!cc) {
-        cc = await bubbleFindOne("ClientCompany", [
-          { key: "Org_Number", constraint_type: "equals", value: cnStr }
-        ]).catch(() => null);
-      }
+      let cc =
+        (await bubbleFindOne("ClientCompany", [
+          { key: "Org_Number", constraint_type: "equals", value: orgNormalized }
+        ]).catch(() => null)) ||
+        (await bubbleFindOne("ClientCompany", [
+          { key: "Org_Number", constraint_type: "equals", value: cnStrRaw }
+        ]).catch(() => null));
 
       const ccId = bubbleId(cc);
       if (ccId) {
@@ -639,33 +666,25 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
   }
 
   // ------------------------------------------------------------
-  // 1) Snabb match via ft_customer_number (Fortnox CustomerNumber)
+  // 1) Snabb match via ft_customer_number
   // ------------------------------------------------------------
-  try {
-    const byCustomerNo = await resolveCompanyFromFortnoxCustomerNumber(cnStr);
-    if (byCustomerNo) {
-      console.log("[UO][resolve] hit via ft_customer_number", {
-        customerNumber: cnStr,
-        clientCompanyId: byCustomerNo
-      });
-      return byCustomerNo;
-    }
-  } catch (e) {
-    console.warn("[UO][resolve] ft_customer_number lookup failed", {
-      error: e?.message || String(e)
+  const byCustomerNo = await resolveCompanyFromFortnoxCustomerNumber(cnStrRaw).catch(() => null);
+  if (byCustomerNo) {
+    console.log("[UO][resolve] hit via ft_customer_number", {
+      customerNumber: cnStrRaw,
+      clientCompanyId: byCustomerNo
     });
+    return byCustomerNo;
   }
 
   // ------------------------------------------------------------
-  // 2) Slå upp FortnoxCustomer i Bubble (customer_number ÄR TEXT hos dig)
+  // 2) Slå upp FortnoxCustomer i Bubble (VIKTIGT: customer_number är TEXT hos dig)
   // ------------------------------------------------------------
   let fc = null;
   try {
     fc = await bubbleFindOne("FortnoxCustomer", [
-      // OBS: om du INTE har connection_id som fält i typen, ta bort denna constraint.
-      // Den kan annars göra att du "missar" kunden. Men din data visar connection_id finns, så vi behåller.
       { key: "connection_id", constraint_type: "equals", value: String(connection_id) },
-      { key: "customer_number", constraint_type: "equals", value: cnStr }
+      { key: "customer_number", constraint_type: "equals", value: cnStrRaw } // <-- TEXT
     ]);
   } catch (e) {
     console.warn("[UO][resolve] Bubble FortnoxCustomer lookup error", {
@@ -681,6 +700,7 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
     organisation_number: fc?.organisation_number || null
   });
 
+  // Om vi hittade FortnoxCustomer: matcha orgnr -> ClientCompany.Org_Number
   if (fc) {
     const orgNormalized = normalizeOrg(fc.organisation_number);
     if (!orgNormalized) {
@@ -712,15 +732,12 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
       clientCompanyId: ccId
     });
 
-    // Cache: skriv ft_customer_number på ClientCompany så framtida blir snabbare
+    // Cache ft_customer_number för snabb väg nästa gång
     try {
-      const cnNum = Number(cnStr);
+      const cnNum = Number(cnDigits);
       if (Number.isFinite(cnNum)) {
         await bubblePatch("ClientCompany", ccId, { ft_customer_number: cnNum });
-        console.log("[UO][resolve] cached ft_customer_number on ClientCompany", {
-          clientCompanyId: ccId,
-          customerNumber: cnNum
-        });
+        console.log("[UO][resolve] cached ft_customer_number on ClientCompany", { ccId, cnNum });
       }
     } catch (_) {}
 
@@ -728,63 +745,49 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
   }
 
   // ------------------------------------------------------------
-  // 3) Fortnox API fallback (endast om funktionen faktiskt finns)
+  // 3) Fortnox API fallback (för kunder som ännu inte finns i Bubble FortnoxCustomer)
   // ------------------------------------------------------------
-  if (typeof fortnoxGetCustomerDetail !== "function") {
-    console.warn("[UO][resolve] Fortnox API fallback skipped (fortnoxGetCustomerDetail not defined)", {
-      customerNumber: cnStr
-    });
-    return null;
-  }
-
   console.log("[UO][resolve] Bubble FortnoxCustomer missing -> Fortnox API fallback", {
     connection_id: String(connection_id),
-    customerNumber: cnStr
+    customerNumber: cnStrRaw
   });
 
-  try {
-    const apiCustomer = await fortnoxGetCustomerDetail({ connection_id, customerNumber: cnStr });
-    const orgFromApi = normalizeOrg(apiCustomer?.OrganisationNumber || apiCustomer?.organisationNumber || null);
+  const apiCustomer = await fortnoxGetCustomerDetail_SAFE({ connection_id, customerNumber: cnStrRaw }).catch(() => null);
+  const orgFromApi = normalizeOrg(apiCustomer?.OrganisationNumber || apiCustomer?.organisationNumber || apiCustomer?.Organisation_number);
 
-    if (!orgFromApi) {
-      console.warn("[UO][resolve] Fortnox API fallback: no org number on customer", {
-        customerNumber: cnStr
-      });
-      return null;
-    }
-
-    const cc =
-      (await bubbleFindOne("ClientCompany", [
-        { key: "Org_Number", constraint_type: "equals", value: orgFromApi }
-      ]).catch(() => null)) ||
-      (await bubbleFindOne("ClientCompany", [
-        { key: "Org_Number", constraint_type: "equals", value: String(apiCustomer?.OrganisationNumber || "").trim() }
-      ]).catch(() => null));
-
-    const ccId = bubbleId(cc);
-    if (!ccId) {
-      console.log("[UO][resolve] Fortnox API fallback: no ClientCompany match", {
-        orgFromApi,
-        customerNumber: cnStr
-      });
-      return null;
-    }
-
-    // Cache ft_customer_number om vi kan
-    try {
-      const cnNum = Number(cnStr);
-      if (Number.isFinite(cnNum)) await bubblePatch("ClientCompany", ccId, { ft_customer_number: cnNum });
-    } catch (_) {}
-
-    console.log("[UO][resolve] Fortnox API fallback: resolved", { clientCompanyId: ccId, orgFromApi });
-    return ccId;
-  } catch (e) {
-    console.warn("[UO][resolve] Fortnox API fallback failed", {
-      error: e?.message || String(e),
-      detail: e?.detail || null
+  if (!orgFromApi) {
+    console.warn("[UO][resolve] Fortnox API fallback: no org number on customer", {
+      customerNumber: cnStrRaw,
+      api_keys: apiCustomer ? Object.keys(apiCustomer) : null
     });
     return null;
   }
+
+  const cc =
+    (await bubbleFindOne("ClientCompany", [
+      { key: "Org_Number", constraint_type: "equals", value: orgFromApi }
+    ]).catch(() => null)) ||
+    (await bubbleFindOne("ClientCompany", [
+      { key: "Org_Number", constraint_type: "equals", value: String(apiCustomer?.OrganisationNumber || "").trim() }
+    ]).catch(() => null));
+
+  const ccId = bubbleId(cc);
+  if (!ccId) {
+    console.log("[UO][resolve] Fortnox API fallback: no ClientCompany match", {
+      orgFromApi,
+      customerNumber: cnStrRaw
+    });
+    return null;
+  }
+
+  // Cache ft_customer_number om vi kan
+  try {
+    const cnNum = Number(cnDigits);
+    if (Number.isFinite(cnNum)) await bubblePatch("ClientCompany", ccId, { ft_customer_number: cnNum });
+  } catch (_) {}
+
+  console.log("[UO][resolve] Fortnox API fallback: resolved", { clientCompanyId: ccId, orgFromApi });
+  return ccId;
 }
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
   const tokenEndpoint = "https://login.microsoftonline.com/" + (tenant || MS_TENANT) + "/oauth2/v2.0/token";
