@@ -531,31 +531,6 @@ function normalizeOrg(org) {
   const s = String(org).replace(/\D/g, "");
   return s.length >= 6 ? s : null;
 }
-
-// Hitta ClientCompany via Org_Number (försök både normaliserat och raw)
-async function findClientCompanyByOrgNo(orgRaw) {
-  const orgNormalized = normalizeOrg(orgRaw);
-  if (!orgNormalized && !orgRaw) return null;
-
-  // 1) normaliserat (bara siffror)
-  if (orgNormalized) {
-    const cc1 = await bubbleFindOne("ClientCompany", [
-      { key: "Org_Number", constraint_type: "equals", value: orgNormalized }
-    ]);
-    if (cc1) return cc1;
-  }
-
-  // 2) raw (om du råkar lagra med bindestreck i Bubble)
-  if (orgRaw) {
-    const cc2 = await bubbleFindOne("ClientCompany", [
-      { key: "Org_Number", constraint_type: "equals", value: String(orgRaw).trim() }
-    ]);
-    if (cc2) return cc2;
-  }
-
-  return null;
-}
-
 /**
  * Resolver för UnifiedOrder (Fortnox)
  * Prioritet:
