@@ -537,7 +537,7 @@ function normalizeOrg(org) {
  * Resolver för UnifiedOrder (Fortnox)
  * Prioritet:
  * 1) ClientCompany.ft_customer_number
- * 2) FortnoxCustomer.linked_company
+ * 2) FortnoxCustomer.linked_company  (om du har/kommer få det fältet)
  * 3) FortnoxCustomer.organisation_number -> ClientCompany.Org_Number
  */
 async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNumber } = {}) {
@@ -567,33 +567,38 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
     }
   } catch (e) {
     console.warn("[UO][resolve] ft_customer_number lookup failed", {
-      error: e?.message || String(e)
+      error: e?.message || String(e),
+      detail: e?.detail || null
     });
   }
 
   // ------------------------------------------------------------
   // 2) Slå upp FortnoxCustomer
+  // OBS: du har INTE connection_id i FortnoxCustomer, så vi kan inte filtrera på det här.
   // ------------------------------------------------------------
   let fc = null;
   try {
     fc = await bubbleFindOne("FortnoxCustomer", [
-      { key: "connection_id", constraint_type: "equals", value: String(connection_id) },
       { key: "customer_number", constraint_type: "equals", value: cn }
     ]);
   } catch (e) {
     console.warn("[UO][resolve] FortnoxCustomer lookup error", {
-      error: e?.message || String(e)
+      error: e?.message || String(e),
+      detail: e?.detail || null
     });
   }
 
-  console.log("[UO][resolve] FortnoxCustomer result", {
+  const orgRaw =
+    fc?.organisation_number ||
+    fc?.organisationNumber ||
+    fc?.OrganisationNumber ||
+    null;
+
+  // ✅ LOG 1: här ser du om FortnoxCustomer faktiskt hittas och vilket orgnr som kommer
+  console.log("[UO][resolve] FortnoxCustomer lookup", {
     found: !!fc,
     fortnoxCustomerId: bubbleId(fc) || null,
-    organisation_number:
-      fc?.organisation_number ||
-      fc?.organisationNumber ||
-      fc?.OrganisationNumber ||
-      null,
+    organisation_number: orgRaw,
     linked_company: fc?.linked_company || null
   });
 
@@ -613,14 +618,8 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
   }
 
   // ------------------------------------------------------------
-  // 2b) Matcha via orgnr
+  // 2b) Matcha via orgnr mot ClientCompany.Org_Number
   // ------------------------------------------------------------
-  const orgRaw =
-    fc.organisation_number ||
-    fc.organisationNumber ||
-    fc.OrganisationNumber ||
-    null;
-
   const orgNormalized = normalizeOrg(orgRaw);
 
   console.log("[UO][resolve] org lookup", {
@@ -633,32 +632,47 @@ async function resolveCompanyForUnifiedOrderFortnox({ connection_id, customerNum
     return null;
   }
 
-  // Försök 1: normaliserat orgnr
-  let cc = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: orgNormalized }
-  ]);
+  // Försök 1: normaliserat orgnr (endast siffror)
+  let cc = null;
+  try {
+    cc = await bubbleFindOne("ClientCompany", [
+      { key: "Org_Number", constraint_type: "equals", value: orgNormalized }
+    ]);
+  } catch (e) {
+    console.warn("[UO][resolve] ClientCompany Org_Number lookup failed (normalized)", {
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
 
   // Försök 2: raw orgnr (om Bubble lagrar med bindestreck)
   if (!cc && orgRaw) {
-    cc = await bubbleFindOne("ClientCompany", [
-      { key: "Org_Number", constraint_type: "equals", value: String(orgRaw).trim() }
-    ]);
+    try {
+      cc = await bubbleFindOne("ClientCompany", [
+        { key: "Org_Number", constraint_type: "equals", value: String(orgRaw).trim() }
+      ]);
+    } catch (e) {
+      console.warn("[UO][resolve] ClientCompany Org_Number lookup failed (raw)", {
+        error: e?.message || String(e),
+        detail: e?.detail || null
+      });
+    }
   }
 
-  const ccId = bubbleId(cc);
+  const ccId = bubbleId(cc) || null;
+
+  // ✅ LOG 2: här ser du om ClientCompany matchen lyckas, och vilket id du får
+  console.log("[UO][resolve] ClientCompany result", {
+    found: !!ccId,
+    clientCompanyId: ccId,
+    tried_orgNormalized: orgNormalized,
+    tried_orgRaw: orgRaw ? String(orgRaw).trim() : null
+  });
 
   if (!ccId) {
-    console.log("[UO][resolve] no ClientCompany match", {
-      tried_orgNormalized: orgNormalized,
-      tried_orgRaw: orgRaw
-    });
+    console.log("[UO][resolve] abort: no ClientCompany match");
     return null;
   }
-
-  console.log("[UO][resolve] hit via orgnr", {
-    clientCompanyId: ccId,
-    orgNormalized
-  });
 
   // ------------------------------------------------------------
   // (valfritt) Cache ft_customer_number på ClientCompany
