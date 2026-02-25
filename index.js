@@ -434,7 +434,35 @@ async function upsertUnifiedOrder(payload) {
     return { ok: true, mode: "create", id: createdId || null };
   }
 }
+app.post("/debug/unifiedorder/resolve", requireApiKey, async (req, res) => {
+  const { connection_id, customerNumber } = req.body || {};
 
+  if (!connection_id || !customerNumber) {
+    return res.status(400).json({
+      ok: false,
+      error: "connection_id and customerNumber are required"
+    });
+  }
+
+  try {
+    const companyId = await resolveCompanyForUnifiedOrderFortnox({
+      connection_id,
+      customerNumber
+    });
+
+    return res.json({
+      ok: true,
+      input: { connection_id, customerNumber },
+      resolved_company_id: companyId || null
+    });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
 function toDateOrNull(v) {
   if (!v) return null;
   const d = new Date(v);
