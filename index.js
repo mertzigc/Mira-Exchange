@@ -402,37 +402,45 @@ async function fetchBubbleUser(user_unique_id) {
 // Upsert by (source + source_thing_id)
 // ────────────────────────────────────────────────────────────
 async function upsertUnifiedOrder(payload) {
-  const type = "UnifiedOrder";
-
-  const source = String(payload?.source || "").trim();
-  const sourceThingId = String(payload?.source_thing_id || "").trim();
-  if (!source || !sourceThingId) {
-    return { ok: false, reason: "missing_source_or_source_thing_id" };
+  if (!payload?.source || !payload?.source_thing_id) {
+    throw new Error("UnifiedOrder requires source + source_thing_id");
   }
 
-  const existing = await bubbleFindOne(type, [
-    { key: "source", constraint_type: "equals", value: source },
-    { key: "source_thing_id", constraint_type: "equals", value: sourceThingId }
-  ]);
+  // 1) Hitta ev befintlig UnifiedOrder på (source, source_thing_id)
+  const existing = await bubbleFindOne("UnifiedOrder", [
+    { key: "source", constraint_type: "equals", value: String(payload.source) },
+    { key: "source_thing_id", constraint_type: "equals", value: String(payload.source_thing_id) },
+  ]).catch(() => null);
 
   const existingId = bubbleId(existing);
 
-  // always stamp sync time
-  const patchPayload = {
+  // 2) Bas-payload som alltid är OK att skriva
+  const base = {
     ...payload,
-    last_synced_at: new Date().toISOString()
+    last_synced_at: new Date().toISOString(),
   };
 
-  // Bubble: remove undefined (null is OK)
-  Object.keys(patchPayload).forEach((k) => patchPayload[k] === undefined && delete patchPayload[k]);
+  // 3) KRITISKT: skriv ALDRIG över company med null/empty vid UPDATE
+  //    - om vi har ett company-id => sätt det
+  //    - annars => ta bort nyckeln helt (så vi inte nollar ett befintligt värde)
+  const hasCompany = !!(base.company && String(base.company).trim());
+  if (!hasCompany) delete base.company;
+
+  // 4) Rensa endast undefined (men låt null finnas kvar för andra fält om du vill nolla dem)
+  //    (company hanteras redan ovan)
+  const finalPayload = Object.fromEntries(
+    Object.entries(base).filter(([, v]) => v !== undefined)
+  );
 
   if (existingId) {
-    await bubblePatch(type, existingId, patchPayload);
-    return { ok: true, mode: "update", id: existingId };
-  } else {
-    const createdId = await bubbleCreate(type, patchPayload);
-    return { ok: true, mode: "create", id: createdId || null };
+    const patched = await bubblePatch("UnifiedOrder", existingId, finalPayload);
+    return { ok: true, action: "patched", id: existingId, patched };
   }
+
+  // CREATE: här är det okej att company saknas (då sparas den tom),
+  // men om company finns så följer den med (eftersom vi inte delete:ar när den finns).
+  const createdId = await bubbleCreate("UnifiedOrder", finalPayload);
+  return { ok: true, action: "created", id: createdId };
 }
 app.post("/debug/unifiedorder/resolve", requireApiKey, async (req, res) => {
   try {
