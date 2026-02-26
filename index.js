@@ -474,28 +474,11 @@ function toDateOrNull(v) {
 async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder, connection_id }) {
   const docNo = String(fortnoxOrder?.DocumentNumber || fortnoxOrder?.documentNumber || "").trim();
 
-  // ✅ Company:
-  // 1) resolve via Fortnox CustomerNumber (ft_customer_number / FortnoxCustomer->orgnr)
-  // 2) fallback via orgnr som ligger direkt på ordern (OrganisationNumber)
-  const customerNumber = fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber;
-  const orderOrgNo =
-    fortnoxOrder?.OrganisationNumber ??
-    fortnoxOrder?.organisationNumber ??
-    fortnoxOrder?.Organisation_Number ??
-    null;
-
-  let companyId = await resolveCompanyForUnifiedOrderFortnox({
+  // ✅ Company: prefer orgnr-match via FortnoxCustomer -> ClientCompany(orgnr)
+  const companyId = await resolveCompanyForUnifiedOrderFortnox({
     connection_id,
-    customerNumber
+    customerNumber: fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber
   });
-
-  if (!companyId && orderOrgNo) {
-    // Resolvern stödjer redan "ser ut som orgnr" => match på ClientCompany.Org_Number
-    companyId = await resolveCompanyForUnifiedOrderFortnox({
-      connection_id,
-      customerNumber: String(orderOrgNo)
-    });
-  }
 
   // ---- Robust money parsing (Fortnox kan ge "1234.50" eller "1 234,50")
   const fnxMoneyOrNull = (v) => {
@@ -556,6 +539,7 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
     source_url: String(fortnoxOrder?.["@url"] || ""),
     account_manager: null
   };
+} // ✅ VIKTIG: den här saknades
 // UnifiedOrder – Company resolver (Fortnox) – Policy B (create ONLY if order has orgnr)
 // ------------------------------------------------------------
 
