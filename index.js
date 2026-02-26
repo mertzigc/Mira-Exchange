@@ -7448,27 +7448,27 @@ app.post("/tengella/auth/test", async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // WorkOrders sync route (TOP-LEVEL, not nested)
-// Also resolves TengellaCustomer → company if customer has field `company`
+// Resolves TengellaCustomer → ClientCompany (Policy B)
 // ────────────────────────────────────────────────────────────
 app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
   try {
     const orgNo = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
-if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
+    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
+
     const limit = Number(req.body?.limit ?? 100) || 100;
     const cursor = req.body?.cursor ?? null;
     const customerId = req.body?.customerId ?? null;
     const projectId = req.body?.projectId ?? null;
     const maxPages = Number(req.body?.maxPages ?? 50) || 50;
 
-    const saveRowsJson = req.body?.saveRowsJson === undefined ? true : normalizeBool(req.body?.saveRowsJson);
-    const upsertRows = req.body?.upsertRows === undefined ? true : normalizeBool(req.body?.upsertRows);
+    const saveRowsJson =
+      req.body?.saveRowsJson === undefined ? true : normalizeBool(req.body?.saveRowsJson);
+    const upsertRows =
+      req.body?.upsertRows === undefined ? true : normalizeBool(req.body?.upsertRows);
 
-    // optional inputs from Bubble/curl
-    const bubbleCompanyId = req.body?.bubbleCompanyId ?? null;      // can be null
-    const bubbleCommissionId = req.body?.bubbleCommissionId ?? null; // can be null
+    const bubbleCompanyId = req.body?.bubbleCompanyId ?? null;
+    const bubbleCommissionId = req.body?.bubbleCommissionId ?? null;
     const parsedCommissionUid = req.body?.parsedCommissionUid ?? "";
-
-    if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
 
     const token = await tengellaLogin(orgNo);
 
@@ -7485,99 +7485,95 @@ if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
     while (existsMoreData && page < maxPages) {
       page += 1;
 
-      const resp = await listTengellaWorkOrders({ token, limit, cursor: nextCursor, customerId, projectId });
-            const data = Array.isArray(resp?.Data) ? resp.Data : [];
+      const resp = await listTengellaWorkOrders({
+        token,
+        limit,
+        cursor: nextCursor,
+        customerId,
+        projectId
+      });
+
+      const data = Array.isArray(resp?.Data) ? resp.Data : [];
       fetched += data.length;
 
       for (const wo of data) {
-// ─────────────────────────────────────────
-// Resolve TengellaCustomer → Company (ClientCompany)
-// Policy: skapa ClientCompany endast om orgnr finns
-// ─────────────────────────────────────────
-let resolvedCompanyId = bubbleCompanyId || null;
-let resolvedTengellaCustomerId = null;
+        // ─────────────────────────────────────────
+        // Resolve TengellaCustomer → ClientCompany
+        // ─────────────────────────────────────────
+        let resolvedCompanyId = bubbleCompanyId || null;
+        let resolvedTengellaCustomerId = null;
 
-if (wo?.CustomerId) {
-  const custIdNum = Number(wo.CustomerId);
+        if (wo?.CustomerId) {
+          const custIdNum = Number(wo.CustomerId);
 
-  // 1) hitta TengellaCustomer i Bubble
-  let tc = await bubbleFindOne("TengellaCustomer", [
-    { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
-  ]).catch(() => null);
+          let tc = await bubbleFindOne("TengellaCustomer", [
+            { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
+          ]).catch(() => null);
 
-  // 2) om tc saknas: (valfritt men rekommenderat) hämta från Tengella API och upserta
-  // OBS: detta kräver att du har eller lägger till helpern tengellaGetCustomerById()
-  if (!tc && typeof tengellaGetCustomerById === "function") {
-    try {
-      const apiCustomer = await tengellaGetCustomerById({ token, customerId: custIdNum });
-      if (apiCustomer && typeof upsertTengellaCustomerToBubble === "function") {
-        await upsertTengellaCustomerToBubble(apiCustomer).catch(() => null);
-        tc = await bubbleFindOne("TengellaCustomer", [
-          { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
-        ]).catch(() => null);
-      }
-    } catch (e) {
-      console.warn("[tengella/workorders] could not fetch/upsert customer", {
-        customerId: custIdNum,
-        err: e?.message || String(e)
-      });
-    }
-  }
+          if (!tc && typeof tengellaGetCustomerById === "function") {
+            try {
+              const apiCustomer = await tengellaGetCustomerById({
+                token,
+                customerId: custIdNum
+              });
+              if (apiCustomer && typeof upsertTengellaCustomerToBubble === "function") {
+                await upsertTengellaCustomerToBubble(apiCustomer).catch(() => null);
+                tc = await bubbleFindOne("TengellaCustomer", [
+                  { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
+                ]).catch(() => null);
+              }
+            } catch (e) {
+              console.warn("[tengella/workorders] customer fetch failed", custIdNum);
+            }
+          }
 
-  // 3) om vi hittade tc: resolve + cache
-  if (tc?._id) {
-    resolvedTengellaCustomerId = tc._id;
+          if (tc?._id) {
+            resolvedTengellaCustomerId = tc._id;
 
-// a) om tc redan har company → använd direkt
-if (tc?.company) {
-  resolvedCompanyId = tc.company;
-} else {
-  // b) annars: orgnr => hitta/skapa ClientCompany
-  const regDigits = normalizeOrgNo(
-    tc?.org_no ||
-    tc?.org_no_raw ||
-    tc?.organization_number ||
-    ""
-  );
+            if (tc.company) {
+              resolvedCompanyId = tc.company;
+            } else {
+              const regDigits = normalizeOrgNo(
+                tc.org_no || tc.org_no_raw || tc.organization_number || ""
+              );
 
-  if (regDigits) {
-    // 1) försök hitta befintlig ClientCompany på orgnr
-    const cc = await findClientCompanyByOrgNo(regDigits).catch(() => null);
-    let ccId = cc?._id || cc?.id || null;
+              if (regDigits) {
+                let cc = await findClientCompanyByOrgNo(regDigits).catch(() => null);
+                let ccId = cc?._id || null;
 
-    // 2) Policy B: skapa CC on-the-fly om den saknas (men bara om orgnr finns)
-    if (!ccId && typeof ensureClientCompanyForTengellaCustomer === "function") {
-      ccId = await ensureClientCompanyForTengellaCustomer({
-        RegNo: regDigits,
-        CustomerName: tc?.name || tc?.customer_name || null
-      }).catch(() => null);
-    }
+                if (!ccId && typeof ensureClientCompanyForTengellaCustomer === "function") {
+                  ccId = await ensureClientCompanyForTengellaCustomer({
+                    RegNo: regDigits,
+                    CustomerName: tc.name || tc.customer_name || null
+                  }).catch(() => null);
+                }
 
-    // 3) använd + cachea
-    if (ccId) {
-      resolvedCompanyId = ccId;
-      await bubblePatch("TengellaCustomer", tc._id, { company: ccId }).catch(() => null);
-    }
-  }
-}
+                if (ccId) {
+                  resolvedCompanyId = ccId;
+                  await bubblePatch("TengellaCustomer", tc._id, {
+                    company: ccId
+                  }).catch(() => null);
+                }
+              }
+            }
+          }
+        }
+
         // ─────────────────────────────────────────
         // Upsert WorkOrder
         // ─────────────────────────────────────────
         const result = await upsertTengellaWorkorderToBubble(wo, {
-  bubbleCompanyId: resolvedCompanyId,
-  bubbleCommissionId,
-  parsedCommissionUid,
-  saveRowsJson,
-  tengellaCustomerId: resolvedTengellaCustomerId
-});
+          bubbleCompanyId: resolvedCompanyId,
+          bubbleCommissionId,
+          parsedCommissionUid,
+          saveRowsJson,
+          tengellaCustomerId: resolvedTengellaCustomerId
+        });
 
         if (result?.ok) {
           upserted += 1;
 
-          // ─────────────────────────────────────────
-          // Upsert Rows
-          // ─────────────────────────────────────────
-          if (upsertRows && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
+          if (upsertRows && Array.isArray(wo.WorkOrderRows)) {
             for (const row of wo.WorkOrderRows) {
               try {
                 const rr = await upsertTengellaWorkorderRowToBubble(row, {
@@ -7585,24 +7581,14 @@ if (tc?.company) {
                   workorderId: wo.WorkOrderId,
                   projectId: wo.ProjectId,
                   customerId: wo.CustomerId,
-                  company: resolvedCompanyId, // ✅ VIKTIGT: rätt company här
-                  commission: bubbleCommissionId,
+                  company: resolvedCompanyId,
+                  commission: bubbleCommissionId
                 });
 
                 if (rr?.ok) workorderRowsUpserted += 1;
-                else {
-                  workorderRowsErrors += 1;
-                  errors.push({
-                    workOrderRowId: row?.WorkOrderRowId,
-                    reason: rr?.reason || "row_upsert_failed",
-                  });
-                }
+                else workorderRowsErrors += 1;
               } catch (e) {
                 workorderRowsErrors += 1;
-                errors.push({
-                  workOrderRowId: row?.WorkOrderRowId,
-                  reason: e?.message || String(e),
-                });
               }
             }
           }
@@ -7611,7 +7597,6 @@ if (tc?.company) {
 
       nextCursor = resp?.Next || null;
       existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
-      if (normalizeBool(resp?.ExistsMoreData) && !nextCursor) existsMoreData = false;
     }
 
     return res.json({
@@ -7623,15 +7608,11 @@ if (tc?.company) {
       workorderRowsErrors,
       nextCursor,
       existsMoreData,
-      errors: errors.slice(0, 50),
+      errors: errors.slice(0, 50)
     });
   } catch (e) {
-    console.error("[tengella/workorders/sync] error:", e?.message || e, e?.details || e?.detail || "");
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || String(e),
-      details: e?.details || e?.detail || null,
-    });
+    console.error("[tengella/workorders/sync] fatal", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
