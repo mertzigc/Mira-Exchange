@@ -7449,6 +7449,7 @@ app.post("/tengella/auth/test", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // WorkOrders sync route (TOP-LEVEL, not nested)
 // Resolves TengellaCustomer → ClientCompany (Policy B)
+// + ✅ Upsert UnifiedOrder per WorkOrder (Alternativ 2)
 // ────────────────────────────────────────────────────────────
 app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
   try {
@@ -7478,6 +7479,8 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
 
     let fetched = 0;
     let upserted = 0;
+    let unifiedOrdersUpserted = 0; // ✅ NYTT
+    let unifiedOrdersErrors = 0;   // ✅ NYTT
     let workorderRowsUpserted = 0;
     let workorderRowsErrors = 0;
     const errors = [];
@@ -7503,10 +7506,13 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
         let resolvedCompanyId = bubbleCompanyId || null;
         let resolvedTengellaCustomerId = null;
 
+        // ✅ VIKTIGT: tc måste ligga i scope för UnifiedOrder-hooken
+        let tc = null;
+
         if (wo?.CustomerId) {
           const custIdNum = Number(wo.CustomerId);
 
-          let tc = await bubbleFindOne("TengellaCustomer", [
+          tc = await bubbleFindOne("TengellaCustomer", [
             { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
           ]).catch(() => null);
 
@@ -7537,9 +7543,10 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
                 tc.org_no || tc.org_no_raw || tc.organization_number || ""
               );
 
+              // Policy B: skapa ClientCompany endast om orgnr finns
               if (regDigits) {
                 let cc = await findClientCompanyByOrgNo(regDigits).catch(() => null);
-                let ccId = cc?._id || null;
+                let ccId = cc?._id || cc?.id || null;
 
                 if (!ccId && typeof ensureClientCompanyForTengellaCustomer === "function") {
                   ccId = await ensureClientCompanyForTengellaCustomer({
@@ -7550,9 +7557,7 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
 
                 if (ccId) {
                   resolvedCompanyId = ccId;
-                  await bubblePatch("TengellaCustomer", tc._id, {
-                    company: ccId
-                  }).catch(() => null);
+                  await bubblePatch("TengellaCustomer", tc._id, { company: ccId }).catch(() => null);
                 }
               }
             }
@@ -7573,7 +7578,41 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
         if (result?.ok) {
           upserted += 1;
 
-          if (upsertRows && Array.isArray(wo.WorkOrderRows)) {
+          // ─────────────────────────────────────────
+          // ✅ Upsert UnifiedOrder (Alternativ 2)
+          // ─────────────────────────────────────────
+          try {
+            if (
+              result?.id &&
+              typeof buildUnifiedOrderFromTengella === "function" &&
+              typeof upsertUnifiedOrder === "function"
+            ) {
+              const unifiedPayload = await buildUnifiedOrderFromTengella({
+                bubbleWorkorderId: result.id,
+                wo,
+                resolvedCompanyId,
+                tengellaCustomer: tc || null,
+                supplier: "Carotte Housekeeping AB"
+              });
+
+              await upsertUnifiedOrder(unifiedPayload);
+              unifiedOrdersUpserted += 1;
+            }
+          } catch (e) {
+            unifiedOrdersErrors += 1;
+            errors.push({
+              kind: "unifiedorder_upsert_failed",
+              workOrderId: wo?.WorkOrderId,
+              workOrderNo: wo?.WorkOrderNo,
+              bubbleWorkorderId: result?.id || null,
+              reason: e?.message || String(e)
+            });
+          }
+
+          // ─────────────────────────────────────────
+          // Upsert Rows
+          // ─────────────────────────────────────────
+          if (upsertRows && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
             for (const row of wo.WorkOrderRows) {
               try {
                 const rr = await upsertTengellaWorkorderRowToBubble(row, {
@@ -7597,6 +7636,7 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
 
       nextCursor = resp?.Next || null;
       existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!nextCursor;
+      if (normalizeBool(resp?.ExistsMoreData) && !nextCursor) existsMoreData = false;
     }
 
     return res.json({
@@ -7604,6 +7644,8 @@ app.post("/tengella/workorders/sync", requireSyncSecret, async (req, res) => {
       pages: page,
       fetched,
       upserted,
+      unifiedOrdersUpserted, // ✅ NYTT
+      unifiedOrdersErrors,   // ✅ NYTT
       workorderRowsUpserted,
       workorderRowsErrors,
       nextCursor,
