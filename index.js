@@ -435,27 +435,33 @@ async function upsertUnifiedOrder(payload) {
   }
 }
 app.post("/debug/unifiedorder/resolve", requireApiKey, async (req, res) => {
-  const { connection_id, customerNumber } = req.body || {};
-
-  if (!connection_id || !customerNumber) {
-    return res.status(400).json({
-      ok: false,
-      error: "connection_id and customerNumber are required"
-    });
-  }
-
   try {
-    const companyId = await resolveCompanyForUnifiedOrderFortnox({
-  connection_id,
-  customerNumber: fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber,
-  orgNumber: fortnoxOrder?.OrganisationNumber ?? fortnoxOrder?.organisationNumber,
-  customerName: fortnoxOrder?.CustomerName ?? fortnoxOrder?.customerName
-});
+    const body = req.body || {};
+
+    const connection_id = String(body.connection_id || "").trim();
+    const customerNumber = body.customerNumber ?? "";
+    const orgNumber = body.orgNumber ?? null;
+    const customerName = body.customerName ?? null;
+
+    // Viktigt: resolvern ska INTE referera till "fortnoxOrder" här.
+    // Den ska använda inputs från body.
+    const resolved_company_id = await resolveCompanyForUnifiedOrderFortnox({
+      connection_id,
+      customerNumber,
+      // Policy B inputs (om du lagt till stöd i resolvern)
+      orgNumber,
+      customerName
+    });
 
     return res.json({
       ok: true,
-      input: { connection_id, customerNumber },
-      resolved_company_id: companyId || null
+      input: {
+        connection_id,
+        customerNumber: String(customerNumber ?? ""),
+        orgNumber: orgNumber ? String(orgNumber) : null,
+        customerName: customerName ? String(customerName) : null
+      },
+      resolved_company_id: resolved_company_id || null
     });
   } catch (e) {
     return res.status(500).json({
