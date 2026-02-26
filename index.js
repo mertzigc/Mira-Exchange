@@ -481,10 +481,14 @@ async function buildUnifiedOrderFromFortnox({ bubbleFortnoxOrderId, fortnoxOrder
   const docNo = String(fortnoxOrder?.DocumentNumber || fortnoxOrder?.documentNumber || "").trim();
 
   // ✅ Company: prefer orgnr-match via FortnoxCustomer -> ClientCompany(orgnr)
-  const companyId = await resolveCompanyForUnifiedOrderFortnox({
-    connection_id,
-    customerNumber: fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber
-  });
+const companyId = await resolveCompanyForUnifiedOrderFortnox({
+  connection_id,
+  customerNumber: fortnoxOrder?.CustomerNumber ?? fortnoxOrder?.customerNumber,
+
+  // 🔑 Policy B – ONLY source of creation
+  orgNumber: fortnoxOrder?.OrganisationNumber ?? null,
+  customerName: fortnoxOrder?.CustomerName ?? null
+});
 
   // ---- Robust money parsing (Fortnox kan ge "1234.50" eller "1 234,50")
   const fnxMoneyOrNull = (v) => {
