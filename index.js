@@ -6745,6 +6745,17 @@ async function listTengellaCustomers({ token, limit = 100, cursor = null } = {})
     query: { limit, cursor },
   });
 }
+async function tengellaGetCustomerById({ token, customerId }) {
+  if (!customerId) return null;
+  // Försök vanligaste REST-mönstret först
+  try {
+    return await tengellaFetch(`/v2/Customers/${customerId}`, { token });
+  } catch (e) {
+    // Fallback om API:t inte stödjer /Customers/:id
+    // (då kan du senare byta till listTengellaCustomers + filtrering)
+    throw e;
+  }
+}
 async function upsertTengellaCustomerToBubble(customer) {
   const type = "TengellaCustomer";
 
@@ -7479,33 +7490,73 @@ if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
       fetched += data.length;
 
       for (const wo of data) {
-        // ─────────────────────────────────────────
+// ─────────────────────────────────────────
 // Resolve TengellaCustomer → Company (ClientCompany)
+// Policy: skapa ClientCompany endast om orgnr finns
 // ─────────────────────────────────────────
 let resolvedCompanyId = bubbleCompanyId || null;
 let resolvedTengellaCustomerId = null;
 
 if (wo?.CustomerId) {
-  const tc = await bubbleFindOne("TengellaCustomer", [
-    { key: "tengella_customer_id", constraint_type: "equals", value: Number(wo.CustomerId) }
-  ]);
+  const custIdNum = Number(wo.CustomerId);
 
+  // 1) hitta TengellaCustomer i Bubble
+  let tc = await bubbleFindOne("TengellaCustomer", [
+    { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
+  ]).catch(() => null);
+
+  // 2) om tc saknas: (valfritt men rekommenderat) hämta från Tengella API och upserta
+  // OBS: detta kräver att du har eller lägger till helpern tengellaGetCustomerById()
+  if (!tc && typeof tengellaGetCustomerById === "function") {
+    try {
+      const apiCustomer = await tengellaGetCustomerById({ token, customerId: custIdNum });
+      if (apiCustomer && typeof upsertTengellaCustomerToBubble === "function") {
+        await upsertTengellaCustomerToBubble(apiCustomer).catch(() => null);
+        tc = await bubbleFindOne("TengellaCustomer", [
+          { key: "tengella_customer_id", constraint_type: "equals", value: custIdNum }
+        ]).catch(() => null);
+      }
+    } catch (e) {
+      console.warn("[tengella/workorders] could not fetch/upsert customer", {
+        customerId: custIdNum,
+        err: e?.message || String(e)
+      });
+    }
+  }
+
+  // 3) om vi hittade tc: resolve + cache
   if (tc?._id) {
     resolvedTengellaCustomerId = tc._id;
 
-    if (tc?.company) {
-      resolvedCompanyId = tc.company;
-    } else {
-      const regDigits = normalizeOrgNo(tc?.org_no || tc?.org_no_raw || "");
-      if (regDigits) {
-        const cc = await findClientCompanyByOrgNo(regDigits);
-        if (cc?._id) {
-          resolvedCompanyId = cc._id;
+// a) om tc redan har company → använd direkt
+if (tc?.company) {
+  resolvedCompanyId = tc.company;
+} else {
+  // b) annars: orgnr => hitta/skapa ClientCompany
+  const regDigits = normalizeOrgNo(
+    tc?.org_no ||
+    tc?.org_no_raw ||
+    tc?.organization_number ||
+    ""
+  );
 
-          // cachea kopplingen för framtiden
-          await bubblePatch("TengellaCustomer", tc._id, { company: cc._id });
-        }
-      }
+  if (regDigits) {
+    // 1) försök hitta befintlig ClientCompany på orgnr
+    const cc = await findClientCompanyByOrgNo(regDigits).catch(() => null);
+    let ccId = cc?._id || cc?.id || null;
+
+    // 2) Policy B: skapa CC on-the-fly om den saknas (men bara om orgnr finns)
+    if (!ccId && typeof ensureClientCompanyForTengellaCustomer === "function") {
+      ccId = await ensureClientCompanyForTengellaCustomer({
+        RegNo: regDigits,
+        CustomerName: tc?.name || tc?.customer_name || null
+      }).catch(() => null);
+    }
+
+    // 3) använd + cachea
+    if (ccId) {
+      resolvedCompanyId = ccId;
+      await bubblePatch("TengellaCustomer", tc._id, { company: ccId }).catch(() => null);
     }
   }
 }
