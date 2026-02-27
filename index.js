@@ -1260,30 +1260,62 @@ async function safeSetConnPaging(connectionId, patchObj) {
     return false;
   }
 }
-// POST internt med timeout
-async function postInternalJson(path, payload, timeoutMs = 180000) {
+// POST internt med timeout + bättre error-detail
+async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
-  const url = `${SELF_BASE_URL}${path}`;
+  // Viktigt: kalla helst lokalt på Render istället för publika URL:en
+  // - minskar latency
+  // - minskar risk för Cloudflare/HTTP2-strul
+  // Om du inte har INTERNAL_BASE_URL, fallbacka till SELF_BASE_URL.
+  const base =
+    process.env.INTERNAL_BASE_URL ||
+    process.env.SELF_BASE_URL ||
+    SELF_BASE_URL;
+
+  const url = `${String(base).replace(/\/+$/, "")}${path}`;
+
   try {
     const r = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
+        "x-api-key": process.env.MIRA_RENDER_API_KEY,
       },
       body: JSON.stringify(payload || {}),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
-    const j = await r.json().catch(() => ({}));
+    const text = await r.text().catch(() => "");
+    let j = {};
+    try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
+
     if (!r.ok || !j.ok) {
       const err = new Error(`internal call failed: ${path}`);
-      err.detail = { path, status: r.status, body: j };
+      err.detail = {
+        url,
+        path,
+        status: r.status,
+        statusText: r.statusText,
+        bodyText: text || null,
+        bodyJson: j || null,
+      };
       throw err;
     }
+
     return j;
+  } catch (e) {
+    // Gör AbortError och "fetch failed" tydligare i loggar
+    const err = new Error(e?.message || String(e));
+    err.cause = e;
+    err.detail = {
+      path,
+      url,
+      timeoutMs,
+      name: e?.name || null,
+    };
+    throw err;
   } finally {
     clearTimeout(t);
   }
