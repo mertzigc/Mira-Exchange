@@ -4300,9 +4300,14 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
   const now = Date.now();
   const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 
+  const numOr = (v, fallback) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
   const { connection_id = null, only_connection_id = null, months_back = 12 } = req.body || {};
   const onlyId = (only_connection_id || connection_id || null);
-  const mb = Math.max(1, Number(months_back) || 12);
+  const mb = Math.max(1, numOr(months_back, 12));
 
   // stale lock clear
   if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
@@ -4323,13 +4328,13 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 
   try {
     const connections = await getAllFortnoxConnections();
-    const pick = onlyId
+    const pickList = onlyId
       ? connections.filter(c => String(c?._id || "") === String(onlyId))
       : connections;
 
     const results = [];
 
-    for (const conn of pick) {
+    for (const conn of pickList) {
       const cid = conn._id;
       const allowDocs = isDocsConnection(cid);
 
@@ -4456,12 +4461,6 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
   }
 });
-// Fortnox: Nightly orchestrator – kör ALLA connections i rätt ordning
-// Policy:
-// - CUSTOMERS: alla connections (soft-fail så invoices ändå körs)
-// - INVOICES: alla connections (self-heal paging på Fortnox code 2001889)
-// - ORDERS + ORDER ROWS: endast "docs-allowlist" (Food & Event)
-// - OFFERS + OFFER ROWS: endast "docs-allowlist" (Food & Event)
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   const lock = getLock();
   const now = Date.now();
@@ -4470,27 +4469,31 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   let acquired = false;
   let myRunId = null;
 
-  // Helper: allowlist for docs (orders+offers + rows)
-  // Set in Render (Web + Cron): FORTNOX_DOCS_CONNECTION_IDS=<Food&Event-connection-id>
-  // Backward compatible: falls back to FORTNOX_ORDERS_CONNECTION_IDS if you used that earlier.
-  const isDocsConnection = (connection_id) => {
+  // --- Helpers ---
+  const numOr = (v, fallback) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const boolOr = (v, fallback) => (v === undefined ? fallback : !!v);
+
+  const isDocsConnectionLocal = (connection_id) => {
     const id = String(connection_id || "").trim();
     const allow = String(
       process.env.FORTNOX_DOCS_CONNECTION_IDS ||
-        process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
-        ""
+      process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
+      ""
     )
       .split(",")
-      .map((s) => s.trim())
+      .map(s => s.trim())
       .filter(Boolean);
 
-    // If not set, default allow ALL (safer for dev). In prod: set it.
     if (!allow.length) return true;
     return allow.includes(id);
   };
 
-  // Helper: robustly extract Fortnox ErrorInformation from nested "internal call failed" structures
   const extractFortnoxErrorInfo = (err) => {
+    // Walk down nested .detail chains until we find ErrorInformation
     let node = err?.detail?.body;
     for (let i = 0; i < 12 && node; i++) {
       if (node?.ErrorInformation) return node.ErrorInformation;
@@ -4502,10 +4505,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   try {
     // Clear stale lock
     if (lock.running && lock.started_at && now - lock.started_at > LOCK_TTL_MS) {
-      console.warn("[nightly/run] stale lock cleared", {
-        ...lock,
-        age_ms: now - lock.started_at
-      });
+      console.warn("[nightly/run] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
       lock.running = false;
       lock.started_at = 0;
       lock.finished_at = 0;
@@ -4513,9 +4513,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
       lock.run_id = null;
     }
     if (lock.running) {
-      return res
-        .status(409)
-        .json({ ok: false, error: "Nightly already running", lock });
+      return res.status(409).json({ ok: false, error: "Nightly already running", lock });
     }
 
     myRunId = `${now}-${Math.random().toString(16).slice(2)}`;
@@ -4527,35 +4525,45 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
     acquired = true;
 
     const body = req.body || {};
-    const months_back = Math.max(1, Number(body.months_back ?? 12) || 12);
+    const months_back = Math.max(1, numOr(body.months_back, 12));
+    const docs_allowlist = String(body.docs_allowlist ?? "").trim() || null;
 
+    // allow override via request body (optional), else env-based isDocsConnectionLocal
+    const allowDocsFor = (cid) => {
+      if (!docs_allowlist) return isDocsConnectionLocal(cid);
+      const allow = docs_allowlist.split(",").map(s => s.trim()).filter(Boolean);
+      if (!allow.length) return isDocsConnectionLocal(cid);
+      return allow.includes(String(cid));
+    };
+
+    // ✅ IMPORTANT: respect 0 (skip). Correctly read pages_per_call (NOT max_pages).
     const cfg = {
       customers: {
-        limit: Number(body?.customers?.limit ?? 500) || 500,
-        max_pages: Number(body?.customers?.max_pages ?? 30) || 30,
-        pause_ms: Number(body?.customers?.pause_ms ?? 50) || 50,
-        skip_without_orgnr: true,
-        link_company: true
+        limit:  numOr(body?.customers?.limit, 500),
+        max_pages: numOr(body?.customers?.max_pages, 30),
+        pause_ms: numOr(body?.customers?.pause_ms, 50),
+        skip_without_orgnr: boolOr(body?.customers?.skip_without_orgnr, true),
+        link_company: boolOr(body?.customers?.link_company, true)
       },
       orders: {
-        limit: Number(body?.orders?.limit ?? 200) || 200,
-        pages_per_call: Number(body?.orders?.max_pages ?? 5) || 5,
-        pause_ms: Number(body?.orders?.pause_ms ?? 150) || 150
+        limit: numOr(body?.orders?.limit, 200),
+        pages_per_call: numOr(body?.orders?.pages_per_call, 5),
+        pause_ms: numOr(body?.orders?.pause_ms, 150)
       },
       offers: {
-        limit: Number(body?.offers?.limit ?? 200) || 200,
-        pages_per_call: Number(body?.offers?.max_pages ?? 5) || 5,
-        pause_ms: Number(body?.offers?.pause_ms ?? 150) || 150
+        limit: numOr(body?.offers?.limit, 200),
+        pages_per_call: numOr(body?.offers?.pages_per_call, 5),
+        pause_ms: numOr(body?.offers?.pause_ms, 150)
       },
       invoices: {
-        limit: Number(body?.invoices?.limit ?? 200) || 200,
-        pages_per_call: Number(body?.invoices?.max_pages ?? 5) || 5,
-        pause_ms: Number(body?.invoices?.pause_ms ?? 150) || 150
+        limit: numOr(body?.invoices?.limit, 200),
+        pages_per_call: numOr(body?.invoices?.pages_per_call, 5),
+        pause_ms: numOr(body?.invoices?.pause_ms, 150)
       },
       rows: {
-        limit: Number(body?.rows?.limit ?? 30) || 30,
-        passes: Number(body?.rows?.passes ?? 20) || 20,
-        pause_ms: Number(body?.rows?.pause_ms ?? 250) || 250
+        limit: numOr(body?.rows?.limit, 30),
+        passes: numOr(body?.rows?.passes, 20),
+        pause_ms: numOr(body?.rows?.pause_ms, 250)
       }
     };
 
@@ -4564,7 +4572,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
     for (const c of conns) {
       const connection_id = c._id;
-      const allowDocs = isDocsConnection(connection_id);
+      const allowDocs = allowDocsFor(connection_id);
 
       const one = {
         connection_id,
@@ -4576,107 +4584,147 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         errors: []
       };
 
-// --- CUSTOMERS (ALL) — SOFT FAIL ---
-try {
-  let startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
-
-  const runCustomers = async (start_page) => {
-    return await postInternalJson(
-      "/fortnox/upsert/customers/all",
-      {
-        connection_id,
-        start_page,
-        limit: cfg.customers.limit,
-        max_pages: cfg.customers.max_pages,
-        pause_ms: cfg.customers.pause_ms,
-        skip_without_orgnr: cfg.customers.skip_without_orgnr,
-        link_company: cfg.customers.link_company
-      },
-      180000
-    );
-  };
-
-  // Walk down nested .detail chains until we find an object with ErrorInformation
-  const extractFortnoxErrorInfo = (err) => {
-    let node = err?.detail?.body;
-    for (let i = 0; i < 12 && node; i++) {
-      if (node?.ErrorInformation) return node.ErrorInformation;
-      node = node?.detail;
-    }
-    return null;
-  };
-
-  let customersJ;
-
-  try {
-    customersJ = await runCustomers(startCustomers);
-  } catch (e1) {
-    const errInfo = extractFortnoxErrorInfo(e1);
-    const fortnoxCode = errInfo?.code;
-
-    // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once
-    if (fortnoxCode === 2001889) {
-      console.warn("[nightly/run] customers page out of range; resetting to page 1", {
-        connection_id,
-        startCustomers,
-        limit: cfg.customers.limit,
-        months_back
-      });
-
-      await safeSetConnPaging(connection_id, {
-        customers_next_page: 1,
-        customers_last_progress_at: nowIso()
-      });
-
-      customersJ = await runCustomers(1);
-    } else {
-      throw e1;
-    }
-  }
-
-  one.customers = {
-    done: !!customersJ.done,
-    next_page: customersJ.next_page ?? null,
-    counts: customersJ.counts || null
-  };
-
-  await safeSetConnPaging(connection_id, {
-    customers_next_page: customersJ?.next_page || 1,
-    customers_last_progress_at: nowIso(),
-    ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
-  });
-} catch (e) {
-  const msg = e?.message || String(e);
-  const fortnoxInfo = (() => {
-    let node = e?.detail?.body;
-    for (let i = 0; i < 12 && node; i++) {
-      if (node?.ErrorInformation) return node.ErrorInformation;
-      node = node?.detail;
-    }
-    return null;
-  })();
-
-  one.customers = {
-    ok: false,
-    skipped: true,
-    reason: "customers failed (continuing)",
-    message: msg,
-    fortnox_error: fortnoxInfo || null
-  };
-
-  one.errors.push({ message: msg, detail: e?.detail || null });
-}
-
-      // --- OFFERS + OFFER ROWS (DOCS ONLY) ---
-      if (!allowDocs) {
-        one.offers = { skipped: true, reason: "not allowed for orders/offers" };
+      // --- CUSTOMERS (ALL) — SOFT FAIL / SKIP WHEN max_pages<=0 ---
+      if (cfg.customers.max_pages <= 0) {
+        one.customers = { skipped: true, reason: "customers.max_pages=0" };
       } else {
         try {
-          const startOffers = await getConnNextPage(
-            connection_id,
-            "offers_next_page",
-            1
-          );
+          let startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
+
+          const runCustomers = async (start_page) => {
+            return await postInternalJson(
+              "/fortnox/upsert/customers/all",
+              {
+                connection_id,
+                start_page,
+                limit: cfg.customers.limit,
+                max_pages: cfg.customers.max_pages,
+                pause_ms: cfg.customers.pause_ms,
+                skip_without_orgnr: cfg.customers.skip_without_orgnr,
+                link_company: cfg.customers.link_company
+              },
+              180000
+            );
+          };
+
+          let customersJ;
+          try {
+            customersJ = await runCustomers(startCustomers);
+          } catch (e1) {
+            const errInfo = extractFortnoxErrorInfo(e1);
+            if (errInfo?.code === 2001889) {
+              console.warn("[nightly/run] customers page out of range; resetting to page 1", {
+                connection_id, startCustomers, limit: cfg.customers.limit, months_back
+              });
+              await safeSetConnPaging(connection_id, { customers_next_page: 1, customers_last_progress_at: nowIso() });
+              customersJ = await runCustomers(1);
+            } else {
+              throw e1;
+            }
+          }
+
+          one.customers = {
+            done: !!customersJ.done,
+            next_page: customersJ.next_page ?? null,
+            counts: customersJ.counts || null
+          };
+
+          await safeSetConnPaging(connection_id, {
+            customers_next_page: customersJ?.next_page || 1,
+            customers_last_progress_at: nowIso(),
+            ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
+          });
+        } catch (e) {
+          const msg = e?.message || String(e);
+          one.customers = {
+            ok: false,
+            skipped: true,
+            reason: "customers failed (continuing)",
+            message: msg,
+            fortnox_error: extractFortnoxErrorInfo(e) || null
+          };
+          one.errors.push({ message: msg, detail: e?.detail || null });
+        }
+      }
+
+      // --- ORDERS + ORDER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
+      if (!allowDocs) {
+        one.orders = { skipped: true, reason: "not allowed for orders/offers" };
+      } else if (cfg.orders.pages_per_call <= 0) {
+        one.orders = { skipped: true, reason: "orders.pages_per_call=0" };
+      } else {
+        try {
+          let startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
+
+          const runOrders = async (start_page) => {
+            return await postInternalJson(
+              "/fortnox/upsert/orders/all",
+              {
+                connection_id,
+                start_page,
+                limit: cfg.orders.limit,
+                max_pages: cfg.orders.pages_per_call,
+                pause_ms: cfg.orders.pause_ms,
+                months_back
+              },
+              15 * 60 * 1000
+            );
+          };
+
+          let ordersJ;
+          try {
+            ordersJ = await runOrders(startOrders);
+          } catch (e1) {
+            const errInfo = extractFortnoxErrorInfo(e1);
+            if (errInfo?.code === 2001889) {
+              console.warn("[nightly/run] orders page out of range; resetting to page 1", {
+                connection_id, startOrders, months_back
+              });
+              await safeSetConnPaging(connection_id, { orders_next_page: 1, orders_last_progress_at: nowIso() });
+              ordersJ = await runOrders(1);
+            } else {
+              throw e1;
+            }
+          }
+
+          one.orders = {
+            done: !!ordersJ.done,
+            next_page: ordersJ.next_page ?? null,
+            counts: ordersJ.counts || null
+          };
+
+          await safeSetConnPaging(connection_id, {
+            orders_next_page: ordersJ?.next_page || 1,
+            orders_last_progress_at: nowIso(),
+            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
+          });
+
+          // Order rows flagged (optional) — also skip if rows.passes<=0
+          if (cfg.rows.passes > 0) {
+            for (let p = 0; p < cfg.rows.passes; p++) {
+              const rowsJ = await postInternalJson(
+                "/fortnox/upsert/order-rows/flagged",
+                { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
+                180000
+              );
+              if (!rowsJ.flagged_found) break;
+              if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+            }
+          }
+        } catch (e) {
+          one.orders = null;
+          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
+        }
+      }
+
+      // --- OFFERS + OFFER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
+      if (!allowDocs) {
+        one.offers = { skipped: true, reason: "not allowed for orders/offers" };
+      } else if (cfg.offers.pages_per_call <= 0) {
+        one.offers = { skipped: true, reason: "offers.pages_per_call=0" };
+      } else {
+        try {
+          const startOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
 
           const offersJ = await postInternalJson(
             "/fortnox/upsert/offers/all",
@@ -4686,7 +4734,7 @@ try {
               limit: cfg.offers.limit,
               max_pages: cfg.offers.pages_per_call
             },
-            180000
+            15 * 60 * 1000
           );
 
           one.offers = {
@@ -4701,85 +4749,79 @@ try {
             ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
           });
 
-          for (let p = 0; p < cfg.rows.passes; p++) {
-            const rowsJ = await postInternalJson(
-              "/fortnox/upsert/offer-rows/flagged",
-              { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-              180000
-            );
-            if (!rowsJ.flagged_found) break;
-            if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+          if (cfg.rows.passes > 0) {
+            for (let p = 0; p < cfg.rows.passes; p++) {
+              const rowsJ = await postInternalJson(
+                "/fortnox/upsert/offer-rows/flagged",
+                { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
+                180000
+              );
+              if (!rowsJ.flagged_found) break;
+              if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+            }
           }
         } catch (e) {
+          one.offers = null;
           one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
         }
       }
 
-      // --- INVOICES (ALL) — self-heal paging on Fortnox code 2001889 ---
-      try {
-        let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
-
-        const runInvoices = async (start_page) => {
-          return await postInternalJson(
-            "/fortnox/upsert/invoices/all",
-            {
-              connection_id,
-              start_page,
-              limit: cfg.invoices.limit,
-              max_pages: cfg.invoices.pages_per_call,
-              months_back
-            },
-            180000
-          );
-        };
-
-        let invoicesJ;
-
+      // --- INVOICES (ALL) — self-heal paging / SKIP WHEN pages_per_call<=0 ---
+      if (cfg.invoices.pages_per_call <= 0) {
+        one.invoices = { skipped: true, reason: "invoices.pages_per_call=0" };
+      } else {
         try {
-          invoicesJ = await runInvoices(startInv);
-        } catch (e1) {
-          const errInfo = extractFortnoxErrorInfo(e1);
-          const fortnoxCode = errInfo?.code;
+          let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
 
-          // Fortnox: "Angiven sida hittades ej (X)." => reset paging and retry once
-          if (fortnoxCode === 2001889) {
-            console.warn("[nightly/run] invoices page out of range; resetting to page 1", {
-              connection_id,
-              startInv,
-              months_back
-            });
+          const runInvoices = async (start_page) => {
+            return await postInternalJson(
+              "/fortnox/upsert/invoices/all",
+              {
+                connection_id,
+                start_page,
+                limit: cfg.invoices.limit,
+                max_pages: cfg.invoices.pages_per_call,
+                months_back
+              },
+              15 * 60 * 1000
+            );
+          };
 
-            await safeSetConnPaging(connection_id, {
-              invoices_next_page: 1,
-              invoices_last_progress_at: nowIso()
-            });
-
-            invoicesJ = await runInvoices(1);
-          } else {
-            throw e1;
+          let invoicesJ;
+          try {
+            invoicesJ = await runInvoices(startInv);
+          } catch (e1) {
+            const errInfo = extractFortnoxErrorInfo(e1);
+            if (errInfo?.code === 2001889) {
+              console.warn("[nightly/run] invoices page out of range; resetting to page 1", {
+                connection_id, startInv, months_back
+              });
+              await safeSetConnPaging(connection_id, { invoices_next_page: 1, invoices_last_progress_at: nowIso() });
+              invoicesJ = await runInvoices(1);
+            } else {
+              throw e1;
+            }
           }
+
+          one.invoices = {
+            done: !!invoicesJ.done,
+            next_page: invoicesJ.next_page ?? null,
+            counts: invoicesJ.counts || null
+          };
+
+          await safeSetConnPaging(connection_id, {
+            invoices_next_page: invoicesJ?.next_page || 1,
+            invoices_last_progress_at: nowIso(),
+            ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
+          });
+        } catch (e) {
+          one.invoices = null;
+          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
         }
-
-        one.invoices = {
-          done: !!invoicesJ.done,
-          next_page: invoicesJ.next_page ?? null,
-          counts: invoicesJ.counts || null
-        };
-
-        await safeSetConnPaging(connection_id, {
-          invoices_next_page: invoicesJ?.next_page || 1,
-          invoices_last_progress_at: nowIso(),
-          ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
-        });
-      } catch (e) {
-        // keep your current output shape on failure
-        one.invoices = null;
-        one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
       }
 
       results.push(one);
 
-      // Small pause between connections
       if (cfg.customers.pause_ms) await sleep(Number(cfg.customers.pause_ms));
     }
 
@@ -4788,10 +4830,10 @@ try {
       run_id: myRunId,
       months_back,
       config: cfg,
-      docs_allowlist: String(
+      docs_allowlist: docs_allowlist || String(
         process.env.FORTNOX_DOCS_CONNECTION_IDS ||
-          process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
-          ""
+        process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
+        ""
       ),
       connections: conns.length,
       results
@@ -4806,10 +4848,7 @@ try {
     if (acquired && lock.run_id === myRunId) {
       lock.running = false;
       lock.finished_at = Date.now();
-      console.log("[nightly/run] finished", {
-        run_id: lock.run_id,
-        finished_at: lock.finished_at
-      });
+      console.log("[nightly/run] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
     }
   }
 });
