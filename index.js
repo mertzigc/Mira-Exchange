@@ -4374,53 +4374,80 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
         connection_id: cid,
         allow_docs: allowDocs,
         ok: false,
-        steps: {}
+        steps: {},
+        errors: []
       };
 
       try {
         // 1) customers (1 sida delta) — ALLA connections
-        const customersJ = await postInternalJson("/fortnox/upsert/customers", {
-          connection_id: cid, page: 1, limit: 100
-        }, 120000);
-
+        const customersJ = await postInternalJson(
+          "/fortnox/upsert/customers",
+          { connection_id: cid, page: 1, limit: 100 },
+          120000
+        );
         one.steps.customers = { ok: true, counts: customersJ.counts || null };
 
-        const ordersJ = await postInternalJson(
-  "/fortnox/upsert/orders",
-  {
-    connection_id: cid,
-    months_back: mb,
-    page: 1,
-    limit: 50
-  },
-  15 * 60 * 1000 // 15 minuter
-);
+        // 2) orders (paged) + order rows flagged — ENDAST docs-allowlist (Food & Event)
+        if (allowDocs) {
+          // orders/all (resume via orders_next_page)
+          const startOrders = await getConnNextPage(cid, "orders_next_page", 1);
 
-          one.steps.orders = { ok: true, counts: ordersJ.counts || null };
+          const ordersJ = await postInternalJson(
+            "/fortnox/upsert/orders/all",
+            {
+              connection_id: cid,
+              months_back: mb,
+              start_page: startOrders,
+              limit: 100,
+              max_pages: 5,
+              pause_ms: 150
+            },
+            15 * 60 * 1000
+          );
 
-          // 3) order rows flagged — ENDAST Food & Event
+          one.steps.orders = {
+            ok: true,
+            done: !!ordersJ.done,
+            next_page: ordersJ.next_page ?? null,
+            counts: ordersJ.counts || null
+          };
+
+          await safeSetConnPaging(cid, {
+            orders_next_page: ordersJ?.next_page || 1,
+            orders_last_progress_at: nowIso(),
+            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
+          });
+
+          // order-rows/flagged (några pass)
           for (let round = 0; round < 5; round++) {
-            const rowsJ = await postInternalJson("/fortnox/upsert/order-rows/flagged", {
-              connection_id: cid, limit: 30, pause_ms: 250
-            }, 180000);
+            const rowsJ = await postInternalJson(
+              "/fortnox/upsert/order-rows/flagged",
+              { connection_id: cid, limit: 30, pause_ms: 250 },
+              5 * 60 * 1000
+            );
             if (!rowsJ.flagged_found) break;
           }
           one.steps.order_rows = { ok: true };
         } else {
-          one.steps.orders = { skipped: true };
-          one.steps.order_rows = { skipped: true };
+          one.steps.orders = { skipped: true, reason: "not allowed for orders/offers" };
+          one.steps.order_rows = { skipped: true, reason: "not allowed for orders/offers" };
         }
 
-        // 4) offers + pdf + offer rows — ENDAST Food & Event
+        // 3) offers + pdf + offer rows — ENDAST docs-allowlist
         if (allowDocs) {
           const startOffers = await getConnNextPage(cid, "offers_next_page", 1);
-          const offersJ = await postInternalJson("/fortnox/upsert/offers/all", {
-            connection_id: cid,
-            start_page: startOffers,
-            limit: 100,
-            max_pages: 5,
-            fetch_pdf: false
-          }, 15 * 60 * 1000);
+
+          const offersJ = await postInternalJson(
+            "/fortnox/upsert/offers/all",
+            {
+              connection_id: cid,
+              start_page: startOffers,
+              limit: 100,
+              max_pages: 5,
+              fetch_pdf: false
+            },
+            15 * 60 * 1000
+          );
 
           one.steps.offers = {
             ok: true,
@@ -4435,30 +4462,41 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
             ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
           });
 
-          const pdfJ = await postInternalJson("/fortnox/upsert/offer-pdfs/flagged", {
-            connection_id: cid, limit: 10, pause_ms: 500
-          }, 15 * 60 * 1000);
+          const pdfJ = await postInternalJson(
+            "/fortnox/upsert/offer-pdfs/flagged",
+            { connection_id: cid, limit: 10, pause_ms: 500 },
+            15 * 60 * 1000
+          );
 
-          one.steps.offer_pdfs = { ok: true, counts: pdfJ.counts || null, flagged_found: pdfJ.flagged_found ?? null };
+          one.steps.offer_pdfs = {
+            ok: true,
+            counts: pdfJ.counts || null,
+            flagged_found: pdfJ.flagged_found ?? null
+          };
 
           for (let round = 0; round < 5; round++) {
-            const rowsJ = await postInternalJson("/fortnox/upsert/offer-rows/flagged", {
-              connection_id: cid, limit: 30, pause_ms: 250
-            }, 180000);
+            const rowsJ = await postInternalJson(
+              "/fortnox/upsert/offer-rows/flagged",
+              { connection_id: cid, limit: 30, pause_ms: 250 },
+              5 * 60 * 1000
+            );
             if (!rowsJ.flagged_found) break;
           }
           one.steps.offer_rows = { ok: true };
         } else {
-          one.steps.offers = { skipped: true };
-          one.steps.offer_pdfs = { skipped: true };
-          one.steps.offer_rows = { skipped: true };
+          one.steps.offers = { skipped: true, reason: "not allowed for orders/offers" };
+          one.steps.offer_pdfs = { skipped: true, reason: "not allowed for orders/offers" };
+          one.steps.offer_rows = { skipped: true, reason: "not allowed for orders/offers" };
         }
 
-        // 5) invoices — ALLA connections
+        // 4) invoices — ALLA connections
         const startInv = await getConnNextPage(cid, "invoices_next_page", 1);
-        const invoicesJ = await postInternalJson("/fortnox/upsert/invoices/all", {
-          connection_id: cid, start_page: startInv, limit: 50, max_pages: 5, months_back: mb
-        }, 15 * 60 * 1000);
+
+        const invoicesJ = await postInternalJson(
+          "/fortnox/upsert/invoices/all",
+          { connection_id: cid, start_page: startInv, limit: 50, max_pages: 5, months_back: mb },
+          15 * 60 * 1000
+        );
 
         one.steps.invoices = {
           ok: true,
@@ -4475,12 +4513,19 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 
         one.ok = true;
         await safeSetConnPaging(cid, { nightly_last_run_at: nowIso(), nightly_last_error: "" });
-
       } catch (e) {
         one.ok = false;
         one.error = e?.message || String(e);
         one.detail = e?.detail || null;
-        console.error("[nightly/delta] conn error", { connection_id: cid, error: one.error, detail: one.detail });
+
+        one.errors.push({ message: one.error, detail: one.detail });
+
+        console.error("[nightly/delta] conn error", {
+          connection_id: cid,
+          error: one.error,
+          detail: one.detail
+        });
+
         await safeSetConnPaging(cid, { nightly_last_run_at: nowIso(), nightly_last_error: one.error });
       }
 
@@ -4488,7 +4533,6 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     }
 
     return res.json({ ok: true, run_id: lock.run_id, months_back: mb, results });
-
   } catch (e) {
     console.error("[nightly/delta] fatal", e);
     return res.status(500).json({ ok: false, run_id: lock.run_id, error: e?.message || String(e) });
