@@ -4384,36 +4384,220 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
         );
         one.steps.customers = { ok: true, counts: customersJ.counts || null };
 
-        // 2) orders (paged) + order rows flagged — ENDAST docs-allowlist (Food & Event)
-        if (allowDocs) {
-          // orders/all (resume via orders_next_page)
-          const startOrders = await getConnNextPage(cid, "orders_next_page", 1);
+        app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
+  const lock = getLock();
+  const now = Date.now();
+  const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 
+  const numOr = (v, fallback) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const { connection_id = null, only_connection_id = null, months_back = 12 } = req.body || {};
+  const onlyId = (only_connection_id || connection_id || null);
+  const mb = Math.max(1, numOr(months_back, 12));
+
+  // stale lock clear
+  if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
+    console.warn("[nightly/delta] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
+    lock.running = false;
+    lock.started_at = 0;
+    lock.finished_at = 0;
+    lock.connection_id = null;
+    lock.run_id = null;
+  }
+  if (lock.running) return res.status(409).json({ ok: false, error: "Nightly already running", lock });
+
+  lock.running = true;
+  lock.started_at = now;
+  lock.finished_at = 0;
+  lock.connection_id = onlyId;
+
+  // ✅ run_id med "x" (om du vill ha den formen)
+  const rand = Math.random().toString(16).slice(2);
+  lock.run_id = `${now}x${rand}`;
+
+  try {
+    const connections = await getAllFortnoxConnections();
+    const pickList = onlyId
+      ? connections.filter(c => String(c?._id || "") === String(onlyId))
+      : connections;
+
+    const results = [];
+
+    for (const conn of pickList) {
+      const cid = conn._id;
+      const allowDocs = isDocsConnection(cid);
+
+      const one = {
+        connection_id: cid,
+        allow_docs: allowDocs,
+        ok: false,
+        steps: {},
+        errors: []
+      };
+
+      try {
+        // 1) customers (1 sida delta) — ALLA connections
+        const customersJ = await postInternalJson(
+          "/fortnox/upsert/customers",
+          { connection_id: cid, page: 1, limit: 100 },
+          180000 // 3 min
+        );
+
+        one.steps.customers = { ok: true, counts: customersJ.counts || null };
+
+        // 2) orders (1 sida delta) + order rows flagged — ENDAST docs-allowlist (Food & Event)
+        if (allowDocs) {
           const ordersJ = await postInternalJson(
-            "/fortnox/upsert/orders/all",
+            "/fortnox/upsert/orders",
             {
               connection_id: cid,
               months_back: mb,
-              start_page: startOrders,
-              limit: 100,
-              max_pages: 5,
-              pause_ms: 150
+              page: 1,
+              limit: 100
             },
-            15 * 60 * 1000
+            180000 // 3 min
           );
 
-          one.steps.orders = {
+          one.steps.orders = { ok: true, counts: ordersJ.counts || null };
+
+          // order-rows/flagged (några pass)
+          for (let round = 0; round < 5; round++) {
+            const rowsJ = await postInternalJson(
+              "/fortnox/upsert/order-rows/flagged",
+              { connection_id: cid, limit: 30, pause_ms: 250 },
+              180000
+            );
+            if (!rowsJ.flagged_found) break;
+            if (250) await sleep(250);
+          }
+          one.steps.order_rows = { ok: true };
+        } else {
+          one.steps.orders = { skipped: true, reason: "not allowed for orders/offers" };
+          one.steps.order_rows = { skipped: true, reason: "not allowed for orders/offers" };
+        }
+
+        // 3) offers + pdf + offer rows — ENDAST docs-allowlist
+        // (Delta-variant: liten tugga, men du kan kommentera bort hela blocket om du vill)
+        if (allowDocs) {
+          const startOffers = await getConnNextPage(cid, "offers_next_page", 1);
+
+          const offersJ = await postInternalJson(
+            "/fortnox/upsert/offers/all",
+            {
+              connection_id: cid,
+              start_page: startOffers,
+              limit: 100,
+              max_pages: 1,      // ✅ delta: bara 1 sida
+              fetch_pdf: false
+            },
+            5 * 60 * 1000
+          );
+
+          one.steps.offers = {
             ok: true,
-            done: !!ordersJ.done,
-            next_page: ordersJ.next_page ?? null,
-            counts: ordersJ.counts || null
+            done: !!offersJ.done,
+            next_page: offersJ.next_page ?? null,
+            counts: offersJ.counts || null
           };
 
           await safeSetConnPaging(cid, {
-            orders_next_page: ordersJ?.next_page || 1,
-            orders_last_progress_at: nowIso(),
-            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
+            offers_next_page: offersJ?.next_page || 1,
+            offers_last_progress_at: nowIso(),
+            ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
           });
+
+          // (valfritt) pdf flagged
+          try {
+            const pdfJ = await postInternalJson(
+              "/fortnox/upsert/offer-pdfs/flagged",
+              { connection_id: cid, limit: 10, pause_ms: 500 },
+              5 * 60 * 1000
+            );
+            one.steps.offer_pdfs = { ok: true, counts: pdfJ.counts || null, flagged_found: pdfJ.flagged_found ?? null };
+          } catch (e) {
+            one.steps.offer_pdfs = { ok: false, error: e?.message || String(e) };
+            one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
+          }
+
+          // offer-rows flagged
+          for (let round = 0; round < 5; round++) {
+            const rowsJ = await postInternalJson(
+              "/fortnox/upsert/offer-rows/flagged",
+              { connection_id: cid, limit: 30, pause_ms: 250 },
+              180000
+            );
+            if (!rowsJ.flagged_found) break;
+            if (250) await sleep(250);
+          }
+          one.steps.offer_rows = { ok: true };
+        } else {
+          one.steps.offers = { skipped: true, reason: "not allowed for orders/offers" };
+          one.steps.offer_pdfs = { skipped: true, reason: "not allowed for orders/offers" };
+          one.steps.offer_rows = { skipped: true, reason: "not allowed for orders/offers" };
+        }
+
+        // 4) invoices — ALLA connections
+        const startInv = await getConnNextPage(cid, "invoices_next_page", 1);
+
+        const invoicesJ = await postInternalJson(
+          "/fortnox/upsert/invoices/all",
+          {
+            connection_id: cid,
+            start_page: startInv,
+            limit: 50,
+            max_pages: 2,      // ✅ delta: mindre tugga (ändra till 5 om du vill)
+            months_back: mb
+          },
+          10 * 60 * 1000
+        );
+
+        one.steps.invoices = {
+          ok: true,
+          done: !!invoicesJ.done,
+          next_page: invoicesJ.next_page ?? null,
+          counts: invoicesJ.counts || null
+        };
+
+        await safeSetConnPaging(cid, {
+          invoices_next_page: invoicesJ?.next_page || 1,
+          invoices_last_progress_at: nowIso(),
+          ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
+        });
+
+        one.ok = true;
+        await safeSetConnPaging(cid, { nightly_last_run_at: nowIso(), nightly_last_error: "" });
+      } catch (e) {
+        one.ok = false;
+        one.error = e?.message || String(e);
+        one.detail = e?.detail || null;
+
+        one.errors.push({ message: one.error, detail: one.detail });
+
+        console.error("[nightly/delta] conn error", {
+          connection_id: cid,
+          error: one.error,
+          detail: one.detail
+        });
+
+        await safeSetConnPaging(cid, { nightly_last_run_at: nowIso(), nightly_last_error: one.error });
+      }
+
+      results.push(one);
+    }
+
+    return res.json({ ok: true, run_id: lock.run_id, months_back: mb, results });
+  } catch (e) {
+    console.error("[nightly/delta] fatal", e);
+    return res.status(500).json({ ok: false, run_id: lock.run_id, error: e?.message || String(e) });
+  } finally {
+    lock.running = false;
+    lock.finished_at = Date.now();
+    console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
+  }
+});
 
           // order-rows/flagged (några pass)
           for (let round = 0; round < 5; round++) {
