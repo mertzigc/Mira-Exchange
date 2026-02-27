@@ -1260,45 +1260,59 @@ async function safeSetConnPaging(connectionId, patchObj) {
     return false;
   }
 }
+// POST internt med timeout + robust URL + bättre fel
 async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
-  const base =
-    process.env.INTERNAL_BASE_URL ||
-    process.env.SELF_BASE_URL ||
-    SELF_BASE_URL;
+  // Använd alltid serverns resolved SELF_BASE_URL (konstanten), inte env direkt
+  // + självläk om någon råkat sätta "${PORT}" i env
+  const base0 = String(SELF_BASE_URL || "").trim();
+  const base = base0.includes("${PORT}")
+    ? base0.replace("${PORT}", String(PORT))
+    : base0;
 
-  const url = `${String(base).replace(/\/+$/, "")}${path}`;
+  const url = `${base.replace(/\/+$/, "")}${path}`;
 
   try {
     const r = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY,
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
       },
       body: JSON.stringify(payload || {}),
-      signal: controller.signal,
+      signal: controller.signal
     });
 
     const text = await r.text().catch(() => "");
     let j = {};
-    try { j = text ? JSON.parse(text) : {}; } catch {}
+    try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
 
-    if (!r.ok || !j.ok) {
+    if (!r.ok || j?.ok === false) {
       const err = new Error(`internal call failed: ${path}`);
       err.detail = {
         url,
         path,
         status: r.status,
+        statusText: r.statusText,
         bodyText: text || null,
-        bodyJson: j || null,
+        bodyJson: j || null
       };
       throw err;
     }
 
     return j;
+  } catch (e) {
+    const err = new Error(e?.message || String(e));
+    err.detail = {
+      url,
+      path,
+      timeoutMs,
+      name: e?.name || null,
+      cause: e?.cause || null
+    };
+    throw err;
   } finally {
     clearTimeout(t);
   }
