@@ -4385,11 +4385,16 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 
         one.steps.customers = { ok: true, counts: customersJ.counts || null };
 
-        // 2) orders (1 sida delta) — ENDAST Food & Event (docs-allowlist)
-        if (allowDocs) {
-          const ordersJ = await postInternalJson("/fortnox/upsert/orders", {
-            connection_id: cid, months_back: mb, page: 1, limit: 50
-          }, 180000);
+        const ordersJ = await postInternalJson(
+  "/fortnox/upsert/orders",
+  {
+    connection_id: cid,
+    months_back: mb,
+    page: 1,
+    limit: 50
+  },
+  15 * 60 * 1000 // 15 minuter
+);
 
           one.steps.orders = { ok: true, counts: ordersJ.counts || null };
 
