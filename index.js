@@ -1,5 +1,5 @@
-// inget undici-import behövs i Node 22
-const fetchFn = globalThis.fetch;import express from "express";
+// Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
+import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
 
@@ -13,11 +13,7 @@ if (process.env.NODE_ENV !== "production") {
     console.warn("[dotenv] not loaded (dev only):", e?.message || e);
   }
 }
-// Disable Undici timeouts for long internal orchestrations
-const INTERNAL_FETCH_AGENT = new Agent({
-  headersTimeout: 0,
-  bodyTimeout: 0
-});
+
 // ────────────────────────────────────────────────────────────
 // App & JSON
 const app = express();
