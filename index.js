@@ -1,3 +1,4 @@
+import { Agent } from "undici";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -12,7 +13,11 @@ if (process.env.NODE_ENV !== "production") {
     console.warn("[dotenv] not loaded (dev only):", e?.message || e);
   }
 }
-
+// Disable Undici timeouts for long internal orchestrations
+const INTERNAL_FETCH_AGENT = new Agent({
+  headersTimeout: 0,
+  bodyTimeout: 0
+});
 // ────────────────────────────────────────────────────────────
 // App & JSON
 const app = express();
@@ -1260,18 +1265,22 @@ async function safeSetConnPaging(connectionId, patchObj) {
     return false;
   }
 }
-// POST internt med timeout + robust URL + bättre fel
+// POST internt med timeout + Undici-agent (så vi inte dör på headers-timeout)
 async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Använd alltid serverns resolved SELF_BASE_URL (konstanten), inte env direkt
-  // + självläk om någon råkat sätta "${PORT}" i env
-  const base0 = String(SELF_BASE_URL || "").trim();
-  const base = base0.includes("${PORT}")
-    ? base0.replace("${PORT}", String(PORT))
-    : base0;
+  // Default: loopback på samma service (snabbast & slipper Cloudflare)
+  const defaultInternalBase = `http://127.0.0.1:${process.env.PORT || 10000}`;
 
+  const baseRaw =
+    process.env.INTERNAL_BASE_URL ||
+    process.env.SELF_BASE_URL ||
+    SELF_BASE_URL ||
+    defaultInternalBase;
+
+  // Om någon env råkat innehålla "${PORT}" så löser vi det här
+  const base = String(baseRaw).replace("${PORT}", String(process.env.PORT || 10000));
   const url = `${base.replace(/\/+$/, "")}${path}`;
 
   try {
@@ -1282,14 +1291,21 @@ async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
         "x-api-key": process.env.MIRA_RENDER_API_KEY
       },
       body: JSON.stringify(payload || {}),
-      signal: controller.signal
+      signal: controller.signal,
+
+      // Viktigt: stoppa Undici från att kasta UND_ERR_HEADERS_TIMEOUT
+      dispatcher: INTERNAL_FETCH_AGENT
     });
 
     const text = await r.text().catch(() => "");
     let j = {};
-    try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+    try {
+      j = text ? JSON.parse(text) : {};
+    } catch {
+      j = {};
+    }
 
-    if (!r.ok || j?.ok === false) {
+    if (!r.ok || !j.ok) {
       const err = new Error(`internal call failed: ${path}`);
       err.detail = {
         url,
@@ -1305,9 +1321,10 @@ async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
     return j;
   } catch (e) {
     const err = new Error(e?.message || String(e));
+    err.cause = e;
     err.detail = {
-      url,
       path,
+      url,
       timeoutMs,
       name: e?.name || null,
       cause: e?.cause || null
@@ -4616,10 +4633,11 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
         link_company: boolOr(body?.customers?.link_company, true)
       },
       orders: {
-        limit: numOr(body?.orders?.limit, 200),
-        pages_per_call: numOr(body?.orders?.pages_per_call, 5),
-        pause_ms: numOr(body?.orders?.pause_ms, 150)
-      },
+  mode: String(body?.orders?.mode || "delta"),  // <--- ADD
+  limit: Number(body?.orders?.limit ?? 200) || 200,
+  pages_per_call: Number(body?.orders?.pages_per_call ?? 5) || 5,
+  pause_ms: Number(body?.orders?.pause_ms ?? 150) || 150
+},
       offers: {
         limit: numOr(body?.offers?.limit, 200),
         pages_per_call: numOr(body?.offers?.pages_per_call, 5),
@@ -4716,77 +4734,132 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           one.errors.push({ message: msg, detail: e?.detail || null });
         }
       }
+// --- ORDERS + ORDER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
+if (!allowDocs) {
+  one.orders = { skipped: true, reason: "not allowed for orders/offers" };
+} else if (cfg.orders.pages_per_call <= 0) {
+  one.orders = { skipped: true, reason: "orders.pages_per_call=0" };
+} else {
+  const ordersMode = String(cfg.orders.mode || "delta").toLowerCase(); // "delta" | "backfill"
+  let ordersOk = false;
 
-      // --- ORDERS + ORDER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
-      if (!allowDocs) {
-        one.orders = { skipped: true, reason: "not allowed for orders/offers" };
-      } else if (cfg.orders.pages_per_call <= 0) {
-        one.orders = { skipped: true, reason: "orders.pages_per_call=0" };
-      } else {
-        try {
-          let startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
+  try {
+    if (ordersMode === "backfill") {
+      // BACKFILL: fortsätt från orders_next_page
+      let startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
 
-          const runOrders = async (start_page) => {
-            return await postInternalJson(
-              "/fortnox/upsert/orders/all",
-              {
-                connection_id,
-                start_page,
-                limit: cfg.orders.limit,
-                max_pages: cfg.orders.pages_per_call,
-                pause_ms: cfg.orders.pause_ms,
-                months_back
-              },
-              15 * 60 * 1000
-            );
-          };
+      const runOrdersAll = async (start_page) => {
+        return await postInternalJson(
+          "/fortnox/upsert/orders/all",
+          {
+            connection_id,
+            start_page,
+            limit: cfg.orders.limit,
+            max_pages: cfg.orders.pages_per_call,
+            pause_ms: cfg.orders.pause_ms,
+            months_back
+          },
+          15 * 60 * 1000
+        );
+      };
 
-          let ordersJ;
-          try {
-            ordersJ = await runOrders(startOrders);
-          } catch (e1) {
-            const errInfo = extractFortnoxErrorInfo(e1);
-            if (errInfo?.code === 2001889) {
-              console.warn("[nightly/run] orders page out of range; resetting to page 1", {
-                connection_id, startOrders, months_back
-              });
-              await safeSetConnPaging(connection_id, { orders_next_page: 1, orders_last_progress_at: nowIso() });
-              ordersJ = await runOrders(1);
-            } else {
-              throw e1;
-            }
-          }
-
-          one.orders = {
-            done: !!ordersJ.done,
-            next_page: ordersJ.next_page ?? null,
-            counts: ordersJ.counts || null
-          };
-
-          await safeSetConnPaging(connection_id, {
-            orders_next_page: ordersJ?.next_page || 1,
-            orders_last_progress_at: nowIso(),
-            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
+      let ordersJ;
+      try {
+        ordersJ = await runOrdersAll(startOrders);
+      } catch (e1) {
+        const errInfo = extractFortnoxErrorInfo(e1);
+        if (errInfo?.code === 2001889) {
+          console.warn("[nightly/run] orders page out of range; resetting to page 1", {
+            connection_id,
+            startOrders,
+            months_back
           });
-
-          // Order rows flagged (optional) — also skip if rows.passes<=0
-          if (cfg.rows.passes > 0) {
-            for (let p = 0; p < cfg.rows.passes; p++) {
-              const rowsJ = await postInternalJson(
-                "/fortnox/upsert/order-rows/flagged",
-                { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-                180000
-              );
-              if (!rowsJ.flagged_found) break;
-              if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
-            }
-          }
-        } catch (e) {
-          one.orders = null;
-          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
+          await safeSetConnPaging(connection_id, {
+            orders_next_page: 1,
+            orders_last_progress_at: nowIso()
+          });
+          ordersJ = await runOrdersAll(1);
+        } else {
+          throw e1;
         }
       }
 
+      one.orders = {
+        mode: "backfill",
+        done: !!ordersJ.done,
+        next_page: ordersJ.next_page ?? null,
+        counts: ordersJ.counts || null
+      };
+
+      await safeSetConnPaging(connection_id, {
+        orders_next_page: ordersJ?.next_page || 1,
+        orders_last_progress_at: nowIso(),
+        ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
+      });
+
+      ordersOk = true;
+    } else {
+      // DELTA: alltid page 1..N (senaste först)
+      const totals = { created: 0, updated: 0, skipped: 0, errors: 0 };
+
+      for (let page = 1; page <= cfg.orders.pages_per_call; page++) {
+        const j = await postInternalJson(
+          "/fortnox/upsert/orders",
+          {
+            connection_id,
+            months_back,
+            page,
+            limit: cfg.orders.limit
+          },
+          5 * 60 * 1000
+        );
+
+        const c = j?.counts || {};
+        totals.created += Number(c.created || 0);
+        totals.updated += Number(c.updated || 0);
+        totals.skipped += Number(c.skipped || 0);
+        totals.errors += Number(c.errors || 0);
+
+        if (cfg.orders.pause_ms) await sleep(Number(cfg.orders.pause_ms));
+      }
+
+      one.orders = {
+        mode: "delta",
+        done: true,
+        next_page: 1,
+        counts: totals
+      };
+
+      // I delta-läge ska vi INTE flytta orders_next_page (för att inte “fastna” i historik).
+      await safeSetConnPaging(connection_id, {
+        orders_last_progress_at: nowIso(),
+        orders_last_delta_at: nowIso()
+      });
+
+      ordersOk = true;
+    }
+
+    // --- Order rows flagged (optional) — only if rows.passes>0 AND orders ran ok ---
+    if (ordersOk && cfg.rows.passes > 0) {
+      for (let p = 0; p < cfg.rows.passes; p++) {
+        const rowsJ = await postInternalJson(
+          "/fortnox/upsert/order-rows/flagged",
+          { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
+          5 * 60 * 1000
+        );
+        if (!rowsJ.flagged_found) break;
+        if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
+      }
+      one.order_rows = { ok: true };
+    } else if (cfg.rows.passes <= 0) {
+      one.order_rows = { skipped: true, reason: "rows.passes=0" };
+    }
+  } catch (e) {
+    one.orders = null;
+    one.order_rows = one.order_rows || null;
+    one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
+  }
+}
       // --- OFFERS + OFFER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
       if (!allowDocs) {
         one.offers = { skipped: true, reason: "not allowed for orders/offers" };
