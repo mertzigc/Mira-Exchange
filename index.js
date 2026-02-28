@@ -1,5 +1,5 @@
-import { Agent } from "undici";
-import express from "express";
+// inget undici-import behövs i Node 22
+const fetchFn = globalThis.fetch;import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
 
@@ -1265,23 +1265,16 @@ async function safeSetConnPaging(connectionId, patchObj) {
     return false;
   }
 }
-// POST internt med timeout + Undici-agent (så vi inte dör på headers-timeout)
 async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Default: loopback på samma service (snabbast & slipper Cloudflare)
-  const defaultInternalBase = `http://127.0.0.1:${process.env.PORT || 10000}`;
-
-  const baseRaw =
+  const base =
     process.env.INTERNAL_BASE_URL ||
     process.env.SELF_BASE_URL ||
-    SELF_BASE_URL ||
-    defaultInternalBase;
+    SELF_BASE_URL;
 
-  // Om någon env råkat innehålla "${PORT}" så löser vi det här
-  const base = String(baseRaw).replace("${PORT}", String(process.env.PORT || 10000));
-  const url = `${base.replace(/\/+$/, "")}${path}`;
+  const url = `${String(base).replace(/\/+$/, "")}${path}`;
 
   try {
     const r = await fetch(url, {
@@ -1291,45 +1284,20 @@ async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
         "x-api-key": process.env.MIRA_RENDER_API_KEY
       },
       body: JSON.stringify(payload || {}),
-      signal: controller.signal,
-
-      // Viktigt: stoppa Undici från att kasta UND_ERR_HEADERS_TIMEOUT
-      dispatcher: INTERNAL_FETCH_AGENT
+      signal: controller.signal
     });
 
     const text = await r.text().catch(() => "");
     let j = {};
-    try {
-      j = text ? JSON.parse(text) : {};
-    } catch {
-      j = {};
-    }
+    try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
 
     if (!r.ok || !j.ok) {
       const err = new Error(`internal call failed: ${path}`);
-      err.detail = {
-        url,
-        path,
-        status: r.status,
-        statusText: r.statusText,
-        bodyText: text || null,
-        bodyJson: j || null
-      };
+      err.detail = { url, path, status: r.status, statusText: r.statusText, bodyText: text || null, bodyJson: j || null };
       throw err;
     }
 
     return j;
-  } catch (e) {
-    const err = new Error(e?.message || String(e));
-    err.cause = e;
-    err.detail = {
-      path,
-      url,
-      timeoutMs,
-      name: e?.name || null,
-      cause: e?.cause || null
-    };
-    throw err;
   } finally {
     clearTimeout(t);
   }
