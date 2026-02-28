@@ -21,7 +21,8 @@ CUSTOMER_PAUSE_MS="${CUSTOMER_PAUSE_MS:-50}"
 ORDER_LIMIT="${ORDER_LIMIT:-200}"
 ORDER_PAGES_PER_CALL="${ORDER_PAGES_PER_CALL:-5}"
 ORDER_PAUSE_MS="${ORDER_PAUSE_MS:-150}"
-
+# Orders mode: delta (senaste) eller backfill (historik via orders_next_page)
+ORDER_MODE="${ORDER_MODE:-delta}"
 # Offers
 OFFER_LIMIT="${OFFER_LIMIT:-200}"
 OFFER_PAGES_PER_CALL="${OFFER_PAGES_PER_CALL:-5}"
@@ -44,10 +45,9 @@ curl -sS --max-time 43200 \
 
     \"customers\": {\"limit\": $CUSTOMER_LIMIT, \"max_pages\": $CUSTOMER_MAX_PAGES, \"pause_ms\": $CUSTOMER_PAUSE_MS},
 
-    \"orders\": {\"limit\": $ORDER_LIMIT, \"max_pages\": $ORDER_PAGES_PER_CALL, \"pause_ms\": $ORDER_PAUSE_MS},
-    \"offers\": {\"limit\": $OFFER_LIMIT, \"max_pages\": $OFFER_PAGES_PER_CALL, \"pause_ms\": $OFFER_PAUSE_MS},
-
-    \"invoices\": {\"limit\": $INVOICE_LIMIT, \"max_pages\": $INVOICE_PAGES_PER_CALL, \"pause_ms\": $INVOICE_PAUSE_MS},
+        \"orders\":   {\"mode\": \"${ORDER_MODE}\", \"limit\": $ORDER_LIMIT, \"pages_per_call\": $ORDER_PAGES_PER_CALL, \"pause_ms\": $ORDER_PAUSE_MS},
+    \"offers\":   {\"limit\": $OFFER_LIMIT, \"pages_per_call\": $OFFER_PAGES_PER_CALL, \"pause_ms\": $OFFER_PAUSE_MS},
+    \"invoices\": {\"limit\": $INVOICE_LIMIT, \"pages_per_call\": $INVOICE_PAGES_PER_CALL, \"pause_ms\": $INVOICE_PAUSE_MS},
 
     \"rows\": {\"limit\": $ROWS_LIMIT, \"passes\": $ROWS_PASSES, \"pause_ms\": $ROWS_PAUSE_MS}
   }" | cat
