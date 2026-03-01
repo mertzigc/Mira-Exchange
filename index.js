@@ -1952,7 +1952,7 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
         ft_document_number: docNo,
         ft_customer_number: String(o?.CustomerNumber || ""),
         ft_customer_name: String(o?.CustomerName || ""),
-        ft_your_reference: String(o?.YourReference || ""),
+        ft_your_reference: String(o?.YourOrderNumber || ""),
         ft_order_date: toIsoDate(o?.OrderDate),
         ft_delivery_date: toIsoDate(o?.DeliveryDate),
         ft_last_seen_at: new Date().toISOString(),
