@@ -2662,47 +2662,63 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
 
     for (let i = 0; i < invoices.length; i++) {
       const inv = invoices[i] || {};
+
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
-// --- References (Fortnox invoice → Bubble fields) ---
-// Fortnox UI: "Ert ordernummer", "Er referens", "Vår referens"
-const yourOrderNumber =
-  asTextOrEmpty(inv.YourOrderNumber) ||
-  asTextOrEmpty(inv.yourOrderNumber) ||
-  asTextOrEmpty(inv.YourOrderNo) ||
-  asTextOrEmpty(inv.yourOrderNo);
 
-const yourReference =
-  asTextOrEmpty(inv.YourReference) ||
-  asTextOrEmpty(inv.yourReference);
+      // --- References (Fortnox invoice → Bubble fields) ---
+      // Fortnox UI: "Ert ordernummer", "Er referens", "Vår referens"
+      const yourOrderNumber =
+        asTextOrEmpty(inv.YourOrderNumber) ||
+        asTextOrEmpty(inv.yourOrderNumber) ||
+        asTextOrEmpty(inv.YourOrderNo) ||
+        asTextOrEmpty(inv.yourOrderNo) ||
+        asTextOrEmpty(inv.YourOrderNr) ||
+        asTextOrEmpty(inv.yourOrderNr);
 
-const ourReference =
-  asTextOrEmpty(inv.OurReference) ||
-  asTextOrEmpty(inv.ourReference);
+      const yourReference =
+        asTextOrEmpty(inv.YourReference) ||
+        asTextOrEmpty(inv.yourReference);
+
+      const ourReference =
+        asTextOrEmpty(inv.OurReference) ||
+        asTextOrEmpty(inv.ourReference);
+
+      // Viktigt: Deal-koppling kan ligga i "Ert ordernummer" på fakturan
+      const dealLink = yourReference || yourOrderNumber;
+
       const fields = {
-        connection_id: connection_id,                           // ✅ matchar ditt relationsfält
+        // ✅ matchar ditt relationsfält
+        connection_id: connection_id,
+
         ft_document_number: docNo,
 
-        ft_invoice_date: toIsoDate(inv.InvoiceDate),            // ✅ date-fält
-        ft_due_date: toIsoDate(inv.DueDate),                    // ✅ date-fält
+        // ✅ date-fält
+        ft_invoice_date: toIsoDate(inv.InvoiceDate),
+        ft_due_date: toIsoDate(inv.DueDate),
 
-        ft_customer_number: asTextOrEmpty(inv.CustomerNumber),  // ✅ text
-        ft_customer_name: asTextOrEmpty(inv.CustomerName),      // ✅ text
+        // ✅ text
+        ft_customer_number: asTextOrEmpty(inv.CustomerNumber),
+        ft_customer_name: asTextOrEmpty(inv.CustomerName),
 
-        ft_total: asTextOrEmpty(inv.Total),                     // ✅ text
-        ft_balance: asTextOrEmpty(inv.Balance),                 // ✅ text
-        ft_currency: asTextOrEmpty(inv.Currency),               // ✅ text
-        ft_ocr: asTextOrEmpty(inv.OCR),                         // ✅ text
+        // ✅ text (du har dessa som text i Bubble)
+        ft_total: asTextOrEmpty(inv.Total),
+        ft_balance: asTextOrEmpty(inv.Balance),
+        ft_currency: asTextOrEmpty(inv.Currency),
+        ft_ocr: asTextOrEmpty(inv.OCR),
 
-        ft_cancelled: inv.Cancelled === true,                   // ✅ yes/no
-        ft_sent: inv.Sent === true,                             // ✅ yes/no
+        // ✅ yes/no
+        ft_cancelled: inv.Cancelled === true,
+        ft_sent: inv.Sent === true,
 
-        ft_url: asTextOrEmpty(inv["@url"]),                     // ✅ text
+        // ✅ text
+        ft_url: asTextOrEmpty(inv["@url"]),
+
+        // ✅ dina nya fält (exakta benämningar)
         ft_our_reference: ourReference,
-ft_your_order_number: yourOrderNumber,
+        ft_your_order_number: yourOrderNumber,
+        ft_your_reference: dealLink,
 
-// Viktigt: för att din Deal-koppling ska funka även när Fortnox stoppar värdet i "Ert ordernummer":
-ft_your_reference: yourReference || yourOrderNumber,
         ft_raw_json: JSON.stringify(inv || {})
       };
 
@@ -2725,7 +2741,7 @@ ft_your_reference: yourReference || yourOrderNumber,
         }
       } catch (e) {
         errors++;
-        if (!first_error)
+        if (!first_error) {
           first_error = {
             step: "bubbleUpsert",
             docNo,
@@ -2733,6 +2749,7 @@ ft_your_reference: yourReference || yourOrderNumber,
             status: e?.status || null,
             detail: e?.detail || null
           };
+        }
       }
 
       if (pause_ms) await sleep(Number(pause_ms));
