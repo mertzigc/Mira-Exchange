@@ -2711,18 +2711,37 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
           asTextOrEmpty(inv.OurReference) ||
           asTextOrEmpty(inv.ourReference);
 
-        // 3) Om refs saknas → hämta DETAIL för just den fakturan
-        const needDetail = !yourOrderNumber && !yourReference && !ourReference;
-        let detail = null;
+       // 3) Om något av refs saknas → hämta DETAIL för just den fakturan
+let detail = null;
+const needDetail = (!yourOrderNumber || !yourReference || !ourReference);
 
-        if (needDetail) {
-          detail = await fortnoxGetInvoiceDetail(conn, docNo);
-          if (detail) {
-            yourOrderNumber = asTextOrEmpty(detail.YourOrderNumber);
-            yourReference   = asTextOrEmpty(detail.YourReference);
-            ourReference    = asTextOrEmpty(detail.OurReference);
-          }
-        }
+if (needDetail) {
+  detail = await fortnoxGetInvoiceDetail(conn, docNo);
+
+  if (detail) {
+    // Fyll bara det som saknas (låt LIST vinna om den redan hade värden)
+    if (!yourOrderNumber) {
+      yourOrderNumber =
+        asTextOrEmpty(detail.YourOrderNumber) ||
+        asTextOrEmpty(detail.YourOrderNo) ||
+        asTextOrEmpty(detail.YourOrderNr) ||
+        asTextOrEmpty(detail.YourOrdernumber);
+    }
+
+    if (!yourReference) {
+      yourReference =
+        asTextOrEmpty(detail.YourReference) ||
+        asTextOrEmpty(detail.YourRef) ||
+        asTextOrEmpty(detail.CustomerReference);
+    }
+
+    if (!ourReference) {
+      ourReference =
+        asTextOrEmpty(detail.OurReference) ||
+        asTextOrEmpty(detail.OurRef);
+    }
+  }
+}
 
         // Deal-koppling: i Fortnox-faktura ligger den ofta i "Ert ordernummer"
         const dealLink = yourReference || yourOrderNumber;
