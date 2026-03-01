@@ -2725,7 +2725,6 @@ if (needDetail) {
     ourReference    = ourReference    || asTextOrEmpty(detail.OurReference);
   }
 }
-}
 
         // Deal-koppling: i Fortnox-faktura ligger den ofta i "Ert ordernummer"
         const dealLink = yourReference || yourOrderNumber;
