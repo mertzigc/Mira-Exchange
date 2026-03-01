@@ -2655,8 +2655,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing connection_id" });
     }
 
-    // 0) Hämta FortnoxConnection så vi har access_token för detail-call
-    // OBS: byt bubbleGet(...) om din helper heter annorlunda i din index-fil.
+    // 0) Hämta FortnoxConnection (för access_token till detail-call)
     const conn = await bubbleGet("FortnoxConnection", connection_id).catch(() => null);
     if (!conn?.access_token) {
       return res.status(400).json({
@@ -2666,7 +2665,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       });
     }
 
-    // 1) Hämta invoices via sync-endpoint (LIST)
+    // 1) LIST: hämta invoices
     const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/invoices`, {
       method: "POST",
       headers: {
@@ -2689,12 +2688,11 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
 
     for (let i = 0; i < invoices.length; i++) {
       const inv = invoices[i] || {};
-
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
 
       try {
-        // 2) Försök plocka refs från LIST (ofta tomt)
+        // 2) Försök läsa refs från LIST
         let yourOrderNumber =
           asTextOrEmpty(inv.YourOrderNumber) ||
           asTextOrEmpty(inv.yourOrderNumber) ||
@@ -2711,26 +2709,24 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
           asTextOrEmpty(inv.OurReference) ||
           asTextOrEmpty(inv.ourReference);
 
-       // 3) Om något av refs saknas → hämta DETAIL för just den fakturan
-let detail = null;
-// Hämta DETAIL om vi saknar det vi faktiskt behöver för Deal-koppling
-const needDetail = !yourOrderNumber && !yourReference;
-let detail = null;
+        // 3) DETAIL vid behov (Ert ordernummer / Deal-koppling)
+        let detail = null;
+        const needDetail = !yourOrderNumber && !yourReference;
 
-if (needDetail) {
-  detail = await fortnoxGetInvoiceDetail(conn, docNo);
-  if (detail) {
-    yourOrderNumber = yourOrderNumber || asTextOrEmpty(detail.YourOrderNumber);
-    yourReference   = yourReference   || asTextOrEmpty(detail.YourReference);
-    ourReference    = ourReference    || asTextOrEmpty(detail.OurReference);
-  }
-}
+        if (needDetail) {
+          detail = await fortnoxGetInvoiceDetail(conn, docNo);
+          if (detail) {
+            yourOrderNumber = yourOrderNumber || asTextOrEmpty(detail.YourOrderNumber);
+            yourReference   = yourReference   || asTextOrEmpty(detail.YourReference);
+            ourReference    = ourReference    || asTextOrEmpty(detail.OurReference);
+          }
+        }
 
-        // Deal-koppling: i Fortnox-faktura ligger den ofta i "Ert ordernummer"
+        // Deal-koppling (prio: Er referens → Ert ordernummer)
         const dealLink = yourReference || yourOrderNumber;
 
         const fields = {
-          connection_id: connection_id,              // relation FortnoxConnection
+          connection_id,
           ft_document_number: docNo,
 
           ft_invoice_date: toIsoDate(inv.InvoiceDate),
@@ -2749,13 +2745,16 @@ if (needDetail) {
 
           ft_url: asTextOrEmpty(inv["@url"]),
 
-          // ✅ EXAKT dina fältnamn i Bubble
+          // 🔑 EXAKTA Bubble-fält
           ft_our_reference: ourReference,
           ft_your_order_number: yourOrderNumber,
           ft_your_reference: dealLink,
 
-          // Spara gärna detail också om den fanns (guld vid felsökning)
-          ft_raw_json: JSON.stringify({ list: inv || {}, detail: detail || null })
+          // Debug / spårbarhet
+          ft_raw_json: JSON.stringify({
+            list: inv || {},
+            detail: detail || null
+          })
         };
 
         const existing = await bubbleFindOne(TYPE, [
@@ -2771,7 +2770,9 @@ if (needDetail) {
           if (id) created++;
           else {
             errors++;
-            if (!first_error) first_error = { step: "bubbleCreate", docNo, detail: "bubbleCreate returned null id" };
+            if (!first_error) {
+              first_error = { step: "bubbleCreate", docNo, detail: "bubbleCreate returned null id" };
+            }
           }
         }
       } catch (e) {
