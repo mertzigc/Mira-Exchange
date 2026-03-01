@@ -2664,7 +2664,21 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       const inv = invoices[i] || {};
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
+// --- References (Fortnox invoice → Bubble fields) ---
+// Fortnox UI: "Ert ordernummer", "Er referens", "Vår referens"
+const yourOrderNumber =
+  asTextOrEmpty(inv.YourOrderNumber) ||
+  asTextOrEmpty(inv.yourOrderNumber) ||
+  asTextOrEmpty(inv.YourOrderNo) ||
+  asTextOrEmpty(inv.yourOrderNo);
 
+const yourReference =
+  asTextOrEmpty(inv.YourReference) ||
+  asTextOrEmpty(inv.yourReference);
+
+const ourReference =
+  asTextOrEmpty(inv.OurReference) ||
+  asTextOrEmpty(inv.ourReference);
       const fields = {
         connection_id: connection_id,                           // ✅ matchar ditt relationsfält
         ft_document_number: docNo,
@@ -2684,6 +2698,11 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
         ft_sent: inv.Sent === true,                             // ✅ yes/no
 
         ft_url: asTextOrEmpty(inv["@url"]),                     // ✅ text
+        ft_our_reference: ourReference,
+ft_your_order_number: yourOrderNumber,
+
+// Viktigt: för att din Deal-koppling ska funka även när Fortnox stoppar värdet i "Ert ordernummer":
+ft_your_reference: yourReference || yourOrderNumber,
         ft_raw_json: JSON.stringify(inv || {})
       };
 
