@@ -2623,6 +2623,22 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: invoice detail (needed for YourOrderNumber/YourReference/OurReference)
+async function fortnoxGetInvoiceDetail(connection, documentNumber) {
+  const r = await fetch(`https://api.fortnox.se/3/invoices/${encodeURIComponent(documentNumber)}`, {
+    headers: {
+      "Authorization": `Bearer ${connection.access_token}`,
+      "Accept": "application/json",
+      "Client-Secret": process.env.FORTNOX_CLIENT_SECRET
+    }
+  });
+
+  const j = await r.json().catch(() => ({}));
+  // Fortnox brukar svara { Invoice: {...} }
+  return j?.Invoice || null;
+}
+
+// ────────────────────────────────────────────────────────────
 // Fortnox: upsert invoices (NO invoice rows) – uses /fortnox/sync/invoices
 // Upsert key: connection_id + ft_document_number
 app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
@@ -2639,7 +2655,18 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing connection_id" });
     }
 
-    // 1) Hämta invoices via din sync-endpoint (filtrerar på datum)
+    // 0) Hämta FortnoxConnection så vi har access_token för detail-call
+    // OBS: byt bubbleGet(...) om din helper heter annorlunda i din index-fil.
+    const conn = await bubbleGet("FortnoxConnection", connection_id).catch(() => null);
+    if (!conn?.access_token) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing access_token on FortnoxConnection",
+        detail: { connection_id }
+      });
+    }
+
+    // 1) Hämta invoices via sync-endpoint (LIST)
     const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/invoices`, {
       method: "POST",
       headers: {
@@ -2666,63 +2693,69 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       const docNo = String(inv.DocumentNumber || inv.documentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
 
-      // --- References (Fortnox invoice → Bubble fields) ---
-      // Fortnox UI: "Ert ordernummer", "Er referens", "Vår referens"
-      const yourOrderNumber =
-        asTextOrEmpty(inv.YourOrderNumber) ||
-        asTextOrEmpty(inv.yourOrderNumber) ||
-        asTextOrEmpty(inv.YourOrderNo) ||
-        asTextOrEmpty(inv.yourOrderNo) ||
-        asTextOrEmpty(inv.YourOrderNr) ||
-        asTextOrEmpty(inv.yourOrderNr);
-
-      const yourReference =
-        asTextOrEmpty(inv.YourReference) ||
-        asTextOrEmpty(inv.yourReference);
-
-      const ourReference =
-        asTextOrEmpty(inv.OurReference) ||
-        asTextOrEmpty(inv.ourReference);
-
-      // Viktigt: Deal-koppling kan ligga i "Ert ordernummer" på fakturan
-      const dealLink = yourReference || yourOrderNumber;
-
-      const fields = {
-        // ✅ matchar ditt relationsfält
-        connection_id: connection_id,
-
-        ft_document_number: docNo,
-
-        // ✅ date-fält
-        ft_invoice_date: toIsoDate(inv.InvoiceDate),
-        ft_due_date: toIsoDate(inv.DueDate),
-
-        // ✅ text
-        ft_customer_number: asTextOrEmpty(inv.CustomerNumber),
-        ft_customer_name: asTextOrEmpty(inv.CustomerName),
-
-        // ✅ text (du har dessa som text i Bubble)
-        ft_total: asTextOrEmpty(inv.Total),
-        ft_balance: asTextOrEmpty(inv.Balance),
-        ft_currency: asTextOrEmpty(inv.Currency),
-        ft_ocr: asTextOrEmpty(inv.OCR),
-
-        // ✅ yes/no
-        ft_cancelled: inv.Cancelled === true,
-        ft_sent: inv.Sent === true,
-
-        // ✅ text
-        ft_url: asTextOrEmpty(inv["@url"]),
-
-        // ✅ dina nya fält (exakta benämningar)
-        ft_our_reference: ourReference,
-        ft_your_order_number: yourOrderNumber,
-        ft_your_reference: dealLink,
-
-        ft_raw_json: JSON.stringify(inv || {})
-      };
-
       try {
+        // 2) Försök plocka refs från LIST (ofta tomt)
+        let yourOrderNumber =
+          asTextOrEmpty(inv.YourOrderNumber) ||
+          asTextOrEmpty(inv.yourOrderNumber) ||
+          asTextOrEmpty(inv.YourOrderNo) ||
+          asTextOrEmpty(inv.yourOrderNo) ||
+          asTextOrEmpty(inv.YourOrderNr) ||
+          asTextOrEmpty(inv.yourOrderNr);
+
+        let yourReference =
+          asTextOrEmpty(inv.YourReference) ||
+          asTextOrEmpty(inv.yourReference);
+
+        let ourReference =
+          asTextOrEmpty(inv.OurReference) ||
+          asTextOrEmpty(inv.ourReference);
+
+        // 3) Om refs saknas → hämta DETAIL för just den fakturan
+        const needDetail = !yourOrderNumber && !yourReference && !ourReference;
+        let detail = null;
+
+        if (needDetail) {
+          detail = await fortnoxGetInvoiceDetail(conn, docNo);
+          if (detail) {
+            yourOrderNumber = asTextOrEmpty(detail.YourOrderNumber);
+            yourReference   = asTextOrEmpty(detail.YourReference);
+            ourReference    = asTextOrEmpty(detail.OurReference);
+          }
+        }
+
+        // Deal-koppling: i Fortnox-faktura ligger den ofta i "Ert ordernummer"
+        const dealLink = yourReference || yourOrderNumber;
+
+        const fields = {
+          connection_id: connection_id,              // relation FortnoxConnection
+          ft_document_number: docNo,
+
+          ft_invoice_date: toIsoDate(inv.InvoiceDate),
+          ft_due_date: toIsoDate(inv.DueDate),
+
+          ft_customer_number: asTextOrEmpty(inv.CustomerNumber),
+          ft_customer_name: asTextOrEmpty(inv.CustomerName),
+
+          ft_total: asTextOrEmpty(inv.Total),
+          ft_balance: asTextOrEmpty(inv.Balance),
+          ft_currency: asTextOrEmpty(inv.Currency),
+          ft_ocr: asTextOrEmpty(inv.OCR),
+
+          ft_cancelled: inv.Cancelled === true,
+          ft_sent: inv.Sent === true,
+
+          ft_url: asTextOrEmpty(inv["@url"]),
+
+          // ✅ EXAKT dina fältnamn i Bubble
+          ft_our_reference: ourReference,
+          ft_your_order_number: yourOrderNumber,
+          ft_your_reference: dealLink,
+
+          // Spara gärna detail också om den fanns (guld vid felsökning)
+          ft_raw_json: JSON.stringify({ list: inv || {}, detail: detail || null })
+        };
+
         const existing = await bubbleFindOne(TYPE, [
           { key: "connection_id", constraint_type: "equals", value: connection_id },
           { key: "ft_document_number", constraint_type: "equals", value: docNo }
@@ -2743,7 +2776,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
         errors++;
         if (!first_error) {
           first_error = {
-            step: "bubbleUpsert",
+            step: "invoiceLoop",
             docNo,
             message: e?.message || String(e),
             status: e?.status || null,
