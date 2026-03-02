@@ -1946,21 +1946,13 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
     for (const o of orders) {
       const docNo = String(o?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
-const extRef =
-  asTextOrEmpty(o?.ExternalInvoiceReference) ||
-  asTextOrEmpty(o?.externalInvoiceReference) ||
-  asTextOrEmpty(o?.ExternalOrderReference) ||
-  asTextOrEmpty(o?.externalOrderReference) ||
-  asTextOrEmpty(o?.YourOrderNumber) ||
-  asTextOrEmpty(o?.yourOrderNumber) ||
-  asTextOrEmpty(o?.YourOrderNo) ||
-  asTextOrEmpty(o?.yourOrderNo);
+
       const payload = {
         connection: connection_id,
         ft_document_number: docNo,
         ft_customer_number: String(o?.CustomerNumber || ""),
         ft_customer_name: String(o?.CustomerName || ""),
-        ft_your_reference: extRef,
+        ft_your_reference: asTextOrEmpty(o?.YourOrderNumber) || asTextOrEmpty(o?.YourReference) || "",
         ft_order_date: toIsoDate(o?.OrderDate),
         ft_delivery_date: toIsoDate(o?.DeliveryDate),
         ft_last_seen_at: new Date().toISOString(),
