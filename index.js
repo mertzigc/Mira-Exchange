@@ -1918,8 +1918,8 @@ async function fortnoxGetOfferDetail(tok, docNo) {
   return { ok: true, offer };
 }
 // ────────────────────────────────────────────────────────────
-// Fortnox: upsert orders into Bubble (one page)
-app.post("/fortnox/upsert/orders", async (req, res) => {
+// Fortnox: upsert orders into Bubble (one page) - WITH detail fallback for YourOrderNumber
+app.post("/fortnox/upsert/orders", requireApiKey, async (req, res) => {
   const { connection_id, page = 1, limit = 100, months_back = 12 } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
@@ -1927,6 +1927,13 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
   let firstError = null;
 
   try {
+    // 0) token (re-use your existing helper)
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok?.ok) {
+      return res.status(401).json({ ok: false, error: tok?.error || "Token error", detail: tok?.detail || null });
+    }
+
+    // 1) LIST
     const syncRes = await fetch("https://mira-exchange.onrender.com/fortnox/sync/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
@@ -1947,25 +1954,50 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
       const docNo = String(o?.DocumentNumber || "").trim();
       if (!docNo) { skipped++; continue; }
 
-      const payload = {
-        connection: connection_id,
-        ft_document_number: docNo,
-        ft_customer_number: String(o?.CustomerNumber || ""),
-        ft_customer_name: String(o?.CustomerName || ""),
-        ft_your_reference: asTextOrEmpty(o?.YourOrderNumber) || asTextOrEmpty(o?.YourReference) || "",
-        ft_order_date: toIsoDate(o?.OrderDate),
-        ft_delivery_date: toIsoDate(o?.DeliveryDate),
-        ft_last_seen_at: new Date().toISOString(),
-        ft_total: o?.Total == null ? "" : String(o.Total),
-        ft_cancelled: !!o?.Cancelled,
-        ft_sent: !!o?.Sent,
-        ft_currency: String(o?.Currency || ""),
-        ft_url: String(o?.["@url"] || ""),
-        ft_raw_json: JSON.stringify(o || {}),
-        needs_rows_sync: true
-      };
-
       try {
+        // 2) plocka från LIST
+        let yourOrderNumber = asTextOrEmpty(o?.YourOrderNumber || o?.yourOrderNumber).trim();
+        let yourReference   = asTextOrEmpty(o?.YourReference   || o?.yourReference).trim();
+
+        // 3) fallback till DETAIL om vi saknar YourOrderNumber (det du behöver för Deal-koppling)
+        let detail = null;
+        if (!yourOrderNumber) {
+          const r = await fortnoxGet("/orders/" + encodeURIComponent(docNo), tok.access_token);
+          if (r?.ok) {
+            detail = r.data?.Order || r.data?.order || null;
+            if (detail) {
+              yourOrderNumber = yourOrderNumber || asTextOrEmpty(detail.YourOrderNumber).trim();
+              yourReference   = yourReference   || asTextOrEmpty(detail.YourReference).trim();
+            }
+          }
+        }
+
+        const dealLink = yourOrderNumber || yourReference || "";
+
+        const payload = {
+          connection: connection_id,
+          ft_document_number: docNo,
+          ft_customer_number: asTextOrEmpty(o?.CustomerNumber).trim(),
+          ft_customer_name: asTextOrEmpty(o?.CustomerName).trim(),
+
+          // ✅ DETTA är din Deal-länk
+          ft_your_reference: dealLink,
+
+          ft_order_date: toIsoDate(o?.OrderDate),
+          ft_delivery_date: toIsoDate(o?.DeliveryDate),
+          ft_last_seen_at: new Date().toISOString(),
+          ft_total: o?.Total == null ? "" : String(o.Total),
+          ft_cancelled: !!o?.Cancelled,
+          ft_sent: !!o?.Sent,
+          ft_currency: asTextOrEmpty(o?.Currency).trim(),
+          ft_url: asTextOrEmpty(o?.["@url"]).trim(),
+
+          // spara även detail när den fanns (superbra för felsökning)
+          ft_raw_json: JSON.stringify({ list: o || {}, detail: detail || null }),
+
+          needs_rows_sync: true
+        };
+
         const search = await bubbleFind("FortnoxOrder", {
           constraints: [
             { key: "connection", constraint_type: "equals", value: connection_id },
@@ -1979,32 +2011,33 @@ app.post("/fortnox/upsert/orders", async (req, res) => {
 
         let fortnoxOrderId = null;
 
-if (existing?._id && foundDoc === docNo) {
-  fortnoxOrderId = existing._id;
-  await bubblePatch("FortnoxOrder", fortnoxOrderId, payload);
-  updated++;
-} else {
-  fortnoxOrderId = await bubbleCreate("FortnoxOrder", payload);
-  created++;
-}
+        if (existing?._id && foundDoc === docNo) {
+          fortnoxOrderId = existing._id;
+          await bubblePatch("FortnoxOrder", fortnoxOrderId, payload);
+          updated++;
+        } else {
+          fortnoxOrderId = await bubbleCreate("FortnoxOrder", payload);
+          created++;
+        }
 
-// ✅ UnifiedOrder cache
-try {
-  if (fortnoxOrderId) {
-    const unifiedPayload = await buildUnifiedOrderFromFortnox({
-      bubbleFortnoxOrderId: fortnoxOrderId,
-      fortnoxOrder: o,
-      connection_id
-    });
-    await upsertUnifiedOrder(unifiedPayload);
-  }
-} catch (e) {
-  console.error("[UnifiedOrder][fortnox] failed", {
-    docNo,
-    error: e?.message || String(e),
-    detail: e?.detail || null
-  });
-}
+        // ✅ UnifiedOrder cache (som du redan har)
+        try {
+          if (fortnoxOrderId) {
+            const unifiedPayload = await buildUnifiedOrderFromFortnox({
+              bubbleFortnoxOrderId: fortnoxOrderId,
+              fortnoxOrder: o,
+              connection_id
+            });
+            await upsertUnifiedOrder(unifiedPayload);
+          }
+        } catch (e) {
+          console.error("[UnifiedOrder][fortnox] failed", {
+            docNo,
+            error: e?.message || String(e),
+            detail: e?.detail || null
+          });
+        }
+
       } catch (e) {
         errors++;
         if (!firstError) firstError = { docNo, message: e?.message || String(e), status: e?.status || null, detail: e?.detail || null };
