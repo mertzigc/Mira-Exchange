@@ -2167,6 +2167,134 @@ app.post("/fortnox/sync/order", requireApiKey, async (req, res) => {
   return res.status(r.status).json(j);
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: upsert ONE order (by docno) into Bubble
+// Uses existing /fortnox/sync/orders/one (DETAIL)
+app.post("/fortnox/upsert/orders/one", requireApiKey, async (req, res) => {
+  try {
+    const { connection_id, order_docno, pause_ms = 0 } = req.body || {};
+    const docNo = String(order_docno || "").trim();
+
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+    if (!docNo) return res.status(400).json({ ok: false, error: "Missing order_docno" });
+
+    // 1) Fetch detail via your existing endpoint
+    const r = await fetch(`${SELF_BASE_URL.replace(/\/$/, "")}/fortnox/sync/orders/one`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({ connection_id, order_docno: docNo })
+    });
+
+    const text = await r.text();
+    let j = {};
+    try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
+
+    if (!r.ok || !j.ok) {
+      return res.status(400).json({
+        ok: false,
+        error: "sync/orders/one failed",
+        http_status: r.status,
+        detail: j
+      });
+    }
+
+    const o = j.order || null;
+    if (!o) return res.status(400).json({ ok: false, error: "No order returned from sync/orders/one", detail: j });
+
+    const realDocNo = String(o?.DocumentNumber || docNo).trim();
+
+    // 2) Map refs (DETAIL has YourOrderNumber)
+    const yourOrderNumber = asTextOrEmpty(o?.YourOrderNumber).trim();
+    const yourReference   = asTextOrEmpty(o?.YourReference).trim();
+    const dealLink        = yourOrderNumber || yourReference || "";
+
+    const payload = {
+      connection: connection_id,
+      ft_document_number: realDocNo,
+      ft_customer_number: asTextOrEmpty(o?.CustomerNumber).trim(),
+      ft_customer_name: asTextOrEmpty(o?.CustomerName).trim(),
+
+      // ✅ Deal link you want
+      ft_your_reference: dealLink,
+
+      ft_order_date: toIsoDate(o?.OrderDate),
+      ft_delivery_date: toIsoDate(o?.DeliveryDate),
+      ft_last_seen_at: new Date().toISOString(),
+      ft_total: o?.Total == null ? "" : String(o.Total),
+      ft_cancelled: !!o?.Cancelled,
+      ft_sent: !!o?.Sent,
+      ft_currency: asTextOrEmpty(o?.Currency).trim(),
+      ft_url: asTextOrEmpty(o?.["@url"]).trim(),
+
+      // Save detail for debugging
+      ft_raw_json: JSON.stringify(o || {}),
+
+      needs_rows_sync: true
+    };
+
+    // 3) Upsert in Bubble
+    const search = await bubbleFind("FortnoxOrder", {
+      constraints: [
+        { key: "connection", constraint_type: "equals", value: connection_id },
+        { key: "ft_document_number", constraint_type: "equals", value: realDocNo }
+      ],
+      limit: 1
+    });
+
+    const existing = Array.isArray(search) && search.length ? search[0] : null;
+
+    let action = "skipped";
+    let fortnoxOrderId = null;
+
+    if (existing?._id) {
+      fortnoxOrderId = existing._id;
+      await bubblePatch("FortnoxOrder", fortnoxOrderId, payload);
+      action = "updated";
+    } else {
+      fortnoxOrderId = await bubbleCreate("FortnoxOrder", payload);
+      action = "created";
+    }
+
+    // 4) UnifiedOrder cache (optional, but nice)
+    try {
+      if (fortnoxOrderId && typeof buildUnifiedOrderFromFortnox === "function" && typeof upsertUnifiedOrder === "function") {
+        const unifiedPayload = await buildUnifiedOrderFromFortnox({
+          bubbleFortnoxOrderId: fortnoxOrderId,
+          fortnoxOrder: o,
+          connection_id
+        });
+        await upsertUnifiedOrder(unifiedPayload);
+      }
+    } catch (e) {
+      console.error("[UnifiedOrder][fortnox][orders/one] failed", {
+        docNo: realDocNo,
+        error: e?.message || String(e),
+        detail: e?.detail || null
+      });
+    }
+
+    if (pause_ms) await sleep(Number(pause_ms));
+
+    return res.json({
+      ok: true,
+      connection_id,
+      order_docno: realDocNo,
+      action,
+      bubble_id: fortnoxOrderId,
+      ft_your_reference: dealLink,
+      debug: {
+        YourOrderNumber: yourOrderNumber,
+        YourReference: yourReference
+      }
+    });
+  } catch (e) {
+    console.error("[/fortnox/upsert/orders/one] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // Fortnox: fetch + upsert customers into Bubble (FortnoxCustomer)
 app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
   const {
