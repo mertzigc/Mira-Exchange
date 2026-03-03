@@ -340,14 +340,65 @@ app.get("/debug/find-port-placeholder", (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-app.get("/debug/fingerprint", (req, res) => {
-  res.json({
-    ok: true,
-    service: "mira-exchange",
-    fingerprint: "2026-03-03_nightly-port-fix_v1",
-    port: process.env.PORT,
-    node: process.version,
-  });
+app.get("/debug/find-selfcall-builders", (req, res) => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+
+  const root = process.cwd();
+  const files = [];
+
+  function walk(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === "node_modules" || ent.name.startsWith(".")) continue;
+        walk(p);
+      } else if (ent.isFile()) {
+        if (/\.(js|mjs|cjs|sh|env|json|txt)$/i.test(p)) files.push(p);
+      }
+    }
+  }
+
+  walk(root);
+
+  const needles = [
+    "127.0.0.1",
+    "localhost",
+    "SELF_BASE_URL",
+    "SELF_BASE",
+    "INTERNAL",
+    "BASE_URL",
+    "renderPostJson",
+    "fetch(",
+    "upsert/customers",
+    "upsert/orders",
+    "upsert/offers",
+    "upsert/invoices",
+    "PORT",
+    "${PORT}",
+    ":${PORT}",
+    "http://127.0.0.1:${PORT}"
+  ];
+
+  const hits = [];
+  for (const f of files) {
+    let txt;
+    try { txt = fs.readFileSync(f, "utf8"); } catch { continue; }
+    for (const n of needles) {
+      if (txt.includes(n)) {
+        hits.push({ file: f.replace(root + "/", ""), needle: n });
+      }
+    }
+  }
+
+  // Maskad env – vi vill bara se om SELF_BASE_URL finns och vad den ungefär är
+  const env = {};
+  for (const k of Object.keys(process.env)) {
+    if (/KEY|SECRET|TOKEN|PASS|AUTH/i.test(k)) continue;
+    if (k === "SELF_BASE_URL") env[k] = process.env[k];
+  }
+
+  res.json({ ok: true, root, file_hits: hits.slice(0, 200), env });
 });
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
