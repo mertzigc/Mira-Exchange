@@ -13,8 +13,8 @@ DOCS_ALLOWLIST="${DOCS_ALLOWLIST:-1771579463578x385222043661358460}"
 echo "=== Fortnox MINI nightly START ==="
 echo "HOST=$HOST (PORT=$PORT_LOCAL)"
 
-curl -sS --max-time 7200 \
-  "$HOST/fortnox/nightly/run" \
+curl -sS --max-time 30 \
+  "$HOST/fortnox/nightly/kickoff" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "{
