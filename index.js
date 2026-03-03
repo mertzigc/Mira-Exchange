@@ -1442,9 +1442,6 @@ app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
   lock.run_id = null;
   return res.json({ ok: true, unlocked: true, was });
 });
-// Internal self-calls – alltid localhost på aktuell PORT
-const SELF_BASE_URL = `http://127.0.0.1:${PORT}`;
-console.log("[BOOT] SELF_BASE_URL =", SELF_BASE_URL);
 
 async function renderPostJson(path, body) {
   const url = SELF_BASE_URL.replace(/\/$/, "") + path;
