@@ -5278,6 +5278,19 @@ if (!allowDocs) {
     }
   }
 });
+app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
+  const lock = getLock();
+  const now = Date.now();
+  const age_ms = lock?.started_at ? (now - lock.started_at) : null;
+  return res.json({
+    ok: true,
+    now,
+    lock: {
+      ...lock,
+      age_ms
+    }
+  });
+});
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Bubble: Matter + MatterMessage
