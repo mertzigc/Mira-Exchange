@@ -4743,6 +4743,29 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
   }
 });
+// Kickoff: svara direkt (undvik Cloudflare 524) och starta nightly i bakgrunden
+app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
+  // svara direkt så Cloudflare aldrig hinner timeouta
+  res.status(202).json({ ok: true, kicked: true });
+
+  // fire-and-forget: trigga samma nightly internt via PUBLIC URL (ja, men snabbt)
+  // vi väntar inte på svaret här
+  setImmediate(async () => {
+    try {
+      const url = `https://mira-exchange.onrender.com/fortnox/nightly/run`;
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY // måste vara samma som cron använder
+        },
+        body: JSON.stringify(req.body || {})
+      });
+    } catch (e) {
+      console.error("[nightly/kickoff] failed", e?.message || e);
+    }
+  });
+});
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   const lock = getLock();
   const now = Date.now();
