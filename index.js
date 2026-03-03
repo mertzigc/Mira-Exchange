@@ -52,7 +52,8 @@ const PORT       = process.env.PORT || 10000;
 
 // Interna self-calls: alltid localhost på aktuell PORT (inga env-overrides)
 const SELF_BASE_URL = `http://127.0.0.1:${PORT}`;
-
+// Timeout för interna nightly-calls (förhindrar "This operation was aborted")
+const NIGHTLY_INTERNAL_TIMEOUT_MS = 45 * 60 * 1000; // 45 minuter
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
 const RENDER_API_KEY =
@@ -4887,7 +4888,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
                 skip_without_orgnr: cfg.customers.skip_without_orgnr,
                 link_company: cfg.customers.link_company
               },
-              180000
+              NIGHTLY_INTERNAL_TIMEOUT_MS
             );
           };
 
@@ -4955,7 +4956,7 @@ if (!allowDocs) {
             pause_ms: cfg.orders.pause_ms,
             months_back
           },
-          15 * 60 * 1000
+          NIGHTLY_INTERNAL_TIMEOUT_MS
         );
       };
 
@@ -5007,7 +5008,7 @@ if (!allowDocs) {
             page,
             limit: cfg.orders.limit
           },
-          5 * 60 * 1000
+          NIGHTLY_INTERNAL_TIMEOUT_MS
         );
 
         const c = j?.counts || {};
@@ -5041,7 +5042,7 @@ if (!allowDocs) {
         const rowsJ = await postInternalJson(
           "/fortnox/upsert/order-rows/flagged",
           { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-          5 * 60 * 1000
+          NIGHTLY_INTERNAL_TIMEOUT_MS
         );
         if (!rowsJ.flagged_found) break;
         if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
@@ -5073,7 +5074,7 @@ if (!allowDocs) {
               limit: cfg.offers.limit,
               max_pages: cfg.offers.pages_per_call
             },
-            15 * 60 * 1000
+            NIGHTLY_INTERNAL_TIMEOUT_MS
           );
 
           one.offers = {
@@ -5093,7 +5094,7 @@ if (!allowDocs) {
               const rowsJ = await postInternalJson(
                 "/fortnox/upsert/offer-rows/flagged",
                 { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-                180000
+                NIGHTLY_INTERNAL_TIMEOUT_MS
               );
               if (!rowsJ.flagged_found) break;
               if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
@@ -5122,7 +5123,7 @@ if (!allowDocs) {
                 max_pages: cfg.invoices.pages_per_call,
                 months_back
               },
-              15 * 60 * 1000
+              NIGHTLY_INTERNAL_TIMEOUT_MS
             );
           };
 
