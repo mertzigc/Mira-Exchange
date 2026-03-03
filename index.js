@@ -4776,27 +4776,35 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
   const url = `http://127.0.0.1:${port}/fortnox/nightly/run`;
   const body = req.body || {};
 
-  setImmediate(async () => {
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": incomingKey
-        },
-        body: JSON.stringify(body)
-      });
-
+setImmediate(() => {
+  fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": incomingKey
+    },
+    body: JSON.stringify(body)
+  })
+    .then(async (r) => {
       const text = await r.text().catch(() => "");
       console.log("[nightly/kickoff] internal /run response", { status: r.status, preview: text.slice(0, 300) });
-    } catch (e) {
+    })
+    .catch((e) => {
       console.error("[nightly/kickoff] internal /run fetch failed", e?.message || e);
-    } finally {
-      // släpp kickoff-flaggan oavsett
+    })
+    .finally(() => {
+      lock.kickoff_inflight = false;
+      lock.kickoff_started_at = 0;
+    });
+
+  // failsafe: släpp kickoff-flaggan även om något helt oväntat händer
+  setTimeout(() => {
+    if (lock.kickoff_inflight) {
+      console.warn("[nightly/kickoff] failsafe release kickoff_inflight");
       lock.kickoff_inflight = false;
       lock.kickoff_started_at = 0;
     }
-  });
+  }, 30_000);
 });
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   const lock = getLock();
@@ -4861,7 +4869,8 @@ const postInternalJsonStable = async (path, payload, timeoutMs) => {
   await sleep(250);
 
   try {
-    return await postInternalJsonStable(path, payload, timeoutMs);
+    // ✅ correct: call the real internal poster
+    return await postInternalJson(path, payload, timeoutMs);
   } catch (e1) {
     if (!isTransientFetchError(e1)) throw e1;
 
@@ -4873,7 +4882,7 @@ const postInternalJsonStable = async (path, payload, timeoutMs) => {
 
     // Backoff then retry once
     await sleep(1500);
-    return await postInternalJsonStable(path, payload, timeoutMs);
+    return await postInternalJson(path, payload, timeoutMs);
   }
 };
   try {
@@ -5294,6 +5303,23 @@ app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
       age_ms
     }
   });
+});
+app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
+  const lock = getLock();
+
+  lock.running = false;
+  lock.started_at = 0;
+  lock.finished_at = Date.now();
+  lock.connection_id = null;
+  lock.run_id = null;
+
+  // även kickoff-flaggor
+  lock.kickoff_inflight = false;
+  lock.kickoff_started_at = 0;
+
+  console.warn("[nightly/unlock] manual unlock", { at: new Date().toISOString() });
+
+  return res.json({ ok: true, lock });
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
