@@ -1429,9 +1429,6 @@ const getLock = () => {
   return globalThis.__miraLock;
 };
 
-// ✅ alias så dina routes funkar (du kan använda båda namnen)
-const getLock = getLock;
-
 app.get("/fortnox//status", requireApiKey, async (req, res) => {
   const lock = getNightlyLock();
   return res.json({ ok: true, lock });
