@@ -4748,7 +4748,7 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
   const now = Date.now();
   const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 
-  // Clear stale lock (samma beteende som run)
+  // Clear stale lock
   if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
     console.warn("[nightly/kickoff] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
     lock.running = false;
@@ -4762,36 +4762,49 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
     return res.status(409).json({ ok: false, already_running: true, lock });
   }
 
-  // Markera "running" direkt så nästa kickoff blockas omedelbart
+  // Mark running immediately to block double-kicks
   lock.running = true;
   lock.started_at = now;
   lock.finished_at = 0;
   lock.connection_id = null;
   lock.run_id = `${now}-${Math.random().toString(16).slice(2)}`;
 
-  // Svara direkt (ingen 524)
+  // Respond immediately (avoid 524)
   res.status(202).json({ ok: true, kicked: true, run_id: lock.run_id });
 
-  // Starta nightly i bakgrunden via localhost
-  const url = `http://127.0.0.1:${PORT}/fortnox/nightly/run`;
+  // IMPORTANT: reuse the SAME api key that cron used (already validated by requireApiKey)
+  const incomingKey = req.get("x-api-key");
+  const port = process.env.PORT || "10000";
+  const url = `http://127.0.0.1:${port}/fortnox/nightly/run`;
   const body = req.body || {};
 
-  setImmediate(() => {
-    fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
-      },
-      body: JSON.stringify(body)
-    })
-      .then(async (r) => {
-        const t = await r.text().catch(() => "");
-        console.log("[nightly/kickoff] internal run returned", { status: r.status, preview: t.slice(0, 200) });
-      })
-      .catch((e) => {
-        console.error("[nightly/kickoff] internal run failed", e?.message || e);
+  setImmediate(async () => {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": incomingKey
+        },
+        body: JSON.stringify(body)
       });
+
+      const text = await r.text().catch(() => "");
+      console.log("[nightly/kickoff] internal run response", { status: r.status, preview: text.slice(0, 300) });
+
+      // If internal call failed, release lock so you don't get stuck "running"
+      if (!r.ok) {
+        console.error("[nightly/kickoff] internal run NOT ok; releasing lock", { status: r.status });
+        lock.running = false;
+        lock.finished_at = Date.now();
+        lock.connection_id = null;
+      }
+    } catch (e) {
+      console.error("[nightly/kickoff] internal run fetch failed; releasing lock", e?.message || e);
+      lock.running = false;
+      lock.finished_at = Date.now();
+      lock.connection_id = null;
+    }
   });
 });
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
