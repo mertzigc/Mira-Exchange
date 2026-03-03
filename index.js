@@ -50,6 +50,9 @@ const MS_TENANT = pick(process.env.MS_TENANT, "common");
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const PORT       = process.env.PORT || 10000;
 
+// Interna self-calls: alltid localhost på aktuell PORT (inga env-overrides)
+const SELF_BASE_URL = `http://127.0.0.1:${PORT}`;
+
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
 const RENDER_API_KEY =
@@ -299,104 +302,6 @@ function extractActionLink({ bodyHtml = "", bodyText = "" } = {}) {
 import fs from "node:fs";
 import path from "node:path";
 
-app.get("/debug/find-port-placeholder", (req, res) => {
-  try {
-    const root = process.cwd(); // /opt/render/project/src
-    const files = [];
-
-    function walk(dir) {
-      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-        const p = path.join(dir, ent.name);
-        if (ent.isDirectory()) {
-          if (ent.name === "node_modules" || ent.name.startsWith(".")) continue;
-          walk(p);
-        } else if (ent.isFile()) {
-          if (p.endsWith(".js") || p.endsWith(".mjs") || p.endsWith(".cjs") || p.endsWith(".sh")) {
-            files.push(p);
-          }
-        }
-      }
-    }
-
-    walk(root);
-
-    const hits = [];
-    for (const f of files) {
-      const txt = fs.readFileSync(f, "utf8");
-      if (txt.includes("${PORT}")) {
-        // ta med lite kontext runt träffen
-        const idx = txt.indexOf("${PORT}");
-        const start = Math.max(0, idx - 80);
-        const end = Math.min(txt.length, idx + 80);
-        hits.push({
-          file: f.replace(root + "/", ""),
-          snippet: txt.slice(start, end).replace(/\n/g, "\\n"),
-        });
-      }
-    }
-
-    res.json({ ok: true, root, count: hits.length, hits });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-import fs from "node:fs";
-import path from "node:path";
-
-app.get("/debug/find-selfcall-builders", (req, res) => {
-  try {
-    const root = process.cwd(); // /opt/render/project/src
-    const files = [];
-
-    function walk(dir) {
-      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-        const p = path.join(dir, ent.name);
-        if (ent.isDirectory()) {
-          if (ent.name === "node_modules" || ent.name.startsWith(".")) continue;
-          walk(p);
-        } else if (ent.isFile()) {
-          if (/\.(js|mjs|cjs|sh|env|json|txt)$/i.test(p)) files.push(p);
-        }
-      }
-    }
-
-    walk(root);
-
-    const needles = [
-      "http://127.0.0.1:${PORT}",
-      ":${PORT}",
-      "${PORT}",
-      "127.0.0.1",
-      "localhost",
-      "SELF_BASE_URL",
-      "SELF_BASE",
-      "INTERNAL",
-      "BASE_URL",
-      "renderPostJson",
-      "/fortnox/upsert/customers/all",
-      "/fortnox/upsert/orders",
-      "/fortnox/upsert/offers/all",
-      "/fortnox/upsert/invoices/all"
-    ];
-
-    const hits = [];
-    for (const f of files) {
-      let txt;
-      try { txt = fs.readFileSync(f, "utf8"); } catch { continue; }
-      for (const n of needles) {
-        if (txt.includes(n)) hits.push({ file: f.replace(root + "/", ""), needle: n });
-      }
-    }
-
-    // Maskad env: visa bara SELF_BASE_URL om den finns
-    const env = {};
-    if (process.env.SELF_BASE_URL) env.SELF_BASE_URL = process.env.SELF_BASE_URL;
-
-    res.json({ ok: true, root, hit_count: hits.length, hits: hits.slice(0, 300), env });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
@@ -1366,11 +1271,8 @@ async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
-  const base =
-    process.env.INTERNAL_BASE_URL ||
-    process.env.SELF_BASE_URL ||
-    SELF_BASE_URL;
-
+  // Viktigt: inga env-overrides här. Vi vill aldrig riskera "${PORT}" i bas-URL.
+  const base = SELF_BASE_URL;
   const url = `${String(base).replace(/\/+$/, "")}${path}`;
 
   try {
