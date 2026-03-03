@@ -4743,27 +4743,55 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
   }
 });
-// Kickoff: svara direkt (undvik Cloudflare 524) och starta nightly i bakgrunden
 app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
-  // svara direkt så Cloudflare aldrig hinner timeouta
-  res.status(202).json({ ok: true, kicked: true });
+  const lock = getLock();
+  const now = Date.now();
+  const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 
-  // fire-and-forget: trigga samma nightly internt via PUBLIC URL (ja, men snabbt)
-  // vi väntar inte på svaret här
-  setImmediate(async () => {
-    try {
-      const url = `https://mira-exchange.onrender.com/fortnox/nightly/run`;
-      await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY // måste vara samma som cron använder
-        },
-        body: JSON.stringify(req.body || {})
+  // Clear stale lock (samma beteende som run)
+  if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
+    console.warn("[nightly/kickoff] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
+    lock.running = false;
+    lock.started_at = 0;
+    lock.finished_at = 0;
+    lock.connection_id = null;
+    lock.run_id = null;
+  }
+
+  if (lock.running) {
+    return res.status(409).json({ ok: false, already_running: true, lock });
+  }
+
+  // Markera "running" direkt så nästa kickoff blockas omedelbart
+  lock.running = true;
+  lock.started_at = now;
+  lock.finished_at = 0;
+  lock.connection_id = null;
+  lock.run_id = `${now}-${Math.random().toString(16).slice(2)}`;
+
+  // Svara direkt (ingen 524)
+  res.status(202).json({ ok: true, kicked: true, run_id: lock.run_id });
+
+  // Starta nightly i bakgrunden via localhost
+  const url = `http://127.0.0.1:${PORT}/fortnox/nightly/run`;
+  const body = req.body || {};
+
+  setImmediate(() => {
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify(body)
+    })
+      .then(async (r) => {
+        const t = await r.text().catch(() => "");
+        console.log("[nightly/kickoff] internal run returned", { status: r.status, preview: t.slice(0, 200) });
+      })
+      .catch((e) => {
+        console.error("[nightly/kickoff] internal run failed", e?.message || e);
       });
-    } catch (e) {
-      console.error("[nightly/kickoff] failed", e?.message || e);
-    }
   });
 });
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
