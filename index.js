@@ -340,6 +340,15 @@ app.get("/debug/find-port-placeholder", (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+app.get("/debug/fingerprint", (req, res) => {
+  res.json({
+    ok: true,
+    service: "mira-exchange",
+    fingerprint: "2026-03-03_nightly-port-fix_v1",
+    port: process.env.PORT,
+    node: process.version,
+  });
+});
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
