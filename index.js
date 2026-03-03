@@ -4746,33 +4746,31 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
 app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
   const lock = getLock();
   const now = Date.now();
-  const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 
-  // Clear stale lock
-  if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
-    console.warn("[nightly/kickoff] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
-    lock.running = false;
-    lock.started_at = 0;
-    lock.finished_at = 0;
-    lock.connection_id = null;
-    lock.run_id = null;
-  }
+  // separat skydd mot dubbel-kick (inte samma som lock.running)
+  const KICKOFF_TTL_MS = 60 * 1000; // 60s räcker
 
+  // init fields om de saknas
+  if (lock.kickoff_inflight === undefined) lock.kickoff_inflight = false;
+  if (lock.kickoff_started_at === undefined) lock.kickoff_started_at = 0;
+
+  // om nightly redan kör: blocka
   if (lock.running) {
     return res.status(409).json({ ok: false, already_running: true, lock });
   }
 
-  // Mark running immediately to block double-kicks
-  lock.running = true;
-  lock.started_at = now;
-  lock.finished_at = 0;
-  lock.connection_id = null;
-  lock.run_id = `${now}-${Math.random().toString(16).slice(2)}`;
+  // om kickoff precis nyss triggat: blocka
+  if (lock.kickoff_inflight && lock.kickoff_started_at && (now - lock.kickoff_started_at < KICKOFF_TTL_MS)) {
+    return res.status(409).json({ ok: false, kickoff_inflight: true, lock });
+  }
 
-  // Respond immediately (avoid 524)
-  res.status(202).json({ ok: true, kicked: true, run_id: lock.run_id });
+  // markera kickoff inflight (MEN INTE running)
+  lock.kickoff_inflight = true;
+  lock.kickoff_started_at = now;
 
-  // IMPORTANT: reuse the SAME api key that cron used (already validated by requireApiKey)
+  // svara direkt (så cron aldrig får 524)
+  res.status(202).json({ ok: true, kicked: true });
+
   const incomingKey = req.get("x-api-key");
   const port = process.env.PORT || "10000";
   const url = `http://127.0.0.1:${port}/fortnox/nightly/run`;
@@ -4790,20 +4788,13 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
       });
 
       const text = await r.text().catch(() => "");
-      console.log("[nightly/kickoff] internal run response", { status: r.status, preview: text.slice(0, 300) });
-
-      // If internal call failed, release lock so you don't get stuck "running"
-      if (!r.ok) {
-        console.error("[nightly/kickoff] internal run NOT ok; releasing lock", { status: r.status });
-        lock.running = false;
-        lock.finished_at = Date.now();
-        lock.connection_id = null;
-      }
+      console.log("[nightly/kickoff] internal /run response", { status: r.status, preview: text.slice(0, 300) });
     } catch (e) {
-      console.error("[nightly/kickoff] internal run fetch failed; releasing lock", e?.message || e);
-      lock.running = false;
-      lock.finished_at = Date.now();
-      lock.connection_id = null;
+      console.error("[nightly/kickoff] internal /run fetch failed", e?.message || e);
+    } finally {
+      // släpp kickoff-flaggan oavsett
+      lock.kickoff_inflight = false;
+      lock.kickoff_started_at = 0;
     }
   });
 });
