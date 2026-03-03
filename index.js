@@ -4760,7 +4760,11 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
   }
 
   // om kickoff precis nyss triggat: blocka
-  if (lock.kickoff_inflight && lock.kickoff_started_at && (now - lock.kickoff_started_at < KICKOFF_TTL_MS)) {
+  if (
+    lock.kickoff_inflight &&
+    lock.kickoff_started_at &&
+    (now - lock.kickoff_started_at < KICKOFF_TTL_MS)
+  ) {
     return res.status(409).json({ ok: false, kickoff_inflight: true, lock });
   }
 
@@ -4769,42 +4773,46 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
   lock.kickoff_started_at = now;
 
   // svara direkt (så cron aldrig får 524)
-  res.status(202).json({ ok: true, kicked: true });
+  res.status(202).json({ ok: true, kicked: true, run_id: `${now}-${Math.random().toString(16).slice(2)}` });
 
   const incomingKey = req.get("x-api-key");
   const port = process.env.PORT || "10000";
   const url = `http://127.0.0.1:${port}/fortnox/nightly/run`;
   const body = req.body || {};
 
-setImmediate(() => {
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": incomingKey
-    },
-    body: JSON.stringify(body)
-  })
-    .then(async (r) => {
-      const text = await r.text().catch(() => "");
-      console.log("[nightly/kickoff] internal /run response", { status: r.status, preview: text.slice(0, 300) });
+  setImmediate(() => {
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": incomingKey
+      },
+      body: JSON.stringify(body)
     })
-    .catch((e) => {
-      console.error("[nightly/kickoff] internal /run fetch failed", e?.message || e);
-    })
-    .finally(() => {
-      lock.kickoff_inflight = false;
-      lock.kickoff_started_at = 0;
-    });
+      .then(async (r) => {
+        const text = await r.text().catch(() => "");
+        console.log("[nightly/kickoff] internal /run response", {
+          status: r.status,
+          preview: text.slice(0, 300)
+        });
+      })
+      .catch((e) => {
+        console.error("[nightly/kickoff] internal /run fetch failed", e?.message || e);
+      })
+      .finally(() => {
+        lock.kickoff_inflight = false;
+        lock.kickoff_started_at = 0;
+      });
 
-  // failsafe: släpp kickoff-flaggan även om något helt oväntat händer
-  setTimeout(() => {
-    if (lock.kickoff_inflight) {
-      console.warn("[nightly/kickoff] failsafe release kickoff_inflight");
-      lock.kickoff_inflight = false;
-      lock.kickoff_started_at = 0;
-    }
-  }, 30_000);
+    // failsafe: släpp kickoff-flaggan även om något helt oväntat händer
+    setTimeout(() => {
+      if (lock.kickoff_inflight) {
+        console.warn("[nightly/kickoff] failsafe release kickoff_inflight");
+        lock.kickoff_inflight = false;
+        lock.kickoff_started_at = 0;
+      }
+    }, 30_000);
+  });
 });
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   const lock = getLock();
