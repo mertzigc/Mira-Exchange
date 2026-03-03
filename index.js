@@ -296,6 +296,50 @@ function extractActionLink({ bodyHtml = "", bodyText = "" } = {}) {
 
   return { url: "", label: "", foundIn: "" };
 }
+import fs from "node:fs";
+import path from "node:path";
+
+app.get("/debug/find-port-placeholder", (req, res) => {
+  try {
+    const root = process.cwd(); // /opt/render/project/src
+    const files = [];
+
+    function walk(dir) {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          if (ent.name === "node_modules" || ent.name.startsWith(".")) continue;
+          walk(p);
+        } else if (ent.isFile()) {
+          if (p.endsWith(".js") || p.endsWith(".mjs") || p.endsWith(".cjs") || p.endsWith(".sh")) {
+            files.push(p);
+          }
+        }
+      }
+    }
+
+    walk(root);
+
+    const hits = [];
+    for (const f of files) {
+      const txt = fs.readFileSync(f, "utf8");
+      if (txt.includes("${PORT}")) {
+        // ta med lite kontext runt träffen
+        const idx = txt.indexOf("${PORT}");
+        const start = Math.max(0, idx - 80);
+        const end = Math.min(txt.length, idx + 80);
+        hits.push({
+          file: f.replace(root + "/", ""),
+          snippet: txt.slice(start, end).replace(/\n/g, "\\n"),
+        });
+      }
+    }
+
+    res.json({ ok: true, root, count: hits.length, hits });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
