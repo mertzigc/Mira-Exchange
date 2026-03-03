@@ -52,8 +52,8 @@ const PORT       = process.env.PORT || 10000;
 
 // Interna self-calls: alltid localhost på aktuell PORT (inga env-overrides)
 const SELF_BASE_URL = `http://127.0.0.1:${PORT}`;
-// Timeout för interna nightly-calls (förhindrar "This operation was aborted")
-const NIGHTLY_INTERNAL_TIMEOUT_MS = 45 * 60 * 1000; // 45 minuter
+// Timeout för interna -calls (förhindrar "This operation was aborted")
+const _INTERNAL_TIMEOUT_MS = 45 * 60 * 1000; // 45 minuter
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
 const RENDER_API_KEY =
@@ -1259,7 +1259,7 @@ async function safeSetConnPaging(connectionId, patchObj) {
     await bubblePatch("FortnoxConnection", connectionId, patchObj);
     return true;
   } catch (e) {
-    console.warn("[nightly] safeSetConnPaging failed (ignored)", {
+    console.warn("[] safeSetConnPaging failed (ignored)", {
       connectionId,
       patchObj,
       err: e?.message || String(e),
@@ -1417,8 +1417,8 @@ async function fortnoxGet(path, accessToken, query = {}) {
 // ────────────────────────────────────────────────────────────
 //  lock (in-memory, survives within same Node process)
 const getLock = () => {
-  if (!globalThis.__miraNightlyLock) {
-    globalThis.__miraNightlyLock = {
+  if (!globalThis.__miraLock) {
+    globalThis.__miraLock = {
       running: false,
       started_at: 0,
       finished_at: 0,
@@ -1426,13 +1426,13 @@ const getLock = () => {
       run_id: null
     };
   }
-  return globalThis.__miraNightlyLock;
+  return globalThis.__miraLock;
 };
 
 // ✅ alias så dina routes funkar (du kan använda båda namnen)
-const getNightlyLock = getLock;
+const getLock = getLock;
 
-app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
+app.get("/fortnox//status", requireApiKey, async (req, res) => {
   const lock = getNightlyLock();
   return res.json({ ok: true, lock });
 });
@@ -4785,7 +4785,44 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
     }
     return null;
   };
+// --- Internal self-call stability helpers ---
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Retry only for transient internal fetch problems (Node fetch "fetch failed", socket hangups etc)
+const isTransientFetchError = (e) => {
+  const msg = String(e?.message || "");
+  const cause = e?.cause ? String(e.cause) : "";
+  return (
+    msg.includes("fetch failed") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("socket hang up") ||
+    msg.includes("ETIMEDOUT") ||
+    cause.includes("ECONNRESET") ||
+    cause.includes("socket hang up") ||
+    cause.includes("ETIMEDOUT")
+  );
+};
+
+const postInternalJsonStable = async (path, payload, timeoutMs) => {
+  // Small throttle between internal calls to reduce socket churn
+  await sleep(250);
+
+  try {
+    return await postInternalJsonStable(path, payload, timeoutMs);
+  } catch (e1) {
+    if (!isTransientFetchError(e1)) throw e1;
+
+    console.warn("[nightly/run] transient internal fetch failed; retrying once", {
+      path,
+      message: e1?.message,
+      cause: e1?.cause ? String(e1.cause) : null
+    });
+
+    // Backoff then retry once
+    await sleep(1500);
+    return await postInternalJsonStable(path, payload, timeoutMs);
+  }
+};
   try {
     // Clear stale lock
     if (lock.running && lock.started_at && now - lock.started_at > LOCK_TTL_MS) {
@@ -4877,7 +4914,7 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
           let startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
 
           const runCustomers = async (start_page) => {
-            return await postInternalJson(
+            return await postInternalJsonStable(
               "/fortnox/upsert/customers/all",
               {
                 connection_id,
@@ -4946,7 +4983,7 @@ if (!allowDocs) {
       let startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
 
       const runOrdersAll = async (start_page) => {
-        return await postInternalJson(
+        return await postInternalJsonStable(
           "/fortnox/upsert/orders/all",
           {
             connection_id,
@@ -5000,7 +5037,7 @@ if (!allowDocs) {
       const totals = { created: 0, updated: 0, skipped: 0, errors: 0 };
 
       for (let page = 1; page <= cfg.orders.pages_per_call; page++) {
-        const j = await postInternalJson(
+        const j = await postInternalJsonStable(
           "/fortnox/upsert/orders",
           {
             connection_id,
@@ -5039,7 +5076,7 @@ if (!allowDocs) {
     // --- Order rows flagged (optional) — only if rows.passes>0 AND orders ran ok ---
     if (ordersOk && cfg.rows.passes > 0) {
       for (let p = 0; p < cfg.rows.passes; p++) {
-        const rowsJ = await postInternalJson(
+        const rowsJ = await postInternalJsonStable(
           "/fortnox/upsert/order-rows/flagged",
           { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
           NIGHTLY_INTERNAL_TIMEOUT_MS
@@ -5066,7 +5103,7 @@ if (!allowDocs) {
         try {
           const startOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
 
-          const offersJ = await postInternalJson(
+          const offersJ = await postInternalJsonStable(
             "/fortnox/upsert/offers/all",
             {
               connection_id,
@@ -5091,7 +5128,7 @@ if (!allowDocs) {
 
           if (cfg.rows.passes > 0) {
             for (let p = 0; p < cfg.rows.passes; p++) {
-              const rowsJ = await postInternalJson(
+              const rowsJ = await postInternalJsonStable(
                 "/fortnox/upsert/offer-rows/flagged",
                 { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
                 NIGHTLY_INTERNAL_TIMEOUT_MS
@@ -5114,7 +5151,7 @@ if (!allowDocs) {
           let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
 
           const runInvoices = async (start_page) => {
-            return await postInternalJson(
+            return await postInternalJsonStable(
               "/fortnox/upsert/invoices/all",
               {
                 connection_id,
