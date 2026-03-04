@@ -3444,42 +3444,39 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 app.post("/fortnox/sync/offers", async (req, res) => {
-  try {
-    const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
-    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-    const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok?.ok) return res.status(401).json(tok);
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok?.ok) return res.status(401).json(tok);
 
-    const lm = lastmodified ? String(lastmodified).trim() : "";
+  const lm = lastmodified ? String(lastmodified).trim() : "";
 
-    const q = {
-      page: Number(page) || 1,
-      limit: Number(limit) || 100,
-      ...(lm ? { lastmodified: lm } : {})
-    };
+  const q = {
+    page,
+    limit,
+    ...(lm ? { lastmodified: lm } : {})
+  };
 
-    // OBS: fortnoxGet ska själv sköta querystring från q (inkl encoding)
-    const r = await fortnoxGet(tok, "/offers", q);
+  const r = await fortnoxGet("/offers", tok.access_token, q);
 
-    if (!r?.ok) {
-      return res.status(r?.status || 502).json({
-        ok: false,
-        error: "fortnoxGet /offers failed",
-        detail: r?.data || r
-      });
-    }
-
-    return res.json({
-      ok: true,
-      connection_id,
-      meta: r.data?.MetaInformation || null,
-      offers: r.data?.Offers || []
+  if (!r.ok) {
+    // SUPER-viktig debug så du ser exakt URL + Fortnox svar
+    return res.status(r.status || 502).json({
+      ok: false,
+      error: "fortnoxGet /offers failed",
+      status: r.status,
+      url: r.url,
+      data: r.data
     });
-  } catch (e) {
-    console.error("[/fortnox/sync/offers] error", e);
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
+
+  return res.json({
+    ok: true,
+    connection_id,
+    meta: r.data?.MetaInformation || null,
+    offers: r.data?.Offers || []
+  });
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox PDF -> Bubble fileupload helpers (OFFERS)
