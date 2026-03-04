@@ -1415,6 +1415,22 @@ async function fortnoxGet(path, accessToken, query = {}) {
   const data = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, data, url };
 }
+// ─────────────────────────────────────────────
+// Nightly lock helper
+function getNightlyLock() {
+  if (!globalThis.__miraNightlyLock) {
+    globalThis.__miraNightlyLock = {
+      running: false,
+      started_at: 0,
+      finished_at: 0,
+      connection_id: null,
+      run_id: null,
+      kickoff_inflight: false,
+      kickoff_started_at: 0
+    };
+  }
+  return globalThis.__miraNightlyLock;
+}
 // ────────────────────────────────────────────────────────────
 //  lock (in-memory, survives within same Node process)
 const getLock = () => {
