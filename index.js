@@ -3175,7 +3175,7 @@ app.post("/fortnox/upsert/order-rows", requireApiKey, async (req, res) => {
     const ordDocNo = String(order?.DocumentNumber || docNoReq).trim();
 
     // ✅ Fix: YourReference kommer från ORDER, inte "o" (som inte finns här)
-    const orderYourRef = String(order?.YourReference || order?.YourReferenceNumber || "");
+    const orderYourRef = String(order?.YourReferenceNumber || "");
 
     // 3) Hitta parent order i Bubble
     const searchOrd = await bubbleFind("FortnoxOrder", {
@@ -3821,7 +3821,7 @@ for (const o of offers) {
     ft_customer_number: String(o?.CustomerNumber || ""),
     ft_customer_name: String(o?.CustomerName || ""),
     // OBS: kommer ofta vara tomt från listan – vi enrich:ar senare
-    ft_your_reference: String(o?.YourReferenceNumber || o?.YourReference || "").trim(),
+    ft_your_reference: String(o?.YourReferenceNumber || "").trim(),
     ft_offer_date: toIsoDate(o?.OfferDate),
     ft_total: toNumOrNull(o?.Total),
     ft_currency: String(o?.Currency || ""),
@@ -3902,7 +3902,7 @@ for (const o of offers) {
     if (shouldEnrich && missingDeal) {
       const det = await fortnoxGetOfferDetail(tok, docNo);
       if (det?.ok && det.offer) {
-        const yourRef = String(det.offer?.YourReferenceNumber || det.offer?.YourReference || "").trim();
+        const yourRef = String(det.offer?.YourReferenceNumber || "").trim();
 
         const patch = {
           ft_your_reference: yourRef,
