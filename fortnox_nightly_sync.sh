@@ -1,40 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_FINGERPRINT="2026-03-04_lastmodified_nopage_v1"
-echo "[offers-10min] SCRIPT_FINGERPRINT=$SCRIPT_FINGERPRINT"
+SCRIPT_FINGERPRINT="2026-03-05_nightly_kickoff_v1"
+echo "=== Fortnox nightly sync START ==="
+echo "[nightly] SCRIPT_FINGERPRINT=$SCRIPT_FINGERPRINT"
 
 HOST="${HOST:-https://mira-exchange.onrender.com}"
 API_KEY="${MIRA_RENDER_API_KEY:-}"
-CID="${FORTNOX_CONNECTION_ID:-${DOCS_ALLOWLIST:-}}"
+
+# Hur långt bak nightly ska jobba (du ville inte 12 månader)
+# Sätt i Render ENV: NIGHTLY_MONTHS_BACK=1 (rekommenderat)
+MONTHS_BACK="${NIGHTLY_MONTHS_BACK:-1}"
+
+# När vi ska våga unlocka om låset “fastnat”
+# Sätt i Render ENV om du vill: NIGHTLY_STUCK_MINUTES=90
+STUCK_MINUTES="${NIGHTLY_STUCK_MINUTES:-90}"
 
 if [[ -z "$API_KEY" ]]; then
-  echo "[offers-10min] ERROR: Missing env MIRA_RENDER_API_KEY" >&2
-  exit 2
-fi
-if [[ -z "$CID" ]]; then
-  echo "[offers-10min] ERROR: Missing env FORTNOX_CONNECTION_ID (or DOCS_ALLOWLIST)" >&2
+  echo "[nightly] ERROR: Missing env MIRA_RENDER_API_KEY" >&2
   exit 2
 fi
 
-# Fortnox "lastmodified": kör senaste 15 minuterna (UTC), format: YYYY-MM-DD HH:MM
-LASTMODIFIED="$(date -u -d '15 minutes ago' '+%Y-%m-%d %H:%M')"
-echo "[offers-10min] host=$HOST cid=$CID lastmodified='$LASTMODIFIED'"
+echo "[nightly] HOST=$HOST MONTHS_BACK=$MONTHS_BACK STUCK_MINUTES=$STUCK_MINUTES"
 
-# En enda call. Ingen pagination-beräkning.
-curl -sS --max-time 60 -X POST "$HOST/fortnox/upsert/offers" \
+# 1) Kolla status
+STATUS_JSON="$(curl -sS --max-time 20 "$HOST/fortnox/nightly/status" -H "x-api-key: $API_KEY" || true)"
+echo "[nightly] status: $STATUS_JSON"
+
+# 2) Om nightly redan kör: avgör om den verkar “stuck” och unlocka försiktigt
+if echo "$STATUS_JSON" | grep -q '"running":true'; then
+  # Försök läsa age_ms (om finns). Om inte finns: avbryt utan unlock.
+  AGE_MS="$(echo "$STATUS_JSON" | sed -n 's/.*"age_ms":[[:space:]]*\([0-9]\+\).*/\1/p' | head -n 1 || true)"
+  if [[ -n "${AGE_MS:-}" ]]; then
+    STUCK_MS=$((STUCK_MINUTES * 60 * 1000))
+    if (( AGE_MS > STUCK_MS )); then
+      echo "[nightly] Detected stuck lock (age_ms=$AGE_MS > $STUCK_MS) -> unlocking..."
+      curl -sS --max-time 20 -X POST "$HOST/fortnox/nightly/unlock" \
+        -H "x-api-key: $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d '{}' || true
+      echo
+    else
+      echo "[nightly] Already running and not stuck (age_ms=$AGE_MS). Exiting."
+      echo "=== Fortnox nightly sync END ==="
+      exit 0
+    fi
+  else
+    echo "[nightly] Already running but no age_ms present. Exiting (no unlock)."
+    echo "=== Fortnox nightly sync END ==="
+    exit 0
+  fi
+fi
+
+# 3) Kickoff (snabb 202 och sen sköter servern resten)
+BODY="{\"months_back\":$MONTHS_BACK}"
+echo "[nightly] kickoff body: $BODY"
+
+curl -sS --max-time 30 -X POST "$HOST/fortnox/nightly/kickoff" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"connection_id\":\"$CID\",
-    \"page\": 1,
-    \"limit\": 500,
-    \"lastmodified\":\"$LASTMODIFIED\",
-    \"fetch_pdf\": true,
-    \"pdf_missing_only\": true,
-    \"pdf_max_per_page\": 20,
-    \"pdf_pause_ms\": 500
-  }"
+  -d "$BODY"
 
 echo
-echo "[offers-10min] done"
+echo "=== Fortnox nightly sync END ==="
