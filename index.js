@@ -4808,45 +4808,76 @@ async function runNightly() {
 
   try {
 
-    console.log("Nightly: syncing customers");
+    // 1️⃣ hämta alla Fortnox connections
+    const connections = await renderGetJson("/fortnox/debug/connections");
 
-    await postInternalJson(
-      "/fortnox/upsert/customers/all",
-      NIGHTLY_CONFIG.customers,
-      NIGHTLY_INTERNAL_TIMEOUT_MS
-    );
+    if (!connections?.connections?.length) {
+      console.log("No Fortnox connections found");
+      return;
+    }
 
-    console.log("Nightly: syncing orders");
+    for (const conn of connections.connections) {
 
-    await postInternalJson(
-      "/fortnox/upsert/orders/all",
-      NIGHTLY_CONFIG.orders,
-      NIGHTLY_INTERNAL_TIMEOUT_MS
-    );
+      const connection_id = conn.connection_id || conn.id;
 
-    console.log("Nightly: syncing offers");
+      console.log("Nightly: connection", connection_id);
 
-    await postInternalJson(
-      "/fortnox/upsert/offers/all",
-      NIGHTLY_CONFIG.offers,
-      NIGHTLY_INTERNAL_TIMEOUT_MS
-    );
+      console.log("Nightly: syncing customers");
 
-    console.log("Nightly: syncing invoices");
+      await postInternalJson(
+        "/fortnox/upsert/customers/all",
+        {
+          connection_id,
+          ...NIGHTLY_CONFIG.customers
+        },
+        NIGHTLY_INTERNAL_TIMEOUT_MS
+      );
 
-    await postInternalJson(
-      "/fortnox/upsert/invoices/all",
-      NIGHTLY_CONFIG.invoices,
-      NIGHTLY_INTERNAL_TIMEOUT_MS
-    );
+      console.log("Nightly: syncing orders");
 
-    console.log("Nightly: syncing rows");
+      await postInternalJson(
+        "/fortnox/upsert/orders/all",
+        {
+          connection_id,
+          ...NIGHTLY_CONFIG.orders
+        },
+        NIGHTLY_INTERNAL_TIMEOUT_MS
+      );
 
-    await postInternalJson(
-      "/fortnox/upsert/order-rows/flagged",
-      NIGHTLY_CONFIG.rows,
-      NIGHTLY_INTERNAL_TIMEOUT_MS
-    );
+      console.log("Nightly: syncing offers");
+
+      await postInternalJson(
+        "/fortnox/upsert/offers/all",
+        {
+          connection_id,
+          ...NIGHTLY_CONFIG.offers
+        },
+        NIGHTLY_INTERNAL_TIMEOUT_MS
+      );
+
+      console.log("Nightly: syncing invoices");
+
+      await postInternalJson(
+        "/fortnox/upsert/invoices/all",
+        {
+          connection_id,
+          ...NIGHTLY_CONFIG.invoices
+        },
+        NIGHTLY_INTERNAL_TIMEOUT_MS
+      );
+
+      console.log("Nightly: syncing rows");
+
+      await postInternalJson(
+        "/fortnox/upsert/order-rows/flagged",
+        {
+          connection_id,
+          ...NIGHTLY_CONFIG.rows
+        },
+        NIGHTLY_INTERNAL_TIMEOUT_MS
+      );
+
+    }
 
     console.log("✅ Nightly finished");
 
