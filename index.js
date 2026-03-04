@@ -1435,14 +1435,14 @@ app.get("/fortnox//status", requireApiKey, async (req, res) => {
   return res.json({ ok: true, lock });
 });
 
-app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
+app.post("/fortnox/nightly/", requireApiKey, async (req, res) => {
   const lock = getNightlyLock();
   const was = { ...lock };
   lock.running = false;
   lock.started_at = 0;
   lock.connection_id = null;
   lock.run_id = null;
-  return res.json({ ok: true, unlocked: true, was });
+  return res.json({ ok: true, ed: true, was });
 });
 
 async function renderPostJson(path, body) {
@@ -5318,23 +5318,6 @@ app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
       age_ms
     }
   });
-});
-app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
-  const lock = getLock();
-
-  lock.running = false;
-  lock.started_at = 0;
-  lock.finished_at = Date.now();
-  lock.connection_id = null;
-  lock.run_id = null;
-
-  // även kickoff-flaggor
-  lock.kickoff_inflight = false;
-  lock.kickoff_started_at = 0;
-
-  console.warn("[nightly/unlock] manual unlock", { at: new Date().toISOString() });
-
-  return res.json({ ok: true, lock });
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
