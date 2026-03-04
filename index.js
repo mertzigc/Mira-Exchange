@@ -1435,14 +1435,14 @@ app.get("/fortnox//status", requireApiKey, async (req, res) => {
   return res.json({ ok: true, lock });
 });
 
-app.post("/fortnox/nightly/", requireApiKey, async (req, res) => {
+app.post("/fortnox/nightly/unlock", requireApiKey, async (req, res) => {
   const lock = getNightlyLock();
   const was = { ...lock };
   lock.running = false;
   lock.started_at = 0;
   lock.connection_id = null;
   lock.run_id = null;
-  return res.json({ ok: true, ed: true, was });
+  return res.json({ ok: true, unlocked: true, was });
 });
 
 async function renderPostJson(path, body) {
