@@ -1866,7 +1866,7 @@ app.post("/fortnox/sync/orders", async (req, res) => {
     connection_id,
     page = 1,
     limit = 100,
-    months_back = 12
+    months_back = 1
   } = req.body || {};
 
   if (!connection_id) {
@@ -2010,7 +2010,7 @@ async function fortnoxGetOfferDetail(tok, docNo) {
 // ────────────────────────────────────────────────────────────
 // Fortnox: upsert orders into Bubble (one page) - WITH detail fallback for YourOrderNumber
 app.post("/fortnox/upsert/orders", requireApiKey, async (req, res) => {
-  const { connection_id, page = 1, limit = 100, months_back = 12 } = req.body || {};
+  const { connection_id, page = 1, limit = 100, months_back = 1 } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   let created = 0, updated = 0, skipped = 0, errors = 0;
@@ -2157,7 +2157,7 @@ app.post("/fortnox/upsert/orders/all", async (req, res) => {
     start_page = 1,
     limit = 100,
     max_pages = 10,
-    months_back = 12
+    months_back = 1
   } = req.body || {};
 
   if (!connection_id) {
@@ -2726,7 +2726,7 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
     connection_id,
     page = 1,
     limit = 100,
-    months_back = 12
+    months_back = 1
   } = req.body || {};
 
   if (!connection_id) {
@@ -2769,7 +2769,7 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
     if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
 
     // 3) months_back window (cutoff = today - months_back)
-    const mb = Math.max(1, Number(months_back) || 12);
+    const mb = Math.max(1, Number(months_back) || 1);
     const now = new Date();
     const from = new Date(now);
     from.setMonth(from.getMonth() - mb);
@@ -2898,7 +2898,7 @@ app.post("/fortnox/upsert/invoices", requireApiKey, async (req, res) => {
       connection_id,
       page = 1,
       limit = 100,
-      months_back = 12,
+      months_back = 1,
       pause_ms = 0
     } = req.body || {};
 
@@ -3318,7 +3318,7 @@ app.post("/fortnox/upsert/order-rows/flagged", requireApiKey, async (req, res) =
 // Fortnox: upsert order rows for ALL orders on one orders page
 app.post("/fortnox/upsert/order-rows/page", requireApiKey, async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 50, months_back = 12, pause_ms = 250 } = req.body || {};
+    const { connection_id, page = 1, limit = 50, months_back = 1, pause_ms = 250 } = req.body || {};
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     // ✅ Byt bort hardcoded onrender och kör mot SELF_BASE_URL (rätt miljö alltid)
@@ -4316,7 +4316,7 @@ app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
       connection_id,
       start_page = 1,
       limit = 100,
-      months_back = 12,
+      months_back = 1,
       max_pages = 9999,
       pause_ms = 250
     } = req.body || {};
@@ -4325,7 +4325,7 @@ app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing connection_id" });
     }
 
-    const mb = Math.max(1, Number(months_back) || 12);
+    const mb = Math.max(1, Number(months_back) || 1);
     const perPage = Math.max(1, Math.min(500, Number(limit) || 100));
     const maxPages = Math.max(1, Number(max_pages) || 9999);
     const pauseMs = Math.max(0, Number(pause_ms) || 0);
@@ -4638,9 +4638,9 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     return Number.isFinite(n) ? n : fallback;
   };
 
-  const { connection_id = null, only_connection_id = null, months_back = 12 } = req.body || {};
+  const { connection_id = null, only_connection_id = null, months_back = 1 } = req.body || {};
   const onlyId = (only_connection_id || connection_id || null);
-  const mb = Math.max(1, numOr(months_back, 12));
+  const mb = Math.max(1, numOr(months_back, 1));
 
   // stale lock clear
   if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
@@ -5077,7 +5077,7 @@ const postInternalJsonStable = async (path, payload, timeoutMs) => {
     acquired = true;
 
     const body = req.body || {};
-    const months_back = Math.max(1, numOr(body.months_back, 12));
+    const months_back = Math.max(1, numOr(body.months_back, 1));
     const docs_allowlist = String(body.docs_allowlist ?? "").trim() || null;
 
     // allow override via request body (optional), else env-based isDocsConnectionLocal
