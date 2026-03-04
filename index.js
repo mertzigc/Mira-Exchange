@@ -3443,28 +3443,43 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// fortnox/sync/offers  (Render-first, read-only)
 app.post("/fortnox/sync/offers", async (req, res) => {
-  const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
+  try {
+    const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  const tok = await ensureFortnoxAccessToken(connection_id);
-  if (!tok.ok) return res.status(401).json(tok);
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok?.ok) return res.status(401).json(tok);
 
-const q = {
-  page,
-  limit,
-  ...(lastmodified ? { lastmodified } : {})
-};
+    const lm = lastmodified ? String(lastmodified).trim() : "";
 
-const data = await fortnoxGet(tok, `/offers`, q);
+    const q = {
+      page: Number(page) || 1,
+      limit: Number(limit) || 100,
+      ...(lm ? { lastmodified: lm } : {})
+    };
 
-  return res.json({
-    ok: true,
-    connection_id,
-    meta: r.data?.MetaInformation || null,
-    offers: r.data?.Offers || []
-  });
+    // OBS: fortnoxGet ska själv sköta querystring från q (inkl encoding)
+    const r = await fortnoxGet(tok, "/offers", q);
+
+    if (!r?.ok) {
+      return res.status(r?.status || 502).json({
+        ok: false,
+        error: "fortnoxGet /offers failed",
+        detail: r?.data || r
+      });
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      meta: r.data?.MetaInformation || null,
+      offers: r.data?.Offers || []
+    });
+  } catch (e) {
+    console.error("[/fortnox/sync/offers] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox PDF -> Bubble fileupload helpers (OFFERS)
@@ -3777,7 +3792,7 @@ const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
     connection_id,
     page,
     limit,
-    ...(lastmodified ? { lastmodified } : {})
+    lastmodified
   })
 });
 
