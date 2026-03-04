@@ -1,29 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${API_KEY:?Missing API_KEY}"
+SCRIPT_FINGERPRINT="2026-03-04_lastmodified_nopage_v1"
+echo "[offers-10min] SCRIPT_FINGERPRINT=$SCRIPT_FINGERPRINT"
 
-HOST="https://mira-exchange.onrender.com"
-DOCS_ALLOWLIST="${DOCS_ALLOWLIST:-1771579463578x385222043661358460}"
+HOST="${HOST:-https://mira-exchange.onrender.com}"
+API_KEY="${MIRA_RENDER_API_KEY:-}"
+CID="${FORTNOX_CONNECTION_ID:-${DOCS_ALLOWLIST:-}}"
 
-echo "=== Fortnox MINI nightly START ==="
-echo "HOST=$HOST DOCS_ALLOWLIST=$DOCS_ALLOWLIST"
+if [[ -z "$API_KEY" ]]; then
+  echo "[offers-10min] ERROR: Missing env MIRA_RENDER_API_KEY" >&2
+  exit 2
+fi
+if [[ -z "$CID" ]]; then
+  echo "[offers-10min] ERROR: Missing env FORTNOX_CONNECTION_ID (or DOCS_ALLOWLIST)" >&2
+  exit 2
+fi
 
-# Anropa kickoff (ska svara snabbt med 202)
-curl -sS --max-time 30 \
-  "$HOST/fortnox/nightly/kickoff" \
+# Fortnox "lastmodified": kör senaste 15 minuterna (UTC), format: YYYY-MM-DD HH:MM
+LASTMODIFIED="$(date -u -d '15 minutes ago' '+%Y-%m-%d %H:%M')"
+echo "[offers-10min] host=$HOST cid=$CID lastmodified='$LASTMODIFIED'"
+
+# En enda call. Ingen pagination-beräkning.
+curl -sS --max-time 60 -X POST "$HOST/fortnox/upsert/offers" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "{
-    \"docs_allowlist\": \"${DOCS_ALLOWLIST}\",
-    \"months_back\": 1,
-
-    \"customers\": {\"limit\": 50, \"max_pages\": 1, \"pause_ms\": 0, \"skip_without_orgnr\": true, \"link_company\": true},
-    \"orders\": {\"mode\": \"delta\", \"limit\": 50, \"pages_per_call\": 1, \"pause_ms\": 100},
-    \"offers\": {\"limit\": 50, \"pages_per_call\": 1, \"pause_ms\": 0},
-    \"invoices\": {\"limit\": 50, \"pages_per_call\": 1, \"pause_ms\": 0},
-    \"rows\": {\"limit\": 100, \"passes\": 1, \"pause_ms\": 0}
-  }" | cat
+    \"connection_id\":\"$CID\",
+    \"page\": 1,
+    \"limit\": 500,
+    \"lastmodified\":\"$LASTMODIFIED\",
+    \"fetch_pdf\": true,
+    \"pdf_missing_only\": true,
+    \"pdf_max_per_page\": 20,
+    \"pdf_pause_ms\": 500
+  }"
 
 echo
-echo "=== Fortnox MINI nightly END ==="
+echo "[offers-10min] done"
