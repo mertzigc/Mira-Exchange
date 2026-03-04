@@ -1341,6 +1341,44 @@ async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
     clearTimeout(t);
   }
 }
+// ─────────────────────────────────────────────
+// internal GET helper (same pattern as postInternalJson)
+
+async function getInternalJson(path) {
+
+  const url = `http://127.0.0.1:${PORT}${path}`;
+
+  const r = await fetch(url, {
+    method: "GET",
+    headers: {
+      "x-api-key": process.env.MIRA_RENDER_API_KEY
+    }
+  });
+
+  const text = await r.text();
+
+  let json;
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    json = { raw: text };
+  }
+
+  if (!r.ok || json?.ok === false) {
+    const err = new Error(`internal call failed: ${path}`);
+    err.detail = {
+      url,
+      path,
+      status: r.status,
+      statusText: r.statusText,
+      bodyText: text,
+      bodyJson: json
+    };
+    throw err;
+  }
+
+  return json;
+}
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) – connection-based token refresh + API fetch
 function nowIso() { return new Date().toISOString(); }
@@ -4809,7 +4847,7 @@ async function runNightly() {
   try {
 
     // 1️⃣ hämta alla Fortnox connections
-    const connections = await renderGetJson("/fortnox/debug/connections");
+    const connections = await getInternalJson("/fortnox/debug/connections");
 
     if (!connections?.connections?.length) {
       console.log("No Fortnox connections found");
