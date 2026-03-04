@@ -815,6 +815,42 @@ async function resolveCompanyForUnifiedOrderFortnox({
   console.log("[UO][resolve] end: unresolved");
   return null;
 }
+// ────────────────────────────────────────────────────────────
+// Save Microsoft tokens to Bubble User
+// ────────────────────────────────────────────────────────────
+async function upsertTokensToBubble(userId, tokenData, fallbackRefreshToken = null) {
+  if (!userId) throw new Error("upsertTokensToBubble: missing userId");
+
+  const accessToken = tokenData?.access_token;
+  if (!accessToken) throw new Error("upsertTokensToBubble: missing access_token");
+
+  const refreshToken = tokenData?.refresh_token || fallbackRefreshToken || null;
+  const expiresIn = Number(tokenData?.expires_in || 3600);
+
+  const now = Date.now();
+  const expiresAt = new Date(now + expiresIn * 1000).toISOString();
+
+  const payload = {
+    ms_access_token: accessToken,
+    ms_token_type: tokenData?.token_type || "Bearer",
+    ms_scope: tokenData?.scope || null,
+    ms_expires_at: expiresAt,
+    ms_last_refresh_at: new Date(now).toISOString(),
+    ms_connected: true,
+    ms_needs_reauth: false
+  };
+
+  if (refreshToken) payload.ms_refresh_token = refreshToken;
+
+  const result = await bubblePatch("user", userId, payload);
+
+  if (!result?.ok) {
+    console.error("[upsertTokensToBubble] bubblePatch failed", result);
+    return { ok: false, error: "bubblePatch failed", detail: result };
+  }
+
+  return { ok: true };
+}
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
   const tokenEndpoint = "https://login.microsoftonline.com/" + (tenant || MS_TENANT) + "/oauth2/v2.0/token";
   const form = new URLSearchParams();
