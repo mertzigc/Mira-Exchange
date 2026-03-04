@@ -3445,14 +3445,19 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // fortnox/sync/offers  (Render-first, read-only)
 app.post("/fortnox/sync/offers", async (req, res) => {
-  const { connection_id, page = 1, limit = 100 } = req.body || {};
+  const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
 
   const tok = await ensureFortnoxAccessToken(connection_id);
   if (!tok.ok) return res.status(401).json(tok);
 
-  const r = await fortnoxGet("/offers", tok.access_token, { page, limit });
-  if (!r.ok) return res.status(r.status).json(r);
+const q = {
+  page,
+  limit,
+  ...(lastmodified ? { lastmodified } : {})
+};
+
+const data = await fortnoxGet(tok, `/offers`, q);
 
   return res.json({
     ok: true,
@@ -3737,6 +3742,7 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
     connection_id,
     page = 1,
     limit = 100,
+    lastmodified,
 
     fetch_pdf = false,
     pdf_missing_only = true,
@@ -3761,14 +3767,19 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
 
   try {
     // 1) Hämta offers via din befintliga sync-route
-    const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
-      },
-      body: JSON.stringify({ connection_id, page, limit })
-    });
+const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": process.env.MIRA_RENDER_API_KEY
+  },
+  body: JSON.stringify({
+    connection_id,
+    page,
+    limit,
+    ...(lastmodified ? { lastmodified } : {})
+  })
+});
 
     const syncText = await syncRes.text().catch(() => "");
     let sync = null;
