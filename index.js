@@ -112,6 +112,44 @@ if (!BUBBLE_API_KEY) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+// ─────────────────────────────────────────────
+// Nightly configuration (safe limits)
+const NIGHTLY_CONFIG = {
+  months_back: 1,
+
+  customers: {
+    limit: 50,
+    max_pages: 1,
+    pause_ms: 0,
+    skip_without_orgnr: true,
+    link_company: true
+  },
+
+  orders: {
+    mode: "delta",
+    limit: 50,
+    pages_per_call: 1,
+    pause_ms: 100
+  },
+
+  offers: {
+    limit: 50,
+    pages_per_call: 1,
+    pause_ms: 0
+  },
+
+  invoices: {
+    limit: 50,
+    pages_per_call: 1,
+    pause_ms: 0
+  },
+
+  rows: {
+    limit: 100,
+    passes: 1,
+    pause_ms: 0
+  }
+};
 // Helpers ────────────────────────────────────────────────────────────
 function decodeHtmlEntities(s = "") {
   return String(s)
@@ -4759,83 +4797,114 @@ app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
     console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
   }
 });
+// ─────────────────────────────────────────────
+// Nightly worker (stable)
+
+async function runNightly() {
+
+  const lock = getNightlyLock();
+
+  console.log("🌙 Nightly started");
+
+  try {
+
+    console.log("Nightly: syncing customers");
+
+    await postInternalJson(
+      "/fortnox/upsert/customers/all",
+      NIGHTLY_CONFIG.customers,
+      NIGHTLY_INTERNAL_TIMEOUT_MS
+    );
+
+    console.log("Nightly: syncing orders");
+
+    await postInternalJson(
+      "/fortnox/upsert/orders/all",
+      NIGHTLY_CONFIG.orders,
+      NIGHTLY_INTERNAL_TIMEOUT_MS
+    );
+
+    console.log("Nightly: syncing offers");
+
+    await postInternalJson(
+      "/fortnox/upsert/offers/all",
+      NIGHTLY_CONFIG.offers,
+      NIGHTLY_INTERNAL_TIMEOUT_MS
+    );
+
+    console.log("Nightly: syncing invoices");
+
+    await postInternalJson(
+      "/fortnox/upsert/invoices/all",
+      NIGHTLY_CONFIG.invoices,
+      NIGHTLY_INTERNAL_TIMEOUT_MS
+    );
+
+    console.log("Nightly: syncing rows");
+
+    await postInternalJson(
+      "/fortnox/upsert/order-rows/flagged",
+      NIGHTLY_CONFIG.rows,
+      NIGHTLY_INTERNAL_TIMEOUT_MS
+    );
+
+    console.log("✅ Nightly finished");
+
+  } catch (err) {
+
+    console.error("❌ Nightly failed", err);
+
+  } finally {
+
+    lock.running = false;
+    lock.finished_at = Date.now();
+
+  }
+
+}
 app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
-  const lock = getLock();
+
+  const lock = getNightlyLock();
   const now = Date.now();
 
-  // separat skydd mot dubbel-kick (inte samma som lock.running)
-  const KICKOFF_TTL_MS = 60 * 1000; // 60s räcker
+  const MAX_LOCK_MS = 2 * 60 * 60 * 1000;
 
-  // init fields om de saknas
-  if (lock.kickoff_inflight === undefined) lock.kickoff_inflight = false;
-  if (lock.kickoff_started_at === undefined) lock.kickoff_started_at = 0;
-
-  // om nightly redan kör: blocka
   if (lock.running) {
-    return res.status(409).json({ ok: false, already_running: true, lock });
-  }
 
-  // om kickoff precis nyss triggat: blocka
-  if (
-    lock.kickoff_inflight &&
-    lock.kickoff_started_at &&
-    (now - lock.kickoff_started_at < KICKOFF_TTL_MS)
-  ) {
-    return res.status(409).json({ ok: false, kickoff_inflight: true, lock });
-  }
+    const age = now - lock.started_at;
 
-  // markera kickoff inflight (MEN INTE running)
-  lock.kickoff_inflight = true;
-  setTimeout(() => {
-  if (lock.kickoff_inflight && (Date.now() - lock.kickoff_started_at > 15_000)) {
-    console.warn("[nightly/kickoff] failsafe: releasing kickoff_inflight after 15s");
-    lock.kickoff_inflight = false;
-    lock.kickoff_started_at = 0;
-  }
-}, 15_000);
-  lock.kickoff_started_at = now;
+    if (age < MAX_LOCK_MS) {
 
-  // svara direkt (så cron aldrig får 524)
-  res.status(202).json({ ok: true, kicked: true, run_id: `${now}-${Math.random().toString(16).slice(2)}` });
-
-  const incomingKey = req.get("x-api-key");
-const base = process.env.BASE_URL || "https://mira-exchange.onrender.com";
-const url = base.replace(/\/$/, "") + "/fortnox/nightly/run";
-  const body = req.body || {};
-
-  setImmediate(() => {
-    fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": incomingKey
-      },
-      body: JSON.stringify(body)
-    })
-      .then(async (r) => {
-        const text = await r.text().catch(() => "");
-        console.log("[nightly/kickoff] internal /run response", {
-          status: r.status,
-          preview: text.slice(0, 300)
-        });
-      })
-      .catch((e) => {
-        console.error("[nightly/kickoff] internal /run fetch failed", e?.message || e);
-      })
-      .finally(() => {
-        lock.kickoff_inflight = false;
-        lock.kickoff_started_at = 0;
+      return res.status(409).json({
+        ok: false,
+        already_running: true,
+        lock
       });
 
-    // failsafe: släpp kickoff-flaggan även om något helt oväntat händer
-    setTimeout(() => {
-      if (lock.kickoff_inflight) {
-        console.warn("[nightly/kickoff] failsafe release kickoff_inflight");
-        lock.kickoff_inflight = false;
-        lock.kickoff_started_at = 0;
-      }
-    }, 30_000);
+    }
+
+    console.warn("Nightly stale lock reset");
+
+    lock.running = false;
+
+  }
+
+  lock.running = true;
+  lock.started_at = now;
+  lock.finished_at = 0;
+  lock.connection_id = null;
+  lock.run_id = now + "-" + Math.random().toString(16).slice(2);
+
+  console.log("🌙 Nightly kickoff", lock.run_id);
+
+  setImmediate(runNightly);
+
+  return res.status(202).json({
+    ok: true,
+    kicked: true,
+    run_id: lock.run_id
   });
+
 });
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   const lock = getLock();
