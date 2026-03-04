@@ -4770,14 +4770,21 @@ app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
 
   // markera kickoff inflight (MEN INTE running)
   lock.kickoff_inflight = true;
+  setTimeout(() => {
+  if (lock.kickoff_inflight && (Date.now() - lock.kickoff_started_at > 15_000)) {
+    console.warn("[nightly/kickoff] failsafe: releasing kickoff_inflight after 15s");
+    lock.kickoff_inflight = false;
+    lock.kickoff_started_at = 0;
+  }
+}, 15_000);
   lock.kickoff_started_at = now;
 
   // svara direkt (så cron aldrig får 524)
   res.status(202).json({ ok: true, kicked: true, run_id: `${now}-${Math.random().toString(16).slice(2)}` });
 
   const incomingKey = req.get("x-api-key");
-  const port = process.env.PORT || "10000";
-  const url = `http://127.0.0.1:${port}/fortnox/nightly/run`;
+const base = process.env.BASE_URL || "https://mira-exchange.onrender.com";
+const url = base.replace(/\/$/, "") + "/fortnox/nightly/run";
   const body = req.body || {};
 
   setImmediate(() => {
