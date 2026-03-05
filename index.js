@@ -843,7 +843,7 @@ async function upsertTokensToBubble(userId, tokenData, fallbackRefreshToken = nu
 
   if (refreshToken) payload.ms_refresh_token = refreshToken;
 
-const result = await bubblePatch("user", userId, patch);
+const result = await bubblePatch("User", userId, payload);
 
 // bubblePatch() i din kod returnerar ofta `true` vid success.
 // Så vi måste behandla `true` som OK.
@@ -1823,83 +1823,29 @@ app.post("/fortnox/connection/refresh", async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync customers (Render-first, read-only)
-app.post("/fortnox/sync/customers", async (req, res) => {
-  const {
+app.post("/fortnox/sync/customers", requireApiKey, async (req, res) => {
+  const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
+
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok.ok) return res.status(401).json(tok);
+
+  const lm = lastmodified ? String(lastmodified).trim() : "";
+  const q = {
+    page,
+    limit,
+    ...(lm ? { lastmodified: lm } : {})
+  };
+
+  const r = await fortnoxGet(tok, "/customers", q);
+
+  return res.json({
+    ok: true,
     connection_id,
-    page = 1,
-    limit = 100
-  } = req.body || {};
-
-  if (!connection_id) {
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
-  }
-
-  try {
-    // 1) Hämta FortnoxConnection
-    const conn = await bubbleGet("FortnoxConnection", connection_id);
-    if (!conn) {
-      return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
-    }
-
-    let accessToken = conn.access_token || null;
-    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
-
-    // 2) Auto-refresh om token saknas eller är expired
-    if (!accessToken || Date.now() > expiresAt - 60_000) {
-      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify({ connection_id })
-      });
-      const refJson = await ref.json().catch(() => ({}));
-      if (!ref.ok) {
-        return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
-      }
-
-      const updated = await bubbleGet("FortnoxConnection", connection_id);
-      accessToken = updated?.access_token || null;
-    }
-
-    if (!accessToken) {
-      return res.status(401).json({ ok: false, error: "No access_token available" });
-    }
-
-    // 3) Call Fortnox Customers
-    const url =
-      "https://api.fortnox.se/3/customers" +
-      `?page=${encodeURIComponent(page)}` +
-      `&limit=${encodeURIComponent(limit)}`;
-
-    const r = await fetch(url, {
-      headers: {
-        "Authorization": "Bearer " + accessToken,
-        "Client-Secret": FORTNOX_CLIENT_SECRET,
-        "Accept": "application/json"
-      }
-    });
-
-    const data = await r.json().catch(() => ({}));
-
-    if (!r.ok) {
-      return res.status(r.status).json({
-        ok: false,
-        error: "Fortnox API error",
-        detail: data
-      });
-    }
-
-    return res.json({
-      ok: true,
-      connection_id,
-      page,
-      limit,
-      meta: data?.MetaInformation || null,
-      customers: data?.Customers || []
-    });
-
+    meta: r.data?.MetaInformation || null,
+    customers: r.data?.Customers || []
+  });
+});
   } catch (e) {
     console.error("[/fortnox/sync/customers] error", e);
     return res.status(500).json({ ok: false, error: e.message });
@@ -1908,122 +1854,41 @@ app.post("/fortnox/sync/customers", async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync orders (Render-first, read-only) with months_back filter
 app.post("/fortnox/sync/orders", async (req, res) => {
-  const {
-    connection_id,
-    page = 1,
-    limit = 100,
-    months_back = 1
-  } = req.body || {};
+  const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
 
-  if (!connection_id) {
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok.ok) return res.status(401).json(tok);
+
+  // ✅ days_back vinner alltid (exakt 7 dagar)
+  const now = new Date();
+  const fromDate = new Date(now);
+
+  const db = Number(days_back);
+  if (Number.isFinite(db) && db > 0) {
+    fromDate.setUTCDate(fromDate.getUTCDate() - db);
+  } else {
+    const mb = Math.max(1, Number(months_back) || 1);
+    fromDate.setUTCMonth(fromDate.getUTCMonth() - mb);
   }
 
-  try {
-    // 1) Load FortnoxConnection
-    const conn = await bubbleGet("FortnoxConnection", connection_id);
-    if (!conn) {
-      return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
-    }
+  const fdate = fromDate.toISOString().slice(0, 10);
+  const tdate = now.toISOString().slice(0, 10);
 
-    let accessToken = conn.access_token || null;
-    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
+  const data = await fortnoxGet(tok, `/orders`, {
+    page,
+    limit,
+    fromdate: fdate,
+    todate: tdate
+  });
 
-    // 2) Auto-refresh token
-    if (!accessToken || Date.now() > expiresAt - 60_000) {
-      const ref = await fetch("https://mira-exchange.onrender.com/fortnox/connection/refresh", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify({ connection_id })
-      });
-
-      const refJson = await ref.json().catch(() => ({}));
-      if (!ref.ok) {
-        return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
-      }
-
-      const updated = await bubbleGet("FortnoxConnection", connection_id);
-      accessToken = updated?.access_token || null;
-    }
-
-    if (!accessToken) {
-      return res.status(401).json({ ok: false, error: "No access_token available" });
-    }
-
-    // 3) Date window
-    const mb = Math.max(1, Number(months_back) || 12);
-    const to = new Date();
-    const from = new Date();
-    from.setMonth(from.getMonth() - mb);
-
-    const fmt = (d) => {
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
-    };
-
-    const fromDate = fmt(from);
-    const toDate   = fmt(to);
-
-    // 4) Fetch orders filtered by ORDER DATE (server-side)
-    const url =
-      "https://api.fortnox.se/3/orders" +
-      `?page=${encodeURIComponent(page)}` +
-      `&limit=${encodeURIComponent(limit)}` +
-      `&fromdate=${encodeURIComponent(fromDate)}` +
-      `&todate=${encodeURIComponent(toDate)}`;
-
-    const r = await fetch(url, {
-      headers: {
-        "Authorization": "Bearer " + accessToken,
-        "Client-Secret": FORTNOX_CLIENT_SECRET,
-        "Accept": "application/json"
-      }
-    });
-
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      return res.status(r.status).json({
-        ok: false,
-        error: "Fortnox API error",
-        detail: data
-      });
-    }
-
-    const list = Array.isArray(data?.Orders) ? data.Orders : [];
-
-    // 5) Render-side filter:  >= cutoff
-    const cutoff = new Date(fromDate + "T00:00:00Z").getTime();
-
-    const filtered = list.filter(o => {
-      const d = String(o?.DeliveryDate || "").trim();
-      if (!d) return false;
-      const t = new Date(d + "T00:00:00Z").getTime();
-      return Number.isFinite(t) && t >= cutoff;
-    });
-
-    return res.json({
-      ok: true,
-      connection_id,
-      page,
-      limit,
-      sent_filters: {
-        months_back: mb,
-        orderDateFrom: fromDate,
-        orderDateTo: toDate,
-        deliveryDateCutoff: fromDate
-      },
-      meta: data?.MetaInformation || null,
-      orders: filtered,
-      debug_counts: {
-        fetched: list.length,
-        kept_by_deliverydate: filtered.length
-      }
-    });
+  return res.json({
+    ok: true,
+    connection_id,
+    meta: data?.MetaInformation || null,
+    orders: data?.Orders || []
+  });
+});
 
   } catch (e) {
     console.error("[/fortnox/sync/orders] error", e);
@@ -2768,152 +2633,40 @@ function parseFtDateToTs(v) {
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync invoices (Render-first, read-only) with months_back filter on InvoiceDate
 app.post("/fortnox/sync/invoices", async (req, res) => {
-  const {
-    connection_id,
-    page = 1,
-    limit = 100,
-    months_back = 1
-  } = req.body || {};
+  const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
 
-  if (!connection_id) {
-    return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok.ok) return res.status(401).json(tok);
+
+  const now = new Date();
+  const fromDate = new Date(now);
+
+  const db = Number(days_back);
+  if (Number.isFinite(db) && db > 0) {
+    fromDate.setUTCDate(fromDate.getUTCDate() - db);
+  } else {
+    const mb = Math.max(1, Number(months_back) || 1);
+    fromDate.setUTCMonth(fromDate.getUTCMonth() - mb);
   }
 
-  try {
-    // 1) Hämta FortnoxConnection
-    const conn = await bubbleGet("FortnoxConnection", connection_id);
-    if (!conn) return res.status(404).json({ ok: false, error: "FortnoxConnection not found" });
+  const fdate = fromDate.toISOString().slice(0, 10);
+  const tdate = now.toISOString().slice(0, 10);
 
-    // PAUS: om du stänger av is_active stoppar vi här
-    if (conn.is_active === false) {
-      return res.json({ ok: true, paused: true, connection_id });
-    }
+  const data = await fortnoxGet(tok, `/invoices`, {
+    page,
+    limit,
+    fromdate: fdate,
+    todate: tdate
+  });
 
-    let accessToken = conn.access_token || null;
-    const expiresAt = conn.expires_at ? new Date(conn.expires_at).getTime() : 0;
-
-    // 2) Auto-refresh om token saknas/expired
-    if (!accessToken || Date.now() > expiresAt - 60_000) {
-      const ref = await fetch(`${SELF_BASE_URL}/fortnox/connection/refresh`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify({ connection_id })
-      });
-
-      const refJson = await ref.json().catch(() => ({}));
-      if (!ref.ok) {
-        return res.status(401).json({ ok: false, error: "Token refresh failed", detail: refJson });
-      }
-
-      const updated = await bubbleGet("FortnoxConnection", connection_id);
-      accessToken = updated?.access_token || null;
-    }
-
-    if (!accessToken) return res.status(401).json({ ok: false, error: "No access_token available" });
-
-    // 3) months_back window (cutoff = today - months_back)
-    const mb = Math.max(1, Number(months_back) || 1);
-    const now = new Date();
-    const from = new Date(now);
-    from.setMonth(from.getMonth() - mb);
-
-    const fmt = (d) => {
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
-    };
-
-    const cutoffDate = fmt(from);      // fromdate
-    const toDate = fmt(now);           // todate
-    const cutoffTs = new Date(cutoffDate + "T00:00:00Z").getTime();
-
-    // 4) Hämta invoices (LÅT FORTNOX FILTRERA via fromdate/todate)
-    const qs = new URLSearchParams({
-      page: String(page),
-      limit: String(limit),
-      fromdate: cutoffDate,
-      todate: toDate
-    });
-
-    const url = `https://api.fortnox.se/3/invoices?${qs.toString()}`;
-
-    const r = await fetch(url, {
-      headers: {
-        "Authorization": "Bearer " + accessToken,
-        "Client-Secret": FORTNOX_CLIENT_SECRET,
-        "Accept": "application/json"
-      }
-    });
-
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      return res.status(r.status).json({
-        ok: false,
-        error: "Fortnox API error",
-        detail: data
-      });
-    }
-
-    const list = Array.isArray(data?.Invoices) ? data.Invoices : [];
-
-    // Safety net: client-side filter också (ska normalt vara redundant nu)
-    const pickInvoiceDateTs = (inv) => {
-      const candidates = [
-        inv?.InvoiceDate,
-        inv?.invoiceDate,
-        inv?.DocumentDate,
-        inv?.documentDate,
-        inv?.Created,
-        inv?.created,
-        inv?.DueDate,
-        inv?.dueDate
-      ];
-      for (const c of candidates) {
-        const ts = parseFtDateToTs(c);
-        if (Number.isFinite(ts)) return ts;
-      }
-      return NaN;
-    };
-
-    const filtered = list.filter(inv => {
-      const ts = pickInvoiceDateTs(inv);
-      return Number.isFinite(ts) && ts >= cutoffTs;
-    });
-
-    // DEBUG: visa sample så vi ser exakt vilka fält som kommer
-    const sample = list[0] || null;
-    const sampleKeys = sample ? Object.keys(sample) : [];
-    const samplePickedTs = sample ? pickInvoiceDateTs(sample) : null;
-
-    return res.json({
-      ok: true,
-      connection_id,
-      page,
-      limit,
-      sent_filters: {
-        months_back: mb,
-        fromdate: cutoffDate,
-        todate: toDate,
-        invoiceDateCutoff: cutoffDate
-      },
-      meta: data?.MetaInformation || null,
-      invoices: filtered,
-      debug_counts: { fetched: list.length, kept_by_date: filtered.length },
-      debug_sample: {
-        keys: sampleKeys,
-        invoiceDate: sample?.InvoiceDate || sample?.invoiceDate || null,
-        documentDate: sample?.DocumentDate || sample?.documentDate || null,
-        created: sample?.Created || sample?.created || null,
-        dueDate: sample?.DueDate || sample?.dueDate || null,
-        picked_ts: samplePickedTs,
-        cutoff_ts: cutoffTs,
-        request_url: url
-      }
-    });
+  return res.json({
+    ok: true,
+    connection_id,
+    meta: data?.MetaInformation || null,
+    invoices: data?.Invoices || []
+  });
+});
   } catch (e) {
     console.error("[/fortnox/sync/invoices] error", e);
     return res.status(500).json({ ok: false, error: e.message });
