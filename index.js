@@ -54,7 +54,6 @@ const PORT       = process.env.PORT || 10000;
 const SELF_BASE_URL = `http://127.0.0.1:${PORT}`;
 // Timeout för interna -calls (förhindrar "This operation was aborted")
 const _INTERNAL_TIMEOUT_MS = 45 * 60 * 1000; // 45 minuter
-const _INTERNAL_TIMEOUT_MS = _INTERNAL_TIMEOUT_MS;
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
 const RENDER_API_KEY =
