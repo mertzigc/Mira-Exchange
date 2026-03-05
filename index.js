@@ -1826,48 +1826,55 @@ app.post("/fortnox/connection/refresh", async (req, res) => {
 // Fortnox: sync customers (Render-first, read-only)
 app.post("/fortnox/sync/customers", async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+    const { connection_id, page = 1, limit = 100 } = req.body || {};
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json(tok);
+    if (!tok?.ok || !tok?.access_token) return res.status(401).json(tok || { ok: false, error: "Token error" });
 
-    const lm = lastmodified ? String(lastmodified).trim() : "";
+    const r = await fortnoxGet("/customers", tok.access_token, { page, limit });
 
-    const q = {
-      page,
-      limit,
-      ...(lm ? { lastmodified: lm } : {})
-    };
-
-    const data = await fortnoxGet(tok, "/customers", q);
+    if (!r?.ok) {
+      return res.status(r?.status || 502).json({
+        ok: false,
+        error: "fortnoxGet /customers failed",
+        status: r?.status || null,
+        url: r?.url || null,
+        detail: r?.data || null
+      });
+    }
 
     return res.json({
       ok: true,
       connection_id,
-      meta: data?.MetaInformation || null,
-      customers: data?.Customers || []
+      meta: r.data?.MetaInformation || null,
+      customers: r.data?.Customers || [],
+      fortnox_url: r.url
     });
-
   } catch (e) {
     console.error("[/fortnox/sync/customers] error", e);
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || String(e)
-    });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
-// Fortnox: sync orders (Render-first, read-only) with months_back / days_back filter
+// Fortnox: sync orders (Render-first, read-only) with days_back/months_back window
 app.post("/fortnox/sync/orders", async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
+    const {
+      connection_id,
+      page = 1,
+      limit = 100,
+      months_back = 1,
+      days_back = null
+    } = req.body || {};
+
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json(tok);
+    if (!tok?.ok || !tok?.access_token) return res.status(401).json(tok || { ok: false, error: "Token error" });
 
+    // days_back vinner alltid (t.ex. 7 dagar)
     const now = new Date();
     const fromDate = new Date(now);
 
@@ -1882,26 +1889,34 @@ app.post("/fortnox/sync/orders", async (req, res) => {
     const fdate = fromDate.toISOString().slice(0, 10);
     const tdate = now.toISOString().slice(0, 10);
 
-    const data = await fortnoxGet(tok, "/orders", {
+    const r = await fortnoxGet("/orders", tok.access_token, {
       page,
       limit,
       fromdate: fdate,
       todate: tdate
     });
 
+    if (!r?.ok) {
+      return res.status(r?.status || 502).json({
+        ok: false,
+        error: "fortnoxGet /orders failed",
+        status: r?.status || null,
+        url: r?.url || null,
+        detail: r?.data || null
+      });
+    }
+
     return res.json({
       ok: true,
       connection_id,
-      meta: data?.MetaInformation || null,
-      orders: data?.Orders || []
+      meta: r.data?.MetaInformation || null,
+      orders: r.data?.Orders || [],
+      window: { fromdate: fdate, todate: tdate },
+      fortnox_url: r.url
     });
-
   } catch (e) {
     console.error("[/fortnox/sync/orders] error", e);
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || String(e)
-    });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 async function fortnoxGetOfferDetail(tok, docNo) {
@@ -2642,13 +2657,21 @@ function parseFtDateToTs(v) {
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync invoices (Render-first, read-only) with months_back / days_back filter
+// Fortnox: sync invoices (Render-first, read-only) with days_back/months_back window
 app.post("/fortnox/sync/invoices", async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
+    const {
+      connection_id,
+      page = 1,
+      limit = 100,
+      months_back = 1,
+      days_back = null
+    } = req.body || {};
+
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json(tok);
+    if (!tok?.ok || !tok?.access_token) return res.status(401).json(tok || { ok: false, error: "Token error" });
 
     const now = new Date();
     const fromDate = new Date(now);
@@ -2664,26 +2687,34 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
     const fdate = fromDate.toISOString().slice(0, 10);
     const tdate = now.toISOString().slice(0, 10);
 
-    const data = await fortnoxGet(tok, "/invoices", {
+    const r = await fortnoxGet("/invoices", tok.access_token, {
       page,
       limit,
       fromdate: fdate,
       todate: tdate
     });
 
+    if (!r?.ok) {
+      return res.status(r?.status || 502).json({
+        ok: false,
+        error: "fortnoxGet /invoices failed",
+        status: r?.status || null,
+        url: r?.url || null,
+        detail: r?.data || null
+      });
+    }
+
     return res.json({
       ok: true,
       connection_id,
-      meta: data?.MetaInformation || null,
-      invoices: data?.Invoices || []
+      meta: r.data?.MetaInformation || null,
+      invoices: r.data?.Invoices || [],
+      window: { fromdate: fdate, todate: tdate },
+      fortnox_url: r.url
     });
-
   } catch (e) {
     console.error("[/fortnox/sync/invoices] error", e);
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || String(e)
-    });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 // ────────────────────────────────────────────────────────────
@@ -3220,14 +3251,15 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// Fortnox: sync offers (Render-first, read-only) with optional lastmodified
+// Fortnox: sync offers (Render-first, read-only)
+// Supports lastmodified (Fortnox delta), plus page/limit
 app.post("/fortnox/sync/offers", async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+    const { connection_id, page = 1, limit = 100, lastmodified = null } = req.body || {};
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok.ok) return res.status(401).json(tok);
+    if (!tok?.ok || !tok?.access_token) return res.status(401).json(tok || { ok: false, error: "Token error" });
 
     const lm = lastmodified ? String(lastmodified).trim() : "";
 
@@ -3237,13 +3269,26 @@ app.post("/fortnox/sync/offers", async (req, res) => {
       ...(lm ? { lastmodified: lm } : {})
     };
 
-    const data = await fortnoxGet(tok, `/offers`, q);
+    const r = await fortnoxGet("/offers", tok.access_token, q);
+
+    if (!r?.ok) {
+      return res.status(r?.status || 502).json({
+        ok: false,
+        error: "fortnoxGet /offers failed",
+        status: r?.status || null,
+        url: r?.url || null,
+        sent: q,
+        detail: r?.data || null
+      });
+    }
 
     return res.json({
       ok: true,
       connection_id,
-      meta: data?.MetaInformation || null,
-      offers: data?.Offers || []
+      meta: r.data?.MetaInformation || null,
+      offers: r.data?.Offers || [],
+      sent: q,
+      fortnox_url: r.url
     });
   } catch (e) {
     console.error("[/fortnox/sync/offers] error", e);
