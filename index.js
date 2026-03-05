@@ -3220,40 +3220,35 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Fortnox: sync offers (Render-first, read-only) with optional lastmodified
 app.post("/fortnox/sync/offers", async (req, res) => {
-  const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+  try {
+    const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  const tok = await ensureFortnoxAccessToken(connection_id);
-  if (!tok?.ok) return res.status(401).json(tok);
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json(tok);
 
-  const lm = lastmodified ? String(lastmodified).trim() : "";
+    const lm = lastmodified ? String(lastmodified).trim() : "";
 
-  const q = {
-    page,
-    limit,
-    ...(lm ? { lastmodified: lm } : {})
-  };
+    const q = {
+      page,
+      limit,
+      ...(lm ? { lastmodified: lm } : {})
+    };
 
-  const r = await fortnoxGet("/offers", tok.access_token, q);
+    const data = await fortnoxGet(tok, `/offers`, q);
 
-  if (!r.ok) {
-    // SUPER-viktig debug så du ser exakt URL + Fortnox svar
-    return res.status(r.status || 502).json({
-      ok: false,
-      error: "fortnoxGet /offers failed",
-      status: r.status,
-      url: r.url,
-      data: r.data
+    return res.json({
+      ok: true,
+      connection_id,
+      meta: data?.MetaInformation || null,
+      offers: data?.Offers || []
     });
+  } catch (e) {
+    console.error("[/fortnox/sync/offers] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
-
-  return res.json({
-    ok: true,
-    connection_id,
-    meta: r.data?.MetaInformation || null,
-    offers: r.data?.Offers || []
-  });
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox PDF -> Bubble fileupload helpers (OFFERS)
@@ -3520,55 +3515,64 @@ async function fetchAndStoreOfferPdf({
   };
 }
 // ────────────────────────────────────────────────────────────
-// /fortnox/upsert/offers
+// /fortnox/upsert/offers  (delta-friendly)
+// Body:
+// - connection_id (required)
+// - page, limit
+// - lastmodified (optional)  e.g. "2026-03-05 09:45" (UTC recommended)
+// - enrich_detail: true/false  (default true)   <-- frikopplad från PDF!
 // - fetch_pdf: true/false (default false)
 // - pdf_missing_only: true/false (default true)
-// - pdf_max_per_page: max PDF-försök per sida (default 10)  <-- throttling på attempted
-// - pdf_pause_ms: paus mellan PDF-hämtningar (default 400ms)
-// Retur: first_pdf_error visar första PDF-felet (Fortnox eller Bubble upload)
+// - pdf_max_per_page: throttle (default 10)    <-- används även som throttle för detail
+// - pdf_pause_ms: throttle (default 400)
 app.post("/fortnox/upsert/offers", async (req, res) => {
-  const {
-    connection_id,
-    page = 1,
-    limit = 100,
-    lastmodified,
-
-    fetch_pdf = false,
-    pdf_missing_only = true,
-    pdf_max_per_page = 10,
-    pdf_pause_ms = 400
-  } = req.body || {};
-
-  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
-
-  let created = 0, updated = 0, skipped = 0, errors = 0;
-  let firstError = null;
-  let meta = null;
-
-  // PDF counters
-  let pdf_attempted = 0;
-  let pdf_fetched = 0;
-  let pdf_skipped = 0;
-  let pdf_errors = 0;
-
-  // NEW: capture first PDF error for curl-debug
-  let firstPdfError = null;
-
   try {
-    // 1) Hämta offers via din befintliga sync-route
-const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": process.env.MIRA_RENDER_API_KEY
-  },
-  body: JSON.stringify({
-    connection_id,
-    page,
-    limit,
-    lastmodified
-  })
-});
+    const {
+      connection_id,
+      page = 1,
+      limit = 100,
+      lastmodified = null,
+
+      enrich_detail = true,
+
+      fetch_pdf = false,
+      pdf_missing_only = true,
+      pdf_max_per_page = 10,
+      pdf_pause_ms = 400
+    } = req.body || {};
+
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+    let created = 0, updated = 0, skipped = 0, errors = 0;
+    let firstError = null;
+    let meta = null;
+
+    // Detail counters
+    let detail_enriched = 0;
+    let detail_errors = 0;
+    let firstDetailError = null;
+
+    // PDF counters
+    let pdf_attempted = 0;
+    let pdf_fetched = 0;
+    let pdf_skipped = 0;
+    let pdf_errors = 0;
+    let firstPdfError = null;
+
+    // 1) Hämta offers via sync-route
+    const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({
+        connection_id,
+        page,
+        limit,
+        ...(lastmodified ? { lastmodified } : {})
+      })
+    });
 
     const syncText = await syncRes.text().catch(() => "");
     let sync = null;
@@ -3587,17 +3591,15 @@ const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
     const offers = Array.isArray(sync?.offers) ? sync.offers : [];
     meta = sync?.meta || null;
 
-    // 2) Om PDF ska hämtas i samma pass: hämta token EN gång
+    // 2) Token behövs för detail och/eller pdf
     const wantPdf = boolish(fetch_pdf, false);
+    const wantDetail = boolish(enrich_detail, true);
+
     let tok = null;
-    if (wantPdf) {
+    if (wantPdf || wantDetail) {
       tok = await ensureFortnoxAccessToken(connection_id);
       if (!tok?.ok) {
-        return res.status(401).json({
-          ok: false,
-          error: "Token error",
-          detail: tok
-        });
+        return res.status(401).json({ ok: false, error: "Token error", detail: tok });
       }
     }
 
@@ -3605,251 +3607,205 @@ const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/offers`, {
     const pauseMs = Math.max(0, Number(pdf_pause_ms) || 0);
     const missingOnly = boolish(pdf_missing_only, true);
 
-// 3) Upsert per offer
-let detail_enriched = 0;        // NEW: räkna hur många detail-enrich vi gjorde
-let detail_errors = 0;
-let firstDetailError = null;
+    // 3) Upsert per offer
+    for (const o of offers) {
+      const docNo = String(o?.DocumentNumber || "").trim();
+      if (!docNo) { skipped++; continue; }
 
-for (const o of offers) {
-  const docNo = String(o?.DocumentNumber || "").trim();
-  if (!docNo) { skipped++; continue; }
+      try {
+        // Hitta befintlig (behövs för pdf-flag + update/create)
+        const existing = await bubbleFindOne("FortnoxOffer", [
+          { key: "connection", constraint_type: "equals", value: connection_id },
+          { key: "ft_document_number", constraint_type: "equals", value: docNo }
+        ]);
 
-  // Bas-payload från LIST (saknar YourReferenceNumber)
-  const payload = {
-    connection: connection_id, // Bubble reference (FortnoxConnection) = Bubble thing-id
-    ft_document_number: docNo,
-    ft_customer_number: String(o?.CustomerNumber || ""),
-    ft_customer_name: String(o?.CustomerName || ""),
-    // OBS: kommer ofta vara tomt från listan – vi enrich:ar senare
-    ft_your_reference: String(o?.YourReferenceNumber || "").trim(),
-    ft_offer_date: toIsoDate(o?.OfferDate),
-    ft_total: toNumOrNull(o?.Total),
-    ft_currency: String(o?.Currency || ""),
-    ft_sent: !!o?.Sent,
-    ft_cancelled: !!o?.Cancelled,
-    ft_url: String(o?.["@url"] || ""),
-    ft_raw_json: JSON.stringify(o || {}),
-    needs_rows_sync: true
-  };
+        const existingHasPdf = !!(existing?.ft_pdf || existing?.item?.ft_pdf);
 
-  try {
-    // bubbleFindOne() hos dig returnerar ett Bubble-objekt (med _id) eller null.
-    const existing = await bubbleFindOne("FortnoxOffer", [
-      { key: "connection", constraint_type: "equals", value: connection_id },
-      { key: "ft_document_number", constraint_type: "equals", value: docNo }
-    ]);
-
-    let bubbleId = null;
-
-    if (existing?._id) {
-      // UPDATE
-      bubbleId = existing._id;
-
-      const r = await bubblePatch("FortnoxOffer", bubbleId, payload);
-
-      // I din kodbas kan bubblePatch vara boolean true vid OK.
-      // Vi accepterar även några vanliga varianter, men främst true.
-      const patchOk =
-        r === true ||
-        r?.ok === true ||
-        r?.status === "success" ||
-        r?.status === "SUCCESS" ||
-        r?.response?.status === "success";
-
-      if (!patchOk) {
-        const err = new Error("bubblePatch failed");
-        err.detail = r;
-        throw err;
-      }
-
-      updated++;
-    } else {
-      // CREATE
-      const r = await bubbleCreate("FortnoxOffer", payload);
-
-      // bubbleCreate i din kod brukar returnera id-string vid OK.
-      // Men vi stödjer även några varianter.
-      const createdId =
-        (typeof r === "string" && r) ||
-        r?.id ||
-        r?._id ||
-        r?.response?.id ||
-        r?.response?._id ||
-        null;
-
-      if (!createdId) {
-        const err = new Error("bubbleCreate failed");
-        err.detail = r;
-        throw err;
-      }
-
-      bubbleId = createdId;
-      created++;
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // NEW: Detail-enrichment (throttlad)
-    //
-    // Fortnox list-offers saknar YourReferenceNumber (deal-koden).
-    // Vi hämtar detaljer för ett begränsat antal poster per körning.
-    //
-    const shouldEnrich = wantPdf && detail_enriched < maxPerPage;          // återanvänder pdf_max_per_page som throttle
-
-    // Enrich bara om vi saknar deal-kod i Bubble (eller om payload saknade den)
-    // Vi använder "missingOnly"-logiken för att undvika onödiga calls.
-    const missingDeal = !String(payload.ft_your_reference || "").trim();
-
-    if (shouldEnrich && missingDeal) {
-      const det = await fortnoxGetOfferDetail(tok, docNo);
-      if (det?.ok && det.offer) {
-        const yourRef = String(det.offer?.YourReferenceNumber || "").trim();
-
-        const patch = {
-          ft_your_reference: yourRef,
-          ft_delivery_date: toIsoDate(det.offer?.DeliveryDate),
-          ft_valid_until: toIsoDate(det.offer?.ExpireDate),
-          // om du vill spara hela detail-json också:
-          // ft_raw_json_detail: JSON.stringify(det.offer || {})
+        // Bas-payload från LIST (kan sakna YourReferenceNumber)
+        const payload = {
+          connection: connection_id,
+          ft_document_number: docNo,
+          ft_customer_number: String(o?.CustomerNumber || ""),
+          ft_customer_name: String(o?.CustomerName || ""),
+          ft_your_reference: String(o?.YourReferenceNumber || "").trim(),
+          ft_offer_date: toIsoDate(o?.OfferDate),
+          ft_total: toNumOrNull(o?.Total),
+          ft_currency: String(o?.Currency || ""),
+          ft_sent: !!o?.Sent,
+          ft_cancelled: !!o?.Cancelled,
+          ft_url: String(o?.["@url"] || ""),
+          ft_raw_json: JSON.stringify(o || {}),
+          // Rows sync vill vi alltid flagga på list-sync (rows kommer separat)
+          needs_rows_sync: true,
+          // PDF-flag: endast relevant om vi kör PDF i detta pass (annars rör vi inte flaggan)
+          ...(wantPdf ? { needs_pdf_sync: (missingOnly ? !existingHasPdf : true) } : {})
         };
 
-        const pr = await bubblePatch("FortnoxOffer", bubbleId, patch);
+        let bubbleId = null;
 
-const patchOk =
-  pr === true ||
-  typeof pr === "string" ||
-  pr?.ok === true ||
-  pr?.status === "success" ||
-  pr?.status === "SUCCESS" ||
-  pr?.response?.status === "success";
+        if (existing?._id) {
+          bubbleId = existing._id;
 
-if (!patchOk) {
-  detail_errors++;
-  if (!firstDetailError) {
-    firstDetailError = {
-      ok: false,
-      stage: "bubblePatch(detail) failed",
-      docNo,
-      bubbleId,
-      patch_attempted: patch,
-      detail: pr
-    };
-  }
-  // IMPORTANT: fortsätt utan att kasta
-} else {
-  detail_enriched++;
-}
-      } else {
-        detail_errors++;
-        if (!firstDetailError) {
-          firstDetailError = {
-            ok: false,
-            stage: "offer_detail_failed",
+          const r = await bubblePatch("FortnoxOffer", bubbleId, payload);
+          const patchOk =
+            r === true ||
+            typeof r === "string" ||
+            r?.ok === true ||
+            r?.status === "success" ||
+            r?.status === "SUCCESS" ||
+            r?.response?.status === "success";
+
+          if (!patchOk) {
+            const err = new Error("bubblePatch failed");
+            err.detail = r;
+            throw err;
+          }
+
+          updated++;
+        } else {
+          const r = await bubbleCreate("FortnoxOffer", payload);
+          const createdId =
+            (typeof r === "string" && r) ||
+            r?.id ||
+            r?._id ||
+            r?.response?.id ||
+            r?.response?._id ||
+            null;
+
+          if (!createdId) {
+            const err = new Error("bubbleCreate failed");
+            err.detail = r;
+            throw err;
+          }
+
+          bubbleId = createdId;
+          created++;
+        }
+
+        // 4) Detail-enrich (frikopplat från PDF)
+        if (wantDetail) {
+          const missingRef = !String(payload.ft_your_reference || "").trim();
+          const withinThrottle = detail_enriched < maxPerPage;
+
+          if (missingRef && withinThrottle) {
+            const det = await fortnoxGetOfferDetail(tok, docNo);
+
+            if (det?.ok && det.offer) {
+              const yourRef = String(det.offer?.YourReferenceNumber || "").trim();
+
+              const patch = {
+                ft_your_reference: yourRef,
+                ft_delivery_date: toIsoDate(det.offer?.DeliveryDate),
+                ft_valid_until: toIsoDate(det.offer?.ExpireDate)
+              };
+
+              const pr = await bubblePatch("FortnoxOffer", bubbleId, patch);
+              const patchOk =
+                pr === true ||
+                typeof pr === "string" ||
+                pr?.ok === true ||
+                pr?.status === "success" ||
+                pr?.status === "SUCCESS" ||
+                pr?.response?.status === "success";
+
+              if (!patchOk) {
+                detail_errors++;
+                if (!firstDetailError) {
+                  firstDetailError = {
+                    ok: false,
+                    stage: "bubblePatch(detail) failed",
+                    docNo,
+                    bubbleId,
+                    patch_attempted: patch,
+                    detail: pr
+                  };
+                }
+              } else {
+                detail_enriched++;
+              }
+            } else {
+              detail_errors++;
+              if (!firstDetailError) {
+                firstDetailError = { ok: false, stage: "offer_detail_failed", docNo, detail: det };
+              }
+            }
+          }
+        }
+
+        // 5) PDF fetch (valfritt)
+        if (wantPdf) {
+          const hasPdfNow = !!(existing?.ft_pdf || existing?.item?.ft_pdf);
+          const shouldTryPdf =
+            pdf_attempted < maxPerPage &&
+            (!missingOnly || !hasPdfNow);
+
+          if (shouldTryPdf) {
+            pdf_attempted++;
+
+            try {
+              const pdfRes = await fetchAndStoreOfferPdf({
+                connection_id,
+                offer_docno: docNo,
+                bubble_offer_id: bubbleId,
+                access_token: tok.access_token
+              });
+
+              if (pdfRes?.ok) {
+                pdf_fetched++;
+                // bränn flaggan när vi lyckas
+                try { await bubblePatch("FortnoxOffer", bubbleId, { needs_pdf_sync: false }); } catch {}
+              } else {
+                pdf_errors++;
+                if (!firstPdfError) {
+                  firstPdfError = { ok: false, stage: "fetchAndStoreOfferPdf_failed", docNo, detail: pdfRes };
+                }
+              }
+
+              if (pauseMs) await sleep(pauseMs);
+            } catch (e) {
+              pdf_errors++;
+              if (!firstPdfError) {
+                firstPdfError = { ok: false, stage: "fetchAndStoreOfferPdf_exception", docNo, detail: String(e?.message || e) };
+              }
+            }
+          } else {
+            pdf_skipped++;
+          }
+        }
+
+      } catch (e) {
+        errors++;
+        if (!firstError) {
+          firstError = {
             docNo,
-            detail: det
+            message: e?.message || String(e),
+            stack: e?.stack || null,
+            detail: e?.detail || null
           };
         }
       }
     }
 
-    // ────────────────────────────────────────────────────────────
-   // ────────────────────────────────────────────────────────────
-// PDF fetch (din befintliga logik, men med KORREKT param-mapping)
-if (wantPdf) {
-  const alreadyHasPdf = !!existing?.item?.ft_pdf;
-  const shouldTryPdf =
-    pdf_attempted < maxPerPage &&
-    (!missingOnly || !alreadyHasPdf);
-
-  if (shouldTryPdf) {
-    pdf_attempted++;
-    try {
-      const pdfRes = await fetchAndStoreOfferPdf({
-        connection_id,
-        offer_docno: docNo,          // ✅ MÅSTE heta offer_docno
-        bubble_offer_id: bubbleId,   // ✅ MÅSTE heta bubble_offer_id
-        access_token: tok.access_token // ✅ MÅSTE heta access_token (string)
-      });
-
-      if (pdfRes?.ok) {
-        pdf_fetched++;
-      } else {
-        pdf_errors++;
-        if (!firstPdfError) {
-          firstPdfError = {
-            ok: false,
-            stage: "fetchAndStoreOfferPdf_failed",
-            docNo,
-            detail: pdfRes
-          };
-        }
-      }
-
-      if (pauseMs) await sleep(pauseMs);
-    } catch (e) {
-      pdf_errors++;
-      if (!firstPdfError) {
-        firstPdfError = {
-          ok: false,
-          stage: "fetchAndStoreOfferPdf_exception",
-          docNo,
-          detail: String(e?.message || e)
-        };
-      }
-    }
-  } else {
-    pdf_skipped++;
-  }
-}
-  } catch (e) {
-    errors++;
-    if (!firstError) {
-      firstError = {
-        docNo,
-        message: e?.message || String(e),
-        stack: e?.stack || null,
-        detail: e?.detail || null
-      };
-    }
-  }
-}
-
-return res.json({
-  ok: true,
-  connection_id,
-  page,
-  limit,
-  meta,
-  counts: { created, updated, skipped, errors },
-
-  // NEW: detail-enrichment stats
-  detail: {
-    enabled: true,
-    enriched: detail_enriched,
-    errors: detail_errors,
-    cfg: { maxPerPage }
-  },
-
-  pdf: {
-    enabled: wantPdf,
-    attempted: pdf_attempted,
-    fetched: pdf_fetched,
-    skipped: pdf_skipped,
-    errors: pdf_errors,
-    cfg: { missingOnly, maxPerPage, pauseMs }
-  },
-
-  first_error: firstError,
-  first_detail_error: firstDetailError,
-  first_pdf_error: firstPdfError
-});
-  } catch (e) {
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || String(e),
-      detail: e?.detail || null
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      meta,
+      counts: { created, updated, skipped, errors },
+      detail: { enabled: wantDetail, enriched: detail_enriched, errors: detail_errors, cfg: { maxPerPage } },
+      pdf: { enabled: wantPdf, attempted: pdf_attempted, fetched: pdf_fetched, skipped: pdf_skipped, errors: pdf_errors, cfg: { missingOnly, maxPerPage, pauseMs } },
+      first_error: firstError,
+      first_detail_error: firstDetailError,
+      first_pdf_error: firstPdfError
     });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/offers] fatal", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
+
 // ────────────────────────────────────────────────────────────
 // /fortnox/upsert/offer-rows  (WU-optimerad: bulk fetch av befintliga rows)
 app.post("/fortnox/upsert/offer-rows", requireApiKey, async (req, res) => {
@@ -4287,101 +4243,85 @@ app.post("/fortnox/upsert/invoices/all", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
-// ────────────────────────────────────────────
-// Fortnox: upsert offers - batch loop (N pages per run)
-// NYTT: skickar igenom pdf-parametrar till /fortnox/upsert/offers
-app.post("/fortnox/upsert/offers/all", async (req, res) => {
-  const {
-    connection_id,
-    start_page = 1,
-    limit = 100,
-    max_pages = 10,
-
-    // pass-through (valfritt)
-    fetch_pdf = false,
-    pdf_missing_only = true,
-    pdf_max_per_page = 10,
-    pdf_pause_ms = 400
-  } = req.body || {};
-
-  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
-
-  const start = numOr(start_page, 1);
-  const lim = Math.max(1, Math.min(500, numOr(limit, 100)));
-  const maxP = Math.max(1, numOr(max_pages, 10));
-
-  let page = start;
-  let created = 0, updated = 0, errors = 0;
-  let totalPages = null;
-
-  // pdf aggregate
-  let pdf_attempted = 0, pdf_fetched = 0, pdf_skipped = 0, pdf_errors = 0;
-
+// ────────────────────────────────────────────────────────────
+// /fortnox/upsert/offers/all  (delta only via lastmodified)
+// Body:
+// - connection_id (required)
+// - days_back (default 7)  -> lastmodified = now - days_back
+// - pages_per_call (default 2)  -> hur många pages vi tar per körning (snällt)
+// - limit (default 100)
+// - fetch_pdf (default false)  -> nightly bör köra false
+app.post("/fortnox/upsert/offers/all", requireApiKey, async (req, res) => {
   try {
-    for (let i = 0; i < maxP; i++) {
-      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/offers`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "x-api-key": process.env.MIRA_RENDER_API_KEY },
-        body: JSON.stringify({
+    const {
+      connection_id,
+      days_back = 7,
+      pages_per_call = 2,
+      limit = 100,
+      fetch_pdf = false
+    } = req.body || {};
+
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+    const db = Math.max(1, Number(days_back) || 7);
+    const now = new Date();
+    const from = new Date(now);
+    from.setUTCDate(from.getUTCDate() - db);
+
+    // Fortnox lastmodified brukar acceptera "YYYY-MM-DD HH:mm"
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const lm = `${from.getUTCFullYear()}-${pad2(from.getUTCMonth()+1)}-${pad2(from.getUTCDate())} ${pad2(from.getUTCHours())}:${pad2(from.getUTCMinutes())}`;
+
+    const ppc = Math.max(1, Number(pages_per_call) || 2);
+
+    const totals = { created: 0, updated: 0, skipped: 0, errors: 0 };
+    let lastMeta = null;
+
+    for (let page = 1; page <= ppc; page++) {
+      const j = await postInternalJson(
+        "/fortnox/upsert/offers",
+        {
           connection_id,
           page,
-          limit: lim,
-          fetch_pdf,
-          pdf_missing_only,
-          pdf_max_per_page,
-          pdf_pause_ms
-        })
-      });
+          limit,
+          lastmodified: lm,
+          enrich_detail: true,
+          fetch_pdf: !!fetch_pdf
+        },
+        15 * 60 * 1000
+      );
 
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) {
-        return res.status(400).json({ ok:false, error:"upsert/offers failed", page, detail:j });
-      }
+      lastMeta = j?.meta || lastMeta;
 
-      created += j.counts?.created || 0;
-      updated += j.counts?.updated || 0;
-      errors  += j.counts?.errors  || 0;
+      const c = j?.counts || {};
+      totals.created += Number(c.created || 0);
+      totals.updated += Number(c.updated || 0);
+      totals.skipped += Number(c.skipped || 0);
+      totals.errors += Number(c.errors || 0);
 
-      pdf_attempted += j.pdf?.attempted || 0;
-      pdf_fetched   += j.pdf?.fetched   || 0;
-      pdf_skipped   += j.pdf?.skipped   || 0;
-      pdf_errors    += j.pdf?.errors    || 0;
+      // Om Fortnox säger @TotalPages=0 eller vi får 0 offers: bryt tidigt
+      const tp = Number(j?.meta?.["@TotalPages"] || 0);
+      const tr = Number(j?.meta?.["@TotalResources"] || 0);
+      if (!tp || !tr) break;
 
-      const meta = j.meta || null;
-      const cur = numOr(meta?.["@CurrentPage"], page);
-      const tot = numOr(meta?.["@TotalPages"], 0);
-      if (tot) totalPages = tot;
-
-      if (tot && cur >= tot) {
-        return res.json({
-          ok: true,
-          connection_id,
-          done: true,
-          start_page: start,
-          end_page: cur,
-          total_pages: tot,
-          counts: { created, updated, errors },
-          pdf: { attempted: pdf_attempted, fetched: pdf_fetched, skipped: pdf_skipped, errors: pdf_errors },
-          next_page: 1
-        });
-      }
-
-      page = cur + 1;
+      // snäll paus mellan sidor
+      await sleep(250);
     }
 
     return res.json({
       ok: true,
       connection_id,
-      done: false,
-      start_page: start,
-      end_page: page - 1,
-      total_pages: totalPages,
-      counts: { created, updated, errors },
-      pdf: { attempted: pdf_attempted, fetched: pdf_fetched, skipped: pdf_skipped, errors: pdf_errors },
-      next_page: page
+      days_back: db,
+      lastmodified: lm,
+      pages_per_call: ppc,
+      limit,
+      counts: totals,
+      meta: lastMeta
     });
+
   } catch (e) {
-    return res.status(500).json({ ok:false, error:e.message });
+    console.error("[/fortnox/upsert/offers/all] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 // ────────────────────────────────────────────
