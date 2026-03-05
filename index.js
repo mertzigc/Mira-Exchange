@@ -3252,43 +3252,53 @@ app.get("/fortnox/debug/connections", requireApiKey, async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync offers (Render-first, read-only)
-// Supports lastmodified (Fortnox delta), plus page/limit
+// Supports:
+// - lastmodified: "YYYY-MM-DD HH:MM" (Fortnox style)
+// - days_back: number -> converted to lastmodified (UTC)
+// Falls back to plain pagination if neither is provided.
 app.post("/fortnox/sync/offers", async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 100, lastmodified = null } = req.body || {};
+    const {
+      connection_id,
+      page = 1,
+      limit = 100,
+      lastmodified = null,
+      days_back = null
+    } = req.body || {};
+
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok?.ok || !tok?.access_token) return res.status(401).json(tok || { ok: false, error: "Token error" });
+    if (!tok?.ok) return res.status(401).json(tok);
 
-    const lm = lastmodified ? String(lastmodified).trim() : "";
+    // Build Fortnox query
+    const q = { page, limit };
 
-    const q = {
-      page,
-      limit,
-      ...(lm ? { lastmodified: lm } : {})
-    };
+    // days_back -> lastmodified (UTC, "YYYY-MM-DD HH:MM")
+    const db = Number(days_back);
+    let lm = (lastmodified ? String(lastmodified).trim() : "");
 
-    const r = await fortnoxGet("/offers", tok.access_token, q);
-
-    if (!r?.ok) {
-      return res.status(r?.status || 502).json({
-        ok: false,
-        error: "fortnoxGet /offers failed",
-        status: r?.status || null,
-        url: r?.url || null,
-        sent: q,
-        detail: r?.data || null
-      });
+    if (!lm && Number.isFinite(db) && db > 0) {
+      const d = new Date(Date.now() - db * 24 * 60 * 60 * 1000);
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      const HH = String(d.getUTCHours()).padStart(2, "0");
+      const MM = String(d.getUTCMinutes()).padStart(2, "0");
+      lm = `${yyyy}-${mm}-${dd} ${HH}:${MM}`;
     }
+
+    if (lm) q.lastmodified = lm;
+
+    const data = await fortnoxGet(tok, "/offers", q);
 
     return res.json({
       ok: true,
       connection_id,
-      meta: r.data?.MetaInformation || null,
-      offers: r.data?.Offers || [],
+      meta: data?.MetaInformation || null,
+      offers: data?.Offers || [],
       sent: q,
-      fortnox_url: r.url
+      fortnox_url: data?.__debug_url || null // om du har debug-url i fortnoxGet, annars ta bort raden
     });
   } catch (e) {
     console.error("[/fortnox/sync/offers] error", e);
@@ -4450,246 +4460,194 @@ app.post("/fortnox/upsert/offer-pdfs/flagged", requireApiKey, async (req, res) =
   }
 });
 // ─────────────────────────────────────────────
-// Fortnox Nightly Sync (stable single engine)
+// Fortnox Nightly: delta-only (default 7 days back)
 // ─────────────────────────────────────────────
 
 app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
-
   const lock = getNightlyLock();
   const now = Date.now();
 
-  const LOCK_TTL = 4 * 60 * 60 * 1000;
+  const LOCK_TTL_MS = 4 * 60 * 60 * 1000;
+
+  // read days_back from request (default 7)
+  const days_back = Math.max(1, Number(req.body?.days_back ?? 7) || 7);
 
   if (lock.running) {
-
-    const age = now - lock.started_at;
-
-    if (age < LOCK_TTL) {
-      return res.status(409).json({
-        ok: false,
-        already_running: true,
-        lock
-      });
+    const age = now - (lock.started_at || 0);
+    if (age < LOCK_TTL_MS) {
+      return res.status(409).json({ ok: false, already_running: true, lock });
     }
-
-    console.warn("Nightly stale lock cleared");
-
+    console.warn("[nightly] stale lock cleared", { age_ms: age });
     lock.running = false;
   }
 
   lock.running = true;
   lock.started_at = now;
   lock.finished_at = 0;
-  lock.run_id = now + "-" + Math.random().toString(16).slice(2);
+  lock.run_id = `${now}-${Math.random().toString(16).slice(2)}`;
+  lock.days_back = days_back;
 
-  res.json({
-    ok: true,
-    started: true,
-    run_id: lock.run_id
-  });
+  // respond immediately
+  res.json({ ok: true, started: true, run_id: lock.run_id, days_back });
 
-  setImmediate(runNightlyWorker);
-
+  // run async
+  setImmediate(() => runNightlyWorker({ run_id: lock.run_id, days_back }));
 });
 
-
-// ─────────────────────────────────────────────
-// Nightly Worker
-// ─────────────────────────────────────────────
-
-async function runNightlyWorker() {
-
+async function runNightlyWorker({ run_id, days_back }) {
   const lock = getNightlyLock();
-  const DAYS_BACK = Number(process.env.NIGHTLY_DAYS_BACK || 7);
-  const sinceDate = new Date(Date.now() - DAYS_BACK * 24 * 60 * 60 * 1000);
-const sinceStr = sinceDate.toISOString().slice(0,16).replace("T"," ");
 
-  console.log("🌙 Nightly sync started");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
-
-  const isTransient = (e)=>{
-
-    const m = String(e?.message||"");
-
+  const isTransient = (e) => {
+    const m = String(e?.message || "");
+    const c = String(e?.cause || "");
     return (
       m.includes("fetch failed") ||
       m.includes("ECONNRESET") ||
       m.includes("socket hang up") ||
-      m.includes("ETIMEDOUT")
+      m.includes("ETIMEDOUT") ||
+      c.includes("ECONNRESET") ||
+      c.includes("socket hang up") ||
+      c.includes("ETIMEDOUT")
     );
-
   };
 
-  const call = async(path,payload)=>{
-
-    try{
-      return await postInternalJson(path,payload,NIGHTLY_INTERNAL_TIMEOUT_MS);
-    }catch(e){
-
-      if(!isTransient(e)) throw e;
-
-      console.warn("Retry internal call",path);
-
+  const call = async (path, payload) => {
+    try {
+      return await postInternalJson(path, payload, NIGHTLY_INTERNAL_TIMEOUT_MS);
+    } catch (e1) {
+      if (!isTransient(e1)) throw e1;
+      console.warn("[nightly] Retry internal call", path, e1?.message || e1);
       await sleep(1500);
-
-      return await postInternalJson(path,payload,NIGHTLY_INTERNAL_TIMEOUT_MS);
-
+      return await postInternalJson(path, payload, NIGHTLY_INTERNAL_TIMEOUT_MS);
     }
-
   };
+
+  // lastmodified string (UTC) for Fortnox endpoints that support it (offers/customers)
+  const sinceDate = new Date(Date.now() - (Number(days_back) || 7) * 24 * 60 * 60 * 1000);
+  const sinceStr = sinceDate.toISOString().slice(0, 16).replace("T", " "); // "YYYY-MM-DD HH:MM"
+
+  console.log("🌙 Nightly sync started", { run_id, days_back, sinceStr });
 
   try {
-
     const conns = await getAllFortnoxConnections();
-
-    console.log("Nightly connections",conns.length);
+    console.log("Nightly connections", conns.length);
 
     for (const conn of conns) {
+      const connection_id = conn?._id;
+      if (!connection_id) continue;
 
-      const connection_id = conn._id;
-
-      console.log("Nightly connection",connection_id);
+      console.log("Nightly connection", connection_id);
 
       try {
-
         // ─────────────
-        // CUSTOMERS
+        // CUSTOMERS (delta via lastmodified)
         // ─────────────
-
-        await call("/fortnox/upsert/customers/all",{
+        await call("/fortnox/upsert/customers/all", {
           connection_id,
-          start_page: await getConnNextPage(connection_id,"customers_next_page",1),
-          limit:50,
-          max_pages:20,
+          start_page: 1,
+          limit: 100,
+          max_pages: 5,
           lastmodified: sinceStr
         });
-
         console.log("customers synced");
 
-
         // ─────────────
-        // ORDERS (delta)
+        // ORDERS (delta via days_back, page 1..N)
         // ─────────────
-
-        for(let page=1;page<=5;page++){
-
-          await call("/fortnox/upsert/orders",{
+        for (let page = 1; page <= 5; page++) {
+          await call("/fortnox/upsert/orders", {
             connection_id,
             page,
-            limit:200,
-            lastmodified: sinceStr
+            limit: 200,
+            days_back
           });
-
           await sleep(150);
-
         }
-
         console.log("orders synced");
 
-
         // ─────────────
-        // ORDER ROWS
+        // ORDER ROWS (flagged)
         // ─────────────
-
-        for(let i=0;i<10;i++){
-
-          const r = await call("/fortnox/upsert/order-rows/flagged",{
+        for (let i = 0; i < 10; i++) {
+          const r = await call("/fortnox/upsert/order-rows/flagged", {
             connection_id,
-            limit:30
+            limit: 30,
+            pause_ms: 250
           });
-
-          if(!r.flagged_found) break;
-
+          if (!r?.flagged_found) break;
           await sleep(200);
-
         }
-
         console.log("order rows synced");
 
-
         // ─────────────
-        // OFFERS
+        // OFFERS (delta via lastmodified, page 1..N)
         // ─────────────
-
-        await call("/fortnox/upsert/offers/all",{
-          connection_id,
-          start_page: await getConnNextPage(connection_id,"offers_next_page",1),
-          limit:200,
-          max_pages:5,
-          lastmodified: sinceStr
-        });
-
+        for (let page = 1; page <= 5; page++) {
+          await call("/fortnox/upsert/offers", {
+            connection_id,
+            page,
+            limit: 200,
+            lastmodified: sinceStr,
+            enrich_detail: true,
+            fetch_pdf: false
+          });
+          await sleep(150);
+        }
         console.log("offers synced");
 
-
         // ─────────────
-        // OFFER ROWS
+        // OFFER ROWS (flagged)
         // ─────────────
-
-        for(let i=0;i<10;i++){
-
-          const r = await call("/fortnox/upsert/offer-rows/flagged",{
+        for (let i = 0; i < 10; i++) {
+          const r = await call("/fortnox/upsert/offer-rows/flagged", {
             connection_id,
-            limit:30
+            limit: 30,
+            pause_ms: 250
           });
-
-          if(!r.flagged_found) break;
-
+          if (!r?.flagged_found) break;
           await sleep(200);
-
         }
-
         console.log("offer rows synced");
 
-
         // ─────────────
-        // INVOICES
+        // INVOICES (delta via days_back, page 1..N)
         // ─────────────
-
-        await call("/fortnox/upsert/invoices/all",{
-          connection_id,
-          start_page: await getConnNextPage(connection_id,"invoices_next_page",1),
-          limit:200,
-          max_pages:5,
-          lastmodified: sinceStr
-        });
-
+        for (let page = 1; page <= 5; page++) {
+          await call("/fortnox/upsert/invoices", {
+            connection_id,
+            page,
+            limit: 200,
+            days_back
+          });
+          await sleep(150);
+        }
         console.log("invoices synced");
 
-        await safeSetConnPaging(connection_id,{
+        await safeSetConnPaging(connection_id, {
           nightly_last_run_at: nowIso(),
           nightly_last_error: ""
         });
-
       } catch (err) {
-
-        console.error("Nightly connection failed",connection_id,err?.message);
-
-        await safeSetConnPaging(connection_id,{
+        console.error("Nightly connection failed", connection_id, err?.message || err);
+        await safeSetConnPaging(connection_id, {
           nightly_last_run_at: nowIso(),
           nightly_last_error: err?.message || String(err)
         });
-
       }
 
       await sleep(500);
-
     }
 
     console.log("✅ Nightly sync finished");
-
   } catch (err) {
-
-    console.error("Nightly fatal error",err);
-
+    console.error("Nightly fatal error", err?.message || err);
   } finally {
-
-    lock.running=false;
-    lock.finished_at=Date.now();
-
+    lock.running = false;
+    lock.finished_at = Date.now();
+    console.log("🌙 Nightly lock released", { run_id, finished_at: lock.finished_at });
   }
-
 }
 
 
