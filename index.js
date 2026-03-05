@@ -1353,11 +1353,15 @@ async function safeSetConnPaging(connectionId, patchObj) {
     return false;
   }
 }
-async function postInternalJson(path, payload, timeoutMs = 60000) {
-  // IMPORTANT:
-  // Internal calls inside Render should hit localhost to avoid flaky public/egress fetch failures.
-  const base = `http://127.0.0.1:${process.env.PORT || 10000}`;
-  const url = base + path;
+// ────────────────────────────────────────────────────────────
+// Internal self-call helpers (ALWAYS localhost to avoid onrender recursion issues)
+
+const INTERNAL_SELF_BASE_URL =
+  process.env.INTERNAL_SELF_BASE_URL ||
+  `http://127.0.0.1:${process.env.PORT || 10000}`;
+
+async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
+  const url = `${INTERNAL_SELF_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -1367,10 +1371,11 @@ async function postInternalJson(path, payload, timeoutMs = 60000) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // keep API-key since routes use requireApiKey
-        "x-api-key": process.env.MIRA_RENDER_API_KEY
+        // inget x-api-key behövs när du kör localhost-internal,
+        // men om dina routes kräver requireApiKey så kan du behålla den:
+        "x-api-key": process.env.MIRA_RENDER_API_KEY || ""
       },
-      body: JSON.stringify(payload || {}),
+      body: JSON.stringify(payload ?? {}),
       signal: ctrl.signal
     });
 
@@ -1379,53 +1384,57 @@ async function postInternalJson(path, payload, timeoutMs = 60000) {
     try { j = text ? JSON.parse(text) : null; } catch { j = { raw: text }; }
 
     if (!r.ok || j?.ok === false) {
-      const err = new Error(`internal call failed: ${path}`);
-      err.detail = { http_status: r.status, body: j };
-      throw err;
+      const e = new Error(`internal call failed: ${path}`);
+      e.detail = { url, status: r.status, statusText: r.statusText, body: j };
+      throw e;
+    }
+
+    return j;
+  } catch (e) {
+    // gör det lättare att debugga "fetch failed"
+    if (!e.detail) {
+      e.detail = {
+        url,
+        message: e?.message || String(e),
+        cause: e?.cause ? String(e.cause) : null,
+        name: e?.name || null
+      };
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function getInternalJson(path, timeoutMs = 30 * 1000) {
+  const url = `${INTERNAL_SELF_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  try {
+    const r = await fetch(url, {
+      method: "GET",
+      headers: {
+        "x-api-key": process.env.MIRA_RENDER_API_KEY || ""
+      },
+      signal: ctrl.signal
+    });
+
+    const text = await r.text().catch(() => "");
+    let j = null;
+    try { j = text ? JSON.parse(text) : null; } catch { j = { raw: text }; }
+
+    if (!r.ok || j?.ok === false) {
+      const e = new Error(`internal GET failed: ${path}`);
+      e.detail = { url, status: r.status, statusText: r.statusText, body: j };
+      throw e;
     }
 
     return j;
   } finally {
     clearTimeout(t);
   }
-}
-// ─────────────────────────────────────────────
-// internal GET helper (same pattern as postInternalJson)
-
-async function getInternalJson(path) {
-
-  const url = `http://127.0.0.1:${PORT}${path}`;
-
-  const r = await fetch(url, {
-    method: "GET",
-    headers: {
-      "x-api-key": process.env.MIRA_RENDER_API_KEY
-    }
-  });
-
-  const text = await r.text();
-
-  let json;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
-  }
-
-  if (!r.ok || json?.ok === false) {
-    const err = new Error(`internal call failed: ${path}`);
-    err.detail = {
-      url,
-      path,
-      status: r.status,
-      statusText: r.statusText,
-      bodyText: text,
-      bodyJson: json
-    };
-    throw err;
-  }
-
-  return json;
 }
 // ────────────────────────────────────────────────────────────
 // Fortnox (Render-first) – connection-based token refresh + API fetch
