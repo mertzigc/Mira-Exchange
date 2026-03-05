@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_FINGERPRINT="2026-03-05_nightly_daysback_v1"
+SCRIPT_FINGERPRINT="2026-03-05_nightly_kickoff_days_v1"
 echo "=== Fortnox nightly sync START ==="
 echo "[nightly] SCRIPT_FINGERPRINT=$SCRIPT_FINGERPRINT"
 
 HOST="${HOST:-https://mira-exchange.onrender.com}"
 API_KEY="${MIRA_RENDER_API_KEY:-}"
 
-# ✅ NYTT: kör alltid på "days_back" istället för months_back
+# NYTT: Kör max X dagar bakåt (default 7)
 DAYS_BACK="${NIGHTLY_DAYS_BACK:-7}"
 
-# När vi ska våga unlocka om låset “fastnat”
+# Fallback om du vill kunna köra månader ibland
+MONTHS_BACK="${NIGHTLY_MONTHS_BACK:-1}"
+
 STUCK_MINUTES="${NIGHTLY_STUCK_MINUTES:-90}"
 
 if [[ -z "$API_KEY" ]]; then
@@ -19,13 +21,13 @@ if [[ -z "$API_KEY" ]]; then
   exit 2
 fi
 
-echo "[nightly] HOST=$HOST DAYS_BACK=$DAYS_BACK STUCK_MINUTES=$STUCK_MINUTES"
+echo "[nightly] HOST=$HOST DAYS_BACK=$DAYS_BACK (fallback MONTHS_BACK=$MONTHS_BACK) STUCK_MINUTES=$STUCK_MINUTES"
 
-# 1) Kolla status
+# 1) Status
 STATUS_JSON="$(curl -sS --max-time 20 "$HOST/fortnox/nightly/status" -H "x-api-key: $API_KEY" || true)"
 echo "[nightly] status: $STATUS_JSON"
 
-# 2) Om nightly redan kör: avgör om den verkar “stuck” och unlocka försiktigt
+# 2) Stuck unlock (samma som du hade)
 if echo "$STATUS_JSON" | grep -q '"running":true'; then
   AGE_MS="$(echo "$STATUS_JSON" | sed -n 's/.*"age_ms":[[:space:]]*\([0-9]\+\).*/\1/p' | head -n 1 || true)"
   if [[ -n "${AGE_MS:-}" ]]; then
@@ -50,8 +52,9 @@ if echo "$STATUS_JSON" | grep -q '"running":true'; then
 fi
 
 # 3) Kickoff
-# ✅ Skickar days_back. (Om servern inte stödjer det ännu: se minimal kodpatch längst ner.)
-BODY="{\"days_back\":$DAYS_BACK}"
+# Försök med days_back först (kräver minimal kodpatch i index.js, se nedan).
+# Om backend inte stödjer days_back än, kan du temporärt byta BODY till months_back.
+BODY="{\"days_back\":$DAYS_BACK,\"months_back\":$MONTHS_BACK}"
 echo "[nightly] kickoff body: $BODY"
 
 curl -sS --max-time 30 -X POST "$HOST/fortnox/nightly/kickoff" \
