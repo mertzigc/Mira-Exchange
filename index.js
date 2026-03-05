@@ -1823,31 +1823,43 @@ app.post("/fortnox/connection/refresh", async (req, res) => {
 });
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync customers (Render-first, read-only)
-app.post("/fortnox/sync/customers", requireApiKey, async (req, res) => {
-  const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
+app.post("/fortnox/sync/customers", async (req, res) => {
+  try {
+    const { connection_id, page = 1, limit = 100, lastmodified } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  const tok = await ensureFortnoxAccessToken(connection_id);
-  if (!tok.ok) return res.status(401).json(tok);
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok?.ok) return res.status(401).json(tok);
 
-  const lm = lastmodified ? String(lastmodified).trim() : "";
-  const q = {
-    page,
-    limit,
-    ...(lm ? { lastmodified: lm } : {})
-  };
+    const lm = lastmodified ? String(lastmodified).trim() : "";
+    const q = {
+      page,
+      limit,
+      ...(lm ? { lastmodified: lm } : {})
+    };
 
-  const r = await fortnoxGet(tok, "/customers", q);
+    // Samma fortnoxGet-signatur som du använder i sync/offers
+    const r = await fortnoxGet("/customers", tok.access_token, q);
 
-  return res.json({
-    ok: true,
-    connection_id,
-    meta: r.data?.MetaInformation || null,
-    customers: r.data?.Customers || []
-  });
+    if (!r.ok) {
+      return res.status(r.status || 502).json({
+        ok: false,
+        error: "fortnoxGet /customers failed",
+        status: r.status,
+        url: r.url,
+        data: r.data
+      });
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      meta: r.data?.MetaInformation || null,
+      customers: r.data?.Customers || []
+    });
   } catch (e) {
     console.error("[/fortnox/sync/customers] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 // ────────────────────────────────────────────────────────────
