@@ -1845,7 +1845,6 @@ app.post("/fortnox/sync/customers", requireApiKey, async (req, res) => {
     meta: r.data?.MetaInformation || null,
     customers: r.data?.Customers || []
   });
-});
   } catch (e) {
     console.error("[/fortnox/sync/customers] error", e);
     return res.status(500).json({ ok: false, error: e.message });
@@ -1888,7 +1887,6 @@ app.post("/fortnox/sync/orders", async (req, res) => {
     meta: data?.MetaInformation || null,
     orders: data?.Orders || []
   });
-});
 
   } catch (e) {
     console.error("[/fortnox/sync/orders] error", e);
@@ -2666,7 +2664,6 @@ app.post("/fortnox/sync/invoices", async (req, res) => {
     meta: data?.MetaInformation || null,
     invoices: data?.Invoices || []
   });
-});
   } catch (e) {
     console.error("[/fortnox/sync/invoices] error", e);
     return res.status(500).json({ ok: false, error: e.message });
