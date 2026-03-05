@@ -842,14 +842,23 @@ async function upsertTokensToBubble(userId, tokenData, fallbackRefreshToken = nu
 
   if (refreshToken) payload.ms_refresh_token = refreshToken;
 
-  const result = await bubblePatch("user", userId, payload);
+const result = await bubblePatch("user", userId, patch);
 
-  if (!result?.ok) {
-    console.error("[upsertTokensToBubble] bubblePatch failed", result);
-    return { ok: false, error: "bubblePatch failed", detail: result };
-  }
+// bubblePatch() i din kod returnerar ofta `true` vid success.
+// Så vi måste behandla `true` som OK.
+const patchOk =
+  result === true ||
+  result?.ok === true ||
+  result?.status === "success" ||
+  result?.status === "SUCCESS" ||
+  result?.response?.status === "success";
 
-  return { ok: true };
+if (!patchOk) {
+  console.error("[upsertTokensToBubble] bubblePatch failed", result);
+  return { ok: false, error: "bubblePatch failed", detail: result };
+}
+
+return { ok: true };
 }
 async function tokenExchange({ code, refresh_token, scope, tenant, redirect_uri }) {
   const tokenEndpoint = "https://login.microsoftonline.com/" + (tenant || MS_TENANT) + "/oauth2/v2.0/token";
