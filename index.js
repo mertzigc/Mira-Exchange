@@ -1353,32 +1353,34 @@ async function safeSetConnPaging(connectionId, patchObj) {
     return false;
   }
 }
-async function postInternalJson(path, payload, timeoutMs = 15 * 60 * 1000) {
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
+async function postInternalJson(path, payload, timeoutMs = 60000) {
+  // IMPORTANT:
+  // Internal calls inside Render should hit localhost to avoid flaky public/egress fetch failures.
+  const base = `http://127.0.0.1:${process.env.PORT || 10000}`;
+  const url = base + path;
 
-  // Viktigt: inga env-overrides här. Vi vill aldrig riskera "${PORT}" i bas-URL.
-  const base = SELF_BASE_URL;
-  const url = `${String(base).replace(/\/+$/, "")}${path}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
     const r = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        // keep API-key since routes use requireApiKey
         "x-api-key": process.env.MIRA_RENDER_API_KEY
       },
       body: JSON.stringify(payload || {}),
-      signal: controller.signal
+      signal: ctrl.signal
     });
 
     const text = await r.text().catch(() => "");
-    let j = {};
-    try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
+    let j = null;
+    try { j = text ? JSON.parse(text) : null; } catch { j = { raw: text }; }
 
-    if (!r.ok || !j.ok) {
+    if (!r.ok || j?.ok === false) {
       const err = new Error(`internal call failed: ${path}`);
-      err.detail = { url, path, status: r.status, statusText: r.statusText, bodyText: text || null, bodyJson: j || null };
+      err.detail = { http_status: r.status, body: j };
       throw err;
     }
 
