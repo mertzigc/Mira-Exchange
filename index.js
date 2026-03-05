@@ -1863,46 +1863,46 @@ app.post("/fortnox/sync/customers", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
-// Fortnox: sync orders (Render-first, read-only) with months_back filter
+// Fortnox: sync orders (Render-first, read-only) with months_back / days_back filter
 app.post("/fortnox/sync/orders", async (req, res) => {
-  const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
+  try {
+    const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  const tok = await ensureFortnoxAccessToken(connection_id);
-  if (!tok.ok) return res.status(401).json(tok);
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json(tok);
 
-  // ✅ days_back vinner alltid (exakt 7 dagar)
-  const now = new Date();
-  const fromDate = new Date(now);
+    // ✅ days_back vinner alltid (exakt X dagar)
+    const now = new Date();
+    const fromDate = new Date(now);
 
-  const db = Number(days_back);
-  if (Number.isFinite(db) && db > 0) {
-    fromDate.setUTCDate(fromDate.getUTCDate() - db);
-  } else {
-    const mb = Math.max(1, Number(months_back) || 1);
-    fromDate.setUTCMonth(fromDate.getUTCMonth() - mb);
-  }
+    const db = Number(days_back);
+    if (Number.isFinite(db) && db > 0) {
+      fromDate.setUTCDate(fromDate.getUTCDate() - db);
+    } else {
+      const mb = Math.max(1, Number(months_back) || 1);
+      fromDate.setUTCMonth(fromDate.getUTCMonth() - mb);
+    }
 
-  const fdate = fromDate.toISOString().slice(0, 10);
-  const tdate = now.toISOString().slice(0, 10);
+    const fdate = fromDate.toISOString().slice(0, 10);
+    const tdate = now.toISOString().slice(0, 10);
 
-  const data = await fortnoxGet(tok, `/orders`, {
-    page,
-    limit,
-    fromdate: fdate,
-    todate: tdate
-  });
+    const data = await fortnoxGet(tok, `/orders`, {
+      page,
+      limit,
+      fromdate: fdate,
+      todate: tdate
+    });
 
-  return res.json({
-    ok: true,
-    connection_id,
-    meta: data?.MetaInformation || null,
-    orders: data?.Orders || []
-  });
-
+    return res.json({
+      ok: true,
+      connection_id,
+      meta: data?.MetaInformation || null,
+      orders: data?.Orders || []
+    });
   } catch (e) {
     console.error("[/fortnox/sync/orders] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 async function fortnoxGetOfferDetail(tok, docNo) {
