@@ -54,7 +54,7 @@ const PORT       = process.env.PORT || 10000;
 const SELF_BASE_URL = `http://127.0.0.1:${PORT}`;
 // Timeout för interna -calls (förhindrar "This operation was aborted")
 const _INTERNAL_TIMEOUT_MS = 45 * 60 * 1000; // 45 minuter
-const NIGHTLY_INTERNAL_TIMEOUT_MS = _INTERNAL_TIMEOUT_MS;
+const _INTERNAL_TIMEOUT_MS = _INTERNAL_TIMEOUT_MS;
 // ────────────────────────────────────────────────────────────
 // Render API key guard (Bubble -> Render)
 const RENDER_API_KEY =
@@ -113,8 +113,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 // ─────────────────────────────────────────────
-// Nightly configuration (safe limits)
-const NIGHTLY_CONFIG = {
+//  configuration (safe limits)
+const _CONFIG = {
   months_back: 1,
 
   customers: {
@@ -4747,6 +4747,9 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 async function runNightlyWorker() {
 
   const lock = getNightlyLock();
+  const DAYS_BACK = Number(process.env.NIGHTLY_DAYS_BACK || 7);
+  const sinceDate = new Date(Date.now() - DAYS_BACK * 24 * 60 * 60 * 1000);
+const sinceStr = sinceDate.toISOString().slice(0,16).replace("T"," ");
 
   console.log("🌙 Nightly sync started");
 
@@ -4804,8 +4807,9 @@ async function runNightlyWorker() {
         await call("/fortnox/upsert/customers/all",{
           connection_id,
           start_page: await getConnNextPage(connection_id,"customers_next_page",1),
-          limit:500,
-          max_pages:20
+          limit:50,
+          max_pages:20,
+          lastmodified: sinceStr
         });
 
         console.log("customers synced");
@@ -4821,7 +4825,7 @@ async function runNightlyWorker() {
             connection_id,
             page,
             limit:200,
-            months_back:1
+            lastmodified: sinceStr
           });
 
           await sleep(150);
@@ -4859,7 +4863,8 @@ async function runNightlyWorker() {
           connection_id,
           start_page: await getConnNextPage(connection_id,"offers_next_page",1),
           limit:200,
-          max_pages:5
+          max_pages:5,
+          lastmodified: sinceStr
         });
 
         console.log("offers synced");
@@ -4894,7 +4899,7 @@ async function runNightlyWorker() {
           start_page: await getConnNextPage(connection_id,"invoices_next_page",1),
           limit:200,
           max_pages:5,
-          months_back:1
+          lastmodified: sinceStr
         });
 
         console.log("invoices synced");
