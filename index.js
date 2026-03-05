@@ -1822,6 +1822,7 @@ app.post("/fortnox/connection/refresh", async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
 // Fortnox: sync customers (Render-first, read-only)
 app.post("/fortnox/sync/customers", async (req, res) => {
   try {
@@ -1829,39 +1830,34 @@ app.post("/fortnox/sync/customers", async (req, res) => {
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
-    if (!tok?.ok) return res.status(401).json(tok);
+    if (!tok.ok) return res.status(401).json(tok);
 
     const lm = lastmodified ? String(lastmodified).trim() : "";
+
     const q = {
       page,
       limit,
       ...(lm ? { lastmodified: lm } : {})
     };
 
-    // Samma fortnoxGet-signatur som du använder i sync/offers
-    const r = await fortnoxGet("/customers", tok.access_token, q);
-
-    if (!r.ok) {
-      return res.status(r.status || 502).json({
-        ok: false,
-        error: "fortnoxGet /customers failed",
-        status: r.status,
-        url: r.url,
-        data: r.data
-      });
-    }
+    const data = await fortnoxGet(tok, "/customers", q);
 
     return res.json({
       ok: true,
       connection_id,
-      meta: r.data?.MetaInformation || null,
-      customers: r.data?.Customers || []
+      meta: data?.MetaInformation || null,
+      customers: data?.Customers || []
     });
+
   } catch (e) {
     console.error("[/fortnox/sync/customers] error", e);
-    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e)
+    });
   }
 });
+// ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
 // Fortnox: sync orders (Render-first, read-only) with months_back / days_back filter
 app.post("/fortnox/sync/orders", async (req, res) => {
@@ -1872,7 +1868,6 @@ app.post("/fortnox/sync/orders", async (req, res) => {
     const tok = await ensureFortnoxAccessToken(connection_id);
     if (!tok.ok) return res.status(401).json(tok);
 
-    // ✅ days_back vinner alltid (exakt X dagar)
     const now = new Date();
     const fromDate = new Date(now);
 
@@ -1887,7 +1882,7 @@ app.post("/fortnox/sync/orders", async (req, res) => {
     const fdate = fromDate.toISOString().slice(0, 10);
     const tdate = now.toISOString().slice(0, 10);
 
-    const data = await fortnoxGet(tok, `/orders`, {
+    const data = await fortnoxGet(tok, "/orders", {
       page,
       limit,
       fromdate: fdate,
@@ -1900,9 +1895,13 @@ app.post("/fortnox/sync/orders", async (req, res) => {
       meta: data?.MetaInformation || null,
       orders: data?.Orders || []
     });
+
   } catch (e) {
     console.error("[/fortnox/sync/orders] error", e);
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e)
+    });
   }
 });
 async function fortnoxGetOfferDetail(tok, docNo) {
@@ -2641,44 +2640,50 @@ function parseFtDateToTs(v) {
   return NaN;
 }
 // ────────────────────────────────────────────────────────────
-// Fortnox: sync invoices (Render-first, read-only) with months_back filter on InvoiceDate
+// ────────────────────────────────────────────────────────────
+// Fortnox: sync invoices (Render-first, read-only) with months_back / days_back filter
 app.post("/fortnox/sync/invoices", async (req, res) => {
-  const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
-  if (!connection_id) return res.status(400).json({ ok:false, error:"Missing connection_id" });
+  try {
+    const { connection_id, page = 1, limit = 100, months_back = 1, days_back = null } = req.body || {};
+    if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
-  const tok = await ensureFortnoxAccessToken(connection_id);
-  if (!tok.ok) return res.status(401).json(tok);
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok.ok) return res.status(401).json(tok);
 
-  const now = new Date();
-  const fromDate = new Date(now);
+    const now = new Date();
+    const fromDate = new Date(now);
 
-  const db = Number(days_back);
-  if (Number.isFinite(db) && db > 0) {
-    fromDate.setUTCDate(fromDate.getUTCDate() - db);
-  } else {
-    const mb = Math.max(1, Number(months_back) || 1);
-    fromDate.setUTCMonth(fromDate.getUTCMonth() - mb);
-  }
+    const db = Number(days_back);
+    if (Number.isFinite(db) && db > 0) {
+      fromDate.setUTCDate(fromDate.getUTCDate() - db);
+    } else {
+      const mb = Math.max(1, Number(months_back) || 1);
+      fromDate.setUTCMonth(fromDate.getUTCMonth() - mb);
+    }
 
-  const fdate = fromDate.toISOString().slice(0, 10);
-  const tdate = now.toISOString().slice(0, 10);
+    const fdate = fromDate.toISOString().slice(0, 10);
+    const tdate = now.toISOString().slice(0, 10);
 
-  const data = await fortnoxGet(tok, `/invoices`, {
-    page,
-    limit,
-    fromdate: fdate,
-    todate: tdate
-  });
+    const data = await fortnoxGet(tok, "/invoices", {
+      page,
+      limit,
+      fromdate: fdate,
+      todate: tdate
+    });
 
-  return res.json({
-    ok: true,
-    connection_id,
-    meta: data?.MetaInformation || null,
-    invoices: data?.Invoices || []
-  });
+    return res.json({
+      ok: true,
+      connection_id,
+      meta: data?.MetaInformation || null,
+      invoices: data?.Invoices || []
+    });
+
   } catch (e) {
     console.error("[/fortnox/sync/invoices] error", e);
-    return res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e)
+    });
   }
 });
 // ────────────────────────────────────────────────────────────
