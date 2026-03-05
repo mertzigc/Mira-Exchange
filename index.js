@@ -4696,850 +4696,266 @@ app.post("/fortnox/upsert/offer-pdfs/flagged", requireApiKey, async (req, res) =
     return res.status(500).json({ ok:false, error: e?.message || String(e) });
   }
 });
-app.post("/fortnox/nightly/delta", requireApiKey, async (req, res) => {
-  const lock = getLock();
-  const now = Date.now();
-  const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
-
-  const numOr = (v, fallback) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : fallback;
-  };
-
-  const { connection_id = null, only_connection_id = null, months_back = 1 } = req.body || {};
-  const onlyId = (only_connection_id || connection_id || null);
-  const mb = Math.max(1, numOr(months_back, 1));
-
-  // stale lock clear
-  if (lock.running && lock.started_at && (now - lock.started_at > LOCK_TTL_MS)) {
-    console.warn("[nightly/delta] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
-    lock.running = false;
-    lock.started_at = 0;
-    lock.finished_at = 0;
-    lock.connection_id = null;
-    lock.run_id = null;
-  }
-  if (lock.running) return res.status(409).json({ ok: false, error: "Nightly already running", lock });
-
-  lock.running = true;
-  lock.started_at = now;
-  lock.finished_at = 0;
-  lock.connection_id = onlyId;
-  lock.run_id = `${now}-${Math.random().toString(16).slice(2)}`;
-
-  try {
-    const connections = await getAllFortnoxConnections();
-    const pickList = onlyId
-      ? connections.filter(c => String(c?._id || "") === String(onlyId))
-      : connections;
-
-    const results = [];
-
-    for (const conn of pickList) {
-      const cid = conn._id;
-      const allowDocs = isDocsConnection(cid);
-
-      const one = {
-        connection_id: cid,
-        allow_docs: allowDocs,
-        ok: false,
-        steps: {},
-        errors: []
-      };
-
-      try {
-        // 1) customers (1 sida delta) — ALLA connections
-        const customersJ = await postInternalJson(
-          "/fortnox/upsert/customers",
-          { connection_id: cid, page: 1, limit: 100 },
-          120000
-        );
-        one.steps.customers = { ok: true, counts: customersJ.counts || null };
-
-        // 2) orders + order rows — ENDAST docs-allowlist (Food & Event)
-        if (allowDocs) {
-          const startOrders = await getConnNextPage(cid, "orders_next_page", 1);
-
-          const ordersJ = await postInternalJson(
-            "/fortnox/upsert/orders/all",
-            {
-              connection_id: cid,
-              months_back: mb,
-              start_page: startOrders,
-              limit: 100,
-              max_pages: 5,
-              pause_ms: 150
-            },
-            15 * 60 * 1000
-          );
-
-          one.steps.orders = {
-            ok: true,
-            done: !!ordersJ.done,
-            next_page: ordersJ.next_page ?? null,
-            counts: ordersJ.counts || null
-          };
-
-          await safeSetConnPaging(cid, {
-            orders_next_page: ordersJ?.next_page || 1,
-            orders_last_progress_at: nowIso(),
-            ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
-          });
-
-          for (let round = 0; round < 5; round++) {
-            const rowsJ = await postInternalJson(
-              "/fortnox/upsert/order-rows/flagged",
-              { connection_id: cid, limit: 30, pause_ms: 250 },
-              5 * 60 * 1000
-            );
-            if (!rowsJ.flagged_found) break;
-          }
-          one.steps.order_rows = { ok: true };
-        } else {
-          one.steps.orders = { skipped: true, reason: "not allowed for orders/offers" };
-          one.steps.order_rows = { skipped: true, reason: "not allowed for orders/offers" };
-        }
-
-        // 3) offers + pdf + offer rows — ENDAST docs-allowlist
-        if (allowDocs) {
-          const startOffers = await getConnNextPage(cid, "offers_next_page", 1);
-
-          const offersJ = await postInternalJson(
-            "/fortnox/upsert/offers/all",
-            {
-              connection_id: cid,
-              start_page: startOffers,
-              limit: 100,
-              max_pages: 5,
-              fetch_pdf: false
-            },
-            15 * 60 * 1000
-          );
-
-          one.steps.offers = {
-            ok: true,
-            done: !!offersJ.done,
-            next_page: offersJ.next_page ?? null,
-            counts: offersJ.counts || null
-          };
-
-          await safeSetConnPaging(cid, {
-            offers_next_page: offersJ?.next_page || 1,
-            offers_last_progress_at: nowIso(),
-            ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
-          });
-
-          const pdfJ = await postInternalJson(
-            "/fortnox/upsert/offer-pdfs/flagged",
-            { connection_id: cid, limit: 10, pause_ms: 500 },
-            15 * 60 * 1000
-          );
-
-          one.steps.offer_pdfs = {
-            ok: true,
-            counts: pdfJ.counts || null,
-            flagged_found: pdfJ.flagged_found ?? null
-          };
-
-          for (let round = 0; round < 5; round++) {
-            const rowsJ = await postInternalJson(
-              "/fortnox/upsert/offer-rows/flagged",
-              { connection_id: cid, limit: 30, pause_ms: 250 },
-              5 * 60 * 1000
-            );
-            if (!rowsJ.flagged_found) break;
-          }
-          one.steps.offer_rows = { ok: true };
-        } else {
-          one.steps.offers = { skipped: true, reason: "not allowed for orders/offers" };
-          one.steps.offer_pdfs = { skipped: true, reason: "not allowed for orders/offers" };
-          one.steps.offer_rows = { skipped: true, reason: "not allowed for orders/offers" };
-        }
-
-        // 4) invoices — ALLA connections
-        const startInv = await getConnNextPage(cid, "invoices_next_page", 1);
-
-        const invoicesJ = await postInternalJson(
-          "/fortnox/upsert/invoices/all",
-          { connection_id: cid, start_page: startInv, limit: 50, max_pages: 5, months_back: mb },
-          15 * 60 * 1000
-        );
-
-        one.steps.invoices = {
-          ok: true,
-          done: !!invoicesJ.done,
-          next_page: invoicesJ.next_page ?? null,
-          counts: invoicesJ.counts || null
-        };
-
-        await safeSetConnPaging(cid, {
-          invoices_next_page: invoicesJ?.next_page || 1,
-          invoices_last_progress_at: nowIso(),
-          ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
-        });
-
-        one.ok = true;
-        await safeSetConnPaging(cid, { nightly_last_run_at: nowIso(), nightly_last_error: "" });
-      } catch (e) {
-        one.ok = false;
-        one.error = e?.message || String(e);
-        one.detail = e?.detail || null;
-        one.errors.push({ message: one.error, detail: one.detail });
-
-        console.error("[nightly/delta] conn error", { connection_id: cid, error: one.error, detail: one.detail });
-        await safeSetConnPaging(cid, { nightly_last_run_at: nowIso(), nightly_last_error: one.error });
-      }
-
-      results.push(one);
-    }
-
-    return res.json({ ok: true, run_id: lock.run_id, months_back: mb, results });
-  } catch (e) {
-    console.error("[nightly/delta] fatal", e);
-    return res.status(500).json({ ok: false, run_id: lock.run_id, error: e?.message || String(e) });
-  } finally {
-    lock.running = false;
-    lock.finished_at = Date.now();
-    console.log("[nightly/delta] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
-  }
-});
 // ─────────────────────────────────────────────
-// Nightly worker (stable)
+// Fortnox Nightly Sync (stable single engine)
+// ─────────────────────────────────────────────
 
-async function runNightly() {
-
-  const lock = getNightlyLock();
-
-  console.log("🌙 Nightly started");
-
-  try {
-
-    // 1️⃣ hämta alla Fortnox connections
-    const connections = await getInternalJson("/fortnox/debug/connections");
-
-    if (!connections?.connections?.length) {
-      console.log("No Fortnox connections found");
-      return;
-    }
-
-    for (const conn of connections.connections) {
-
-      const connection_id = conn.connection_id || conn.id;
-
-      console.log("Nightly: connection", connection_id);
-
-      console.log("Nightly: syncing customers");
-
-      await postInternalJson(
-        "/fortnox/upsert/customers/all",
-        {
-          connection_id,
-          ...NIGHTLY_CONFIG.customers
-        },
-        NIGHTLY_INTERNAL_TIMEOUT_MS
-      );
-
-      console.log("Nightly: syncing orders");
-
-      await postInternalJson(
-        "/fortnox/upsert/orders/all",
-        {
-          connection_id,
-          ...NIGHTLY_CONFIG.orders
-        },
-        NIGHTLY_INTERNAL_TIMEOUT_MS
-      );
-
-      console.log("Nightly: syncing offers");
-
-      await postInternalJson(
-        "/fortnox/upsert/offers/all",
-        {
-          connection_id,
-          ...NIGHTLY_CONFIG.offers
-        },
-        NIGHTLY_INTERNAL_TIMEOUT_MS
-      );
-
-      console.log("Nightly: syncing invoices");
-
-      await postInternalJson(
-        "/fortnox/upsert/invoices/all",
-        {
-          connection_id,
-          ...NIGHTLY_CONFIG.invoices
-        },
-        NIGHTLY_INTERNAL_TIMEOUT_MS
-      );
-
-      console.log("Nightly: syncing rows");
-
-      await postInternalJson(
-        "/fortnox/upsert/order-rows/flagged",
-        {
-          connection_id,
-          ...NIGHTLY_CONFIG.rows
-        },
-        NIGHTLY_INTERNAL_TIMEOUT_MS
-      );
-
-    }
-
-    console.log("✅ Nightly finished");
-
-  } catch (err) {
-
-    console.error("❌ Nightly failed", err);
-
-  } finally {
-
-    lock.running = false;
-    lock.finished_at = Date.now();
-
-  }
-
-}
-app.post("/fortnox/nightly/kickoff", requireApiKey, async (req, res) => {
+app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
   const lock = getNightlyLock();
   const now = Date.now();
 
-  const MAX_LOCK_MS = 2 * 60 * 60 * 1000;
+  const LOCK_TTL = 4 * 60 * 60 * 1000;
 
   if (lock.running) {
 
     const age = now - lock.started_at;
 
-    if (age < MAX_LOCK_MS) {
-
+    if (age < LOCK_TTL) {
       return res.status(409).json({
         ok: false,
         already_running: true,
         lock
       });
-
     }
 
-    console.warn("Nightly stale lock reset");
+    console.warn("Nightly stale lock cleared");
 
     lock.running = false;
-
   }
 
   lock.running = true;
   lock.started_at = now;
   lock.finished_at = 0;
-  lock.connection_id = null;
   lock.run_id = now + "-" + Math.random().toString(16).slice(2);
 
-  console.log("🌙 Nightly kickoff", lock.run_id);
-
-  setImmediate(runNightly);
-
-  return res.status(202).json({
+  res.json({
     ok: true,
-    kicked: true,
+    started: true,
     run_id: lock.run_id
   });
 
+  setImmediate(runNightlyWorker);
+
 });
-app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
-  const lock = getLock();
-  const now = Date.now();
-  const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 
-  let acquired = false;
-  let myRunId = null;
 
-  // --- Helpers ---
-  const numOr = (v, fallback) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : fallback;
+// ─────────────────────────────────────────────
+// Nightly Worker
+// ─────────────────────────────────────────────
+
+async function runNightlyWorker() {
+
+  const lock = getNightlyLock();
+
+  console.log("🌙 Nightly sync started");
+
+  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+
+  const isTransient = (e)=>{
+
+    const m = String(e?.message||"");
+
+    return (
+      m.includes("fetch failed") ||
+      m.includes("ECONNRESET") ||
+      m.includes("socket hang up") ||
+      m.includes("ETIMEDOUT")
+    );
+
   };
 
-  const boolOr = (v, fallback) => (v === undefined ? fallback : !!v);
+  const call = async(path,payload)=>{
 
-  const isDocsConnectionLocal = (connection_id) => {
-    const id = String(connection_id || "").trim();
-    const allow = String(
-      process.env.FORTNOX_DOCS_CONNECTION_IDS ||
-      process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
-      ""
-    )
-      .split(",")
-      .map(s => s.trim())
-      .filter(Boolean);
+    try{
+      return await postInternalJson(path,payload,NIGHTLY_INTERNAL_TIMEOUT_MS);
+    }catch(e){
 
-    if (!allow.length) return true;
-    return allow.includes(id);
-  };
+      if(!isTransient(e)) throw e;
 
-  const extractFortnoxErrorInfo = (err) => {
-    // Walk down nested .detail chains until we find ErrorInformation
-    let node = err?.detail?.body;
-    for (let i = 0; i < 12 && node; i++) {
-      if (node?.ErrorInformation) return node.ErrorInformation;
-      node = node?.detail;
+      console.warn("Retry internal call",path);
+
+      await sleep(1500);
+
+      return await postInternalJson(path,payload,NIGHTLY_INTERNAL_TIMEOUT_MS);
+
     }
-    return null;
+
   };
-// --- Internal self-call stability helpers ---
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Retry only for transient internal fetch problems (Node fetch "fetch failed", socket hangups etc)
-const isTransientFetchError = (e) => {
-  const msg = String(e?.message || "");
-  const cause = e?.cause ? String(e.cause) : "";
-  return (
-    msg.includes("fetch failed") ||
-    msg.includes("ECONNRESET") ||
-    msg.includes("socket hang up") ||
-    msg.includes("ETIMEDOUT") ||
-    cause.includes("ECONNRESET") ||
-    cause.includes("socket hang up") ||
-    cause.includes("ETIMEDOUT")
-  );
-};
-
-const postInternalJsonStable = async (path, payload, timeoutMs) => {
-  // Small throttle between internal calls to reduce socket churn
-  await sleep(250);
 
   try {
-    // ✅ correct: call the real internal poster
-    return await postInternalJson(path, payload, timeoutMs);
-  } catch (e1) {
-    if (!isTransientFetchError(e1)) throw e1;
-
-    console.warn("[nightly/run] transient internal fetch failed; retrying once", {
-      path,
-      message: e1?.message,
-      cause: e1?.cause ? String(e1.cause) : null
-    });
-
-    // Backoff then retry once
-    await sleep(1500);
-    return await postInternalJson(path, payload, timeoutMs);
-  }
-};
-  try {
-    // Clear stale lock
-    if (lock.running && lock.started_at && now - lock.started_at > LOCK_TTL_MS) {
-      console.warn("[nightly/run] stale lock cleared", { ...lock, age_ms: now - lock.started_at });
-      lock.running = false;
-      lock.started_at = 0;
-      lock.finished_at = 0;
-      lock.connection_id = null;
-      lock.run_id = null;
-    }
-    if (lock.running) {
-      return res.status(409).json({ ok: false, error: "Nightly already running", lock });
-    }
-
-    myRunId = `${now}-${Math.random().toString(16).slice(2)}`;
-    lock.running = true;
-    lock.started_at = now;
-    lock.finished_at = 0;
-    lock.connection_id = null;
-    lock.run_id = myRunId;
-    acquired = true;
-
-    const body = req.body || {};
-    const months_back = Math.max(1, numOr(body.months_back, 1));
-    const docs_allowlist = String(body.docs_allowlist ?? "").trim() || null;
-
-    // allow override via request body (optional), else env-based isDocsConnectionLocal
-    const allowDocsFor = (cid) => {
-      if (!docs_allowlist) return isDocsConnectionLocal(cid);
-      const allow = docs_allowlist.split(",").map(s => s.trim()).filter(Boolean);
-      if (!allow.length) return isDocsConnectionLocal(cid);
-      return allow.includes(String(cid));
-    };
-
-    // ✅ IMPORTANT: respect 0 (skip). Correctly read pages_per_call (NOT max_pages).
-    const cfg = {
-      customers: {
-        limit:  numOr(body?.customers?.limit, 500),
-        max_pages: numOr(body?.customers?.max_pages, 30),
-        pause_ms: numOr(body?.customers?.pause_ms, 50),
-        skip_without_orgnr: boolOr(body?.customers?.skip_without_orgnr, true),
-        link_company: boolOr(body?.customers?.link_company, true)
-      },
-      orders: {
-  mode: String(body?.orders?.mode || "delta"),  // <--- ADD
-  limit: Number(body?.orders?.limit ?? 200) || 200,
-  pages_per_call: Number(body?.orders?.pages_per_call ?? 5) || 5,
-  pause_ms: Number(body?.orders?.pause_ms ?? 150) || 150
-},
-      offers: {
-        limit: numOr(body?.offers?.limit, 200),
-        pages_per_call: numOr(body?.offers?.pages_per_call, 5),
-        pause_ms: numOr(body?.offers?.pause_ms, 150)
-      },
-      invoices: {
-        limit: numOr(body?.invoices?.limit, 200),
-        pages_per_call: numOr(body?.invoices?.pages_per_call, 5),
-        pause_ms: numOr(body?.invoices?.pause_ms, 150)
-      },
-      rows: {
-        limit: numOr(body?.rows?.limit, 30),
-        passes: numOr(body?.rows?.passes, 20),
-        pause_ms: numOr(body?.rows?.pause_ms, 250)
-      }
-    };
 
     const conns = await getAllFortnoxConnections();
-    const results = [];
 
-    for (const c of conns) {
-      const connection_id = c._id;
-      const allowDocs = allowDocsFor(connection_id);
+    console.log("Nightly connections",conns.length);
 
-      const one = {
-        connection_id,
-        allow_docs: allowDocs,
-        customers: null,
-        orders: null,
-        offers: null,
-        invoices: null,
-        errors: []
-      };
+    for (const conn of conns) {
 
-      // --- CUSTOMERS (ALL) — SOFT FAIL / SKIP WHEN max_pages<=0 ---
-      if (cfg.customers.max_pages <= 0) {
-        one.customers = { skipped: true, reason: "customers.max_pages=0" };
-      } else {
-        try {
-          let startCustomers = await getConnNextPage(connection_id, "customers_next_page", 1);
+      const connection_id = conn._id;
 
-          const runCustomers = async (start_page) => {
-            return await postInternalJsonStable(
-              "/fortnox/upsert/customers/all",
-              {
-                connection_id,
-                start_page,
-                limit: cfg.customers.limit,
-                max_pages: cfg.customers.max_pages,
-                pause_ms: cfg.customers.pause_ms,
-                skip_without_orgnr: cfg.customers.skip_without_orgnr,
-                link_company: cfg.customers.link_company
-              },
-              NIGHTLY_INTERNAL_TIMEOUT_MS
-            );
-          };
+      console.log("Nightly connection",connection_id);
 
-          let customersJ;
-          try {
-            customersJ = await runCustomers(startCustomers);
-          } catch (e1) {
-            const errInfo = extractFortnoxErrorInfo(e1);
-            if (errInfo?.code === 2001889) {
-              console.warn("[nightly/run] customers page out of range; resetting to page 1", {
-                connection_id, startCustomers, limit: cfg.customers.limit, months_back
-              });
-              await safeSetConnPaging(connection_id, { customers_next_page: 1, customers_last_progress_at: nowIso() });
-              customersJ = await runCustomers(1);
-            } else {
-              throw e1;
-            }
-          }
-
-          one.customers = {
-            done: !!customersJ.done,
-            next_page: customersJ.next_page ?? null,
-            counts: customersJ.counts || null
-          };
-
-          await safeSetConnPaging(connection_id, {
-            customers_next_page: customersJ?.next_page || 1,
-            customers_last_progress_at: nowIso(),
-            ...(customersJ?.done ? { customers_last_full_sync_at: nowIso() } : {})
-          });
-        } catch (e) {
-          const msg = e?.message || String(e);
-          one.customers = {
-            ok: false,
-            skipped: true,
-            reason: "customers failed (continuing)",
-            message: msg,
-            fortnox_error: extractFortnoxErrorInfo(e) || null
-          };
-          one.errors.push({ message: msg, detail: e?.detail || null });
-        }
-      }
-// --- ORDERS + ORDER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
-if (!allowDocs) {
-  one.orders = { skipped: true, reason: "not allowed for orders/offers" };
-} else if (cfg.orders.pages_per_call <= 0) {
-  one.orders = { skipped: true, reason: "orders.pages_per_call=0" };
-} else {
-  const ordersMode = String(cfg.orders.mode || "delta").toLowerCase(); // "delta" | "backfill"
-  let ordersOk = false;
-
-  try {
-    if (ordersMode === "backfill") {
-      // BACKFILL: fortsätt från orders_next_page
-      let startOrders = await getConnNextPage(connection_id, "orders_next_page", 1);
-
-      const runOrdersAll = async (start_page) => {
-        return await postInternalJsonStable(
-          "/fortnox/upsert/orders/all",
-          {
-            connection_id,
-            start_page,
-            limit: cfg.orders.limit,
-            max_pages: cfg.orders.pages_per_call,
-            pause_ms: cfg.orders.pause_ms,
-            months_back
-          },
-          NIGHTLY_INTERNAL_TIMEOUT_MS
-        );
-      };
-
-      let ordersJ;
       try {
-        ordersJ = await runOrdersAll(startOrders);
-      } catch (e1) {
-        const errInfo = extractFortnoxErrorInfo(e1);
-        if (errInfo?.code === 2001889) {
-          console.warn("[nightly/run] orders page out of range; resetting to page 1", {
+
+        // ─────────────
+        // CUSTOMERS
+        // ─────────────
+
+        await call("/fortnox/upsert/customers/all",{
+          connection_id,
+          start_page: await getConnNextPage(connection_id,"customers_next_page",1),
+          limit:500,
+          max_pages:20
+        });
+
+        console.log("customers synced");
+
+
+        // ─────────────
+        // ORDERS (delta)
+        // ─────────────
+
+        for(let page=1;page<=5;page++){
+
+          await call("/fortnox/upsert/orders",{
             connection_id,
-            startOrders,
-            months_back
-          });
-          await safeSetConnPaging(connection_id, {
-            orders_next_page: 1,
-            orders_last_progress_at: nowIso()
-          });
-          ordersJ = await runOrdersAll(1);
-        } else {
-          throw e1;
-        }
-      }
-
-      one.orders = {
-        mode: "backfill",
-        done: !!ordersJ.done,
-        next_page: ordersJ.next_page ?? null,
-        counts: ordersJ.counts || null
-      };
-
-      await safeSetConnPaging(connection_id, {
-        orders_next_page: ordersJ?.next_page || 1,
-        orders_last_progress_at: nowIso(),
-        ...(ordersJ?.done ? { orders_last_full_sync_at: nowIso() } : {})
-      });
-
-      ordersOk = true;
-    } else {
-      // DELTA: alltid page 1..N (senaste först)
-      const totals = { created: 0, updated: 0, skipped: 0, errors: 0 };
-
-      for (let page = 1; page <= cfg.orders.pages_per_call; page++) {
-        const j = await postInternalJsonStable(
-          "/fortnox/upsert/orders",
-          {
-            connection_id,
-            months_back,
             page,
-            limit: cfg.orders.limit
-          },
-          NIGHTLY_INTERNAL_TIMEOUT_MS
-        );
-
-        const c = j?.counts || {};
-        totals.created += Number(c.created || 0);
-        totals.updated += Number(c.updated || 0);
-        totals.skipped += Number(c.skipped || 0);
-        totals.errors += Number(c.errors || 0);
-
-        if (cfg.orders.pause_ms) await sleep(Number(cfg.orders.pause_ms));
-      }
-
-      one.orders = {
-        mode: "delta",
-        done: true,
-        next_page: 1,
-        counts: totals
-      };
-
-      // I delta-läge ska vi INTE flytta orders_next_page (för att inte “fastna” i historik).
-      await safeSetConnPaging(connection_id, {
-        orders_last_progress_at: nowIso(),
-        orders_last_delta_at: nowIso()
-      });
-
-      ordersOk = true;
-    }
-
-    // --- Order rows flagged (optional) — only if rows.passes>0 AND orders ran ok ---
-    if (ordersOk && cfg.rows.passes > 0) {
-      for (let p = 0; p < cfg.rows.passes; p++) {
-        const rowsJ = await postInternalJsonStable(
-          "/fortnox/upsert/order-rows/flagged",
-          { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-          NIGHTLY_INTERNAL_TIMEOUT_MS
-        );
-        if (!rowsJ.flagged_found) break;
-        if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
-      }
-      one.order_rows = { ok: true };
-    } else if (cfg.rows.passes <= 0) {
-      one.order_rows = { skipped: true, reason: "rows.passes=0" };
-    }
-  } catch (e) {
-    one.orders = null;
-    one.order_rows = one.order_rows || null;
-    one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
-  }
-}
-      // --- OFFERS + OFFER ROWS (DOCS ONLY) / SKIP WHEN pages_per_call<=0 ---
-      if (!allowDocs) {
-        one.offers = { skipped: true, reason: "not allowed for orders/offers" };
-      } else if (cfg.offers.pages_per_call <= 0) {
-        one.offers = { skipped: true, reason: "offers.pages_per_call=0" };
-      } else {
-        try {
-          const startOffers = await getConnNextPage(connection_id, "offers_next_page", 1);
-
-          const offersJ = await postInternalJsonStable(
-            "/fortnox/upsert/offers/all",
-            {
-              connection_id,
-              start_page: startOffers,
-              limit: cfg.offers.limit,
-              max_pages: cfg.offers.pages_per_call
-            },
-            NIGHTLY_INTERNAL_TIMEOUT_MS
-          );
-
-          one.offers = {
-            done: !!offersJ.done,
-            next_page: offersJ.next_page ?? null,
-            counts: offersJ.counts || null
-          };
-
-          await safeSetConnPaging(connection_id, {
-            offers_next_page: offersJ?.next_page || 1,
-            offers_last_progress_at: nowIso(),
-            ...(offersJ?.done ? { offers_last_full_sync_at: nowIso() } : {})
+            limit:200,
+            months_back:1
           });
 
-          if (cfg.rows.passes > 0) {
-            for (let p = 0; p < cfg.rows.passes; p++) {
-              const rowsJ = await postInternalJsonStable(
-                "/fortnox/upsert/offer-rows/flagged",
-                { connection_id, limit: cfg.rows.limit, pause_ms: cfg.rows.pause_ms },
-                NIGHTLY_INTERNAL_TIMEOUT_MS
-              );
-              if (!rowsJ.flagged_found) break;
-              if (cfg.rows.pause_ms) await sleep(Number(cfg.rows.pause_ms));
-            }
-          }
-        } catch (e) {
-          one.offers = null;
-          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
+          await sleep(150);
+
         }
-      }
 
-      // --- INVOICES (ALL) — self-heal paging / SKIP WHEN pages_per_call<=0 ---
-      if (cfg.invoices.pages_per_call <= 0) {
-        one.invoices = { skipped: true, reason: "invoices.pages_per_call=0" };
-      } else {
-        try {
-          let startInv = await getConnNextPage(connection_id, "invoices_next_page", 1);
+        console.log("orders synced");
 
-          const runInvoices = async (start_page) => {
-            return await postInternalJsonStable(
-              "/fortnox/upsert/invoices/all",
-              {
-                connection_id,
-                start_page,
-                limit: cfg.invoices.limit,
-                max_pages: cfg.invoices.pages_per_call,
-                months_back
-              },
-              NIGHTLY_INTERNAL_TIMEOUT_MS
-            );
-          };
 
-          let invoicesJ;
-          try {
-            invoicesJ = await runInvoices(startInv);
-          } catch (e1) {
-            const errInfo = extractFortnoxErrorInfo(e1);
-            if (errInfo?.code === 2001889) {
-              console.warn("[nightly/run] invoices page out of range; resetting to page 1", {
-                connection_id, startInv, months_back
-              });
-              await safeSetConnPaging(connection_id, { invoices_next_page: 1, invoices_last_progress_at: nowIso() });
-              invoicesJ = await runInvoices(1);
-            } else {
-              throw e1;
-            }
-          }
+        // ─────────────
+        // ORDER ROWS
+        // ─────────────
 
-          one.invoices = {
-            done: !!invoicesJ.done,
-            next_page: invoicesJ.next_page ?? null,
-            counts: invoicesJ.counts || null
-          };
+        for(let i=0;i<10;i++){
 
-          await safeSetConnPaging(connection_id, {
-            invoices_next_page: invoicesJ?.next_page || 1,
-            invoices_last_progress_at: nowIso(),
-            ...(invoicesJ?.done ? { invoices_last_full_sync_at: nowIso() } : {})
+          const r = await call("/fortnox/upsert/order-rows/flagged",{
+            connection_id,
+            limit:30
           });
-        } catch (e) {
-          one.invoices = null;
-          one.errors.push({ message: e?.message || String(e), detail: e?.detail || null });
+
+          if(!r.flagged_found) break;
+
+          await sleep(200);
+
         }
+
+        console.log("order rows synced");
+
+
+        // ─────────────
+        // OFFERS
+        // ─────────────
+
+        await call("/fortnox/upsert/offers/all",{
+          connection_id,
+          start_page: await getConnNextPage(connection_id,"offers_next_page",1),
+          limit:200,
+          max_pages:5
+        });
+
+        console.log("offers synced");
+
+
+        // ─────────────
+        // OFFER ROWS
+        // ─────────────
+
+        for(let i=0;i<10;i++){
+
+          const r = await call("/fortnox/upsert/offer-rows/flagged",{
+            connection_id,
+            limit:30
+          });
+
+          if(!r.flagged_found) break;
+
+          await sleep(200);
+
+        }
+
+        console.log("offer rows synced");
+
+
+        // ─────────────
+        // INVOICES
+        // ─────────────
+
+        await call("/fortnox/upsert/invoices/all",{
+          connection_id,
+          start_page: await getConnNextPage(connection_id,"invoices_next_page",1),
+          limit:200,
+          max_pages:5,
+          months_back:1
+        });
+
+        console.log("invoices synced");
+
+        await safeSetConnPaging(connection_id,{
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: ""
+        });
+
+      } catch (err) {
+
+        console.error("Nightly connection failed",connection_id,err?.message);
+
+        await safeSetConnPaging(connection_id,{
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: err?.message || String(err)
+        });
+
       }
 
-      results.push(one);
+      await sleep(500);
 
-      if (cfg.customers.pause_ms) await sleep(Number(cfg.customers.pause_ms));
     }
 
-    return res.json({
-      ok: true,
-      run_id: myRunId,
-      months_back,
-      config: cfg,
-      docs_allowlist: docs_allowlist || String(
-        process.env.FORTNOX_DOCS_CONNECTION_IDS ||
-        process.env.FORTNOX_ORDERS_CONNECTION_IDS ||
-        ""
-      ),
-      connections: conns.length,
-      results
-    });
-  } catch (e) {
-    return res.status(500).json({
-      ok: false,
-      error: e?.message || String(e),
-      detail: e?.detail || null
-    });
+    console.log("✅ Nightly sync finished");
+
+  } catch (err) {
+
+    console.error("Nightly fatal error",err);
+
   } finally {
-    if (acquired && lock.run_id === myRunId) {
-      lock.running = false;
-      lock.finished_at = Date.now();
-      console.log("[nightly/run] finished", { run_id: lock.run_id, finished_at: lock.finished_at });
-    }
+
+    lock.running=false;
+    lock.finished_at=Date.now();
+
   }
-});
-app.get("/fortnox/nightly/status", requireApiKey, async (req, res) => {
-  const lock = getLock();
+
+}
+
+
+
+// ─────────────────────────────────────────────
+// Status endpoint
+// ─────────────────────────────────────────────
+
+app.get("/fortnox/nightly/status", requireApiKey, async (req,res)=>{
+
+  const lock = getNightlyLock();
+
   const now = Date.now();
-  const age_ms = lock?.started_at ? (now - lock.started_at) : null;
-  return res.json({
-    ok: true,
-    now,
-    lock: {
-      ...lock,
-      age_ms
-    }
+
+  const age = lock.started_at ? now-lock.started_at : null;
+
+  res.json({
+    ok:true,
+    running:lock.running,
+    started_at:lock.started_at,
+    finished_at:lock.finished_at,
+    age_ms:age
   });
+
 });
 // ────────────────────────────────────────────────────────────
 // ────────────────────────────────────────────────────────────
