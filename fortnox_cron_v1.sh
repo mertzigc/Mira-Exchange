@@ -20,7 +20,7 @@ echo "[fortnox-cron-v1] HOST=$HOST CONNECTION_ID=$CONNECTION_ID DAYS_BACK=$DAYS_
 curl -sS --max-time 600 -X POST "$HOST/fortnox/cron/v1" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"connection_id\":\"$CONNECTION_ID\",\"days_back\":$DAYS_BACK}" 
+  -d "{\"connection_id\":\"$CONNECTION_ID\",\"days_back\":$DAYS_BACK}"
 
 echo
 echo "=== FortnoxCron v1 END ==="
