@@ -7821,6 +7821,7 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
     ft_customer_name: String(order?.CustomerName || ""),
     ft_order_date: toIsoDate(order?.OrderDate),
     ft_delivery_date: toIsoDate(order?.DeliveryDate),
+    ft_your_reference: String(offer?.YourReferenceNumber || "").trim(),
     ft_total: toNumOrNull(order?.Total),
     ft_currency: String(order?.Currency || ""),
     ft_sent: !!order?.Sent,
@@ -7923,14 +7924,19 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   const docNo = String(invoice?.DocumentNumber || "").trim();
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
 
+  const totalValue =
+    invoice?.Total === null || invoice?.Total === undefined || invoice?.Total === ""
+      ? ""
+      : String(invoice.Total);
+
   const payload = {
-    // OBS: ingen "connection" här eftersom FortnoxInvoice saknar det fältet i Bubble
+    // OBS: FortnoxInvoice saknar "connection" i Bubble
     ft_document_number: docNo,
     ft_customer_number: String(invoice?.CustomerNumber || ""),
     ft_customer_name: String(invoice?.CustomerName || ""),
     ft_invoice_date: toIsoDate(invoice?.InvoiceDate),
     ft_due_date: toIsoDate(invoice?.DueDate),
-    ft_total: toNumOrNull(invoice?.Total),
+    ft_total: totalValue, // ✅ string, inte number
     ft_currency: String(invoice?.Currency || ""),
     ft_url: String(invoice?.["@url"] || ""),
     ft_raw_json: JSON.stringify(invoice || {})
@@ -7945,7 +7951,7 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   if (existingId) {
     const r = await bubblePatch("FortnoxInvoice", existingId, payload);
     if (!bubbleOk(r)) {
-      const e = new Error("bubblePatch FortnoxInvoice failed");
+      const e = new Error("bubblePatch failed");
       e.detail = r;
       throw e;
     }
@@ -7969,7 +7975,6 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
 
   return { ok: true, mode: "create", id: createdId, docNo };
 }
-
 async function runFortnoxCronV1ForConnection({
   connection_id,
   days_back = 7,
