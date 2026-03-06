@@ -7810,17 +7810,6 @@ function bubbleOk(result) {
   );
 }
 
-function bubbleId(result) {
-  return (
-    (typeof result === "string" && result) ||
-    result?._id ||
-    result?.id ||
-    result?.response?._id ||
-    result?.response?.id ||
-    null
-  );
-}
-
 async function upsertFortnoxOrderDirect(connection_id, order) {
   const docNo = String(order?.DocumentNumber || "").trim();
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
