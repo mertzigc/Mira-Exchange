@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_FINGERPRINT="2026-03-05_nightly_run_v2"
+SCRIPT_FINGERPRINT="2026-03-05_nightly_run_v3"
 echo "=== Fortnox nightly sync START ==="
 echo "[nightly] SCRIPT_FINGERPRINT=$SCRIPT_FINGERPRINT"
 
 HOST="${HOST:-https://mira-exchange.onrender.com}"
 API_KEY="${MIRA_RENDER_API_KEY:-}"
 STUCK_MINUTES="${NIGHTLY_STUCK_MINUTES:-90}"
+DAYS_BACK="${NIGHTLY_DAYS_BACK:-7}"
 
 if [[ -z "$API_KEY" ]]; then
   echo "[nightly] ERROR: Missing env MIRA_RENDER_API_KEY" >&2
   exit 2
 fi
 
-echo "[nightly] HOST=$HOST STUCK_MINUTES=$STUCK_MINUTES"
-echo "[nightly] NOTE: days-back styrs av Render ENV NIGHTLY_DAYS_BACK (ska vara 7)"
+echo "[nightly] HOST=$HOST STUCK_MINUTES=$STUCK_MINUTES DAYS_BACK=$DAYS_BACK"
 
 # 1) Status
 STATUS_JSON="$(curl -sS --max-time 20 "$HOST/fortnox/nightly/status" -H "x-api-key: $API_KEY" || true)"
@@ -45,11 +45,11 @@ if echo "$STATUS_JSON" | grep -q '"running":true'; then
   fi
 fi
 
-# 3) Run (ingen body – styrs av ENV)
+# 3) Run
 curl -sS --max-time 30 -X POST "$HOST/fortnox/nightly/run" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d "{\"days_back\":$DAYS_BACK}"
 
 echo
 echo "=== Fortnox nightly sync END ==="
