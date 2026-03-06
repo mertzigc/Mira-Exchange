@@ -7938,6 +7938,7 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
     ft_due_date: toIsoDate(invoice?.DueDate),
     ft_total: totalValue, // ✅ string, inte number
     ft_currency: String(invoice?.Currency || ""),
+    ft_your_order_number: String(invoice?.yourOrderNumber || ""),
     ft_url: String(invoice?.["@url"] || ""),
     ft_raw_json: JSON.stringify(invoice || {})
   };
