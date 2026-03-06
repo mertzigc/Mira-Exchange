@@ -7835,7 +7835,7 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
     { key: "ft_document_number", constraint_type: "equals", value: docNo }
   ]);
 
-  const existingId = bubbleId(existing);
+  const existingId = existing?._id || existing?.id || null;
 
   if (existingId) {
     const r = await bubblePatch("FortnoxOrder", existingId, payload);
@@ -7848,15 +7848,22 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
   }
 
   const created = await bubbleCreate("FortnoxOrder", payload);
-  const createdId = bubbleId(created);
+  const createdId =
+    (typeof created === "string" && created) ||
+    created?._id ||
+    created?.id ||
+    created?.response?._id ||
+    created?.response?.id ||
+    null;
+
   if (!createdId) {
     const e = new Error("bubbleCreate FortnoxOrder failed");
     e.detail = created;
     throw e;
   }
+
   return { ok: true, mode: "create", id: createdId, docNo };
 }
-
 async function upsertFortnoxOfferDirect(connection_id, offer) {
   const docNo = String(offer?.DocumentNumber || "").trim();
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
@@ -7882,7 +7889,7 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
     { key: "ft_document_number", constraint_type: "equals", value: docNo }
   ]);
 
-  const existingId = bubbleId(existing);
+  const existingId = existing?._id || existing?.id || null;
 
   if (existingId) {
     const r = await bubblePatch("FortnoxOffer", existingId, payload);
@@ -7895,12 +7902,20 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
   }
 
   const created = await bubbleCreate("FortnoxOffer", payload);
-  const createdId = bubbleId(created);
+  const createdId =
+    (typeof created === "string" && created) ||
+    created?._id ||
+    created?.id ||
+    created?.response?._id ||
+    created?.response?.id ||
+    null;
+
   if (!createdId) {
     const e = new Error("bubbleCreate FortnoxOffer failed");
     e.detail = created;
     throw e;
   }
+
   return { ok: true, mode: "create", id: createdId, docNo };
 }
 
@@ -7909,7 +7924,7 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
 
   const payload = {
-    connection: connection_id,
+    // OBS: ingen "connection" här eftersom FortnoxInvoice saknar det fältet i Bubble
     ft_document_number: docNo,
     ft_customer_number: String(invoice?.CustomerNumber || ""),
     ft_customer_name: String(invoice?.CustomerName || ""),
@@ -7922,11 +7937,10 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   };
 
   const existing = await bubbleFindOne("FortnoxInvoice", [
-    { key: "connection", constraint_type: "equals", value: connection_id },
     { key: "ft_document_number", constraint_type: "equals", value: docNo }
   ]);
 
-  const existingId = bubbleId(existing);
+  const existingId = existing?._id || existing?.id || null;
 
   if (existingId) {
     const r = await bubblePatch("FortnoxInvoice", existingId, payload);
@@ -7939,12 +7953,20 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   }
 
   const created = await bubbleCreate("FortnoxInvoice", payload);
-  const createdId = bubbleId(created);
+  const createdId =
+    (typeof created === "string" && created) ||
+    created?._id ||
+    created?.id ||
+    created?.response?._id ||
+    created?.response?.id ||
+    null;
+
   if (!createdId) {
     const e = new Error("bubbleCreate FortnoxInvoice failed");
     e.detail = created;
     throw e;
   }
+
   return { ok: true, mode: "create", id: createdId, docNo };
 }
 
