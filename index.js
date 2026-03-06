@@ -7821,7 +7821,7 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
     ft_customer_name: String(order?.CustomerName || ""),
     ft_order_date: toIsoDate(order?.OrderDate),
     ft_delivery_date: toIsoDate(order?.DeliveryDate),
-    ft_your_reference: String(offer?.YourReferenceNumber || "").trim(),
+    ft_your_reference: String(order?.YourReferenceNumber || "").trim(),
     ft_total: toNumOrNull(order?.Total),
     ft_currency: String(order?.Currency || ""),
     ft_sent: !!order?.Sent,
