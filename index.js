@@ -1361,77 +1361,72 @@ const INTERNAL_SELF_BASE_URL =
   `http://127.0.0.1:${process.env.PORT || 10000}`;
 
 async function postInternalJson(path, payload, timeoutMs = 120000) {
-  const tryOnce = async (baseUrl) => {
-    const url = baseUrl.replace(/\/$/, "") + path;
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+  const withLeading = path.startsWith("/") ? path : `/${path}`;
 
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify(payload || {}),
-        signal: ac.signal
-      });
-
-      const text = await r.text().catch(() => "");
-      let j = {};
-      try { j = text ? JSON.parse(text) : {}; } catch { j = { raw: text }; }
-
-      if (!r.ok || j?.ok === false) {
-        const err = new Error(`internal call failed: ${path}`);
-        err.status = r.status;
-        err.detail = j;
-        err._internal_url = url;
-        throw err;
-      }
-
-      return j;
-    } finally {
-      clearTimeout(t);
-    }
-  };
-
-  // 1) First: localhost/internal
   const PORT = process.env.PORT || 10000;
-  const internalBase =
-    process.env.INTERNAL_SELF_BASE_URL ||
-    `http://127.0.0.1:${PORT}`;
+
+  // Viktigt: prova localhost först (IPv6), sen 127.0.0.1 (IPv4)
+  const bases = [
+    process.env.INTERNAL_SELF_BASE_URL,                     // om du vill sätta explicit i Render
+    `http://localhost:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+    process.env.RENDER_EXTERNAL_URL,                        // ex: https://mira-exchange.onrender.com (om satt)
+    process.env.SELF_PUBLIC_BASE_URL                        // valfri egen env om du vill
+  ].filter(Boolean).map(b => String(b).replace(/\/$/, ""));
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  let lastErr = null;
 
   try {
-    return await tryOnce(internalBase);
-  } catch (e) {
-    const msg = String(e?.message || "");
-    const isNetworkish =
-      msg.includes("fetch failed") ||
-      msg.includes("ECONNRESET") ||
-      msg.includes("socket hang up") ||
-      msg.includes("ETIMEDOUT") ||
-      msg.includes("EAI_AGAIN") ||
-      msg.includes("ECONNREFUSED");
+    for (const base of bases) {
+      const url = `${base}${withLeading}`;
+      try {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.MIRA_RENDER_API_KEY
+          },
+          body: JSON.stringify(payload || {}),
+          signal: controller.signal
+        });
 
-    // If it is NOT a network-ish failure, do NOT fallback (keep the real error)
-    if (!isNetworkish) throw e;
+        const text = await r.text().catch(() => "");
+        let json = null;
+        try { json = text ? JSON.parse(text) : null; } catch { json = { raw: text }; }
 
-    // 2) Fallback: public/self URL (Render)
-    try {
-      console.warn("[postInternalJson] localhost failed, fallback to SELF_BASE_URL", {
-        path,
-        message: e?.message || String(e)
-      });
-      return await renderPostJson(path, payload); // uses SELF_BASE_URL
-    } catch (e2) {
-      // Keep both errors for debugging
-      const err = new Error(`postInternalJson failed (localhost + fallback) for ${path}`);
-      err.detail = { localhost_error: e?.message || String(e), fallback_error: e2?.message || String(e2) };
-      throw err;
+        if (!r.ok || (json && json.ok === false)) {
+          const e = new Error(`internal call failed: ${withLeading} ${r.status}`);
+          e.detail = json;
+          e.status = r.status;
+          throw e;
+        }
+
+        return json;
+      } catch (e) {
+        lastErr = e;
+        // prova nästa base om detta var “fetch failed / connect”-typ
+        const msg = String(e?.message || "");
+        const isNet =
+          msg.includes("fetch failed") ||
+          msg.includes("ECONNRESET") ||
+          msg.includes("socket hang up") ||
+          msg.includes("ETIMEDOUT") ||
+          msg.includes("ENOTFOUND") ||
+          msg.includes("EAI_AGAIN");
+        if (!isNet) throw e;
+      }
     }
+
+    const e = new Error(`postInternalJson failed (all bases) for ${withLeading}`);
+    e.detail = lastErr?.detail || null;
+    throw e;
+  } finally {
+    clearTimeout(t);
   }
 }
-
 async function getInternalJson(path, timeoutMs = 30 * 1000) {
   const url = `${INTERNAL_SELF_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
 
@@ -4506,20 +4501,17 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
   const now = Date.now();
   const LOCK_TTL = 4 * 60 * 60 * 1000;
 
-  const days_back = Math.max(1, Number(req.body?.days_back ?? 7) || 7);
-
-  // sinceStr i UTC "YYYY-MM-DD HH:mm" (Fortnox lastmodified brukar lira med detta format)
-  const sinceDate = new Date(Date.now() - days_back * 24 * 60 * 60 * 1000);
-  const sinceStr = sinceDate.toISOString().slice(0, 16).replace("T", " ");
-
+  // clear stale
   if (lock.running) {
-    const age = now - lock.started_at;
+    const age = now - (lock.started_at || 0);
     if (age < LOCK_TTL) {
       return res.status(409).json({ ok: false, already_running: true, lock });
     }
-    console.warn("[nightly/run] stale lock cleared");
+    console.warn("[nightly/run] stale lock cleared", { age_ms: age });
     lock.running = false;
   }
+
+  const days_back = Math.max(1, Number(req.body?.days_back ?? 7) || 7);
 
   lock.running = true;
   lock.started_at = now;
@@ -4528,42 +4520,17 @@ app.post("/fortnox/nightly/run", requireApiKey, async (req, res) => {
 
   res.json({ ok: true, started: true, run_id: lock.run_id, days_back });
 
-  // Passa in parametrar — läs inte req inne i worker
-  setImmediate(() => runNightlyWorker({
-    run_id: lock.run_id,
-    days_back,
-    sinceStr
-  }));
+  setImmediate(() => runNightlyWorker({ run_id: lock.run_id, days_back }));
 });
 
-async function runNightlyWorker({ run_id, days_back, sinceStr }) {
+async function runNightlyWorker({ run_id, days_back }) {
   const lock = getNightlyLock();
+
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  const INTERNAL_TIMEOUT_MS = Number(process.env.NIGHTLY_INTERNAL_TIMEOUT_MS || 15 * 60 * 1000);
-
-  const isTransient = (e) => {
-    const m = String(e?.message || "");
-    return (
-      m.includes("fetch failed") ||
-      m.includes("ECONNRESET") ||
-      m.includes("socket hang up") ||
-      m.includes("ETIMEDOUT") ||
-      m.includes("EAI_AGAIN") ||
-      m.includes("ECONNREFUSED")
-    );
-  };
-
-  const call = async (path, payload) => {
-    try {
-      return await postInternalJson(path, payload, INTERNAL_TIMEOUT_MS);
-    } catch (e) {
-      if (!isTransient(e)) throw e;
-      console.warn("[nightly] Retry internal call", path, e?.message || String(e));
-      await sleep(1500);
-      return await postInternalJson(path, payload, INTERNAL_TIMEOUT_MS);
-    }
-  };
+  // Fortnox lastmodified-format: "YYYY-MM-DD HH:MM"
+  const sinceDate = new Date(Date.now() - days_back * 24 * 60 * 60 * 1000);
+  const sinceStr = sinceDate.toISOString().slice(0, 16).replace("T", " ");
 
   console.log("🌙 Nightly sync started", { run_id, days_back, sinceStr });
 
@@ -4577,52 +4544,60 @@ async function runNightlyWorker({ run_id, days_back, sinceStr }) {
 
       try {
         // 1) CUSTOMERS (delta via lastmodified)
-        await call("/fortnox/upsert/customers/all", {
+        await postInternalJson("/fortnox/upsert/customers/all", {
           connection_id,
-          start_page: 1,
-          limit: 100,
-          max_pages: 5,
+          start_page: await getConnNextPage(connection_id, "customers_next_page", 1),
+          limit: 50,
+          max_pages: 10,
           lastmodified: sinceStr
-        });
+        }, NIGHTLY_INTERNAL_TIMEOUT_MS);
         console.log("customers synced");
 
-        // 2) ORDERS (delta via days_back) – kör några sidor
+        // 2) ORDERS (delta via days_back)
         for (let page = 1; page <= 5; page++) {
-          await call("/fortnox/upsert/orders", {
+          await postInternalJson("/fortnox/upsert/orders", {
             connection_id,
             page,
             limit: 200,
             days_back
-          });
+          }, NIGHTLY_INTERNAL_TIMEOUT_MS);
           await sleep(150);
         }
         console.log("orders synced");
 
         // 3) ORDER ROWS flagged
         for (let i = 0; i < 10; i++) {
-          const r = await call("/fortnox/upsert/order-rows/flagged", { connection_id, limit: 30, pause_ms: 250 });
+          const r = await postInternalJson("/fortnox/upsert/order-rows/flagged", {
+            connection_id,
+            limit: 30,
+            pause_ms: 250
+          }, NIGHTLY_INTERNAL_TIMEOUT_MS);
           if (!r?.flagged_found) break;
           await sleep(200);
         }
         console.log("order rows synced");
 
-        // 4) OFFERS (delta via lastmodified) – använd din nya /fortnox/upsert/offers
+        // 4) OFFERS (delta via lastmodified)  ✅ OBS: INTE /offers/all här
         for (let page = 1; page <= 5; page++) {
-          await call("/fortnox/upsert/offers", {
+          await postInternalJson("/fortnox/upsert/offers", {
             connection_id,
             page,
             limit: 200,
             lastmodified: sinceStr,
             enrich_detail: true,
             fetch_pdf: false
-          });
+          }, NIGHTLY_INTERNAL_TIMEOUT_MS);
           await sleep(150);
         }
         console.log("offers synced");
 
         // 5) OFFER ROWS flagged
         for (let i = 0; i < 10; i++) {
-          const r = await call("/fortnox/upsert/offer-rows/flagged", { connection_id, limit: 30, pause_ms: 250 });
+          const r = await postInternalJson("/fortnox/upsert/offer-rows/flagged", {
+            connection_id,
+            limit: 30,
+            pause_ms: 250
+          }, NIGHTLY_INTERNAL_TIMEOUT_MS);
           if (!r?.flagged_found) break;
           await sleep(200);
         }
@@ -4630,29 +4605,35 @@ async function runNightlyWorker({ run_id, days_back, sinceStr }) {
 
         // 6) INVOICES (delta via days_back)
         for (let page = 1; page <= 5; page++) {
-          await call("/fortnox/upsert/invoices", {
+          await postInternalJson("/fortnox/upsert/invoices", {
             connection_id,
             page,
             limit: 200,
             days_back
-          });
+          }, NIGHTLY_INTERNAL_TIMEOUT_MS);
           await sleep(150);
         }
         console.log("invoices synced");
 
-        await safeSetConnPaging(connection_id, { nightly_last_run_at: nowIso(), nightly_last_error: "" });
+        await safeSetConnPaging(connection_id, {
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: ""
+        });
 
       } catch (err) {
-        console.error("Nightly connection failed", connection_id, err?.message || String(err), err?.status || null);
-        await safeSetConnPaging(connection_id, { nightly_last_run_at: nowIso(), nightly_last_error: err?.message || String(err) });
+        console.error("Nightly connection failed", connection_id, err?.message, err?.status || null);
+        await safeSetConnPaging(connection_id, {
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: err?.message || String(err)
+        });
       }
 
-      await sleep(500);
+      await sleep(400);
     }
 
     console.log("✅ Nightly sync finished");
   } catch (err) {
-    console.error("Nightly fatal error", err?.message || String(err));
+    console.error("Nightly fatal error", err);
   } finally {
     lock.running = false;
     lock.finished_at = Date.now();
