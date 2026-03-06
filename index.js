@@ -7779,4 +7779,404 @@ if (wr?.ok && Array.isArray(wo?.WorkOrderRows) && wo.WorkOrderRows.length) {
     });
   }
 });
+// ────────────────────────────────────────────────────────────
+// FortnoxCron v1
+// Pilot: direct Fortnox -> Bubble
+// No internal self-calls
+// Scope v1: orders + offers + invoices
+// ────────────────────────────────────────────────────────────
+
+function fmtFortnoxLastModifiedUtc(dateObj) {
+  const y = dateObj.getUTCFullYear();
+  const m = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getUTCDate()).padStart(2, "0");
+  const hh = String(dateObj.getUTCHours()).padStart(2, "0");
+  const mm = String(dateObj.getUTCMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d} ${hh}:${mm}`;
+}
+
+function fmtYmdUtc(dateObj) {
+  return dateObj.toISOString().slice(0, 10);
+}
+
+function bubbleOk(result) {
+  return (
+    result === true ||
+    typeof result === "string" ||
+    result?.ok === true ||
+    result?.status === "success" ||
+    result?.status === "SUCCESS" ||
+    result?.response?.status === "success"
+  );
+}
+
+function bubbleId(result) {
+  return (
+    (typeof result === "string" && result) ||
+    result?._id ||
+    result?.id ||
+    result?.response?._id ||
+    result?.response?.id ||
+    null
+  );
+}
+
+async function upsertFortnoxOrderDirect(connection_id, order) {
+  const docNo = String(order?.DocumentNumber || "").trim();
+  if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
+
+  const payload = {
+    connection: connection_id,
+    ft_document_number: docNo,
+    ft_customer_number: String(order?.CustomerNumber || ""),
+    ft_customer_name: String(order?.CustomerName || ""),
+    ft_order_date: toIsoDate(order?.OrderDate),
+    ft_delivery_date: toIsoDate(order?.DeliveryDate),
+    ft_total: toNumOrNull(order?.Total),
+    ft_currency: String(order?.Currency || ""),
+    ft_sent: !!order?.Sent,
+    ft_cancelled: !!order?.Cancelled,
+    ft_url: String(order?.["@url"] || ""),
+    ft_raw_json: JSON.stringify(order || {}),
+    needs_rows_sync: true
+  };
+
+  const existing = await bubbleFindOne("FortnoxOrder", [
+    { key: "connection", constraint_type: "equals", value: connection_id },
+    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+  ]);
+
+  const existingId = bubbleId(existing);
+
+  if (existingId) {
+    const r = await bubblePatch("FortnoxOrder", existingId, payload);
+    if (!bubbleOk(r)) {
+      const e = new Error("bubblePatch FortnoxOrder failed");
+      e.detail = r;
+      throw e;
+    }
+    return { ok: true, mode: "update", id: existingId, docNo };
+  }
+
+  const created = await bubbleCreate("FortnoxOrder", payload);
+  const createdId = bubbleId(created);
+  if (!createdId) {
+    const e = new Error("bubbleCreate FortnoxOrder failed");
+    e.detail = created;
+    throw e;
+  }
+  return { ok: true, mode: "create", id: createdId, docNo };
+}
+
+async function upsertFortnoxOfferDirect(connection_id, offer) {
+  const docNo = String(offer?.DocumentNumber || "").trim();
+  if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
+
+  const payload = {
+    connection: connection_id,
+    ft_document_number: docNo,
+    ft_customer_number: String(offer?.CustomerNumber || ""),
+    ft_customer_name: String(offer?.CustomerName || ""),
+    ft_your_reference: String(offer?.YourReferenceNumber || "").trim(),
+    ft_offer_date: toIsoDate(offer?.OfferDate),
+    ft_total: toNumOrNull(offer?.Total),
+    ft_currency: String(offer?.Currency || ""),
+    ft_sent: !!offer?.Sent,
+    ft_cancelled: !!offer?.Cancelled,
+    ft_url: String(offer?.["@url"] || ""),
+    ft_raw_json: JSON.stringify(offer || {}),
+    needs_rows_sync: true
+  };
+
+  const existing = await bubbleFindOne("FortnoxOffer", [
+    { key: "connection", constraint_type: "equals", value: connection_id },
+    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+  ]);
+
+  const existingId = bubbleId(existing);
+
+  if (existingId) {
+    const r = await bubblePatch("FortnoxOffer", existingId, payload);
+    if (!bubbleOk(r)) {
+      const e = new Error("bubblePatch FortnoxOffer failed");
+      e.detail = r;
+      throw e;
+    }
+    return { ok: true, mode: "update", id: existingId, docNo };
+  }
+
+  const created = await bubbleCreate("FortnoxOffer", payload);
+  const createdId = bubbleId(created);
+  if (!createdId) {
+    const e = new Error("bubbleCreate FortnoxOffer failed");
+    e.detail = created;
+    throw e;
+  }
+  return { ok: true, mode: "create", id: createdId, docNo };
+}
+
+async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
+  const docNo = String(invoice?.DocumentNumber || "").trim();
+  if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
+
+  const payload = {
+    connection: connection_id,
+    ft_document_number: docNo,
+    ft_customer_number: String(invoice?.CustomerNumber || ""),
+    ft_customer_name: String(invoice?.CustomerName || ""),
+    ft_invoice_date: toIsoDate(invoice?.InvoiceDate),
+    ft_due_date: toIsoDate(invoice?.DueDate),
+    ft_total: toNumOrNull(invoice?.Total),
+    ft_currency: String(invoice?.Currency || ""),
+    ft_url: String(invoice?.["@url"] || ""),
+    ft_raw_json: JSON.stringify(invoice || {})
+  };
+
+  const existing = await bubbleFindOne("FortnoxInvoice", [
+    { key: "connection", constraint_type: "equals", value: connection_id },
+    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+  ]);
+
+  const existingId = bubbleId(existing);
+
+  if (existingId) {
+    const r = await bubblePatch("FortnoxInvoice", existingId, payload);
+    if (!bubbleOk(r)) {
+      const e = new Error("bubblePatch FortnoxInvoice failed");
+      e.detail = r;
+      throw e;
+    }
+    return { ok: true, mode: "update", id: existingId, docNo };
+  }
+
+  const created = await bubbleCreate("FortnoxInvoice", payload);
+  const createdId = bubbleId(created);
+  if (!createdId) {
+    const e = new Error("bubbleCreate FortnoxInvoice failed");
+    e.detail = created;
+    throw e;
+  }
+  return { ok: true, mode: "create", id: createdId, docNo };
+}
+
+async function runFortnoxCronV1ForConnection({
+  connection_id,
+  days_back = 7,
+  orders_limit = 200,
+  offers_limit = 200,
+  invoices_limit = 200,
+  orders_pages = 5,
+  offers_pages = 5,
+  invoices_pages = 5
+}) {
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok?.ok || !tok?.access_token) {
+    const e = new Error("ensureFortnoxAccessToken failed");
+    e.detail = tok;
+    throw e;
+  }
+
+  const now = new Date();
+  const fromDate = new Date(now);
+  fromDate.setUTCDate(fromDate.getUTCDate() - days_back);
+
+  const fromYmd = fmtYmdUtc(fromDate);
+  const toYmd = fmtYmdUtc(now);
+  const sinceStr = fmtFortnoxLastModifiedUtc(fromDate);
+
+  const summary = {
+    connection_id,
+    days_back,
+    windows: {
+      orders_fromdate: fromYmd,
+      orders_todate: toYmd,
+      invoices_fromdate: fromYmd,
+      invoices_todate: toYmd,
+      offers_lastmodified: sinceStr
+    },
+    orders: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null },
+    offers: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null },
+    invoices: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null }
+  };
+
+  // ─────────────────────
+  // ORDERS
+  // ─────────────────────
+  for (let page = 1; page <= orders_pages; page++) {
+    const r = await fortnoxGet("/orders", tok.access_token, {
+      page,
+      limit: orders_limit,
+      fromdate: fromYmd,
+      todate: toYmd
+    });
+
+    if (!r?.ok) {
+      const e = new Error(`fortnoxGet /orders failed on page ${page}`);
+      e.detail = r;
+      throw e;
+    }
+
+    const items = Array.isArray(r?.data?.Orders) ? r.data.Orders : [];
+    summary.orders.fetched += items.length;
+
+    for (const item of items) {
+      try {
+        const rr = await upsertFortnoxOrderDirect(connection_id, item);
+        if (rr?.mode === "create") summary.orders.created++;
+        else if (rr?.mode === "update") summary.orders.updated++;
+      } catch (e) {
+        summary.orders.errors++;
+        if (!summary.orders.first_error) {
+          summary.orders.first_error = {
+            docNo: item?.DocumentNumber || null,
+            message: e?.message || String(e),
+            detail: e?.detail || null
+          };
+        }
+      }
+    }
+
+    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+    if (totalPages && page >= totalPages) break;
+    if (items.length === 0) break;
+  }
+
+  // ─────────────────────
+  // OFFERS
+  // ─────────────────────
+  for (let page = 1; page <= offers_pages; page++) {
+    const r = await fortnoxGet("/offers", tok.access_token, {
+      page,
+      limit: offers_limit,
+      lastmodified: sinceStr
+    });
+
+    if (!r?.ok) {
+      const e = new Error(`fortnoxGet /offers failed on page ${page}`);
+      e.detail = r;
+      throw e;
+    }
+
+    const items = Array.isArray(r?.data?.Offers) ? r.data.Offers : [];
+    summary.offers.fetched += items.length;
+
+    for (const item of items) {
+      try {
+        const rr = await upsertFortnoxOfferDirect(connection_id, item);
+        if (rr?.mode === "create") summary.offers.created++;
+        else if (rr?.mode === "update") summary.offers.updated++;
+      } catch (e) {
+        summary.offers.errors++;
+        if (!summary.offers.first_error) {
+          summary.offers.first_error = {
+            docNo: item?.DocumentNumber || null,
+            message: e?.message || String(e),
+            detail: e?.detail || null
+          };
+        }
+      }
+    }
+
+    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+    if (totalPages && page >= totalPages) break;
+    if (items.length === 0) break;
+  }
+
+  // ─────────────────────
+  // INVOICES
+  // ─────────────────────
+  for (let page = 1; page <= invoices_pages; page++) {
+    const r = await fortnoxGet("/invoices", tok.access_token, {
+      page,
+      limit: invoices_limit,
+      fromdate: fromYmd,
+      todate: toYmd
+    });
+
+    if (!r?.ok) {
+      const e = new Error(`fortnoxGet /invoices failed on page ${page}`);
+      e.detail = r;
+      throw e;
+    }
+
+    const items = Array.isArray(r?.data?.Invoices) ? r.data.Invoices : [];
+    summary.invoices.fetched += items.length;
+
+    for (const item of items) {
+      try {
+        const rr = await upsertFortnoxInvoiceDirect(connection_id, item);
+        if (rr?.mode === "create") summary.invoices.created++;
+        else if (rr?.mode === "update") summary.invoices.updated++;
+      } catch (e) {
+        summary.invoices.errors++;
+        if (!summary.invoices.first_error) {
+          summary.invoices.first_error = {
+            docNo: item?.DocumentNumber || null,
+            message: e?.message || String(e),
+            detail: e?.detail || null
+          };
+        }
+      }
+    }
+
+    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+    if (totalPages && page >= totalPages) break;
+    if (items.length === 0) break;
+  }
+
+  return summary;
+}
+
+app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
+  const {
+    connection_id = "1771579463578x385222043661358460",
+    days_back = 7,
+    orders_limit = 200,
+    offers_limit = 200,
+    invoices_limit = 200,
+    orders_pages = 5,
+    offers_pages = 5,
+    invoices_pages = 5
+  } = req.body || {};
+
+  try {
+    const summary = await runFortnoxCronV1ForConnection({
+      connection_id,
+      days_back,
+      orders_limit,
+      offers_limit,
+      invoices_limit,
+      orders_pages,
+      offers_pages,
+      invoices_pages
+    });
+
+    await safeSetConnPaging(connection_id, {
+      nightly_last_run_at: nowIso(),
+      nightly_last_error: ""
+    });
+
+    return res.json({
+      ok: true,
+      mode: "fortnox_cron_v1",
+      summary
+    });
+  } catch (e) {
+    console.error("[/fortnox/cron/v1] error", e?.message || e, e?.detail || null);
+
+    try {
+      await safeSetConnPaging(connection_id, {
+        nightly_last_run_at: nowIso(),
+        nightly_last_error: e?.message || String(e)
+      });
+    } catch (_) {}
+
+    return res.status(500).json({
+      ok: false,
+      mode: "fortnox_cron_v1",
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
