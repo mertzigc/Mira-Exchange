@@ -8324,16 +8324,28 @@ async function upsertFortnoxOfferRowsDirect(connection_id, offer_docno) {
 async function runFortnoxCronV1ForConnection({
   connection_id,
   days_back = 7,
+
   customers_limit = 100,
   customers_pages = 3,
+
   orders_limit = 200,
   offers_limit = 200,
   invoices_limit = 200,
+
   orders_pages = 5,
   offers_pages = 5,
   invoices_pages = 5,
+
   order_rows_limit = 40,
-  offer_rows_limit = 40
+  offer_rows_limit = 40,
+
+  enable_customers = true,
+  enable_orders = true,
+  enable_unified_orders = true,
+  enable_order_rows = true,
+  enable_offers = true,
+  enable_offer_rows = true,
+  enable_invoices = true
 }) {
   const tok = await ensureFortnoxAccessToken(connection_id);
   if (!tok?.ok || !tok?.access_token) {
@@ -8361,123 +8373,138 @@ async function runFortnoxCronV1ForConnection({
       invoices_todate: toYmd,
       offers_lastmodified: sinceStr
     },
-    customers: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null },
-    orders: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null },
-    unified_orders: { created: 0, updated: 0, errors: 0, first_error: null },
-    order_rows: { parents: 0, created: 0, updated: 0, errors: 0, first_error: null },
-    offers: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null },
-    offer_rows: { parents: 0, created: 0, updated: 0, errors: 0, first_error: null },
-    invoices: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null }
+    flags: {
+      enable_customers,
+      enable_orders,
+      enable_unified_orders,
+      enable_order_rows,
+      enable_offers,
+      enable_offer_rows,
+      enable_invoices
+    },
+    customers: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_customers },
+    orders: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_orders },
+    unified_orders: { created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_unified_orders },
+    order_rows: { parents: 0, created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_order_rows },
+    offers: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_offers },
+    offer_rows: { parents: 0, created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_offer_rows },
+    invoices: { fetched: 0, created: 0, updated: 0, errors: 0, first_error: null, skipped: !enable_invoices }
   };
 
   // ─────────────────────
   // CUSTOMERS
   // ─────────────────────
-  for (let page = 1; page <= customers_pages; page++) {
-    const r = await fortnoxGet("/customers", tok.access_token, {
-      page,
-      limit: customers_limit,
-      lastmodified: sinceStr
-    });
+  if (enable_customers) {
+    for (let page = 1; page <= customers_pages; page++) {
+      const r = await fortnoxGet("/customers", tok.access_token, {
+        page,
+        limit: customers_limit,
+        lastmodified: sinceStr
+      });
 
-    if (!r?.ok) {
-      const e = new Error(`fortnoxGet /customers failed on page ${page}`);
-      e.detail = r;
-      throw e;
-    }
+      if (!r?.ok) {
+        const e = new Error(`fortnoxGet /customers failed on page ${page}`);
+        e.detail = r;
+        throw e;
+      }
 
-    const items = Array.isArray(r?.data?.Customers) ? r.data.Customers : [];
-    summary.customers.fetched += items.length;
+      const items = Array.isArray(r?.data?.Customers) ? r.data.Customers : [];
+      summary.customers.fetched += items.length;
 
-    for (const item of items) {
-      try {
-        const rr = await upsertFortnoxCustomerDirect(connection_id, item, { link_company: true });
-        if (rr?.mode === "create") summary.customers.created++;
-        else if (rr?.mode === "update") summary.customers.updated++;
-      } catch (e) {
-        summary.customers.errors++;
-        if (!summary.customers.first_error) {
-          summary.customers.first_error = {
-            customerNumber: item?.CustomerNumber || null,
-            message: e?.message || String(e),
-            detail: e?.detail || null
-          };
+      for (const item of items) {
+        try {
+          const rr = await upsertFortnoxCustomerDirect(connection_id, item, { link_company: true });
+          if (rr?.mode === "create") summary.customers.created++;
+          else if (rr?.mode === "update") summary.customers.updated++;
+        } catch (e) {
+          summary.customers.errors++;
+          if (!summary.customers.first_error) {
+            summary.customers.first_error = {
+              customerNumber: item?.CustomerNumber || null,
+              message: e?.message || String(e),
+              detail: e?.detail || null
+            };
+          }
         }
       }
-    }
 
-    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
-    if (totalPages && page >= totalPages) break;
-    if (items.length === 0) break;
+      const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+      if (totalPages && page >= totalPages) break;
+      if (items.length === 0) break;
+    }
   }
 
   // ─────────────────────
   // ORDERS + UnifiedOrder
   // ─────────────────────
-  for (let page = 1; page <= orders_pages; page++) {
-    const r = await fortnoxGet("/orders", tok.access_token, {
-      page,
-      limit: orders_limit,
-      fromdate: fromYmd,
-      todate: toYmd
-    });
+  if (enable_orders) {
+    for (let page = 1; page <= orders_pages; page++) {
+      const r = await fortnoxGet("/orders", tok.access_token, {
+        page,
+        limit: orders_limit,
+        fromdate: fromYmd,
+        todate: toYmd
+      });
 
-    if (!r?.ok) {
-      const e = new Error(`fortnoxGet /orders failed on page ${page}`);
-      e.detail = r;
-      throw e;
-    }
+      if (!r?.ok) {
+        const e = new Error(`fortnoxGet /orders failed on page ${page}`);
+        e.detail = r;
+        throw e;
+      }
 
-    const items = Array.isArray(r?.data?.Orders) ? r.data.Orders : [];
-    summary.orders.fetched += items.length;
+      const items = Array.isArray(r?.data?.Orders) ? r.data.Orders : [];
+      summary.orders.fetched += items.length;
 
-    for (const item of items) {
-      try {
-        const rr = await upsertFortnoxOrderDirect(connection_id, item);
-        if (rr?.mode === "create") summary.orders.created++;
-        else if (rr?.mode === "update") summary.orders.updated++;
-
+      for (const item of items) {
         try {
-          const unifiedPayload = await buildUnifiedOrderFromFortnox({
-            bubbleFortnoxOrderId: rr.id,
-            fortnoxOrder: item,
-            connection_id
-          });
+          const rr = await upsertFortnoxOrderDirect(connection_id, item);
+          if (rr?.mode === "create") summary.orders.created++;
+          else if (rr?.mode === "update") summary.orders.updated++;
 
-          const uo = await upsertUnifiedOrder(unifiedPayload);
-          if (uo?.action === "created") summary.unified_orders.created++;
-          else if (uo?.action === "patched") summary.unified_orders.updated++;
+          if (enable_unified_orders) {
+            try {
+              const unifiedPayload = await buildUnifiedOrderFromFortnox({
+                bubbleFortnoxOrderId: rr.id,
+                fortnoxOrder: item,
+                connection_id
+              });
+
+              const uo = await upsertUnifiedOrder(unifiedPayload);
+              if (uo?.action === "created") summary.unified_orders.created++;
+              else if (uo?.action === "patched") summary.unified_orders.updated++;
+            } catch (e) {
+              summary.unified_orders.errors++;
+              if (!summary.unified_orders.first_error) {
+                summary.unified_orders.first_error = {
+                  docNo: item?.DocumentNumber || null,
+                  message: e?.message || String(e),
+                  detail: e?.detail || null
+                };
+              }
+            }
+          }
         } catch (e) {
-          summary.unified_orders.errors++;
-          if (!summary.unified_orders.first_error) {
-            summary.unified_orders.first_error = {
+          summary.orders.errors++;
+          if (!summary.orders.first_error) {
+            summary.orders.first_error = {
               docNo: item?.DocumentNumber || null,
               message: e?.message || String(e),
               detail: e?.detail || null
             };
           }
         }
-      } catch (e) {
-        summary.orders.errors++;
-        if (!summary.orders.first_error) {
-          summary.orders.first_error = {
-            docNo: item?.DocumentNumber || null,
-            message: e?.message || String(e),
-            detail: e?.detail || null
-          };
-        }
       }
-    }
 
-    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
-    if (totalPages && page >= totalPages) break;
-    if (items.length === 0) break;
+      const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+      if (totalPages && page >= totalPages) break;
+      if (items.length === 0) break;
+    }
   }
 
   // ─────────────────────
-  // ORDER ROWS (flagged parents, throttled)
+  // ORDER ROWS
   // ─────────────────────
-  {
+  if (enable_order_rows) {
     const flaggedOrders = await bubbleFind("FortnoxOrder", {
       constraints: [
         { key: "connection", constraint_type: "equals", value: connection_id },
@@ -8518,48 +8545,50 @@ async function runFortnoxCronV1ForConnection({
   // ─────────────────────
   // OFFERS
   // ─────────────────────
-  for (let page = 1; page <= offers_pages; page++) {
-    const r = await fortnoxGet("/offers", tok.access_token, {
-      page,
-      limit: offers_limit,
-      lastmodified: sinceStr
-    });
+  if (enable_offers) {
+    for (let page = 1; page <= offers_pages; page++) {
+      const r = await fortnoxGet("/offers", tok.access_token, {
+        page,
+        limit: offers_limit,
+        lastmodified: sinceStr
+      });
 
-    if (!r?.ok) {
-      const e = new Error(`fortnoxGet /offers failed on page ${page}`);
-      e.detail = r;
-      throw e;
-    }
+      if (!r?.ok) {
+        const e = new Error(`fortnoxGet /offers failed on page ${page}`);
+        e.detail = r;
+        throw e;
+      }
 
-    const items = Array.isArray(r?.data?.Offers) ? r.data.Offers : [];
-    summary.offers.fetched += items.length;
+      const items = Array.isArray(r?.data?.Offers) ? r.data.Offers : [];
+      summary.offers.fetched += items.length;
 
-    for (const item of items) {
-      try {
-        const rr = await upsertFortnoxOfferDirect(connection_id, item);
-        if (rr?.mode === "create") summary.offers.created++;
-        else if (rr?.mode === "update") summary.offers.updated++;
-      } catch (e) {
-        summary.offers.errors++;
-        if (!summary.offers.first_error) {
-          summary.offers.first_error = {
-            docNo: item?.DocumentNumber || null,
-            message: e?.message || String(e),
-            detail: e?.detail || null
-          };
+      for (const item of items) {
+        try {
+          const rr = await upsertFortnoxOfferDirect(connection_id, item);
+          if (rr?.mode === "create") summary.offers.created++;
+          else if (rr?.mode === "update") summary.offers.updated++;
+        } catch (e) {
+          summary.offers.errors++;
+          if (!summary.offers.first_error) {
+            summary.offers.first_error = {
+              docNo: item?.DocumentNumber || null,
+              message: e?.message || String(e),
+              detail: e?.detail || null
+            };
+          }
         }
       }
-    }
 
-    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
-    if (totalPages && page >= totalPages) break;
-    if (items.length === 0) break;
+      const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+      if (totalPages && page >= totalPages) break;
+      if (items.length === 0) break;
+    }
   }
 
   // ─────────────────────
-  // OFFER ROWS (flagged parents, throttled)
+  // OFFER ROWS
   // ─────────────────────
-  {
+  if (enable_offer_rows) {
     const flaggedOffers = await bubbleFind("FortnoxOffer", {
       constraints: [
         { key: "connection", constraint_type: "equals", value: connection_id },
@@ -8600,43 +8629,45 @@ async function runFortnoxCronV1ForConnection({
   // ─────────────────────
   // INVOICES
   // ─────────────────────
-  for (let page = 1; page <= invoices_pages; page++) {
-    const r = await fortnoxGet("/invoices", tok.access_token, {
-      page,
-      limit: invoices_limit,
-      fromdate: fromYmd,
-      todate: toYmd
-    });
+  if (enable_invoices) {
+    for (let page = 1; page <= invoices_pages; page++) {
+      const r = await fortnoxGet("/invoices", tok.access_token, {
+        page,
+        limit: invoices_limit,
+        fromdate: fromYmd,
+        todate: toYmd
+      });
 
-    if (!r?.ok) {
-      const e = new Error(`fortnoxGet /invoices failed on page ${page}`);
-      e.detail = r;
-      throw e;
-    }
+      if (!r?.ok) {
+        const e = new Error(`fortnoxGet /invoices failed on page ${page}`);
+        e.detail = r;
+        throw e;
+      }
 
-    const items = Array.isArray(r?.data?.Invoices) ? r.data.Invoices : [];
-    summary.invoices.fetched += items.length;
+      const items = Array.isArray(r?.data?.Invoices) ? r.data.Invoices : [];
+      summary.invoices.fetched += items.length;
 
-    for (const item of items) {
-      try {
-        const rr = await upsertFortnoxInvoiceDirect(connection_id, item);
-        if (rr?.mode === "create") summary.invoices.created++;
-        else if (rr?.mode === "update") summary.invoices.updated++;
-      } catch (e) {
-        summary.invoices.errors++;
-        if (!summary.invoices.first_error) {
-          summary.invoices.first_error = {
-            docNo: item?.DocumentNumber || null,
-            message: e?.message || String(e),
-            detail: e?.detail || null
-          };
+      for (const item of items) {
+        try {
+          const rr = await upsertFortnoxInvoiceDirect(connection_id, item);
+          if (rr?.mode === "create") summary.invoices.created++;
+          else if (rr?.mode === "update") summary.invoices.updated++;
+        } catch (e) {
+          summary.invoices.errors++;
+          if (!summary.invoices.first_error) {
+            summary.invoices.first_error = {
+              docNo: item?.DocumentNumber || null,
+              message: e?.message || String(e),
+              detail: e?.detail || null
+            };
+          }
         }
       }
-    }
 
-    const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
-    if (totalPages && page >= totalPages) break;
-    if (items.length === 0) break;
+      const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+      if (totalPages && page >= totalPages) break;
+      if (items.length === 0) break;
+    }
   }
 
   return summary;
@@ -8644,59 +8675,135 @@ async function runFortnoxCronV1ForConnection({
 
 app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
   const {
-    connection_id = "1771579463578x385222043661358460",
+    connection_id = null,
+    all_connections = false,
+
     days_back = 7,
+
     customers_limit = 100,
-    customers_pages = 3,
+    customers_pages = 2,
+
     orders_limit = 200,
     offers_limit = 200,
     invoices_limit = 200,
-    orders_pages = 5,
-    offers_pages = 5,
-    invoices_pages = 5,
-    order_rows_limit = 40,
-    offer_rows_limit = 40
+
+    orders_pages = 3,
+    offers_pages = 3,
+    invoices_pages = 3,
+
+    order_rows_limit = 20,
+    offer_rows_limit = 20,
+
+    docs_connection_ids = null
   } = req.body || {};
 
   try {
-    const summary = await runFortnoxCronV1ForConnection({
-      connection_id,
-      days_back,
-      customers_limit,
-      customers_pages,
-      orders_limit,
-      offers_limit,
-      invoices_limit,
-      orders_pages,
-      offers_pages,
-      invoices_pages,
-      order_rows_limit,
-      offer_rows_limit
-    });
+    const allConns = await getAllFortnoxConnections();
 
-    await safeSetConnPaging(connection_id, {
-      nightly_last_run_at: nowIso(),
-      nightly_last_error: ""
-    });
+    let selected = [];
+    if (connection_id) {
+      selected = allConns.filter(c => String(c?._id || "") === String(connection_id));
+    } else if (all_connections) {
+      selected = allConns;
+    } else {
+      selected = allConns.filter(c => String(c?._id || "") === "1771579463578x385222043661358460");
+    }
+
+    const docsAllow = (
+      Array.isArray(docs_connection_ids) && docs_connection_ids.length
+        ? docs_connection_ids
+        : String(process.env.FORTNOX_DOCS_CONNECTION_IDS || "1771579463578x385222043661358460")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean)
+    );
+
+    const results = [];
+    let connections_ok = 0;
+    let connections_failed = 0;
+
+    for (const conn of selected) {
+      const cid = String(conn?._id || "");
+      if (!cid) continue;
+
+      const docsEnabled = docsAllow.includes(cid);
+
+      try {
+        const summary = await runFortnoxCronV1ForConnection({
+          connection_id: cid,
+          days_back,
+
+          customers_limit,
+          customers_pages,
+
+          orders_limit,
+          offers_limit,
+          invoices_limit,
+
+          orders_pages,
+          offers_pages,
+          invoices_pages,
+
+          order_rows_limit,
+          offer_rows_limit,
+
+          enable_customers: true,
+          enable_orders: docsEnabled,
+          enable_unified_orders: docsEnabled,
+          enable_order_rows: docsEnabled,
+          enable_offers: docsEnabled,
+          enable_offer_rows: docsEnabled,
+          enable_invoices: true
+        });
+
+        await safeSetConnPaging(cid, {
+          nightly_last_run_at: nowIso(),
+          nightly_last_error: ""
+        });
+
+        results.push({
+          connection_id: cid,
+          supplier: conn?.supplier || null,
+          docs_enabled: docsEnabled,
+          ok: true,
+          summary
+        });
+
+        connections_ok++;
+      } catch (e) {
+        try {
+          await safeSetConnPaging(cid, {
+            nightly_last_run_at: nowIso(),
+            nightly_last_error: e?.message || String(e)
+          });
+        } catch (_) {}
+
+        results.push({
+          connection_id: cid,
+          supplier: conn?.supplier || null,
+          docs_enabled: docsEnabled,
+          ok: false,
+          error: e?.message || String(e),
+          detail: e?.detail || null
+        });
+
+        connections_failed++;
+      }
+    }
 
     return res.json({
       ok: true,
-      mode: "fortnox_cron_v1_1",
-      summary
+      mode: "fortnox_cron_v1_1_multi",
+      connections_total: selected.length,
+      connections_ok,
+      connections_failed,
+      docs_connection_ids: docsAllow,
+      results
     });
   } catch (e) {
-    console.error("[/fortnox/cron/v1] error", e?.message || e, e?.detail || null);
-
-    try {
-      await safeSetConnPaging(connection_id, {
-        nightly_last_run_at: nowIso(),
-        nightly_last_error: e?.message || String(e)
-      });
-    } catch (_) {}
-
     return res.status(500).json({
       ok: false,
-      mode: "fortnox_cron_v1_1",
+      mode: "fortnox_cron_v1_1_multi",
       error: e?.message || String(e),
       detail: e?.detail || null
     });
