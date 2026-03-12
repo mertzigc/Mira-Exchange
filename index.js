@@ -3683,6 +3683,7 @@ app.post("/fortnox/upsert/offers", async (req, res) => {
           connection: connection_id,
           ft_document_number: docNo,
           ft_customer_number: String(o?.CustomerNumber || ""),
+          ft_delivery_date: toIsoDate(o?.DeliveryDate),
           ft_customer_name: String(o?.CustomerName || ""),
           ft_your_reference: String(o?.YourReferenceNumber || "").trim(),
           ft_offer_date: toIsoDate(o?.OfferDate),
@@ -7676,6 +7677,7 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
     ft_customer_number: String(offer?.CustomerNumber || ""),
     ft_customer_name: String(offer?.CustomerName || ""),
     ft_your_reference: String(offer?.YourReferenceNumber || "").trim(),
+    ft_delivery_date: toIsoDate(offer?.DeliveryDate),
     ft_offer_date: toIsoDate(offer?.OfferDate),
     ft_total: toNumOrNull(offer?.Total),
     ft_currency: String(offer?.Currency || ""),
@@ -7732,6 +7734,7 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
 
   const payload = {
     ft_document_number: docNo,
+    connection: connection_id,
     ft_customer_number: String(invoice?.CustomerNumber || ""),
     ft_customer_name: String(invoice?.CustomerName || ""),
     ft_invoice_date: toIsoDate(invoice?.InvoiceDate),
@@ -7740,6 +7743,8 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
     ft_currency: String(invoice?.Currency || ""),
     ft_your_order_number: String(invoice?.YourOrderNumber || "").trim(),
     ft_url: String(invoice?.["@url"] || ""),
+    ft_balance: asTextOrEmpty(invoice?.Balance),
+    ft_ocr: asTextOrEmpty(invoice?.OCR),
     ft_raw_json: JSON.stringify(invoice || {})
   };
 
