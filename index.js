@@ -5866,7 +5866,6 @@ if (leadFields?.Email) {
     linked++;
   }
 }
-        }
       } catch (e) {
         errors++;
         if (!first_error) first_error = { message: e?.message || String(e), detail: e?.detail || null };
