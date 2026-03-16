@@ -5188,20 +5188,266 @@ function pickFirstRealEmail(text, mailbox_upn) {
   }
   return null;
 }
+function isStructuredCalculatorLead(msg) {
+  const subject = String(msg?.subject || "").toLowerCase();
+  const bodyText = getMessageBodyText(msg);
 
-// ────────────────────────────────────────────────────────────
-// Extract fields for new Lead based on inbound email
-function extractLeadFieldsFromMessage(msg) {
+  return (
+    subject.includes("workplace calculator lead") ||
+    bodyText.includes("---MIRA_DATA_START---") ||
+    bodyText.includes("NEW LEAD – WORKPLACE STRATEGY TOOL") ||
+    bodyText.includes("NEW LEAD - WORKPLACE STRATEGY TOOL")
+  );
+}
+
+function extractBlock(text, startMarker, endMarker) {
+  const s = String(text || "");
+  const start = s.indexOf(startMarker);
+  const end = s.indexOf(endMarker);
+  if (start === -1 || end === -1 || end <= start) return "";
+  return s.slice(start + startMarker.length, end).trim();
+}
+
+function parseKeyValueLines(text) {
+  const out = {};
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (key) out[key] = value;
+  }
+  return out;
+}
+
+function firstNonEmpty(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      return v;
+    }
+  }
+  return "";
+}
+
+function asPctNumberOrNull(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).replace("%", "").trim();
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function cleanOneLine(v, maxLen = 500) {
+  return safeText(String(v || "").replace(/\s+/g, " ").trim(), maxLen);
+}
+
+function computeLeadScore(fields = {}) {
+  let score = 0;
+
+  const employees = Number(fields.office_employees || 0);
+  const sqm = Number(fields.office_sqm || 0);
+  const monthly = Number(fields.estimated_service_cost_monthly || 0);
+  const maturity = Number(fields.workplace_maturity_score || 0);
+
+  const svc = String(fields.requested_services_summary || "").toLowerCase();
+  const timeline = String(fields.timeline || "").toLowerCase();
+  const decision = String(fields.decision_stage || "").toLowerCase();
+  const msg = String(fields.prospect_message || "").trim();
+
+  if (employees >= 50) score += 20;
+  if (sqm >= 500) score += 10;
+  if (monthly >= 100000) score += 15;
+  if (maturity >= 80) score += 10;
+  if (svc.includes("reception") || svc.includes("concierge")) score += 15;
+  if (svc.includes("housekeeping")) score += 10;
+  if (msg.length >= 20) score += 5;
+  if (timeline.includes("3 month") || timeline.includes("within_3_months") || timeline.includes("within 3 months")) score += 10;
+  if (decision.includes("exploring") || decision.includes("active")) score += 5;
+
+  return score;
+}
+
+function computeLeadPriority(score) {
+  const n = Number(score || 0);
+  if (n >= 60) return "Hot";
+  if (n >= 40) return "High";
+  if (n >= 20) return "Medium";
+  return "Low";
+}
+
+function buildRequestedServicesSummary(data = {}) {
+  const items = [];
+
+  if (data.service_reception) items.push(`Reception: ${data.service_reception}`);
+  if (data.service_housekeeping) items.push(`Housekeeping: ${data.service_housekeeping}`);
+  if (data.service_coffee) items.push(`Coffee: ${data.service_coffee}`);
+  if (data.service_plants) items.push(`Plants: ${data.service_plants}`);
+  if (data.service_water) items.push(`Water: ${data.service_water}`);
+
+  return items.join(" | ");
+}
+
+function buildStructuredLeadDescriptions(fields = {}) {
+  const shortParts = [];
+
+  if (fields.Company) shortParts.push(fields.Company);
+  if (fields.office_employees) shortParts.push(`${fields.office_employees} medarbetare`);
+  if (fields.office_sqm) shortParts.push(`${fields.office_sqm} kvm`);
+  if (fields.estimated_service_cost_monthly) shortParts.push(`est. servicekostnad ${fields.estimated_service_cost_monthly} kr/mån`);
+  if (fields.requested_services_summary) shortParts.push(fields.requested_services_summary);
+  if (fields.timeline) shortParts.push(`Timeline: ${fields.timeline}`);
+
+  const description_short = cleanOneLine(shortParts.join(", "), 500);
+
+  const longText = [
+    "Lead från Workplace Strategy Tool.",
+    "",
+    "Kontakt:",
+    fields.Name || "",
+    fields.titel || "",
+    fields.Email || "",
+    fields.Phone || "",
+    "",
+    "Bolag:",
+    fields.Company || "",
+    "",
+    "Kontorsprofil:",
+    fields.office_employees ? `${fields.office_employees} medarbetare` : "",
+    fields.office_sqm ? `${fields.office_sqm} kvm` : "",
+    fields.office_occupancy_pct !== null && fields.office_occupancy_pct !== undefined ? `${fields.office_occupancy_pct}% beläggning` : "",
+    fields.rent_per_sqm_year ? `${fields.rent_per_sqm_year} kr/kvm/år` : "",
+    "",
+    "Valda tjänster:",
+    fields.requested_services_summary || "",
+    "",
+    "Ekonomi:",
+    fields.estimated_service_cost_monthly ? `Servicekostnad ${fields.estimated_service_cost_monthly} kr/mån` : "",
+    fields.estimated_cost_per_employee_monthly ? `${fields.estimated_cost_per_employee_monthly} kr per medarbetare/mån` : "",
+    fields.estimated_cost_per_sqm_monthly ? `${fields.estimated_cost_per_sqm_monthly} kr per kvm/mån` : "",
+    fields.estimated_total_office_cost_monthly ? `Total kontorskostnad ${fields.estimated_total_office_cost_monthly} kr/mån` : "",
+    fields.estimated_arr ? `Estimerad ARR ${fields.estimated_arr} kr` : "",
+    "",
+    "Workplace maturity:",
+    fields.workplace_maturity_score ? `${fields.workplace_maturity_score}/100` : "",
+    fields.workplace_maturity_level || "",
+    "",
+    "Köpsignaler:",
+    fields.timeline ? `Timeline: ${fields.timeline}` : "",
+    fields.decision_stage ? `Decision stage: ${fields.decision_stage}` : "",
+    fields.lead_priority ? `Prioritet: ${fields.lead_priority}` : "",
+    fields.lead_score !== undefined && fields.lead_score !== null ? `Lead score: ${fields.lead_score}` : "",
+    "",
+    "Prospect message:",
+    fields.prospect_message || "",
+    "",
+    "External reference:",
+    fields.external_reference || "",
+    "",
+    "Raw payload:",
+    fields.calculator_payload_raw || ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    description_short,
+    description: safeText(longText, 8000)
+  };
+}
+
+function extractStructuredCalculatorLeadFromMessage(msg, mailbox_upn) {
+  const fromEmail = normEmail(msg?.from?.emailAddress?.address);
+  const fromName = safeText(msg?.from?.emailAddress?.name || "", 200);
+
+  const bodyText = getMessageBodyText(msg);
+  const rawBlock = extractBlock(
+    bodyText,
+    "---MIRA_DATA_START---",
+    "---MIRA_DATA_END---"
+  );
+
+  const data = parseKeyValueLines(rawBlock);
+
+  const email = normEmail(firstNonEmpty(data.email, fromEmail, pickFirstRealEmail(bodyText, mailbox_upn)));
+  const name = safeText(firstNonEmpty(data.name, fromName, email ? email.split("@")[0] : "Okänd"), 200);
+  const phone = safeText(firstNonEmpty(data.phone, extractPhoneNumber(bodyText)), 100);
+  const company = safeText(firstNonEmpty(data.company, guessCompanyFromEmail(email)), 200);
+
+  const estimated_service_cost_monthly = asMoneyNumberOrNull(data.service_cost_monthly);
+  const estimated_total_office_cost_monthly = asMoneyNumberOrNull(data.total_office_cost_monthly);
+  const estimated_cost_per_employee_monthly = asMoneyNumberOrNull(data.cost_per_employee_monthly);
+  const estimated_cost_per_sqm_monthly = asMoneyNumberOrNull(data.cost_per_sqm_monthly);
+  const estimated_arr =
+    estimated_service_cost_monthly !== null
+      ? Math.round(estimated_service_cost_monthly * 12)
+      : null;
+
+  const requested_services_summary = buildRequestedServicesSummary(data);
+
+  const structured = {
+    Name: name,
+    Email: email,
+    Phone: phone,
+    Company: company,
+
+    titel: safeText(firstNonEmpty(data.title), 200),
+
+    lead_subsource: "workplace_strategy_tool",
+    inbound_channel: "email",
+    calculator_version: safeText(firstNonEmpty(data.calculator_version, "v1"), 50),
+    external_reference: safeText(firstNonEmpty(data.external_reference), 200),
+
+    office_employees: asNumberOrNull(data.employees),
+    office_sqm: asNumberOrNull(data.office_sqm),
+    office_occupancy_pct: asPctNumberOrNull(data.occupancy_pct),
+    rent_per_sqm_year: asMoneyNumberOrNull(data.rent_per_sqm_year),
+
+    estimated_service_cost_monthly,
+    estimated_total_office_cost_monthly,
+    estimated_cost_per_employee_monthly,
+    estimated_cost_per_sqm_monthly,
+    estimated_arr,
+
+    workplace_maturity_score: asNumberOrNull(data.workplace_maturity_score),
+    workplace_maturity_level: safeText(firstNonEmpty(data.workplace_maturity_level), 100),
+
+    requested_services_summary: safeText(requested_services_summary, 1000),
+    prospect_message: safeText(firstNonEmpty(data.prospect_message), 2000),
+    timeline: safeText(firstNonEmpty(data.timeline), 200),
+    decision_stage: safeText(firstNonEmpty(data.decision_stage), 200),
+
+    calculator_payload_raw: safeText(rawBlock, 5000),
+
+    Source: "info@carotte.se"
+  };
+
+  structured.lead_score = computeLeadScore(structured);
+  structured.lead_priority = computeLeadPriority(structured.lead_score);
+
+  const desc = buildStructuredLeadDescriptions(structured);
+  structured.Description = desc.description;
+  structured.Description_short = desc.description_short;
+
+  return structured;
+}
+function extractLeadFieldsFromMessage(msg, mailbox_upn = "") {
   if (!msg) return {};
 
-  const subject = safeText(msg?.subject || "", 300);
+  if (isStructuredCalculatorLead(msg)) {
+    return extractStructuredCalculatorLeadFromMessage(msg, mailbox_upn);
+  }
+
   const bodyPreview = msg?.bodyPreview || "";
   const bodyContent = msg?.body?.content || "";
   const bodyType = msg?.body?.contentType || "";
   const fromEmail = normEmail(msg?.from?.emailAddress?.address);
   const fromName = safeText(msg?.from?.emailAddress?.name || "", 200);
 
-  // Clean up the HTML body to readable text
   const core =
     bodyType === "html"
       ? decodeHtmlEntities(
@@ -5217,8 +5463,6 @@ function extractLeadFieldsFromMessage(msg) {
   const company = guessCompanyFromEmail(fromEmail);
   const leadEmail = fromEmail || "";
   const phone = extractPhoneNumber(core);
-
-  // Short description = body_preview (or fallback) – tightened & clean
   const description_short = tightenShort(bodyPreview || core, 220);
 
   return {
@@ -5228,7 +5472,6 @@ function extractLeadFieldsFromMessage(msg) {
     Company: company,
     Description: description,
     Description_short: description_short,
-    // Option set value (Display) – assumes Lead has field "Source" (type: lead_source)
     Source: "info@carotte.se"
   };
 }
@@ -5245,7 +5488,6 @@ function tightenShort(str, maxLen = 220) {
     .trim()
     .slice(0, maxLen);
 }
-// Bubble: Create NEW Lead for every inbound (no upsert)
 async function createLeadAlways(fields) {
   const email = normEmail(fields?.Email);
   if (!email) return { ok: false, error: "Lead Email missing" };
@@ -5256,17 +5498,89 @@ async function createLeadAlways(fields) {
     Phone: safeText(fields?.Phone || "", 100),
     Company: safeText(fields?.Company || "", 200),
 
-    // Långa beskrivningen (som du redan bygger)
     Description: safeText(fields?.Description || "", 8000),
-
-    // Kort beskrivning (du bad om body_preview -> Description_short)
     Description_short: safeText(fields?.Description_short || "", 500),
 
-    // Option set "lead_source" - sätt displayvärdet exakt som i option set
     Source: safeText(fields?.Source || "info@carotte.se", 200),
+
+    titel: safeText(fields?.titel || "", 200),
+
+    lead_subsource: safeText(fields?.lead_subsource || "", 100),
+    inbound_channel: safeText(fields?.inbound_channel || "", 100),
+    calculator_version: safeText(fields?.calculator_version || "", 50),
+    external_reference: safeText(fields?.external_reference || "", 200),
+
+    office_employees:
+      fields?.office_employees !== null && fields?.office_employees !== undefined
+        ? Number(fields.office_employees)
+        : null,
+
+    office_sqm:
+      fields?.office_sqm !== null && fields?.office_sqm !== undefined
+        ? Number(fields.office_sqm)
+        : null,
+
+    office_occupancy_pct:
+      fields?.office_occupancy_pct !== null && fields?.office_occupancy_pct !== undefined
+        ? Number(fields.office_occupancy_pct)
+        : null,
+
+    rent_per_sqm_year:
+      fields?.rent_per_sqm_year !== null && fields?.rent_per_sqm_year !== undefined
+        ? Number(fields.rent_per_sqm_year)
+        : null,
+
+    estimated_service_cost_monthly:
+      fields?.estimated_service_cost_monthly !== null && fields?.estimated_service_cost_monthly !== undefined
+        ? Number(fields.estimated_service_cost_monthly)
+        : null,
+
+    estimated_total_office_cost_monthly:
+      fields?.estimated_total_office_cost_monthly !== null && fields?.estimated_total_office_cost_monthly !== undefined
+        ? Number(fields.estimated_total_office_cost_monthly)
+        : null,
+
+    estimated_cost_per_employee_monthly:
+      fields?.estimated_cost_per_employee_monthly !== null && fields?.estimated_cost_per_employee_monthly !== undefined
+        ? Number(fields.estimated_cost_per_employee_monthly)
+        : null,
+
+    estimated_cost_per_sqm_monthly:
+      fields?.estimated_cost_per_sqm_monthly !== null && fields?.estimated_cost_per_sqm_monthly !== undefined
+        ? Number(fields.estimated_cost_per_sqm_monthly)
+        : null,
+
+    estimated_arr:
+      fields?.estimated_arr !== null && fields?.estimated_arr !== undefined
+        ? Number(fields.estimated_arr)
+        : null,
+
+    workplace_maturity_score:
+      fields?.workplace_maturity_score !== null && fields?.workplace_maturity_score !== undefined
+        ? Number(fields.workplace_maturity_score)
+        : null,
+
+    workplace_maturity_level: safeText(fields?.workplace_maturity_level || "", 100),
+    requested_services_summary: safeText(fields?.requested_services_summary || "", 1000),
+    prospect_message: safeText(fields?.prospect_message || "", 2000),
+    timeline: safeText(fields?.timeline || "", 200),
+    decision_stage: safeText(fields?.decision_stage || "", 200),
+
+    lead_score:
+      fields?.lead_score !== null && fields?.lead_score !== undefined
+        ? Number(fields.lead_score)
+        : null,
+
+    lead_priority: safeText(fields?.lead_priority || "", 50),
+    calculator_payload_raw: safeText(fields?.calculator_payload_raw || "", 5000)
   };
 
-  const id = await bubbleCreate("Lead", base);
+  // Rensa bort undefined men låt null gå igenom
+  const payload = Object.fromEntries(
+    Object.entries(base).filter(([, v]) => v !== undefined)
+  );
+
+  const id = await bubbleCreate("Lead", payload);
   return { ok: true, lead_id: id, created: true };
 }
 // -------------------------
@@ -5542,14 +5856,15 @@ app.post("/jobs/mail/poll", requireApiKey, async (req, res) => {
         const inboundId = await createInboundEmail(mailbox_upn, fullMsg);
         createdInbound++;
 
-        // Lead upsert
-        const leadFields = extractLeadFieldsFromMessage(fullMsg, mailbox_upn);
-        if (leadFields?.Email) {
-          const up = await createLeadAlways(leadFields);
-if (up.ok && up.lead_id) {
-  createdLeads++; // alltid ny
-  await bubblePatch("InboundEmail", inboundId, { lead: up.lead_id });
-  linked++;
+        // Lead create
+const leadFields = extractLeadFieldsFromMessage(fullMsg, mailbox_upn);
+if (leadFields?.Email) {
+  const up = await createLeadAlways(leadFields);
+  if (up.ok && up.lead_id) {
+    createdLeads++;
+    await bubblePatch("InboundEmail", inboundId, { lead: up.lead_id });
+    linked++;
+  }
 }
         }
       } catch (e) {
