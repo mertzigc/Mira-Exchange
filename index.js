@@ -8046,64 +8046,6 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
       ? ""
       : String(invoice.Total);
 
-  const payload = {
-    ft_document_number: docNo,
-    connection_id: connection_id,
-    ft_customer_number: String(invoice?.CustomerNumber || ""),
-    ft_customer_name: String(invoice?.CustomerName || ""),
-    ft_invoice_date: toIsoDate(invoice?.InvoiceDate),
-    ft_due_date: toIsoDate(invoice?.DueDate),
-    ft_total: totalValue,
-    ft_currency: String(invoice?.Currency || ""),
-    ft_your_order_number: String(invoice?.YourOrderNumber || "").trim(),
-    ft_url: String(invoice?.["@url"] || ""),
-    ft_balance: asTextOrEmpty(invoice?.Balance),
-    ft_ocr: asTextOrEmpty(invoice?.OCR),
-    ft_raw_json: JSON.stringify(invoice || {})
-  };
-
-  const existing = await bubbleFindOne("FortnoxInvoice", [
-    { key: "ft_document_number", constraint_type: "equals", value: docNo }
-  ]);
-
-  const existingId = existing?._id || existing?.id || null;
-
-  if (existingId) {
-    const r = await bubblePatch("FortnoxInvoice", existingId, payload);
-    if (!bubbleOk(r)) {
-      const e = new Error("bubblePatch failed");
-      e.detail = r;
-      throw e;
-    }
-    return { ok: true, mode: "update", id: existingId, docNo };
-  }
-
-  const created = await bubbleCreate("FortnoxInvoice", payload);
-  const createdId =
-    (typeof created === "string" && created) ||
-    created?._id ||
-    created?.id ||
-    created?.response?._id ||
-    created?.response?.id ||
-    null;
-
-  if (!createdId) {
-    const e = new Error("bubbleCreate FortnoxInvoice failed");
-    e.detail = created;
-    throw e;
-  }
-
-  return { ok: true, mode: "create", id: createdId, docNo };
-}
-async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
-  const docNo = String(invoice?.DocumentNumber || "").trim();
-  if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
-
-  const totalValue =
-    invoice?.Total === null || invoice?.Total === undefined || invoice?.Total === ""
-      ? ""
-      : String(invoice.Total);
-
   const balanceValue =
     invoice?.Balance === null || invoice?.Balance === undefined || invoice?.Balance === ""
       ? ""
