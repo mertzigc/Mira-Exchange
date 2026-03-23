@@ -7992,6 +7992,7 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
     ft_customer_name: String(offer?.CustomerName || ""),
     ft_your_reference: String(offer?.YourReferenceNumber || "").trim(),
     ft_delivery_date: toIsoDate(offer?.DeliveryDate),
+    ft_valid_until: toIsoDate(offer?.ExpireDate),        // ✅ FIX: ExpireDate från Fortnox
     ft_offer_date: toIsoDate(offer?.OfferDate),
     ft_total: toNumOrNull(offer?.Total),
     ft_currency: String(offer?.Currency || ""),
@@ -8851,6 +8852,28 @@ app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
     docs_connection_ids = null
   } = req.body || {};
 
+  // ✅ FIX: Sätt lång timeout på socket + håll HTTP-anslutningen vid liv med keep-alive
+  // Render avbryter requests utan aktivitet efter ~30s, detta förhindrar det.
+  req.socket?.setTimeout?.(0);
+  res.setTimeout?.(0);
+
+  // Heartbeat: skriv ett whitespace-tecken var 20:e sekund så Render vet att vi lever.
+  // Vi byter till JSON-response i slutet, men under körningen håller vi pipe:n öppen.
+  const keepAlive = setInterval(() => {
+    try { if (!res.headersSent) return; res.write(" "); } catch (_) {}
+  }, 20_000);
+
+  // Wrapper som alltid rensar heartbeat
+  const sendFinal = (status, body) => {
+    clearInterval(keepAlive);
+    if (!res.headersSent) {
+      return res.status(status).json(body);
+    }
+    // Om headers redan skickats (pga write() ovan) kan vi inte ändra status,
+    // men vi skriver sista JSON-raden och avslutar.
+    try { res.end("\n" + JSON.stringify(body)); } catch (_) {}
+  };
+
   try {
     const allConns = await getAllFortnoxConnections();
 
@@ -8945,7 +8968,7 @@ app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
       }
     }
 
-    return res.json({
+    return sendFinal(200, {
       ok: true,
       mode: "fortnox_cron_v1_1_multi",
       connections_total: selected.length,
@@ -8955,7 +8978,7 @@ app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
       results
     });
   } catch (e) {
-    return res.status(500).json({
+    return sendFinal(500, {
       ok: false,
       mode: "fortnox_cron_v1_1_multi",
       error: e?.message || String(e),
