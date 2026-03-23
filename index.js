@@ -8048,7 +8048,7 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
 
   const payload = {
     ft_document_number: docNo,
-    connection: connection_id,
+    connection_id: connection_id,
     ft_customer_number: String(invoice?.CustomerNumber || ""),
     ft_customer_name: String(invoice?.CustomerName || ""),
     ft_invoice_date: toIsoDate(invoice?.InvoiceDate),
@@ -8095,6 +8095,80 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
 
   return { ok: true, mode: "create", id: createdId, docNo };
 }
+async function upsertFortnoxCustomerDirect(connection_id, customer, { link_company = true } = {}) {
+  const customerNumber = asTextOrEmpty(
+    customer?.CustomerNumber || customer?.customer_number || customer?.customerNumber
+  ).trim();
+
+  const orgnr = asTextOrEmpty(
+    customer?.OrganisationNumber || customer?.organisation_number || customer?.organisationNumber
+  ).trim();
+
+  if (!customerNumber) return { ok: false, skipped: true, reason: "missing_customer_number" };
+
+  const basePayload = {
+    connection_id: asTextOrEmpty(connection_id),
+    customer_number: customerNumber,
+    name: asTextOrEmpty(customer?.Name || customer?.name),
+    organisation_number: orgnr,
+    email: asTextOrEmpty(customer?.Email || customer?.email),
+    phone: asTextOrEmpty(customer?.Phone || customer?.phone),
+    address1: asTextOrEmpty(customer?.Address1 || customer?.address1),
+    address2: asTextOrEmpty(customer?.Address2 || customer?.address2),
+    zip: asTextOrEmpty(customer?.ZipCode || customer?.zipCode || customer?.zip),
+    city: asTextOrEmpty(customer?.City || customer?.city),
+    ft_url: asTextOrEmpty(customer?.["@url"]),
+    last_seen_at: new Date().toISOString(),
+    raw_json: JSON.stringify(customer || {}),
+    fortnox_json: JSON.stringify(customer || {})
+  };
+
+  const existing = await bubbleFindOne("FortnoxCustomer", [
+    { key: "connection_id", constraint_type: "equals", value: connection_id },
+    { key: "customer_number", constraint_type: "equals", value: customerNumber }
+  ]);
+
+  let ccId = null;
+  const hasLinkedAlready = !!(existing && (existing.linked_company || existing.linked_company?._id));
+
+  if (link_company && orgnr) {
+    ccId = await ensureClientCompanyForFortnoxCustomer(customer);
+  }
+
+  if (existing?._id) {
+    const patchPayload = { ...basePayload };
+    if (ccId && !hasLinkedAlready) patchPayload.linked_company = ccId;
+
+    const r = await bubblePatch("FortnoxCustomer", existing._id, patchPayload);
+    if (!bubbleOk(r)) {
+      const e = new Error("bubblePatch FortnoxCustomer failed");
+      e.detail = r;
+      throw e;
+    }
+    return { ok: true, mode: "update", id: existing._id, customerNumber, linked_company: ccId || null };
+  }
+
+  const createPayload = { ...basePayload };
+  if (ccId) createPayload.linked_company = ccId;
+
+  const created = await bubbleCreate("FortnoxCustomer", createPayload);
+  const createdId =
+    (typeof created === "string" && created) ||
+    created?._id ||
+    created?.id ||
+    created?.response?._id ||
+    created?.response?.id ||
+    null;
+
+  if (!createdId) {
+    const e = new Error("bubbleCreate FortnoxCustomer failed");
+    e.detail = created;
+    throw e;
+  }
+
+  return { ok: true, mode: "create", id: createdId, customerNumber, linked_company: ccId || null };
+}
+
 async function upsertFortnoxCustomerDirect(connection_id, customer, { link_company = true } = {}) {
   const customerNumber = asTextOrEmpty(
     customer?.CustomerNumber || customer?.customer_number || customer?.customerNumber
