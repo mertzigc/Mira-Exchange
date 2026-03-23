@@ -19,7 +19,7 @@ echo "[fortnox-cron-v1.1-multi] HOST=$HOST DAYS_BACK=$DAYS_BACK"
 curl -sS --max-time 1800 -X POST "$HOST/fortnox/cron/v1" \
   -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"all_connections\":true,\"days_back\":$DAYS_BACK,\"customers_pages\":2,\"orders_pages\":3,\"offers_pages\":3,\"invoices_pages\":3,\"order_rows_limit\":20,\"offer_rows_limit\":20}"
+  -d "{\"all_connections\":true,\"days_back\":14,\"customers_pages\":2,\"orders_pages\":3,\"offers_pages\":3,\"invoices_pages\":5,\"order_rows_limit\":20,\"offer_rows_limit\":20}"
 
 echo
 echo "=== FortnoxCron v1.1 multi END ==="
