@@ -8130,6 +8130,149 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   return { ok: true, mode: "create", id: createdId, docNo };
 }
 
+// ────────────────────────────────────────────────────────────
+// ENRICH: Hämta detail för fakturor/offerter som saknar ft_your_reference
+// Kör som ett SEPARAT jobb efter cron – undviker timeout i huvud-cron
+// ────────────────────────────────────────────────────────────
+
+async function enrichFortnoxInvoiceRef(connection_id, bubbleInvoice, accessToken) {
+  const docNo = String(bubbleInvoice?.ft_document_number || "").trim();
+  const id    = bubbleInvoice?._id || bubbleInvoice?.id;
+  if (!docNo || !id) return { ok: false, reason: "missing_docno_or_id" };
+
+  const r = await fortnoxGet(`/invoices/${encodeURIComponent(docNo)}`, accessToken);
+  if (!r?.ok) return { ok: false, reason: "fortnox_detail_failed", status: r?.status };
+
+  const detail = r?.data?.Invoice || r?.data?.invoice || null;
+  if (!detail) return { ok: false, reason: "no_invoice_in_response" };
+
+  const yourOrderNumber = String(detail?.YourOrderNumber || "").trim();
+  const yourReference   = String(detail?.YourReference   || "").trim();
+  const ourReference    = String(detail?.OurReference    || "").trim();
+  const dealLink        = yourReference || yourOrderNumber;
+
+  if (!dealLink && !ourReference) return { ok: true, skipped: true, reason: "still_empty_after_detail" };
+
+  await bubblePatch("FortnoxInvoice", id, {
+    ft_your_order_number: yourOrderNumber,
+    ft_your_reference:    dealLink,
+    ft_our_reference:     ourReference
+  });
+
+  return { ok: true, docNo, dealLink, ourReference };
+}
+
+async function enrichFortnoxOfferDelivery(connection_id, bubbleOffer, accessToken) {
+  const docNo = String(bubbleOffer?.ft_document_number || "").trim();
+  const id    = bubbleOffer?._id || bubbleOffer?.id;
+  if (!docNo || !id) return { ok: false, reason: "missing_docno_or_id" };
+
+  const r = await fortnoxGet(`/offers/${encodeURIComponent(docNo)}`, accessToken);
+  if (!r?.ok) return { ok: false, reason: "fortnox_detail_failed", status: r?.status };
+
+  const detail = r?.data?.Offer || r?.data?.offer || null;
+  if (!detail) return { ok: false, reason: "no_offer_in_response" };
+
+  const deliveryDate  = toIsoDate(detail?.DeliveryDate);
+  const validUntil    = toIsoDate(detail?.ExpireDate);
+  const yourReference = String(detail?.YourReferenceNumber || "").trim();
+
+  const patch = {};
+  if (deliveryDate)  patch.ft_delivery_date   = deliveryDate;
+  if (validUntil)    patch.ft_valid_until      = validUntil;
+  if (yourReference) patch.ft_your_reference   = yourReference;
+
+  if (!Object.keys(patch).length) return { ok: true, skipped: true, reason: "nothing_to_patch" };
+
+  await bubblePatch("FortnoxOffer", id, patch);
+  return { ok: true, docNo, patch };
+}
+
+// POST /fortnox/enrich/invoices
+// Berikar fakturor som saknar ft_your_reference med detail-anrop
+// Body: { connection_id, limit=50, pause_ms=300 }
+app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
+  const { connection_id, limit = 50, pause_ms = 300 } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok?.ok) return res.status(401).json({ ok: false, error: "Token error", detail: tok });
+
+  // Hämta fakturor som saknar ft_your_reference (tom sträng eller saknas)
+  const list = await bubbleFind("FortnoxInvoice", {
+    constraints: [
+      { key: "connection_id", constraint_type: "equals", value: connection_id },
+      { key: "ft_your_reference", constraint_type: "is_empty" }
+    ],
+    limit: Math.min(Number(limit) || 50, 200)
+  });
+
+  let enriched = 0, skipped = 0, errors = 0;
+  let first_error = null;
+
+  for (const inv of list) {
+    try {
+      const r = await enrichFortnoxInvoiceRef(connection_id, inv, tok.access_token);
+      if (r?.ok && !r?.skipped) enriched++;
+      else skipped++;
+      if (pause_ms) await sleep(Number(pause_ms));
+    } catch (e) {
+      errors++;
+      if (!first_error) first_error = { docNo: inv?.ft_document_number, message: e?.message || String(e) };
+    }
+  }
+
+  return res.json({
+    ok: true,
+    connection_id,
+    found: list.length,
+    counts: { enriched, skipped, errors },
+    first_error
+  });
+});
+
+// POST /fortnox/enrich/offers
+// Berikar offerter som saknar ft_delivery_date med detail-anrop
+// Body: { connection_id, limit=50, pause_ms=400 }
+app.post("/fortnox/enrich/offers", requireApiKey, async (req, res) => {
+  const { connection_id, limit = 50, pause_ms = 400 } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok?.ok) return res.status(401).json({ ok: false, error: "Token error", detail: tok });
+
+  const list = await bubbleFind("FortnoxOffer", {
+    constraints: [
+      { key: "connection", constraint_type: "equals", value: connection_id },
+      { key: "ft_delivery_date", constraint_type: "is_empty" }
+    ],
+    limit: Math.min(Number(limit) || 50, 200)
+  });
+
+  let enriched = 0, skipped = 0, errors = 0;
+  let first_error = null;
+
+  for (const offer of list) {
+    try {
+      const r = await enrichFortnoxOfferDelivery(connection_id, offer, tok.access_token);
+      if (r?.ok && !r?.skipped) enriched++;
+      else skipped++;
+      if (pause_ms) await sleep(Number(pause_ms));
+    } catch (e) {
+      errors++;
+      if (!first_error) first_error = { docNo: offer?.ft_document_number, message: e?.message || String(e) };
+    }
+  }
+
+  return res.json({
+    ok: true,
+    connection_id,
+    found: list.length,
+    counts: { enriched, skipped, errors },
+    first_error
+  });
+});
+
 async function upsertFortnoxCustomerDirect(connection_id, customer, { link_company = true } = {}) {
   const customerNumber = asTextOrEmpty(
     customer?.CustomerNumber || customer?.customer_number || customer?.customerNumber
