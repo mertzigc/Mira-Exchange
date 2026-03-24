@@ -9644,8 +9644,12 @@ async function fetchKpiSummary({ force = false } = {}) {
 // GET /kpi/summary
 // Query: ?force=true för att forcera ny hämtning
 app.get("/kpi/summary", requireApiKey, async (req, res) => {
-  // CORS – tillåt anrop från Bubble live-domän
-  res.setHeader("Access-Control-Allow-Origin", "https://carotteconcierge.bubbleapps.io");
+  // CORS – tillåt anrop från Bubble live-domän och custom domän
+  const kpiOrigin = req.headers.origin || "";
+  const kpiAllowed = ["https://carotteconcierge.bubbleapps.io", "https://mira-fm.com"];
+  if (kpiAllowed.includes(kpiOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", kpiOrigin);
+  }
   res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
 
   try {
@@ -9663,7 +9667,11 @@ app.get("/kpi/summary", requireApiKey, async (req, res) => {
 
 // OPTIONS preflight för CORS
 app.options("/kpi/summary", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "https://carotteconcierge.bubbleapps.io");
+  const preOrigin = req.headers.origin || "";
+  const preAllowed = ["https://carotteconcierge.bubbleapps.io", "https://mira-fm.com"];
+  if (preAllowed.includes(preOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", preOrigin);
+  }
   res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.sendStatus(204);
