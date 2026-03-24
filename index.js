@@ -8192,19 +8192,24 @@ async function enrichFortnoxOfferDelivery(connection_id, bubbleOffer, accessToke
 // Berikar fakturor som saknar ft_your_reference med detail-anrop
 // Body: { connection_id, limit=50, pause_ms=300 }
 app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
-  const { connection_id, limit = 50, pause_ms = 300 } = req.body || {};
+  const { connection_id, limit = 50, pause_ms = 300, cursor = 0 } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   const tok = await ensureFortnoxAccessToken(connection_id);
   if (!tok?.ok) return res.status(401).json({ ok: false, error: "Token error", detail: tok });
 
-  // Hämta fakturor som saknar ft_your_reference (tom sträng eller saknas)
+  const lim = Math.min(Number(limit) || 50, 200);
+
+  // cursor-paginering: hämtar nästa batch, descending = nyast först
   const list = await bubbleFind("FortnoxInvoice", {
     constraints: [
       { key: "connection_id", constraint_type: "equals", value: connection_id },
       { key: "ft_your_reference", constraint_type: "is_empty" }
     ],
-    limit: Math.min(Number(limit) || 50, 200)
+    limit: lim,
+    cursor: Number(cursor) || 0,
+    sort_field: "Created Date",
+    descending: true
   });
 
   let enriched = 0, skipped = 0, errors = 0;
@@ -8222,31 +8227,38 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
     }
   }
 
+  const next_cursor = list.length === lim ? (Number(cursor) || 0) + lim : null;
+
   return res.json({
     ok: true,
     connection_id,
     found: list.length,
+    cursor: Number(cursor) || 0,
+    next_cursor,
     counts: { enriched, skipped, errors },
     first_error
   });
 });
 
 // POST /fortnox/enrich/offers
-// Berikar offerter som saknar ft_delivery_date med detail-anrop
-// Body: { connection_id, limit=50, pause_ms=400 }
 app.post("/fortnox/enrich/offers", requireApiKey, async (req, res) => {
-  const { connection_id, limit = 50, pause_ms = 400 } = req.body || {};
+  const { connection_id, limit = 50, pause_ms = 400, cursor = 0 } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   const tok = await ensureFortnoxAccessToken(connection_id);
   if (!tok?.ok) return res.status(401).json({ ok: false, error: "Token error", detail: tok });
+
+  const lim = Math.min(Number(limit) || 50, 200);
 
   const list = await bubbleFind("FortnoxOffer", {
     constraints: [
       { key: "connection", constraint_type: "equals", value: connection_id },
       { key: "ft_delivery_date", constraint_type: "is_empty" }
     ],
-    limit: Math.min(Number(limit) || 50, 200)
+    limit: lim,
+    cursor: Number(cursor) || 0,
+    sort_field: "Created Date",
+    descending: true
   });
 
   let enriched = 0, skipped = 0, errors = 0;
@@ -8264,10 +8276,14 @@ app.post("/fortnox/enrich/offers", requireApiKey, async (req, res) => {
     }
   }
 
+  const next_cursor = list.length === lim ? (Number(cursor) || 0) + lim : null;
+
   return res.json({
     ok: true,
     connection_id,
     found: list.length,
+    cursor: Number(cursor) || 0,
+    next_cursor,
     counts: { enriched, skipped, errors },
     first_error
   });
