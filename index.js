@@ -9496,7 +9496,7 @@ const KPI_CACHE_MS = 5 * 60 * 1000; // 5 min
 async function fetchKpiSummary({ force = false } = {}) {
   const now = Date.now();
   if (!force && _kpiCache.data && (now - _kpiCache.ts) < KPI_CACHE_MS) {
-    return { ...._kpiCache.data, cached: true };
+    return { ..._kpiCache.data, cached: true };
   }
 
   // Kör alla Bubble-anrop parallellt
