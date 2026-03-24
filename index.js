@@ -9481,4 +9481,199 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
   }
 });
 
+
+// ────────────────────────────────────────────────────────────
+// GET /kpi/summary
+// Centralt KPI-block – hämtar och räknar ihop all statistik
+// från Bubble för användning i HTML-element runt om i Mira.
+// Returnerar ett enkelt JSON-objekt utan sideffekter.
+// Cache: 5 minuter (i minne) för att inte hammra Bubble-API:t.
+// ────────────────────────────────────────────────────────────
+
+const _kpiCache = { data: null, ts: 0 };
+const KPI_CACHE_MS = 5 * 60 * 1000; // 5 min
+
+async function fetchKpiSummary({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && _kpiCache.data && (now - _kpiCache.ts) < KPI_CACHE_MS) {
+    return { ...._kpiCache.data, cached: true };
+  }
+
+  // Kör alla Bubble-anrop parallellt
+  // ── Optimerad count-hämtning via Bubbles ?limit=1 ──────────────
+  // Bubble returnerar { response: { remaining, count, results } }
+  // Vi behöver bara remaining+count för att få totalen – slipper
+  // ladda ner hela datasetet för räkning.
+
+  async function bubbleCount(typeName, constraints = []) {
+    const qs = new URLSearchParams();
+    qs.set("limit", "1");
+    if (constraints.length) {
+      qs.set("constraints", JSON.stringify(constraints.map(c => ({
+        key: c.key,
+        constraint_type: c.constraint_type || "equals",
+        value: c.value
+      }))));
+    }
+    for (const base of BUBBLE_BASES) {
+      try {
+        const r = await fetch(`${base}/api/1.1/obj/${typeName}?${qs}`, {
+          headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) continue;
+        // Bubble: count = antal som matchade, remaining = kvar efter limit
+        const count   = Number(j?.response?.count     ?? 0);
+        const remaining = Number(j?.response?.remaining ?? 0);
+        // Om remaining = 0 och vi fick 0 results → count är totalen
+        // Om remaining > 0 → totalen = returned (1) + remaining
+        const results = Array.isArray(j?.response?.results) ? j.response.results.length : 0;
+        return results + remaining;
+      } catch (_) {}
+    }
+    return 0;
+  }
+
+  // ── Deals: behöver summera värden → hämta alla men bara relevanta fält ──
+  async function bubbleFindDeals() {
+    const out = [];
+    let cursor = 0;
+    const limit = 100;
+    while (true) {
+      const qs = new URLSearchParams({ limit: String(limit), cursor: String(cursor) });
+      let fetched = false;
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/Deal?${qs}`, {
+            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) continue;
+          const results = j?.response?.results ?? [];
+          // Plocka bara de fält vi behöver
+          for (const d of results) {
+            out.push({
+              value_brutto: d?.value_brutto ?? d?.total_revenue_estimate ?? 0,
+              value_netto:  d?.value_netto ?? 0,
+              Status:       d?.Status ?? d?.status ?? "Okänd"
+            });
+          }
+          fetched = true;
+          if (results.length < limit) return out; // sista sidan
+          break;
+        } catch (_) {}
+      }
+      if (!fetched) break;
+      cursor += limit;
+    }
+    return out;
+  }
+
+  // Kör räkningarna parallellt – bubbleCount gör bara ett anrop per typ
+  const [
+    customersTotal,
+    comissionsTotal,
+    dealsList,
+    fas1Count,
+    fas2Count,
+    fas3Count,
+    fas4Count,
+    ovrigtCount
+  ] = await Promise.all([
+    bubbleCount("ClientCompany"),
+    bubbleCount("Comission"),
+    bubbleFindDeals(),
+    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 1" }]),
+    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 2" }]),
+    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 3" }]),
+    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 4" }]),
+    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Övrigt" }])
+  ]);
+
+  // Räkna ut deals-statistik
+  const dealsCount = dealsList.length;
+  const dealsValueBrutto = dealsList.reduce((sum, d) => {
+    const v = Number(d?.value_brutto ?? 0);
+    return sum + (Number.isFinite(v) ? v : 0);
+  }, 0);
+  const dealsValueNetto = dealsList.reduce((sum, d) => {
+    const v = Number(d?.value_netto ?? 0);
+    return sum + (Number.isFinite(v) ? v : 0);
+  }, 0);
+  const dealsByStatus = {};
+  for (const d of dealsList) {
+    const s = String(d?.Status ?? "Okänd");
+    dealsByStatus[s] = (dealsByStatus[s] || 0) + 1;
+  }
+
+  const result = {
+    cached: false,
+    generated_at: new Date().toISOString(),
+
+    customers: {
+      total: customersTotal
+    },
+
+    deals: {
+      total:        dealsCount,
+      value_brutto: Math.round(dealsValueBrutto),
+      value_netto:  Math.round(dealsValueNetto),
+      by_status:    dealsByStatus
+    },
+
+    comissions: {
+      total: comissionsTotal
+    },
+
+    kundmoten: {
+      fas1:   fas1Count,
+      fas2:   fas2Count,
+      fas3:   fas3Count,
+      fas4:   fas4Count,
+      ovrigt: ovrigtCount,
+      total:  fas1Count + fas2Count + fas3Count + fas4Count + ovrigtCount
+    }
+  };
+
+  _kpiCache.data = result;
+  _kpiCache.ts = now;
+
+  return result;
+}
+
+// GET /kpi/summary
+// Query: ?force=true för att forcera ny hämtning
+app.get("/kpi/summary", requireApiKey, async (req, res) => {
+  // CORS – tillåt anrop från Bubble live-domän
+  res.setHeader("Access-Control-Allow-Origin", "https://carotteconcierge.bubbleapps.io");
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+
+  try {
+    const force = req.query.force === "true";
+    const data = await fetchKpiSummary({ force });
+    return res.json({ ok: true, ...data });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
+
+// OPTIONS preflight för CORS
+app.options("/kpi/summary", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "https://carotteconcierge.bubbleapps.io");
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
+});
+
+// POST /kpi/summary/flush – tömmer cachen (kör från Bubble workflow vid behov)
+app.post("/kpi/summary/flush", requireApiKey, (req, res) => {
+  _kpiCache.data = null;
+  _kpiCache.ts = 0;
+  return res.json({ ok: true, message: "KPI cache flushed" });
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
