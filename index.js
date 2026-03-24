@@ -9173,7 +9173,7 @@ app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
 // Unit: 13 (Klockan Norra Bantorget)
 // ────────────────────────────────────────────────────────────
 
-const CASPECO_BASE_URL = "https://rms.caspeco.se/api/v1";
+const CASPECO_BASE_URL = "https://rms.caspeco.se/api/booking/v1";
 const CASPECO_SYSTEM   = pick(process.env.CASPECO_SYSTEM, "se_carsto3");
 const CASPECO_UNIT_ID  = Number(pick(process.env.CASPECO_UNIT_ID, "13")) || 13;
 const CASPECO_PAT      = pick(process.env.CASPECO_PAT);
@@ -9261,7 +9261,7 @@ app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
 
   // Testa 3: ExternalBookingSettings (rätt path)
   try {
-    const settings = await caspecoFetch(`/booking/ExternalBookingSettings/${CASPECO_UNIT_ID}`);
+    const settings = await caspecoFetch(`/ExternalBookingSettings/${CASPECO_UNIT_ID}`);
     results.settings = { ok: true, data: settings };
   } catch (e) {
     results.settings = { ok: false, status: e.status, error: e?.message };
