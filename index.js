@@ -9227,21 +9227,54 @@ async function caspecoFetch(path, { method = "GET", query = null, body = null } 
 // Testar PAT + hämtar info om unitId 13
 // ────────────────────────────────────────────────────────────
 app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
+  const results = {};
+
+  // Testa 1: WebBookings med changedFrom (bör alltid fungera om PAT är giltig)
   try {
-    const data = await caspecoFetch(`/booking/ExternalBookingSettings/${CASPECO_UNIT_ID}`);
-    return res.json({
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const bookings = await caspecoFetch("/WebBooking/WebBookings", {
+      query: { changedFrom: since, unitId: [CASPECO_UNIT_ID] }
+    });
+    results.bookings = {
       ok: true,
-      system: CASPECO_SYSTEM,
-      unit_id: CASPECO_UNIT_ID,
-      data
-    });
+      count: Array.isArray(bookings) ? bookings.length : null,
+      sample: Array.isArray(bookings) ? bookings.slice(0, 2) : bookings
+    };
   } catch (e) {
-    return res.status(e.status || 500).json({
-      ok: false,
-      error: e?.message || String(e),
-      detail: e?.detail || null
-    });
+    results.bookings = { ok: false, status: e.status, error: e?.message, detail: e?.detail };
   }
+
+  // Testa 2: AvailableTimes för idag
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const avail = await caspecoFetch("/WebBooking/AvailableTimes", {
+      query: { date: [today], unitId: [CASPECO_UNIT_ID] }
+    });
+    results.availability = {
+      ok: true,
+      count: Array.isArray(avail) ? avail.length : null,
+      sample: Array.isArray(avail) ? avail.slice(0, 2) : avail
+    };
+  } catch (e) {
+    results.availability = { ok: false, status: e.status, error: e?.message, detail: e?.detail };
+  }
+
+  // Testa 3: ExternalBookingSettings (rätt path)
+  try {
+    const settings = await caspecoFetch(`/booking/ExternalBookingSettings/${CASPECO_UNIT_ID}`);
+    results.settings = { ok: true, data: settings };
+  } catch (e) {
+    results.settings = { ok: false, status: e.status, error: e?.message };
+  }
+
+  const anyOk = Object.values(results).some(r => r.ok);
+  return res.status(anyOk ? 200 : 502).json({
+    ok: anyOk,
+    system: CASPECO_SYSTEM,
+    unit_id: CASPECO_UNIT_ID,
+    base_url: CASPECO_BASE_URL,
+    results
+  });
 });
 
 // ────────────────────────────────────────────────────────────
