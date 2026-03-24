@@ -9499,21 +9499,15 @@ async function fetchKpiSummary({ force = false } = {}) {
     return { ..._kpiCache.data, cached: true };
   }
 
-  // Kör alla Bubble-anrop parallellt
-  // ── Optimerad count-hämtning via Bubbles ?limit=1 ──────────────
-  // Bubble returnerar { response: { remaining, count, results } }
-  // Vi behöver bara remaining+count för att få totalen – slipper
-  // ladda ner hela datasetet för räkning.
+  // ── Bubble API-fältnamn (verifierade mot live-data) ──────────────
+  // Deal:          value_brutto (number), Status (text: "Kundkontakt"|"Offert"|"Avtal"|"Avslutad")
+  // Activitet_crm: kundm_te_option_kundm_te (option: "Fas 1"|"Fas 2"|"Fas 3"|"Fas 4"|"Övrigt")
 
   async function bubbleCount(typeName, constraints = []) {
     const qs = new URLSearchParams();
     qs.set("limit", "1");
     if (constraints.length) {
-      qs.set("constraints", JSON.stringify(constraints.map(c => ({
-        key: c.key,
-        constraint_type: c.constraint_type || "equals",
-        value: c.value
-      }))));
+      qs.set("constraints", JSON.stringify(constraints));
     }
     for (const base of BUBBLE_BASES) {
       try {
@@ -9522,19 +9516,15 @@ async function fetchKpiSummary({ force = false } = {}) {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) continue;
-        // Bubble: count = antal som matchade, remaining = kvar efter limit
-        const count   = Number(j?.response?.count     ?? 0);
-        const remaining = Number(j?.response?.remaining ?? 0);
-        // Om remaining = 0 och vi fick 0 results → count är totalen
-        // Om remaining > 0 → totalen = returned (1) + remaining
         const results = Array.isArray(j?.response?.results) ? j.response.results.length : 0;
+        const remaining = Number(j?.response?.remaining ?? 0);
         return results + remaining;
       } catch (_) {}
     }
     return 0;
   }
 
-  // ── Deals: behöver summera värden → hämta alla men bara relevanta fält ──
+  // Hämta alla deals med value_brutto + Status
   async function bubbleFindDeals() {
     const out = [];
     let cursor = 0;
@@ -9544,22 +9534,20 @@ async function fetchKpiSummary({ force = false } = {}) {
       let fetched = false;
       for (const base of BUBBLE_BASES) {
         try {
-          const r = await fetch(`${base}/api/1.1/obj/Deal?${qs}`, {
+          const r = await fetch(`${base}/api/1.1/obj/deal?${qs}`, {
             headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
           });
           const j = await r.json().catch(() => ({}));
           if (!r.ok) continue;
           const results = j?.response?.results ?? [];
-          // Plocka bara de fält vi behöver
           for (const d of results) {
             out.push({
-              value_brutto: d?.value_brutto ?? d?.total_revenue_estimate ?? 0,
-              value_netto:  d?.value_netto ?? 0,
-              Status:       d?.Status ?? d?.status ?? "Okänd"
+              value_brutto: Number(d?.value_brutto ?? 0),
+              Status: String(d?.Status ?? "Okänd")
             });
           }
           fetched = true;
-          if (results.length < limit) return out; // sista sidan
+          if (results.length < limit) return out;
           break;
         } catch (_) {}
       }
@@ -9569,7 +9557,10 @@ async function fetchKpiSummary({ force = false } = {}) {
     return out;
   }
 
-  // Kör räkningarna parallellt – bubbleCount gör bara ett anrop per typ
+  // Kundmöten: fältnamnet är "kundm_te_option_kundm_te" i Bubble API
+  // constraint_type "equals" med option set-textvärde
+  const KM_FIELD = "kundm_te_option_kundm_te";
+
   const [
     customersTotal,
     comissionsTotal,
@@ -9583,47 +9574,37 @@ async function fetchKpiSummary({ force = false } = {}) {
     bubbleCount("ClientCompany"),
     bubbleCount("Comission"),
     bubbleFindDeals(),
-    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 1" }]),
-    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 2" }]),
-    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 3" }]),
-    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Fas 4" }]),
-    bubbleCount("Activitet_crm", [{ key: "Kundmöte", constraint_type: "equals", value: "Övrigt" }])
+    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 1" }]),
+    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 2" }]),
+    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 3" }]),
+    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 4" }]),
+    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Övrigt" }])
   ]);
 
-  // Räkna ut deals-statistik
-  const dealsCount = dealsList.length;
-  const dealsValueBrutto = dealsList.reduce((sum, d) => {
-    const v = Number(d?.value_brutto ?? 0);
-    return sum + (Number.isFinite(v) ? v : 0);
-  }, 0);
-  const dealsValueNetto = dealsList.reduce((sum, d) => {
-    const v = Number(d?.value_netto ?? 0);
-    return sum + (Number.isFinite(v) ? v : 0);
-  }, 0);
+  // Summera deals per status och value_brutto
   const dealsByStatus = {};
+  let dealsValueBrutto = 0;
   for (const d of dealsList) {
-    const s = String(d?.Status ?? "Okänd");
-    dealsByStatus[s] = (dealsByStatus[s] || 0) + 1;
+    const s = d.Status;
+    if (!dealsByStatus[s]) dealsByStatus[s] = { count: 0, value: 0 };
+    dealsByStatus[s].count++;
+    dealsByStatus[s].value += Number.isFinite(d.value_brutto) ? d.value_brutto : 0;
+    dealsValueBrutto += Number.isFinite(d.value_brutto) ? d.value_brutto : 0;
   }
 
   const result = {
     cached: false,
     generated_at: new Date().toISOString(),
 
-    customers: {
-      total: customersTotal
-    },
+    customers: { total: customersTotal },
 
     deals: {
-      total:        dealsCount,
+      total:        dealsList.length,
       value_brutto: Math.round(dealsValueBrutto),
-      value_netto:  Math.round(dealsValueNetto),
-      by_status:    dealsByStatus
+      by_status:    dealsByStatus   // { "Avtal": { count: N, value: N }, ... }
     },
 
-    comissions: {
-      total: comissionsTotal
-    },
+    comissions: { total: comissionsTotal },
 
     kundmoten: {
       fas1:   fas1Count,
