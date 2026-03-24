@@ -9641,8 +9641,24 @@ async function fetchKpiSummary({ force = false } = {}) {
   return result;
 }
 
+// GET /kpi/debug/fields
+app.get("/kpi/debug/fields", requireApiKey, async (req, res) => {
+  const type = req.query.type || "Deal";
+  for (const base of BUBBLE_BASES) {
+    try {
+      const r = await fetch(`${base}/api/1.1/obj/${type}?limit=1`, {
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+      });
+      const j = await r.json();
+      const record = j?.response?.results?.[0] || {};
+      return res.json({ ok: true, type, keys: Object.keys(record), sample: record });
+    } catch (e) { /* next */ }
+  }
+  res.status(500).json({ ok: false, error: "ingen bas svarade" });
+});
+
 // GET /kpi/summary
-// Query: ?force=true för att forcera ny hämtning
+// Query: ?force=true
 app.get("/kpi/summary", requireApiKey, async (req, res) => {
   // CORS – tillåt anrop från Bubble live-domän och custom domän
   const kpiOrigin = req.headers.origin || "";
