@@ -9642,7 +9642,12 @@ async function fetchKpiSummary({ force = false } = {}) {
 }
 
 // GET /kpi/debug/fields
-app.get("/kpi/debug/fields", requireApiKey, async (req, res) => {
+app.get("/kpi/debug/fields", async (req, res) => {
+  // Accepterar antingen x-api-key header eller ?apikey= query param (för browser-test)
+  const key = req.headers["x-api-key"] || req.query.apikey || "";
+  if (!RENDER_API_KEY || String(key).trim() !== String(RENDER_API_KEY).trim()) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
   const type = req.query.type || "Deal";
   for (const base of BUBBLE_BASES) {
     try {
