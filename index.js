@@ -9494,21 +9494,32 @@ const _kpiCache = { data: null, ts: 0 };
 const KPI_CACHE_MS = 5 * 60 * 1000; // 5 min
 
 async function fetchKpiSummary({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && _kpiCache.data && (now - _kpiCache.ts) < KPI_CACHE_MS) {
+  const nowMs = Date.now();
+  if (!force && _kpiCache.data && (nowMs - _kpiCache.ts) < KPI_CACHE_MS) {
     return { ..._kpiCache.data, cached: true };
   }
 
-  // ── Bubble API-fältnamn (verifierade mot live-data) ──────────────
-  // Deal:          value_brutto (number), Status (text: "Kundkontakt"|"Offert"|"Avtal"|"Avslutad")
-  // Activitet_crm: kundm_te_option_kundm_te (option: "Fas 1"|"Fas 2"|"Fas 3"|"Fas 4"|"Övrigt")
+  // ── Verifierade Bubble API-fältnamn ──────────────────────────────
+  // deal:          value_brutto, Status ("Kundkontakt"|"Offert"|"Avtal"|"Avslutad")
+  // activitet_crm: Datum_bokning (date), kundm_te_option_kundm_te ("Fas 1"–"Fas 4"|"Övrigt")
+  // clientcompany: Created Date
+  // grade:         Värde (number), kontrolldatum (date), _rende_custom__rende, kvalitetskontroll_custom_kvalitetskontroll
+  // matter:        status ("Pågående")
 
+  const now = new Date();
+  const y   = now.getFullYear();
+  const m   = now.getMonth();
+
+  // Månads-gränser
+  const thisMonthStart = new Date(y, m,   1).toISOString();   // 1:e denna månad
+  const prevMonthStart = new Date(y, m-1, 1).toISOString();   // 1:e förra månaden
+  const prevMonthEnd   = thisMonthStart;                       // = start denna månad
+  const yearStart      = new Date(y, 0,   1).toISOString();   // 1 jan innevarande år
+
+  // ── Hjälpfunktioner ───────────────────────────────────────────
   async function bubbleCount(typeName, constraints = []) {
-    const qs = new URLSearchParams();
-    qs.set("limit", "1");
-    if (constraints.length) {
-      qs.set("constraints", JSON.stringify(constraints));
-    }
+    const qs = new URLSearchParams({ limit: "1" });
+    if (constraints.length) qs.set("constraints", JSON.stringify(constraints));
     for (const base of BUBBLE_BASES) {
       try {
         const r = await fetch(`${base}/api/1.1/obj/${typeName}?${qs}`, {
@@ -9516,7 +9527,7 @@ async function fetchKpiSummary({ force = false } = {}) {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) continue;
-        const results = Array.isArray(j?.response?.results) ? j.response.results.length : 0;
+        const results   = Array.isArray(j?.response?.results) ? j.response.results.length : 0;
         const remaining = Number(j?.response?.remaining ?? 0);
         return results + remaining;
       } catch (_) {}
@@ -9524,28 +9535,24 @@ async function fetchKpiSummary({ force = false } = {}) {
     return 0;
   }
 
-  // Hämta alla deals med value_brutto + Status
-  async function bubbleFindDeals() {
+  // Hämta alla records av en typ med given constraint-lista (paginerat)
+  async function bubbleFetchAll(typeName, constraints = [], fields = []) {
     const out = [];
     let cursor = 0;
     const limit = 100;
     while (true) {
       const qs = new URLSearchParams({ limit: String(limit), cursor: String(cursor) });
+      if (constraints.length) qs.set("constraints", JSON.stringify(constraints));
       let fetched = false;
       for (const base of BUBBLE_BASES) {
         try {
-          const r = await fetch(`${base}/api/1.1/obj/deal?${qs}`, {
+          const r = await fetch(`${base}/api/1.1/obj/${typeName}?${qs}`, {
             headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
           });
           const j = await r.json().catch(() => ({}));
-          if (!r.ok) continue;
+          if (!r.ok) break;
           const results = j?.response?.results ?? [];
-          for (const d of results) {
-            out.push({
-              value_brutto: Number(d?.value_brutto ?? 0),
-              Status: String(d?.Status ?? "Okänd")
-            });
-          }
+          out.push(...results);
           fetched = true;
           if (results.length < limit) return out;
           break;
@@ -9557,67 +9564,179 @@ async function fetchKpiSummary({ force = false } = {}) {
     return out;
   }
 
-  // Kundmöten: fältnamnet är "kundm_te_option_kundm_te" i Bubble API
-  // constraint_type "equals" med option set-textvärde
-  const KM_FIELD = "kundm_te_option_kundm_te";
+  // Snittbetyg från Grade-lista (fält: "Värde" är sträng i Bubble)
+  function avgVarde(grades) {
+    const vals = grades.map(g => parseFloat(g?.["Värde"] ?? "0")).filter(v => v > 0);
+    if (!vals.length) return null;
+    return Math.round((vals.reduce((a,b) => a+b, 0) / vals.length) * 10) / 10;
+  }
 
+  // ── Parallella anrop ──────────────────────────────────────────
   const [
     customersTotal,
-    comissionsTotal,
     dealsList,
-    fas1Count,
-    fas2Count,
-    fas3Count,
-    fas4Count,
-    ovrigtCount
+    // Kundmöten: denna månad per fas
+    km_fas1,  km_fas2,  km_fas3,  km_fas4,  km_ovr,
+    // Kundmöten: förra månaden per fas
+    pkm_fas1, pkm_fas2, pkm_fas3, pkm_fas4, pkm_ovr,
+    // Kundtillväxt per månad (innevarande år)
+    ccThisYear,
+    // Matter pågående
+    matterPagaende,
+    // Grades ärenden denna + förra månaden
+    gradesArendeThis,
+    gradesArendePrev,
+    // Grades kvalitetskontroll denna + förra månaden
+    gradesQcThis,
+    gradesQcPrev,
   ] = await Promise.all([
     bubbleCount("ClientCompany"),
-    bubbleCount("Comission"),
-    bubbleFindDeals(),
-    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 1" }]),
-    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 2" }]),
-    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 3" }]),
-    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Fas 4" }]),
-    bubbleCount("activitet_crm", [{ key: KM_FIELD, constraint_type: "equals", value: "Övrigt" }])
+    bubbleFetchAll("deal", []),
+
+    // Kundmöten denna månad
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: thisMonthStart }
+      ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 1" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: thisMonthStart }
+      ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 2" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: thisMonthStart }
+      ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 3" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: thisMonthStart }
+      ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 4" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: thisMonthStart }
+      ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Övrigt" }
+    ]),
+
+    // Kundmöten förra månaden
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "datum_bokning_date", constraint_type: "less than",    value: prevMonthEnd }
+     ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 1" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "datum_bokning_date", constraint_type: "less than",    value: prevMonthEnd }
+     ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 2" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "datum_bokning_date", constraint_type: "less than",    value: prevMonthEnd }
+     ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 3" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "datum_bokning_date", constraint_type: "less than",    value: prevMonthEnd }
+     ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Fas 4" }
+    ]),
+    bubbleCount("activitet_crm", [
+      { key: "datum_bokning_date", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "datum_bokning_date", constraint_type: "less than",    value: prevMonthEnd }
+     ,{ key: "kundm_te_option_kundm_te", constraint_type: "equals", value: "Övrigt" }
+    ]),
+
+    // ClientCompany innevarande år (för tillväxtkurva)
+    bubbleFetchAll("clientcompany", [
+      { key: "Created Date", constraint_type: "greater than", value: yearStart }
+    ]),
+
+    // Matter pågående
+    bubbleCount("matter", [
+      { key: "status", constraint_type: "equals", value: "Pågående" }
+    ]),
+
+    // Grades ärenden - denna månad
+    bubbleFetchAll("grade", [
+      { key: "kontrolldatum", constraint_type: "greater than", value: thisMonthStart }
+    ]),
+    // Grades ärenden - förra månaden
+    bubbleFetchAll("grade", [
+      { key: "kontrolldatum", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "kontrolldatum", constraint_type: "less than",    value: prevMonthEnd }
+    ]),
+    // Grades qc - samma månader (filtreras på server via fältnärvaro)
+    bubbleFetchAll("grade", [
+      { key: "kontrolldatum", constraint_type: "greater than", value: thisMonthStart }
+    ]),
+    bubbleFetchAll("grade", [
+      { key: "kontrolldatum", constraint_type: "greater than", value: prevMonthStart }
+     ,{ key: "kontrolldatum", constraint_type: "less than",    value: prevMonthEnd }
+    ]),
   ]);
 
-  // Summera deals per status och value_brutto
+  // ── Deals per status ──────────────────────────────────────────
   const dealsByStatus = {};
   let dealsValueBrutto = 0;
   for (const d of dealsList) {
-    const s = d.Status;
+    const s = String(d?.Status ?? "Okänd");
     if (!dealsByStatus[s]) dealsByStatus[s] = { count: 0, value: 0 };
     dealsByStatus[s].count++;
-    dealsByStatus[s].value += Number.isFinite(d.value_brutto) ? d.value_brutto : 0;
-    dealsValueBrutto += Number.isFinite(d.value_brutto) ? d.value_brutto : 0;
+    const v = Number(d?.value_brutto ?? 0);
+    if (Number.isFinite(v)) { dealsByStatus[s].value += v; dealsValueBrutto += v; }
   }
+
+  // ── Kundtillväxt per månad (Jan–nuvarande) ────────────────────
+  const monthlyGrowth = {};
+  for (let mo = 0; mo <= m; mo++) {
+    const key = `${y}-${String(mo+1).padStart(2,"0")}`;
+    monthlyGrowth[key] = 0;
+  }
+  for (const cc of ccThisYear) {
+    const d = cc?.["Created Date"];
+    if (!d) continue;
+    const key = d.substring(0, 7);
+    if (key in monthlyGrowth) monthlyGrowth[key]++;
+  }
+
+  // ── Grades: separera ärende vs qc via fältnärvaro ────────────
+  // Filtrera på server – "ärende" och "kvalitetskontroll" är direkta fältnamn
+  const arendeThis = gradesArendeThis.filter(g => g["ärende"]);
+  const arendePrev = gradesArendePrev.filter(g => g["ärende"]);
+  const qcThis     = gradesQcThis.filter(g => g["kvalitetskontroll"]);
+  const qcPrev     = gradesQcPrev.filter(g => g["kvalitetskontroll"]);
 
   const result = {
     cached: false,
     generated_at: new Date().toISOString(),
 
-    customers: { total: customersTotal },
+    customers: {
+      total:         customersTotal,
+      monthly_growth: monthlyGrowth   // { "2026-01": N, "2026-02": N, ... }
+    },
 
     deals: {
       total:        dealsList.length,
       value_brutto: Math.round(dealsValueBrutto),
-      by_status:    dealsByStatus   // { "Avtal": { count: N, value: N }, ... }
+      by_status:    dealsByStatus
     },
 
-    comissions: { total: comissionsTotal },
-
     kundmoten: {
-      fas1:   fas1Count,
-      fas2:   fas2Count,
-      fas3:   fas3Count,
-      fas4:   fas4Count,
-      ovrigt: ovrigtCount,
-      total:  fas1Count + fas2Count + fas3Count + fas4Count + ovrigtCount
+      this_month: { fas1: km_fas1,  fas2: km_fas2,  fas3: km_fas3,  fas4: km_fas4,  ovrigt: km_ovr,
+                    total: km_fas1+km_fas2+km_fas3+km_fas4+km_ovr },
+      prev_month: { fas1: pkm_fas1, fas2: pkm_fas2, fas3: pkm_fas3, fas4: pkm_fas4, ovrigt: pkm_ovr,
+                    total: pkm_fas1+pkm_fas2+pkm_fas3+pkm_fas4+pkm_ovr }
+    },
+
+    drift: {
+      matter_pagaende:  matterPagaende,
+      arende_snitt:     avgVarde(arendeThis),
+      arende_snitt_prev:avgVarde(arendePrev),
+      arende_count:     arendeThis.length,
+      qc_snitt:         avgVarde(qcThis),
+      qc_snitt_prev:    avgVarde(qcPrev),
+      qc_count:         qcThis.length,
     }
   };
 
   _kpiCache.data = result;
-  _kpiCache.ts = now;
+  _kpiCache.ts = Date.now();
 
   return result;
 }
