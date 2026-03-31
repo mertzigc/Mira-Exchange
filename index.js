@@ -9762,6 +9762,167 @@ app.get("/kpi/debug/fields", async (req, res) => {
   res.status(500).json({ ok: false, error: "ingen bas svarade" });
 });
 
+// GET /kpi/leads – Leads denna vs föregående vecka (Source=Mira), per kategori
+app.get("/kpi/leads", async (req, res) => {
+  // CORS
+  const orig = req.headers.origin || "";
+  const allowed = ["https://carotteconcierge.bubbleapps.io","https://mira-fm.com"];
+  if (allowed.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers","x-api-key,Content-Type");
+
+  const key = req.headers["x-api-key"] || req.query.apikey || "";
+  if (!RENDER_API_KEY || key.trim() !== String(RENDER_API_KEY).trim())
+    return res.status(401).json({ok:false,error:"Unauthorized"});
+
+  const now = new Date();
+  const dow = now.getDay() || 7; // måndag=1
+  const weekStart     = new Date(now); weekStart.setDate(now.getDate()-dow+1); weekStart.setHours(0,0,0,0);
+  const prevWeekStart = new Date(weekStart); prevWeekStart.setDate(weekStart.getDate()-7);
+  const prevWeekEnd   = weekStart;
+
+  async function fetchLeads(after, before) {
+    const constraints = [{key:"Source",constraint_type:"equals",value:"Mira"},
+                         {key:"Created Date",constraint_type:"greater than",value:after.toISOString()}];
+    if (before) constraints.push({key:"Created Date",constraint_type:"less than",value:before.toISOString()});
+    const out = [];
+    let cursor = 0;
+    while (true) {
+      const qs = new URLSearchParams({limit:"100",cursor:String(cursor),constraints:JSON.stringify(constraints)});
+      let fetched = false;
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/lead?${qs}`,{headers:{Authorization:"Bearer "+BUBBLE_API_KEY}});
+          const j = await r.json().catch(()=>({}));
+          if (!r.ok) break;
+          const results = j?.response?.results ?? [];
+          out.push(...results);
+          fetched = true;
+          if (results.length < 100) return out;
+          break;
+        } catch(_) {}
+      }
+      if (!fetched) break;
+      cursor += 100;
+    }
+    return out;
+  }
+
+  const CATS = ["Housekeeping","Food & Event","Staff"];
+
+  const [thisWeek, prevWeek] = await Promise.all([
+    fetchLeads(weekStart, null),
+    fetchLeads(prevWeekStart, prevWeekEnd)
+  ]);
+
+  function countByCat(leads) {
+    const m = {};
+    CATS.forEach(c => m[c] = 0);
+    leads.forEach(l => { const c = l.Category; if (c && c in m) m[c]++; });
+    return m;
+  }
+
+  res.json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    this_week:  { total: thisWeek.length,  by_category: countByCat(thisWeek) },
+    prev_week:  { total: prevWeek.length,  by_category: countByCat(prevWeek) }
+  });
+});
+
+app.options("/kpi/leads", (req,res) => {
+  const orig = req.headers.origin||"";
+  const allowed=["https://carotteconcierge.bubbleapps.io","https://mira-fm.com"];
+  if(allowed.includes(orig)) res.setHeader("Access-Control-Allow-Origin",orig);
+  res.setHeader("Access-Control-Allow-Headers","x-api-key,Content-Type");
+  res.setHeader("Access-Control-Allow-Methods","GET,OPTIONS");
+  res.sendStatus(204);
+});
+
+// GET /kpi/customers/categories – Kundfördelning per kategori (Lead.Category) + tillväxt förra månaden
+app.get("/kpi/customers/categories", async (req, res) => {
+  const orig = req.headers.origin||"";
+  const allowed=["https://carotteconcierge.bubbleapps.io","https://mira-fm.com"];
+  if(allowed.includes(orig)) res.setHeader("Access-Control-Allow-Origin",orig);
+  res.setHeader("Access-Control-Allow-Headers","x-api-key,Content-Type");
+
+  const key = req.headers["x-api-key"]||req.query.apikey||"";
+  if(!RENDER_API_KEY||key.trim()!==String(RENDER_API_KEY).trim())
+    return res.status(401).json({ok:false,error:"Unauthorized"});
+
+  const now  = new Date();
+  const y    = now.getFullYear(), mo = now.getMonth();
+  const thisMonthStart = new Date(y, mo, 1).toISOString();
+  const prevMonthStart = new Date(y, mo-1, 1).toISOString();
+  const CATS = ["Housekeeping","Food & Event","Staff"];
+
+  async function countLeadsByCat(afterISO, beforeISO) {
+    const m = {};
+    CATS.forEach(c => m[c] = 0);
+    for (const cat of CATS) {
+      const constraints = [
+        {key:"Category",constraint_type:"equals",value:cat},
+        {key:"Created Date",constraint_type:"greater than",value:afterISO}
+      ];
+      if (beforeISO) constraints.push({key:"Created Date",constraint_type:"less than",value:beforeISO});
+      const qs = new URLSearchParams({limit:"1",constraints:JSON.stringify(constraints)});
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/lead?${qs}`,{headers:{Authorization:"Bearer "+BUBBLE_API_KEY}});
+          const j = await r.json().catch(()=>({}));
+          if (!r.ok) break;
+          m[cat] = (j?.response?.results?.length||0)+(j?.response?.remaining||0);
+          break;
+        } catch(_) {}
+      }
+    }
+    return m;
+  }
+
+  // Totalt per kategori (alla leads)
+  async function totalByCat() {
+    const m = {};
+    for (const cat of CATS) {
+      const qs = new URLSearchParams({limit:"1",constraints:JSON.stringify([
+        {key:"Category",constraint_type:"equals",value:cat}
+      ])});
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/lead?${qs}`,{headers:{Authorization:"Bearer "+BUBBLE_API_KEY}});
+          const j = await r.json().catch(()=>({}));
+          if (!r.ok) break;
+          m[cat] = (j?.response?.results?.length||0)+(j?.response?.remaining||0);
+          break;
+        } catch(_) {}
+      }
+    }
+    return m;
+  }
+
+  const [total, thisMonth, prevMonth] = await Promise.all([
+    totalByCat(),
+    countLeadsByCat(thisMonthStart, null),
+    countLeadsByCat(prevMonthStart, thisMonthStart)
+  ]);
+
+  res.json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    total_by_category:      total,
+    this_month_by_category: thisMonth,
+    prev_month_by_category: prevMonth
+  });
+});
+
+app.options("/kpi/customers/categories", (req,res) => {
+  const orig=req.headers.origin||"";
+  const allowed=["https://carotteconcierge.bubbleapps.io","https://mira-fm.com"];
+  if(allowed.includes(orig)) res.setHeader("Access-Control-Allow-Origin",orig);
+  res.setHeader("Access-Control-Allow-Headers","x-api-key,Content-Type");
+  res.setHeader("Access-Control-Allow-Methods","GET,OPTIONS");
+  res.sendStatus(204);
+});
+
+
 // GET /kpi/summary
 // Query: ?force=true
 app.get("/kpi/summary", requireApiKey, async (req, res) => {
