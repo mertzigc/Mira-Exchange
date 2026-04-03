@@ -9965,5 +9965,168 @@ app.post("/kpi/summary/flush", requireApiKey, (req, res) => {
   _kpiCache.ts = 0;
   return res.json({ ok: true, message: "KPI cache flushed" });
 });
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /api/kpi/grades
+//
+// Beräknar snittbetyg för kvalitetskontroller och ärenden per kund,
+// server-side på Render – ingenting beräknas i Bubble/mobilen.
+//
+// Query-parametrar:
+//   company_id  = ett Bubble ClientCompany-ID  (en kund)
+//   company_ids = komma-separerade IDs          (visa alla, flera kunder)
+//
+// Returnerar:
+// {
+//   ok: true,
+//   kvalitet_30d:        4.6,   // snitt kvalitetskontroll-betyg senaste 30 dagar
+//   kvalitet_totalt:     4.3,   // snitt kvalitetskontroll-betyg totalt
+//   arende_30d:          4.2,   // snitt ärendebetyg senaste 30 dagar
+//   arende_totalt:       4.3,   // snitt ärendebetyg totalt
+//   kvalitet_antal_30d:  12,    // antal grade-poster i beräkningen
+//   arende_antal_30d:    8,
+//   generated_at:        "..."
+// }
+// ──────────────────────────────────────────────────────────────────────────────
 
+// Återanvänder samma CORS-allowed-lista och requireApiKey som resten av filen.
+const KPI_GRADES_ALLOWED = [
+  "https://carotteconcierge.bubbleapps.io",
+  "https://mira-fm.com"
+];
+
+// Intern hjälpfunktion: hämtar ALLA Grade-poster för en eller flera company-IDs.
+// Paginerar automatiskt (100 poster/anrop) och kör parallellt per kund.
+async function fetchGradesForCompanies(companyIds) {
+  // Kör alla kunder parallellt för att minimera total latency
+  const perCompany = await Promise.all(
+    companyIds.map(cid =>
+      (async () => {
+        const out = [];
+        let cursor = 0;
+        const limit = 100;
+        while (true) {
+          const constraints = [
+            { key: "Kundföretag", constraint_type: "equals", value: cid }
+          ];
+          const qs = new URLSearchParams({
+            limit:       String(limit),
+            cursor:      String(cursor),
+            constraints: JSON.stringify(constraints)
+          });
+          let fetched = false;
+          for (const base of BUBBLE_BASES) {
+            try {
+              const r = await fetch(`${base}/api/1.1/obj/grade?${qs}`, {
+                headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+              });
+              const j = await r.json().catch(() => ({}));
+              if (!r.ok) break;
+              const results = j?.response?.results ?? [];
+              out.push(...results);
+              fetched = true;
+              if (results.length < limit) return out; // sista sidan
+              break;
+            } catch (_) { /* prova nästa BUBBLE_BASE */ }
+          }
+          if (!fetched) break;
+          cursor += limit;
+        }
+        return out;
+      })()
+    )
+  );
+  // Platta ut alla kunder till en lista
+  return perCompany.flat();
+}
+
+// Beräknar average av Värde-fältet (samma logik som befintlig avgVarde i fetchKpiSummary)
+function calcAvg(grades) {
+  const vals = grades
+    .map(g => parseFloat(g?.["Värde"] ?? "0"))
+    .filter(v => v > 0);
+  if (!vals.length) return null;
+  return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+}
+
+app.get("/api/kpi/grades", async (req, res) => {
+  // CORS
+  const orig = req.headers.origin || "";
+  if (KPI_GRADES_ALLOWED.includes(orig)) {
+    res.setHeader("Access-Control-Allow-Origin", orig);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+
+  // Auth – samma nyckel som resten av Render-endpointsen
+  const key = req.headers["x-api-key"] || req.query.apikey || "";
+  if (!RENDER_API_KEY || String(key).trim() !== String(RENDER_API_KEY).trim()) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+
+  // Parsa company_id / company_ids
+  const singleId  = req.query.company_id  ? String(req.query.company_id).trim()  : null;
+  const multiRaw  = req.query.company_ids ? String(req.query.company_ids).trim()  : null;
+
+  let companyIds = [];
+  if (multiRaw) {
+    companyIds = multiRaw.split(",").map(s => s.trim()).filter(Boolean);
+  } else if (singleId) {
+    companyIds = [singleId];
+  }
+
+  if (!companyIds.length) {
+    return res.status(400).json({
+      ok: false,
+      error: "Ange company_id (en kund) eller company_ids (komma-separerade IDs)"
+    });
+  }
+
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // Hämta alla Grade-poster för aktuella kunder parallellt
+    const allGrades = await fetchGradesForCompanies(companyIds);
+
+    // Dela upp: kvalitetskontroll vs ärende (samma logik som i fetchKpiSummary)
+    const kvalGrades  = allGrades.filter(g => g["kvalitetskontroll"]);
+    const arendeGrades = allGrades.filter(g => g["ärende"]);
+
+    // Senaste 30 dagarna (filtrera på kontrolldatum)
+    const kvalGrades30   = kvalGrades.filter(g =>
+      g.kontrolldatum && new Date(g.kontrolldatum) >= thirtyDaysAgo
+    );
+    const arendeGrades30 = arendeGrades.filter(g =>
+      g.kontrolldatum && new Date(g.kontrolldatum) >= thirtyDaysAgo
+    );
+
+    return res.json({
+      ok:                  true,
+      company_ids:         companyIds,
+      visa_alla:           companyIds.length > 1,
+      kvalitet_30d:        calcAvg(kvalGrades30),
+      kvalitet_totalt:     calcAvg(kvalGrades),
+      arende_30d:          calcAvg(arendeGrades30),
+      arende_totalt:       calcAvg(arendeGrades),
+      kvalitet_antal_30d:  kvalGrades30.length,
+      arende_antal_30d:    arendeGrades30.length,
+      total_grades:        allGrades.length,
+      generated_at:        new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error("[/api/kpi/grades] error:", err);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// OPTIONS preflight
+app.options("/api/kpi/grades", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KPI_GRADES_ALLOWED.includes(orig)) {
+    res.setHeader("Access-Control-Allow-Origin", orig);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
