@@ -10129,4 +10129,112 @@ app.options("/api/kpi/grades", (req, res) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.sendStatus(204);
 });
+app.get("/api/kpi/grades/user", async (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KPI_GRADES_ALLOWED.includes(orig)) {
+    res.setHeader("Access-Control-Allow-Origin", orig);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+
+  const key = req.headers["x-api-key"] || req.query.apikey || "";
+  if (!RENDER_API_KEY || String(key).trim() !== String(RENDER_API_KEY).trim()) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+
+  const userId = req.query.user_id ? String(req.query.user_id).trim() : null;
+  const mode   = req.query.mode || "single"; // "single" eller "alla"
+
+  if (!userId) {
+    return res.status(400).json({ ok: false, error: "user_id krävs" });
+  }
+
+  try {
+    // Hämta användaren från Bubble
+    let companyIds = [];
+
+    if (mode === "alla") {
+      // Hämta Associated_company-listan från User
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/user/${userId}`, {
+            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) break;
+          const user = j?.response;
+          const list = user?.["Associated_company"] ?? [];
+          companyIds = Array.isArray(list) ? list : [list];
+          break;
+        } catch (_) {}
+      }
+    } else {
+      // single – hämta bara Company-fältet
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/user/${userId}`, {
+            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) break;
+          const user = j?.response;
+          const cid = user?.["Company"];
+          if (cid) companyIds = [cid];
+          break;
+        } catch (_) {}
+      }
+    }
+
+    if (!companyIds.length) {
+      return res.json({
+        ok: true, mode, company_count: 0,
+        kvalitet_30d: null, kvalitet_totalt: null,
+        arende_30d: null, arende_totalt: null,
+        kvalitet_antal_30d: 0, arende_antal_30d: 0,
+        total_grades: 0, generated_at: new Date().toISOString()
+      });
+    }
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const allGrades = await fetchGradesForCompanies(companyIds);
+
+    const kvalGrades    = allGrades.filter(g => g["kvalitetskontroll"]);
+    const arendeGrades  = allGrades.filter(g => g["ärende"]);
+    const kvalGrades30  = kvalGrades.filter(g =>
+      g.kontrolldatum && new Date(g.kontrolldatum) >= thirtyDaysAgo
+    );
+    const arendeGrades30 = arendeGrades.filter(g =>
+      g.kontrolldatum && new Date(g.kontrolldatum) >= thirtyDaysAgo
+    );
+
+    return res.json({
+      ok:                  true,
+      mode,
+      company_count:       companyIds.length,
+      kvalitet_30d:        calcAvg(kvalGrades30),
+      kvalitet_totalt:     calcAvg(kvalGrades),
+      arende_30d:          calcAvg(arendeGrades30),
+      arende_totalt:       calcAvg(arendeGrades),
+      kvalitet_antal_30d:  kvalGrades30.length,
+      arende_antal_30d:    arendeGrades30.length,
+      total_grades:        allGrades.length,
+      generated_at:        new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error("[/api/kpi/grades/user] error:", err);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+app.options("/api/kpi/grades/user", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KPI_GRADES_ALLOWED.includes(orig)) {
+    res.setHeader("Access-Control-Allow-Origin", orig);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
