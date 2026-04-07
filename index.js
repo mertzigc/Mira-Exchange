@@ -9170,15 +9170,32 @@ app.post("/fortnox/cron/v1", requireApiKey, async (req, res) => {
 // Caspeco – Konferens/bokning (Carotte Food & Event)
 // Auth: PAT i Authorization-header
 // System: se_carsto3
-// Unit: 13 (Klockan Norra Bantorget)
+// Multi-unit: CASPECO_UNIT_IDS=13,14,15 (komma-separerade)
 // ────────────────────────────────────────────────────────────
 
 const CASPECO_BASE_URL = "https://rms.caspeco.se/api/booking/v1";
 const CASPECO_SYSTEM   = pick(process.env.CASPECO_SYSTEM, "se_carsto3");
-const CASPECO_UNIT_ID  = Number(pick(process.env.CASPECO_UNIT_ID, "13")) || 13;
 const CASPECO_PAT      = pick(process.env.CASPECO_PAT);
 
+// Multi-unit: läs CASPECO_UNIT_IDS (komma-sep) → array av numbers
+// Fallback: CASPECO_UNIT_ID (singular, bakåtkompatibelt)
+const CASPECO_UNIT_IDS = (() => {
+  const multi = pick(process.env.CASPECO_UNIT_IDS);
+  if (multi) {
+    return multi.split(",").map(s => Number(s.trim())).filter(n => n > 0);
+  }
+  const single = Number(pick(process.env.CASPECO_UNIT_ID, "13")) || 13;
+  return [single];
+})();
+
+// Primary/default unit (bakåtkompatibelt – används om unit_id saknas i query)
+const CASPECO_UNIT_ID = CASPECO_UNIT_IDS[0];
+
+console.log("[BOOT] CASPECO_UNIT_IDS =", CASPECO_UNIT_IDS);
+
+// ────────────────────────────────────────────────────────────
 // Bas-fetch mot Caspeco API
+// ────────────────────────────────────────────────────────────
 async function caspecoFetch(path, { method = "GET", query = null, body = null } = {}) {
   if (!CASPECO_PAT) throw new Error("Missing env CASPECO_PAT");
 
@@ -9223,17 +9240,40 @@ async function caspecoFetch(path, { method = "GET", query = null, body = null } 
 }
 
 // ────────────────────────────────────────────────────────────
+// GET /caspeco/units
+// Listar alla konfigurerade unit_ids + hämtar ExternalBookingSettings
+// för var och en (namn, rum/sections osv.)
+// ────────────────────────────────────────────────────────────
+app.get("/caspeco/units", requireApiKey, async (req, res) => {
+  const results = await Promise.all(
+    CASPECO_UNIT_IDS.map(async uid => {
+      try {
+        const settings = await caspecoFetch(`/ExternalBookingSettings/${uid}`);
+        return { unit_id: uid, ok: true, settings };
+      } catch (e) {
+        return { unit_id: uid, ok: false, error: e?.message, status: e?.status };
+      }
+    })
+  );
+  return res.json({
+    ok: true,
+    system: CASPECO_SYSTEM,
+    unit_ids: CASPECO_UNIT_IDS,
+    units: results
+  });
+});
+
+// ────────────────────────────────────────────────────────────
 // GET /caspeco/debug/test
-// Testar PAT + hämtar info om unitId 13
+// Testar PAT + hämtar bookings + availability + settings för alla units
 // ────────────────────────────────────────────────────────────
 app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
   const results = {};
 
-  // Testa 1: WebBookings med changedFrom (bör alltid fungera om PAT är giltig)
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const bookings = await caspecoFetch("/WebBooking/WebBookings", {
-      query: { changedFrom: since, unitId: [CASPECO_UNIT_ID] }
+      query: { changedFrom: since, unitId: CASPECO_UNIT_IDS }
     });
     results.bookings = {
       ok: true,
@@ -9244,11 +9284,10 @@ app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
     results.bookings = { ok: false, status: e.status, error: e?.message, detail: e?.detail };
   }
 
-  // Testa 2: AvailableTimes för idag
   try {
     const today = new Date().toISOString().slice(0, 10);
     const avail = await caspecoFetch("/WebBooking/AvailableTimes", {
-      query: { date: [today], unitId: [CASPECO_UNIT_ID] }
+      query: { date: [today], unitId: CASPECO_UNIT_IDS }
     });
     results.availability = {
       ok: true,
@@ -9259,7 +9298,7 @@ app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
     results.availability = { ok: false, status: e.status, error: e?.message, detail: e?.detail };
   }
 
-  // Testa 3: ExternalBookingSettings (rätt path)
+  // Settings för första unit
   try {
     const settings = await caspecoFetch(`/ExternalBookingSettings/${CASPECO_UNIT_ID}`);
     results.settings = { ok: true, data: settings };
@@ -9271,7 +9310,7 @@ app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
   return res.status(anyOk ? 200 : 502).json({
     ok: anyOk,
     system: CASPECO_SYSTEM,
-    unit_id: CASPECO_UNIT_ID,
+    unit_ids: CASPECO_UNIT_IDS,
     base_url: CASPECO_BASE_URL,
     results
   });
@@ -9280,15 +9319,15 @@ app.get("/caspeco/debug/test", requireApiKey, async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // GET /caspeco/bookings
 // Hämtar bokningar för en tidsperiod
-// Query: ?start=2026-03-24T00:00:00&end=2026-03-31T00:00:00&unit_id=13
+// Query: ?start=ISO&end=ISO&unit_id=13  (unit_id valfritt, default = alla)
 // ────────────────────────────────────────────────────────────
 app.get("/caspeco/bookings", requireApiKey, async (req, res) => {
   try {
     const {
-      start = null,
-      end   = null,
+      start        = null,
+      end          = null,
       changed_from = null,
-      unit_id = CASPECO_UNIT_ID,
+      unit_id      = null,       // om null → hämta för ALLA units
       include_contact = false
     } = req.query || {};
 
@@ -9296,11 +9335,16 @@ app.get("/caspeco/bookings", requireApiKey, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Krävs: ?start=ISO&end=ISO eller ?changed_from=ISO" });
     }
 
+    // Vilka unit_ids ska vi hämta för?
+    const unitIds = unit_id
+      ? [Number(unit_id)]
+      : CASPECO_UNIT_IDS;
+
     const query = {};
     if (start)        query.startTime   = start;
     if (end)          query.endTime     = end;
     if (changed_from) query.changedFrom = changed_from;
-    if (unit_id)      query.unitId      = [Number(unit_id)];
+    query.unitId = unitIds;
     if (String(include_contact) === "true") query.includeContact = true;
 
     const data = await caspecoFetch("/WebBooking/WebBookings", { query });
@@ -9308,7 +9352,7 @@ app.get("/caspeco/bookings", requireApiKey, async (req, res) => {
     return res.json({
       ok: true,
       system: CASPECO_SYSTEM,
-      unit_id: Number(unit_id),
+      unit_ids: unitIds,
       count: Array.isArray(data) ? data.length : null,
       bookings: data
     });
@@ -9324,14 +9368,14 @@ app.get("/caspeco/bookings", requireApiKey, async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // GET /caspeco/availability
 // Hämtar tillgängliga tider per datum
-// Query: ?date=2026-03-25&unit_id=13&section_id=X (section_id valfritt)
+// Query: ?date=2026-04-07&unit_id=13  (unit_id valfritt, default = alla)
 // ────────────────────────────────────────────────────────────
 app.get("/caspeco/availability", requireApiKey, async (req, res) => {
   try {
     const {
-      date        = null,
-      unit_id     = CASPECO_UNIT_ID,
-      section_id  = null,
+      date       = null,
+      unit_id    = null,    // om null → alla units
+      section_id = null,
       include_unavailability = false
     } = req.query || {};
 
@@ -9339,9 +9383,13 @@ app.get("/caspeco/availability", requireApiKey, async (req, res) => {
       return res.status(400).json({ ok: false, error: "Krävs: ?date=YYYY-MM-DD" });
     }
 
+    const unitIds = unit_id
+      ? [Number(unit_id)]
+      : CASPECO_UNIT_IDS;
+
     const query = {
-      date: [date],  // API accepterar array av datum
-      unitId: [Number(unit_id)]
+      date: [date],
+      unitId: unitIds
     };
 
     if (section_id) query.sectionId = [Number(section_id)];
@@ -9352,9 +9400,54 @@ app.get("/caspeco/availability", requireApiKey, async (req, res) => {
     return res.json({
       ok: true,
       system: CASPECO_SYSTEM,
-      unit_id: Number(unit_id),
+      unit_ids: unitIds,
       date,
       section_id: section_id ? Number(section_id) : null,
+      data
+    });
+  } catch (e) {
+    return res.status(e.status || 500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// GET /caspeco/availability/multi
+// Hämtar tillgänglighet för flera datum + flera units i ett anrop
+// Query: ?dates=2026-04-07,2026-04-08&unit_ids=13,14,15
+// ────────────────────────────────────────────────────────────
+app.get("/caspeco/availability/multi", requireApiKey, async (req, res) => {
+  try {
+    const {
+      dates    = null,
+      unit_ids = null
+    } = req.query || {};
+
+    if (!dates) {
+      return res.status(400).json({ ok: false, error: "Krävs: ?dates=YYYY-MM-DD,YYYY-MM-DD" });
+    }
+
+    const dateList = dates.split(",").map(s => s.trim()).filter(Boolean);
+    const unitIds  = unit_ids
+      ? unit_ids.split(",").map(s => Number(s.trim())).filter(n => n > 0)
+      : CASPECO_UNIT_IDS;
+
+    const query = {
+      date:   dateList,
+      unitId: unitIds
+    };
+
+    const data = await caspecoFetch("/WebBooking/AvailableTimes", { query });
+
+    return res.json({
+      ok: true,
+      system:   CASPECO_SYSTEM,
+      unit_ids: unitIds,
+      dates:    dateList,
+      count:    Array.isArray(data) ? data.length : null,
       data
     });
   } catch (e) {
@@ -9389,7 +9482,7 @@ app.get("/caspeco/booking/:id", requireApiKey, async (req, res) => {
 
 // ────────────────────────────────────────────────────────────
 // POST /caspeco/bookings/sync
-// Delta-sync: hämtar bokningar ändrade sedan changedFrom → upsert Bubble CaspecoBooking
+// Delta-sync för EN unit → upsert Bubble CaspecoBooking
 // Body: { changed_from?: ISO, days_back?: number, unit_id?: number }
 // ────────────────────────────────────────────────────────────
 app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
@@ -9400,7 +9493,6 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
       unit_id      = CASPECO_UNIT_ID
     } = req.body || {};
 
-    // Bygg changedFrom – antingen explicit eller days_back
     let changedFrom = changed_from;
     if (!changedFrom) {
       const d = new Date();
@@ -9428,22 +9520,18 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
         const payload = {
           caspeco_booking_id: bookingId,
           unit_id: Number(unit_id),
-          section_id: b?.sectionId ?? b?.SectionId ?? null,
-          section_name: String(b?.sectionName ?? b?.SectionName ?? ""),
-          start_time: b?.startTime ?? b?.StartTime ?? null,
-          end_time: b?.endTime ?? b?.EndTime ?? null,
-          status: String(b?.status ?? b?.Status ?? ""),
-          guest_count: Number(b?.guestCount ?? b?.GuestCount ?? 0) || null,
-          contact_name: String(b?.contact?.name ?? b?.Contact?.Name ?? ""),
+          section_id:    String(b?.sectionId   ?? b?.SectionId   ?? ""),
+          section_name:  String(b?.sectionName ?? b?.SectionName ?? ""),
+          start_time:    b?.startTime  ?? b?.StartTime  ?? null,
+          end_time:      b?.endTime    ?? b?.EndTime    ?? null,
+          status:        String(b?.status  ?? b?.Status  ?? ""),
+          guest_count:   Number(b?.guestCount ?? b?.GuestCount ?? 0) || null,
+          contact_name:  String(b?.contact?.name  ?? b?.Contact?.Name  ?? ""),
           contact_email: String(b?.contact?.email ?? b?.Contact?.Email ?? ""),
-          contact_phone: String(b?.contact?.phone ?? b?.Contact?.Phone ?? ""),
-          booking_text: String(b?.bookingText ?? b?.BookingText ?? ""),
-          created_at: b?.createdTime ?? b?.CreatedTime ?? null,
-          updated_at: b?.changedTime ?? b?.ChangedTime ?? null,
-          raw_json: JSON.stringify(b)
+          booking_text:  String(b?.bookingText ?? b?.BookingText ?? ""),
+          raw_json:      JSON.stringify(b)
         };
 
-        // Rensa undefined
         Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
         const existing = await bubbleFindOne("CaspecoBooking", [
@@ -9481,7 +9569,103 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────
+// POST /caspeco/bookings/sync-all
+// Delta-sync för ALLA konfigurerade units parallellt → upsert Bubble
+// Body: { changed_from?: ISO, days_back?: number }
+// ────────────────────────────────────────────────────────────
+app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
+  try {
+    const {
+      changed_from = null,
+      days_back    = 30
+    } = req.body || {};
 
+    let changedFrom = changed_from;
+    if (!changedFrom) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - Number(days_back));
+      changedFrom = d.toISOString();
+    }
+
+    // Kör alla units parallellt
+    const unitResults = await Promise.all(
+      CASPECO_UNIT_IDS.map(async uid => {
+        const query = {
+          changedFrom,
+          unitId: [uid],
+          includeContact: true
+        };
+
+        const bookings = await caspecoFetch("/WebBooking/WebBookings", { query });
+        const list = Array.isArray(bookings) ? bookings : [];
+
+        let created = 0, updated = 0, errors = 0, first_error = null;
+
+        for (const b of list) {
+          const bookingId = String(b?.id ?? b?.Id ?? "").trim();
+          if (!bookingId) continue;
+
+          try {
+            const payload = {
+              caspeco_booking_id: bookingId,
+              unit_id:       uid,
+              section_id:    String(b?.sectionId   ?? b?.SectionId   ?? ""),
+              section_name:  String(b?.sectionName ?? b?.SectionName ?? ""),
+              start_time:    b?.startTime  ?? b?.StartTime  ?? null,
+              end_time:      b?.endTime    ?? b?.EndTime    ?? null,
+              status:        String(b?.status  ?? b?.Status  ?? ""),
+              guest_count:   Number(b?.guestCount ?? b?.GuestCount ?? 0) || null,
+              contact_name:  String(b?.contact?.name  ?? b?.Contact?.Name  ?? ""),
+              contact_email: String(b?.contact?.email ?? b?.Contact?.Email ?? ""),
+              booking_text:  String(b?.bookingText ?? b?.BookingText ?? ""),
+              raw_json:      JSON.stringify(b)
+            };
+
+            Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+
+            const existing = await bubbleFindOne("CaspecoBooking", [
+              { key: "caspeco_booking_id", constraint_type: "equals", value: bookingId }
+            ]).catch(() => null);
+
+            if (existing?._id) {
+              await bubblePatch("CaspecoBooking", existing._id, payload);
+              updated++;
+            } else {
+              await bubbleCreate("CaspecoBooking", payload);
+              created++;
+            }
+          } catch (e) {
+            errors++;
+            if (!first_error) first_error = { bookingId, message: e?.message || String(e) };
+          }
+        }
+
+        return { unit_id: uid, ok: true, fetched: list.length, counts: { created, updated, errors }, first_error };
+      })
+    );
+
+    const totalFetched  = unitResults.reduce((s, r) => s + (r.fetched  || 0), 0);
+    const totalCreated  = unitResults.reduce((s, r) => s + (r.counts?.created || 0), 0);
+    const totalUpdated  = unitResults.reduce((s, r) => s + (r.counts?.updated || 0), 0);
+    const totalErrors   = unitResults.reduce((s, r) => s + (r.counts?.errors  || 0), 0);
+
+    return res.json({
+      ok: true,
+      system: CASPECO_SYSTEM,
+      unit_ids: CASPECO_UNIT_IDS,
+      changed_from: changedFrom,
+      totals: { fetched: totalFetched, created: totalCreated, updated: totalUpdated, errors: totalErrors },
+      per_unit: unitResults
+    });
+  } catch (e) {
+    return res.status(e.status || 500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null
+    });
+  }
+});
 // ────────────────────────────────────────────────────────────
 // GET /kpi/summary
 // Centralt KPI-block – hämtar och räknar ihop all statistik
