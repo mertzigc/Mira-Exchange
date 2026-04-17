@@ -9779,66 +9779,98 @@ async function upsertTengellaInvoiceToBubble(inv) {
 
 // ────────────────────────────────────────────────────────────
 // POST /tengella/invoices/sync
-// Skyddad med requireSyncSecret (x-sync-secret header) – samma som workorders/sync
-// Body: { orgNo?, customerId?, limit?, maxPages?, cursor? }
+// Loopar över alla TengellaCustomers i Bubble och hämtar fakturor
+// per customerId – /v2/Invoices kräver customerId för att returnera data.
+// Body: { orgNo?, customerId?, limit?, maxPages? }
+//   customerId = valfritt, kör bara för en specifik kund
 // ────────────────────────────────────────────────────────────
 app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
   try {
     const orgNo      = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
     if (!orgNo) return res.status(400).json({ ok: false, error: "Missing orgNo" });
 
-    const limit      = Number(req.body?.limit    ?? 100) || 100;
-    const maxPages   = Number(req.body?.maxPages ?? 50)  || 50;
-    const customerId = req.body?.customerId ?? null;   // valfritt filter per kund
-    let   cursor     = req.body?.cursor     ?? null;
+    const limit          = Number(req.body?.limit    ?? 100) || 100;
+    const maxPages       = Number(req.body?.maxPages ?? 50)  || 50;
+    const singleCustomer = req.body?.customerId ? Number(req.body.customerId) : null;
 
     const token = await tengellaLogin(orgNo);
 
-    let page    = 0;
-    let fetched = 0;
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
+    // Hämta alla TengellaCustomers från Bubble (eller bara en om customerId anges)
+    let customerIds = [];
+    if (singleCustomer) {
+      customerIds = [singleCustomer];
+    } else {
+      // Paginera alla TengellaCustomer-poster ur Bubble
+      let cur = 0;
+      while (true) {
+        const qs = new URLSearchParams({ limit: "100", cursor: String(cur) });
+        let done = false;
+        for (const base of BUBBLE_BASES) {
+          try {
+            const r = await fetch(`${base}/api/1.1/obj/TengellaCustomer?${qs}`, {
+              headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) break;
+            const results = j?.response?.results ?? [];
+            const ids = results
+              .map(c => Number(c?.tengella_customer_id ?? 0))
+              .filter(n => n > 0);
+            customerIds.push(...ids);
+            done = true;
+            if (results.length < 100) { cur = -1; } // sista sidan
+            else                      { cur += 100; }
+            break;
+          } catch (_) {}
+        }
+        if (!done || cur === -1) break;
+      }
+    }
+
+    console.log(`[tengella/invoices/sync] ${customerIds.length} kunder att hämta fakturor för`);
+
+    let totalFetched = 0;
+    let created = 0, updated = 0, skipped = 0;
     const errors = [];
 
-    let existsMoreData = true;
+    // Hämta fakturor per kund
+    for (const customerId of customerIds) {
+      let cursor = null;
+      let page   = 0;
+      let more   = true;
 
-    while (existsMoreData && page < maxPages) {
-      page++;
+      while (more && page < maxPages) {
+        page++;
+        const resp = await listTengellaInvoices({ token, limit, cursor, customerId });
+        const data = Array.isArray(resp?.Data) ? resp.Data : (Array.isArray(resp) ? resp : []);
+        totalFetched += data.length;
 
-      const resp = await listTengellaInvoices({ token, limit, cursor, customerId });
-
-      const data = Array.isArray(resp?.Data) ? resp.Data : (Array.isArray(resp) ? resp : []);
-      fetched += data.length;
-
-      for (const inv of data) {
-        try {
-          const r = await upsertTengellaInvoiceToBubble(inv);
-          if (r.skipped)        skipped++;
-          else if (r.mode === "create") created++;
-          else                          updated++;
-        } catch (e) {
-          errors.push({
-            invoiceNo: String(inv?.InvoiceNo ?? inv?.InvoiceId ?? "?"),
-            message:   e?.message || String(e),
-            detail:    e?.detail  || null
-          });
+        for (const inv of data) {
+          try {
+            const r = await upsertTengellaInvoiceToBubble(inv);
+            if (r.skipped)             skipped++;
+            else if (r.mode === "create") created++;
+            else                          updated++;
+          } catch (e) {
+            errors.push({
+              customerId,
+              invoiceNo: String(inv?.InvoiceNo ?? inv?.InvoiceId ?? "?"),
+              message:   e?.message || String(e),
+            });
+          }
         }
-      }
 
-      cursor         = resp?.Next || null;
-      existsMoreData = normalizeBool(resp?.ExistsMoreData) && !!cursor;
-      if (normalizeBool(resp?.ExistsMoreData) && !cursor) existsMoreData = false;
+        cursor = resp?.Next || null;
+        more   = normalizeBool(resp?.ExistsMoreData) && !!cursor;
+      }
     }
 
     return res.json({
-      ok:             true,
-      pages:          page,
-      fetched,
-      counts:         { created, updated, skipped, errors: errors.length },
-      nextCursor:     cursor,
-      existsMoreData,
-      errors:         errors.slice(0, 50)
+      ok:           true,
+      customers:    customerIds.length,
+      fetched:      totalFetched,
+      counts:       { created, updated, skipped, errors: errors.length },
+      errors:       errors.slice(0, 50)
     });
   } catch (e) {
     console.error("[tengella/invoices/sync] fatal", e);
