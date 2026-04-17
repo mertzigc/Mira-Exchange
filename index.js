@@ -9688,6 +9688,13 @@ async function listTengellaInvoices({ token, limit = 100, cursor = null, custome
   return tengellaFetch(`/v2/Invoices`, { method: "GET", token, query });
 }
 
+// Tengella returnerar datum som "2026-03-31T00:00:00" (utan Z/offset).
+// toIsoDate() lägger på T00:00:00.000Z och får dubbel T. Strippa tidsdelen först.
+function tengellaDate(v) {
+  if (!v) return null;
+  return String(v).slice(0, 10); // "2026-03-31"
+}
+
 // ────────────────────────────────────────────────────────────
 // Mappning: Tengella-faktura → FortnoxInvoice-payload
 // Tengella använder PascalCase (samma som WorkOrders)
@@ -9713,8 +9720,8 @@ function mapTengellaInvoiceToFortnoxInvoicePayload(inv) {
     ft_customer_number:   String(inv?.InvoiceId ?? "").trim(),  // bästa proxy för kundnr
     ft_customer_name:     "",                                    // ej i list-svaret
 
-    ft_invoice_date:      toIsoDate(inv?.InvoiceDate),
-    ft_due_date:          toIsoDate(inv?.DueDate),
+    ft_invoice_date:      toIsoDate(tengellaDate(inv?.InvoiceDate)),
+    ft_due_date:          toIsoDate(tengellaDate(inv?.DueDate)),
 
     ft_total:             totalValue,
     ft_balance:           balanceValue,
