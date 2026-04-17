@@ -9667,6 +9667,392 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
   }
 });
 // ────────────────────────────────────────────────────────────
+// Caspeco – Fakturor (parallell synk med FortnoxInvoice-struktur)
+// Bubble-datatyp: FortnoxInvoice (återanvänder befintlig modell)
+// source-fält: "caspeco"
+// ────────────────────────────────────────────────────────────
+
+// Möjliga invoice-endpoints i Caspeco RMS API (testas i debug-route).
+// Justera CASPECO_INVOICE_PATH om rätt endpoint avviker.
+const CASPECO_INVOICE_PATH =
+  process.env.CASPECO_INVOICE_PATH || "/WebBooking/Invoices";
+
+// Connection ID – samma värde som används för Caspeco-workorders i Bubble.
+// Sätt CASPECO_CONNECTION_ID i Render env (t.ex. det Bubble-ID du kopplat till Caspeco).
+const CASPECO_CONNECTION_ID =
+  pick(process.env.CASPECO_CONNECTION_ID) || null;
+
+console.log("[BOOT] CASPECO_CONNECTION_ID =", CASPECO_CONNECTION_ID || "(ej satt – fallback till caspeco_unit_{uid})");
+
+// ────────────────────────────────────────────────────────────
+// GET /caspeco/debug/invoices
+// Testar vilken endpoint som faktiskt returnerar fakturadata.
+// Prova automatiskt ett antal kandidater och returnera det första som svarar.
+// ────────────────────────────────────────────────────────────
+app.get("/caspeco/debug/invoices", requireApiKey, async (req, res) => {
+  const candidates = [
+    "/WebBooking/Invoices",
+    "/Invoice/Invoices",
+    "/Invoices",
+    "/WebBooking/Invoice",
+  ];
+
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const results = {};
+
+  for (const path of candidates) {
+    try {
+      const data = await caspecoFetch(path, {
+        query: { unitId: CASPECO_UNIT_IDS, changedFrom: since }
+      });
+      results[path] = {
+        ok:     true,
+        count:  Array.isArray(data) ? data.length : (typeof data === "object" ? Object.keys(data).length : null),
+        sample: Array.isArray(data) ? data.slice(0, 2) : data
+      };
+    } catch (e) {
+      results[path] = { ok: false, status: e?.status, error: e?.message };
+    }
+  }
+
+  const working = Object.entries(results).find(([, v]) => v.ok);
+
+  return res.json({
+    ok:              !!working,
+    recommended_path: working ? working[0] : null,
+    hint:            "Sätt CASPECO_INVOICE_PATH i Render env om rätt path avviker från default",
+    system:          CASPECO_SYSTEM,
+    unit_ids:        CASPECO_UNIT_IDS,
+    results
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Mappning: Caspeco-faktura → FortnoxInvoice-payload
+// Fältnamnen är best-guess baserade på Caspeco RMS API-konventioner.
+// Justera om ditt system returnerar andra fältnamn.
+// ────────────────────────────────────────────────────────────
+function mapCaspecoInvoiceToFortnoxInvoicePayload(inv, unit_id) {
+  // Caspeco kan använda camelCase eller PascalCase – stöd båda
+  const get = (camel, pascal) => inv?.[camel] ?? inv?.[pascal] ?? null;
+
+  const invoiceId     = String(get("id",            "Id")            ?? "").trim();
+  const invoiceNumber = String(get("invoiceNumber",  "InvoiceNumber") ?? get("number", "Number") ?? invoiceId).trim();
+  const customerName  = String(get("customerName",   "CustomerName")  ?? get("guestName", "GuestName") ?? "").trim();
+  const customerRef   = String(get("customerNumber", "CustomerNumber") ?? get("customerId", "CustomerId") ?? "").trim();
+
+  // Belopp – Caspeco använder ofta totalAmount eller total
+  const rawTotal   = get("totalAmount", "TotalAmount") ?? get("total", "Total") ?? get("amount", "Amount") ?? null;
+  const rawBalance = get("balance", "Balance") ?? get("remainingAmount", "RemainingAmount") ?? null;
+
+  const totalStr   = rawTotal   !== null && rawTotal   !== "" ? String(rawTotal)   : "";
+  const balanceStr = rawBalance !== null && rawBalance !== "" ? String(rawBalance) : "";
+
+  // Datum
+  const invoiceDateRaw = get("invoiceDate", "InvoiceDate") ?? get("createdAt", "CreatedAt") ?? get("date", "Date") ?? null;
+  const dueDateRaw     = get("dueDate",     "DueDate")     ?? get("paymentDueDate", "PaymentDueDate") ?? null;
+
+  // Caspeco kan ha valuta och OCR
+  const currency = String(get("currency", "Currency") ?? "SEK").trim();
+  const ocr      = String(get("ocr", "OCR") ?? get("ocrNumber", "OcrNumber") ?? "").trim();
+
+  // Bokningsreferenser (Caspeco-specifikt)
+  const bookingId  = String(get("bookingId", "BookingId")   ?? get("webBookingId", "WebBookingId") ?? "").trim();
+  const yourRef    = bookingId || String(get("reference", "Reference") ?? "").trim();
+  const ourRef     = String(get("ourReference", "OurReference") ?? "").trim();
+  const status     = String(get("status", "Status") ?? "").trim();
+
+  return {
+    // Identifiering – samma connection_id som för Caspeco-workorders
+    connection_id:         CASPECO_CONNECTION_ID || `caspeco_unit_${unit_id}`,
+
+    ft_document_number:    invoiceNumber || invoiceId,
+    ft_customer_number:    customerRef,
+    ft_customer_name:      customerName,
+
+    ft_invoice_date:       toIsoDate(invoiceDateRaw),
+    ft_due_date:           toIsoDate(dueDateRaw),
+
+    ft_total:              totalStr,
+    ft_balance:            balanceStr,
+    ft_currency:           currency,
+    ft_ocr:                ocr,
+
+    ft_cancelled:          status?.toLowerCase().includes("cancel") || false,
+    ft_sent:               !!invoiceNumber,               // rimlig proxy
+
+    ft_our_reference:      ourRef,
+    ft_your_order_number:  bookingId,                     // boknings-id som ordernr
+    ft_your_reference:     yourRef,
+
+    ft_url:                String(get("url", "Url") ?? get("@url", "@url") ?? "").trim(),
+    ft_raw_json:           JSON.stringify(inv || {}),
+
+    // Extra Caspeco-fält (sparas i raw_json men loggas separat)
+    _caspeco_booking_id:   bookingId || null,
+    _caspeco_unit_id:      unit_id,
+    _caspeco_invoice_id:   invoiceId || null,
+    _caspeco_status:       status || null
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// Upsert en Caspeco-faktura i Bubble FortnoxInvoice
+// Deduplicering: connection_id + ft_document_number (samma logik som Fortnox)
+// ────────────────────────────────────────────────────────────
+async function upsertCaspecoInvoice(unit_id, inv) {
+  const payload = mapCaspecoInvoiceToFortnoxInvoicePayload(inv, unit_id);
+  const connection_id = payload.connection_id;
+  const docNo         = payload.ft_document_number;
+
+  if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
+
+  // Ta bort interna _caspeco_*-nycklar från Bubble-payload (sparas bara i raw_json)
+  const bubblePayload = Object.fromEntries(
+    Object.entries(payload).filter(([k]) => !k.startsWith("_"))
+  );
+
+  // 1) Hitta befintlig på connection_id + dokumentnummer
+  let existing = await bubbleFindOne("FortnoxInvoice", [
+    { key: "connection_id",      constraint_type: "equals", value: connection_id },
+    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+  ]).catch(() => null);
+
+  const existingId = existing?._id || existing?.id || null;
+
+  if (existingId) {
+    const r = await bubblePatch("FortnoxInvoice", existingId, bubblePayload);
+    if (!bubbleOk(r)) {
+      const e = new Error("bubblePatch FortnoxInvoice (caspeco) failed");
+      e.detail = r;
+      throw e;
+    }
+    return { ok: true, mode: "update", id: existingId, docNo };
+  }
+
+  const created   = await bubbleCreate("FortnoxInvoice", bubblePayload);
+  const createdId =
+    (typeof created === "string" && created) ||
+    created?._id || created?.id ||
+    created?.response?._id || created?.response?.id ||
+    null;
+
+  if (!createdId) {
+    const e = new Error("bubbleCreate FortnoxInvoice (caspeco) failed");
+    e.detail = created;
+    throw e;
+  }
+
+  return { ok: true, mode: "create", id: createdId, docNo };
+}
+
+// ────────────────────────────────────────────────────────────
+// GET /caspeco/invoices
+// Hämtar fakturor från Caspeco (raw – ingen Bubble-synk)
+// Query: ?unit_id=13&changed_from=ISO&days_back=30
+// ────────────────────────────────────────────────────────────
+app.get("/caspeco/invoices", requireApiKey, async (req, res) => {
+  try {
+    const {
+      unit_id      = null,
+      changed_from = null,
+      days_back    = 30,
+      start        = null,
+      end          = null
+    } = req.query || {};
+
+    const unitIds = unit_id
+      ? [Number(unit_id)]
+      : CASPECO_UNIT_IDS;
+
+    let changedFrom = changed_from;
+    if (!changedFrom && !start) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - Number(days_back));
+      changedFrom = d.toISOString();
+    }
+
+    const query = { unitId: unitIds };
+    if (changedFrom)  query.changedFrom = changedFrom;
+    if (start)        query.startTime   = start;
+    if (end)          query.endTime     = end;
+
+    const data = await caspecoFetch(CASPECO_INVOICE_PATH, { query });
+
+    return res.json({
+      ok:          true,
+      system:      CASPECO_SYSTEM,
+      unit_ids:    unitIds,
+      changed_from: changedFrom,
+      count:       Array.isArray(data) ? data.length : null,
+      invoices:    data
+    });
+  } catch (e) {
+    return res.status(e.status || 500).json({
+      ok:     false,
+      error:  e?.message || String(e),
+      detail: e?.detail  || null
+    });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// POST /caspeco/invoices/sync
+// Delta-sync för EN unit → upsert Bubble FortnoxInvoice (source=caspeco)
+// Body: { unit_id?, changed_from?, days_back? }
+// ────────────────────────────────────────────────────────────
+app.post("/caspeco/invoices/sync", requireApiKey, async (req, res) => {
+  try {
+    const {
+      unit_id      = CASPECO_UNIT_ID,
+      changed_from = null,
+      days_back    = 30
+    } = req.body || {};
+
+    let changedFrom = changed_from;
+    if (!changedFrom) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - Number(days_back));
+      changedFrom = d.toISOString();
+    }
+
+    const uid   = Number(unit_id);
+    const query = {
+      changedFrom,
+      unitId: [uid]
+    };
+
+    const data    = await caspecoFetch(CASPECO_INVOICE_PATH, { query });
+    const list    = Array.isArray(data) ? data : [];
+
+    let created = 0, updated = 0, errors = 0;
+    let first_error = null;
+
+    for (const inv of list) {
+      try {
+        const r = await upsertCaspecoInvoice(uid, inv);
+        if (r.mode === "create") created++;
+        else                      updated++;
+      } catch (e) {
+        errors++;
+        if (!first_error) {
+          first_error = {
+            docNo:   String(inv?.invoiceNumber ?? inv?.InvoiceNumber ?? inv?.id ?? "?"),
+            message: e?.message || String(e),
+            detail:  e?.detail  || null
+          };
+        }
+      }
+    }
+
+    return res.json({
+      ok:           true,
+      system:       CASPECO_SYSTEM,
+      unit_id:      uid,
+      changed_from: changedFrom,
+      fetched:      list.length,
+      counts:       { created, updated, errors },
+      first_error
+    });
+  } catch (e) {
+    return res.status(e.status || 500).json({
+      ok:     false,
+      error:  e?.message || String(e),
+      detail: e?.detail  || null
+    });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// POST /caspeco/invoices/sync-all
+// Delta-sync för ALLA konfigurerade units parallellt → FortnoxInvoice
+// Body: { changed_from?, days_back? }
+// ────────────────────────────────────────────────────────────
+app.post("/caspeco/invoices/sync-all", requireApiKey, async (req, res) => {
+  try {
+    const {
+      changed_from = null,
+      days_back    = 30
+    } = req.body || {};
+
+    let changedFrom = changed_from;
+    if (!changedFrom) {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - Number(days_back));
+      changedFrom = d.toISOString();
+    }
+
+    // Kör alla units parallellt – exakt samma mönster som bookings/sync-all
+    const unitResults = await Promise.all(
+      CASPECO_UNIT_IDS.map(async uid => {
+        const query = {
+          changedFrom,
+          unitId: [uid]
+        };
+
+        try {
+          const data = await caspecoFetch(CASPECO_INVOICE_PATH, { query });
+          const list = Array.isArray(data) ? data : [];
+
+          let created = 0, updated = 0, errors = 0, first_error = null;
+
+          for (const inv of list) {
+            try {
+              const r = await upsertCaspecoInvoice(uid, inv);
+              if (r.mode === "create") created++;
+              else                      updated++;
+            } catch (e) {
+              errors++;
+              if (!first_error) {
+                first_error = {
+                  docNo:   String(inv?.invoiceNumber ?? inv?.InvoiceNumber ?? inv?.id ?? "?"),
+                  message: e?.message || String(e)
+                };
+              }
+            }
+          }
+
+          return {
+            unit_id: uid,
+            ok:      true,
+            fetched: list.length,
+            counts:  { created, updated, errors },
+            first_error
+          };
+        } catch (e) {
+          return {
+            unit_id: uid,
+            ok:      false,
+            error:   e?.message || String(e),
+            status:  e?.status  || null,
+            detail:  e?.detail  || null
+          };
+        }
+      })
+    );
+
+    const totalFetched = unitResults.reduce((s, r) => s + (r.fetched  || 0), 0);
+    const totalCreated = unitResults.reduce((s, r) => s + (r.counts?.created || 0), 0);
+    const totalUpdated = unitResults.reduce((s, r) => s + (r.counts?.updated || 0), 0);
+    const totalErrors  = unitResults.reduce((s, r) => s + (r.counts?.errors  || 0), 0);
+
+    return res.json({
+      ok:           true,
+      system:       CASPECO_SYSTEM,
+      unit_ids:     CASPECO_UNIT_IDS,
+      changed_from: changedFrom,
+      totals:       { fetched: totalFetched, created: totalCreated, updated: totalUpdated, errors: totalErrors },
+      per_unit:     unitResults
+    });
+  } catch (e) {
+    return res.status(e.status || 500).json({
+      ok:     false,
+      error:  e?.message || String(e),
+      detail: e?.detail  || null
+    });
+  }
+});
+// ────────────────────────────────────────────────────────────
 // GET /kpi/summary
 // Centralt KPI-block – hämtar och räknar ihop all statistik
 // från Bubble för användning i HTML-element runt om i Mira.
