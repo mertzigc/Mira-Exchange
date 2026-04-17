@@ -9669,7 +9669,7 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
 // ────────────────────────────────────────────────────────────
 // Tengella – Fakturor
 // Bubble-datatyp: FortnoxInvoice (återanvänder befintlig modell)
-// connection_id: 1771579481117x119544302020443410 (via env TENGELLA_CONNECTION_ID)
+// connection_id: via env TENGELLA_CONNECTION_ID
 // Endpoint: GET /v2/Invoices  (samma namnkonvention som /v2/WorkOrders)
 // ────────────────────────────────────────────────────────────
 
@@ -9697,28 +9697,28 @@ function tengellaDate(v) {
 
 // ────────────────────────────────────────────────────────────
 // Mappning: Tengella-faktura → FortnoxInvoice-payload
-// Tengella använder PascalCase (samma som WorkOrders)
+// company sätts separat i upsert-funktionen efter ClientCompany-lookup
 // ────────────────────────────────────────────────────────────
-function mapTengellaInvoiceToFortnoxInvoicePayload(inv) {
-  // Fältnamn enligt Tengella Swagger: InvoiceId, InvoiceNo, TotalAmount,
-  // TaxReductionAmount, PaidAmount, InvoiceDate, DueDate,
-  // TaxReductionType, Void, InvoiceType, Url (+ Next/ExistsMoreData på listan)
-
+function mapTengellaInvoiceToFortnoxInvoicePayload(inv, { companyId = null } = {}) {
   const invoiceNo = String(inv?.InvoiceNo ?? "").trim() ||
                     String(inv?.InvoiceId  ?? "").trim();
 
-  const totalValue   = inv?.TotalAmount  != null ? String(inv.TotalAmount)  : "";
-  // Kvarvarande saldo = Total - Betalt
-  const paid         = Number(inv?.PaidAmount ?? 0);
+  const totalValue   = inv?.TotalAmount != null ? String(inv.TotalAmount) : "";
+  const paid         = Number(inv?.PaidAmount  ?? 0);
   const total        = Number(inv?.TotalAmount ?? 0);
   const balanceValue = inv?.TotalAmount != null ? String(total - paid) : "";
 
-  return {
+  // OCR: Tengella har det som Ocr/OCR/OcrNumber, annars tom
+  const ocr    = String(inv?.Ocr ?? inv?.OCR ?? inv?.OcrNumber ?? "").trim();
+  // PDF-länk: Tengella returnerar Url i list-svaret
+  const pdfUrl = String(inv?.Url ?? inv?.PdfUrl ?? inv?.Uri ?? "").trim();
+
+  const payload = {
     connection_id:        TENGELLA_CONNECTION_ID,
 
     ft_document_number:   invoiceNo,
-    ft_customer_number:   String(inv?.InvoiceId ?? "").trim(),  // bästa proxy för kundnr
-    ft_customer_name:     "",                                    // ej i list-svaret
+    ft_customer_number:   String(inv?.CustomerId ?? inv?.InvoiceId ?? "").trim(),
+    ft_customer_name:     "",   // ej i list-svaret
 
     ft_invoice_date:      toIsoDate(tengellaDate(inv?.InvoiceDate)),
     ft_due_date:          toIsoDate(tengellaDate(inv?.DueDate)),
@@ -9726,46 +9726,94 @@ function mapTengellaInvoiceToFortnoxInvoicePayload(inv) {
     ft_total:             totalValue,
     ft_balance:           balanceValue,
     ft_currency:          "SEK",
-    ft_ocr:               "",
+    ft_ocr:               ocr,
 
     ft_cancelled:         inv?.Void === true,
     ft_sent:              !!invoiceNo,
 
-    ft_our_reference:     String(inv?.InvoiceType ?? "").trim(),
+    ft_our_reference:     String(inv?.InvoiceType      ?? "").trim(),
     ft_your_order_number: "",
     ft_your_reference:    String(inv?.TaxReductionType ?? "").trim(),
 
-    ft_url:               String(inv?.Url ?? "").trim(),
+    ft_url:               pdfUrl,
     ft_raw_json:          JSON.stringify(inv || {}),
   };
+
+  if (companyId) payload.company = companyId;
+
+  return payload;
+}
+
+// ────────────────────────────────────────────────────────────
+// Resolve ClientCompany för en Tengella-kund
+// TengellaCustomer → org_no → match/skapa ClientCompany
+// Samma logik som workorders-synken
+// ────────────────────────────────────────────────────────────
+async function resolveClientCompanyForTengellaInvoice(customerId) {
+  if (!customerId) return null;
+
+  const tc = await bubbleFindOne("TengellaCustomer", [
+    { key: "tengella_customer_id", constraint_type: "equals", value: Number(customerId) }
+  ]).catch(() => null);
+
+  if (!tc) return null;
+
+  // Snabb väg: TengellaCustomer har redan company-relation
+  if (tc.company) return tc.company;
+
+  // Matcha/skapa ClientCompany via org_no
+  const orgRaw  = String(tc?.org_no || tc?.org_no_raw || tc?.organization_number || "").trim();
+  const orgNorm = normalizeOrgNo(orgRaw);
+  if (!orgNorm) return null;
+
+  let cc = await findClientCompanyByOrgNo(orgNorm).catch(() => null);
+  let ccId = cc?._id || cc?.id || null;
+
+  if (!ccId && typeof ensureClientCompanyForTengellaCustomer === "function") {
+    ccId = await ensureClientCompanyForTengellaCustomer({
+      org_no:       orgNorm,
+      CustomerName: tc?.name || tc?.customer_name || null
+    }).catch(() => null);
+  }
+
+  // Spara tillbaka på TengellaCustomer så nästa anrop går snabbare
+  if (ccId && tc._id) {
+    await bubblePatch("TengellaCustomer", tc._id, { company: ccId }).catch(() => null);
+  }
+
+  return ccId || null;
 }
 
 // ────────────────────────────────────────────────────────────
 // Upsert en Tengella-faktura i Bubble FortnoxInvoice
 // Deduplicering: connection_id + ft_document_number
 // ────────────────────────────────────────────────────────────
-async function upsertTengellaInvoiceToBubble(inv) {
-  const payload = mapTengellaInvoiceToFortnoxInvoicePayload(inv);
-  const docNo   = payload.ft_document_number;
+async function upsertTengellaInvoiceToBubble(inv, { customerId = null } = {}) {
+  const invoiceNo = String(inv?.InvoiceNo ?? "").trim() ||
+                    String(inv?.InvoiceId  ?? "").trim();
 
-  if (!docNo) return { ok: false, skipped: true, reason: "missing_invoice_number" };
+  if (!invoiceNo) return { ok: false, skipped: true, reason: "missing_invoice_number" };
 
-  // 1) Hitta befintlig på connection_id + dokumentnummer
+  const companyId = await resolveClientCompanyForTengellaInvoice(customerId);
+  const payload   = mapTengellaInvoiceToFortnoxInvoicePayload(inv, { companyId });
+
   let existing = await bubbleFindOne("FortnoxInvoice", [
     { key: "connection_id",      constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
-    { key: "ft_document_number", constraint_type: "equals", value: docNo }
+    { key: "ft_document_number", constraint_type: "equals", value: invoiceNo }
   ]).catch(() => null);
 
   const existingId = existing?._id || existing?.id || null;
 
   if (existingId) {
+    // Skriv aldrig över company med null vid update
+    if (!companyId) delete payload.company;
     const r = await bubblePatch("FortnoxInvoice", existingId, payload);
     if (!bubbleOk(r)) {
       const e = new Error("bubblePatch FortnoxInvoice (tengella) failed");
       e.detail = r;
       throw e;
     }
-    return { ok: true, mode: "update", id: existingId, docNo };
+    return { ok: true, mode: "update", id: existingId, invoiceNo };
   }
 
   const created   = await bubbleCreate("FortnoxInvoice", payload);
@@ -9781,7 +9829,7 @@ async function upsertTengellaInvoiceToBubble(inv) {
     throw e;
   }
 
-  return { ok: true, mode: "create", id: createdId, docNo };
+  return { ok: true, mode: "create", id: createdId, invoiceNo };
 }
 
 // ────────────────────────────────────────────────────────────
@@ -9789,7 +9837,6 @@ async function upsertTengellaInvoiceToBubble(inv) {
 // Loopar över alla TengellaCustomers i Bubble och hämtar fakturor
 // per customerId – /v2/Invoices kräver customerId för att returnera data.
 // Body: { orgNo?, customerId?, limit?, maxPages? }
-//   customerId = valfritt, kör bara för en specifik kund
 // ────────────────────────────────────────────────────────────
 app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
   try {
@@ -9807,7 +9854,6 @@ app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
     if (singleCustomer) {
       customerIds = [singleCustomer];
     } else {
-      // Paginera alla TengellaCustomer-poster ur Bubble
       let cur = 0;
       while (true) {
         const qs = new URLSearchParams({ limit: "100", cursor: String(cur) });
@@ -9825,7 +9871,7 @@ app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
               .filter(n => n > 0);
             customerIds.push(...ids);
             done = true;
-            if (results.length < 100) { cur = -1; } // sista sidan
+            if (results.length < 100) { cur = -1; }
             else                      { cur += 100; }
             break;
           } catch (_) {}
@@ -9840,7 +9886,6 @@ app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
     let created = 0, updated = 0, skipped = 0;
     const errors = [];
 
-    // Hämta fakturor per kund
     for (const customerId of customerIds) {
       let cursor = null;
       let page   = 0;
@@ -9854,8 +9899,8 @@ app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
 
         for (const inv of data) {
           try {
-            const r = await upsertTengellaInvoiceToBubble(inv);
-            if (r.skipped)             skipped++;
+            const r = await upsertTengellaInvoiceToBubble(inv, { customerId });
+            if (r.skipped)                skipped++;
             else if (r.mode === "create") created++;
             else                          updated++;
           } catch (e) {
@@ -9873,11 +9918,11 @@ app.post("/tengella/invoices/sync", requireSyncSecret, async (req, res) => {
     }
 
     return res.json({
-      ok:           true,
-      customers:    customerIds.length,
-      fetched:      totalFetched,
-      counts:       { created, updated, skipped, errors: errors.length },
-      errors:       errors.slice(0, 50)
+      ok:        true,
+      customers: customerIds.length,
+      fetched:   totalFetched,
+      counts:    { created, updated, skipped, errors: errors.length },
+      errors:    errors.slice(0, 50)
     });
   } catch (e) {
     console.error("[tengella/invoices/sync] fatal", e);
