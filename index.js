@@ -6971,6 +6971,45 @@ async function ensureClientCompanyForTengellaCustomer(tCustomer) {
   const createdId = await bubbleCreate("ClientCompany", payload);
   return createdId || null;
 }
+// ────────────────────────────────────────────────────────────
+// Caspeco – Säkerställ ClientCompany för en bokning
+// Prioritet:
+//   1) contact.orgNr       → direkt org.nr
+//   2) contact.customerId  → slå upp Customer via API för att få orgNr
+//   3) contact.customerName → används som namn vid skapande
+// Skapar ClientCompany om det inte finns, precis som Fortnox/Tengella.
+// ────────────────────────────────────────────────────────────
+async function ensureClientCompanyForCaspecoBooking(b) {
+  const contact = b?.contact || null;
+  if (!contact) return null;
+
+  // 1) Försök direkt med contact.orgNr (bekräftat fält i Caspeco Contact-schema)
+  const orgRaw = String(contact?.orgNr || "").trim();
+  const orgNorm = normalizeOrgNo(orgRaw);
+
+  const companyName = String(
+    contact?.customerName || // bekräftat fält i Contact-schema
+    (contact?.fname && contact?.lname ? `${contact.fname} ${contact.lname}` : "") ||
+    ""
+  ).trim();
+
+  if (orgNorm) {
+    const existing = await findClientCompanyByOrgNo(orgNorm).catch(() => null);
+    if (existing?._id) return existing._id;
+
+    // Skapa nytt ClientCompany
+    const createdId = await bubbleCreate("ClientCompany", {
+      Name_company:              companyName || orgNorm,
+      [CLIENTCOMPANY_ORG_FIELD]: orgNorm
+    }).catch(() => null);
+    return createdId || null;
+  }
+
+  // 2) Om inget orgNr på contact men customerId finns – returnera null för nu
+  //    (vi har inte org.nr att matcha/skapa på)
+  return null;
+}
+
 function toBubbleDate(v) {
   if (!v) return null;
   const d = new Date(String(v));
@@ -9517,6 +9556,9 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
       if (!bookingId) continue;
 
       try {
+        // Resolve ClientCompany via contact.orgNr (bekräftat Caspeco Swagger-fält)
+        const companyId = await ensureClientCompanyForCaspecoBooking(b).catch(() => null);
+
         const payload = {
           // ── Identifiering ──────────────────────────────────────
           caspeco_booking_id:    bookingId,
@@ -9545,10 +9587,16 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
           message:               String(b?.message         ?? "").trim(),
           message_internal:      String(b?.messageInternal ?? "").trim(),
 
-          // ── Kontakt ────────────────────────────────────────────
-          contact_name:          String(b?.contact?.name   ?? b?.internalContactName ?? "").trim(),
+          // ── Kontakt (Caspeco Contact-schema: fname, lname, mobile, email, orgNr, customerName) ──
+          contact_name:          String(
+            (b?.contact?.fname ? b.contact.fname + " " + (b?.contact?.lname ?? "") : "") ||
+            b?.internalContactName || ""
+          ).trim(),
           contact_email:         String(b?.contact?.email  ?? "").trim(),
-          contact_phone:         String(b?.contact?.phone  ?? b?.contact?.mobile ?? "").trim(),
+          contact_phone:         String(b?.contact?.mobile ?? b?.contact?.phone ?? "").trim(),
+          contact_org_nr:        String(b?.contact?.orgNr  ?? "").trim(),
+          contact_customer_name: String(b?.contact?.customerName ?? "").trim(),
+          contact_customer_id:   b?.contact?.customerId ? Number(b.contact.customerId) : null,
 
           // ── Arrangement & taggar ───────────────────────────────
           arrangement_name:      String(b?.arrangementName ?? "").trim(),
@@ -9561,6 +9609,9 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
           charge_should_pay:     b?.chargeShouldPayAmount      ?? null,
           charge_payed:          b?.chargePayedAmount          ?? null,
           charge_refunded:       b?.chargeRefundedAmount       ?? null,
+
+          // ── ClientCompany (via contact.orgNr → Bubble ClientCompany) ──
+          ...(companyId ? { company: companyId } : {}),
 
           // ── Raw JSON ───────────────────────────────────────────
           raw_json:              JSON.stringify(b)
@@ -9641,52 +9692,44 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
           if (!bookingId) continue;
 
           try {
+            const companyId = await ensureClientCompanyForCaspecoBooking(b).catch(() => null);
+
             const payload = {
-              // ── Identifiering ──────────────────────────────────────
               caspeco_booking_id:    bookingId,
               unit_id:               uid,
               global_booking_number: String(b?.globalBookingNumber ?? "").trim(),
               long_booking_number:   String(b?.longBookingNumber   ?? "").trim(),
-
-              // ── Tid ────────────────────────────────────────────────
               start_time:            b?.start       ?? null,
               end_time:              b?.end         ?? null,
               created_date:          b?.createdDate ?? null,
               change_date:           b?.changeDate  ?? null,
               cancel_allowed_before: b?.cancelAllowedBeforeUtc ?? null,
               valid_until:           b?.validUntil  ?? null,
-
-              // ── Status ─────────────────────────────────────────────
               status:                String(b?.statusName ?? b?.status ?? "").trim(),
               status_code:           Number(b?.status     ?? 0) || null,
               sub_status:            Number(b?.subStatus  ?? 0) || null,
-
-              // ── Gäster ─────────────────────────────────────────────
               guest_count:           Number(b?.guests         ?? 0) || null,
               guest_count_children:  Number(b?.guestsChildren ?? 0) || null,
-
-              // ── Meddelanden ────────────────────────────────────────
               message:               String(b?.message         ?? "").trim(),
               message_internal:      String(b?.messageInternal ?? "").trim(),
-
-              // ── Kontakt ────────────────────────────────────────────
-              contact_name:          String(b?.contact?.name   ?? b?.internalContactName ?? "").trim(),
+              contact_name:          String(
+                (b?.contact?.fname ? b.contact.fname + " " + (b?.contact?.lname ?? "") : "") ||
+                b?.internalContactName || ""
+              ).trim(),
               contact_email:         String(b?.contact?.email  ?? "").trim(),
-              contact_phone:         String(b?.contact?.phone  ?? b?.contact?.mobile ?? "").trim(),
-
-              // ── Arrangement & taggar ───────────────────────────────
+              contact_phone:         String(b?.contact?.mobile ?? b?.contact?.phone ?? "").trim(),
+              contact_org_nr:        String(b?.contact?.orgNr  ?? "").trim(),
+              contact_customer_name: String(b?.contact?.customerName ?? "").trim(),
+              contact_customer_id:   b?.contact?.customerId ? Number(b.contact.customerId) : null,
               arrangement_name:      String(b?.arrangementName ?? "").trim(),
               event_tag:             String(b?.eventTag        ?? "").trim(),
               language:              String(b?.language        ?? "").trim(),
-
-              // ── Betalning ──────────────────────────────────────────
               charge_type:           Number(b?.chargeType          ?? 0) || null,
               charge_status:         Number(b?.chargeStatus        ?? 0) || null,
               charge_should_pay:     b?.chargeShouldPayAmount      ?? null,
               charge_payed:          b?.chargePayedAmount          ?? null,
               charge_refunded:       b?.chargeRefundedAmount       ?? null,
-
-              // ── Raw JSON ───────────────────────────────────────────
+              ...(companyId ? { company: companyId } : {}),
               raw_json:              JSON.stringify(b)
             };
 
