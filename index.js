@@ -9636,15 +9636,15 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
 
         Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
-        const existing = await bubbleFindOne("CaspecoBooking", [
+        const existing = await bubbleFindOne("caspecobooking", [
           { key: "caspeco_booking_id", constraint_type: "equals", value: bookingId }
         ]).catch(() => null);
 
         if (existing?._id) {
-          await bubblePatch("CaspecoBooking", existing._id, payload);
+          await bubblePatch("caspecobooking", existing._id, payload);
           updated++;
         } else {
-          await bubbleCreate("CaspecoBooking", payload);
+          await bubbleCreate("caspecobooking", payload);
           created++;
         }
       } catch (e) {
@@ -9757,15 +9757,15 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
 
             Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
-            const existing = await bubbleFindOne("CaspecoBooking", [
+            const existing = await bubbleFindOne("caspecobooking", [
               { key: "caspeco_booking_id", constraint_type: "equals", value: bookingId }
             ]).catch(() => null);
 
             if (existing?._id) {
-              await bubblePatch("CaspecoBooking", existing._id, payload);
+              await bubblePatch("caspecobooking", existing._id, payload);
               updated++;
             } else {
-              await bubbleCreate("CaspecoBooking", payload);
+              await bubbleCreate("caspecobooking", payload);
               created++;
             }
           } catch (e) {
