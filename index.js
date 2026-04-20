@@ -9513,23 +9513,57 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
     let first_error = null;
 
     for (const b of list) {
-      const bookingId = String(b?.id ?? b?.Id ?? "").trim();
+      const bookingId = String(b?.guid ?? b?.id ?? b?.Id ?? "").trim();
       if (!bookingId) continue;
 
       try {
         const payload = {
-          caspeco_booking_id: bookingId,
-          unit_id: Number(unit_id),
-          section_id:    String(b?.sectionId   ?? b?.SectionId   ?? ""),
-          section_name:  String(b?.sectionName ?? b?.SectionName ?? ""),
-          start_time:    b?.startTime  ?? b?.StartTime  ?? null,
-          end_time:      b?.endTime    ?? b?.EndTime    ?? null,
-          status:        String(b?.status  ?? b?.Status  ?? ""),
-          guest_count:   Number(b?.guestCount ?? b?.GuestCount ?? 0) || null,
-          contact_name:  String(b?.contact?.name  ?? b?.Contact?.Name  ?? ""),
-          contact_email: String(b?.contact?.email ?? b?.Contact?.Email ?? ""),
-          booking_text:  String(b?.bookingText ?? b?.BookingText ?? ""),
-          raw_json:      JSON.stringify(b)
+          // ── Identifiering ──────────────────────────────────────
+          caspeco_booking_id:    bookingId,
+          unit_id:               Number(unit_id),
+          global_booking_number: String(b?.globalBookingNumber ?? "").trim(),
+          long_booking_number:   String(b?.longBookingNumber   ?? "").trim(),
+
+          // ── Tid ────────────────────────────────────────────────
+          start_time:            b?.start       ?? null,
+          end_time:              b?.end         ?? null,
+          created_date:          b?.createdDate ?? null,
+          change_date:           b?.changeDate  ?? null,
+          cancel_allowed_before: b?.cancelAllowedBeforeUtc ?? null,
+          valid_until:           b?.validUntil  ?? null,
+
+          // ── Status ─────────────────────────────────────────────
+          status:                String(b?.statusName ?? b?.status ?? "").trim(),
+          status_code:           Number(b?.status     ?? 0) || null,
+          sub_status:            Number(b?.subStatus  ?? 0) || null,
+
+          // ── Gäster ─────────────────────────────────────────────
+          guest_count:           Number(b?.guests         ?? 0) || null,
+          guest_count_children:  Number(b?.guestsChildren ?? 0) || null,
+
+          // ── Meddelanden ────────────────────────────────────────
+          message:               String(b?.message         ?? "").trim(),
+          message_internal:      String(b?.messageInternal ?? "").trim(),
+
+          // ── Kontakt ────────────────────────────────────────────
+          contact_name:          String(b?.contact?.name   ?? b?.internalContactName ?? "").trim(),
+          contact_email:         String(b?.contact?.email  ?? "").trim(),
+          contact_phone:         String(b?.contact?.phone  ?? b?.contact?.mobile ?? "").trim(),
+
+          // ── Arrangement & taggar ───────────────────────────────
+          arrangement_name:      String(b?.arrangementName ?? "").trim(),
+          event_tag:             String(b?.eventTag        ?? "").trim(),
+          language:              String(b?.language        ?? "").trim(),
+
+          // ── Betalning ──────────────────────────────────────────
+          charge_type:           Number(b?.chargeType          ?? 0) || null,
+          charge_status:         Number(b?.chargeStatus        ?? 0) || null,
+          charge_should_pay:     b?.chargeShouldPayAmount      ?? null,
+          charge_payed:          b?.chargePayedAmount          ?? null,
+          charge_refunded:       b?.chargeRefundedAmount       ?? null,
+
+          // ── Raw JSON ───────────────────────────────────────────
+          raw_json:              JSON.stringify(b)
         };
 
         Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
@@ -9603,23 +9637,57 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
         let created = 0, updated = 0, errors = 0, first_error = null;
 
         for (const b of list) {
-          const bookingId = String(b?.id ?? b?.Id ?? "").trim();
+          const bookingId = String(b?.guid ?? b?.id ?? b?.Id ?? "").trim();
           if (!bookingId) continue;
 
           try {
             const payload = {
-              caspeco_booking_id: bookingId,
-              unit_id:       uid,
-              section_id:    String(b?.sectionId   ?? b?.SectionId   ?? ""),
-              section_name:  String(b?.sectionName ?? b?.SectionName ?? ""),
-              start_time:    b?.startTime  ?? b?.StartTime  ?? null,
-              end_time:      b?.endTime    ?? b?.EndTime    ?? null,
-              status:        String(b?.status  ?? b?.Status  ?? ""),
-              guest_count:   Number(b?.guestCount ?? b?.GuestCount ?? 0) || null,
-              contact_name:  String(b?.contact?.name  ?? b?.Contact?.Name  ?? ""),
-              contact_email: String(b?.contact?.email ?? b?.Contact?.Email ?? ""),
-              booking_text:  String(b?.bookingText ?? b?.BookingText ?? ""),
-              raw_json:      JSON.stringify(b)
+              // ── Identifiering ──────────────────────────────────────
+              caspeco_booking_id:    bookingId,
+              unit_id:               uid,
+              global_booking_number: String(b?.globalBookingNumber ?? "").trim(),
+              long_booking_number:   String(b?.longBookingNumber   ?? "").trim(),
+
+              // ── Tid ────────────────────────────────────────────────
+              start_time:            b?.start       ?? null,
+              end_time:              b?.end         ?? null,
+              created_date:          b?.createdDate ?? null,
+              change_date:           b?.changeDate  ?? null,
+              cancel_allowed_before: b?.cancelAllowedBeforeUtc ?? null,
+              valid_until:           b?.validUntil  ?? null,
+
+              // ── Status ─────────────────────────────────────────────
+              status:                String(b?.statusName ?? b?.status ?? "").trim(),
+              status_code:           Number(b?.status     ?? 0) || null,
+              sub_status:            Number(b?.subStatus  ?? 0) || null,
+
+              // ── Gäster ─────────────────────────────────────────────
+              guest_count:           Number(b?.guests         ?? 0) || null,
+              guest_count_children:  Number(b?.guestsChildren ?? 0) || null,
+
+              // ── Meddelanden ────────────────────────────────────────
+              message:               String(b?.message         ?? "").trim(),
+              message_internal:      String(b?.messageInternal ?? "").trim(),
+
+              // ── Kontakt ────────────────────────────────────────────
+              contact_name:          String(b?.contact?.name   ?? b?.internalContactName ?? "").trim(),
+              contact_email:         String(b?.contact?.email  ?? "").trim(),
+              contact_phone:         String(b?.contact?.phone  ?? b?.contact?.mobile ?? "").trim(),
+
+              // ── Arrangement & taggar ───────────────────────────────
+              arrangement_name:      String(b?.arrangementName ?? "").trim(),
+              event_tag:             String(b?.eventTag        ?? "").trim(),
+              language:              String(b?.language        ?? "").trim(),
+
+              // ── Betalning ──────────────────────────────────────────
+              charge_type:           Number(b?.chargeType          ?? 0) || null,
+              charge_status:         Number(b?.chargeStatus        ?? 0) || null,
+              charge_should_pay:     b?.chargeShouldPayAmount      ?? null,
+              charge_payed:          b?.chargePayedAmount          ?? null,
+              charge_refunded:       b?.chargeRefundedAmount       ?? null,
+
+              // ── Raw JSON ───────────────────────────────────────────
+              raw_json:              JSON.stringify(b)
             };
 
             Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
