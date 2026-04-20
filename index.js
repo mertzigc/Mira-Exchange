@@ -9576,14 +9576,13 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
         const payload = {
           // ── Identifiering ──────────────────────────────────────
           booking_guid:    bookingId,
-          unit_id:               Number(unit_id),
+          unit_id:               String(unit_id),
           global_booking_number: String(bd?.globalBookingNumber ?? "").trim(),
           long_booking_number:   String(bd?.longBookingNumber   ?? "").trim(),
 
           // ── Tid ────────────────────────────────────────────────
           start_time:            bd?.start       ?? null,
           end_time:              bd?.end         ?? null,
-          created_date:          bd?.createdDate ?? null,
           change_date:           bd?.changeDate  ?? null,
           cancel_allowed_before: bd?.cancelAllowedBeforeUtc ?? null,
           valid_until:           bd?.validUntil  ?? null,
@@ -9656,7 +9655,7 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
     return res.json({
       ok: true,
       system: CASPECO_SYSTEM,
-      unit_id: Number(unit_id),
+      unit_id: String(unit_id),
       changed_from: changedFrom,
       fetched: list.length,
       counts: { created, updated, errors },
@@ -9717,12 +9716,11 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
 
             const payload = {
               booking_guid:    bookingId,
-              unit_id:               uid,
+              unit_id:               String(uid),
               global_booking_number: String(bd?.globalBookingNumber ?? "").trim(),
               long_booking_number:   String(bd?.longBookingNumber   ?? "").trim(),
               start_time:            bd?.start       ?? null,
               end_time:              bd?.end         ?? null,
-              created_date:          bd?.createdDate ?? null,
               change_date:           bd?.changeDate  ?? null,
               cancel_allowed_before: bd?.cancelAllowedBeforeUtc ?? null,
               valid_until:           bd?.validUntil  ?? null,
