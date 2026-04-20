@@ -9575,7 +9575,7 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
 
         const payload = {
           // ── Identifiering ──────────────────────────────────────
-          caspeco_booking_id:    bookingId,
+          booking_guid:    bookingId,
           unit_id:               Number(unit_id),
           global_booking_number: String(bd?.globalBookingNumber ?? "").trim(),
           long_booking_number:   String(bd?.longBookingNumber   ?? "").trim(),
@@ -9637,7 +9637,7 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
         Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
         const existing = await bubbleFindOne("caspecobooking", [
-          { key: "caspeco_booking_id", constraint_type: "equals", value: bookingId }
+          { key: "booking_guid", constraint_type: "equals", value: bookingId }
         ]).catch(() => null);
 
         if (existing?._id) {
@@ -9716,7 +9716,7 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
             const sectionName = caspecoSectionName(bd);
 
             const payload = {
-              caspeco_booking_id:    bookingId,
+              booking_guid:    bookingId,
               unit_id:               uid,
               global_booking_number: String(bd?.globalBookingNumber ?? "").trim(),
               long_booking_number:   String(bd?.longBookingNumber   ?? "").trim(),
@@ -9758,7 +9758,7 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
             Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
             const existing = await bubbleFindOne("caspecobooking", [
-              { key: "caspeco_booking_id", constraint_type: "equals", value: bookingId }
+              { key: "booking_guid", constraint_type: "equals", value: bookingId }
             ]).catch(() => null);
 
             if (existing?._id) {
