@@ -9610,7 +9610,7 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
           ).trim(),
           contact_email:         String(bd?.contact?.email  ?? "").trim(),
           contact_phone:         String(bd?.contact?.mobile ?? bd?.contact?.phone ?? "").trim(),
-          contact_org_nr:        String(bd?.contact?.orgNr  ?? "").trim(),
+          contact_org_nr:        String(bd?.customer?.orgNr ?? bd?.contact?.orgNr ?? "").trim(),
           contact_customer_name: String(bd?.customer?.name  ?? bd?.contact?.customerName ?? "").trim(),
           contact_customer_id:   bd?.customer?.id ? Number(bd.customer.id) : null,
 
@@ -9738,7 +9738,7 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
               ).trim(),
               contact_email:         String(bd?.contact?.email  ?? "").trim(),
               contact_phone:         String(bd?.contact?.mobile ?? bd?.contact?.phone ?? "").trim(),
-              contact_org_nr:        String(bd?.contact?.orgNr  ?? "").trim(),
+              contact_org_nr:        String(bd?.customer?.orgNr ?? bd?.contact?.orgNr ?? "").trim(),
               contact_customer_name: String(bd?.customer?.name  ?? bd?.contact?.customerName ?? "").trim(),
               contact_customer_id:   bd?.customer?.id ? Number(bd.customer.id) : null,
               arrangement_name:      String(bd?.arrangementName ?? "").trim(),
