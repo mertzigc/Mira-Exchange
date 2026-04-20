@@ -9589,8 +9589,8 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
 
           // ── Status ─────────────────────────────────────────────
           status:                String(bd?.statusName ?? bd?.status ?? "").trim(),
-          status_code:           Number(bd?.status     ?? 0) || null,
-          sub_status:            Number(bd?.subStatus  ?? 0) || null,
+          status_code:           String(bd?.status ?? ""),
+          sub_status:            String(bd?.subStatus ?? ""),
 
           // ── Gäster ─────────────────────────────────────────────
           guest_count:           Number(bd?.guests         ?? 0) || null,
@@ -9620,11 +9620,11 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
           language:              String(bd?.language        ?? "").trim(),
 
           // ── Betalning ──────────────────────────────────────────
-          charge_type:           Number(bd?.chargeType          ?? 0) || null,
-          charge_status:         Number(bd?.chargeStatus        ?? 0) || null,
-          charge_should_pay:     bd?.chargeShouldPayAmount      ?? null,
-          charge_payed:          bd?.chargePayedAmount          ?? null,
-          charge_refunded:       bd?.chargeRefundedAmount       ?? null,
+          charge_type:           String(bd?.chargeType ?? ""),
+          charge_status:         String(bd?.chargeStatus ?? ""),
+          charge_should_pay:     bd?.chargeShouldPayAmount != null ? String(bd.chargeShouldPayAmount) : "",
+          charge_payed:          bd?.chargePayedAmount != null ? String(bd.chargePayedAmount) : "",
+          charge_refunded:       bd?.chargeRefundedAmount != null ? String(bd.chargeRefundedAmount) : "",
 
           // ── ClientCompany (via customer.orgNr) ─────────────────
           ...(companyId ? { company: companyId } : {}),
@@ -9725,8 +9725,8 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
               cancel_allowed_before: bd?.cancelAllowedBeforeUtc ?? null,
               valid_until:           bd?.validUntil  ?? null,
               status:                String(bd?.statusName ?? bd?.status ?? "").trim(),
-              status_code:           Number(bd?.status     ?? 0) || null,
-              sub_status:            Number(bd?.subStatus  ?? 0) || null,
+              status_code:           String(bd?.status ?? ""),
+              sub_status:            String(bd?.subStatus ?? ""),
               guest_count:           Number(bd?.guests         ?? 0) || null,
               guest_count_children:  Number(bd?.guestsChildren ?? 0) || null,
               section_name:          sectionName,
@@ -9744,11 +9744,11 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
               arrangement_name:      String(bd?.arrangementName ?? "").trim(),
               event_tag:             String(bd?.eventTag        ?? "").trim(),
               language:              String(bd?.language        ?? "").trim(),
-              charge_type:           Number(bd?.chargeType          ?? 0) || null,
-              charge_status:         Number(bd?.chargeStatus        ?? 0) || null,
-              charge_should_pay:     bd?.chargeShouldPayAmount      ?? null,
-              charge_payed:          bd?.chargePayedAmount          ?? null,
-              charge_refunded:       bd?.chargeRefundedAmount       ?? null,
+              charge_type:           String(bd?.chargeType ?? ""),
+              charge_status:         String(bd?.chargeStatus ?? ""),
+              charge_should_pay:     bd?.chargeShouldPayAmount != null ? String(bd.chargeShouldPayAmount) : "",
+              charge_payed:          bd?.chargePayedAmount != null ? String(bd.chargePayedAmount) : "",
+              charge_refunded:       bd?.chargeRefundedAmount != null ? String(bd.chargeRefundedAmount) : "",
               ...(companyId ? { company: companyId } : {}),
               raw_json:              JSON.stringify(bd)
             };
