@@ -10993,9 +10993,9 @@ if (fortnox_connection_bubble_id) {
       const supplierId = connJson.response?.supplier;
       if (supplierId) {
         const suppRes = await fetch(
-          `${base}/api/1.1/obj/leverant_r_-_supplier/${supplierId}`,
-          { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } }
-        );
+  `${base}/api/1.1/obj/leverant%C3%B6r-supplier/${supplierId}`,
+  { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } }
+);
         const suppJson = await suppRes.json().catch(() => ({}));
         if (suppRes.ok && suppJson?.response) {
           fallbackSupplierName = asTextOrEmpty(suppJson.response?.["Företagsnamn"]);
