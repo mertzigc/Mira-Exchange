@@ -11006,12 +11006,8 @@ app.post("/fortnox/upsert/articles", requireApiKey, async (req, res) => {
           ft_supplier_number:  asTextOrEmpty(a?.SupplierNumber),
           ft_supplier_name:    asTextOrEmpty(a?.SupplierName),
           ft_url:              asTextOrEmpty(a?.["@url"]),
+          ft_purchase_price: asTextOrEmpty(a?.PurchasePrice),
           ft_raw_json:         JSON.stringify(a || {}),
-
-          // Kostad = PurchasePrice (number)
-          ...(a?.PurchasePrice != null && a.PurchasePrice !== ""
-            ? { Kostnad: toNumOrNull(a.PurchasePrice) }
-            : {}),
 
           // Länk till FortnoxConnection-objektet i Bubble (om angivet)
           ...(fortnox_connection_bubble_id
