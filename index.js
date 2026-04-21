@@ -10978,7 +10978,35 @@ app.post("/fortnox/upsert/articles", requireApiKey, async (req, res) => {
         detail: sync
       });
     }
+// Hämta fallback-leverantörsnamn från FortnoxConnection → Supplier → Företagsnamn
+let fallbackSupplierName = "";
+if (fortnox_connection_bubble_id) {
+  try {
+    for (const base of BUBBLE_BASES) {
+      const connRes = await fetch(
+        `${base}/api/1.1/obj/FortnoxConnection/${fortnox_connection_bubble_id}`,
+        { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } }
+      );
+      const connJson = await connRes.json().catch(() => ({}));
+      if (!connRes.ok || !connJson?.response) break;
 
+      const supplierId = connJson.response?.supplier;
+      if (supplierId) {
+        const suppRes = await fetch(
+          `${base}/api/1.1/obj/leverant_r_-_supplier/${supplierId}`,
+          { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } }
+        );
+        const suppJson = await suppRes.json().catch(() => ({}));
+        if (suppRes.ok && suppJson?.response) {
+          fallbackSupplierName = asTextOrEmpty(suppJson.response?.["Företagsnamn"]);
+        }
+      }
+      break;
+    }
+  } catch (e) {
+    console.warn("[upsert/articles] fallbackSupplierName lookup failed", e?.message);
+  }
+}
     const articles = Array.isArray(sync?.articles) ? sync.articles : [];
     const meta     = sync?.meta || null;
 
@@ -11004,7 +11032,7 @@ app.post("/fortnox/upsert/articles", requireApiKey, async (req, res) => {
           ft_vat:              asTextOrEmpty(a?.VAT),
           ft_active:           a?.Active === true ? "yes" : "no",
           ft_supplier_number:  asTextOrEmpty(a?.SupplierNumber),
-          ft_supplier_name:    asTextOrEmpty(a?.SupplierName),
+          ft_supplier_name: asTextOrEmpty(a?.SupplierName) || fallbackSupplierName,
           ft_url:              asTextOrEmpty(a?.["@url"]),
           ft_purchase_price: asTextOrEmpty(a?.PurchasePrice),
           ft_raw_json:         JSON.stringify(a || {}),
