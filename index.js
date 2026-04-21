@@ -11223,8 +11223,8 @@ app.post("/fortnox/upsert/articles/all", requireApiKey, async (req, res) => {
 const ANALYTICS_ALLOWED = [
   "https://claude.ai",
   "https://mira-fm.com",
-  "https://www.mira-fm.com"
-  "https://www.carotteconcierge.bubbleapps.io"
+  "https://www.mira-fm.com",
+  "https://carotteconcierge.bubbleapps.io"
 ];
 
 app.options("/analytics/articles", (req, res) => {
