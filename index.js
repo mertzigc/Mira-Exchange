@@ -11219,6 +11219,23 @@ app.post("/fortnox/upsert/articles/all", requireApiKey, async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+// CORS för analytics (tillåter anrop från claude.ai och mira-fm.com)
+const ANALYTICS_ALLOWED = [
+  "https://claude.ai",
+  "https://mira-fm.com",
+  "https://www.mira-fm.com"
+  "https://www.carotteconcierge.bubbleapps.io"
+];
+
+app.options("/analytics/articles", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (ANALYTICS_ALLOWED.includes(orig)) {
+    res.setHeader("Access-Control-Allow-Origin", orig);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.sendStatus(204);
+});
 // ────────────────────────────────────────────────────────────
 // Analytics: Artikel-analys
 // POST /analytics/articles
@@ -11237,6 +11254,11 @@ app.post("/fortnox/upsert/articles/all", requireApiKey, async (req, res) => {
 //   sort_by          "revenue" | "quantity" | "margin_pct" | "margin_sek"  (default "revenue")
 // ────────────────────────────────────────────────────────────
 app.post("/analytics/articles", requireApiKey, async (req, res) => {
+  const orig = req.headers.origin || "";
+  if (ANALYTICS_ALLOWED.includes(orig)) {
+    res.setHeader("Access-Control-Allow-Origin", orig);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
   const {
     connection_id,
     date_from   = null,
