@@ -11030,7 +11030,7 @@ if (fortnox_connection_bubble_id) {
           ft_unit:             asTextOrEmpty(a?.Unit),
           ft_type:             asTextOrEmpty(a?.Type),
           ft_vat:              asTextOrEmpty(a?.VAT),
-          ft_active:           a?.Active === true ? "yes" : "no",
+          ft_active: filter === "active" ? "yes" : filter === "inactive" ? "no" : (a?.Active === true ? "yes" : "no"),
           ft_supplier_number:  asTextOrEmpty(a?.SupplierNumber),
           ft_supplier_name: asTextOrEmpty(a?.SupplierName) || fallbackSupplierName,
           ft_url:              asTextOrEmpty(a?.["@url"]),
