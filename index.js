@@ -10853,4 +10853,346 @@ app.options("/api/kpi/grades/user", (req, res) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.sendStatus(204);
 });
+// ────────────────────────────────────────────────────────────
+// Fortnox: sync articles (hämta rådata från Fortnox API)
+// POST /fortnox/sync/articles
+// Body: { connection_id, page?, limit?, lastmodified?, filter? }
+//   filter: "active" | "inactive" (valfritt, default = alla)
+// ────────────────────────────────────────────────────────────
+app.post("/fortnox/sync/articles", requireApiKey, async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    lastmodified = null,
+    filter = null          // "active" | "inactive" | null
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  try {
+    const tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok?.ok) {
+      return res.status(401).json({ ok: false, error: "Token error", detail: tok });
+    }
+
+    const query = {
+      page:  String(page),
+      limit: String(limit)
+    };
+    if (lastmodified) query.lastmodified = String(lastmodified);
+    if (filter)       query.filter       = String(filter);
+
+    const r = await fortnoxGet("/articles", tok.access_token, query);
+
+    if (!r.ok) {
+      return res.status(r.status || 500).json({
+        ok: false,
+        error: "Fortnox /articles failed",
+        http_status: r.status,
+        detail: r.data
+      });
+    }
+
+    const articles = r.data?.Articles ?? [];
+    const meta     = r.data?.MetaInformation ?? null;
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      articles,
+      meta
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/sync/articles] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert articles → Bubble (Product-objekt)
+// POST /fortnox/upsert/articles
+// Body:
+//   connection_id   (required)
+//   page            (default 1)
+//   limit           (default 100)
+//   lastmodified    (valfritt, ISO eller "YYYY-MM-DD HH:mm")
+//   filter          (valfritt: "active" | "inactive")
+//   fortnox_connection_bubble_id  (valfritt, Bubble-ID på FortnoxConnection-objektet)
+//
+// Mappar Fortnox-artikel → Bubble Product med dessa fält:
+//   Produkttitel       ← Description
+//   Beskrivning        ← Note
+//   Kostnad            ← PurchasePrice (number)
+//   ft_article_number  ← ArticleNumber   (text, unik nyckel)
+//   ft_sales_price     ← SalesPrice
+//   ft_unit            ← Unit
+//   ft_type            ← Type
+//   ft_vat             ← VAT
+//   ft_active          ← Active (yes/no)
+//   ft_supplier_number ← SupplierNumber
+//   ft_supplier_name   ← SupplierName
+//   ft_url             ← @url
+//   ft_raw_json        ← hela artikelobjektet
+//   FortnoxConnection  ← fortnox_connection_bubble_id (om angivet)
+// ────────────────────────────────────────────────────────────
+app.post("/fortnox/upsert/articles", requireApiKey, async (req, res) => {
+  const {
+    connection_id,
+    page = 1,
+    limit = 100,
+    lastmodified = null,
+    filter = null,
+    fortnox_connection_bubble_id = null  // Bubble-ID på FortnoxConnection-posten
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let first_error = null;
+
+  try {
+    // 1) Hämta artiklar från Fortnox via intern sync-route
+    const syncRes = await fetch(`${SELF_BASE_URL}/fortnox/sync/articles`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.MIRA_RENDER_API_KEY
+      },
+      body: JSON.stringify({ connection_id, page, limit, lastmodified, filter })
+    });
+
+    const syncText = await syncRes.text().catch(() => "");
+    let sync = null;
+    try { sync = syncText ? JSON.parse(syncText) : null; }
+    catch { sync = { raw: syncText }; }
+
+    if (!syncRes.ok || !sync || sync.ok === false) {
+      return res.status(400).json({
+        ok: false,
+        error: "sync/articles failed",
+        http_status: syncRes.status,
+        detail: sync
+      });
+    }
+
+    const articles = Array.isArray(sync?.articles) ? sync.articles : [];
+    const meta     = sync?.meta || null;
+
+    // 2) Upsert varje artikel som ett Bubble Product-objekt
+    for (const a of articles) {
+      const articleNumber = asTextOrEmpty(a?.ArticleNumber).trim();
+
+      // Fortnox-artiklar utan artikelnummer är inte hanterbara
+      if (!articleNumber) { skipped++; continue; }
+
+      try {
+        // Bygg payload – mappar Fortnox-fält mot Mira Product-fält
+        const payload = {
+          // Grunddata
+          Produkttitel:        asTextOrEmpty(a?.Description),
+          Beskrivning:         asTextOrEmpty(a?.Note),
+
+          // Fortnox-specifika fält
+          ft_article_number:   articleNumber,
+          ft_sales_price:      asTextOrEmpty(a?.SalesPrice),
+          ft_unit:             asTextOrEmpty(a?.Unit),
+          ft_type:             asTextOrEmpty(a?.Type),
+          ft_vat:              asTextOrEmpty(a?.VAT),
+          ft_active:           a?.Active === true ? "yes" : "no",
+          ft_supplier_number:  asTextOrEmpty(a?.SupplierNumber),
+          ft_supplier_name:    asTextOrEmpty(a?.SupplierName),
+          ft_url:              asTextOrEmpty(a?.["@url"]),
+          ft_raw_json:         JSON.stringify(a || {}),
+
+          // Kostad = PurchasePrice (number)
+          ...(a?.PurchasePrice != null && a.PurchasePrice !== ""
+            ? { Kostnad: toNumOrNull(a.PurchasePrice) }
+            : {}),
+
+          // Länk till FortnoxConnection-objektet i Bubble (om angivet)
+          ...(fortnox_connection_bubble_id
+            ? { FortnoxConnection: fortnox_connection_bubble_id }
+            : {})
+        };
+
+        // 3) Sök efter befintlig Product med samma ft_article_number + (valfritt) connection
+        const constraints = [
+          { key: "ft_article_number", constraint_type: "equals", value: articleNumber }
+        ];
+        if (fortnox_connection_bubble_id) {
+          constraints.push({
+            key: "FortnoxConnection",
+            constraint_type: "equals",
+            value: fortnox_connection_bubble_id
+          });
+        }
+
+        const existing = await bubbleFindOne("Product", constraints);
+
+        if (existing?._id) {
+          // UPDATE
+          const pr = await bubblePatch("Product", existing._id, payload);
+          const patchOk =
+            pr === true ||
+            typeof pr === "string" ||
+            pr?.ok === true ||
+            pr?.status === "success" ||
+            pr?.status === "SUCCESS" ||
+            pr?.response?.status === "success";
+
+          if (!patchOk) {
+            const err = new Error("bubblePatch failed");
+            err.detail = pr;
+            throw err;
+          }
+          updated++;
+
+        } else {
+          // CREATE
+          const newId = await bubbleCreate("Product", payload);
+          const createdId =
+            (typeof newId === "string" && newId) ||
+            newId?.id ||
+            newId?._id ||
+            newId?.response?.id ||
+            newId?.response?._id ||
+            null;
+
+          if (!createdId) {
+            const err = new Error("bubbleCreate returned no id");
+            err.detail = newId;
+            throw err;
+          }
+          created++;
+        }
+
+      } catch (e) {
+        errors++;
+        if (!first_error) {
+          first_error = {
+            step: "upsert",
+            articleNumber,
+            message: e?.message || String(e),
+            detail: e?.detail || null
+          };
+        }
+        console.error("[/fortnox/upsert/articles] item error", { articleNumber, err: e?.message });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      page,
+      limit,
+      filter:  filter  || null,
+      lastmodified: lastmodified || null,
+      meta,
+      counts: { created, updated, skipped, errors },
+      first_error
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/articles] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// Fortnox: upsert articles – alla sidor (batch-loop)
+// POST /fortnox/upsert/articles/all
+// Body:
+//   connection_id, start_page?, limit?, max_pages?,
+//   pause_ms?, lastmodified?, filter?,
+//   fortnox_connection_bubble_id?
+// ────────────────────────────────────────────────────────────
+app.post("/fortnox/upsert/articles/all", requireApiKey, async (req, res) => {
+  const {
+    connection_id,
+    start_page  = 1,
+    limit       = 100,
+    max_pages   = 20,
+    pause_ms    = 100,
+    lastmodified = null,
+    filter      = null,
+    fortnox_connection_bubble_id = null
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  const start  = Number(start_page) || 1;
+  const maxP   = Math.max(1, Number(max_pages) || 20);
+  const lim    = Math.max(1, Math.min(500, Number(limit) || 100));
+  const pause  = Math.max(0, Number(pause_ms) || 0);
+
+  let created = 0, updated = 0, skipped = 0, errors = 0;
+  let first_error = null;
+  let totalPages = null;
+  let page = start;
+
+  try {
+    for (let i = 0; i < maxP; i++) {
+      const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/articles`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.MIRA_RENDER_API_KEY
+        },
+        body: JSON.stringify({
+          connection_id,
+          page,
+          limit: lim,
+          lastmodified,
+          filter,
+          fortnox_connection_bubble_id
+        })
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        return res.status(400).json({ ok: false, error: "upsert/articles failed", detail: j, page });
+      }
+
+      created += j.counts?.created || 0;
+      updated += j.counts?.updated || 0;
+      skipped += j.counts?.skipped || 0;
+      errors  += j.counts?.errors  || 0;
+
+      if (!first_error && j.first_error) first_error = j.first_error;
+
+      const meta   = j.meta || null;
+      const cur    = Number(meta?.["@CurrentPage"] || page);
+      const tot    = Number(meta?.["@TotalPages"]  || 0);
+      if (tot) totalPages = tot;
+
+      // Sista sidan?
+      if (tot && cur >= tot) {
+        page = cur;
+        break;
+      }
+
+      page++;
+      if (pause) await sleep(pause);
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      pages_processed: page - start + 1,
+      total_pages: totalPages,
+      filter: filter || null,
+      lastmodified: lastmodified || null,
+      counts: { created, updated, skipped, errors },
+      first_error
+    });
+
+  } catch (e) {
+    console.error("[/fortnox/upsert/articles/all] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
