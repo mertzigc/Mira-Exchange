@@ -50,4 +50,13 @@ for CONN_ID in "${CONN_ARRAY[@]}"; do
 done
 
 echo ""
+# Steg 3: Bygg analytics-cache för dashboard
+echo ""
+echo "[fortnox-cron-v1.2] Step 3: analytics refresh..."
+curl -sS --max-time 300 -X POST "$HOST/analytics/articles/refresh" \
+  -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{}"
+echo ""
+echo "[fortnox-cron-v1.2] Analytics refresh done."
 echo "=== FortnoxCron v1.2 articles END ==="
