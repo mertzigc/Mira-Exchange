@@ -43,7 +43,7 @@ for CONN_ID in "${CONN_ARRAY[@]}"; do
   curl -sS --max-time 900 -X POST "$HOST/fortnox/upsert/articles/all" \
     -H "x-api-key: $API_KEY" \
     -H "Content-Type: application/json" \
-    -d "{\"connection_id\":\"$CONN_ID\",\"fortnox_connection_bubble_id\":\"$CONN_ID\",\"limit\":100,\"max_pages\":50,\"pause_ms\":200}"
+    -d "{\"connection_id\":\"$CONN_ID\",\"fortnox_connection_bubble_id\":\"$CONN_ID\",\"filter\":\"active\",\"limit\":100,\"max_pages\":50,\"pause_ms\":200}"
 
   echo ""
   echo "[fortnox-cron-v1.2] Articles done for: $CONN_ID"
