@@ -11236,15 +11236,6 @@ app.options("/analytics/articles", (req, res) => {
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.sendStatus(204);
 });
-// ────────────────────────────────────────────────────────────
-// Analytics: tillåtna origins
-// ────────────────────────────────────────────────────────────
-const ANALYTICS_ALLOWED = [
-  "https://claude.ai",
-  "https://mira-fm.com",
-  "https://www.mira-fm.com",
-  "https://carotteconcierge.bubbleapps.io"
-];
 
 // ────────────────────────────────────────────────────────────
 // In-memory analytics cache
