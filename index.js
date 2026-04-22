@@ -11237,193 +11237,170 @@ app.options("/analytics/articles", (req, res) => {
   res.sendStatus(204);
 });
 // ────────────────────────────────────────────────────────────
-// Analytics: Artikel-analys
+// Analytics: tillåtna origins
+// ────────────────────────────────────────────────────────────
+const ANALYTICS_ALLOWED = [
+  "https://claude.ai",
+  "https://mira-fm.com",
+  "https://www.mira-fm.com",
+  "https://carotteconcierge.bubbleapps.io"
+];
+
+// ────────────────────────────────────────────────────────────
+// In-memory analytics cache
+// ────────────────────────────────────────────────────────────
+if (!globalThis.__analyticsCache) globalThis.__analyticsCache = null;
+
+// ────────────────────────────────────────────────────────────
+// Intern hjälpfunktion: aggregera orderrader + produkter
+// för en enskild connection_id
+// ────────────────────────────────────────────────────────────
+async function computeArticleAnalyticsForConnection(connection_id) {
+  const PAGE = 100;
+
+  // 1) Hämta alla FortnoxOrderRows för connection
+  const allRows = [];
+  let cursor = 0;
+  while (true) {
+    const qs = new URLSearchParams({
+      limit:       String(PAGE),
+      cursor:      String(cursor),
+      constraints: JSON.stringify([
+        { key: "Connection", constraint_type: "equals", value: connection_id }
+      ])
+    });
+
+    let fetched = false;
+    for (const base of BUBBLE_BASES) {
+      try {
+        const r = await fetch(`${base}/api/1.1/obj/FortnoxOrderRow?${qs}`, {
+          headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) break;
+        const results = j?.response?.results ?? [];
+        allRows.push(...results);
+        fetched = true;
+        if (results.length < PAGE) break;
+        break;
+      } catch (_) {}
+    }
+    if (!fetched) break;
+    cursor += PAGE;
+    if (allRows.length >= 20000) break;
+  }
+
+  // 2) Hämta alla Products → map artikelnr → produkt
+  const productMap = {};
+  let prodCursor = 0;
+  while (true) {
+    const qs = new URLSearchParams({
+      limit:       String(PAGE),
+      cursor:      String(prodCursor),
+      constraints: JSON.stringify([
+        { key: "FortnoxConnection", constraint_type: "equals", value: connection_id }
+      ])
+    });
+
+    let fetched = false;
+    for (const base of BUBBLE_BASES) {
+      try {
+        const r = await fetch(`${base}/api/1.1/obj/Product?${qs}`, {
+          headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) break;
+        const results = j?.response?.results ?? [];
+        for (const p of results) {
+          const artNr = asTextOrEmpty(p?.ft_article_number).trim();
+          if (artNr) productMap[artNr] = p;
+        }
+        fetched = true;
+        if (results.length < PAGE) break;
+        break;
+      } catch (_) {}
+    }
+    if (!fetched) break;
+    prodCursor += PAGE;
+    if (prodCursor >= 10000) break;
+  }
+
+  // 3) Aggregera per artikelnummer
+  const aggMap = {};
+  for (const row of allRows) {
+    const artNr = asTextOrEmpty(row?.Ft_article_number || row?.ft_article_number).trim();
+    if (!artNr) continue;
+
+    const qty      = toNumOrNull(row?.Ft_quantity  || row?.ft_quantity)  ?? 1;
+    const total    = toNumOrNull(row?.Ft_total     || row?.ft_total)     ?? 0;
+    const discount = toNumOrNull(row?.Ft_discount  || row?.ft_discount)  ?? 0;
+    const desc     = asTextOrEmpty(row?.Ft_description || row?.ft_description);
+    const prod     = productMap[artNr];
+    const purchaseP = toNumOrNull(prod?.ft_purchase_price) ?? null;
+    const title    = asTextOrEmpty(prod?.Produkttitel) || desc;
+
+    if (!aggMap[artNr]) {
+      aggMap[artNr] = {
+        article_number: artNr,
+        title:          title || artNr,
+        revenue:        0,
+        quantity:       0,
+        cost:           0,
+        has_cost:       purchaseP !== null,
+        discount_sum:   0,
+        row_count:      0,
+        supplier_name:  asTextOrEmpty(prod?.ft_supplier_name),
+        vat:            asTextOrEmpty(prod?.ft_vat)
+      };
+    }
+
+    const agg = aggMap[artNr];
+    agg.revenue      += total;
+    agg.quantity     += qty;
+    agg.discount_sum += discount;
+    agg.row_count    += 1;
+    if (!agg.title || agg.title === artNr) agg.title = title || artNr;
+    if (purchaseP !== null) {
+      agg.cost     += purchaseP * qty;
+      agg.has_cost  = true;
+    }
+  }
+
+  return { aggMap, totalRows: allRows.length };
+}
+
+// ────────────────────────────────────────────────────────────
 // POST /analytics/articles
-//
-// Aggregerar FortnoxOrderRows + Product för att beräkna:
-//   - Omsättning per artikel
-//   - Antal sålda
-//   - Bruttomarginal (om ft_purchase_price finns på Product)
-//   - Snittrabatt
-//
-// Body:
-//   connection_id    (required)
-//   date_from        (optional, "YYYY-MM-DD")
-//   date_to          (optional, "YYYY-MM-DD")
-//   top_n            (default 50)
-//   sort_by          "revenue" | "quantity" | "margin_pct" | "margin_sek"  (default "revenue")
+// Kör live-beräkning för en specifik connection (intern/admin-bruk)
+// Body: { connection_id, date_from?, date_to?, top_n?, sort_by? }
 // ────────────────────────────────────────────────────────────
 app.post("/analytics/articles", requireApiKey, async (req, res) => {
   const orig = req.headers.origin || "";
-  if (ANALYTICS_ALLOWED.includes(orig)) {
-    res.setHeader("Access-Control-Allow-Origin", orig);
-  }
+  if (ANALYTICS_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
   res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+
   const {
     connection_id,
-    date_from   = null,
-    date_to     = null,
-    top_n       = 50,
-    sort_by     = "revenue"
+    date_from = null,
+    date_to   = null,
+    top_n     = 50,
+    sort_by   = "revenue"
   } = req.body || {};
 
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   try {
-    // ── 1) Hämta alla FortnoxOrderRows för connection ──────────────────────
-    // Paginera tills vi har allt
-    const allRows = [];
-    let cursor = 0;
-    const PAGE = 100;
+    const { aggMap, totalRows } = await computeArticleAnalyticsForConnection(connection_id);
 
-    while (true) {
-      const constraints = [
-        { key: "Connection", constraint_type: "equals", value: connection_id }
-      ];
-
-      // Datumfilter på Order-nivå (via ft_order_date på FortnoxOrder)
-      // Vi filtrerar här på rad-nivå om ft_delivery_date finns, annars post-filter
-      const qs = new URLSearchParams({
-        limit:       String(PAGE),
-        cursor:      String(cursor),
-        constraints: JSON.stringify(constraints)
-      });
-
-      let fetched = false;
-      for (const base of BUBBLE_BASES) {
-        try {
-          const r = await fetch(`${base}/api/1.1/obj/FortnoxOrderRow?${qs}`, {
-            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) break;
-
-          const results = j?.response?.results ?? [];
-          allRows.push(...results);
-          fetched = true;
-
-          if (results.length < PAGE) break; // sista sidan
-          break;
-        } catch (_) {}
-      }
-
-      if (!fetched) break;
-      cursor += PAGE;
-
-      // Säkerhetsgräns: max 10 000 rader
-      if (allRows.length >= 10000) break;
-    }
-
-    // ── 2) Hämta alla Products för connection → map artikelnr → produkt ───
-    const productMap = {};
-    let prodCursor = 0;
-
-    while (true) {
-      const constraints = [
-        { key: "FortnoxConnection", constraint_type: "equals", value: connection_id }
-      ];
-      const qs = new URLSearchParams({
-        limit:       String(PAGE),
-        cursor:      String(prodCursor),
-        constraints: JSON.stringify(constraints)
-      });
-
-      let fetched = false;
-      for (const base of BUBBLE_BASES) {
-        try {
-          const r = await fetch(`${base}/api/1.1/obj/Product?${qs}`, {
-            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) break;
-
-          const results = j?.response?.results ?? [];
-          for (const p of results) {
-            const artNr = asTextOrEmpty(p?.ft_article_number).trim();
-            if (artNr) productMap[artNr] = p;
-          }
-
-          fetched = true;
-          if (results.length < PAGE) break;
-          break;
-        } catch (_) {}
-      }
-
-      if (!fetched) break;
-      prodCursor += PAGE;
-      if (prodCursor >= 5000) break;
-    }
-
-    // ── 3) Datumfilter på rader (post-filter via Order date) ───────────────
-    // FortnoxOrderRow har inte alltid eget datum — vi filtrerar på Created Date
-    // som proxy om date_from/date_to anges
     const from = date_from ? new Date(date_from) : null;
     const to   = date_to   ? new Date(date_to + "T23:59:59") : null;
 
-    const filteredRows = allRows.filter(row => {
-      if (!from && !to) return true;
-      const d = new Date(row?.["Created Date"] || row?.["Modified Date"] || 0);
-      if (from && d < from) return false;
-      if (to   && d > to)   return false;
-      return true;
-    });
-
-    // ── 4) Aggregera per artikelnummer ────────────────────────────────────
-    const aggMap = {};
-
-    for (const row of filteredRows) {
-      const artNr  = asTextOrEmpty(row?.Ft_article_number || row?.ft_article_number).trim();
-      if (!artNr) continue;
-
-      const price    = toNumOrNull(row?.Ft_price    || row?.ft_price)    ?? 0;
-      const qty      = toNumOrNull(row?.Ft_quantity  || row?.ft_quantity)  ?? 1;
-      const total    = toNumOrNull(row?.Ft_total     || row?.ft_total)     ?? (price * qty);
-      const discount = toNumOrNull(row?.Ft_discount  || row?.ft_discount)  ?? 0;
-      const desc     = asTextOrEmpty(row?.Ft_description || row?.ft_description);
-
-      const prod      = productMap[artNr];
-      const purchaseP = toNumOrNull(prod?.ft_purchase_price) ?? null;
-      const title     = asTextOrEmpty(prod?.Produkttitel) || desc;
-
-      if (!aggMap[artNr]) {
-        aggMap[artNr] = {
-          article_number: artNr,
-          title:          title || artNr,
-          revenue:        0,
-          quantity:       0,
-          cost:           0,
-          has_cost:       purchaseP !== null,
-          discount_sum:   0,
-          row_count:      0,
-          supplier_name:  asTextOrEmpty(prod?.ft_supplier_name),
-          vat:            asTextOrEmpty(prod?.ft_vat)
-        };
-      }
-
-      const agg = aggMap[artNr];
-      agg.revenue      += total;
-      agg.quantity     += qty;
-      agg.discount_sum += discount;
-      agg.row_count    += 1;
-
-      if (purchaseP !== null) {
-        agg.cost     += purchaseP * qty;
-        agg.has_cost  = true;
-      }
-
-      // Uppdatera title om tom
-      if (!agg.title || agg.title === artNr) agg.title = title || artNr;
-    }
-
-    // ── 5) Beräkna marginal + sortera ────────────────────────────────────
     const articles = Object.values(aggMap).map(a => {
-      const margin_sek = a.has_cost ? Math.round((a.revenue - a.cost) * 100) / 100 : null;
-      const margin_pct = (a.has_cost && a.revenue > 0)
-        ? Math.round(((a.revenue - a.cost) / a.revenue) * 10000) / 100
-        : null;
+      const margin_sek   = a.has_cost ? Math.round((a.revenue - a.cost) * 100) / 100 : null;
+      const margin_pct   = (a.has_cost && a.revenue > 0)
+        ? Math.round(((a.revenue - a.cost) / a.revenue) * 10000) / 100 : null;
       const avg_price    = a.quantity > 0 ? Math.round((a.revenue / a.quantity) * 100) / 100 : 0;
       const avg_discount = a.row_count > 0 ? Math.round((a.discount_sum / a.row_count) * 100) / 100 : 0;
-
       return {
         article_number: a.article_number,
         title:          a.title,
@@ -11432,16 +11409,12 @@ app.post("/analytics/articles", requireApiKey, async (req, res) => {
         revenue:        Math.round(a.revenue * 100) / 100,
         quantity:       Math.round(a.quantity * 100) / 100,
         cost:           a.has_cost ? Math.round(a.cost * 100) / 100 : null,
-        margin_sek,
-        margin_pct,
-        avg_price,
-        avg_discount,
-        has_cost:       a.has_cost,
-        row_count:      a.row_count
+        margin_sek, margin_pct, avg_price, avg_discount,
+        has_cost:  a.has_cost,
+        row_count: a.row_count
       };
     });
 
-    // Sortera
     const sortFns = {
       revenue:    (a, b) => b.revenue    - a.revenue,
       quantity:   (a, b) => b.quantity   - a.quantity,
@@ -11450,25 +11423,19 @@ app.post("/analytics/articles", requireApiKey, async (req, res) => {
     };
     articles.sort(sortFns[sort_by] || sortFns.revenue);
 
-    const topArticles = articles.slice(0, Math.max(1, Number(top_n) || 50));
-
-    // ── 6) Summering ──────────────────────────────────────────────────────
+    const topArticles   = articles.slice(0, Math.max(1, Number(top_n) || 50));
     const totRevenue    = articles.reduce((s, a) => s + a.revenue, 0);
     const totCost       = articles.filter(a => a.has_cost).reduce((s, a) => s + (a.cost ?? 0), 0);
     const totMarginSek  = articles.some(a => a.has_cost) ? totRevenue - totCost : null;
     const totMarginPct  = (totMarginSek !== null && totRevenue > 0)
-      ? Math.round((totMarginSek / totRevenue) * 10000) / 100
-      : null;
+      ? Math.round((totMarginSek / totRevenue) * 10000) / 100 : null;
 
     return res.json({
       ok: true,
-      connection_id,
-      date_from,
-      date_to,
-      sort_by,
-      total_rows_fetched:    allRows.length,
-      total_rows_filtered:   filteredRows.length,
-      unique_articles:       articles.length,
+      connection_id, date_from, date_to, sort_by,
+      total_rows_fetched:  totalRows,
+      total_rows_filtered: topArticles.length,
+      unique_articles:     articles.length,
       summary: {
         total_revenue:    Math.round(totRevenue * 100) / 100,
         total_cost:       totCost ? Math.round(totCost * 100) / 100 : null,
@@ -11482,5 +11449,157 @@ app.post("/analytics/articles", requireApiKey, async (req, res) => {
     console.error("[/analytics/articles] error", e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
+});
+
+app.options("/analytics/articles", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (ANALYTICS_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.sendStatus(204);
+});
+
+// ────────────────────────────────────────────────────────────
+// POST /analytics/articles/refresh
+// Skyddad av requireApiKey — anropas av cron varje natt.
+// Läser connection IDs från env ANALYTICS_CONNECTION_IDS
+// (eller FORTNOX_CONNECTION_IDS som fallback).
+// Beräknar och sparar resultatet i globalThis.__analyticsCache.
+// ────────────────────────────────────────────────────────────
+app.post("/analytics/articles/refresh", requireApiKey, async (req, res) => {
+  const connIds = String(
+    process.env.ANALYTICS_CONNECTION_IDS ||
+    process.env.FORTNOX_CONNECTION_IDS   || ""
+  ).split(",").map(s => s.trim()).filter(Boolean);
+
+  if (!connIds.length) {
+    return res.status(400).json({ ok: false, error: "Sätt ANALYTICS_CONNECTION_IDS i Render env" });
+  }
+
+  try {
+    const mergedMap = {};
+    let totalRevenue = 0, totalCost = 0, totalRows = 0, hasCost = false;
+
+    for (const cid of connIds) {
+      console.log("[analytics/refresh] computing for connection:", cid);
+      const { aggMap, totalRows: rows } = await computeArticleAnalyticsForConnection(cid);
+      totalRows += rows;
+
+      for (const [artNr, a] of Object.entries(aggMap)) {
+        if (!mergedMap[artNr]) {
+          mergedMap[artNr] = { ...a };
+        } else {
+          mergedMap[artNr].revenue      += a.revenue;
+          mergedMap[artNr].quantity     += a.quantity;
+          mergedMap[artNr].row_count    += a.row_count;
+          mergedMap[artNr].discount_sum += a.discount_sum;
+          if (a.has_cost) {
+            mergedMap[artNr].cost     = (mergedMap[artNr].cost || 0) + a.cost;
+            mergedMap[artNr].has_cost  = true;
+          }
+          if (!mergedMap[artNr].title || mergedMap[artNr].title === artNr) {
+            mergedMap[artNr].title = a.title;
+          }
+        }
+      }
+    }
+
+    // Beräkna marginaler efter merge
+    const articles = Object.values(mergedMap).map(a => {
+      const margin_sek   = a.has_cost ? Math.round((a.revenue - a.cost) * 100) / 100 : null;
+      const margin_pct   = (a.has_cost && a.revenue > 0)
+        ? Math.round(((a.revenue - a.cost) / a.revenue) * 10000) / 100 : null;
+      const avg_price    = a.quantity > 0 ? Math.round((a.revenue / a.quantity) * 100) / 100 : 0;
+      const avg_discount = a.row_count > 0 ? Math.round((a.discount_sum / a.row_count) * 100) / 100 : 0;
+
+      if (margin_sek !== null) {
+        totalRevenue += a.revenue;
+        totalCost    += a.cost ?? 0;
+        hasCost       = true;
+      }
+
+      return {
+        article_number: a.article_number,
+        title:          a.title,
+        supplier_name:  a.supplier_name,
+        vat:            a.vat,
+        revenue:        Math.round(a.revenue * 100) / 100,
+        quantity:       Math.round(a.quantity * 100) / 100,
+        cost:           a.has_cost ? Math.round(a.cost * 100) / 100 : null,
+        margin_sek, margin_pct, avg_price, avg_discount,
+        has_cost:  a.has_cost,
+        row_count: a.row_count
+      };
+    }).sort((a, b) => b.revenue - a.revenue);
+
+    // Summering
+    const totRevAll    = articles.reduce((s, a) => s + a.revenue, 0);
+    const totCostAll   = articles.filter(a => a.has_cost).reduce((s, a) => s + (a.cost ?? 0), 0);
+    const totMarginSek = hasCost ? Math.round((totRevAll - totCostAll) * 100) / 100 : null;
+    const totMarginPct = (hasCost && totRevAll > 0)
+      ? Math.round(((totRevAll - totCostAll) / totRevAll) * 10000) / 100 : null;
+
+    const payload = {
+      summary: {
+        total_revenue:    Math.round(totRevAll * 100) / 100,
+        total_cost:       hasCost ? Math.round(totCostAll * 100) / 100 : null,
+        total_margin_sek: totMarginSek,
+        total_margin_pct: totMarginPct
+      },
+      total_rows_fetched:  totalRows,
+      total_rows_filtered: totalRows,
+      unique_articles:     articles.length,
+      articles
+    };
+
+    globalThis.__analyticsCache = {
+      cached_at:   new Date().toISOString(),
+      connection_ids: connIds,
+      data: payload
+    };
+
+    console.log("[analytics/refresh] done —", articles.length, "artiklar,", totalRows, "rader");
+
+    return res.json({
+      ok:              true,
+      cached_at:       globalThis.__analyticsCache.cached_at,
+      unique_articles: articles.length,
+      total_rows:      totalRows,
+      total_revenue:   payload.summary.total_revenue,
+      connection_ids:  connIds
+    });
+
+  } catch (e) {
+    console.error("[analytics/refresh] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// GET /analytics/articles/latest
+// Publik (ingen API-nyckel) — returnerar senast cachade analys.
+// Anropas av HTML-dashboard i Mira.
+// ────────────────────────────────────────────────────────────
+app.get("/analytics/articles/latest", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (ANALYTICS_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  const cache = globalThis.__analyticsCache;
+  if (!cache?.data) {
+    return res.status(404).json({
+      ok:    false,
+      error: "Ingen cachad data. Kör POST /analytics/articles/refresh först (eller vänta på nattlig cron)."
+    });
+  }
+  return res.json({ ok: true, cached_at: cache.cached_at, ...cache.data });
+});
+
+app.options("/analytics/articles/latest", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (ANALYTICS_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
 });
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
