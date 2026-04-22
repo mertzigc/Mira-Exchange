@@ -342,7 +342,14 @@ function extractActionLink({ bodyHtml = "", bodyText = "" } = {}) {
 }
 import fs from "node:fs";
 import path from "node:path";
-
+const openPaths = new Set([
+  "/health",
+  "/fortnox/authorize",
+  "/fortnox/callback",
+  "/ms/authorize",
+  "/ms/callback",
+  "/analytics/articles/latest",  // ← lägg till denna
+]);
 // ────────────────────────────────────────────────────────────
 // API key guard – allow health + OAuth redirect/callback endpoints without key
 function requireApiKey(req, res, next) {
