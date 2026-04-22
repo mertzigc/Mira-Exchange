@@ -11147,7 +11147,7 @@ app.post("/fortnox/upsert/articles/all", requireApiKey, async (req, res) => {
     start_page  = 1,
     limit       = 100,
     max_pages   = 20,
-    pause_ms    = 100,
+    pause_ms    = 500,
     lastmodified = null,
     filter      = null,
     fortnox_connection_bubble_id = null
@@ -11168,20 +11168,21 @@ app.post("/fortnox/upsert/articles/all", requireApiKey, async (req, res) => {
   try {
     for (let i = 0; i < maxP; i++) {
       const r = await fetch(`${SELF_BASE_URL}/fortnox/upsert/articles`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.MIRA_RENDER_API_KEY
-        },
-        body: JSON.stringify({
-          connection_id,
-          page,
-          limit: lim,
-          lastmodified,
-          filter,
-          fortnox_connection_bubble_id
-        })
-      });
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-api-key": process.env.MIRA_RENDER_API_KEY
+  },
+  body: JSON.stringify({
+    connection_id,
+    page,
+    limit: lim,
+    lastmodified,
+    filter,
+    fortnox_connection_bubble_id
+  }),
+  signal: AbortSignal.timeout(_INTERNAL_TIMEOUT_MS)
+});
 
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
