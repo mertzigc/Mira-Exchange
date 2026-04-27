@@ -11601,4 +11601,105 @@ app.options("/analytics/articles/latest", (req, res) => {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.sendStatus(204);
 });
+// ────────────────────────────────────────────────────────────
+// POST /leads/create-from-calculator
+// Kallas direkt från Workplace Strategy Calculator (HTML).
+// Ingen API-nyckel krävs (publik endpoint – klienten har ingen secret).
+// ────────────────────────────────────────────────────────────
+app.post("/leads/create-from-calculator", async (req, res) => {
+  try {
+    const d = req.body || {};
+
+    // ── Grundfält ──────────────────────────────────────────
+    const email   = normEmail(d.email);
+    const name    = safeText(d.name    || "", 200);
+    const phone   = safeText(d.phone   || "", 100);
+    const company = safeText(d.company || "", 200);
+    const titel   = safeText(d.titel   || "", 200);
+
+    if (!email) return res.status(400).json({ ok: false, error: "email required" });
+
+    // ── Försök hitta befintligt ClientCompany på Name_company ──
+    let clientCompanyId = null;
+    if (company) {
+      const cc = await bubbleFindOne("ClientCompany", [
+        { key: "Name_company", constraint_type: "equals", value: company }
+      ]).catch(() => null);
+      clientCompanyId = cc?._id || null;
+
+      // Hittades inte – skapa ett nytt ClientCompany
+      if (!clientCompanyId) {
+        try {
+          clientCompanyId = await bubbleCreate("ClientCompany", {
+            Name_company: company,
+            Email: email
+          });
+          console.log("[calculator-lead] created ClientCompany", clientCompanyId);
+        } catch (e) {
+          console.warn("[calculator-lead] ClientCompany create failed (non-fatal)", e?.message);
+        }
+      }
+    }
+
+    // ── Beräkna lead score & priority ─────────────────────
+    const fields = {
+      Name:    name,
+      Email:   email,
+      Phone:   phone,
+      Company: company,
+      titel,
+
+      Source:          "Workplace Strategy Calculator",
+      lead_subsource:  "workplace_strategy_tool",
+      inbound_channel: "calculator",
+      calculator_version: safeText(d.calculator_version || "v1", 50),
+      external_reference: safeText(d.external_reference || "", 200),
+
+      office_employees:   asNumberOrNull(d.employees),
+      office_sqm:         asNumberOrNull(d.office_sqm),
+      office_occupancy_pct: d.occupancy_pct != null ? Number(d.occupancy_pct) : null,
+      rent_per_sqm_year:  asMoneyNumberOrNull(d.rent_per_sqm_year),
+
+      estimated_service_cost_monthly:       asMoneyNumberOrNull(d.service_cost_monthly),
+      estimated_total_office_cost_monthly:  asMoneyNumberOrNull(d.total_office_cost_monthly),
+      estimated_cost_per_employee_monthly:  asMoneyNumberOrNull(d.cost_per_employee_monthly),
+      estimated_cost_per_sqm_monthly:       asMoneyNumberOrNull(d.cost_per_sqm_monthly),
+      estimated_arr: d.service_cost_monthly != null
+        ? Math.round(Number(d.service_cost_monthly) * 12) : null,
+
+      workplace_maturity_score: asNumberOrNull(d.workplace_maturity_score),
+      workplace_maturity_level: safeText(d.workplace_maturity_level || "", 100),
+
+      requested_services_summary: safeText(buildRequestedServicesSummary(d), 1000),
+      prospect_message:  safeText(d.prospect_message  || "", 2000),
+      timeline:          safeText(d.timeline          || "", 200),
+      decision_stage:    safeText(d.decision_stage    || "", 200),
+      calculator_payload_raw: safeText(JSON.stringify(d), 5000)
+    };
+
+    fields.lead_score    = computeLeadScore(fields);
+    fields.lead_priority = computeLeadPriority(fields.lead_score);
+
+    const desc = buildStructuredLeadDescriptions(fields);
+    fields.Description       = desc.description;
+    fields.Description_short = desc.description_short;
+
+    // ── Skapa Lead ──────────────────────────────────────────
+    const result = await createLeadAlways(fields);
+
+    // ── Länka ClientCompany till Lead om vi har båda ────────
+    if (result.ok && result.lead_id && clientCompanyId) {
+      await bubblePatch("Lead", result.lead_id, {
+        client_company: clientCompanyId
+      }).catch(e => console.warn("[calculator-lead] patch Kundföretag failed", e?.message));
+    }
+
+    console.log("[calculator-lead] created lead", result.lead_id, "company:", company, "cc:", clientCompanyId);
+    return res.json({ ok: true, lead_id: result.lead_id, client_company_id: clientCompanyId });
+
+  } catch (e) {
+    console.error("[calculator-lead] error", e);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
