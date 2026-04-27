@@ -11652,7 +11652,7 @@ app.post("/leads/create-from-calculator", async (req, res) => {
       Company: company,
       titel,
 
-      Source:          "Workplace Strategy Calculator",
+      Source:          "Kalkylator",
       lead_subsource:  "workplace_strategy_tool",
       inbound_channel: "calculator",
       calculator_version: safeText(d.calculator_version || "v1", 50),
