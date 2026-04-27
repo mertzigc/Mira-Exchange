@@ -364,6 +364,9 @@ function requireApiKey(req, res, next) {
     // Microsoft OAuth (browser hits these WITHOUT x-api-key)
     "/ms/authorize",
     "/ms/callback",
+
+    // Workplace Strategy Calculator (publik endpoint, ingen API-nyckel)
+    "/leads/create-from-calculator",
   ]);
 
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
