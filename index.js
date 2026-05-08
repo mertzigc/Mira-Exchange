@@ -1,4 +1,5 @@
 // Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
+import { startEmailPoller } from "./emailer.js";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -11708,3 +11709,4 @@ app.post("/leads/create-from-calculator", async (req, res) => {
   }
 });
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
+startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
