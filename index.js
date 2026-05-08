@@ -11708,5 +11708,136 @@ app.post("/leads/create-from-calculator", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+// ════════════════════════════════════════════════════════════════════════════
+// ADMIN E-POST – lägg in detta block i index.js
+//
+// VAR: Klistra in PRECIS OVANFÖR den sista raden i filen:
+//      app.listen(PORT, () => console.log(...))
+//
+// Det här blocket kräver att följande funktioner redan finns i index.js
+// (de finns redan):  bubbleGet · bubbleFind · bubblePatch · bubbleCreate
+// ════════════════════════════════════════════════════════════════════════════
+
+
+// ── Middleware: kräver att inloggad Bubble-användare har admin_crm = true ──
+// Alla admin-endpoints nedan använder denna istället för requireApiKey.
+// HTML-blocket i Bubble skickar Current User's unique id i x-bubble-user-headern.
+
+async function requireAdminCrm(req, res, next) {
+  const userId = req.headers["x-bubble-user"];
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "x-bubble-user header saknas" });
+  }
+  try {
+    const user = await bubbleGet("user", userId);
+    if (!user?.admin_crm) {
+      return res.status(403).json({ ok: false, error: "Åtkomst nekad – admin_crm krävs" });
+    }
+    req.bubbleUser = user; // tillgänglig i route-handlers om det behövs
+    next();
+  } catch (e) {
+    return res.status(401).json({ ok: false, error: "Kunde inte verifiera användare", detail: e?.message });
+  }
+}
+
+
+// ── GET /admin/email/templates ───────────────────────────────────────────────
+// Returnerar alla EmailTemplate-poster sorterade på name.
+
+app.get("/admin/email/templates", requireAdminCrm, async (req, res) => {
+  try {
+    const templates = await bubbleFind("emailtemplate", {
+      sort_field: "name",
+      descending: false,
+      limit: 100
+    });
+    res.json({ ok: true, templates });
+  } catch (e) {
+    console.error("[admin/email/templates] fel:", e?.message);
+    res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+
+// ── PATCH /admin/email/template/:id ─────────────────────────────────────────
+// Uppdaterar ett EmailTemplate-objekt.
+// Body (valfria fält): name · slug · subject · cta_label · is_active · entity_type
+
+app.patch("/admin/email/template/:id", requireAdminCrm, async (req, res) => {
+  const { id } = req.params;
+  const allowed = ["name", "slug", "subject", "cta_label", "is_active", "entity_type"];
+  const payload = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) payload[key] = req.body[key];
+  }
+  if (!Object.keys(payload).length) {
+    return res.status(400).json({ ok: false, error: "Inga giltiga fält i body" });
+  }
+  try {
+    await bubblePatch("emailtemplate", id, payload);
+    res.json({ ok: true, updated: id });
+  } catch (e) {
+    console.error("[admin/email/template PATCH] fel:", e?.message);
+    res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+
+// ── GET /admin/email/queue ───────────────────────────────────────────────────
+// Returnerar de 100 senaste EmailQueue-posterna + sammanfattad statistik.
+
+app.get("/admin/email/queue", requireAdminCrm, async (req, res) => {
+  try {
+    const rows = await bubbleFind("emailqueue", {
+      sort_field: "Created Date",
+      descending: true,
+      limit: 100
+    });
+
+    const now  = Date.now();
+    const d30  = 30 * 24 * 60 * 60 * 1000;
+    const stats = {
+      sent_last_30d: rows.filter(r => r.email_sent && (now - new Date(r["Created Date"]) < d30)).length,
+      pending:       rows.filter(r => !r.email_sent && !r.error_message).length,
+      errors:        rows.filter(r => r.error_message?.length > 0).length
+    };
+
+    res.json({ ok: true, queue: rows, stats });
+  } catch (e) {
+    console.error("[admin/email/queue] fel:", e?.message);
+    res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+
+// ── POST /admin/email/test ───────────────────────────────────────────────────
+// Skapar en EmailQueue-post som pollern skickar inom 2 minuter.
+// Body: template_id (required) · to_email (required) · to_name (optional)
+
+app.post("/admin/email/test", requireAdminCrm, async (req, res) => {
+  const { template_id, to_email, to_name } = req.body;
+  if (!template_id || !to_email) {
+    return res.status(400).json({ ok: false, error: "template_id och to_email krävs" });
+  }
+  try {
+    const id = await bubbleCreate("emailqueue", {
+      template_id,
+      to_email,
+      to_name: to_name || "Testmottagare",
+      entity_id: "",
+      email_sent: false
+    });
+    console.log(`[admin/email/test] Testmail köat → ${to_email} (queue id: ${id})`);
+    res.json({ ok: true, queued_id: id });
+  } catch (e) {
+    console.error("[admin/email/test] fel:", e?.message);
+    res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SLUT PÅ ADMIN E-POST BLOCKET
+// ════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
+
