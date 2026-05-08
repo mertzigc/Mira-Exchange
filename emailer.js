@@ -42,12 +42,12 @@ export function startEmailPoller({ bubbleFind, bubbleGet, bubblePatch }) {
 
   // Kör direkt vid start, sen var 2:a minut
   processEmailQueue().catch(e =>
-    console.error("[email] Första körning misslyckades:", e?.message)
+    console.error("[email] Första körning misslyckades:", e?.message, e?.detail ? JSON.stringify(e.detail) : "")
   );
 
   nodeCron.schedule("*/2 * * * *", () =>
     processEmailQueue().catch(e =>
-      console.error("[email] Poller-fel:", e?.message)
+      console.error("[email] Poller-fel:", e?.message, e?.detail ? JSON.stringify(e.detail) : "")
     )
   );
 
@@ -58,7 +58,7 @@ export function startEmailPoller({ bubbleFind, bubbleGet, bubblePatch }) {
 // Huvud-poller: hämtar osända rader, skickar, markerar
 // ────────────────────────────────────────────────────────────
 async function processEmailQueue() {
-  const queue = await _bubbleFind("EmailQueue", {
+  const queue = await _bubbleFind("emailqueue", {
     constraints: [{ key: "email_sent", constraint_type: "equals", value: false }],
     limit: 20,
     sort_field: "Created Date",
@@ -67,6 +67,7 @@ async function processEmailQueue() {
 
   if (!queue.length) return;
   console.log(`[email] ${queue.length} mail i kö`);
+
 
   for (const item of queue) {
     try {
@@ -79,7 +80,7 @@ async function processEmailQueue() {
         html
       });
 
-      await _bubblePatch("EmailQueue", item._id, {
+      await _bubblePatch("emailqueue", item._id, {
         email_sent: true,
         sent_at:    new Date().toISOString(),
         error_message: ""
@@ -89,7 +90,7 @@ async function processEmailQueue() {
 
     } catch (err) {
       console.error(`[email] ✗ ${item._id}:`, err.message);
-      await _bubblePatch("EmailQueue", item._id, {
+      await _bubblePatch("emailqueue", item._id, {
         error_message: String(err.message || "Okänt fel").slice(0, 500)
       }).catch(() => {});
     }
@@ -115,7 +116,7 @@ async function buildEmail(item) {
   // Hämta EmailTemplate-posten via template_id (Bubble-relation = ID-sträng)
   let tmpl = {};
   if (item.template_id) {
-    tmpl = await _bubbleGet("EmailTemplate", item.template_id).catch(() => ({})) || {};
+    tmpl = await _bubbleGet("emailtemplate", item.template_id).catch(() => ({})) || {};
   }
 
   // slug: hämtas från EmailTemplate.slug (primärt) eller direkt på queue-posten (fallback)
