@@ -357,44 +357,36 @@ function requireApiKey(req, res, next) {
   // Exakta paths (utan querystring)
   const openPaths = new Set([
     "/health",
-
     // Fortnox OAuth
     "/fortnox/authorize",
     "/fortnox/callback",
-
     // Microsoft OAuth (browser hits these WITHOUT x-api-key)
     "/ms/authorize",
     "/ms/callback",
-
     // Workplace Strategy Calculator (publik endpoint, ingen API-nyckel)
     "/leads/create-from-calculator",
-        // Artikelanalys (läs cached data, publik)
+    // Artikelanalys (läs cached data, publik)
     "/analytics/articles/latest",
   ]);
-
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [
-    // ex: om du senare lägger /ms/callback/...
+    // Admin-routes skyddas av requireAdminCrm (Bubble user-verifiering) istället
+    "/admin/",
   ];
-
   if (openPaths.has(req.path) || openPrefixes.some(p => req.path.startsWith(p))) {
     return next();
   }
-
   if (!RENDER_API_KEY) {
     return res
       .status(500)
       .json({ ok: false, error: "Missing MIRA_RENDER_API_KEY on server" });
   }
-
   const key = req.headers["x-api-key"];
   if (!key || String(key).trim() !== String(RENDER_API_KEY).trim()) {
     return res.status(401).json({ ok: false, error: "Unauthorized (bad x-api-key)" });
   }
-
   return next();
 }
-
 app.use(requireApiKey);
 // ────────────────────────────────────────────────────────────
 // Bubble helpers (User + Data API)
