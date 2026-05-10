@@ -369,10 +369,7 @@ function requireApiKey(req, res, next) {
     "/analytics/articles/latest",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
-  const openPrefixes = [
-    // Admin-routes skyddas av requireAdminCrm (Bubble user-verifiering) istället
-    "/admin/",
-  ];
+  const openPrefixes = [];
   if (openPaths.has(req.path) || openPrefixes.some(p => req.path.startsWith(p))) {
     return next();
   }
@@ -11736,7 +11733,7 @@ async function requireAdminCrm(req, res, next) {
 // ── GET /admin/email/templates ───────────────────────────────────────────────
 // Returnerar alla EmailTemplate-poster sorterade på name.
 
-app.get("/admin/email/templates", requireAdminCrm, async (req, res) => {
+app.get("/admin/email/templates", requireApiKey, async (req, res) => {
   try {
     const templates = await bubbleFind("emailtemplate", {
       sort_field: "name",
@@ -11755,7 +11752,7 @@ app.get("/admin/email/templates", requireAdminCrm, async (req, res) => {
 // Uppdaterar ett EmailTemplate-objekt.
 // Body (valfria fält): name · slug · subject · cta_label · is_active · entity_type
 
-app.patch("/admin/email/template/:id", requireAdminCrm, async (req, res) => {
+app.patch("/admin/email/template/:id", requireApiKey, async (req, res) => {
   const { id } = req.params;
   const allowed = ["name", "slug", "subject", "cta_label", "is_active", "entity_type"];
   const payload = {};
@@ -11778,7 +11775,7 @@ app.patch("/admin/email/template/:id", requireAdminCrm, async (req, res) => {
 // ── GET /admin/email/queue ───────────────────────────────────────────────────
 // Returnerar de 100 senaste EmailQueue-posterna + sammanfattad statistik.
 
-app.get("/admin/email/queue", requireAdminCrm, async (req, res) => {
+app.get("/admin/email/queue", requireApiKey, async (req, res) => {
   try {
     const rows = await bubbleFind("emailqueue", {
       sort_field: "Created Date",
@@ -11806,7 +11803,7 @@ app.get("/admin/email/queue", requireAdminCrm, async (req, res) => {
 // Skapar en EmailQueue-post som pollern skickar inom 2 minuter.
 // Body: template_id (required) · to_email (required) · to_name (optional)
 
-app.post("/admin/email/test", requireAdminCrm, async (req, res) => {
+app.post("/admin/email/test", requireApiKey, async (req, res) => {
   const { template_id, to_email, to_name } = req.body;
   if (!template_id || !to_email) {
     return res.status(400).json({ ok: false, error: "template_id och to_email krävs" });
