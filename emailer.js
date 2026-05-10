@@ -251,18 +251,20 @@ async function tmplMatterNew(e, extra, toName, ctaLabel, item) {
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl, accent: "#db6923",
     tag: "Nytt ärende",
     headline: title,
-    body: descr ? `<p>${esc(descr)}</p>` : "",
+    body: descr ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(descr)}</p>` : "",
     details: detailRows([
-      office    && ["Kontor",     office],
-      category  && ["Kategori",   category],
-      priority  && ["Prioritet",  priorityBadge(priority)],
-      refName   && ["Inrapporterat av", refName],
-      createdAt && ["Datum",      createdAt],
-      status    && ["Status",     status],
-      avvikelse  ? ["Avvikelse",  '<span style="color:#f87171;font-weight:600;">Ja</span>'] : null
+      senderName && ["Företag",   senderName],
+      office     && ["Kontor",    office],
+      category   && ["Kategori",  category],
+      priority   && ["Prioritet", priorityBadge(priority)],
+      refName    && ["Inrapporterat av", refName],
+      createdAt  && ["Datum",     createdAt],
+      status     && ["Status",    status],
+      avvikelse   ? ["Avvikelse", '<span style="color:#f87171;font-weight:600;">Ja</span>'] : null
     ]),
-    ctaLabel: ctaLabel || "Öppna ärende",
-    ctaUrl: `${APP_BASE_URL}/matter/${e._id || ""}`
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Läs och hantera ärendet på Mira."
   });
 
   return { subject, html };
@@ -299,11 +301,13 @@ async function tmplMatterUpdated(e, extra, toName, ctaLabel, item) {
     headline: title,
     body: commentsHtml,
     details: detailRows([
-      status && ["Status",  statusBadge(status)],
-      betyg  && ["Betyg",   starRating(betyg)]
+      senderName && ["Företag",  senderName],
+      status     && ["Status",   statusBadge(status)],
+      betyg      && ["Betyg",    starRating(betyg)]
     ]),
-    ctaLabel: ctaLabel || "Se hela ärendet",
-    ctaUrl: `${APP_BASE_URL}/matter/${e._id || ""}`
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Läs och hantera ärendet på Mira."
   });
 
   return { subject, html };
@@ -344,8 +348,9 @@ async function tmplCommissionNew(e, extra, toName, ctaLabel, item) {
       poNumber            && ["PO-nummer",      poNumber],
       orderers.length     && ["Beställare",     orderers.join(", ")]
     ]),
-    ctaLabel: ctaLabel || "Se bokning",
-    ctaUrl: `${APP_BASE_URL}/commission/${e._id || ""}`
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Läs och hantera bokningen på Mira."
   });
 
   return { subject, html };
@@ -383,8 +388,9 @@ async function tmplCommissionUpdated(e, extra, toName, ctaLabel, item) {
     details: detailRows([
       status && ["Status", statusBadge(status)]
     ]),
-    ctaLabel: ctaLabel || "Se bokning",
-    ctaUrl: `${APP_BASE_URL}/commission/${e._id || ""}`
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Läs och hantera bokningen på Mira."
   });
 
   return { subject, html };
@@ -420,8 +426,9 @@ async function tmplQcNew(e, extra, toName, ctaLabel, item) {
       qcDate     && ["Datum",       qcDate],
       betyg      && ["Betyg",       starRating(betyg)]
     ]),
-    ctaLabel: ctaLabel || "Se rapport",
-    ctaUrl: `${APP_BASE_URL}/qualitycontrol/${e._id || ""}`
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Läs rapporten på Mira."
   });
 
   return { subject, html };
@@ -444,8 +451,9 @@ async function tmplQcUpdated(e, extra, toName, ctaLabel, item) {
     headline: "Ny kommentar på kvalitetskontroll",
     body: message ? `<p style="line-height:1.65;color:#c0c4d6;">${esc(message)}</p>` : "",
     details: "",
-    ctaLabel: ctaLabel || "Se rapport",
-    ctaUrl: `${APP_BASE_URL}/qualitycontrol/${e._id || ""}`
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Läs rapporten på Mira."
   });
 
   return { subject, html };
@@ -487,7 +495,7 @@ async function tmplNewsNew(e, extra, toName, accent, ctaLabel, item) {
 function wrapLayout({
   toName, logoUrl, senderName, imageUrl,
   accent = "#db6923", tag, headline, body,
-  details, ctaLabel, ctaUrl
+  details, ctaLabel, ctaUrl, miraNote = null
 }) {
   const logoBlock = logoUrl
     ? `<img src="${esc(logoUrl)}" alt="${esc(senderName)}"
@@ -522,11 +530,9 @@ function wrapLayout({
                    letter-spacing:-.1px;">
            ${esc(ctaLabel)}
          </a>
-       </div>
-       <p style="font-size:12px;color:#4a5068;margin:10px 0 0;">
-         Eller öppna länken: <a href="${esc(ctaUrl)}"
-           style="color:#606880;text-decoration:underline;">${esc(ctaUrl)}</a>
-       </p>`
+       </div>`
+    : miraNote
+    ? `<p style="font-size:13px;color:#606880;margin:24px 0 0;font-style:italic;">${esc(miraNote)}</p>`
     : "";
 
   return `<!DOCTYPE html>
@@ -549,14 +555,7 @@ function wrapLayout({
 
     <!-- Header / Logo -->
     <tr><td style="padding:28px 36px 0;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0">
-      <tr>
-        <td>${logoBlock}</td>
-        <td align="right" style="font-size:11px;color:#3a4055;vertical-align:bottom;">
-          Powered by Mira
-        </td>
-      </tr>
-      </table>
+      ${logoBlock}
     </td></tr>
 
     <!-- Hero image (om det finns) -->
@@ -590,19 +589,10 @@ function wrapLayout({
     </td></tr>
 
     <!-- Footer -->
-    <tr><td style="padding:32px 36px;border-top:1px solid #1e2437;margin-top:24px;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0">
-      <tr>
-        <td style="font-size:11px;color:#3a4055;line-height:1.6;">
-          Mira · Powered by Carotte Group AB<br>
-          Du får detta mail eftersom du är kopplad till Mira.
-        </td>
-        <td align="right" style="font-size:11px;color:#3a4055;vertical-align:top;">
-          <a href="${APP_BASE_URL}/settings/notifications"
-             style="color:#4a5068;text-decoration:none;">Avsluta notiser</a>
-        </td>
-      </tr>
-      </table>
+    <tr><td style="padding:24px 36px;border-top:1px solid #1e2437;margin-top:24px;">
+      <p style="font-size:11px;color:#3a4055;line-height:1.6;margin:0;">
+        Mira · Carotte Group AB
+      </p>
     </td></tr>
 
   </table>
