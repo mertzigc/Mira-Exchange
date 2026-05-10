@@ -326,27 +326,34 @@ async function tmplCommissionNew(e, extra, toName, ctaLabel, item) {
 
   const title       = e.commission_title || e.Title       || extra.title    || "Ny bokning";
   const descr       = e.Description      || e.description || "";
-  const delivDate   = fmtDate(e.delivery_date || e.DeliveryDate);
+  // Leveransdatum med klockslag
+  const delivDate   = fmtDateTime(e.delivery_date || e.DeliveryDate);
+  const delivAddr   = e.delivery_address  || e.DeliveryAddress || extra.delivery_address || "";
   const category    = e.Category         || e.category    || "";
   const subcat      = e.SubcategoryFM    || e.SubCategoryHK || e.SubCategorySP || e.SubkategoriFE || "";
   const budget      = e.Budget           || e.budget      || "";
   const guests      = e.guest            || e.Guest;
   const poNumber    = e.po_number        || e.PONumber    || "";
-  const orderers    = asArray(extra.orderers);           // skickas som [namn1, namn2, …] i extra_json
+  // Beställare: skicka "Förnamn Efternamn" via extra_data.orderer_name (första beställaren)
+  // eller en kommaseparerad lista via extra_data.orderers
+  const ordererName = extra.orderer_name || "";
+  const orderers    = ordererName ? [ordererName] : asArray(extra.orderers);
   const subject     = item.subject_override || `Ny bokning: ${title}`;
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
     tag: "Ny bokning",
     headline: title,
-    body: descr ? `<p>${esc(descr)}</p>` : "",
+    body: descr ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(descr)}</p>` : "",
     details: detailRows([
+      senderName          && ["Företag",       senderName],
+      orderers.length     && ["Beställare",    orderers.join(", ")],
       delivDate           && ["Leveransdatum", delivDate],
+      delivAddr           && ["Leveransadress",delivAddr],
       category            && ["Kategori",      category],
       subcat              && ["Underkategori",  subcat],
       budget              && ["Budget",         budget],
       guests != null      && ["Antal gäster",   String(guests)],
-      poNumber            && ["PO-nummer",      poNumber],
-      orderers.length     && ["Beställare",     orderers.join(", ")]
+      poNumber            && ["PO-nummer",      poNumber]
     ]),
     ctaLabel: null,
     ctaUrl: null,
@@ -532,7 +539,7 @@ function wrapLayout({
          </a>
        </div>`
     : miraNote
-    ? `<p style="font-size:13px;color:#606880;margin:24px 0 0;font-style:italic;">${esc(miraNote)}</p>`
+    ? `<p style="font-size:13px;color:#606880;margin:28px 0 20px;font-style:italic;">${esc(miraNote)}</p>`
     : "";
 
   return `<!DOCTYPE html>
@@ -655,6 +662,20 @@ function fmtDate(v) {
     return d.toLocaleDateString("sv-SE", {
       day: "numeric", month: "long", year: "numeric"
     });
+  } catch {
+    return String(v);
+  }
+}
+
+// Datum + tid → "5 maj 2026, 14:30"
+function fmtDateTime(v) {
+  if (!v) return "";
+  try {
+    const d = new Date(v);
+    if (!Number.isFinite(d.getTime())) return String(v);
+    return d.toLocaleDateString("sv-SE", {
+      day: "numeric", month: "long", year: "numeric"
+    }) + ", " + d.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
   } catch {
     return String(v);
   }
