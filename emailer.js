@@ -232,20 +232,33 @@ async function tmplInvitationNew(e, extra, toName, accent, ctaLabel, item) {
 //       Bild, Status, Avvikelse
 // ────────────────────────────────────────────────────────────
 async function tmplMatterNew(e, extra, toName, ctaLabel, item) {
-  const cc        = await fetchClientCompany(e.company || e.Company);
-  const logoUrl   = cc?.logo_url || cc?.Logo || "";
-  const senderName= cc?.Name_company || "";
+  // extra_data från Bubble-workflow ska innehålla:
+  //   company_id    – matter's Kundföretag's unique id  (för logotyp)
+  //   company_name  – matter's Kundföretag's Name_company
+  //   category      – matter's Ärendekategori's Display
+  //   description   – matter's Beskrivning
+  //   ref_name      – matter's Creator's First Name + " " + Creator's Surname
+  //   office        – matter's Kontor's Office_title
 
-  const title     = e.Title         || e.title        || "Nytt ärende";
-  const descr     = e.Description   || e.description  || "";
-  const office    = e.Office_title  || e.office_title || extra.office    || "";
-  const priority  = e.priority      || e.Prioritet    || "";
-  const category  = e.category_title|| e.Category     || extra.category  || "";
-  const refName   = extra.ref_name  || "";                // "Förnamn Efternamn" – skickas av Bubble
-  const imageUrl  = e.image_url     || e.Image        || extra.image_url || "";
-  const status    = e.Status        || e.status       || "Pågående";
-  const avvikelse = e.Avvikelse     ?? e.avvikelse    ?? false;
-  const createdAt = fmtDate(e["Created Date"] || e.created_date);
+  const companyId   = extra.company_id   || e.Kundföretag || e.kundföretag || e.company || e.Company || "";
+  const cc          = companyId ? await fetchClientCompany(companyId) : null;
+  const logoUrl     = cc?.logo_url   || cc?.Logo        || "";
+  // Företagsnamn: extra_data prioriteras (redan löst i Bubble), annars API-fältet
+  const senderName  = extra.company_name || cc?.Name_company || e.company_name || "";
+
+  const title     = e.Title         || e.title        || extra.title       || "Nytt ärende";
+  // Beskrivning: ta från extra_data (Bubble kan skicka den enkelt) eller API-fältet
+  const descr     = extra.description || e.Description || e.description    || e.Beskrivning || "";
+  const office    = extra.office      || e.Office_title || e.office_title  || "";
+  const priority  = e.priority        || e.Prioritet   || extra.priority   || "";
+  // Ärendekategori är ett option set – display-värdet skickas enklast via extra_data
+  const category  = extra.category    || e.category_title || e.Category    || "";
+  const refName   = extra.ref_name    || "";
+  const imageUrl  = extra.image_url   || e.image_url   || e.Image          || "";
+  const status    = e.Status          || e.status      || "Pågående";
+  const avvikelse = e.Avvikelse       ?? e.avvikelse   ?? false;
+  // Datum med klockslag
+  const createdAt = fmtDateTime(e["Created Date"] || e.created_date);
   const subject   = item.subject_override || `Nytt ärende: ${title}`;
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl, accent: "#db6923",
@@ -253,14 +266,14 @@ async function tmplMatterNew(e, extra, toName, ctaLabel, item) {
     headline: title,
     body: descr ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(descr)}</p>` : "",
     details: detailRows([
-      senderName && ["Företag",   senderName],
-      office     && ["Kontor",    office],
-      category   && ["Kategori",  category],
-      priority   && ["Prioritet", priorityBadge(priority)],
-      refName    && ["Inrapporterat av", refName],
-      createdAt  && ["Datum",     createdAt],
-      status     && ["Status",    status],
-      avvikelse   ? ["Avvikelse", '<span style="color:#f87171;font-weight:600;">Ja</span>'] : null
+      senderName  && ["Företag",          senderName],
+      office      && ["Kontor",           office],
+      category    && ["Ärendekategori",   category],
+      priority    && ["Prioritet",        priorityBadge(priority)],
+      refName     && ["Inrapporterat av", refName],
+      createdAt   && ["Inrapporterat",    createdAt],
+      status      && ["Status",          status],
+      avvikelse    ? ["Avvikelse", '<span style="color:#f87171;font-weight:600;">Ja</span>'] : null
     ]),
     ctaLabel: null,
     ctaUrl: null,
