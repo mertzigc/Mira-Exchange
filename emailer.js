@@ -666,29 +666,32 @@ function hexAlpha(hex, alpha) {
   return hex + alpha;
 }
 
-// Datum → "5 maj 2026"
+// Datum → "5 maj 2026" (svensk tidszon)
 function fmtDate(v) {
   if (!v) return "";
   try {
     const d = new Date(v);
     if (!Number.isFinite(d.getTime())) return String(v);
     return d.toLocaleDateString("sv-SE", {
-      day: "numeric", month: "long", year: "numeric"
+      day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Stockholm"
     });
   } catch {
     return String(v);
   }
 }
 
-// Datum + tid → "5 maj 2026, 14:30"
+// Datum + tid → "5 maj 2026, 17:13" (svensk tidszon)
 function fmtDateTime(v) {
   if (!v) return "";
   try {
     const d = new Date(v);
     if (!Number.isFinite(d.getTime())) return String(v);
+    const tz = "Europe/Stockholm";
     return d.toLocaleDateString("sv-SE", {
-      day: "numeric", month: "long", year: "numeric"
-    }) + ", " + d.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+      day: "numeric", month: "long", year: "numeric", timeZone: tz
+    }) + ", " + d.toLocaleTimeString("sv-SE", {
+      hour: "2-digit", minute: "2-digit", timeZone: tz
+    });
   } catch {
     return String(v);
   }
