@@ -12117,11 +12117,10 @@ app.get("/invoice/lookup", async (req, res) => {
               if (levId) {
                 // supplier är en relation → hämta Leverantör-posten
                 const lev = await bubbleGet("leverantör-supplier", levId);
-                // Fältnamn i Bubble API: ö→_ (Företagsnamn → F_retagsnamn)
+                // Fältnamnet i Bubble API är "Företagsnamn" med ö bevarat
                 supplierName = (
-                  lev?.F_retagsnamn      ||   // Företagsnamn → F_retagsnamn
-                  lev?.Foretagsnamn      ||   // utan ö
-                  lev?.supplier_name     ||   // äldre fältnamn
+                  lev?.["Företagsnamn"]  ||   // bekräftat från API-logg
+                  lev?.supplier_name     ||
                   lev?.Name              ||
                   ""
                 ).trim();
