@@ -12105,13 +12105,26 @@ app.get("/invoice/lookup", async (req, res) => {
       ]).catch(() => null);
 
       if (fi?._id) {
+        // Hämta leverantörsnamn via FortnoxConnection.supplier
+        let supplierName = fi.ft_supplier_name || "";
+        if (fi.Connection_id || fi.connection_id) {
+          try {
+            const conn = await bubbleGet(
+              "FortnoxConnection",
+              fi.Connection_id || fi.connection_id
+            );
+            if (conn?.supplier) supplierName = conn.supplier;
+          } catch (e) {
+            console.warn("[invoice/lookup] FortnoxConnection-hämtning misslyckades:", e?.message);
+          }
+        }
+
         result.invoice = {
           found:           true,
           invoice_nr:      fi.ft_document_number  || invoiceNr,
           customer_name:   fi.ft_customer_name    || "",
-          // supplier_name matchar direkt mot dropdown-värden i formuläret:
-          // "Carotte Housekeeping AB" | "Carotte Staff AB" | "Carotte Food & Event AB" | "Carotte Group AB"
-          supplier_name:   fi.ft_supplier_name    || "",
+          // supplier från FortnoxConnection.supplier – matchar dropdown-värden direkt
+          supplier_name:   supplierName,
           due_date:        fi.ft_due_date         || null,
           invoice_date:    fi.ft_invoice_date     || null,
           amount:          fi.ft_total            || null,
