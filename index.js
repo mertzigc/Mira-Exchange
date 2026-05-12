@@ -11938,7 +11938,6 @@ app.get("/invoice/lookup", async (req, res) => {
 // SLUT PÅ FAKTURA LOOKUP-BLOCKET
 // ════════════════════════════════════════════════════════════════════════════
 
-
 // ════════════════════════════════════════════════════════════════════════════
 // FAKTURAFRÅGOR – lägg in PRECIS OVANFÖR app.listen(...) i index.js
 //
@@ -11983,27 +11982,21 @@ app.post("/invoice/submit", async (req, res) => {
     };
     const bubbleCaseType = caseTypeMap[case_type] || "Allmänt";
 
-    // ── 2. Matcha ClientCompany på företagsnamn ───────────────────────────
+    // ── 2. ClientCompany matchas EFTER FortnoxInvoice-sökning (steg 4)
+    //    Samma mönster som resten av Mira: ft_customer_number → ClientCompany
     let clientCompanyId = null;
-    try {
-      const companies = await bubbleFindOne("clientcompany", [
-        { key: "Name_company", constraint_type: "contains", value: company_name.trim() }
-      ]).catch(() => null);
-      clientCompanyId = companies?._id || null;
-    } catch (e) {
-      console.warn("[invoice] ClientCompany-sökning misslyckades:", e?.message);
-    }
 
     // ── 3. Matcha Leverantör (billing_company) på namn ────────────────────
     // billing_company är relation till Leverantör-typen i Bubble
     let leverantorId = null;
     if (billingCompanyName) {
       try {
-        // Typnamn från meta: leverantör-supplier, sökfält: supplier_name
+        // Fältnamnet på Leverantör är "Företagsnamn" (bekräftat via API-logg)
         const lev = await bubbleFindOne("leverantör-supplier", [
-          { key: "supplier_name", constraint_type: "contains", value: billingCompanyName }
+          { key: "Företagsnamn", constraint_type: "contains", value: billingCompanyName }
         ]).catch(() => null);
         leverantorId = lev?._id || null;
+        console.log(`[invoice] Leverantör lookup "${billingCompanyName}": ${leverantorId ? "✓ "+lev?.["Företagsnamn"] : "ingen match"}`);
       } catch (e) {
         console.warn("[invoice] Leverantör-sökning misslyckades:", e?.message);
       }
@@ -12022,10 +12015,28 @@ app.post("/invoice/submit", async (req, res) => {
         fortnoxInvoiceId = fi?._id || null;
         if (fortnoxInvoiceId) {
           console.log(`[invoice] FortnoxInvoice matchad: ${fortnoxInvoiceId} (${invoiceNumToSearch})`);
+          // Matcha ClientCompany via ft_customer_number (samma sätt som FortnoxInvoice-sync)
+          const custNum = fi.ft_customer_number;
+          if (custNum) {
+            clientCompanyId = await resolveCompanyFromFortnoxCustomerNumber(custNum)
+              .catch(() => null);
+            console.log(`[invoice] ClientCompany via ft_customer_number ${custNum}: ${clientCompanyId ? "✓" : "ingen match"}`);
+          }
         }
       } catch (e) {
         console.warn("[invoice] FortnoxInvoice-sökning misslyckades:", e?.message);
       }
+    }
+
+    // Fallback: matcha ClientCompany på företagsnamn om ingen faktura hittades
+    if (!clientCompanyId && company_name) {
+      try {
+        const cc = await bubbleFindOne("clientcompany", [
+          { key: "Name_company", constraint_type: "contains", value: company_name.trim() }
+        ]).catch(() => null);
+        if (cc?._id) clientCompanyId = cc._id;
+        console.log(`[invoice] ClientCompany fallback via namn: ${clientCompanyId ? "✓" : "ingen match"}`);
+      } catch (e) { console.warn("[invoice] namn-fallback:", e?.message); }
     }
 
     // ── 5. Bygg Bubble-payload ────────────────────────────────────────────
