@@ -12074,6 +12074,79 @@ async function invSendgrid({ to, from, replyTo, subject, html, attachments = [] 
 // ════════════════════════════════════════════════════════════════════════════
 // SLUT PÅ FAKTURAFRÅGOR-BLOCKET
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// FAKTURA LOOKUP – lägg PRECIS OVANFÖR app.listen(...) i index.js
+//
+// GET /invoice/lookup
+//   ?invoice_nr=10042       → söker FortnoxInvoice på ft_document_number
+//   ?company_name=CMIAB     → söker ClientCompany på Name_company (max 5 träffar)
+//   Båda kan kombineras i samma anrop.
+//
+// Öppen endpoint – ingen API-nyckel krävs (publik formulär-sida).
+// ════════════════════════════════════════════════════════════════════════════
+
+app.get("/invoice/lookup", async (req, res) => {
+  const invoiceNr   = String(req.query.invoice_nr   || "").trim();
+  const companyName = String(req.query.company_name || "").trim();
+
+  if (!invoiceNr && !companyName) {
+    return res.status(400).json({ ok: false, error: "invoice_nr eller company_name krävs" });
+  }
+
+  const result = { ok: true, invoice: null, companies: [] };
+
+  // ── 1. Faktura-lookup ─────────────────────────────────────────────────────
+  if (invoiceNr) {
+    try {
+      const fi = await bubbleFindOne("FortnoxInvoice", [
+        { key: "ft_document_number", constraint_type: "equals", value: invoiceNr }
+      ]).catch(() => null);
+
+      if (fi?._id) {
+        result.invoice = {
+          found:         true,
+          invoice_nr:    fi.ft_document_number || invoiceNr,
+          customer_name: fi.ft_customer_name   || "",
+          due_date:      fi.ft_due_date        || fi.ft_invoice_date || null,
+          amount:        fi.ft_total           || fi.ft_total_vat    || null,
+          currency:      fi.ft_currency        || "SEK"
+        };
+      } else {
+        result.invoice = { found: false, invoice_nr: invoiceNr };
+      }
+    } catch (e) {
+      console.warn("[invoice/lookup] FortnoxInvoice-sökning misslyckades:", e?.message);
+      result.invoice = { found: false, invoice_nr: invoiceNr };
+    }
+  }
+
+  // ── 2. Företagsnamn-sökning ───────────────────────────────────────────────
+  if (companyName.length >= 2) {
+    try {
+      const companies = await bubbleFind("clientcompany", {
+        constraints: [
+          { key: "Name_company", constraint_type: "contains", value: companyName }
+        ],
+        limit: 5,
+        sort_field: "Name_company",
+        descending: false
+      });
+
+      result.companies = (companies || []).map(c => ({
+        id:   c._id,
+        name: c.Name_company || ""
+      }));
+    } catch (e) {
+      console.warn("[invoice/lookup] ClientCompany-sökning misslyckades:", e?.message);
+    }
+  }
+
+  res.json(result);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SLUT PÅ FAKTURA LOOKUP-BLOCKET
+// ════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
 
