@@ -12105,17 +12105,24 @@ app.get("/invoice/lookup", async (req, res) => {
       ]).catch(() => null);
 
       if (fi?._id) {
-        // Hämta leverantörsnamn via FortnoxConnection.supplier
-        let supplierName = fi.ft_supplier_name || "";
-        if (fi.Connection_id || fi.connection_id) {
-          try {
-            const conn = await bubbleGet(
-              "FortnoxConnection",
-              fi.Connection_id || fi.connection_id
-            );
-            if (conn?.supplier) supplierName = conn.supplier;
-          } catch (e) {
-            console.warn("[invoice/lookup] FortnoxConnection-hämtning misslyckades:", e?.message);
+        // Hämta leverantörsnamn: FortnoxInvoice → FortnoxConnection → Leverantör.supplier_name
+        let supplierName = (fi.ft_supplier_name || "").trim();
+
+        if (!supplierName) {
+          const connId = fi.Connection_id || fi.connection_id;
+          if (connId) {
+            try {
+              const conn = await bubbleGet("FortnoxConnection", connId);
+              const levId = conn?.supplier;
+              if (levId) {
+                // supplier är en relation → hämta Leverantör-posten
+                const lev = await bubbleGet("leverantör-supplier", levId);
+                supplierName = (lev?.supplier_name || lev?.Name || "").trim();
+                console.log(`[invoice/lookup] Leverantör: ${supplierName} (${levId})`);
+              }
+            } catch (e) {
+              console.warn("[invoice/lookup] Leverantör-hämtning misslyckades:", e?.message);
+            }
           }
         }
 
