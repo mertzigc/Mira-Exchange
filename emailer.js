@@ -151,6 +151,7 @@ async function buildEmail(item) {
     case "qc_new":             return tmplQcNew(entity,          extra, toName, ctaLabel, ctx);
     case "qc_updated":         return tmplQcUpdated(entity,      extra, toName, ctaLabel, ctx);
     case "news_new":           return tmplNewsNew(entity,        extra, toName, accent, ctaLabel, ctx);
+    case "invoice_question":   return tmplInvoiceQuestion(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -168,7 +169,8 @@ async function fetchEntity(slug, id) {
     commission_updated:    "Comission",
     qc_new:                "QualityControl",
     qc_updated:            "QualityControl",
-    news_new:              "Invitation"
+    news_new:              "Invitation",
+    invoice_question:      "invoiceinquiry"
   };
   const type = typeMap[slug];
   if (!type) return {};
@@ -504,6 +506,66 @@ async function tmplNewsNew(e, extra, toName, accent, ctaLabel, item) {
     ]),
     ctaLabel: ctaLabel || "Läs mer",
     ctaUrl: `${APP_BASE_URL}/news/${e._id || ""}`
+  });
+
+  return { subject, html };
+}
+
+// ────────────────────────────────────────────────────────────
+// MALL: invoice_question  (InvoiceInquiry)
+// extra_data: case_number, billing_company_name
+// ────────────────────────────────────────────────────────────
+async function tmplInvoiceQuestion(e, extra, toName, ctaLabel, ctx) {
+  const caseNr      = extra.case_number          || "";
+  const billingCo   = extra.billing_company_name || e.billing_company || "";
+  const contactName = e.contact_name             || toName             || "";
+  const company     = e.company_name_raw         || extra.company      || "";
+  const caseType    = e.case_type                || "";
+  const invNr       = e.invoice_number           || "";
+  const billingInv  = e.billing_invoice_number   || "";
+  const poNr        = e.po_number                || "";
+  const clientRef   = e.client_reference         || "";
+  const carotteRef  = e.carotte_reference        || "";
+  const descr       = e.description              || "";
+  const status      = e.status                   || "Pågående";
+  const phone       = e.phone                    || "";
+  const emailAddr   = e.email                    || "";
+
+  // Bilagor
+  let filesHtml = "";
+  try {
+    const fi = e.files_info ? JSON.parse(e.files_info) : [];
+    if (fi.length) filesHtml = `<p style="font-size:13px;color:#c0c4d6;margin-top:16px">
+      <strong>Bilagor:</strong> ${fi.map(f => esc(f.name)).join(", ")}</p>`;
+  } catch {}
+
+  const subject = ctx.subject_override || (caseNr ? `[${caseNr}] Fakturafråga` : "Fakturafråga");
+
+  const html = wrapLayout({ toName, logoUrl: "", senderName: "Carotte", imageUrl: "",
+    accent: "#db6923",
+    tag: "Fakturafråga",
+    headline: caseNr ? `Fakturafråga · ${caseNr}` : "Fakturafråga",
+    body: descr
+      ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(descr)}</p>${filesHtml}`
+      : filesHtml,
+    details: detailRows([
+      caseNr      && ["Ärendenummer",   `<span style="font-family:monospace;color:#db6923;font-weight:700;">${esc(caseNr)}</span>`],
+      status      && ["Status",         statusBadge(status)],
+      contactName && ["Kontakt",        contactName],
+      company     && ["Företag",        company],
+      emailAddr   && ["E-post",         emailAddr],
+      phone       && ["Telefon",        phone],
+      caseType    && ["Ärendetyp",      caseType],
+      billingCo   && ["Fakturabolag",   billingCo],
+      billingInv  && ["Fakturanummer",  billingInv],
+      invNr && invNr !== billingInv && ["Ref. fakturanr", invNr],
+      poNr        && ["PO-nummer",      poNr],
+      clientRef   && ["Er referens",    clientRef],
+      carotteRef  && ["Carottes ref.",  carotteRef]
+    ]),
+    ctaLabel: null,
+    ctaUrl:   null,
+    miraNote: "Läs och hantera ärendet på Mira."
   });
 
   return { subject, html };
