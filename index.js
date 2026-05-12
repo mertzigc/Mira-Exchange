@@ -11830,6 +11830,116 @@ app.post("/admin/email/test", requireApiKey, async (req, res) => {
 // SLUT PÅ ADMIN E-POST BLOCKET
 // ════════════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════════════
+// FAKTURA LOOKUP – lägg PRECIS OVANFÖR app.listen(...) i index.js
+//
+// GET /invoice/lookup
+//   ?invoice_nr=10042       → söker FortnoxInvoice på ft_document_number
+//   ?company_name=CMIAB     → söker ClientCompany på Name_company (max 5 träffar)
+//   Båda kan kombineras i samma anrop.
+//
+// Öppen endpoint – ingen API-nyckel krävs (publik formulär-sida).
+// ════════════════════════════════════════════════════════════════════════════
+
+app.get("/invoice/lookup", async (req, res) => {
+  const invoiceNr   = String(req.query.invoice_nr   || "").trim();
+  const companyName = String(req.query.company_name || "").trim();
+
+  if (!invoiceNr && !companyName) {
+    return res.status(400).json({ ok: false, error: "invoice_nr eller company_name krävs" });
+  }
+
+  const result = { ok: true, invoice: null, companies: [] };
+
+  // ── 1. Faktura-lookup ─────────────────────────────────────────────────────
+  if (invoiceNr) {
+    try {
+      const fi = await bubbleFindOne("FortnoxInvoice", [
+        { key: "ft_document_number", constraint_type: "equals", value: invoiceNr }
+      ]).catch(() => null);
+
+      if (fi?._id) {
+        // Hämta leverantörsnamn: FortnoxInvoice → FortnoxConnection → Leverantör.supplier_name
+        let supplierName = (fi.ft_supplier_name || "").trim();
+
+        if (!supplierName) {
+          const connId = fi.Connection_id || fi.connection_id;
+          if (connId) {
+            try {
+              const conn = await bubbleGet("FortnoxConnection", connId);
+              const levId = conn?.supplier;
+              if (levId) {
+                // supplier är en relation → hämta Leverantör-posten
+                const lev = await bubbleGet("leverantör-supplier", levId);
+                // Fältnamnet i Bubble API är "Företagsnamn" med ö bevarat
+                supplierName = (
+                  lev?.["Företagsnamn"]  ||   // bekräftat från API-logg
+                  lev?.supplier_name     ||
+                  lev?.Name              ||
+                  ""
+                ).trim();
+                // Logga alla nycklar för felsökning
+                console.log(`[invoice/lookup] Leverantör keys: ${Object.keys(lev||{}).join(", ")}`);
+                console.log(`[invoice/lookup] Leverantör: ${supplierName} (${levId})`);
+              }
+            } catch (e) {
+              console.warn("[invoice/lookup] Leverantör-hämtning misslyckades:", e?.message);
+            }
+          }
+        }
+
+        result.invoice = {
+          found:           true,
+          invoice_nr:      fi.ft_document_number  || invoiceNr,
+          customer_name:   fi.ft_customer_name    || "",
+          // supplier från FortnoxConnection.supplier – matchar dropdown-värden direkt
+          supplier_name:   supplierName,
+          due_date:        fi.ft_due_date         || null,
+          invoice_date:    fi.ft_invoice_date     || null,
+          amount:          fi.ft_total            || null,
+          currency:        fi.ft_currency         || "SEK",
+          your_reference:  fi.ft_your_reference   || "",
+          our_reference:   fi.ft_our_reference    || ""
+        };
+      } else {
+        result.invoice = { found: false, invoice_nr: invoiceNr };
+      }
+    } catch (e) {
+      console.warn("[invoice/lookup] FortnoxInvoice-sökning misslyckades:", e?.message);
+      result.invoice = { found: false, invoice_nr: invoiceNr };
+    }
+  }
+
+  // ── 2. Företagsnamn-sökning ───────────────────────────────────────────────
+  if (companyName.length >= 2) {
+    try {
+      const companies = await bubbleFind("clientcompany", {
+        constraints: [
+          { key: "Name_company", constraint_type: "contains", value: companyName }
+        ],
+        limit: 5,
+        sort_field: "Name_company",
+        descending: false
+      });
+
+      result.companies = (companies || []).map(c => ({
+        id:      c._id,
+        name:    c.Name_company || "",
+        org_nr:  c.org_number   || c.Org_number || ""
+      }));
+    } catch (e) {
+      console.warn("[invoice/lookup] ClientCompany-sökning misslyckades:", e?.message);
+    }
+  }
+
+  res.json(result);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SLUT PÅ FAKTURA LOOKUP-BLOCKET
+// ════════════════════════════════════════════════════════════════════════════
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // FAKTURAFRÅGOR – lägg in PRECIS OVANFÖR app.listen(...) i index.js
 //
 // POST /invoice/submit  –  öppen endpoint (publik form, inget API-nyckelkrav)
