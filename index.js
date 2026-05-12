@@ -12077,112 +12077,317 @@ async function invSendgrid({ to, from, replyTo, subject, html, attachments = [] 
 // SLUT PÅ FAKTURAFRÅGOR-BLOCKET
 // ════════════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════════════
-// FAKTURA LOOKUP – lägg PRECIS OVANFÖR app.listen(...) i index.js
+// FAKTURAFRÅGOR – lägg in PRECIS OVANFÖR app.listen(...) i index.js
 //
-// GET /invoice/lookup
-//   ?invoice_nr=10042       → söker FortnoxInvoice på ft_document_number
-//   ?company_name=CMIAB     → söker ClientCompany på Name_company (max 5 träffar)
-//   Båda kan kombineras i samma anrop.
+// POST /invoice/submit  –  öppen endpoint (publik form, inget API-nyckelkrav)
 //
-// Öppen endpoint – ingen API-nyckel krävs (publik formulär-sida).
+// Bubble-fältnamn (InvoiceInquiry):
+//   case_type        → option set "case_type_invoice":  Faktura | Allmänt
+//   status           → option set "Status Ärende":      Pågående | Avslutat
+//   billing_company  → relation Leverantör (Supplier)
+//   FortnoxInvoice   → relation FortnoxInvoice (matchas på ft_document_number)
+//   client_company   → relation ClientCompany
 // ════════════════════════════════════════════════════════════════════════════
 
-app.get("/invoice/lookup", async (req, res) => {
-  const invoiceNr   = String(req.query.invoice_nr   || "").trim();
-  const companyName = String(req.query.company_name || "").trim();
+app.post("/invoice/submit", async (req, res) => {
+  const {
+    contact_name, company_name, email, phone,
+    invoice_number, case_type,
+    billing_company: billingCompanyName,
+    billing_invoice_number,
+    po_number, client_reference, carotte_reference,
+    description,
+    files = []
+  } = req.body;
 
-  if (!invoiceNr && !companyName) {
-    return res.status(400).json({ ok: false, error: "invoice_nr eller company_name krävs" });
+  if (!email || !company_name || !description || !case_type) {
+    return res.status(400).json({
+      ok: false,
+      error: "Obligatoriska fält saknas (email, company_name, description, case_type)"
+    });
   }
 
-  const result = { ok: true, invoice: null, companies: [] };
+  try {
+    // ── 1. Mappa ärendetyp → option set-värde i Bubble ───────────────────
+    // Bubble option set "case_type_invoice" har värdena: Faktura | Allmänt
+    const caseTypeMap = {
+      "Fråga om faktura":           "Faktura",
+      "Ändring av fakturauppgifter":"Faktura",
+      "Påminnelse":                 "Faktura",
+      "Faktura":                    "Faktura",
+      "Övrigt":                     "Allmänt",
+      "Allmänt":                    "Allmänt"
+    };
+    const bubbleCaseType = caseTypeMap[case_type] || "Allmänt";
 
-  // ── 1. Faktura-lookup ─────────────────────────────────────────────────────
-  if (invoiceNr) {
+    // ── 2. Matcha ClientCompany på företagsnamn ───────────────────────────
+    let clientCompanyId = null;
     try {
-      const fi = await bubbleFindOne("FortnoxInvoice", [
-        { key: "ft_document_number", constraint_type: "equals", value: invoiceNr }
+      const companies = await bubbleFindOne("clientcompany", [
+        { key: "Name_company", constraint_type: "contains", value: company_name.trim() }
       ]).catch(() => null);
+      clientCompanyId = companies?._id || null;
+    } catch (e) {
+      console.warn("[invoice] ClientCompany-sökning misslyckades:", e?.message);
+    }
 
-      if (fi?._id) {
-        // Hämta leverantörsnamn: FortnoxInvoice → FortnoxConnection → Leverantör.supplier_name
-        let supplierName = (fi.ft_supplier_name || "").trim();
-
-        if (!supplierName) {
-          const connId = fi.Connection_id || fi.connection_id;
-          if (connId) {
-            try {
-              const conn = await bubbleGet("FortnoxConnection", connId);
-              const levId = conn?.supplier;
-              if (levId) {
-                // supplier är en relation → hämta Leverantör-posten
-                const lev = await bubbleGet("leverantör-supplier", levId);
-                // Fältnamnet i Bubble API är "Företagsnamn" med ö bevarat
-                supplierName = (
-                  lev?.["Företagsnamn"]  ||   // bekräftat från API-logg
-                  lev?.supplier_name     ||
-                  lev?.Name              ||
-                  ""
-                ).trim();
-                // Logga alla nycklar för felsökning
-                console.log(`[invoice/lookup] Leverantör keys: ${Object.keys(lev||{}).join(", ")}`);
-                console.log(`[invoice/lookup] Leverantör: ${supplierName} (${levId})`);
-              }
-            } catch (e) {
-              console.warn("[invoice/lookup] Leverantör-hämtning misslyckades:", e?.message);
-            }
-          }
-        }
-
-        result.invoice = {
-          found:           true,
-          invoice_nr:      fi.ft_document_number  || invoiceNr,
-          customer_name:   fi.ft_customer_name    || "",
-          // supplier från FortnoxConnection.supplier – matchar dropdown-värden direkt
-          supplier_name:   supplierName,
-          due_date:        fi.ft_due_date         || null,
-          invoice_date:    fi.ft_invoice_date     || null,
-          amount:          fi.ft_total            || null,
-          currency:        fi.ft_currency         || "SEK",
-          your_reference:  fi.ft_your_reference   || "",
-          our_reference:   fi.ft_our_reference    || ""
-        };
-      } else {
-        result.invoice = { found: false, invoice_nr: invoiceNr };
+    // ── 3. Matcha Leverantör (billing_company) på namn ────────────────────
+    // billing_company är relation till Leverantör-typen i Bubble
+    let leverantorId = null;
+    if (billingCompanyName) {
+      try {
+        // Typnamn från meta: leverantör-supplier, sökfält: supplier_name
+        const lev = await bubbleFindOne("leverantör-supplier", [
+          { key: "supplier_name", constraint_type: "contains", value: billingCompanyName }
+        ]).catch(() => null);
+        leverantorId = lev?._id || null;
+      } catch (e) {
+        console.warn("[invoice] Leverantör-sökning misslyckades:", e?.message);
       }
-    } catch (e) {
-      console.warn("[invoice/lookup] FortnoxInvoice-sökning misslyckades:", e?.message);
-      result.invoice = { found: false, invoice_nr: invoiceNr };
     }
-  }
 
-  // ── 2. Företagsnamn-sökning ───────────────────────────────────────────────
-  if (companyName.length >= 2) {
+    // ── 4. Matcha FortnoxInvoice på fakturanummer ─────────────────────────
+    // Söker på billing_invoice_number (fakturanumret på den mottagna fakturan)
+    let fortnoxInvoiceId = null;
+    const invoiceNumToSearch = billing_invoice_number || invoice_number || "";
+    if (invoiceNumToSearch) {
+      try {
+        const fi = await bubbleFindOne("FortnoxInvoice", [
+          { key: "ft_document_number", constraint_type: "equals",
+            value: String(invoiceNumToSearch).trim() }
+        ]).catch(() => null);
+        fortnoxInvoiceId = fi?._id || null;
+        if (fortnoxInvoiceId) {
+          console.log(`[invoice] FortnoxInvoice matchad: ${fortnoxInvoiceId} (${invoiceNumToSearch})`);
+        }
+      } catch (e) {
+        console.warn("[invoice] FortnoxInvoice-sökning misslyckades:", e?.message);
+      }
+    }
+
+    // ── 5. Bygg Bubble-payload ────────────────────────────────────────────
+    const filesInfo = files.length > 0
+      ? JSON.stringify(files.map(f => ({ name: f.name, type: f.type })))
+      : null;
+
+    const bubblePayload = {
+      contact_name:           contact_name          || "",
+      company_name_raw:       company_name          || "",
+      email,
+      phone:                  phone                 || "",
+      invoice_number:         invoice_number        || "",
+      // Option set – skicka displayvärdet direkt
+      case_type:              bubbleCaseType,
+      billing_invoice_number: billing_invoice_number || "",
+      po_number:              po_number             || "",
+      client_reference:       client_reference      || "",
+      carotte_reference:      carotte_reference     || "",
+      description:            description           || "",
+      // Option set "Status Ärende" – startvärde
+      status:                 "Pågående",
+      files_info:             filesInfo
+    };
+
+    // Relationer: lägg bara till om vi har ett ID
+    if (clientCompanyId)   bubblePayload.client_company   = clientCompanyId;
+    if (leverantorId)      bubblePayload.billing_company  = leverantorId;
+    if (fortnoxInvoiceId)  bubblePayload.FortnoxInvoice   = fortnoxInvoiceId;
+
+    const inquiryId = await bubbleCreate("invoiceinquiry", bubblePayload);
+    const caseNumber = "IQ-" + inquiryId.slice(-8).toUpperCase();
+    console.log(`[invoice] Skapad ${caseNumber} (${inquiryId}) för ${company_name}` +
+      (fortnoxInvoiceId ? ` | FI: ${fortnoxInvoiceId}` : "") +
+      (clientCompanyId  ? ` | CC: ${clientCompanyId}` : "")
+    );
+
+    // ── 6. Lägg till InvoiceInquiry på ClientCompany ──────────────────────
+    if (clientCompanyId) {
+      try {
+        const cc = await bubbleGet("clientcompany", clientCompanyId);
+        const existing = Array.isArray(cc?.InvoiceInquiry) ? cc.InvoiceInquiry : [];
+        await bubblePatch("clientcompany", clientCompanyId, {
+          InvoiceInquiry: [...existing, inquiryId]
+        });
+        console.log(`[invoice] CC ${clientCompanyId} uppdaterad med ${inquiryId}`);
+      } catch (e) {
+        console.warn("[invoice] CC-uppdatering misslyckades:", e?.message);
+      }
+    }
+
+    // ── 7. Hämta finance-users för EmailQueue ─────────────────────────────
+    let financeUsers = [];
     try {
-      const companies = await bubbleFind("clientcompany", {
-        constraints: [
-          { key: "Name_company", constraint_type: "contains", value: companyName }
-        ],
-        limit: 5,
-        sort_field: "Name_company",
-        descending: false
+      financeUsers = await bubbleFind("user", {
+        constraints: [{ key: "finance", constraint_type: "equals", value: true }],
+        limit: 50
       });
-
-      result.companies = (companies || []).map(c => ({
-        id:      c._id,
-        name:    c.Name_company || "",
-        org_nr:  c.org_number   || c.Org_number || ""
-      }));
     } catch (e) {
-      console.warn("[invoice/lookup] ClientCompany-sökning misslyckades:", e?.message);
+      console.warn("[invoice] finance-user-sökning misslyckades:", e?.message);
     }
-  }
 
-  res.json(result);
+    // ── 8. Skapa EmailQueue för alla mottagare ────────────────────────────
+    const INVOICE_TEMPLATE_ID = "1778593302550x619235754096854000";
+    const extraJson = JSON.stringify({
+      case_number:          caseNumber,
+      billing_company_name: billingCompanyName || ""
+    });
+
+    const queueRecipients = [
+      // 1. Kunden som skickade formuläret
+      { to_email: email, to_name: contact_name || "" },
+      // 2. Alla users med finance = true
+      ...financeUsers
+        .filter(u => u.email || u["email"])
+        .map(u => ({
+          to_email: u.email || u["email"] || "",
+          to_name:  (u["First Name"] || "") + " " + (u.Surname || "")
+        })),
+      // 3. faktura@carotte.se
+      { to_email: "faktura@carotte.se", to_name: "Carotte Faktura" }
+    ];
+
+    for (const r of queueRecipients) {
+      if (!r.to_email) continue;
+      try {
+        await bubbleCreate("emailqueue", {
+          template_id:  INVOICE_TEMPLATE_ID,
+          entity_id:    inquiryId,
+          entity_type:  "invoice",
+          to_email:     r.to_email,
+          to_name:      r.to_name.trim(),
+          email_sent:   false,
+          extra_data:   extraJson
+        });
+      } catch (e) {
+        console.warn(`[invoice] EmailQueue för ${r.to_email} misslyckades:`, e?.message);
+      }
+    }
+    console.log(`[invoice] ${queueRecipients.length} EmailQueue-poster skapade`);
+
+    // ── 9. Bilagor för SendGrid ───────────────────────────────────────────
+    const attachments = files.map(f => ({
+      content:     f.content,
+      filename:    f.name,
+      type:        f.type,
+      disposition: "attachment"
+    }));
+
+    // ── 10. Notifiering till Carotte-teamet ────────────────────────────────
+    const matchRow = fortnoxInvoiceId
+      ? invRow("FortnoxInvoice matchad", "✅ " + invoiceNumToSearch + " (ID: " + fortnoxInvoiceId + ")")
+      : (invoiceNumToSearch
+          ? invRow("FortnoxInvoice", "⚠️ " + invoiceNumToSearch + " – ingen match")
+          : "");
+
+    const carotteHtml = `
+    <div style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:600px">
+      <h2 style="color:#db6923;margin-bottom:4px">Ny fakturafråga · ${caseNumber}</h2>
+      <p style="color:#666;margin-top:0">Mottagen via formuläret · Ärendenummer: ${caseNumber}</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">
+        ${invRow("Kontakt",          contact_name || "–")}
+        ${invRow("Företag",          company_name + (clientCompanyId ? " ✅" : " ⚠️ ej matchat"))}
+        ${invRow("E-post",           email)}
+        ${invRow("Telefon",          phone || "–")}
+        ${invRow("Ärendetyp",        case_type + " → " + bubbleCaseType)}
+        ${invRow("Fakturanummer",     invoice_number || "–")}
+        ${invRow("Fakturabolag",      billingCompanyName || "–")}
+        ${invRow("Fakturanr (bil.)",  billing_invoice_number || "–")}
+        ${matchRow}
+        ${invRow("PO-nummer",         po_number || "–")}
+        ${invRow("Er referens",       client_reference || "–")}
+        ${invRow("Carottes referens", carotte_reference || "–")}
+      </table>
+      <div style="background:#f5f5f5;padding:14px;border-radius:6px;margin:16px 0">
+        <strong>Beskrivning:</strong><br/>
+        <span style="white-space:pre-wrap">${invEsc(description)}</span>
+      </div>
+      ${files.length > 0
+        ? `<p><strong>Bilagor (${files.length} st):</strong> ${files.map(f => f.name).join(", ")}</p>`
+        : ""}
+    </div>`;
+
+    await invSendgrid({
+      to:      "faktura@carotte.se",
+      from:    { email: "support@mira-fm.com", name: "Mira – Fakturafrågor" },
+      replyTo: email,
+      subject: `[${caseNumber}] Fakturafråga – ${company_name} · ${case_type}`,
+      html:    carotteHtml,
+      attachments
+    });
+
+    // ── 11. Bekräftelse till kunden ────────────────────────────────────────
+    const customerHtml = `
+    <div style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:600px">
+      <h2 style="color:#db6923">Tack för din fakturafråga!</h2>
+      <p style="color:#888;font-size:12px">Ärendenummer: <strong>${caseNumber}</strong></p>
+      <p>Hej ${invEsc(contact_name || "")},</p>
+      <p>Vi har tagit emot ditt ärende och vårt team kommer att påbörja handläggningen.</p>
+      <div style="background:#f9f9f9;border-left:3px solid #db6923;padding:12px 16px;margin:16px 0">
+        <strong>Ärendetyp:</strong> ${invEsc(case_type || "–")}<br/>
+        <strong>Företag:</strong> ${invEsc(company_name)}<br/>
+        ${invoice_number ? `<strong>Fakturanummer:</strong> ${invEsc(invoice_number)}<br/>` : ""}
+      </div>
+      <p>Har du frågor kan du svara på detta mail eller kontakta oss på
+         <a href="mailto:faktura@carotte.se">faktura@carotte.se</a>.</p>
+      <p>Vänliga hälsningar,<br/><strong>Carotte</strong></p>
+    </div>`;
+
+    await invSendgrid({
+      to:      email,
+      from:    { email: "faktura@carotte.se", name: "Carotte Faktura" },
+      subject: `[${caseNumber}] Bekräftelse: Din fakturafråga har mottagits`,
+      html:    customerHtml
+    });
+
+    res.json({ ok: true, id: inquiryId, case_number: caseNumber,
+      matched: { company: !!clientCompanyId, fortnoxInvoice: !!fortnoxInvoiceId, supplier: !!leverantorId }
+    });
+
+  } catch (e) {
+    console.error("[invoice/submit] fel:", e?.message, e?.detail);
+    res.status(500).json({ ok: false, error: e?.message });
+  }
 });
 
+// ── Hjälpfunktioner ───────────────────────────────────────────────────────
+
+function invRow(label, value) {
+  return `<tr>
+    <td style="padding:6px 10px;background:#f9f9f9;font-weight:600;border:1px solid #e0e0e0;
+               white-space:nowrap;width:40%">${invEsc(String(label))}</td>
+    <td style="padding:6px 10px;border:1px solid #e0e0e0">${invEsc(String(value))}</td>
+  </tr>`;
+}
+
+function invEsc(s) {
+  return String(s || "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+async function invSendgrid({ to, from, replyTo, subject, html, attachments = [] }) {
+  const body = {
+    personalizations: [{ to: [typeof to === "string" ? { email: to } : to] }],
+    from, subject,
+    content: [{ type: "text/html", value: html }]
+  };
+  if (replyTo)            body.reply_to   = { email: replyTo };
+  if (attachments.length) body.attachments = attachments;
+
+  const r = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method:  "POST",
+    headers: { Authorization: `Bearer ${process.env.SENDGRID_API_KEY}`, "Content-Type": "application/json" },
+    body:    JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const err = await r.text().catch(() => "");
+    throw new Error(`SendGrid ${r.status}: ${err.slice(0, 200)}`);
+  }
+  return true;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
-// SLUT PÅ FAKTURA LOOKUP-BLOCKET
+// SLUT PÅ FAKTURAFRÅGOR-BLOCKET
 // ════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
