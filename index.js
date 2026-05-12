@@ -12105,13 +12105,25 @@ app.get("/invoice/lookup", async (req, res) => {
       ]).catch(() => null);
 
       if (fi?._id) {
+        // Mappa Carotte-bolagets namn → dropdown-värde i formuläret
+        const supplierRaw = String(fi.ft_supplier_name || "").toLowerCase();
+        let billingCompany = "";
+        if (supplierRaw.includes("housekeeping") || supplierRaw.includes(" hk"))  billingCompany = "Housekeeping";
+        else if (supplierRaw.includes("staff"))                                    billingCompany = "Staff";
+        else if (supplierRaw.includes("food") || supplierRaw.includes("event"))    billingCompany = "Food & Event";
+
         result.invoice = {
-          found:         true,
-          invoice_nr:    fi.ft_document_number || invoiceNr,
-          customer_name: fi.ft_customer_name   || "",
-          due_date:      fi.ft_due_date        || fi.ft_invoice_date || null,
-          amount:        fi.ft_total           || fi.ft_total_vat    || null,
-          currency:      fi.ft_currency        || "SEK"
+          found:           true,
+          invoice_nr:      fi.ft_document_number  || invoiceNr,
+          customer_name:   fi.ft_customer_name    || "",
+          supplier_name:   fi.ft_supplier_name    || "",
+          billing_company: billingCompany,
+          due_date:        fi.ft_due_date         || null,
+          invoice_date:    fi.ft_invoice_date     || null,
+          amount:          fi.ft_total            || null,
+          currency:        fi.ft_currency         || "SEK",
+          your_reference:  fi.ft_your_reference   || "",
+          our_reference:   fi.ft_our_reference    || ""
         };
       } else {
         result.invoice = { found: false, invoice_nr: invoiceNr };
@@ -12135,8 +12147,9 @@ app.get("/invoice/lookup", async (req, res) => {
       });
 
       result.companies = (companies || []).map(c => ({
-        id:   c._id,
-        name: c.Name_company || ""
+        id:      c._id,
+        name:    c.Name_company || "",
+        org_nr:  c.org_number   || c.Org_number || ""
       }));
     } catch (e) {
       console.warn("[invoice/lookup] ClientCompany-sökning misslyckades:", e?.message);
