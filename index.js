@@ -367,6 +367,8 @@ function requireApiKey(req, res, next) {
     "/leads/create-from-calculator",
     // Artikelanalys (läs cached data, publik)
     "/analytics/articles/latest",
+      "/invoice/lookup",    // ← lägg till
+  "/invoice/submit",    // ← lägg till
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
