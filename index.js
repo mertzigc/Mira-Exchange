@@ -12272,72 +12272,7 @@ app.post("/invoice/submit", async (req, res) => {
       disposition: "attachment"
     }));
 
-    // ── 10. Notifiering till Carotte-teamet ────────────────────────────────
-    const matchRow = fortnoxInvoiceId
-      ? invRow("FortnoxInvoice matchad", "✅ " + invoiceNumToSearch + " (ID: " + fortnoxInvoiceId + ")")
-      : (invoiceNumToSearch
-          ? invRow("FortnoxInvoice", "⚠️ " + invoiceNumToSearch + " – ingen match")
-          : "");
-
-    const carotteHtml = `
-    <div style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:600px">
-      <h2 style="color:#db6923;margin-bottom:4px">Ny fakturafråga · ${caseNumber}</h2>
-      <p style="color:#666;margin-top:0">Mottagen via formuläret · Ärendenummer: ${caseNumber}</p>
-      <table style="width:100%;border-collapse:collapse;margin:16px 0">
-        ${invRow("Kontakt",          contact_name || "–")}
-        ${invRow("Företag",          company_name + (clientCompanyId ? " ✅" : " ⚠️ ej matchat"))}
-        ${invRow("E-post",           email)}
-        ${invRow("Telefon",          phone || "–")}
-        ${invRow("Ärendetyp",        case_type + " → " + bubbleCaseType)}
-        ${invRow("Fakturanummer",     invoice_number || "–")}
-        ${invRow("Fakturabolag",      billingCompanyName || "–")}
-        ${invRow("Fakturanr (bil.)",  billing_invoice_number || "–")}
-        ${matchRow}
-        ${invRow("PO-nummer",         po_number || "–")}
-        ${invRow("Er referens",       client_reference || "–")}
-        ${invRow("Carottes referens", carotte_reference || "–")}
-      </table>
-      <div style="background:#f5f5f5;padding:14px;border-radius:6px;margin:16px 0">
-        <strong>Beskrivning:</strong><br/>
-        <span style="white-space:pre-wrap">${invEsc(description)}</span>
-      </div>
-      ${files.length > 0
-        ? `<p><strong>Bilagor (${files.length} st):</strong> ${files.map(f => f.name).join(", ")}</p>`
-        : ""}
-    </div>`;
-
-    await invSendgrid({
-      to:      "faktura@carotte.se",
-      from:    { email: "support@mira-fm.com", name: "Mira – Fakturafrågor" },
-      replyTo: email,
-      subject: `[${caseNumber}] Fakturafråga – ${company_name} · ${case_type}`,
-      html:    carotteHtml,
-      attachments
-    });
-
-    // ── 11. Bekräftelse till kunden ────────────────────────────────────────
-    const customerHtml = `
-    <div style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:600px">
-      <h2 style="color:#db6923">Tack för din fakturafråga!</h2>
-      <p style="color:#888;font-size:12px">Ärendenummer: <strong>${caseNumber}</strong></p>
-      <p>Hej ${invEsc(contact_name || "")},</p>
-      <p>Vi har tagit emot ditt ärende och vårt team kommer att påbörja handläggningen.</p>
-      <div style="background:#f9f9f9;border-left:3px solid #db6923;padding:12px 16px;margin:16px 0">
-        <strong>Ärendetyp:</strong> ${invEsc(case_type || "–")}<br/>
-        <strong>Företag:</strong> ${invEsc(company_name)}<br/>
-        ${invoice_number ? `<strong>Fakturanummer:</strong> ${invEsc(invoice_number)}<br/>` : ""}
-      </div>
-      <p>Har du frågor kan du svara på detta mail eller kontakta oss på
-         <a href="mailto:faktura@carotte.se">faktura@carotte.se</a>.</p>
-      <p>Vänliga hälsningar,<br/><strong>Carotte</strong></p>
-    </div>`;
-
-    await invSendgrid({
-      to:      email,
-      from:    { email: "faktura@carotte.se", name: "Carotte Faktura" },
-      subject: `[${caseNumber}] Bekräftelse: Din fakturafråga har mottagits`,
-      html:    customerHtml
-    });
+    // E-post hanteras av EmailQueue-pollern – inga direkta SendGrid-anrop här.
 
     res.json({ ok: true, id: inquiryId, case_number: caseNumber,
       matched: { company: !!clientCompanyId, fortnoxInvoice: !!fortnoxInvoiceId, supplier: !!leverantorId }
