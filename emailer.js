@@ -420,36 +420,42 @@ async function tmplCommissionUpdated(e, extra, toName, ctaLabel, item) {
 
 // ────────────────────────────────────────────────────────────
 // MALL 6: Kvalitetskontroll  (QualityControl)
-// Fält: Kundföretag, Kontrollant (förnamn+efternamn),
-//       Avtal (contract title), kontrolldatum, Meddelande,
-//       Betyg, kontor (office_title)
+// extra_data: ref_name, company_id, company_name, betyg, meddelande, office
 // ────────────────────────────────────────────────────────────
 async function tmplQcNew(e, extra, toName, ctaLabel, item) {
-  const cc        = await fetchClientCompany(e.clientcompany || e.ClientCompany || e.client_company);
-  const logoUrl   = cc?.logo_url || cc?.Logo || "";
-  const senderName= cc?.Name_company || "";
+  // Hämta logotyp via company_id om det finns i extra_data (annars via entity-fält)
+  const companyId  = extra.company_id   || e.Kundföretag || e.clientcompany || e.ClientCompany || "";
+  const cc         = companyId ? await fetchClientCompany(companyId) : null;
+  const logoUrl    = cc?.logo_url    || cc?.Logo         || "";
+  const senderName = extra.company_name || cc?.Name_company || "";
 
-  const inspector = extra.inspector_name || "";          // "Förnamn Efternamn" – bygg i Bubble-WF
-  const contract  = e.contract_title    || e.Avtal     || extra.contract   || "";
-  const qcDate    = fmtDate(e.kontrolldatum || e.QCDate || extra.qc_date);
-  const message   = e.Meddelande        || e.message   || extra.message    || "";
-  const betyg     = e.betyg             || e.Betyg     || extra.betyg      || "";
-  const office    = e.office_title      || e.Office_title || extra.office  || "";
-  const subject   = item.subject_override || `Kvalitetskontroll: ${senderName || contract || "rapport"}`;
+  // extra_data-nycklar matchar Bubble-workflow (se screenshot):
+  // ref_name=Kontrollant, betyg=Betyg_lev, meddelande=Meddelande, office=Kontor's Office_title
+  const inspector  = extra.ref_name   || extra.inspector_name || "";
+  const message    = extra.meddelande || e.Meddelande         || e.message   || "";
+  const betyg      = extra.betyg      || e.Betyg_lev          || e.betyg     || "";
+  const office     = extra.office     || e.office_title        || "";
+  const contract   = e.Avtal          || e.contract_title      || extra.contract || "";
+  const qcDate     = fmtDateTime(e.kontrolldatum || e.QCDate   || extra.qc_date);
+  const subject    = item.subject_override
+    || `Kvalitetskontroll: ${senderName || contract || "rapport"}`;
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
     tag: "Kvalitetskontroll",
     headline: "Kvalitetskontroll genomförd",
-    body: message ? `<p>${esc(message)}</p>` : "",
+    body: message
+      ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(message)}</p>`
+      : "",
     details: detailRows([
-      office     && ["Kontor",      office],
-      contract   && ["Avtal",       contract],
-      inspector  && ["Kontrollant", inspector],
-      qcDate     && ["Datum",       qcDate],
-      betyg      && ["Betyg",       starRating(betyg)]
+      senderName  && ["Företag",     senderName],
+      office      && ["Kontor",      office],
+      contract    && ["Avtal",       contract],
+      inspector   && ["Kontrollant", inspector],
+      qcDate      && ["Datum",       qcDate],
+      betyg       && ["Betyg",       starRating(betyg)]
     ]),
     ctaLabel: null,
-    ctaUrl: null,
+    ctaUrl:   null,
     miraNote: "Läs rapporten på Mira."
   });
 
@@ -458,23 +464,35 @@ async function tmplQcNew(e, extra, toName, ctaLabel, item) {
 
 // ────────────────────────────────────────────────────────────
 // MALL 7: Kvalitetskontroll uppdatering  (QualityControl)
-// Fält: Meddelande (samlad kommentarstråd)
+// extra_data: ref_name, company_id, company_name, betyg_client, feedback_client, office
 // ────────────────────────────────────────────────────────────
 async function tmplQcUpdated(e, extra, toName, ctaLabel, item) {
-  const cc        = await fetchClientCompany(e.clientcompany || e.ClientCompany || e.client_company);
-  const logoUrl   = cc?.logo_url || cc?.Logo || "";
-  const senderName= cc?.Name_company || "";
+  const companyId      = extra.company_id     || e.Kundföretag || e.clientcompany || "";
+  const cc             = companyId ? await fetchClientCompany(companyId) : null;
+  const logoUrl        = cc?.logo_url     || cc?.Logo          || "";
+  const senderName     = extra.company_name   || cc?.Name_company || "";
 
-  const message   = e.Meddelande || e.message || extra.message || "";
-  const subject   = item.subject_override || `Uppdatering: Kvalitetskontroll`;
+  const inspector      = extra.ref_name       || "";
+  const office         = extra.office         || e.office_title   || "";
+  // Kundens betyg och feedback (skiljer sig från Betyg_lev i qc_new)
+  const betygClient    = extra.betyg_client   || "";
+  const feedbackClient = extra.feedback_client || e.feedback_client || "";
+  const subject        = item.subject_override || `Uppdatering: Kvalitetskontroll${senderName ? " – " + senderName : ""}`;
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
     tag: "QC-uppdatering",
-    headline: "Ny kommentar på kvalitetskontroll",
-    body: message ? `<p style="line-height:1.65;color:#c0c4d6;">${esc(message)}</p>` : "",
-    details: "",
+    headline: "Ny återkoppling på kvalitetskontroll",
+    body: feedbackClient
+      ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(feedbackClient)}</p>`
+      : "",
+    details: detailRows([
+      senderName    && ["Företag",           senderName],
+      office        && ["Kontor",            office],
+      inspector     && ["Kontrollant",       inspector],
+      betygClient   && ["Betyg (kund)",      starRating(betygClient)]
+    ]),
     ctaLabel: null,
-    ctaUrl: null,
+    ctaUrl:   null,
     miraNote: "Läs rapporten på Mira."
   });
 
