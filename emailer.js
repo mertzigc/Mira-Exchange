@@ -435,8 +435,16 @@ async function tmplQcNew(e, extra, toName, ctaLabel, item) {
   const message    = extra.meddelande || e.Meddelande         || e.message   || "";
   const betyg      = extra.betyg      || e.Betyg_lev          || e.betyg     || "";
   const office     = extra.office     || e.office_title        || "";
-  const contract   = e.Avtal          || e.contract_title      || extra.contract || "";
   const qcDate     = fmtDateTime(e.kontrolldatum || e.QCDate   || extra.qc_date);
+
+  // Avtal: e.Avtal är ett Bubble-ID (relation) → hämta titeln via bubbleGet
+  let contract = extra.contract_title || e.contract_title || "";
+  if (!contract && e.Avtal) {
+    try {
+      const avtal = await bubbleGet("Avtal", e.Avtal);
+      contract = avtal?.Title || avtal?.title || avtal?.Name || "";
+    } catch (_) {}
+  }
   const subject    = item.subject_override
     || `Kvalitetskontroll: ${senderName || contract || "rapport"}`;
 
@@ -489,7 +497,7 @@ async function tmplQcUpdated(e, extra, toName, ctaLabel, item) {
       senderName    && ["Företag",           senderName],
       office        && ["Kontor",            office],
       inspector     && ["Kontrollant",       inspector],
-      betygClient   && ["Betyg (kund)",      starRating(betygClient)]
+      betygClient   && ["Betyg (kund)",      `<span style="background:rgba(219,105,35,.15);color:#db6923;font-weight:600;padding:2px 10px;border-radius:20px;font-size:12px;">${esc(betygClient)}</span>`]
     ]),
     ctaLabel: null,
     ctaUrl:   null,
