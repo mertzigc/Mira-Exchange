@@ -287,41 +287,67 @@ async function tmplMatterNew(e, extra, toName, ctaLabel, item) {
 
 // ────────────────────────────────────────────────────────────
 // MALL 3: Ärende uppdatering  (Matter)
-// Fält: Tråd (kommentarer), Status, Betyg + info från ärendet
+// extra_data: ref_name, company_id, company_name, kommentar (list of texts = tråd),
+//             status (Display), category
+// Används för: ny kommentar OCH statusändring
 // ────────────────────────────────────────────────────────────
 async function tmplMatterUpdated(e, extra, toName, ctaLabel, item) {
-  const cc        = await fetchClientCompany(e.company || e.Company);
-  const logoUrl   = cc?.logo_url || cc?.Logo || "";
-  const senderName= cc?.Name_company || "";
+  const companyId  = extra.company_id  || e.Kundföretag || e.kundföretag || e.company || "";
+  const cc         = companyId ? await fetchClientCompany(companyId) : null;
+  const logoUrl    = cc?.logo_url  || cc?.Logo          || "";
+  const senderName = extra.company_name || cc?.Name_company || "";
 
-  const title     = e.Title      || e.title   || "Ärendeuppdatering";
-  const status    = e.Status     || e.status  || "";
-  const comments  = asArray(e.thread || e.Thread || extra.comments); // list of texts
-  const betyg     = extra.betyg  || e.betyg   || "";
-  const subject   = item.subject_override || `Uppdatering: ${title}`;
+  const title    = e.Title        || e.title          || "Ärendeuppdatering";
+  const status   = extra.status   || e.Status         || e.status || "";
+  const category = extra.category || e.category_title || "";
+  const office   = extra.office   || e.Office_title   || "";
+  const priority = e.priority     || e.Prioritet      || "";
+  const refName  = extra.ref_name || "";                // Vem som kommenterade/ändrade
+  const subject  = item.subject_override || `Uppdatering: ${title}`;
 
-  const commentsHtml = comments.length
-    ? `<div style="margin:20px 0;">${
-        comments.map(c =>
-          `<div style="background:#0d1117;border-left:3px solid #262b42;border-radius:0 6px 6px 0;
-                       padding:10px 14px;margin-bottom:8px;font-size:13px;color:#c0c4d6;line-height:1.55;">
-             ${esc(c)}
-           </div>`
-        ).join("")
-      }</div>`
+  // Tråd: extra.kommentar är en list of texts från Bubble → JSON-array
+  // Senaste inlägget visas överst (reversad ordning)
+  let thread = [];
+  try {
+    const raw = extra.kommentar;
+    if (Array.isArray(raw))      thread = raw;
+    else if (typeof raw === "string" && raw.startsWith("[")) thread = JSON.parse(raw);
+    else if (typeof raw === "string" && raw) thread = [raw];
+  } catch (_) {}
+
+  const reversed   = thread.slice().reverse();   // nyaste överst
+  const threadHtml = reversed.length
+    ? `<div style="margin:16px 0 4px;">` +
+      reversed.map(function(c, i) {
+        const isLatest = i === 0;
+        const bg      = isLatest ? "#1a1f2e"    : "#0d1117";
+        const border  = isLatest ? "#db6923"    : "#262b42";
+        const label   = isLatest
+          ? `<span style="font-size:10px;font-weight:700;text-transform:uppercase;` +
+            `letter-spacing:.07em;color:#db6923;margin-bottom:5px;display:block;">Senaste</span>`
+          : "";
+        return `<div style="background:${bg};border-left:3px solid ${border};` +
+          `border-radius:0 7px 7px 0;padding:11px 14px;margin-bottom:7px;` +
+          `font-size:13px;color:#c0c4d6;line-height:1.6;">` +
+          label + esc(c) + `</div>`;
+      }).join("") +
+      `</div>`
     : "";
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
     tag: "Ärendeuppdatering",
     headline: title,
-    body: commentsHtml,
+    body: threadHtml,
     details: detailRows([
-      senderName && ["Företag",  senderName],
-      status     && ["Status",   statusBadge(status)],
-      betyg      && ["Betyg",    starRating(betyg)]
+      senderName && ["Företag",          senderName],
+      office     && ["Kontor",           office],
+      category   && ["Ärendekategori",   category],
+      priority   && ["Prioritet",        priorityBadge(priority)],
+      refName    && ["Uppdaterat av",    refName],
+      status     && ["Status",           statusBadge(status)]
     ]),
     ctaLabel: null,
-    ctaUrl: null,
+    ctaUrl:   null,
     miraNote: "Läs och hantera ärendet på Mira."
   });
 
