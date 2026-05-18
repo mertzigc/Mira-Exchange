@@ -406,38 +406,62 @@ async function tmplCommissionNew(e, extra, toName, ctaLabel, item) {
 
 // ────────────────────────────────────────────────────────────
 // MALL 5: Bokning uppdatering  (Comission)
-// Fält: commission_status, Tråd (kommentarer)
+// extra_data: orderer_name, company_id, company_name, kommentar (tråd), status
 // ────────────────────────────────────────────────────────────
 async function tmplCommissionUpdated(e, extra, toName, ctaLabel, item) {
-  const cc        = await fetchClientCompany(e.Company || e.company);
-  const logoUrl   = cc?.logo_url || cc?.Logo || "";
-  const senderName= cc?.Name_company || "";
+  const companyId  = extra.company_id  || e.Company || e.company || "";
+  const cc         = companyId ? await fetchClientCompany(companyId) : null;
+  const logoUrl    = cc?.logo_url   || cc?.Logo           || "";
+  const senderName = extra.company_name || cc?.Name_company || "";
 
-  const title     = e.commission_title || e.Title || extra.title || "Bokningsuppdatering";
-  const status    = e.commission_status || e.status || extra.status || "";
-  const comments  = asArray(e.thread || extra.comments);
-  const subject   = item.subject_override || `Uppdatering: ${title}`;
+  const title        = e.commission_title || e.Title  || extra.title || "Bokningsuppdatering";
+  const status       = extra.status       || e.commission_status || e.status || "";
+  const ordererName  = extra.orderer_name || "";
+  const delivDate    = fmtDateTime(e.delivery_date || e.DeliveryDate);
+  const category     = e.Category        || e.category || "";
+  const subject      = item.subject_override || `Uppdatering: ${title}`;
 
-  const commentsHtml = comments.length
-    ? `<div style="margin:20px 0;">${
-        comments.map(c =>
-          `<div style="background:#0d1117;border-left:3px solid #262b42;border-radius:0 6px 6px 0;
-                       padding:10px 14px;margin-bottom:8px;font-size:13px;color:#c0c4d6;line-height:1.55;">
-             ${esc(c)}
-           </div>`
-        ).join("")
-      }</div>`
+  // Tråd: extra.kommentar är en list of texts → JSON-array, nyaste överst
+  let thread = [];
+  try {
+    const raw = extra.kommentar;
+    if (Array.isArray(raw))      thread = raw;
+    else if (typeof raw === "string" && raw.startsWith("[")) thread = JSON.parse(raw);
+    else if (typeof raw === "string" && raw) thread = [raw];
+  } catch (_) {}
+
+  const reversed   = thread.slice().reverse();
+  const threadHtml = reversed.length
+    ? `<div style="margin:16px 0 4px;">` +
+      reversed.map(function(c, i) {
+        const isLatest = i === 0;
+        const bg      = isLatest ? "#1a1f2e" : "#0d1117";
+        const border  = isLatest ? "#db6923" : "#262b42";
+        const label   = isLatest
+          ? `<span style="font-size:10px;font-weight:700;text-transform:uppercase;` +
+            `letter-spacing:.07em;color:#db6923;margin-bottom:5px;display:block;">Senaste</span>`
+          : "";
+        return `<div style="background:${bg};border-left:3px solid ${border};` +
+          `border-radius:0 7px 7px 0;padding:11px 14px;margin-bottom:7px;` +
+          `font-size:13px;color:#c0c4d6;line-height:1.6;">` +
+          label + esc(c) + `</div>`;
+      }).join("") +
+      `</div>`
     : "";
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
     tag: "Bokningsuppdatering",
     headline: title,
-    body: commentsHtml,
+    body: threadHtml,
     details: detailRows([
-      status && ["Status", statusBadge(status)]
+      senderName    && ["Företag",     senderName],
+      ordererName   && ["Beställare",  ordererName],
+      delivDate     && ["Leveransdatum", delivDate],
+      category      && ["Kategori",    category],
+      status        && ["Status",      statusBadge(status)]
     ]),
     ctaLabel: null,
-    ctaUrl: null,
+    ctaUrl:   null,
     miraNote: "Läs och hantera bokningen på Mira."
   });
 
