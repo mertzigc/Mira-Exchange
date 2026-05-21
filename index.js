@@ -12198,5 +12198,301 @@ async function invSendgrid({ to, from, replyTo, subject, html, attachments = [] 
 // ════════════════════════════════════════════════════════════════════════════
 // SLUT PÅ FAKTURAFRÅGOR-BLOCKET
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// PUBLIK MEDARBETARPORTAL — landningssida för ärenden & bokningar
+// Oinloggade medarbetare → utkast i Mira + bekräftelse till medarbetaren
+// + notis till alla riktiga users kopplade till samma ClientCompany.
+//
+// INTEGRATION (3 steg):
+//   1) Lägg dessa två paths i requireApiKey() openPaths-setet (publika, ingen x-api-key):
+//          "/public/landing-config",
+//          "/public/request/create",
+//      (Samma mönster som "/leads/create-from-calculator".)
+//   2) Klistra in hela detta block valfri plats FÖRE `app.listen(...)`.
+//   3) Lägg till matchande mall-block i emailer.js (se emailer-public-blocks.js).
+//
+// Beroenden som redan finns i index.js: bubbleCreate, bubbleFind, bubbleFindOne,
+//   bubbleGet, bubblePatch, safeText, normEmail, asNumberOrNull, safeUrl, toBubbleDate.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Konfigurerbara fältnamn (verifiera mot din Bubble-schema) ────────────────
+const LANDING = {
+  CONFIG_TYPE:    "LandingConfig",
+  OFFER_TYPE:     "LandingOffer",
+  COMISSION_TYPE: "Comission",        // Bubble-stavning (samma som emailer.js)
+  MATTER_TYPE:    "Matter",
+
+  // Status på publika poster — BÅDA som "Utkast" (granskas innan åtgärd)
+  COMMISSION_PUBLIC_STATUS: "Utkast", // Comission.commission_status
+  MATTER_PUBLIC_STATUS:     "Utkast", // Matter.status (option set "Status Ärende")
+
+  // Källa (option sets, skickas som display-värde via Data API)
+  COMMISSION_SOURCE: "Internservice",   // Comission.source  (option set lead_source)
+  MATTER_SOURCE:     "Kundorganisation",// Matter.source     (option set matter_source)
+
+  // Notiser → users vars LISTA `associated_company` innehåller postens ClientCompany
+  USER_ASSOCIATED_COMPANY_FIELD: "associated_company",
+
+  // E-post-slugs (sätts som template_slug på EmailQueue → pollern väljer mall)
+  SLUG_RECEIVED: "public_request_received",  // → medarbetaren
+  SLUG_INTERNAL: "public_request_internal"   // → kopplade users
+};
+
+// ── Enkel in-memory rate limit per IP (v1; byt mot Cloudflare Turnstile senare) ──
+const _publicRl = new Map();
+function _publicRateLimited(ip, max = 30, windowMs = 60 * 60 * 1000) {
+  const now = Date.now();
+  const hits = (_publicRl.get(ip) || []).filter(t => now - t < windowMs);
+  hits.push(now);
+  _publicRl.set(ip, hits);
+  return hits.length > max;
+}
+function _clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "")
+    .split(",")[0].trim();
+}
+
+// ── Hämta aktiv LandingConfig via token ──────────────────────────────────────
+async function getLandingConfig(token) {
+  const t = String(token || "").trim();
+  if (!t) return null;
+  return await bubbleFindOne(LANDING.CONFIG_TYPE, [
+    { key: "token",  constraint_type: "equals", value: t },
+    { key: "active", constraint_type: "equals", value: true }
+  ]).catch(() => null);
+}
+
+// ── Hämta aktiva erbjudanden för en config ───────────────────────────────────
+async function getLandingOffers(ccId) {
+  if (!ccId) return [];
+  const rows = await bubbleFind(LANDING.OFFER_TYPE, {
+    constraints: [
+      { key: "client_company", constraint_type: "equals", value: ccId },
+      { key: "active",         constraint_type: "equals", value: true }
+    ],
+    limit: 50, sort_field: "sort", descending: false
+  }).catch(() => []);
+  return (rows || []).map(o => ({
+    title:       o.title       || "",
+    description: o.description || "",
+    price:       o.price ?? null,
+    unit:        o.unit        || "",
+    pdf_url:     safeUrl(o.pdf_url || ""),
+    kategori:    o.kategori    || ""
+  }));
+}
+
+// ── Hämta riktiga users kopplade till en ClientCompany ───────────────────────
+// Princip (Christians notislogik): user.associated_company (LISTA) innehåller
+// postens ClientCompany. Bubble Data API: constraint_type "contains" på listfält.
+async function getCompanyUsers(ccId) {
+  if (!ccId) return [];
+  try {
+    return await bubbleFind("user", {
+      constraints: [{ key: LANDING.USER_ASSOCIATED_COMPANY_FIELD, constraint_type: "contains", value: ccId }],
+      limit: 100
+    });
+  } catch (_) { return []; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GET /public/landing-config?t=TOKEN
+// Frontend (HTML-blocket) hämtar varumärke + kontor + erbjudanden via denna.
+// Returnerar ENDAST whitelistad config — exponerar aldrig hela databasen.
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/public/landing-config", async (req, res) => {
+  try {
+    const cfg = await getLandingConfig(req.query.t || req.query.token);
+    if (!cfg) return res.status(404).json({ ok: false, error: "unknown_or_inactive_token" });
+
+    const ccId = cfg.client_company || cfg.ClientCompany || null;
+    const cc   = ccId ? (await bubbleGet("ClientCompany", ccId).catch(() => ({}))) : {};
+    const offers = await getLandingOffers(ccId);
+
+    return res.json({
+      ok: true,
+      company: {
+        name:     cfg.company_name || cc?.Name_company || "",
+        logo_url: cfg.logo_url || cc?.logo_url || cc?.Logo || ""
+      },
+      office:        cfg.office_title || "",
+      accent_color:  cfg.accent_color || "",
+      info_text:     cfg.info_text || "",
+      allow_booking: cfg.allow_booking !== false,
+      allow_ticket:  cfg.allow_ticket  !== false,
+      offers
+    });
+  } catch (e) {
+    console.error("[public/landing-config]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// POST /public/request/create
+// body: { token, kind:"booking"|"ticket", hp (honeypot), + fält per typ }
+//   booking: titel, beskrivning, kategori, datum, tid, plats, antal, budget,
+//            po, kostnadsstalle, specialkost, email, name, tel
+//   ticket:  rubrik, meddelande, file_url, name, email, tel
+// ════════════════════════════════════════════════════════════════════════════
+app.post("/public/request/create", async (req, res) => {
+  try {
+    const ip = _clientIp(req);
+    const d  = req.body || {};
+
+    // Honeypot: dolt fält som bots fyller i → svälj tyst (svara ok så de inte testar igen)
+    if (safeText(d.hp || d.company_website || "", 100)) {
+      return res.json({ ok: true, id: null, skipped: "honeypot" });
+    }
+    if (_publicRateLimited(ip)) {
+      return res.status(429).json({ ok: false, error: "rate_limited" });
+    }
+
+    const cfg = await getLandingConfig(d.token);
+    if (!cfg) return res.status(404).json({ ok: false, error: "unknown_or_inactive_token" });
+
+    const ccId     = cfg.client_company || cfg.ClientCompany || null;
+    const officeId = cfg.office || cfg.Office || null;
+    const kind     = d.kind === "ticket" ? "ticket" : "booking";
+    const email    = normEmail(d.email);
+    const name     = safeText(d.name || d.namn || "", 200);
+    const phone    = safeText(d.phone || d.tel || "", 100);
+
+    if (!email) return res.status(400).json({ ok: false, error: "email_required" });
+
+    let entityId, entityType, subjectKind;
+
+    if (kind === "ticket") {
+      // ── Matter (felanmälan) – riktiga fältnamn från Bubble-schemat ────────
+      const rubrik = safeText(d.rubrik || d.title || "", 250);
+      const msg    = safeText(d.meddelande || d.description || "", 5000);
+      const fileNote = d.file_url ? `\n\nBilaga: ${safeUrl(d.file_url)}` : "";
+
+      const payload = {
+        Rubrik:            rubrik,
+        subject_latest:    rubrik,
+        "Tråd":            [ (msg + fileNote).trim() ],   // List of texts (tråden)
+        source:            LANDING.MATTER_SOURCE,          // option set matter_source = "Kundorganisation"
+        status:            LANDING.MATTER_PUBLIC_STATUS,   // option set "Status Ärende" = "Utkast"
+        status_raw:        LANDING.MATTER_PUBLIC_STATUS,
+        reported_by_name:  name,
+        reported_by_email: email,
+        reported_by_phone: phone
+      };
+      if (ccId)     payload["Kundföretag"] = ccId;   // ⚠️ verifiera company-relationens fältnamn på Matter
+      if (officeId) payload["Kontor"]      = officeId; // ⚠️ verifiera office-relationens fältnamn
+      Object.keys(payload).forEach(k => payload[k] == null && delete payload[k]);
+
+      entityId    = await bubbleCreate(LANDING.MATTER_TYPE, payload);
+      entityType  = "matter";
+      subjectKind = "felanmälan";
+
+    } else {
+      // ── Comission (beställning, utkast) – riktiga fältnamn ────────────────
+      // Leveransdatum: alltid satt. Default = idag + 5 dagar om inget skickas.
+      const deliveryIso = d.delivery_date
+        || (d.datum ? `${d.datum}T${(d.tid || "12:00")}` : null)
+        || new Date(Date.now() + 5 * 864e5).toISOString();
+
+      // Allergener: frontend skickar `allergens`: [{ name, count }].
+      //   → Specialkost          = lista av allergen-namn (option set Allergener)
+      //   → Specialkost_fritext  = läsbar summering med antal
+      const allergens     = Array.isArray(d.allergens) ? d.allergens : [];
+      const allergenNames = allergens.map(a => safeText(a.name || a.allergen || "", 60)).filter(Boolean);
+      const kostSummary   = allergens.length
+        ? allergens.map(a => `${safeText(a.name || a.allergen || "", 60)}${(Number(a.count) > 1) ? " ×" + Number(a.count) : ""}`).filter(Boolean).join(", ")
+        : safeText(d.specialkost || "", 500);
+
+      // Beställare + kostnadsställe + deltagarlista läggs i Description (säkra fält).
+      // Vill du ha dem strukturerade: skapa egna fält och flytta dit.
+      const submitterLine = [name, email, phone].filter(Boolean).join(" · ");
+      const descrParts = [
+        safeText(d.beskrivning || d.description || "", 5000),
+        submitterLine ? `Beställare: ${submitterLine}` : "",
+        d.kostnadsstalle ? `Kostnadsställe: ${safeText(d.kostnadsstalle, 120)}` : "",
+        d.deltagarlista ? `Deltagare:\n${safeText(d.deltagarlista || d.participants || "", 3000)}` : ""
+      ].filter(Boolean);
+
+      const payload = {
+        commission_title:    safeText(d.titel || d.title || "", 250),
+        Description:         descrParts.join("\n\n"),
+        Category:            safeText(d.kategori || "", 120),
+        delivery_date:       toBubbleDate(deliveryIso),
+        delivery_address:    safeText(d.plats || d.delivery_address || "", 300),
+        Budget:              asNumberOrNull(d.budget),
+        guest:               asNumberOrNull(d.antal),
+        po_number:           safeText(d.po || "", 120),
+        "Specialkost":          allergenNames.length ? allergenNames : null, // List of Allergener (option set)
+        "Specialkost_fritext":  kostSummary || null,
+        commission_status:   LANDING.COMMISSION_PUBLIC_STATUS, // "Utkast"
+        source:              LANDING.COMMISSION_SOURCE          // option set lead_source = "Internservice"
+      };
+      if (ccId)     payload.Company = ccId;
+      if (officeId) payload.Office  = officeId;   // ⚠️ verifiera office-relationens fältnamn
+      Object.keys(payload).forEach(k => payload[k] == null && delete payload[k]);
+
+      entityId    = await bubbleCreate(LANDING.COMISSION_TYPE, payload);
+      entityType  = "commission";
+      subjectKind = "beställning";
+    }
+
+    // ── EmailQueue: bygg mottagarlista ───────────────────────────────────────
+    const extraBase = {
+      request_kind:   kind,
+      company_name:   cfg.company_name || "",
+      office:         cfg.office_title || "",
+      accent_color:   cfg.accent_color || "#db6923",
+      submitter_name: name,
+      submitter_email: email,
+      submitter_phone: phone
+    };
+
+    const recipients = [
+      // 1) bekräftelse till medarbetaren som skickade in
+      { to_email: email, to_name: name, slug: LANDING.SLUG_RECEIVED, role: "submitter" }
+    ];
+
+    // 2) notis till alla riktiga users kopplade till kunden
+    const companyUsers = await getCompanyUsers(ccId);
+    for (const u of companyUsers) {
+      const uEmail = u.email || u["email"];
+      if (!uEmail || normEmail(uEmail) === email) continue; // undvik dubblett till samma adress
+      recipients.push({
+        to_email: uEmail,
+        to_name:  ((u["First Name"] || "") + " " + (u.Surname || "")).trim(),
+        slug:     LANDING.SLUG_INTERNAL,
+        role:     "internal"
+      });
+    }
+
+    let queued = 0;
+    for (const r of recipients) {
+      if (!r.to_email) continue;
+      try {
+        await bubbleCreate("emailqueue", {
+          template_slug: r.slug,        // pollern läser slug direkt (template_id ej krävt)
+          entity_id:     entityId,
+          entity_type:   entityType,
+          to_email:      r.to_email,
+          to_name:       r.to_name,
+          email_sent:    false,
+          extra_data:    JSON.stringify({ ...extraBase, recipient_role: r.role })
+        });
+        queued++;
+      } catch (e) {
+        console.warn(`[public/request] EmailQueue ${r.to_email} misslyckades:`, e?.message);
+      }
+    }
+
+    console.log(`[public/request] ${subjectKind} ${entityId} skapad (${entityType}) ` +
+      `CC ${ccId || "—"} · ${queued} mail köade`);
+
+    return res.json({ ok: true, id: entityId, kind, queued });
+
+  } catch (e) {
+    console.error("[public/request/create]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message });
+  }
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
