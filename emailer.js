@@ -152,6 +152,8 @@ async function buildEmail(item) {
     case "qc_updated":         return tmplQcUpdated(entity,      extra, toName, ctaLabel, ctx);
     case "news_new":           return tmplNewsNew(entity,        extra, toName, accent, ctaLabel, ctx);
     case "invoice_question":   return tmplInvoiceQuestion(entity, extra, toName, ctaLabel, ctx);
+      case "public_request_received": return tmplPublicRequestReceived(entity, extra, toName, ctaLabel, ctx);
+    case "public_request_internal": return tmplPublicRequestInternal(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
