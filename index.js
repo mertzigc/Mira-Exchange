@@ -365,6 +365,8 @@ function requireApiKey(req, res, next) {
     "/ms/callback",
     // Workplace Strategy Calculator (publik endpoint, ingen API-nyckel)
     "/leads/create-from-calculator",
+    "/public/landing-config",
+    "/public/request/create",
     // Artikelanalys (läs cached data, publik)
     "/analytics/articles/latest",
       "/invoice/lookup",    // ← lägg till
