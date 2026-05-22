@@ -12310,12 +12310,14 @@ app.get("/public/landing-config", async (req, res) => {
     const ccId = cfg.client_company || cfg.ClientCompany || null;
     const cc   = ccId ? (await bubbleGet("ClientCompany", ccId).catch(() => ({}))) : {};
     const offers = await getLandingOffers(ccId);
-
+// Bubble image-fält kan ge protokoll-relativ URL (//s3...) → gör absolut https
+    const absUrl = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
+    const logoUrl = absUrl(cfg.logo_url || cc?.logotyp || cc?.logo_url || cc?.Logo || "");
     return res.json({
       ok: true,
       company: {
         name:     cfg.company_name || cc?.Name_company || "",
-        logo_url: cfg.logo_url || cc?.logo_url || cc?.Logo || ""
+        logo_url: logoUrl
       },
       office:        cfg.office_title || "",
       accent_color:  cfg.accent_color || "",
