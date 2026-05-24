@@ -12313,15 +12313,18 @@ function _hedgeKeys(obj) {
   }
   return out;
 }
-async function safeCreate(typeName, obj) {
-  const p = _hedgeKeys(obj);
-  for (let i = 0; i < 24; i++) {
+async function safeCreate(typeName, exactObj, uncertainObj = {}) {
+  const clean = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== null && v !== undefined));
+  const p = { ...clean(exactObj), ..._hedgeKeys(uncertainObj || {}) };
+  for (let i = 0; i < 30; i++) {
     try {
       return await bubbleCreate(typeName, p);
     } catch (e) {
-      const msg = (e && (e.body?.body?.message || e.body?.message || e.message)) || "";
-      const m = /Unrecognized field:\s*([^\s,}'"]+)/i.exec(String(msg));
-      if (m && Object.prototype.hasOwnProperty.call(p, m[1])) { delete p[m[1]]; continue; }
+      const msg = String((e && (e.body?.body?.message || e.body?.message || e.message)) || "").trim();
+      // Fältnamn kan innehålla mellanslag (t.ex. "Commission title") → fånga hela
+      const m = /Unrecognized field:\s*(.+?)\s*$/i.exec(msg);
+      const field = m ? m[1].replace(/^['"]|['"]$/g, "") : null;
+      if (field && Object.prototype.hasOwnProperty.call(p, field)) { delete p[field]; continue; }
       throw e; // annat fel (t.ex. ogiltigt option set-värde) → kasta vidare
     }
   }
@@ -12442,7 +12445,7 @@ app.post("/public/request/create", async (req, res) => {
       };
       // (source utelämnas – option set-värde ej verifierat, skulle kunna avvisas)
 
-      entityId    = await safeCreate(LANDING.MATTER_TYPE, obj);
+      entityId    = await safeCreate(LANDING.MATTER_TYPE, {}, obj);
       entityType  = "matter";
       subjectKind = "felanmälan";
 
@@ -12477,14 +12480,19 @@ app.post("/public/request/create", async (req, res) => {
       ].filter(Boolean);
       const fullText = descrParts.join("\n\n");
 
-      const obj = {
-        "Commission title":     safeText(d.titel || d.title || "", 250),  // verifierat (GET)
-        Description:            fullText,                                   // full backup
-        commission_message:     safeText(d.beskrivning || d.description || "", 5000) || null,
-        delivery_date:          toBubbleDate(deliveryIso),                  // verifierat
-        budget:                 asNumberOrNull(d.budget),                   // verifierat (gemener)
-        commission_status:      LANDING.COMMISSION_PUBLIC_STATUS,           // "Utkast" (giltigt värde)
-        // Dedikerade/strukturerade fält (självläker om namn/case ej stämmer):
+      // Verifierade fältnamn (från GET) – skickas exakt, ingen hedging:
+      const exact = {
+        "Commission title":  safeText(d.titel || d.title || "", 250),
+        Description:         fullText,                                   // full backup
+        commission_message:  safeText(d.beskrivning || d.description || "", 5000) || null,
+        delivery_date:       toBubbleDate(deliveryIso),
+        budget:              asNumberOrNull(d.budget),
+        commission_status:   LANDING.COMMISSION_PUBLIC_STATUS,           // "Utkast"
+        Company:             ccId || null,
+        Office:              officeId || null
+      };
+      // Ej GET-verifierade – hedgas (case självläker), full info finns i Description:
+      const uncertain = {
         public_submitter_name:  name || null,
         public_submitter_email: email || null,
         public_submitter_phone: phone || null,
@@ -12495,11 +12503,9 @@ app.post("/public/request/create", async (req, res) => {
         kostnadsstalle:         d.kostnadsstalle ? safeText(d.kostnadsstalle, 120) : null,
         Location:               (d.plats || d.delivery_address) ? safeText(d.plats || d.delivery_address || "", 300) : null
       };
-      if (ccId)     obj.Company = ccId;
-      if (officeId) obj.Office  = officeId;
-      // (Category utelämnas – är service-option set, inte menykategori; ligger i Description)
+      // (Category utelämnas – service-option set, inte menykategori; ligger i Description)
 
-      entityId    = await safeCreate(LANDING.COMISSION_TYPE, obj);
+      entityId    = await safeCreate(LANDING.COMISSION_TYPE, exact, uncertain);
       entityType  = "commission";
       subjectKind = "beställning";
     }
@@ -12547,7 +12553,7 @@ app.post("/public/request/create", async (req, res) => {
           Email_sent:  false,
           Extra_data:  JSON.stringify({ ...extraBase, recipient_role: r.role, slug: r.slug })
         };
-        await safeCreate("emailqueue", queueObj);
+        await safeCreate("emailqueue", {}, queueObj);
         queued++;
       } catch (e) {
         console.warn(`[public/request] EmailQueue ${r.to_email} misslyckades:`, e?.message);
