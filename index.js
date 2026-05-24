@@ -12320,8 +12320,8 @@ async function safeCreate(typeName, exactObj, uncertainObj = {}) {
     try {
       return await bubbleCreate(typeName, p);
     } catch (e) {
-      const msg = String((e && (e.body?.body?.message || e.body?.message || e.message)) || "").trim();
-      // Fältnamn kan innehålla mellanslag (t.ex. "Commission title") → fånga hela
+      const resp = (e && (e.detail?.body ?? e.body)) || null;
+      const msg  = String((resp && (resp.body?.message || resp.message)) || (e && e.message) || "").trim();
       const m = /Unrecognized field:\s*(.+?)\s*$/i.exec(msg);
       const field = m ? m[1].replace(/^['"]|['"]$/g, "") : null;
       if (field && Object.prototype.hasOwnProperty.call(p, field)) { delete p[field]; continue; }
