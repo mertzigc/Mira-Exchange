@@ -12626,16 +12626,29 @@ const ADM_CC         = "ClientCompany";
 const ADM_USER       = "User";
 const ADM_COWORKER   = "Coworker";
 
-// Försök hitta vilket fält på Coworker som pekar mot ClientCompany (scheman varierar)
+// Försök hitta vilket fält på Coworker som pekar mot ClientCompany (scheman varierar).
+// Region finns INTE på Coworker — den ärvs via Coworker → Kundföretag → ClientCompany.Region.
 async function _coworkersByCompany(ccIds) {
-  const keys = ["company", "client_company", "Company", "clientcompany", "företag", "Företag", "client_company_ref"];
+  const keys = [
+    "Kundföretag", "Kundforetag", "kundföretag", "kundforetag", "kund_företag", "kund_foretag",
+    "company", "client_company", "Company", "clientcompany", "ClientCompany",
+    "företag", "Företag", "foretag", "client_company_ref"
+  ];
   for (const key of keys) {
     try {
       const rows = await bubbleFind(ADM_COWORKER, { constraints: [{ key, constraint_type: "in", value: ccIds }], limit: 2000 });
       if (rows && rows.length) return { rows, key };
     } catch (_) {}
   }
-  return { rows: [], key: "company" };
+  return { rows: [], key: "Kundföretag" };
+}
+// Plocka ut ClientCompany-id ur ett coworker-fält som kan vara id, lista eller objekt
+function _coCompanyId(co, key, ccMap) {
+  let v = co[key];
+  if (v == null) v = co.Kundföretag || co.Kundforetag || co.company || co.Company || "";
+  if (Array.isArray(v)) { for (const x of v) { const id = (x && x._id) || x; if (ccMap[id]) return id; } return (v[0] && v[0]._id) || v[0] || ""; }
+  if (v && typeof v === "object") return v._id || v.id || "";
+  return v || "";
 }
 
 // ── Värdföretag (för dropdown) ────────────────────────────────────────────────
@@ -12761,13 +12774,22 @@ app.patch("/admin/template", async (req, res) => {
   } catch (e) { console.error("[admin/template]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
+// ── Diagnostik: visa ett Coworker-objekts fältnycklar (för att hitta rätt fältnamn) ──
+app.get("/admin/coworker/sample", async (req, res) => {
+  try {
+    const rows = await bubbleFind(ADM_COWORKER, { limit: 1 }).catch(() => []);
+    const co = (rows || [])[0] || {};
+    res.json({ ok: true, keys: Object.keys(co), sample: co });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── Målgrupp: förhandsgranska (region-baserat i v1) ───────────────────────────
 app.post("/admin/audience/preview", async (req, res) => {
   try {
     const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
     const ccConstraints = [];
     if (regions.length) ccConstraints.push({ key: "Region", constraint_type: "in", value: regions });
-    const ccs = await bubbleFind(ADM_CC, { constraints: ccConstraints, limit: 500 }).catch(() => []);
+    const ccs = await bubbleFind(ADM_CC, { constraints: ccConstraints, limit: 2000 }).catch(() => []);
     const ccMap = {};
     (ccs || []).forEach(c => { const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region: c.Region || c.region || "" }; });
     const ccIds = Object.keys(ccMap);
@@ -12784,7 +12806,7 @@ app.post("/admin/audience/preview", async (req, res) => {
       const dedupe = (email || "").toLowerCase() || (co._id || co.id);
       if (!dedupe || seen.has(dedupe)) return;
       seen.add(dedupe);
-      const ccId = co[coKey] || co.company || co.Company || "";
+      const ccId = _coCompanyId(co, coKey, ccMap);
       const cc = ccMap[ccId] || {};
       out.push({ name: _admUserName(co) || email || "(namn saknas)", email: email || "", company_name: cc.name || "", region: cc.region || "" });
     });
