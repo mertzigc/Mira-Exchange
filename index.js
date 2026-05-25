@@ -12232,8 +12232,9 @@ const LANDING = {
   COMMISSION_SOURCE: "Internservice",   // Comission.source  (option set lead_source)
   MATTER_SOURCE:     "Kundorganisation",// Matter.source     (option set matter_source)
 
-  // Notiser → users vars LISTA `associated_company` innehåller postens ClientCompany
-  USER_ASSOCIATED_COMPANY_FIELD: "associated_company",
+  // Notiser → users vars `company` = postens ClientCompany (EJ associated_company,
+  // som även kopplar Carotte). Se getCompanyUsers nedan.
+  USER_COMPANY_FIELD: "company",
 
   // E-post-slugs (sätts som template_slug på EmailQueue → pollern väljer mall)
   SLUG_RECEIVED: "public_request_received",  // → medarbetaren
@@ -12286,16 +12287,23 @@ async function getLandingOffers(ccId) {
 }
 
 // ── Hämta riktiga users kopplade till en ClientCompany ───────────────────────
-// Princip (Christians notislogik): user.associated_company (LISTA) innehåller
-// postens ClientCompany. Bubble Data API: constraint_type "contains" på listfält.
+// VIKTIGT: filtrera ENBART på `company` (= kunden). Inte associated_company –
+// den kopplar både Carotte och kund, och vi ska inte notisa Carotte-users
+// (vi ser ändå utkastet i CRM). Users har bara 1 company = kundföretaget.
 async function getCompanyUsers(ccId) {
   if (!ccId) return [];
-  try {
-    return await bubbleFind("user", {
-      constraints: [{ key: LANDING.USER_ASSOCIATED_COMPANY_FIELD, constraint_type: "contains", value: ccId }],
-      limit: 100
-    });
-  } catch (_) { return []; }
+  const attempts = [
+    { key: "company", constraint_type: "equals", value: ccId },
+    { key: "Company", constraint_type: "equals", value: ccId }  // case-hedge på fältnamnet
+  ];
+  const byId = new Map();
+  for (const c of attempts) {
+    try {
+      const rows = await bubbleFind("user", { constraints: [c], limit: 100 });
+      for (const u of (rows || [])) byId.set(u._id || u.id || u.email || JSON.stringify(u), u);
+    } catch (_) {}
+  }
+  return [...byId.values()];
 }
 
 // ── Robust create: case-hedge + självläkning vid "Unrecognized field" ────────
@@ -12320,8 +12328,10 @@ async function safeCreate(typeName, exactObj, uncertainObj = {}) {
     try {
       return await bubbleCreate(typeName, p);
     } catch (e) {
+      // bubbleCreate kastar Error("bubbleCreate failed") med Bubble-svaret i err.detail.body
       const resp = (e && (e.detail?.body ?? e.body)) || null;
       const msg  = String((resp && (resp.body?.message || resp.message)) || (e && e.message) || "").trim();
+      // Fältnamn kan innehålla mellanslag (t.ex. "Commission title") → fånga hela
       const m = /Unrecognized field:\s*(.+?)\s*$/i.exec(msg);
       const field = m ? m[1].replace(/^['"]|['"]$/g, "") : null;
       if (field && Object.prototype.hasOwnProperty.call(p, field)) { delete p[field]; continue; }
@@ -12417,7 +12427,7 @@ app.post("/public/request/create", async (req, res) => {
 
     if (!email) return res.status(400).json({ ok: false, error: "email_required" });
 
-    let entityId, entityType, subjectKind;
+    let entityId, entityType, subjectKind, requestTitle;
 
     if (kind === "ticket") {
       // ── Matter (felanmälan) ───────────────────────────────────────────────
@@ -12434,6 +12444,7 @@ app.post("/public/request/create", async (req, res) => {
         "Tråd":                 [ fullMsg ],                   // List of texts
         status:                 LANDING.MATTER_PUBLIC_STATUS,  // "Utkast" (giltigt option set-värde)
         status_raw:             LANDING.MATTER_PUBLIC_STATUS,
+        Internservice:          true,                          // märk felanmälan som internservice (yes/no)
         public_submitter_name:  name || null,
         public_submitter_email: email || null,
         public_submitter_phone: phone || null,
@@ -12448,6 +12459,7 @@ app.post("/public/request/create", async (req, res) => {
       entityId    = await safeCreate(LANDING.MATTER_TYPE, {}, obj);
       entityType  = "matter";
       subjectKind = "felanmälan";
+      requestTitle = rubrik;
 
     } else {
       // ── Comission (beställning, utkast) – riktiga fältnamn ────────────────
@@ -12493,6 +12505,7 @@ app.post("/public/request/create", async (req, res) => {
       };
       // Ej GET-verifierade – hedgas (case självläker), full info finns i Description:
       const uncertain = {
+        Internservice:          true,                                 // märk bokningen som internservice (yes/no)
         public_submitter_name:  name || null,
         public_submitter_email: email || null,
         public_submitter_phone: phone || null,
@@ -12508,35 +12521,45 @@ app.post("/public/request/create", async (req, res) => {
       entityId    = await safeCreate(LANDING.COMISSION_TYPE, exact, uncertain);
       entityType  = "commission";
       subjectKind = "beställning";
+      requestTitle = exact["Commission title"] || "";
     }
 
     // ── EmailQueue: bygg mottagarlista ───────────────────────────────────────
     const extraBase = {
-      request_kind:   kind,
-      company_name:   cfg.company_name || "",
-      office:         cfg.office_title || "",
-      accent_color:   cfg.accent_color || "#db6923",
-      submitter_name: name,
+      request_kind:    kind,
+      request_title:   requestTitle || "",       // Comission title / Matter Rubrik → används i mailet
+      reference:       entityId || "",           // unik id på Comission/Matter = referensnummer
+      company_name:    cfg.company_name || "",
+      office:          cfg.office_title || "",
+      accent_color:    cfg.accent_color || "#df6f39",
+      submitter_name:  name || "",
       submitter_email: email,
       submitter_phone: phone
     };
 
-    const recipients = [
-      // 1) bekräftelse till medarbetaren som skickade in
-      { to_email: email, to_name: name, slug: LANDING.SLUG_RECEIVED, role: "submitter" }
-    ];
+    // Dedup på slug|e-post → en mottagare kan aldrig få samma mail två gånger
+    const seen = new Set();
+    const recipients = [];
+    const pushR = (toEmail, toName, slug, role) => {
+      const ne = normEmail(toEmail);
+      if (!ne) return;
+      const key = `${slug}|${ne}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      recipients.push({ to_email: ne, to_name: (toName && toName.trim()) || ne, slug, role });
+    };
 
-    // 2) notis till alla riktiga users kopplade till kunden
+    // 1) bekräftelse till medarbetaren som skickade in (To_name faller tillbaka på e-post)
+    pushR(email, name, LANDING.SLUG_RECEIVED, "submitter");
+
+    // 2) intern notis till alla users kopplade till kunden (ej till inskickaren själv)
     const companyUsers = await getCompanyUsers(ccId);
     for (const u of companyUsers) {
-      const uEmail = u.email || u["email"];
-      if (!uEmail || normEmail(uEmail) === email) continue; // undvik dubblett till samma adress
-      recipients.push({
-        to_email: uEmail,
-        to_name:  ((u["First Name"] || "") + " " + (u.Surname || "")).trim(),
-        slug:     LANDING.SLUG_INTERNAL,
-        role:     "internal"
-      });
+      const uEmail = u.email || u.Email || u["email"] || "";
+      if (!uEmail || normEmail(uEmail) === email) continue;
+      const uName = ((u["First Name"] || u.first_name || u.name || "") + " " +
+                     (u.Surname || u.surname || u.last_name || "")).trim();
+      pushR(uEmail, uName, LANDING.SLUG_INTERNAL, "internal");
     }
 
     let queued = 0;
