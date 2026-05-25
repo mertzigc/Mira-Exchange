@@ -12625,6 +12625,7 @@ const ADM_INVITATION = "Invitation";
 const ADM_CC         = "ClientCompany";
 const ADM_USER       = "User";
 const ADM_COWORKER   = "Coworker";
+const ADM_GUEST      = "InviteGuest";
 
 // Region finns INTE på Coworker — den ärvs via Coworker → Kundföretag → ClientCompany.Region.
 // Hitta vilket fält på Coworker som pekar mot ClientCompany genom att inspektera en cachad rad.
@@ -12865,6 +12866,137 @@ app.post("/admin/audience/preview", async (req, res) => {
     });
     res.json({ ok: true, source: "coworker", match_field: coKey, company_count: ccIds.length, user_count: out.length, no_email: noEmail, companies: Object.values(ccMap), users: out.slice(0, 300) });
   } catch (e) { console.error("[admin/audience/preview]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// DELTAGARLISTOR – skapa InviteGuest-rader från en målgrupp
+// Batchat (drivs av frontend) + Bubble bulk-create → undviker timeout.
+// Idempotent: dedup på e-post per inbjudan, säkert att köra om.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Bygg den fulla, deterministiskt sorterade mottagarlistan för en målgrupp (från cachen)
+function _resolveAudience(regions) {
+  const ccMap = {};
+  _cacheRows(ADM_CC).forEach(c => {
+    const region = c.Region || c.region || "";
+    if (regions.length && !regions.includes(region)) return;
+    const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region };
+  });
+  const coKey = _detectCoKey();
+  const seen = new Set(); const list = [];
+  _cacheRows(ADM_COWORKER).forEach(co => {
+    const ccId = _coCompanyId(co, coKey, ccMap);
+    const cc = ccMap[ccId]; if (!cc) return;
+    const email = _admUserEmail(co); if (!email) return;
+    const dl = email.toLowerCase(); if (seen.has(dl)) return;
+    seen.add(dl);
+    list.push({ email, name: _admUserName(co) || email, coworker: co._id || co.id, client_company: ccId, region: cc.region || "" });
+  });
+  list.sort((a, b) => a.email.localeCompare(b.email));   // stabil ordning för offset/limit
+  return list;
+}
+
+// Bubble bulk-create: ett anrop skapar många rader (newline-separerad JSON)
+async function _bulkCreate(type, rows) {
+  if (!rows.length) return { created: 0 };
+  const body = rows.map(r => JSON.stringify(r)).join("\n");
+  for (const base of BUBBLE_BASES) {
+    try {
+      const r = await fetch(`${base}/api/1.1/obj/${type}/bulk`, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "text/plain" },
+        body
+      });
+      const txt = await r.text().catch(() => "");
+      if (r.ok) {
+        const lines = txt.trim() ? txt.trim().split("\n") : [];
+        const ok = lines.filter(l => /"?status"?\s*:\s*"?success/i.test(l) || /^success/i.test(l)).length;
+        return { created: ok || rows.length, lines: lines.length, bulk: true };
+      }
+    } catch (_) {}
+  }
+  // Fallback: enstaka creates om bulk-endpointen inte är tillgänglig
+  let n = 0;
+  for (const r of rows) { try { await safeCreate(type, r, {}); n++; } catch (_) {} }
+  return { created: n, bulk: false };
+}
+
+// Dedup-set per inbjudan (i minnet) – seedas från befintliga gäster
+const _guestEmailSet = {};
+async function _seedGuestSet(invId) {
+  const existing = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
+  const set = new Set();
+  existing.forEach(g => { const e = String(g.email || "").trim().toLowerCase(); if (e) set.add(e); });
+  _guestEmailSet[invId] = set;
+  return set;
+}
+
+// POST /admin/invite/:id/guests/build  body: { regions:[], offset:0, limit:100, refresh? }
+app.post("/admin/invite/:id/guests/build", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
+    const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
+    const limit = Math.min(200, Math.max(1, parseInt(req.body?.limit, 10) || 100));
+    const full = req.body?.refresh === "full";
+
+    const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
+    if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+
+    await _syncCache(ADM_CC, { full });
+    await _syncCache(ADM_COWORKER, { full });
+
+    const audience = _resolveAudience(regions);
+    const total = audience.length;
+
+    // Seeda dedup-set vid start eller om det saknas (t.ex. efter omstart)
+    let set = _guestEmailSet[invId];
+    if (offset === 0 || !set) set = await _seedGuestSet(invId);
+
+    const slice = audience.slice(offset, offset + limit);
+    const nowIso = new Date().toISOString();
+    const rows = [];
+    let skipped = 0;
+    for (const a of slice) {
+      const dl = a.email.toLowerCase();
+      if (set.has(dl)) { skipped++; continue; }
+      set.add(dl);
+      rows.push({
+        invitation:      invId,
+        guest_token:     _admToken(),
+        name:            a.name,
+        email:           a.email,
+        coworker:        a.coworker || undefined,
+        client_company:  a.client_company || undefined,
+        region:          a.region || undefined,
+        source:          "audience",
+        rsvp_status:     "pending",
+        plus_ones_count: 0,
+        invited_at:      nowIso
+      });
+    }
+    const result = rows.length ? await _bulkCreate(ADM_GUEST, rows) : { created: 0 };
+
+    const nextOffset = offset + limit;
+    const done = nextOffset >= total;
+    if (done) delete _guestEmailSet[invId];   // släpp minnet när klart
+    res.json({ ok: true, total, processed: Math.min(nextOffset, total), created: result.created, skipped, next_offset: done ? null : nextOffset, done });
+  } catch (e) { console.error("[guests/build]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// GET /admin/invite/:id/guests/stats → antal svar
+app.get("/admin/invite/:id/guests/stats", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
+    let yes = 0, no = 0, pending = 0, arrived = 0;
+    guests.forEach(g => {
+      const s = String(g.rsvp_status || "pending").toLowerCase();
+      if (s === "yes") yes++; else if (s === "no") no++; else pending++;
+      if (g.arrived === true) arrived++;
+    });
+    res.json({ ok: true, total: guests.length, yes, no, pending, arrived });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
 // ════════════════════════════════════════════════════════════════════════════
 // Mira — Inbjudningsmodul (publika endpoints)
