@@ -371,6 +371,8 @@ function requireApiKey(req, res, next) {
     "/analytics/articles/latest",
       "/invoice/lookup",    // ← lägg till
   "/invoice/submit",    // ← lägg till
+    "/invite/config",
+    "/invite/rsvp",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
@@ -12602,7 +12604,202 @@ app.post("/public/request/create", async (req, res) => {
 // krockar med invite-public.js.
 // ════════════════════════════════════════════════════════════════════════════
 
-function _admToken() { return require("crypto").randomBytes(16).toString("hex"); }
+function _admToken() {
+  try {
+    if (typeof globalThis !== "undefined" && globalThis.crypto) {
+      if (globalThis.crypto.randomUUID) return globalThis.crypto.randomUUID().replace(/-/g, "");
+      if (globalThis.crypto.getRandomValues) {
+        var a = new Uint8Array(16); globalThis.crypto.getRandomValues(a);
+        return Array.prototype.map.call(a, function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+      }
+    }
+  } catch (_) {}
+  return (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).replace(/[^a-z0-9]/gi, "").slice(0, 32);
+}
+function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
+function _admName(cc) { return cc?.Name_company || cc?.name || cc?.Company_name || cc?.company_name || cc?.Namn || ""; }
+function _admUserEmail(u) { return String(u?.email || u?.Email || u?.email_address || u?.authentication?.email?.email || "").trim(); }
+function _admUserName(u) { return String(u?.name || u?.Name || u?.full_name || u?.fullname || [u?.first_name, u?.last_name].filter(Boolean).join(" ")).trim(); }
+
+const ADM_INVITATION = "Invitation";
+const ADM_CC         = "ClientCompany";
+const ADM_USER       = "User";
+
+// ── Värdföretag (för dropdown) ────────────────────────────────────────────────
+app.get("/admin/cc/list", async (req, res) => {
+  try {
+    const rows = await bubbleFind(ADM_CC, { limit: 300 }).catch(() => []);
+    const out = (rows || []).map(c => ({
+      id: c._id || c.id, name: _admName(c) || "(namnlöst)", region: c.Region || c.region || ""
+    }));
+    out.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    res.json({ ok: true, companies: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── Skapa inbjudan ────────────────────────────────────────────────────────────
+app.post("/admin/invite/create", async (req, res) => {
+  try {
+    const d = req.body || {};
+    if (!d.title) return res.status(400).json({ ok: false, error: "title_required" });
+    const token = _admToken();
+    const exact = {
+      token,
+      active:          d.active !== false,
+      client_company:  d.client_company || null,
+      title:           safeText(d.title, 200),
+      description:     String(d.description || ""),
+      accent_color:    d.accent_color || "#df6f39",
+      event_address:   safeText(d.event_address || "", 300),
+      location_name:   safeText(d.location_name || "", 200),
+      start_date:      d.start_date ? toBubbleDate(d.start_date) : null,
+      end_date:        d.end_date ? toBubbleDate(d.end_date) : null,
+      rsvp_deadline:   d.rsvp_deadline ? toBubbleDate(d.rsvp_deadline) : null,
+      allow_plus_ones: d.allow_plus_ones !== false,
+      max_plus_ones:   asNumberOrNull(d.max_plus_ones) ?? 0,
+      form_schema:     typeof d.form_schema === "string" ? d.form_schema : JSON.stringify(d.form_schema || []),
+      host_name:       safeText(d.host_name || "", 120)
+    };
+    // image hanteras hedgat: image-fältet i Bubble är image-typ och tar oftast inte
+    // emot en extern URL via Data API. Lägg ev. till ett TEXT-fält image_url så fastnar URL:en.
+    const uncertain = (d.image || d.image_url) ? { image_url: _admAbs(d.image || d.image_url) } : {};
+    const id = await safeCreate(ADM_INVITATION, exact, uncertain);
+    res.json({ ok: true, id, token });
+  } catch (e) { console.error("[admin/invite/create]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── Uppdatera inbjudan ────────────────────────────────────────────────────────
+app.patch("/admin/invite/update", async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ ok: false, error: "id_required" });
+    const f = {};
+    const map = {
+      title: v => safeText(v, 200), description: v => String(v), accent_color: v => v,
+      event_address: v => safeText(v, 300), location_name: v => safeText(v, 200),
+      host_name: v => safeText(v, 120), max_plus_ones: v => asNumberOrNull(v) ?? 0,
+      form_schema: v => (typeof v === "string" ? v : JSON.stringify(v || []))
+    };
+    Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
+    ["start_date", "end_date", "rsvp_deadline"].forEach(k => { if (b[k] !== undefined) f[k] = b[k] ? toBubbleDate(b[k]) : null; });
+    if (b.active !== undefined) f.active = !!b.active;
+    if (b.allow_plus_ones !== undefined) f.allow_plus_ones = !!b.allow_plus_ones;
+    if (b.client_company !== undefined) f.client_company = b.client_company || null;
+    await bubblePatch(ADM_INVITATION, b.id, f);
+    res.json({ ok: true });
+  } catch (e) { console.error("[admin/invite/update]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── Lista inbjudningar ────────────────────────────────────────────────────────
+app.get("/admin/invite/list", async (req, res) => {
+  try {
+    const rows = await bubbleFind(ADM_INVITATION, { limit: 60 }).catch(() => []);
+    const out = (rows || []).map(i => ({
+      id: i._id || i.id, title: i.title || "", active: i.active !== false, token: i.token || "",
+      start_date: i.start_date || null, rsvp_deadline: i.rsvp_deadline || null,
+      location_name: i.location_name || "", client_company: i.client_company || null
+    }));
+    out.sort((a, b) => (new Date(b.start_date || 0)) - (new Date(a.start_date || 0)));
+    res.json({ ok: true, invitations: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── E-postmallar (lista) ──────────────────────────────────────────────────────
+async function _admFindTemplates() {
+  for (const t of ["EmailTemplate", "emailtemplate", "email_template"]) {
+    try { const rows = await bubbleFind(t, { limit: 100 }); if (Array.isArray(rows)) return { type: t, rows }; } catch (_) {}
+  }
+  return { type: "EmailTemplate", rows: [] };
+}
+app.get("/admin/templates", async (req, res) => {
+  try {
+    const { rows } = await _admFindTemplates();
+    const ent = String(req.query.entity_type || "").trim().toLowerCase();
+    const out = (rows || [])
+      .filter(r => !ent || String(r.Entity_type || r.entity_type || "").toLowerCase() === ent)
+      .map(r => ({
+        id: r._id || r.id,
+        slug: r.Slug || r.slug || "",
+        name: r.Name || r.name || "",
+        subject: r.Subject || r.subject || "",
+        body_html: r.Body_html || r.body_html || "",
+        cta_label: r.Cta_label || r.cta_label || "",
+        cta_url_pattern: r.Cta_url_pattern || r.cta_url_pattern || "",
+        entity_type: r.Entity_type || r.entity_type || "",
+        is_active: (r.Is_active ?? r.is_active) !== false
+      }));
+    out.sort((a, b) => a.slug.localeCompare(b.slug));
+    res.json({ ok: true, templates: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+app.patch("/admin/template", async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.id) return res.status(400).json({ ok: false, error: "id_required" });
+    const { type } = await _admFindTemplates();
+    const f = {};
+    if (b.subject !== undefined)         f.Subject = String(b.subject);
+    if (b.body_html !== undefined)       f.Body_html = String(b.body_html);
+    if (b.cta_label !== undefined)       f.Cta_label = String(b.cta_label);
+    if (b.cta_url_pattern !== undefined) f.Cta_url_pattern = String(b.cta_url_pattern);
+    if (b.is_active !== undefined)       f.Is_active = !!b.is_active;
+    await bubblePatch(type, b.id, f);
+    res.json({ ok: true });
+  } catch (e) { console.error("[admin/template]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── Målgrupp: förhandsgranska (region-baserat i v1) ───────────────────────────
+app.post("/admin/audience/preview", async (req, res) => {
+  try {
+    const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
+    const ccConstraints = [];
+    if (regions.length) ccConstraints.push({ key: "Region", constraint_type: "in", value: regions });
+    const ccs = await bubbleFind(ADM_CC, { constraints: ccConstraints, limit: 500 }).catch(() => []);
+    const ccMap = {};
+    (ccs || []).forEach(c => { const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region: c.Region || c.region || "" }; });
+    const ccIds = Object.keys(ccMap);
+    if (!ccIds.length) return res.json({ ok: true, companies: [], user_count: 0, users: [] });
+
+    let users = [];
+    try {
+      users = await bubbleFind(ADM_USER, { constraints: [{ key: "company", constraint_type: "in", value: ccIds }], limit: 500 }) || [];
+    } catch (_) {
+      for (const id of ccIds.slice(0, 60)) {
+        const part = await bubbleFind(ADM_USER, { constraints: [{ key: "company", constraint_type: "equals", value: id }], limit: 200 }).catch(() => []);
+        users = users.concat(part || []);
+      }
+    }
+    const seen = new Set(); const out = [];
+    (users || []).forEach(u => {
+      const email = _admUserEmail(u); if (!email || seen.has(email.toLowerCase())) return;
+      seen.add(email.toLowerCase());
+      const cc = ccMap[u.company || u.Company || ""] || {};
+      out.push({ name: _admUserName(u) || email, email, company_name: cc.name || "", region: cc.region || "" });
+    });
+    res.json({ ok: true, companies: Object.values(ccMap), user_count: out.length, users: out.slice(0, 300) });
+  } catch (e) { console.error("[admin/audience/preview]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+// ════════════════════════════════════════════════════════════════════════════
+// Mira — Kommunikationsmodul: ADMIN endpoints
+// Klistra in i index-72.js FÖRE app.listen. Dessa rutter ligger MEDVETET INTE i
+// openPaths → de skyddas av din x-api-key (admin-konsolen skickar nyckeln).
+// Återanvänder globala helpers (bubbleFind, bubbleGet, safeCreate, bubblePatch,
+// toBubbleDate, asNumberOrNull, safeText). Egna helpers har unika namn så inget
+// krockar med invite-public.js.
+// ════════════════════════════════════════════════════════════════════════════
+
+function _admToken() {
+  try {
+    if (typeof globalThis !== "undefined" && globalThis.crypto) {
+      if (globalThis.crypto.randomUUID) return globalThis.crypto.randomUUID().replace(/-/g, "");
+      if (globalThis.crypto.getRandomValues) {
+        var a = new Uint8Array(16); globalThis.crypto.getRandomValues(a);
+        return Array.prototype.map.call(a, function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+      }
+    }
+  } catch (_) {}
+  return (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).replace(/[^a-z0-9]/gi, "").slice(0, 32);
+}
 function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
 function _admName(cc) { return cc?.Name_company || cc?.name || cc?.Company_name || cc?.company_name || cc?.Namn || ""; }
 function _admUserEmail(u) { return String(u?.email || u?.Email || u?.email_address || u?.authentication?.email?.email || "").trim(); }
