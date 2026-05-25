@@ -12593,5 +12593,236 @@ app.post("/public/request/create", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message });
   }
 });
+// ════════════════════════════════════════════════════════════════════════════
+// Mira — Inbjudningsmodul (publika endpoints)
+// Klistra in detta block i index-72.js FÖRE app.listen, efter det publika
+// portal-blocket. Återanvänder befintliga globala helpers (bubbleFind, bubbleGet,
+// bubblePatch, safeCreate, getTemplateId, toBubbleDate, safeText, normEmail,
+// asNumberOrNull). Definierar INGET som redan finns (ingen redeklaration).
+//
+// VIKTIGT: lägg till "/invite/config" och "/invite/rsvp" i din openPaths-whitelist
+// i requireApiKey (precis som /public/*), annars blockeras de av API-nyckeln.
+// ════════════════════════════════════════════════════════════════════════════
+
+const INVITE = {
+  INVITATION_TYPE: "Invitation",
+  GUEST_TYPE:      "InviteGuest",
+  SLUG_CONFIRM:    "invite_rsvp_confirmation",
+  DEFAULT_ACCENT:  "#df6f39"
+};
+
+function _inviteToken() { return require("crypto").randomBytes(16).toString("hex"); }
+const _inviteAbsUrl = u => {
+  u = String(u || "").trim();
+  if (!u) return "";
+  if (u.startsWith("//")) u = "https:" + u;
+  return u.replace(/^(https?:)\/{2,}/i, "$1//");
+};
+const _jArr = s => { try { const a = JSON.parse(s || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } };
+const _jObj = s => { try { const o = JSON.parse(s || "{}"); return (o && typeof o === "object") ? o : {}; } catch { return {}; } };
+
+// ── Uppslag ──────────────────────────────────────────────────────────────────
+async function getGuestByToken(g) {
+  if (!g) return null;
+  try {
+    const rows = await bubbleFind(INVITE.GUEST_TYPE, {
+      constraints: [{ key: "guest_token", constraint_type: "equals", value: g }], limit: 1
+    });
+    return (rows && rows[0]) || null;
+  } catch (_) { return null; }
+}
+async function getInvitationById(id) {
+  if (!id) return null;
+  return (await bubbleGet(INVITE.INVITATION_TYPE, id).catch(() => null)) || null;
+}
+async function getInvitationByToken(t) {
+  if (!t) return null;
+  try {
+    const rows = await bubbleFind(INVITE.INVITATION_TYPE, {
+      constraints: [{ key: "token", constraint_type: "equals", value: t }], limit: 1
+    });
+    return (rows && rows[0]) || null;
+  } catch (_) { return null; }
+}
+
+function inviteBrand(inv, cc) {
+  return {
+    company_name: inv.company_name || cc?.Name_company || inv.host_name || "",
+    logo_url:     _inviteAbsUrl(cc?.logotyp || cc?.logo_url || cc?.Logo || ""),
+    accent_color: inv.accent_color || INVITE.DEFAULT_ACCENT
+  };
+}
+
+function inviteConfigPayload(inv, cc, guest) {
+  const deadlinePassed = inv.rsvp_deadline ? (new Date(inv.rsvp_deadline).getTime() < Date.now()) : false;
+  return {
+    ok: true,
+    active: inv.active !== false,
+    event: {
+      title:         inv.title || "",
+      description:   inv.description || "",
+      image_url:     _inviteAbsUrl(inv.image || inv.image_url || ""),
+      address:       inv.event_address || "",
+      location_name: inv.location_name || "",
+      start_date:    inv.start_date || null,
+      end_date:      inv.end_date || null,
+      rsvp_deadline: inv.rsvp_deadline || null
+    },
+    brand:           inviteBrand(inv, cc),
+    allow_plus_ones: inv.allow_plus_ones !== false,
+    max_plus_ones:   asNumberOrNull(inv.max_plus_ones) ?? 0,
+    form_schema:     _jArr(inv.form_schema),
+    deadline_passed: deadlinePassed,
+    guest: guest ? {
+      name:            guest.name || "",
+      email:           guest.email || "",
+      phone:           guest.phone || "",
+      rsvp_status:     guest.rsvp_status || "pending",
+      plus_ones_count: asNumberOrNull(guest.plus_ones_count) ?? 0,
+      allergens:       _jArr(guest.allergens_json),
+      responses:       _jObj(guest.response_json)
+    } : null
+  };
+}
+
+// ── GET /invite/config?g=<guest_token>  (eller ?t=<invitation token>) ─────────
+app.get("/invite/config", async (req, res) => {
+  try {
+    const g = String(req.query.g || "").trim();
+    const t = String(req.query.t || "").trim();
+    let guest = null, inv = null;
+    if (g) {
+      guest = await getGuestByToken(g);
+      if (!guest) return res.status(404).json({ ok: false, error: "guest_not_found" });
+      inv = await getInvitationById(guest.invitation);
+    } else if (t) {
+      inv = await getInvitationByToken(t);
+    }
+    if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+    if (inv.active === false) return res.status(403).json({ ok: false, error: "inactive" });
+    const ccId = inv.client_company || null;
+    const cc = ccId ? (await bubbleGet("ClientCompany", ccId).catch(() => ({}))) : {};
+    return res.json(inviteConfigPayload(inv, cc, guest));
+  } catch (e) {
+    console.error("[invite/config]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+// ── Enkel rate-limit (per IP) ────────────────────────────────────────────────
+const _inviteHits = new Map();
+function _inviteRate(ip) {
+  const n = (_inviteHits.get(ip) || 0) + 1;
+  _inviteHits.set(ip, n);
+  setTimeout(() => _inviteHits.delete(ip), 60000);
+  return n <= 12;
+}
+
+// ── POST /invite/rsvp ─────────────────────────────────────────────────────────
+app.post("/invite/rsvp", async (req, res) => {
+  try {
+    const d = req.body || {};
+    if (d.company_website) return res.json({ ok: true });           // honeypot
+    const ip = req.headers["x-forwarded-for"] || req.ip || "";
+    if (!_inviteRate(String(ip))) return res.status(429).json({ ok: false, error: "rate" });
+
+    const g    = String(d.g || "").trim();
+    const t    = String(d.t || "").trim();
+    const rsvp = (String(d.rsvp_status || d.rsvp || "").toLowerCase() === "yes") ? "yes" : "no";
+    const plusOnes  = Math.max(0, asNumberOrNull(d.plus_ones_count ?? d.plus_ones) ?? 0);
+    const allergens = Array.isArray(d.allergens) ? d.allergens : [];
+    const responses = (d.responses && typeof d.responses === "object") ? d.responses : {};
+
+    let guest = null, inv = null;
+    if (g) {
+      guest = await getGuestByToken(g);
+      if (!guest) return res.status(404).json({ ok: false, error: "guest_not_found" });
+      inv = await getInvitationById(guest.invitation);
+    } else if (t) {
+      inv = await getInvitationByToken(t);
+    }
+    if (!inv || inv.active === false) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+    if (inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
+      return res.status(403).json({ ok: false, error: "deadline_passed" });
+
+    const nowIso        = toBubbleDate(new Date().toISOString());
+    const allergensJson = JSON.stringify(allergens);
+    const responseJson  = JSON.stringify(responses);
+    const isComing      = rsvp === "yes";
+
+    let guestId, guestName, guestEmail;
+    if (guest) {
+      guestId   = guest._id || guest.id;
+      guestName = guest.name || "";
+      guestEmail = normEmail(guest.email || "");
+      await bubblePatch(INVITE.GUEST_TYPE, guestId, {
+        rsvp_status:     rsvp,
+        rsvp_at:         nowIso,
+        plus_ones_count: isComing ? plusOnes : 0,
+        allergens_json:  isComing ? allergensJson : "[]",
+        response_json:   responseJson
+      });
+    } else {
+      // öppet läge (?t=) — skapa ny gäst
+      guestName  = safeText(d.name || d.namn || "", 120);
+      guestEmail = normEmail(d.email || "");
+      if (!guestEmail) return res.status(400).json({ ok: false, error: "email_required" });
+      guestId = await safeCreate(INVITE.GUEST_TYPE, {
+        invitation:      inv._id || inv.id,
+        guest_token:     _inviteToken(),
+        name:            guestName,
+        email:           guestEmail,
+        phone:           safeText(d.phone || d.tel || "", 60),
+        source:          "manual",
+        rsvp_status:     rsvp,
+        rsvp_at:         nowIso,
+        plus_ones_count: isComing ? plusOnes : 0,
+        allergens_json:  isComing ? allergensJson : "[]",
+        response_json:   responseJson
+      }, {});
+    }
+
+    // ── Bekräftelsemail till gästen ──
+    const ccId  = inv.client_company || null;
+    const cc    = ccId ? (await bubbleGet("ClientCompany", ccId).catch(() => ({}))) : {};
+    const brand = inviteBrand(inv, cc);
+    const kostSummary = allergens.length
+      ? allergens.map(a => `${a.name}${Number(a.count) > 1 ? " ×" + Number(a.count) : ""}`).join(", ") : "";
+    const extra = {
+      event_title:      inv.title || "",
+      event_address:    inv.event_address || "",
+      event_location:   inv.location_name || "",
+      event_start:      inv.start_date || "",
+      event_end:        inv.end_date || "",
+      company_name:     brand.company_name,
+      accent_color:     brand.accent_color,
+      host_name:        inv.host_name || brand.company_name,
+      rsvp_status:      rsvp,
+      plus_ones_count:  isComing ? plusOnes : 0,
+      allergens_summary: isComing ? kostSummary : "",
+      guest_name:       guestName,
+      reference:        guestId || ""
+    };
+    if (guestEmail) {
+      try {
+        const tplId = await getTemplateId(INVITE.SLUG_CONFIRM);
+        await safeCreate("emailqueue", {}, {
+          Template_id: tplId || null,
+          Entity_id:   guestId,
+          Entity_type: "invite",
+          To_email:    guestEmail,
+          To_name:     guestName || guestEmail,
+          Email_sent:  false,
+          Extra_data:  JSON.stringify({ ...extra, slug: INVITE.SLUG_CONFIRM })
+        });
+      } catch (e) { console.warn("[invite/rsvp] bekräftelsemail:", e?.message); }
+    }
+
+    return res.json({ ok: true, rsvp_status: rsvp });
+  } catch (e) {
+    console.error("[invite/rsvp]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message });
+  }
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
