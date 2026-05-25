@@ -1018,6 +1018,77 @@ async function tmplPublicRequestInternal(e, extra, toName, ctaLabel, item) {
   });
   return { subject, html };
 }
+// ════════════════════════════════════════════════════════════════════════════
+// emailer.js — lägg till för inbjudningsmodulen
+// 1) Klistra in funktionen nedan bland övriga tmpl*-funktioner.
+// 2) Lägg till switch-caset i buildEmail (visas längst ner).
+// Återanvänder befintliga helpers: wrapLayout, detailRows, esc, fmtDateTime.
+// Läser ENBART ur `extra` (inget entity-fetch behövs).
+// ════════════════════════════════════════════════════════════════════════════
+
+function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
+  const x        = extra || {};
+  const accent   = x.accent_color || "#df6f39";
+  const coming   = String(x.rsvp_status || "").toLowerCase() === "yes";
+  const company  = esc(x.company_name || "");
+  const title    = esc(x.event_title || "Inbjudan");
+  const guest    = esc(x.guest_name || toName || "");
+  const plusOnes = Number(x.plus_ones_count || 0);
+
+  // Tidsrad: "12 jun 2026, 17:00–20:00" om end finns, annars bara start
+  let when = "";
+  if (x.event_start) {
+    when = fmtDateTime(x.event_start);
+    if (x.event_end) {
+      const endPart = fmtDateTime(x.event_end);
+      const t = String(endPart).split(" ").pop();   // bara klockslag på slutet
+      when += t ? `–${t}` : "";
+    }
+  }
+
+  const rows = [];
+  rows.push(["Event", title]);
+  if (when)              rows.push(["När", esc(when)]);
+  if (x.event_location)  rows.push(["Plats", esc(x.event_location)]);
+  if (x.event_address)   rows.push(["Adress", esc(x.event_address)]);
+  if (coming && plusOnes > 0) rows.push(["Medföljande gäster", String(plusOnes)]);
+  if (coming && x.allergens_summary) rows.push(["Specialkost", esc(x.allergens_summary)]);
+
+  const headline = coming
+    ? "Tack – vi ser fram emot att ses!"
+    : "Tack för ditt svar";
+
+  const intro = coming
+    ? `Hej ${guest || "där"}! Vi har registrerat att du kommer. Här är detaljerna:`
+    : `Hej ${guest || "där"}! Vi har registrerat att du tyvärr inte har möjlighet att komma. Tack för att du svarade.`;
+
+  const footnote = `<p style="margin:18px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">
+      Behöver du ändra ditt svar? Använd samma länk som i din inbjudan – du kan uppdatera fram till sista anmälningsdag.
+    </p>`;
+
+  const body = `
+    <p style="margin:0 0 16px;font-size:15px;color:#111827;line-height:1.6;">${esc(intro)}</p>
+    ${detailRows(rows, accent)}
+    ${footnote}
+  `;
+
+  return wrapLayout({
+    accent,
+    preheader: coming ? `Ditt svar på ${x.event_title || "inbjudan"}: Kommer` : `Ditt svar: Kan inte`,
+    company,
+    headline,
+    bodyHtml: body,
+    cta: null   // ingen knapp i bekräftelsen
+  });
+}
+
+/* ── I buildEmail(slug, …), lägg till bland de andra casen: ───────────────────
+
+    case "invite_rsvp_confirmation":
+      return tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item);
+
+   (samma mönster som case "public_request_received".)
+─────────────────────────────────────────────────────────────────────────────*/
 // ────────────────────────────────────────────────────────────
 // SendGrid REST (ingen SDK – matcher befintligt mönster i index.js)
 // ────────────────────────────────────────────────────────────
