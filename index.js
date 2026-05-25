@@ -12624,11 +12624,24 @@ function _admUserName(u) { return String(u?.name || u?.Name || u?.full_name || u
 const ADM_INVITATION = "Invitation";
 const ADM_CC         = "ClientCompany";
 const ADM_USER       = "User";
+const ADM_COWORKER   = "Coworker";
+
+// Försök hitta vilket fält på Coworker som pekar mot ClientCompany (scheman varierar)
+async function _coworkersByCompany(ccIds) {
+  const keys = ["company", "client_company", "Company", "clientcompany", "företag", "Företag", "client_company_ref"];
+  for (const key of keys) {
+    try {
+      const rows = await bubbleFind(ADM_COWORKER, { constraints: [{ key, constraint_type: "in", value: ccIds }], limit: 2000 });
+      if (rows && rows.length) return { rows, key };
+    } catch (_) {}
+  }
+  return { rows: [], key: "company" };
+}
 
 // ── Värdföretag (för dropdown) ────────────────────────────────────────────────
 app.get("/admin/cc/list", async (req, res) => {
   try {
-    const rows = await bubbleFind(ADM_CC, { limit: 300 }).catch(() => []);
+    const rows = await bubbleFind(ADM_CC, { limit: 2000 }).catch(() => []);
     const out = (rows || []).map(c => ({
       id: c._id || c.id, name: _admName(c) || "(namnlöst)", region: c.Region || c.region || ""
     }));
@@ -12760,23 +12773,22 @@ app.post("/admin/audience/preview", async (req, res) => {
     const ccIds = Object.keys(ccMap);
     if (!ccIds.length) return res.json({ ok: true, companies: [], user_count: 0, users: [] });
 
-    let users = [];
+    let coworkers = [], coKey = "company";
     try {
-      users = await bubbleFind(ADM_USER, { constraints: [{ key: "company", constraint_type: "in", value: ccIds }], limit: 500 }) || [];
-    } catch (_) {
-      for (const id of ccIds.slice(0, 60)) {
-        const part = await bubbleFind(ADM_USER, { constraints: [{ key: "company", constraint_type: "equals", value: id }], limit: 200 }).catch(() => []);
-        users = users.concat(part || []);
-      }
-    }
+      const found = await _coworkersByCompany(ccIds);
+      coworkers = found.rows; coKey = found.key;
+    } catch (_) {}
     const seen = new Set(); const out = [];
-    (users || []).forEach(u => {
-      const email = _admUserEmail(u); if (!email || seen.has(email.toLowerCase())) return;
-      seen.add(email.toLowerCase());
-      const cc = ccMap[u.company || u.Company || ""] || {};
-      out.push({ name: _admUserName(u) || email, email, company_name: cc.name || "", region: cc.region || "" });
+    (coworkers || []).forEach(co => {
+      const email = _admUserEmail(co);
+      const dedupe = (email || "").toLowerCase() || (co._id || co.id);
+      if (!dedupe || seen.has(dedupe)) return;
+      seen.add(dedupe);
+      const ccId = co[coKey] || co.company || co.Company || "";
+      const cc = ccMap[ccId] || {};
+      out.push({ name: _admUserName(co) || email || "(namn saknas)", email: email || "", company_name: cc.name || "", region: cc.region || "" });
     });
-    res.json({ ok: true, companies: Object.values(ccMap), user_count: out.length, users: out.slice(0, 300) });
+    res.json({ ok: true, source: "coworker", match_field: coKey, companies: Object.values(ccMap), user_count: out.length, users: out.slice(0, 300) });
   } catch (e) { console.error("[admin/audience/preview]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 // ════════════════════════════════════════════════════════════════════════════
