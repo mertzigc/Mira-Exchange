@@ -1039,6 +1039,144 @@ async function tmplPublicRequestInternal(e, extra, toName, ctaLabel, item) {
   });
   return { subject, html };
 }
+// ════════════════════════════════════════════════════════════════════════════
+// emailer.js – TILLÄGG för publik medarbetarportal
+//
+// INTEGRATION (2 steg, minimal risk – fetchEntity behöver INTE ändras):
+//
+//   1) I buildEmail():s switch(slug) { … } lägg till två cases:
+//
+//          case "public_request_received": return tmplPublicRequestReceived(entity, extra, toName, ctaLabel, ctx);
+//          case "public_request_internal": return tmplPublicRequestInternal(entity, extra, toName, ctaLabel, ctx);
+//
+//   2) Klistra in de två funktionerna nedan i emailer.js (t.ex. efter tmplCommissionUpdated).
+//
+// Funktionerna hämtar sin egen entitet via item.entity_type (matter|commission),
+// så den statiska typeMap:en i fetchEntity lämnas orörd (returnerar {} för dessa
+// slugs, vilket är ofarligt eftersom vi ignorerar `e`).
+//
+// Återanvänder befintliga helpers i emailer.js: wrapLayout, detailRows, fmtDateTime,
+//   fmtDate, esc, statusBadge, _bubbleGet.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Gemensam entitetshämtning för publika förfrågningar
+async function _fetchPublicEntity(item, extra) {
+  const kind = (item.entity_type === "matter" || extra.request_kind === "ticket")
+    ? "ticket" : "booking";
+  const realType = kind === "ticket" ? "Matter" : "Comission";
+  const ent = item.entity_id
+    ? ((await _bubbleGet(realType, item.entity_id).catch(() => ({}))) || {})
+    : {};
+  return { kind, ent };
+}
+function _firstThread(t){ return Array.isArray(t) ? (t[0] || "") : (t || ""); }
+
+// ────────────────────────────────────────────────────────────
+// MALL 6: Bekräftelse till medarbetaren (submitter)
+// slug: public_request_received
+// Titel + referensnummer kommer från extra (request_title / reference).
+// ────────────────────────────────────────────────────────────
+async function tmplPublicRequestReceived(e, extra, toName, ctaLabel, item) {
+  const { kind, ent } = await _fetchPublicEntity(item, extra);
+  const senderName = extra.company_name || "";
+  const accent     = extra.accent_color || "#df6f39";
+  const ref        = extra.reference || ent._id || "";
+
+  if (kind === "ticket") {
+    const title = extra.request_title || ent.Rubrik || ent.rubrik || "Din felanmälan";
+    const descr = ent.Beskrivning || _firstThread(ent["Tråd"]) || "";
+    const subject = item.subject_override || "Vi har tagit emot din felanmälan";
+    const html = wrapLayout({
+      toName, logoUrl: "", senderName, imageUrl: "", accent,
+      tag: "Mottaget",
+      headline: "Tack – din felanmälan är registrerad",
+      body: `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+          + `Vi har tagit emot din anmälan och teamet${senderName ? ` hos ${esc(senderName)}` : ""} `
+          + `tar hand om den. Du behöver inte göra något mer.</p>`
+          + (descr ? `<p style="font-size:13px;color:#8892aa;line-height:1.6;margin-top:10px;"><em>${esc(descr)}</em></p>` : ""),
+      details: detailRows([
+        title        && ["Felanmälan",      esc(title)],
+        ref          && ["Referensnummer",  esc(ref)],
+        senderName   && ["Företag",         senderName],
+        extra.office && ["Kontor",          extra.office],
+        ["Hanteras av", "Internservice"]
+      ]),
+      ctaLabel: null, ctaUrl: null,
+      miraNote: "Du får ett nytt mejl när status ändras."
+    });
+    return { subject, html };
+  }
+
+  // booking
+  const title   = extra.request_title || ent["Commission title"] || ent.commission_title || "Din beställning";
+  const descr   = ent.Description || ent.description || "";
+  const delivDt = fmtDateTime(ent.delivery_date || ent.DeliveryDate);
+  const subject = item.subject_override || "Vi har tagit emot din beställning";
+  const html = wrapLayout({
+    toName, logoUrl: "", senderName, imageUrl: "", accent,
+    tag: "Mottagen",
+    headline: "Tack – din beställning är mottagen",
+    body: `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+        + `Din beställning är sparad som <strong style="color:#e8eaf0;">utkast</strong> `
+        + `och granskas av internservice${senderName ? ` hos ${esc(senderName)}` : ""} innan den bekräftas. Vi hör av oss.</p>`
+        + (descr ? `<p style="font-size:13px;color:#8892aa;line-height:1.6;margin-top:10px;"><em>${esc(descr)}</em></p>` : ""),
+    details: detailRows([
+      title        && ["Beställning",     esc(title)],
+      ref          && ["Referensnummer",  esc(ref)],
+      senderName   && ["Företag",         senderName],
+      extra.office && ["Kontor",          extra.office],
+      delivDt      && ["Önskat datum",    delivDt],
+      ["Hanteras av", "Internservice"]
+    ]),
+    ctaLabel: null, ctaUrl: null,
+    miraNote: "Du får en bekräftelse när förfrågan är godkänd."
+  });
+  return { subject, html };
+}
+
+// ────────────────────────────────────────────────────────────
+// MALL 7: Intern notis till kopplade users
+// slug: public_request_internal
+// Titel: "Ny beställning / felanmälan att granska" + referensnummer.
+// ────────────────────────────────────────────────────────────
+async function tmplPublicRequestInternal(e, extra, toName, ctaLabel, item) {
+  const { kind, ent } = await _fetchPublicEntity(item, extra);
+  const senderName = extra.company_name || "";
+  const submitter  = extra.submitter_name || extra.submitter_email || "";
+  const accent     = extra.accent_color || "#df6f39";
+  const ref        = extra.reference || ent._id || "";
+  const title      = extra.request_title
+                   || (kind === "ticket" ? (ent.Rubrik || ent.rubrik) : (ent["Commission title"] || ent.commission_title))
+                   || (kind === "ticket" ? "Ny felanmälan" : "Ny beställning");
+  const descr      = (kind === "ticket" ? (ent.Beskrivning || _firstThread(ent["Tråd"]))
+                                        : (ent.Description || ent.description)) || "";
+  const delivDt    = fmtDateTime(ent.delivery_date || ent.DeliveryDate);
+  const subject = item.subject_override || "Ny beställning / felanmälan att granska";
+  const html = wrapLayout({
+    toName, logoUrl: "", senderName, imageUrl: "", accent,
+    tag: kind === "ticket" ? "Internservice · felanmälan" : "Internservice · utkast",
+    headline: "Ny beställning / felanmälan att granska",
+    body: `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+        + `${esc(title)}${senderName ? ` – ${esc(senderName)}` : ""}.</p>`
+        + (descr ? `<p style="font-size:13px;color:#8892aa;line-height:1.6;margin-top:10px;"><em>${esc(descr)}</em></p>` : ""),
+    details: detailRows([
+      title                 && [kind === "ticket" ? "Felanmälan" : "Beställning", esc(title)],
+      ref                   && ["Referensnummer",  esc(ref)],
+      senderName            && ["Företag",          senderName],
+      extra.office          && ["Kontor",           extra.office],
+      submitter             && ["Inskickat av",     esc(submitter)],
+      extra.submitter_email && ["E-post",           esc(extra.submitter_email)],
+      extra.submitter_phone && ["Telefon",          esc(extra.submitter_phone)],
+      delivDt               && ["Leveransdatum",    delivDt],
+      ["Hanteras av", "Internservice"],
+      ["Status", statusBadge("Utkast")],
+      ["Källa", "Publik landningssida"]
+    ]),
+    ctaLabel: null, ctaUrl: null,
+    miraNote: "Granska och hantera i Mira."
+  });
+  return { subject, html };
+}
 // ────────────────────────────────────────────────────────────
 // SendGrid REST (ingen SDK – matcher befintligt mönster i index.js)
 // ────────────────────────────────────────────────────────────
