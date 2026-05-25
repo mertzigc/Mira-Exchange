@@ -1019,75 +1019,121 @@ async function tmplPublicRequestInternal(e, extra, toName, ctaLabel, item) {
   return { subject, html };
 }
 // ════════════════════════════════════════════════════════════════════════════
-// emailer.js — lägg till för inbjudningsmodulen
-// 1) Klistra in funktionen nedan bland övriga tmpl*-funktioner.
-// 2) Lägg till switch-caset i buildEmail (visas längst ner).
-// Återanvänder befintliga helpers: wrapLayout, detailRows, esc, fmtDateTime.
-// Läser ENBART ur `extra` (inget entity-fetch behövs).
+// emailer.js — Kommunikationsmodul: DATA-DRIVEN mall-rendering
+// Ersätter den kodbaserade tmplInviteRsvpConfirmation. Mailen renderas nu FRÅN
+// EmailTemplate-radens Body_html (med {{variabler}}), så admin kan redigera dem
+// utan kodändring. Samma motor återanvänds av Nyhet sen.
+//
+// 1) Klistra in renderCommsTemplate() bland övriga tmpl*-funktioner.
+// 2) Lägg till switch-casen i buildEmail (visas längst ner).
+// Återanvänder befintliga helpers: wrapLayout, esc, fmtDateTime.
 // ════════════════════════════════════════════════════════════════════════════
 
-function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
-  const x        = extra || {};
-  const accent   = x.accent_color || "#df6f39";
-  const coming   = String(x.rsvp_status || "").toLowerCase() === "yes";
-  const company  = esc(x.company_name || "");
-  const title    = esc(x.event_title || "Inbjudan");
-  const guest    = esc(x.guest_name || toName || "");
-  const plusOnes = Number(x.plus_ones_count || 0);
+// Enkel {{variabel}}-substitution. Variabel-VÄRDEN escapas (säkert i HTML),
+// medan mallens egen HTML lämnas orörd. Stödjer {{#if x}}...{{/if}}-block.
+function _commsSubst(tpl, vars) {
+  let s = String(tpl || "");
+  // villkorsblock: visa innehåll bara om variabeln har ett "truthy" värde
+  s = s.replace(/\{\{#if\s+([\w.]+)\s*\}\}([\s\S]*?)\{\{\/if\}\}/g, (m, k, inner) => {
+    const v = vars[k];
+    return (v && String(v).trim() && String(v) !== "0") ? inner : "";
+  });
+  // variabler
+  s = s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (m, k) => (vars[k] != null ? esc(String(vars[k])) : ""));
+  return s;
+}
 
-  // Tidsrad: "12 jun 2026, 17:00–20:00" om end finns, annars bara start
-  let when = "";
-  if (x.event_start) {
-    when = fmtDateTime(x.event_start);
-    if (x.event_end) {
-      const endPart = fmtDateTime(x.event_end);
-      const t = String(endPart).split(" ").pop();   // bara klockslag på slutet
-      when += t ? `–${t}` : "";
+// Bygger den läsbara tidsraden ur start/slut
+function _commsWhen(start, end) {
+  if (!start) return "";
+  try {
+    let out = fmtDateTime(start);
+    if (end) {
+      const e = fmtDateTime(end);
+      const t = String(e).split(" ").pop();   // klockslag i slutet
+      if (t) out += "–" + t;
     }
+    return out;
+  } catch { return ""; }
+}
+
+function renderCommsTemplate(e, extra) {
+  const x = extra || {};
+  const accent = x.accent_color || "#df6f39";
+  const coming = String(x.rsvp_status || "").toLowerCase() === "yes";
+
+  // alla variabler som mallen kan referera via {{...}}
+  const vars = {
+    ...x,
+    event_when:        _commsWhen(x.event_start, x.event_end),
+    rsvp_label:        coming ? "Kommer" : (x.rsvp_status ? "Kan inte" : ""),
+    plus_ones_count:   x.plus_ones_count || 0,
+    allergens_summary: x.allergens_summary || "",
+    company_name:      x.company_name || "",
+    host_name:         x.host_name || x.company_name || "",
+    guest_name:        x.guest_name || "",
+    event_title:       x.event_title || "",
+    event_location:    x.event_location || "",
+    event_address:     x.event_address || "",
+    rsvp_url:          x.rsvp_url || ""
+  };
+
+  const bodyHtml = _commsSubst(e?.Body_html || "", vars);
+  let cta = null;
+  if (e?.Cta_label) {
+    const url = _commsSubst(e.Cta_url_pattern || "", vars);
+    if (url) cta = { label: _commsSubst(e.Cta_label, vars), url };
   }
-
-  const rows = [];
-  rows.push(["Event", title]);
-  if (when)              rows.push(["När", esc(when)]);
-  if (x.event_location)  rows.push(["Plats", esc(x.event_location)]);
-  if (x.event_address)   rows.push(["Adress", esc(x.event_address)]);
-  if (coming && plusOnes > 0) rows.push(["Medföljande gäster", String(plusOnes)]);
-  if (coming && x.allergens_summary) rows.push(["Specialkost", esc(x.allergens_summary)]);
-
-  const headline = coming
-    ? "Tack – vi ser fram emot att ses!"
-    : "Tack för ditt svar";
-
-  const intro = coming
-    ? `Hej ${guest || "där"}! Vi har registrerat att du kommer. Här är detaljerna:`
-    : `Hej ${guest || "där"}! Vi har registrerat att du tyvärr inte har möjlighet att komma. Tack för att du svarade.`;
-
-  const footnote = `<p style="margin:18px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">
-      Behöver du ändra ditt svar? Använd samma länk som i din inbjudan – du kan uppdatera fram till sista anmälningsdag.
-    </p>`;
-
-  const body = `
-    <p style="margin:0 0 16px;font-size:15px;color:#111827;line-height:1.6;">${esc(intro)}</p>
-    ${detailRows(rows, accent)}
-    ${footnote}
-  `;
 
   return wrapLayout({
     accent,
-    preheader: coming ? `Ditt svar på ${x.event_title || "inbjudan"}: Kommer` : `Ditt svar: Kan inte`,
-    company,
-    headline,
-    bodyHtml: body,
-    cta: null   // ingen knapp i bekräftelsen
+    preheader: _commsSubst(e?.Subject || "", vars),
+    company:   esc(vars.company_name),
+    headline:  vars.event_title || _commsSubst(e?.Name || "", vars),
+    bodyHtml,
+    cta
   });
 }
 
-/* ── I buildEmail(slug, …), lägg till bland de andra casen: ───────────────────
+/* ── I buildEmail(slug, e, extra, …) lägg till (e = mallraden): ────────────────
 
+    case "invite_invitation":
     case "invite_rsvp_confirmation":
-      return tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item);
+    case "invite_host_notice":
+    case "news_announcement":               // Nyhet återanvänder samma motor
+      return renderCommsTemplate(e, extra);
 
-   (samma mönster som case "public_request_received".)
+─────────────────────────────────────────────────────────────────────────────*/
+
+/* ── STANDARDINNEHÅLL för Body_html (admin kan "Återställ till standard").
+      Tillgängliga variabler: {{guest_name}} {{event_title}} {{event_when}}
+      {{event_location}} {{event_address}} {{company_name}} {{host_name}}
+      {{rsvp_label}} {{plus_ones_count}} {{allergens_summary}} {{rsvp_url}}
+      {{reference}}. Villkor: {{#if plus_ones_count}}…{{/if}}.
+
+   invite_invitation  (Cta_label: "Svara på inbjudan", Cta_url_pattern: din publika
+                       URL + "?g={{guest_token}}"):
+     <p>Hej {{guest_name}},</p>
+     <p>Du är varmt välkommen till <strong>{{event_title}}</strong>.</p>
+     <p>{{#if event_when}}📅 {{event_when}}<br>{{/if}}
+        {{#if event_location}}📍 {{event_location}}<br>{{/if}}
+        {{#if event_address}}{{event_address}}{{/if}}</p>
+     <p>Klicka nedan för att svara.</p>
+
+   invite_rsvp_confirmation  (ingen CTA):
+     <p>Hej {{guest_name}},</p>
+     <p>Tack för ditt svar – vi har registrerat: <strong>{{rsvp_label}}</strong>.</p>
+     <p>{{#if event_when}}📅 {{event_when}}<br>{{/if}}
+        {{#if event_location}}📍 {{event_location}}{{/if}}</p>
+     {{#if plus_ones_count}}<p>Medföljande gäster: {{plus_ones_count}}</p>{{/if}}
+     {{#if allergens_summary}}<p>Specialkost: {{allergens_summary}}</p>{{/if}}
+     <p>Behöver du ändra ditt svar? Använd samma länk som i din inbjudan.</p>
+
+   invite_host_notice  (notis till värd, ingen CTA):
+     <p>Nytt svar på <strong>{{event_title}}</strong>:</p>
+     <p>{{guest_name}} – <strong>{{rsvp_label}}</strong>
+        {{#if plus_ones_count}}(+{{plus_ones_count}} gäster){{/if}}</p>
+     {{#if allergens_summary}}<p>Specialkost: {{allergens_summary}}</p>{{/if}}
 ─────────────────────────────────────────────────────────────────────────────*/
 // ────────────────────────────────────────────────────────────
 // SendGrid REST (ingen SDK – matcher befintligt mönster i index.js)
