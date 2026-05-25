@@ -12863,7 +12863,7 @@ app.post("/admin/audience/preview", async (req, res) => {
       seen.add(dl);
       out.push({ name: _admUserName(co) || email, email, company_name: cc.name || "", region: cc.region || "" });
     });
-    res.json({ ok: true, source: "coworker", match_field: coKey, company_count: ccIds.length, user_count: out.length, no_email: noEmail, companies: Object.values(ccMap).slice(0, 300), users: out.slice(0, 300) });
+    res.json({ ok: true, source: "coworker", match_field: coKey, company_count: ccIds.length, user_count: out.length, no_email: noEmail, companies: Object.values(ccMap), users: out.slice(0, 300) });
   } catch (e) { console.error("[admin/audience/preview]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 // ════════════════════════════════════════════════════════════════════════════
