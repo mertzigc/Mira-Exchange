@@ -12626,21 +12626,18 @@ const ADM_CC         = "ClientCompany";
 const ADM_USER       = "User";
 const ADM_COWORKER   = "Coworker";
 
-// Försök hitta vilket fält på Coworker som pekar mot ClientCompany (scheman varierar).
 // Region finns INTE på Coworker — den ärvs via Coworker → Kundföretag → ClientCompany.Region.
-async function _coworkersByCompany(ccIds) {
-  const keys = [
+// Hitta vilket fält på Coworker som pekar mot ClientCompany genom att inspektera en cachad rad.
+// Synkron: cachen är redan synkad innan denna anropas.
+function _detectCoKey() {
+  const cands = [
     "Kundföretag", "Kundforetag", "kundföretag", "kundforetag", "kund_företag", "kund_foretag",
-    "company", "client_company", "Company", "clientcompany", "ClientCompany",
-    "företag", "Företag", "foretag", "client_company_ref"
+    "company", "client_company", "Company", "clientcompany", "ClientCompany", "företag", "Företag", "foretag"
   ];
-  for (const key of keys) {
-    try {
-      const rows = await bubbleFind(ADM_COWORKER, { constraints: [{ key, constraint_type: "in", value: ccIds }], limit: 2000 });
-      if (rows && rows.length) return { rows, key };
-    } catch (_) {}
-  }
-  return { rows: [], key: "Kundföretag" };
+  const one = _cacheRows(ADM_COWORKER)[0] || {};
+  for (const k of cands) if (k in one) return k;
+  for (const k of Object.keys(one)) if (/(företag|foretag|company)/i.test(k)) return k;
+  return "Kundföretag";
 }
 // Plocka ut ClientCompany-id ur ett coworker-fält som kan vara id, lista eller objekt
 function _coCompanyId(co, key, ccMap) {
@@ -12651,10 +12648,63 @@ function _coCompanyId(co, key, ccMap) {
   return v || "";
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// INKREMENTELL CACHE (i serverminnet)
+// Full hämtning en gång, sedan bara rader med Modified Date > senaste synk.
+// Sparar WU + tid. Full omsynk vid kallstart eller om cachen är >6h gammal.
+// ══════════════════════════════════════════════════════════════════════════
+const _CACHE = {};                    // type -> { byId:Map, lastMod:string|null, builtAt:number }
+const _CACHE_MAXAGE = 6 * 3600 * 1000;
+
+async function _syncCache(type, opts = {}) {
+  let c = _CACHE[type];
+  const stale = c && (Date.now() - c.builtAt > _CACHE_MAXAGE);
+  const full = opts.full || !c || stale;
+  if (full) {
+    const all = await bubbleFindAll(type, { sort_field: "Modified Date", descending: false });
+    c = _CACHE[type] = { byId: new Map(), lastMod: null, builtAt: Date.now() };
+    for (const r of all) {
+      const id = r._id || r.id; if (!id) continue;
+      c.byId.set(id, r);
+      const m = r["Modified Date"]; if (m && (!c.lastMod || m > c.lastMod)) c.lastMod = m;
+    }
+    return { type, full: true, total: c.byId.size, fetched: all.length };
+  }
+  // inkrementellt: hämta bara det som ändrats sedan sist (med liten överlapp-buffert)
+  const since = c.lastMod ? new Date(new Date(c.lastMod).getTime() - 2000).toISOString() : null;
+  const cons = since ? [{ key: "Modified Date", constraint_type: "greater than", value: since }] : [];
+  let delta;
+  try {
+    delta = await bubbleFindAll(type, { constraints: cons, sort_field: "Modified Date", descending: false });
+  } catch (e) {
+    // Faller tillbaka till full synk om Modified Date-villkoret strular
+    return _syncCache(type, { full: true });
+  }
+  for (const r of delta) {
+    const id = r._id || r.id; if (!id) continue;
+    c.byId.set(id, r);
+    const m = r["Modified Date"]; if (m && (!c.lastMod || m > c.lastMod)) c.lastMod = m;
+  }
+  c.builtAt = Date.now();
+  return { type, full: false, total: c.byId.size, fetched: delta.length };
+}
+function _cacheRows(type) { return Array.from((_CACHE[type] && _CACHE[type].byId ? _CACHE[type].byId : new Map()).values()); }
+
+// Manuell synk/inspektion: GET /admin/cache/sync?full=1
+app.get("/admin/cache/sync", async (req, res) => {
+  try {
+    const full = req.query.full === "1" || req.query.full === "true";
+    const cc = await _syncCache(ADM_CC, { full });
+    const co = await _syncCache(ADM_COWORKER, { full });
+    res.json({ ok: true, companies: cc, coworkers: co });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── Värdföretag (för dropdown) ────────────────────────────────────────────────
 app.get("/admin/cc/list", async (req, res) => {
   try {
-    const rows = await bubbleFind(ADM_CC, { limit: 2000 }).catch(() => []);
+    await _syncCache(ADM_CC);
+    const rows = _cacheRows(ADM_CC);
     const out = (rows || []).map(c => ({
       id: c._id || c.id, name: _admName(c) || "(namnlöst)", region: c.Region || c.region || ""
     }));
@@ -12787,30 +12837,33 @@ app.get("/admin/coworker/sample", async (req, res) => {
 app.post("/admin/audience/preview", async (req, res) => {
   try {
     const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
-    const ccConstraints = [];
-    if (regions.length) ccConstraints.push({ key: "Region", constraint_type: "in", value: regions });
-    const ccs = await bubbleFind(ADM_CC, { constraints: ccConstraints, limit: 2000 }).catch(() => []);
-    const ccMap = {};
-    (ccs || []).forEach(c => { const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region: c.Region || c.region || "" }; });
-    const ccIds = Object.keys(ccMap);
-    if (!ccIds.length) return res.json({ ok: true, companies: [], user_count: 0, users: [] });
+    const full = req.body?.refresh === "full";
+    // Synka cachen inkrementellt (full vid behov) – hämtar bara det som ändrats sedan sist
+    await _syncCache(ADM_CC, { full });
+    await _syncCache(ADM_COWORKER, { full });
 
-    let coworkers = [], coKey = "company";
-    try {
-      const found = await _coworkersByCompany(ccIds);
-      coworkers = found.rows; coKey = found.key;
-    } catch (_) {}
-    const seen = new Set(); const out = [];
-    (coworkers || []).forEach(co => {
-      const email = _admUserEmail(co);
-      const dedupe = (email || "").toLowerCase() || (co._id || co.id);
-      if (!dedupe || seen.has(dedupe)) return;
-      seen.add(dedupe);
-      const ccId = _coCompanyId(co, coKey, ccMap);
-      const cc = ccMap[ccId] || {};
-      out.push({ name: _admUserName(co) || email || "(namn saknas)", email: email || "", company_name: cc.name || "", region: cc.region || "" });
+    const ccMap = {};
+    _cacheRows(ADM_CC).forEach(c => {
+      const region = c.Region || c.region || "";
+      if (regions.length && !regions.includes(region)) return;
+      const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region };
     });
-    res.json({ ok: true, source: "coworker", match_field: coKey, companies: Object.values(ccMap), user_count: out.length, users: out.slice(0, 300) });
+    const ccIds = Object.keys(ccMap);
+    if (!ccIds.length) return res.json({ ok: true, companies: [], company_count: 0, user_count: 0, users: [], no_email: 0 });
+
+    const coKey = _detectCoKey();
+    const seen = new Set(); const out = []; let noEmail = 0;
+    _cacheRows(ADM_COWORKER).forEach(co => {
+      const cc = ccMap[_coCompanyId(co, coKey, ccMap)];
+      if (!cc) return;                       // utanför vald region / utan känt företag
+      const email = _admUserEmail(co);
+      if (!email) { noEmail++; return; }
+      const dl = email.toLowerCase();
+      if (seen.has(dl)) return;
+      seen.add(dl);
+      out.push({ name: _admUserName(co) || email, email, company_name: cc.name || "", region: cc.region || "" });
+    });
+    res.json({ ok: true, source: "coworker", match_field: coKey, company_count: ccIds.length, user_count: out.length, no_email: noEmail, companies: Object.values(ccMap).slice(0, 300), users: out.slice(0, 300) });
   } catch (e) { console.error("[admin/audience/preview]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 // ════════════════════════════════════════════════════════════════════════════
