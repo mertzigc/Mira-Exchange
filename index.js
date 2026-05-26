@@ -12628,7 +12628,7 @@ const ADM_COWORKER   = "Coworker";
 const ADM_GUEST      = "InviteGuest";
 const ADM_FASTIGHET  = "Fastighet";
 // Namn på en fastighet (fältnamn varierar)
-function _admFastName(f) { return f?.name || f?.Name || f?.Namn || f?.title || f?.Title || f?.address || f?.Adress || f?.Fastighetsbeteckning || f?.beteckning || f?.label || ""; }
+function _admFastName(f) { return f?.Titel || f?.titel || f?.name || f?.Name || f?.Namn || f?.title || f?.Title || f?.address || f?.Adress || f?.Fastighetsbeteckning || f?.beteckning || f?.label || ""; }
 // Fastighets-id:n i en ClientCompanys lista (fältnamn varierar; värden kan vara id/objekt)
 function _ccFastIds(cc) {
   let v = cc?.Fastighet ?? cc?.Fastigheter ?? cc?.fastighet ?? cc?.fastigheter ?? cc?.Fastighets ?? null;
