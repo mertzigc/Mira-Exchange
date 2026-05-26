@@ -8149,10 +8149,17 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   ]).catch(() => null);
 
   // 2) Fallback för gamla rader som kanske saknar connection_id
+  //    VIKTIGT: dokumentnummer är INTE unika mellan connections. En träff med
+  //    ett satt connection_id är en ANNAN connections faktura och får ALDRIG
+  //    skrivas över. Använd därför fallbacken endast för legacy-rader som
+  //    saknar connection_id.
   if (!existing?._id) {
-    existing = await bubbleFindOne("FortnoxInvoice", [
+    const legacy = await bubbleFindOne("FortnoxInvoice", [
       { key: "ft_document_number", constraint_type: "equals", value: docNo }
     ]).catch(() => null);
+    if (legacy?._id && !String(legacy.connection_id || "").trim()) {
+      existing = legacy;
+    }
   }
 
   const existingId = existing?._id || existing?.id || null;
@@ -13411,222 +13418,209 @@ app.post("/public/request/create", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message });
   }
 });
+
 // ============================================================================
-//  KUND-KPI  (A-spåret)
-//  Render räknar per företag → PATCHar kpi_json på ClientCompany.
-//  HTML-blocket läser Current User's Company's kpi_json (scoped av Bubble
-//  privacy rules). Refresh triggas direkt från blocket – INGEN Bubble backend
-//  workflow. Endpointen är publik + rate-limitad och returnerar ALDRIG data,
-//  bara { ok:true }. Det är det som gör att vi kan trigga från klienten utan
-//  att läcka något: själva datan plockas alltid av Bubble, scoped per företag.
+//  TILLÄGG v76 – vattentät faktura-sync (saldo), faktura-PDF och health.
+//  Helt additivt: rör ingen befintlig route eller funktion. Alla routes
+//  skyddas av den globala requireApiKey (x-api-key = MIRA_RENDER_API_KEY).
 //
-//  Återanvänder befintliga helpers: bubbleFind/All, bubbleGet, bubblePatch,
-//  bubbleId, calcAvg, fetchGradesForCompanies, normalizeOrgNo,
-//  _publicRateLimited, _clientIp.
-//
-//  Klistra in var som helst bland övriga routes (före app.listen).
-//  OBS: lägg till "/kpi/company/refresh" i openPaths-setet i requireApiKey,
-//  annars blockeras den av den globala x-api-key-vakten.
+//  BEROENDE I BUBBLE: FortnoxInvoice måste ha textfälten  ft_pdf
+//  (+ gärna ft_pdf_fetched_at och yes/no needs_pdf_sync), precis som
+//  FortnoxOffer redan har. Saknas ft_pdf misslyckas PATCH:en.
 // ============================================================================
 
-// ---- Config: JUSTERA till era exakta värden -------------------------------
-const KUND_KPI = {
-  // Data API-typnamn (icke-ASCII måste vara URL-kodat, precis som leverantör-supplier)
-  CLIENTCOMPANY_TYPE:  "ClientCompany",
-  COMISSION_TYPE:      "Comission",                 // bokningar (fält Company → ClientCompany)
-  MATTER_TYPE:         "Matter",                    // ärenden (fält Kundföretag → ClientCompany)
-  KOMIHAG_TYPE:        "kom-ih%C3%A5g-remember",    // ⚠️ VERIFIERA slug i Bubble: Settings → API
-  FORTNOXINVOICE_TYPE: "FortnoxInvoice",
-  FORTNOXCONN_TYPE:    "FortnoxConnection",
-  SUPPLIER_TYPE:       "leverant%C3%B6r-supplier",  // samma som används på rad ~11004
+// Hämta + lagra faktura-PDF i Bubble (speglar fetchAndStoreOfferPdf exakt).
+async function fetchAndStoreInvoicePdf({ connection_id, invoice_docno, bubble_invoice_id, access_token, pdf_path = "preview" }) {
+  const docNo = String(invoice_docno || "").trim();
+  if (!docNo) return { ok: false, status: 400, error: "Missing invoice_docno" };
+  if (!bubble_invoice_id) return { ok: false, status: 400, error: "Missing bubble_invoice_id" };
 
-  // Textfält på ClientCompany dit snapshotet skrivs (skapa det i Bubble)
-  KPI_FIELD:           "kpi_json",
+  // /preview = ingen sidoeffekt (rekommenderas). Om din Fortnox inte exponerar
+  // preview för fakturor: byt pdf_path till "print" (OBS: print kan markera
+  // fakturan som utskriven i Fortnox).
+  const pdf = await fortnoxGetBinary(`/invoices/${encodeURIComponent(docNo)}/${pdf_path}`, access_token);
+  if (!pdf.ok || !pdf.buf?.length) {
+    return { ok: false, status: pdf.status || 500, error: "Failed to fetch invoice PDF", detail: pdf };
+  }
 
-  // Matter.status (option set) – DISPLAY-värden. Justera till era exakta värden.
-  MATTER_AVSLUTADE:    ["Avslutad", "Stängd", "Klar"],
-  MATTER_AVVIKELSER:   ["Avvikelse"],   // om avvikelse är ett eget statusvärde
-  // allt som inte är avslutat/avvikelse räknas som pågående
+  const fileUrl = await bubbleUploadFile({
+    filename: `fortnox_invoice_${connection_id}_${docNo}.pdf`,
+    contentType: pdf.contentType || "application/pdf",
+    buffer: pdf.buf
+  });
 
-  // Kom ihåg.Status (option set status_reminder) – vilka räknas som "pågående"
-  REMINDER_ACTIVE:     ["Pågående"],    // lägg ev. till "Planerad","Försenad"
+  await bubblePatch("FortnoxInvoice", bubble_invoice_id, {
+    ft_pdf: fileUrl,
+    ft_pdf_fetched_at: new Date().toISOString(),
+    needs_pdf_sync: false
+  });
 
-  // FortnoxConnection → Supplier → namn
-  CONN_LEVERANTOR_FIELD: "Leverantör",  // ⚠️ verifiera fältets API-nyckel
-  SUPPLIER_NAME_FIELD:   "Företagsnamn",// ⚠️ verifiera fältets API-nyckel
-
-  INVOICE_YEAR:        "2026"
-};
-
-// ---- små utils ------------------------------------------------------------
-const _kNum = (x) => { const n = parseFloat(String(x ?? "").replace(",", ".")); return isNaN(n) ? 0 : n; };
-const _kMonthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-function _kDedupById(arr) {
-  const seen = new Set(), out = [];
-  for (const o of arr) { const id = bubbleId(o); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(o); }
-  return out;
-}
-// Bygg orgnr-varianter (med och utan bindestreck) från lagrat Org_Number
-function _kOrgVariants(rawOrg) {
-  const raw = String(rawOrg || "").trim();
-  const digits = normalizeOrgNo(raw);            // siffror-only
-  const set = new Set();
-  if (raw) set.add(raw);
-  if (digits) set.add(digits);
-  if (digits.length === 10) set.add(`${digits.slice(0, 6)}-${digits.slice(6)}`);   // 556677-8899
-  if (digits.length === 12) set.add(`${digits.slice(0, 8)}-${digits.slice(8)}`);   // 20xx...-XXXX
-  return [...set].filter(Boolean);
+  return { ok: true, ft_pdf: fileUrl, bytes: pdf.buf.length, invoice_docno: docNo };
 }
 
-// ---- huvudberäkningen: bygg KPI-JSON för ETT företag ----------------------
-async function buildKundKpi(companyId) {
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+// ----------------------------------------------------------------------------
+// ROUTE: lastmodified-svep av fakturor (SALDO-FÄRSKHET).
+// Fångar alla fakturor som ÄNDRATS (t.ex. betalats) sedan X dagar, oavsett
+// fakturadatum. Kompletterar cronens fromdate/todate-fönster, som annars
+// aldrig uppdaterar saldot på äldre fakturor.
+app.post("/fortnox/sync/invoices/modified", async (req, res) => {
+  const {
+    connection_id = null,
+    all_connections = false,
+    days_back = 120,
+    limit = 200,
+    max_pages = 25
+  } = req.body || {};
 
-  // 1) BOKNINGAR – Comission där Company = companyId
-  const comissions = await bubbleFindAll(KUND_KPI.COMISSION_TYPE, {
-    constraints: [{ key: "Company", constraint_type: "equals", value: companyId }]
-  }).catch(() => []);
-  const monthly = {};
-  let thisMonth = 0, upcoming = 0;
-  for (const c of comissions) {
-    const created = c["Created Date"] ? new Date(c["Created Date"]) : null;
-    if (created && !isNaN(created)) {
-      const mk = _kMonthKey(created);
-      monthly[mk] = (monthly[mk] || 0) + 1;
-      if (created >= monthStart) thisMonth++;
-    }
-    const dd = c.delivery_date ? new Date(c.delivery_date) : null;
-    if (dd && !isNaN(dd) && dd >= now) upcoming++;
-  }
-  const last6 = {};
-  Object.keys(monthly).sort().slice(-6).forEach(k => { last6[k] = monthly[k]; });
-  const bookings = { total: comissions.length, this_month: thisMonth, upcoming, monthly: last6 };
-
-  // 2) ÄRENDEN – Matter där Kundföretag = companyId
-  const matters = await bubbleFindAll(KUND_KPI.MATTER_TYPE, {
-    constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }]
-  }).catch(() => []);
-  let pagaende = 0, avslutade = 0, avvikelser = 0;
-  for (const m of matters) {
-    const st = String(m.status ?? "").trim();
-    if (KUND_KPI.MATTER_AVVIKELSER.includes(st)) avvikelser++;
-    else if (KUND_KPI.MATTER_AVSLUTADE.includes(st)) avslutade++;
-    else pagaende++;
-  }
-  const mattersOut = { pagaende, avslutade, avvikelser };
-
-  // 3) BETYG – samma logik som /api/kpi/grades (Värde=float, ärende/kvalitetskontroll)
-  const grades = await fetchGradesForCompanies([companyId]).catch(() => []);
-  const arGr = grades.filter(g => g["ärende"]);
-  const qcGr = grades.filter(g => g["kvalitetskontroll"]);
-  const ratings = {
-    arende: { avg: calcAvg(arGr), count: arGr.length, prev: null },  // prev=null → ingen mån-jämförelse
-    qc:     { avg: calcAvg(qcGr), count: qcGr.length, prev: null }
-  };
-
-  // 4) EKONOMI – FortnoxInvoice (ft_customer_number = orgnr med/utan bindestreck), år 2026
-  const company = await bubbleGet(KUND_KPI.CLIENTCOMPANY_TYPE, companyId).catch(() => null);
-  const orgVariants = _kOrgVariants(company?.Org_Number);
-  let invoices = [];
-  for (const v of orgVariants) {
-    const inv = await bubbleFindAll(KUND_KPI.FORTNOXINVOICE_TYPE, {
-      constraints: [{ key: "ft_customer_number", constraint_type: "equals", value: v }]
-    }).catch(() => []);
-    invoices.push(...inv);
-  }
-  invoices = _kDedupById(invoices)
-    .filter(i => String(i.ft_invoice_date || "").startsWith(KUND_KPI.INVOICE_YEAR));
-
-  const invoiced = invoices.reduce((s, i) => s + _kNum(i.ft_total), 0);
-  const balance  = invoices.reduce((s, i) => s + _kNum(i.ft_balance), 0);
-
-  // Leverantörsfördelning: gruppera per connection → Leverantör (Supplier) → Företagsnamn
-  const connCache = {};
-  async function supplierName(connId) {
-    if (!connId) return null;
-    if (connCache[connId] !== undefined) return connCache[connId];
-    let name = null;
-    try {
-      const conn = await bubbleGet(KUND_KPI.FORTNOXCONN_TYPE, connId);
-      const supId = conn?.[KUND_KPI.CONN_LEVERANTOR_FIELD];
-      if (supId) {
-        const sup = await bubbleGet(KUND_KPI.SUPPLIER_TYPE, supId);
-        name = sup?.[KUND_KPI.SUPPLIER_NAME_FIELD] || null;
-      }
-    } catch (_) { /* fallback nedan */ }
-    connCache[connId] = name;
-    return name;
-  }
-  const byKey = {};
-  for (const i of invoices) {
-    const nm = (await supplierName(i.connection_id)) || i.ft_customer_name || "Övrigt";
-    if (!byKey[nm]) byKey[nm] = { name: nm, invoiced: 0, balance: 0 };
-    byKey[nm].invoiced += _kNum(i.ft_total);
-    byKey[nm].balance  += _kNum(i.ft_balance);
-  }
-  const by_supplier = Object.values(byKey).sort((a, b) => b.invoiced - a.invoiced);
-  const economy = { invoiced_2026: invoiced, balance, by_supplier };
-
-  // 5) KOM IHÅG – pågående för hela organisationen (Företag = companyId)
-  const reminders = (await bubbleFindAll(KUND_KPI.KOMIHAG_TYPE, {
-    constraints: [{ key: "Företag", constraint_type: "equals", value: companyId }]
-  }).catch(() => []))
-    .filter(r => KUND_KPI.REMINDER_ACTIVE.includes(String(r.Status ?? "").trim()))
-    .sort((a, b) => new Date(a.Sluttid || a.Starttid || 0) - new Date(b.Sluttid || b.Starttid || 0))
-    .map(r => ({
-      title:  r.Titel || r.Beskrivning || "(utan titel)",
-      date:   r.Sluttid || r.Starttid || null,
-      status: String(r.Status ?? "Pågående")
-    }));
-
-  return {
-    generated_at: new Date().toISOString(),
-    bookings,
-    matters: mattersOut,
-    ratings,
-    economy,
-    reminders
-  };
-}
-
-// ---- ROUTE: trigga recompute + write-back (returnerar ALDRIG data) --------
-const KUND_KPI_ALLOWED = [
-  "https://mira-fm.com",
-  "https://carotteconcierge.bubbleapps.io"
-  // lägg till ev. white-label kunddomäner här
-];
-
-app.post("/kpi/company/refresh", async (req, res) => {
-  const orig = req.headers.origin || "";
-  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  const ip = _clientIp(req);
-  if (_publicRateLimited(ip)) return res.status(429).json({ ok: false, error: "rate_limited" });
-
-  const companyId = String(req.body?.company_id || req.query.company_id || "").trim();
-  if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+  req.socket?.setTimeout?.(0);
+  res.setTimeout?.(0);
 
   try {
-    const kpi = await buildKundKpi(companyId);
-    const ok  = await bubblePatch(KUND_KPI.CLIENTCOMPANY_TYPE, companyId, {
-      [KUND_KPI.KPI_FIELD]: JSON.stringify(kpi)
-    });
-    if (!bubbleOk(ok)) return res.status(502).json({ ok: false, error: "patch_failed" });
-    return res.json({ ok: true });            // ⚠️ medvetet ingen data i svaret
+    const allConns = await getAllFortnoxConnections();
+    let selected = [];
+    if (connection_id) selected = allConns.filter(c => String(c?._id || "") === String(connection_id));
+    else if (all_connections) selected = allConns;
+    else return res.status(400).json({ ok: false, error: "Ange connection_id eller all_connections:true" });
+
+    const since = new Date(Date.now() - Number(days_back) * 864e5);
+    const sinceStr = fmtFortnoxLastModifiedUtc(since);
+
+    const results = [];
+    for (const conn of selected) {
+      const cid = String(conn?._id || ""); if (!cid) continue;
+
+      const tok = await ensureFortnoxAccessToken(cid);
+      if (!tok?.ok || !tok?.access_token) {
+        results.push({ connection_id: cid, supplier: conn?.supplier || null, ok: false, error: "token_unavailable", detail: tok });
+        continue;
+      }
+
+      let fetched = 0, created = 0, updated = 0, errors = 0, first_error = null;
+      for (let page = 1; page <= Number(max_pages); page++) {
+        const r = await fortnoxGet("/invoices", tok.access_token, { page, limit, lastmodified: sinceStr });
+        if (!r?.ok) { errors++; if (!first_error) first_error = { page, detail: r }; break; }
+
+        const items = Array.isArray(r?.data?.Invoices) ? r.data.Invoices : [];
+        fetched += items.length;
+
+        for (const item of items) {
+          try {
+            const rr = await upsertFortnoxInvoiceDirect(cid, item);
+            if (rr?.mode === "create") created++;
+            else if (rr?.mode === "update") updated++;
+          } catch (e) {
+            errors++;
+            if (!first_error) first_error = { docNo: item?.DocumentNumber || null, message: e?.message || String(e) };
+          }
+        }
+
+        const totalPages = Number(r?.data?.MetaInformation?.["@TotalPages"] || 0);
+        if (totalPages && page >= totalPages) break;
+        if (items.length === 0) break;
+      }
+
+      results.push({ connection_id: cid, supplier: conn?.supplier || null, ok: true, since: sinceStr, fetched, created, updated, errors, first_error });
+    }
+
+    return res.json({ ok: true, mode: "invoices_modified_sweep", since: sinceStr, results });
   } catch (e) {
-    console.error("[/kpi/company/refresh]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// ROUTE: backfill av faktura-PDF för poster som saknar ft_pdf (icke-makulerade).
+// Idempotent: kör tills found=0. limit per anrop håller nere timeouten.
+app.post("/fortnox/enrich/invoice-pdfs", async (req, res) => {
+  const {
+    connection_id = null,
+    all_connections = false,
+    limit = 25,
+    pause_ms = 400,
+    pdf_path = "preview"
+  } = req.body || {};
+
+  req.socket?.setTimeout?.(0);
+  res.setTimeout?.(0);
+
+  try {
+    const allConns = await getAllFortnoxConnections();
+    let selected = [];
+    if (connection_id) selected = allConns.filter(c => String(c?._id || "") === String(connection_id));
+    else if (all_connections) selected = allConns;
+    else return res.status(400).json({ ok: false, error: "Ange connection_id eller all_connections:true" });
+
+    let grandFound = 0;
+    const results = [];
+    for (const conn of selected) {
+      const cid = String(conn?._id || ""); if (!cid) continue;
+
+      const tok = await ensureFortnoxAccessToken(cid);
+      if (!tok?.ok || !tok?.access_token) {
+        results.push({ connection_id: cid, supplier: conn?.supplier || null, ok: false, error: "token_unavailable" });
+        continue;
+      }
+
+      const missing = await bubbleFind("FortnoxInvoice", {
+        constraints: [
+          { key: "connection_id", constraint_type: "equals", value: cid },
+          { key: "ft_pdf", constraint_type: "is_empty" },
+          { key: "ft_cancelled", constraint_type: "equals", value: false }
+        ],
+        limit: Number(limit) || 25
+      }).catch(() => []);
+
+      const list = Array.isArray(missing) ? missing : [];
+      grandFound += list.length;
+
+      let enriched = 0, errors = 0, first_error = null;
+      for (const inv of list) {
+        const docNo = String(inv?.ft_document_number || "").trim();
+        const id = inv?._id;
+        if (!docNo || !id) continue;
+        try {
+          const rr = await fetchAndStoreInvoicePdf({
+            connection_id: cid, invoice_docno: docNo, bubble_invoice_id: id, access_token: tok.access_token, pdf_path
+          });
+          if (rr?.ok) enriched++;
+          else { errors++; if (!first_error) first_error = { docNo, detail: rr }; }
+        } catch (e) {
+          errors++; if (!first_error) first_error = { docNo, message: e?.message || String(e) };
+        }
+        if (pause_ms) await sleep(Number(pause_ms));
+      }
+
+      results.push({ connection_id: cid, supplier: conn?.supplier || null, ok: true, found: list.length, enriched, errors, first_error });
+    }
+
+    return res.json({ ok: true, mode: "invoice_pdf_enrich", found: grandFound, results });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// ROUTE: hälsokoll – lista alla connections med token-/sync-status.
+app.get("/fortnox/debug/health", async (req, res) => {
+  try {
+    const conns = await getAllFortnoxConnections();
+    const now = Date.now();
+    const out = (Array.isArray(conns) ? conns : []).map(c => ({
+      connection_id: c?._id || null,
+      supplier: c?.supplier || null,
+      is_active: c?.is_active !== false,
+      expires_at: c?.expires_at || null,
+      expired: c?.expires_at ? (new Date(c.expires_at).getTime() < now) : null,
+      last_refresh_at: c?.last_refresh_at || null,
+      nightly_last_run_at: c?.nightly_last_run_at || null,
+      nightly_last_error: c?.nightly_last_error || null,
+      last_error: c?.last_error || null
+    }));
+    return res.json({ ok: true, count: out.length, connections: out });
+  } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
-app.options("/kpi/company/refresh", (req, res) => {
-  const orig = req.headers.origin || "";
-  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.sendStatus(204);
-});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
