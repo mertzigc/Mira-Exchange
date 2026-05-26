@@ -1268,6 +1268,25 @@ async function bubbleCreate(typeName, payload) {
   err.detail = lastErr;
   throw err;
 }
+// safeCreate(type, exact, uncertain): skapar objekt med de säkra fälten (exact) och
+// försöker lägga till osäkra fält (uncertain) som kanske inte finns på typen i Bubble.
+// Skickar nycklar EXAKT som de ges (vissa Bubble-fält är versala: Region, Name_company,
+// Förnamn, Titel …). Returnerar nya id:t. Hedgad: om allt-på-en-gång failar skapas
+// objektet med bara de säkra fälten och osäkra patchas in ett i taget (failar tyst).
+async function safeCreate(typeName, exact, uncertain) {
+  const clean = o => { const r = {}; for (const k of Object.keys(o || {})) if (o[k] !== undefined) r[k] = o[k]; return r; };
+  const ex = clean(exact);
+  const un = clean(uncertain);
+  try {
+    const id = await bubbleCreate(typeName, { ...ex, ...un });
+    if (id) return id;
+  } catch (_) { /* faller till hedgad väg */ }
+  const id = await bubbleCreate(typeName, ex);
+  for (const k of Object.keys(un)) {
+    try { await bubblePatch(typeName, id, { [k]: un[k] }); } catch (_) {}
+  }
+  return id;
+}
 // ────────────────────────────────────────────────────────────
 // Fortnox helpers (legacy token upsert to User – kept for compatibility)
 async function fortnoxTokenExchange(code) {
@@ -13014,15 +13033,15 @@ app.post("/invite/rsvp", async (req, res) => {
     if (guestEmail) {
       try {
         const tplId = await getTemplateId(INVITE.SLUG_CONFIRM);
-        await safeCreate("emailqueue", {}, {
-          Template_id: tplId || null,
-          Entity_id:   guestId,
-          Entity_type: "invite",
-          To_email:    guestEmail,
-          To_name:     guestName || guestEmail,
-          Email_sent:  false,
-          Extra_data:  JSON.stringify({ ...extra, slug: INVITE.SLUG_CONFIRM })
-        });
+        await safeCreate("emailqueue", {
+          template_id: tplId || null,
+          entity_id:   guestId,
+          entity_type: "invite",
+          to_email:    guestEmail,
+          to_name:     guestName || guestEmail,
+          email_sent:  false,
+          extra_data:  JSON.stringify({ ...extra, slug: INVITE.SLUG_CONFIRM })
+        }, {});
       } catch (e) { console.warn("[invite/rsvp] bekräftelsemail:", e?.message); }
     }
 
