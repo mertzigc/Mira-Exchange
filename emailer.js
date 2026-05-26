@@ -659,6 +659,9 @@ function wrapLayout({
   accent = "#db6923", tag, headline, body,
   details, ctaLabel, ctaUrl, miraNote = null
 }) {
+  // E-postklienter (Outlook m.fl.) laddar inte protokoll-relativa "//"-URL:er
+  const _abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
+  logoUrl = _abs(logoUrl); imageUrl = _abs(imageUrl);
   const logoBlock = logoUrl
     ? `<img src="${esc(logoUrl)}" alt="${esc(senderName)}"
             style="height:32px;max-width:140px;object-fit:contain;display:block;margin-bottom:20px;">`
