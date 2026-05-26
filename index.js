@@ -12224,6 +12224,21 @@ function _admToken() {
   return (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).replace(/[^a-z0-9]/gi, "").slice(0, 32);
 }
 function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
+async function getTemplateId(slug) {
+  // Slår upp EmailTemplate på slug. Kastar aldrig — returnerar _id eller null.
+  try {
+    if (!slug) return null;
+    const rows = await bubbleFind("EmailTemplate", {
+      constraints: [{ key: "slug", constraint_type: "equals", value: String(slug) }], limit: 5
+    });
+    if (rows && rows.length) {
+      const active = rows.find(r => r.is_active === true || r.Is_active === true || r.active === true);
+      const pick = active || rows[0];
+      return pick._id || pick.id || null;
+    }
+  } catch (_) {}
+  return null;
+}
 function _admName(cc) { return cc?.Name_company || cc?.name || cc?.Company_name || cc?.company_name || cc?.Namn || ""; }
 function _admUserEmail(u) { return String(u?.email || u?.Email || u?.email_address || u?.authentication?.email?.email || "").trim(); }
 function _admUserName(u) {
