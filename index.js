@@ -13149,8 +13149,8 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     const rows = slice.map(g => {
       const extra = { ...baseExtra, guest_name: g.name || "", invite_link: PUBLIC_INVITE_URL + "?g=" + encodeURIComponent(g.guest_token || ""), slug: "invite_invitation" };
       return {
-        Template_id: tplId || null, Entity_id: g._id || g.id, Entity_type: "invite",
-        To_email: g.email, To_name: g.name || g.email, Email_sent: false, Extra_data: JSON.stringify(extra)
+        template_id: tplId || null, entity_id: g._id || g.id, entity_type: "invite",
+        to_email: g.email, to_name: g.name || g.email, email_sent: false, extra_data: JSON.stringify(extra)
       };
     });
     let queued = 0;
