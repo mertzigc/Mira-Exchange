@@ -13621,6 +13621,209 @@ app.get("/fortnox/debug/health", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
+// ============================================================================
+//  KUND-KPI  (A-spåret)
+//  Render räknar per företag → PATCHar kpi_json på ClientCompany.
+//  HTML-blocket läser Current User's Company's kpi_json (scoped av Bubble
+//  privacy rules). Refresh triggas direkt från blocket – INGEN Bubble backend
+//  workflow. Endpointen är publik + rate-limitad och returnerar ALDRIG data,
+//  bara { ok:true }: själva datan plockas alltid av Bubble, scoped per företag.
+//
+//  Återanvänder befintliga helpers: bubbleFindAll, bubbleGet, bubblePatch,
+//  bubbleId, calcAvg, fetchGradesForCompanies, bubbleOk, _publicRateLimited,
+//  _clientIp.
+//
+//  Klistra in bland övriga routes (före app.listen).
+//  OBS: lägg till  "/kpi/company/refresh",  i openPaths-setet i requireApiKey.
+// ============================================================================
 
+// ---- Config (verifierat mot er Data API 2026-05-26) -----------------------
+const KUND_KPI = {
+  CLIENTCOMPANY_TYPE:  "ClientCompany",
+  COMISSION_TYPE:      "Comission",                 // bokningar – fält Company → ClientCompany
+  MATTER_TYPE:         "Matter",                    // ärenden  – fält Kundföretag → ClientCompany
+  KOMIHAG_TYPE:        "komih%C3%A5g-remember",     // ✓ verifierad slug (komihåg-remember)
+  FORTNOXINVOICE_TYPE: "FortnoxInvoice",
+  FORTNOXCUSTOMER_TYPE:"FortnoxCustomer",           // brygga: connection_id+customer_number → linked_company
+  FORTNOXCONN_TYPE:    "FortnoxConnection",
+  SUPPLIER_TYPE:       "leverant%C3%B6r-supplier",
+
+  KPI_FIELD:           "kpi_json",                  // textfält på ClientCompany (skapa i Bubble)
+
+  // Matter.status (verifierat: "Pågående"/"Avslutat"). Allt som inte är
+  // avslutat/avvikelse räknas som pågående (även poster som saknar status).
+  MATTER_AVSLUTADE:       ["Avslutat", "Avslutad", "Stängd", "Klar"],
+  MATTER_AVVIKELSE_FIELD: "Avvikelse",  // yes/no på Matter – true = avvikelse (prioriteras före status)
+
+  // Kom ihåg.Status (option set status_reminder) – vilka räknas som "pågående"
+  REMINDER_ACTIVE:     ["Pågående"],    // lägg ev. till "Planerad","Försenad"
+
+  // FortnoxConnection.supplier → (leverantör-supplier).Företagsnamn  ✓ verifierat
+  CONN_SUPPLIER_FIELD:   "supplier",
+  SUPPLIER_NAME_FIELD:   "Företagsnamn",
+
+  INVOICE_YEAR:        "2026"
+};
+
+// ---- små utils ------------------------------------------------------------
+const _kNum = (x) => { const n = parseFloat(String(x ?? "").replace(",", ".")); return isNaN(n) ? 0 : n; };
+const _kMonthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+function _kDedupById(arr) {
+  const seen = new Set(), out = [];
+  for (const o of arr) { const id = bubbleId(o); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(o); }
+  return out;
+}
+
+// ---- huvudberäkningen: bygg KPI-JSON för ETT företag ----------------------
+async function buildKundKpi(companyId) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // 1) BOKNINGAR – Comission där Company = companyId
+  const comissions = await bubbleFindAll(KUND_KPI.COMISSION_TYPE, {
+    constraints: [{ key: "Company", constraint_type: "equals", value: companyId }]
+  }).catch(() => []);
+  const monthly = {};
+  let thisMonth = 0, upcoming = 0;
+  for (const c of comissions) {
+    const created = c["Created Date"] ? new Date(c["Created Date"]) : null;
+    if (created && !isNaN(created)) {
+      const mk = _kMonthKey(created);
+      monthly[mk] = (monthly[mk] || 0) + 1;
+      if (created >= monthStart) thisMonth++;
+    }
+    const dd = c.delivery_date ? new Date(c.delivery_date) : null;
+    if (dd && !isNaN(dd) && dd >= now) upcoming++;
+  }
+  const last6 = {};
+  Object.keys(monthly).sort().slice(-6).forEach(k => { last6[k] = monthly[k]; });
+  const bookings = { total: comissions.length, this_month: thisMonth, upcoming, monthly: last6 };
+
+  // 2) ÄRENDEN – Matter där Kundföretag = companyId
+  const matters = await bubbleFindAll(KUND_KPI.MATTER_TYPE, {
+    constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }]
+  }).catch(() => []);
+  let pagaende = 0, avslutade = 0, avvikelser = 0;
+  for (const m of matters) {
+    if (m[KUND_KPI.MATTER_AVVIKELSE_FIELD] === true) { avvikelser++; continue; }
+    const st = String(m.status ?? "").trim();
+    if (KUND_KPI.MATTER_AVSLUTADE.includes(st)) avslutade++;
+    else pagaende++;
+  }
+  const mattersOut = { pagaende, avslutade, avvikelser };
+
+  // 3) BETYG – samma logik som /api/kpi/grades (Värde=float, ärende/kvalitetskontroll)
+  const grades = await fetchGradesForCompanies([companyId]).catch(() => []);
+  const arGr = grades.filter(g => g["ärende"]);
+  const qcGr = grades.filter(g => g["kvalitetskontroll"]);
+  const ratings = {
+    arende: { avg: calcAvg(arGr), count: arGr.length, prev: null },
+    qc:     { avg: calcAvg(qcGr), count: qcGr.length, prev: null }
+  };
+
+  // 4) EKONOMI – via FortnoxCustomer-bryggan (linked_company → connection_id + customer_number)
+  const fcs = await bubbleFindAll(KUND_KPI.FORTNOXCUSTOMER_TYPE, {
+    constraints: [{ key: "linked_company", constraint_type: "equals", value: companyId }]
+  }).catch(() => []);
+  const pairs = fcs
+    .map(fc => ({ conn: String(fc.connection_id || "").trim(), cust: String(fc.customer_number || "").trim() }))
+    .filter(p => p.conn && p.cust);
+
+  let invoices = [];
+  for (const p of pairs) {
+    const inv = await bubbleFindAll(KUND_KPI.FORTNOXINVOICE_TYPE, {
+      constraints: [
+        { key: "connection_id",      constraint_type: "equals", value: p.conn },
+        { key: "ft_customer_number", constraint_type: "equals", value: p.cust }
+      ]
+    }).catch(() => []);
+    invoices.push(...inv);
+  }
+  invoices = _kDedupById(invoices)
+    .filter(i => String(i.ft_invoice_date || "").startsWith(KUND_KPI.INVOICE_YEAR));
+
+  const invoiced = invoices.reduce((s, i) => s + _kNum(i.ft_total), 0);
+  const balance  = invoices.reduce((s, i) => s + _kNum(i.ft_balance), 0);
+
+  // Leverantörsfördelning: connection → FortnoxConnection.supplier → Företagsnamn (cachat)
+  const connCache = {};
+  async function supplierName(connId) {
+    if (!connId) return null;
+    if (connCache[connId] !== undefined) return connCache[connId];
+    let name = null;
+    try {
+      const conn  = await bubbleGet(KUND_KPI.FORTNOXCONN_TYPE, connId);
+      const supId = conn?.[KUND_KPI.CONN_SUPPLIER_FIELD];
+      if (supId) {
+        const sup = await bubbleGet(KUND_KPI.SUPPLIER_TYPE, supId);
+        name = sup?.[KUND_KPI.SUPPLIER_NAME_FIELD] || null;
+      }
+    } catch (_) { /* fallback nedan */ }
+    connCache[connId] = name;
+    return name;
+  }
+  const byKey = {};
+  for (const i of invoices) {
+    const nm = (await supplierName(i.connection_id)) || i.ft_customer_name || "Övrigt";
+    if (!byKey[nm]) byKey[nm] = { name: nm, invoiced: 0, balance: 0 };
+    byKey[nm].invoiced += _kNum(i.ft_total);
+    byKey[nm].balance  += _kNum(i.ft_balance);
+  }
+  const by_supplier = Object.values(byKey).sort((a, b) => b.invoiced - a.invoiced);
+  const economy = { invoiced_2026: invoiced, balance, by_supplier };
+
+  // 5) KOM IHÅG – pågående för hela organisationen (Företag = companyId)
+  const reminders = (await bubbleFindAll(KUND_KPI.KOMIHAG_TYPE, {
+    constraints: [{ key: "Företag", constraint_type: "equals", value: companyId }]
+  }).catch(() => []))
+    .filter(r => KUND_KPI.REMINDER_ACTIVE.includes(String(r.Status ?? "").trim()))
+    .sort((a, b) => new Date(a.Sluttid || a.Starttid || 0) - new Date(b.Sluttid || b.Starttid || 0))
+    .map(r => ({
+      title:  r.Titel || r.Beskrivning || "(utan titel)",
+      date:   r.Sluttid || r.Starttid || null,
+      status: String(r.Status ?? "Pågående")
+    }));
+
+  return { generated_at: new Date().toISOString(), bookings, matters: mattersOut, ratings, economy, reminders };
+}
+
+// ---- ROUTE: trigga recompute + write-back (returnerar ALDRIG data) --------
+const KUND_KPI_ALLOWED = [
+  "https://mira-fm.com",
+  "https://carotteconcierge.bubbleapps.io"
+  // lägg ev. till white-label kunddomäner här
+];
+
+app.post("/kpi/company/refresh", async (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  const ip = _clientIp(req);
+  if (_publicRateLimited(ip)) return res.status(429).json({ ok: false, error: "rate_limited" });
+
+  const companyId = String(req.body?.company_id || req.query.company_id || "").trim();
+  if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+
+  try {
+    const kpi = await buildKundKpi(companyId);
+    const ok  = await bubblePatch(KUND_KPI.CLIENTCOMPANY_TYPE, companyId, {
+      [KUND_KPI.KPI_FIELD]: JSON.stringify(kpi)
+    });
+    if (!bubbleOk(ok)) return res.status(502).json({ ok: false, error: "patch_failed" });
+    return res.json({ ok: true });            // medvetet ingen data i svaret
+  } catch (e) {
+    console.error("[/kpi/company/refresh]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.options("/kpi/company/refresh", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.sendStatus(204);
+});
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
