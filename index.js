@@ -12773,6 +12773,7 @@ app.patch("/admin/invite/update", async (req, res) => {
     if (b.active !== undefined) f.active = !!b.active;
     if (b.allow_plus_ones !== undefined) f.allow_plus_ones = !!b.allow_plus_ones;
     if (b.client_company !== undefined) f.client_company = b.client_company || null;
+    if (b.image !== undefined || b.image_url !== undefined) f.image_url = _admAbs(b.image || b.image_url || "");
     await bubblePatch(ADM_INVITATION, b.id, f);
     res.json({ ok: true });
   } catch (e) { console.error("[admin/invite/update]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
@@ -12789,6 +12790,22 @@ app.get("/admin/invite/list", async (req, res) => {
     }));
     out.sort((a, b) => (new Date(b.start_date || 0)) - (new Date(a.start_date || 0)));
     res.json({ ok: true, invitations: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── Hämta en inbjudan (full data för redigering) ──────────────────────────────
+app.get("/admin/invite/:id", async (req, res) => {
+  try {
+    const i = await bubbleGet(ADM_INVITATION, req.params.id).catch(() => null);
+    if (!i) return res.status(404).json({ ok: false, error: "not_found" });
+    res.json({ ok: true, invite: {
+      id: i._id || i.id, token: i.token || "", active: i.active !== false,
+      client_company: i.client_company || "", title: i.title || "", description: i.description || "",
+      accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
+      start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
+      allow_plus_ones: i.allow_plus_ones !== false, max_plus_ones: asNumberOrNull(i.max_plus_ones) ?? 0,
+      image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]"
+    }});
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
 
@@ -13069,14 +13086,83 @@ app.get("/admin/invite/:id/guests/stats", async (req, res) => {
   try {
     const invId = req.params.id;
     const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
-    let yes = 0, no = 0, pending = 0, arrived = 0;
+    let yes = 0, no = 0, pending = 0, arrived = 0, sent = 0, sendable = 0;
     guests.forEach(g => {
       const s = String(g.rsvp_status || "pending").toLowerCase();
       if (s === "yes") yes++; else if (s === "no") no++; else pending++;
       if (g.arrived === true) arrived++;
+      if (g.invite_sent === true) sent++;
+      if (g.invite_sent !== true && s === "pending" && String(g.email || "").trim()) sendable++;
     });
-    res.json({ ok: true, total: guests.length, yes, no, pending, arrived });
+    res.json({ ok: true, total: guests.length, yes, no, pending, arrived, sent, sendable });
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// UTSKICK – köa invite_invitation-mejl till deltagarlistan (personlig ?g=-länk)
+// Batchat. Default: bara de som inte svarat ÄNNU och inte redan fått inbjudan.
+// Markerar invite_sent=true efter köning → idempotent (säkert att köra om).
+// ══════════════════════════════════════════════════════════════════════════
+const PUBLIC_INVITE_URL = "https://mira-fm.com/invite";
+const _sendList = {};
+function _inviteBrand(inv, cc) {
+  return {
+    company_name: inv.host_name || _admName(cc || {}) || "Carotte",
+    accent_color: inv.accent_color || "#df6f39",
+    logo_url: (cc && (cc.logo_url || cc.Logo || cc.logo || cc.Logotyp || cc.logotyp)) || ""
+  };
+}
+app.post("/admin/invite/:id/send", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
+    const limit = Math.min(60, Math.max(1, parseInt(req.body?.limit, 10) || 40));
+    const onlyPending = req.body?.only_pending !== false;   // default: bara obesvarade
+
+    const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
+    if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+    const cc = inv.client_company ? await bubbleGet(ADM_CC, inv.client_company).catch(() => null) : null;
+    const brand = _inviteBrand(inv, cc);
+    const tplId = await getTemplateId("invite_invitation").catch(() => null);
+
+    // Seeda sändlistan vid start (stabil ordning för offset/limit)
+    let list = _sendList[invId];
+    if (offset === 0 || !list) {
+      const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
+      list = guests
+        .filter(g => g.invite_sent !== true)
+        .filter(g => onlyPending ? String(g.rsvp_status || "pending").toLowerCase() === "pending" : true)
+        .filter(g => String(g.email || "").trim())
+        .sort((a, b) => String(a.email).localeCompare(String(b.email)));
+      _sendList[invId] = list;
+    }
+    const total = list.length;
+    const slice = list.slice(offset, offset + limit);
+
+    const baseExtra = {
+      event_title: inv.title || "", event_address: inv.event_address || "", event_location: inv.location_name || "",
+      event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
+      description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
+      logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name
+    };
+
+    const rows = slice.map(g => {
+      const extra = { ...baseExtra, guest_name: g.name || "", invite_link: PUBLIC_INVITE_URL + "?g=" + encodeURIComponent(g.guest_token || ""), slug: "invite_invitation" };
+      return {
+        Template_id: tplId || null, Entity_id: g._id || g.id, Entity_type: "invite",
+        To_email: g.email, To_name: g.name || g.email, Email_sent: false, Extra_data: JSON.stringify(extra)
+      };
+    });
+    let queued = 0;
+    if (rows.length) { const r = await _bulkCreate("emailqueue", rows); queued = r.created; }
+    // Markera som skickade (parallellt) → undviker dubbelutskick vid omkörning
+    await Promise.all(slice.map(g => bubblePatch(ADM_GUEST, g._id || g.id, { invite_sent: true }).catch(() => null)));
+
+    const nextOffset = offset + limit;
+    const done = nextOffset >= total;
+    if (done) delete _sendList[invId];
+    res.json({ ok: true, total, processed: Math.min(nextOffset, total), queued, next_offset: done ? null : nextOffset, done });
+  } catch (e) { console.error("[invite/send]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 // ════════════════════════════════════════════════════════════════════════════
 // Mira — Inbjudningsmodul (publika endpoints)
