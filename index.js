@@ -12626,6 +12626,16 @@ const ADM_CC         = "ClientCompany";
 const ADM_USER       = "User";
 const ADM_COWORKER   = "Coworker";
 const ADM_GUEST      = "InviteGuest";
+const ADM_FASTIGHET  = "Fastighet";
+// Namn på en fastighet (fältnamn varierar)
+function _admFastName(f) { return f?.name || f?.Name || f?.Namn || f?.title || f?.Title || f?.address || f?.Adress || f?.Fastighetsbeteckning || f?.beteckning || f?.label || ""; }
+// Fastighets-id:n i en ClientCompanys lista (fältnamn varierar; värden kan vara id/objekt)
+function _ccFastIds(cc) {
+  let v = cc?.Fastighet ?? cc?.Fastigheter ?? cc?.fastighet ?? cc?.fastigheter ?? cc?.Fastighets ?? null;
+  if (v == null) return [];
+  if (!Array.isArray(v)) v = [v];
+  return v.map(x => (x && (x._id || x.id)) || x).filter(Boolean).map(String);
+}
 
 // Region finns INTE på Coworker — den ärvs via Coworker → Kundföretag → ClientCompany.Region.
 // Hitta vilket fält på Coworker som pekar mot ClientCompany genom att inspektera en cachad rad.
@@ -12697,7 +12707,8 @@ app.get("/admin/cache/sync", async (req, res) => {
     const full = req.query.full === "1" || req.query.full === "true";
     const cc = await _syncCache(ADM_CC, { full });
     const co = await _syncCache(ADM_COWORKER, { full });
-    res.json({ ok: true, companies: cc, coworkers: co });
+    const fa = await _syncCache(ADM_FASTIGHET, { full });
+    res.json({ ok: true, companies: cc, coworkers: co, fastigheter: fa });
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
 
@@ -12825,6 +12836,16 @@ app.patch("/admin/template", async (req, res) => {
   } catch (e) { console.error("[admin/template]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
+// ── Fastigheter (för filter-sökruta) ──────────────────────────────────────────
+app.get("/admin/fastighet/list", async (req, res) => {
+  try {
+    await _syncCache(ADM_FASTIGHET);
+    const out = _cacheRows(ADM_FASTIGHET).map(f => ({ id: f._id || f.id, name: _admFastName(f) || "(namnlös)" }));
+    out.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    res.json({ ok: true, fastigheter: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── Diagnostik: visa ett Coworker-objekts fältnycklar (för att hitta rätt fältnamn) ──
 app.get("/admin/coworker/sample", async (req, res) => {
   try {
@@ -12834,21 +12855,18 @@ app.get("/admin/coworker/sample", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
 
-// ── Målgrupp: förhandsgranska (region-baserat i v1) ───────────────────────────
+// ── Målgrupp: förhandsgranska (region + fastighet + företag) ──────────────────
 app.post("/admin/audience/preview", async (req, res) => {
   try {
     const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
+    const fastigheter = Array.isArray(req.body?.fastigheter) ? req.body.fastigheter.filter(Boolean) : [];
+    const companyId = String(req.body?.company || "").trim();
     const full = req.body?.refresh === "full";
     // Synka cachen inkrementellt (full vid behov) – hämtar bara det som ändrats sedan sist
     await _syncCache(ADM_CC, { full });
     await _syncCache(ADM_COWORKER, { full });
 
-    const ccMap = {};
-    _cacheRows(ADM_CC).forEach(c => {
-      const region = c.Region || c.region || "";
-      if (regions.length && !regions.includes(region)) return;
-      const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region };
-    });
+    const ccMap = _buildCcMap({ regions, fastigheter, companyId });
     const ccIds = Object.keys(ccMap);
     if (!ccIds.length) return res.json({ ok: true, companies: [], company_count: 0, user_count: 0, users: [], no_email: 0 });
 
@@ -12856,7 +12874,7 @@ app.post("/admin/audience/preview", async (req, res) => {
     const seen = new Set(); const out = []; let noEmail = 0;
     _cacheRows(ADM_COWORKER).forEach(co => {
       const cc = ccMap[_coCompanyId(co, coKey, ccMap)];
-      if (!cc) return;                       // utanför vald region / utan känt företag
+      if (!cc) return;                       // utanför valt filter / utan känt företag
       const email = _admUserEmail(co);
       if (!email) { noEmail++; return; }
       const dl = email.toLowerCase();
@@ -12874,14 +12892,27 @@ app.post("/admin/audience/preview", async (req, res) => {
 // Idempotent: dedup på e-post per inbjudan, säkert att köra om.
 // ══════════════════════════════════════════════════════════════════════════
 
-// Bygg den fulla, deterministiskt sorterade mottagarlistan för en målgrupp (från cachen)
-function _resolveAudience(regions) {
+// Bygg ccMap för en målgrupp (region + fastighet + specifikt företag, kombineras som AND)
+function _buildCcMap({ regions = [], fastigheter = [], companyId = "" } = {}) {
+  const fastSet = new Set((fastigheter || []).map(String));
   const ccMap = {};
   _cacheRows(ADM_CC).forEach(c => {
+    const id = c._id || c.id;
+    if (companyId && id !== companyId) return;
     const region = c.Region || c.region || "";
     if (regions.length && !regions.includes(region)) return;
-    const id = c._id || c.id; ccMap[id] = { id, name: _admName(c), region };
+    if (fastSet.size) {
+      const ids = _ccFastIds(c);
+      if (!ids.some(fid => fastSet.has(fid))) return;
+    }
+    ccMap[id] = { id, name: _admName(c), region };
   });
+  return ccMap;
+}
+
+// Bygg den fulla, deterministiskt sorterade mottagarlistan för en målgrupp (från cachen)
+function _resolveAudience(filters) {
+  const ccMap = _buildCcMap(filters);
   const coKey = _detectCoKey();
   const seen = new Set(); const list = [];
   _cacheRows(ADM_COWORKER).forEach(co => {
@@ -12931,11 +12962,13 @@ async function _seedGuestSet(invId) {
   return set;
 }
 
-// POST /admin/invite/:id/guests/build  body: { regions:[], offset:0, limit:100, refresh? }
+// POST /admin/invite/:id/guests/build  body: { regions:[], fastigheter:[], company, offset:0, limit:100, refresh? }
 app.post("/admin/invite/:id/guests/build", async (req, res) => {
   try {
     const invId = req.params.id;
     const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
+    const fastigheter = Array.isArray(req.body?.fastigheter) ? req.body.fastigheter.filter(Boolean) : [];
+    const companyId = String(req.body?.company || "").trim();
     const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
     const limit = Math.min(200, Math.max(1, parseInt(req.body?.limit, 10) || 100));
     const full = req.body?.refresh === "full";
@@ -12946,7 +12979,7 @@ app.post("/admin/invite/:id/guests/build", async (req, res) => {
     await _syncCache(ADM_CC, { full });
     await _syncCache(ADM_COWORKER, { full });
 
-    const audience = _resolveAudience(regions);
+    const audience = _resolveAudience({ regions, fastigheter, companyId });
     const total = audience.length;
 
     // Seeda dedup-set vid start eller om det saknas (t.ex. efter omstart)
@@ -12982,6 +13015,53 @@ app.post("/admin/invite/:id/guests/build", async (req, res) => {
     if (done) delete _guestEmailSet[invId];   // släpp minnet när klart
     res.json({ ok: true, total, processed: Math.min(nextOffset, total), created: result.created, skipped, next_offset: done ? null : nextOffset, done });
   } catch (e) { console.error("[guests/build]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// POST /admin/invite/:id/guests/import  body: { rows:[{name,email,company,region}], first?:bool }
+// Klienten parsar Excel/CSV och skickar rader i batchar. Servern dedupar + bulk-create.
+app.post("/admin/invite/:id/guests/import", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    const inRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const first = req.body?.first === true;
+
+    const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
+    if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+
+    // Företagsnamn → id/region (för att koppla import-rader mot kundföretag om möjligt)
+    await _syncCache(ADM_CC);
+    const nameMap = {};
+    _cacheRows(ADM_CC).forEach(c => { const n = (_admName(c) || "").trim().toLowerCase(); if (n && !nameMap[n]) nameMap[n] = { id: c._id || c.id, region: c.Region || c.region || "" }; });
+
+    let set = _guestEmailSet[invId];
+    if (first || !set) set = await _seedGuestSet(invId);
+
+    const nowIso = new Date().toISOString();
+    const rows = [];
+    let skipped = 0, invalid = 0;
+    for (const r of inRows) {
+      const email = String(r?.email || "").trim().toLowerCase();
+      if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { invalid++; continue; }
+      if (set.has(email)) { skipped++; continue; }
+      set.add(email);
+      const cName = String(r?.company || "").trim().toLowerCase();
+      const match = cName ? nameMap[cName] : null;
+      rows.push({
+        invitation:      invId,
+        guest_token:     _admToken(),
+        name:            String(r?.name || r?.namn || email).trim().slice(0, 120),
+        email,
+        client_company:  match?.id || undefined,
+        region:          String(r?.region || match?.region || "").trim() || undefined,
+        source:          "import",
+        rsvp_status:     "pending",
+        plus_ones_count: 0,
+        invited_at:      nowIso
+      });
+    }
+    const result = rows.length ? await _bulkCreate(ADM_GUEST, rows) : { created: 0 };
+    res.json({ ok: true, created: result.created, skipped, invalid });
+  } catch (e) { console.error("[guests/import]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
 // GET /admin/invite/:id/guests/stats → antal svar
