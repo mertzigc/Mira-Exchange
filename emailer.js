@@ -155,6 +155,7 @@ async function buildEmail(item) {
       case "public_request_received": return tmplPublicRequestReceived(entity, extra, toName, ctaLabel, ctx);
     case "public_request_internal": return tmplPublicRequestInternal(entity, extra, toName, ctaLabel, ctx);
     case "invite_rsvp_confirmation": return tmplInviteRsvpConfirmation(entity, extra, toName, ctaLabel, ctx);
+    case "invite_invitation": return tmplInviteInvitation(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1025,6 +1026,43 @@ async function tmplPublicRequestInternal(e, extra, toName, ctaLabel, item) {
 // event_address, company_name, accent_color, rsvp_status, plus_ones_count,
 // allergens_summary, guest_name, logo_url). Entiteten behövs inte.
 // ────────────────────────────────────────────────────────────
+async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.company_name || "";
+  const accent     = x.accent_color || "#df6f39";
+  const guest      = x.guest_name || toName || "";
+  const title      = x.event_title || "Inbjudan";
+
+  let when = "";
+  if (x.event_start) {
+    when = fmtDateTime(x.event_start);
+    if (x.event_end) { const t = String(fmtDateTime(x.event_end)).split(" ").pop(); if (t) when += "\u2013" + t; }
+  }
+  const deadline = x.rsvp_deadline ? String(fmtDateTime(x.rsvp_deadline)).split(" ")[0] : "";
+
+  const subject  = item.subject_override || ("Inbjudan: " + title);
+  const intro    = x.description
+    ? esc(x.description).replace(/\n/g, "<br>")
+    : "Du \u00e4r varmt v\u00e4lkommen! H\u00e4r \u00e4r detaljerna:";
+
+  const html = wrapLayout({
+    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    tag: "Inbjudan",
+    headline: title,
+    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">' + intro + '</p>',
+    details: detailRows([
+      when && ["N\u00e4r", esc(when)],
+      x.event_location && ["Plats", esc(x.event_location)],
+      x.event_address && ["Adress", esc(x.event_address)],
+      deadline && ["Sista anm\u00e4lan", esc(deadline)]
+    ]),
+    ctaLabel: ctaLabel || "Svara p\u00e5 inbjudan",
+    ctaUrl: x.invite_link || null,
+    miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 inbjudan."
+  });
+  return { subject, html };
+}
+
 async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
   const x = extra || {};
   const senderName = x.company_name || "";
