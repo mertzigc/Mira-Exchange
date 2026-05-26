@@ -373,6 +373,7 @@ function requireApiKey(req, res, next) {
   "/invoice/submit",    // ← lägg till
     "/invite/config",
     "/invite/rsvp",
+    "/kpi/company/refresh",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
