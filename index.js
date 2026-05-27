@@ -13489,7 +13489,7 @@ app.post("/fortnox/sync/invoices/modified", async (req, res) => {
     for (const conn of selected) {
       const cid = String(conn?._id || ""); if (!cid) continue;
 
-      const tok = await ensureFortnoxAccessToken(cid);
+      let tok = await ensureFortnoxAccessToken(cid);
       if (!tok?.ok || !tok?.access_token) {
         results.push({ connection_id: cid, supplier: conn?.supplier || null, ok: false, error: "token_unavailable", detail: tok });
         continue;
@@ -13497,7 +13497,15 @@ app.post("/fortnox/sync/invoices/modified", async (req, res) => {
 
       let fetched = 0, created = 0, updated = 0, errors = 0, first_error = null;
       for (let page = 1; page <= Number(max_pages); page++) {
-        const r = await fortnoxGet("/invoices", tok.access_token, { page, limit, lastmodified: sinceStr });
+        // Håll token färsk under långa sveep (Fortnox-token lever ~1h). Hämta
+        // den per sida – ensureFortnoxAccessToken förnyar proaktivt vid behov.
+        tok = await ensureFortnoxAccessToken(cid);
+        let r = await fortnoxGet("/invoices", tok?.access_token, { page, limit, lastmodified: sinceStr });
+        if (r?.status === 401) {
+          // Token gick ut precis – hämta ny (nu förnyas den) och försök sidan igen.
+          tok = await ensureFortnoxAccessToken(cid);
+          r = await fortnoxGet("/invoices", tok?.access_token, { page, limit, lastmodified: sinceStr });
+        }
         if (!r?.ok) { errors++; if (!first_error) first_error = { page, detail: r }; break; }
 
         const items = Array.isArray(r?.data?.Invoices) ? r.data.Invoices : [];
@@ -13624,6 +13632,41 @@ app.get("/fortnox/debug/health", async (req, res) => {
     return res.json({ ok: true, count: out.length, connections: out });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// ROUTE: dubblett-koll – jämför antal rader mot distinkta dokumentnummer
+// per connection. total_rows == distinct_docnos => rent. Annars finns dubbletter.
+app.get("/fortnox/debug/invoice-dupes", async (req, res) => {
+  const cid = String(req.query.connection_id || "").trim();
+  if (!cid) return res.status(400).json({ ok: false, error: "connection_id krävs (query)" });
+  try {
+    const all = await bubbleFindAll("FortnoxInvoice", {
+      constraints: [{ key: "connection_id", constraint_type: "equals", value: cid }]
+    });
+    const byDoc = {};
+    for (const i of (Array.isArray(all) ? all : [])) {
+      const d = String(i?.ft_document_number || "").trim();
+      if (!d) continue;
+      (byDoc[d] = byDoc[d] || []).push(i._id);
+    }
+    const dupes = Object.entries(byDoc)
+      .filter(([, ids]) => ids.length > 1)
+      .map(([docNo, ids]) => ({ docNo, count: ids.length, ids }));
+    const totalRows = (Array.isArray(all) ? all : []).length;
+    const distinct = Object.keys(byDoc).length;
+    return res.json({
+      ok: true,
+      connection_id: cid,
+      total_rows: totalRows,
+      distinct_docnos: distinct,
+      extra_rows: totalRows - distinct,
+      duplicate_docnos: dupes.length,
+      sample: dupes.slice(0, 20)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 
