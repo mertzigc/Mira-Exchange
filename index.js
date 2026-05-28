@@ -13670,5 +13670,112 @@ app.get("/fortnox/debug/invoice-dupes", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// ROUTE: spök-städning av FortnoxInvoice.
+// Probar varje FortnoxInvoice-rad för en connection mot /invoices/{docNo} i
+// den connectionens Fortnox-tenant. Rader som svarar 404 är spöken – arvet
+// från det gamla docNo-only-dedup-felet (raden taggades en gång med fel
+// connection_id). Dry-run per default; raderar ENDAST om confirm:true.
+app.post("/fortnox/cleanup/ghost-invoices", async (req, res) => {
+  const {
+    connection_id = null,
+    limit = 200,
+    pause_ms = 150,
+    confirm = false,
+    only_missing_pdf = false
+  } = req.body || {};
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "connection_id krävs" });
+  req.socket?.setTimeout?.(0);
+  res.setTimeout?.(0);
+
+  try {
+    const constraints = [
+      { key: "connection_id", constraint_type: "equals", value: connection_id },
+      { key: "ft_cancelled", constraint_type: "equals", value: false }
+    ];
+    if (only_missing_pdf) constraints.push({ key: "ft_pdf", constraint_type: "is_empty" });
+
+    const rows = await bubbleFindAll("FortnoxInvoice", { constraints });
+    const list = Array.isArray(rows) ? rows : [];
+
+    let tok = await ensureFortnoxAccessToken(connection_id);
+    if (!tok?.ok || !tok?.access_token) {
+      return res.status(502).json({ ok: false, error: "token_unavailable", detail: tok });
+    }
+
+    const ghosts = [];
+    const probe_errors = [];
+    let probed = 0, valid = 0;
+
+    for (const row of list) {
+      if (probed >= Number(limit)) break;
+      const docNo = String(row?.ft_document_number || "").trim();
+      const id = row?._id;
+      if (!docNo || !id) continue;
+      probed++;
+
+      // Förnya token vid behov (cheap när giltig)
+      tok = await ensureFortnoxAccessToken(connection_id);
+      let r = await fortnoxGet(`/invoices/${encodeURIComponent(docNo)}`, tok?.access_token);
+      if (r?.status === 401) {
+        tok = await ensureFortnoxAccessToken(connection_id);
+        r = await fortnoxGet(`/invoices/${encodeURIComponent(docNo)}`, tok?.access_token);
+      }
+
+      if (r?.status === 404) {
+        ghosts.push({
+          docNo, id,
+          ft_customer_name: row?.ft_customer_name || null,
+          ft_customer_number: row?.ft_customer_number || null,
+          ft_total: row?.ft_total || null,
+          ft_invoice_date: row?.ft_invoice_date || null
+        });
+      } else if (r?.ok) {
+        valid++;
+      } else {
+        probe_errors.push({ docNo, status: r?.status || null });
+      }
+
+      if (pause_ms) await sleep(Number(pause_ms));
+    }
+
+    let deleted = 0;
+    const delete_errors = [];
+    if (confirm && ghosts.length) {
+      for (const g of ghosts) {
+        try {
+          const url = `${BUBBLE_PRIMARY_BASE}/api/1.1/obj/FortnoxInvoice/${g.id}`;
+          const dr = await fetch(url, {
+            method: "DELETE",
+            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+          });
+          if (dr.ok) deleted++;
+          else delete_errors.push({ id: g.id, docNo: g.docNo, status: dr.status });
+        } catch (e) {
+          delete_errors.push({ id: g.id, docNo: g.docNo, error: e?.message || String(e) });
+        }
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connection_id,
+      total_rows_in_bubble: list.length,
+      probed,
+      valid,
+      ghosts: ghosts.length,
+      probe_errors_count: probe_errors.length,
+      dry_run: !confirm,
+      deleted,
+      sample_ghosts: ghosts.slice(0, 15),
+      sample_probe_errors: probe_errors.slice(0, 5),
+      delete_errors: delete_errors.slice(0, 10)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
