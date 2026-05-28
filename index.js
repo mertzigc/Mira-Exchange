@@ -14737,12 +14737,25 @@ async function detectCcField(type) {
 }
 // Räkna referenser till en ClientCompany-id för en typ. status: ok | no_field | error.
 // error (null count) = osäkert → ska blockera radering (fail-safe).
+// Fallback: om equals-frågan felar (vanligt för list-fält i Bubble Data API) hämtar vi
+// alla rader och filtrerar i koden – så list-fält som Fastighet.Hyresgäster funkar.
 async function countCcRefs(type, ccId) {
   const field = await detectCcField(type);
   if (!field) return { type, field: null, count: 0, status: "no_field" };
+  // 1) Standardväg: constraint equals
   const rows = await bubbleFindAll(type, { constraints: [{ key: field, constraint_type: "equals", value: ccId }] }).catch(() => null);
-  if (!Array.isArray(rows)) return { type, field, count: null, status: "error" };
-  return { type, field, count: rows.length, status: "ok" };
+  if (Array.isArray(rows)) return { type, field, count: rows.length, status: "ok" };
+  // 2) Fallback för list-fält: hämta alla av typen och leta i listan
+  const LIST_MAX = 3000; // över detta returnerar vi osäker (för att inte spräcka minnet)
+  const allRows = await bubbleFindAll(type, {}).catch(() => null);
+  if (!Array.isArray(allRows)) return { type, field, count: null, status: "error" };
+  if (allRows.length > LIST_MAX) return { type, field, count: null, status: "error", note: "för många rader för list-filter" };
+  let count = 0;
+  for (const r of allRows) {
+    const v = r[field];
+    if (Array.isArray(v) ? v.includes(ccId) : v === ccId) count++;
+  }
+  return { type, field, count, status: "ok", method: "list-filter" };
 }
 app.post("/customer/dedup/apply", async (req, res) => {
   const org     = req.body?.org ? normalizeOrgNo(req.body.org) : null;
