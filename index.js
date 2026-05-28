@@ -13793,21 +13793,46 @@ app.post("/tengella/invoices/peek", async (req, res) => {
     const orgNo = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
     if (!orgNo) return res.status(400).json({ ok: false, error: "orgNo krävs (eller sätt TENGELLA_DEFAULT_ORGNO)" });
 
-    const customerId = req.body?.customerId != null ? Number(req.body.customerId) : null;
+    let customerId   = req.body?.customerId != null ? Number(req.body.customerId) : null;
     const invoiceId  = req.body?.invoiceId  != null ? Number(req.body.invoiceId)  : null;
     const limit      = Number(req.body?.limit ?? 5) || 5;
+    const tryCustomers = Number(req.body?.try_customers ?? 30) || 30;
 
     const token = await tengellaLogin(orgNo);
 
-    // 1) Lista några fakturor – visar InvoiceId/InvoiceNo (för docNo-jämförelse)
-    const listResp = await listTengellaInvoices({ token, limit, customerId });
-    const data = Array.isArray(listResp?.Data) ? listResp.Data : (Array.isArray(listResp) ? listResp : []);
+    // Tengella-listan kräver i praktiken en customerId. Hämta kandidater från
+    // Bubble TengellaCustomer om ingen angetts, och prova tills en ger fakturor.
+    let candidateIds = [];
+    if (customerId != null) {
+      candidateIds = [customerId];
+    } else {
+      for (const base of BUBBLE_BASES) {
+        try {
+          const r = await fetch(`${base}/api/1.1/obj/TengellaCustomer?limit=100`, {
+            headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+          });
+          const j = await r.json().catch(() => ({}));
+          const results = j?.response?.results ?? [];
+          candidateIds = results.map(c => Number(c?.tengella_customer_id ?? 0)).filter(n => n > 0);
+          if (candidateIds.length) break;
+        } catch (_) {}
+      }
+    }
+
+    // 1) Prova kandidater tills en ger fakturor – visar InvoiceId/InvoiceNo
+    let usedCustomerId = null;
+    let data = [];
+    for (const cid of candidateIds.slice(0, tryCustomers)) {
+      const listResp = await listTengellaInvoices({ token, limit, customerId: cid });
+      const d = Array.isArray(listResp?.Data) ? listResp.Data : (Array.isArray(listResp) ? listResp : []);
+      if (d.length) { data = d; usedCustomerId = cid; break; }
+    }
 
     // 2) Hämta EN enskild faktura för att se Url (PDF-länken)
     const pickId = (invoiceId != null) ? invoiceId : (data[0]?.InvoiceId ?? null);
     let single = null, url_probe = null;
     if (pickId != null) {
-      single = await getTengellaInvoiceById({ token, invoiceId: pickId, customerId });
+      single = await getTengellaInvoiceById({ token, invoiceId: pickId, customerId: usedCustomerId });
       const pdfUrl = String(single?.Url ?? "").trim();
       if (pdfUrl) {
         try {
@@ -13829,7 +13854,9 @@ app.post("/tengella/invoices/peek", async (req, res) => {
     return res.json({
       ok: true,
       orgNo,
-      customerId,
+      candidates_total: candidateIds.length,
+      candidates_tried: Math.min(candidateIds.length, tryCustomers),
+      used_customer_id: usedCustomerId,
       list_count: data.length,
       list_sample: data.slice(0, limit).map(i => ({
         InvoiceId:   i?.InvoiceId,
