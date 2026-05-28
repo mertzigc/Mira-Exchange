@@ -14375,22 +14375,27 @@ app.post("/kpi/company/diag", async (req, res) => {
   }
 });
 
-// ---- FIX: rätta Tengella-fakturors ft_customer_number (internt id → Kundnr) ----
-// Nyckelskyddad. dry-run default. Skriver om endast Tengella-SKAPADE Housekeeping-rader
-// (ft_raw_json har InvoiceId) där numret är ett internt customerId och rätt Kundnr är känt.
-// Härleder Kundnr ur fakturans EGNA raw_json (CustomerNo direkt, annars CustomerId→Kundnr via
-// TengellaCustomer-mappen). Gissar aldrig på själva värdet. Idempotent (skippar redan-rätta).
+// ---- FIX (v86): rätta Tengella-fakturors ft_customer_number → Kundnr (NAMNBASERAD) ----
+// Nyckelskyddad. dry-run default. Disambiguerar på fakturans NAMN (ft_customer_name), inte på
+// talvärdet — interna id:n och Kundnr delar heltalsrymd, så värdebaserad mappning är INTE
+// idempotent (ett korrekt Kundnr kan krocka med ett annat internt id). Namn → Kundnr via
+// TengellaCustomer är otvetydigt. Re-körning sätter samma värde (idempotent). Tvetydiga namn
+// (samma namn, flera Kundnr) hoppas över. Dry-run efter en tidigare körning fungerar som
+// VERIFIERING: candidates_total≈0 betyder att datat redan är korrekt.
 app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
   const confirm = req.body?.confirm === true;
   const maxFix  = Number(req.body?.max_fix || 500);
   try {
-    // 1) Bygg map internt customerId → Kundnr, samt set av kända Kundnr
+    // 1) Bygg map NAMN → Kundnr från TengellaCustomer; flagga tvetydiga namn
     const tcs = await bubbleFindAll("TengellaCustomer", {}).catch(() => []);
-    const idToKundNr = {};
+    const nameToKundNr = {};
+    const nameConflicts = new Set();
     for (const tc of (tcs || [])) {
-      const intId  = tc?.tengella_customer_id != null ? String(tc.tengella_customer_id).trim() : "";
+      const nm     = String(tc?.name || tc?.customer_name || "").trim().toLowerCase();
       const kundNr = tc?.tengella_customer_no != null ? String(tc.tengella_customer_no).trim() : "";
-      if (intId && kundNr) idToKundNr[intId] = kundNr;
+      if (!nm || !kundNr) continue;
+      if (nameToKundNr[nm] !== undefined && nameToKundNr[nm] !== kundNr) nameConflicts.add(nm);
+      nameToKundNr[nm] = kundNr;
     }
 
     // 2) Hämta alla Housekeeping-fakturor
@@ -14399,7 +14404,8 @@ app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
     }).catch(() => []);
 
     const candidates = [];
-    let skipped_not_tengella = 0, skipped_unknown = 0, already_ok = 0;
+    let skipped_not_tengella = 0, skipped_no_name = 0, skipped_ambiguous = 0,
+        skipped_unknown_name = 0, already_ok = 0;
 
     for (const inv of (invs || [])) {
       let raw = null;
@@ -14407,26 +14413,19 @@ app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
       const isTengella = raw && (raw.InvoiceId != null || raw.InvoiceNo != null) && raw.DocumentNumber == null;
       if (!isTengella) { skipped_not_tengella++; continue; }
 
-      const cur = String(inv.ft_customer_number ?? "").trim();
-      // Härled rätt Kundnr ur fakturans egna data
-      let newNum = "";
-      let via = "";
-      if (raw.CustomerNo != null && String(raw.CustomerNo).trim() !== "") {
-        newNum = String(raw.CustomerNo).trim(); via = "raw.CustomerNo";
-      } else if (raw.CustomerId != null && idToKundNr[String(raw.CustomerId).trim()]) {
-        newNum = idToKundNr[String(raw.CustomerId).trim()]; via = "raw.CustomerId→map";
-      } else if (cur && idToKundNr[cur]) {
-        newNum = idToKundNr[cur]; via = "ft_customer_number→map";
-      }
+      const nm = String(inv.ft_customer_name ?? "").trim().toLowerCase();
+      if (!nm) { skipped_no_name++; continue; }
+      if (nameConflicts.has(nm)) { skipped_ambiguous++; continue; }
 
-      if (!newNum) { skipped_unknown++; continue; }
-      if (newNum === cur) { already_ok++; continue; }
+      const want = nameToKundNr[nm];
+      if (!want) { skipped_unknown_name++; continue; }
+
+      const cur = String(inv.ft_customer_number ?? "").trim();
+      if (want === cur) { already_ok++; continue; }
 
       candidates.push({
         invoice_id: inv._id, docNo: inv.ft_document_number,
-        from: cur, to: newNum, via,
-        raw_CustomerId: raw.CustomerId ?? null, raw_CustomerNo: raw.CustomerNo ?? null,
-        date: inv.ft_invoice_date
+        name: inv.ft_customer_name, from: cur, to: want, date: inv.ft_invoice_date
       });
     }
 
@@ -14445,14 +14444,16 @@ app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
     return res.json({
       ok: true,
       dry_run: !confirm,
+      method: "name-based",
       housekeeping_invoices_scanned: (invs || []).length,
-      tengella_customer_map_size: Object.keys(idToKundNr).length,
-      skipped_not_tengella, skipped_unknown, already_ok,
+      tengella_customer_map_size: Object.keys(nameToKundNr).length,
+      ambiguous_names: nameConflicts.size,
+      skipped_not_tengella, skipped_no_name, skipped_ambiguous, skipped_unknown_name, already_ok,
       candidates_total: candidates.length,
       candidates_to_fix: toFix.length,
       patched: confirm ? patched : 0,
       errors: confirm ? errors : 0,
-      sample: candidates.slice(0, 10)
+      sample: candidates.slice(0, 12)
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
