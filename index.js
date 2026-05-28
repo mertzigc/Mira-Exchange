@@ -14739,6 +14739,9 @@ app.post("/customer/dedup/apply", async (req, res) => {
   const org     = req.body?.org ? normalizeOrgNo(req.body.org) : null;
   const confirm = req.body?.confirm === true;
   const doDelete= req.body?.delete === true;
+  // Operativa typer som ska migreras (utöver financial). Tillåter ops_split om dub-data
+  // ligger ENDAST i dessa typer. Vanligast: ["Coworker"] för stray-användare på fel CC.
+  const migrate_ops = Array.isArray(req.body?.migrate_ops) ? req.body.migrate_ops : [];
   if (!org) return res.status(400).json({ ok: false, error: "org krävs (en grupp i taget)" });
   try {
     const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
@@ -14755,12 +14758,45 @@ app.post("/customer/dedup/apply", async (req, res) => {
       analyzed.push({ cc, _id: cc._id, name: cc.Name_company, ops_score, ops });
     }
     const withOps = analyzed.filter(r => r.ops_score > 0);
-    if (withOps.length > 1) return res.json({ ok: false, org, error: "ops_split_unexpected: operativ data på flera poster – granska manuellt", analyzed: analyzed.map(a => ({ _id: a._id, name: a.name, ops_score: a.ops_score })) });
+    if (withOps.length > 1) {
+      // Tillåt fortsättning OM alla extra-ops på dup(s) ligger ENDAST i migrate_ops-typer.
+      // Annars blockera och visa per-typ-breakdown.
+      const canonicalGuess = [...analyzed].sort((a, b) => b.ops_score - a.ops_score)[0];
+      const dupExtras = analyzed.filter(r => r._id !== canonicalGuess._id);
+      const outsideMigrate = [];
+      for (const d of dupExtras) {
+        const nonzero = Object.entries(d.ops || {}).filter(([k, v]) => (v || 0) > 0).map(([k]) => k);
+        for (const t of nonzero) if (!migrate_ops.includes(t)) outsideMigrate.push({ dup: d.name, type: t });
+      }
+      if (outsideMigrate.length > 0) {
+        return res.json({
+          ok: false, org,
+          error: "ops_split_unexpected: operativ data på flera poster – granska manuellt",
+          hint: "lägg de aktuella typerna i migrate_ops för att flytta dem automatiskt",
+          outside_migrate: outsideMigrate,
+          analyzed: analyzed.map(a => ({
+            _id: a._id, name: a.name, ops_score: a.ops_score,
+            ops_nonzero: Object.fromEntries(Object.entries(a.ops || {}).filter(([k, v]) => (v || 0) > 0))
+          }))
+        });
+      }
+      // OK: vi tänker migrera dessa typer också. Fortsätt med normal klassning.
+    }
     const canonical = [...analyzed].sort((a, b) => (b.ops_score - a.ops_score) || (new Date(a.cc["Created Date"] || 0) - new Date(b.cc["Created Date"] || 0)))[0];
     // SPÄRR: ingen post har operativ data → kan ej avgöra kanonisk → blockera (invariant kräver att keepern har op.data)
     if (canonical.ops_score === 0) return res.json({ ok: false, org, error: "ingen post har operativ data – kan ej avgöra kanonisk, granska manuellt", analyzed: analyzed.map(a => ({ _id: a._id, name: a.name, ops_score: a.ops_score })) });
     const dups = analyzed.filter(r => r._id !== canonical._id);
-    if (dups.some(d => d.ops_score > 0)) return res.json({ ok: false, org, error: "en dubblett har operativ data – granska manuellt", dups: dups.map(d => ({ _id: d._id, name: d.name, ops_score: d.ops_score })) });
+    // Blockera om någon dub har ops i typer UTANFÖR migrate_ops-listan
+    const dupBlockers = [];
+    for (const d of dups) {
+      const nonzero = Object.entries(d.ops || {}).filter(([k, v]) => (v || 0) > 0).map(([k]) => k);
+      for (const t of nonzero) if (!migrate_ops.includes(t)) dupBlockers.push({ dup: d.name, type: t, count: d.ops[t] });
+    }
+    if (dupBlockers.length > 0) return res.json({
+      ok: false, org, error: "en dubblett har operativ data utanför migrate_ops – granska manuellt",
+      blockers: dupBlockers,
+      dups: dups.map(d => ({ _id: d._id, name: d.name, ops_score: d.ops_score, ops_nonzero: Object.fromEntries(Object.entries(d.ops || {}).filter(([k, v]) => (v || 0) > 0)) }))
+    });
 
     // Bygg plan per dubblett
     const plan = [];
@@ -14770,11 +14806,19 @@ app.post("/customer/dedup/apply", async (req, res) => {
         const rows = await bubbleFindAll(s.type, { constraints: [{ key: s.field, constraint_type: "equals", value: d._id }] }).catch(() => null);
         rel[s.label] = { field: s.field, ids: Array.isArray(rows) ? rows.map(r => r._id) : null };
       }));
+      // Lägg till operativa typer som ska migreras (Coworker etc.)
+      const ops_relink = {};
+      for (const t of migrate_ops) {
+        const field = await detectCcField(t);
+        if (!field) { ops_relink[t] = { field: null, ids: null, note: "ingen CC-fältkoppling hittad" }; continue; }
+        const rows = await bubbleFindAll(t, { constraints: [{ key: field, constraint_type: "equals", value: d._id }] }).catch(() => null);
+        ops_relink[t] = { field, ids: Array.isArray(rows) ? rows.map(r => r._id) : null };
+      }
       const setFields = {};
       if ((canonical.cc.tengella_customer_id == null) && d.cc.tengella_customer_id != null) setFields.tengella_customer_id = d.cc.tengella_customer_id;
       if ((canonical.cc.tengella_customer_no == null || canonical.cc.tengella_customer_no === "") && d.cc.tengella_customer_no) setFields.tengella_customer_no = d.cc.tengella_customer_no;
       if ((canonical.cc.ft_customer_number == null) && d.cc.ft_customer_number != null) setFields.ft_customer_number = d.cc.ft_customer_number;
-      plan.push({ dup_id: d._id, dup_name: d.name, set_on_canonical: setFields, relink: rel });
+      plan.push({ dup_id: d._id, dup_name: d.name, set_on_canonical: setFields, relink: rel, ops_relink });
     }
 
     // Fält-täckning: vilket fält detekterades per typ (null = ingen koppling/ingen data)
@@ -14800,6 +14844,14 @@ app.post("/customer/dedup/apply", async (req, res) => {
         if (!r || !Array.isArray(r.ids)) continue;
         for (const id of r.ids) {
           try { await bubblePatch(spec.type, id, { [spec.field]: canonical._id }); patched++; } catch (e) { patch_errors++; }
+          await sleep(110);
+        }
+      }
+      // 2b) Relänka operativa migrate_ops-typer (Coworker etc.) → kanonisk
+      for (const [t, r] of Object.entries(p.ops_relink || {})) {
+        if (!r || !Array.isArray(r.ids) || !r.field) continue;
+        for (const id of r.ids) {
+          try { await bubblePatch(t, id, { [r.field]: canonical._id }); patched++; } catch (e) { patch_errors++; }
           await sleep(110);
         }
       }
