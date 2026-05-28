@@ -14746,7 +14746,9 @@ app.post("/customer/dedup/apply", async (req, res) => {
   try {
     // Hämta ENDAST poster för denna org via constraint (med alla 3 varianter), inte
     // hela 4867-rader-listan. Snabbare, deterministiskt, ingen rate-limit-risk.
-    const orgKey = await detectClientCompanyOrgKey();
+    // OBS: Org_Number hårdkodat (samma som diag-by-org som beprövats fungera) – detect
+    // gav fel cache-värde i loop-användning.
+    const orgKey = "Org_Number";
     const rawOrg = req.body?.org ? String(req.body.org).trim() : "";
     const digits = org;
     const hyph = (digits.length === 10) ? (digits.slice(0, 6) + "-" + digits.slice(6)) : "";
@@ -14761,7 +14763,7 @@ app.post("/customer/dedup/apply", async (req, res) => {
         if (!seenIds.has(cc._id)) { seenIds.add(cc._id); recs.push(cc); }
       }
     }
-    if (recs.length < 2) return res.json({ ok: true, org, note: "ingen dubblett (färre än 2 poster)", records: recs.length, variants_tried: variants });
+    if (recs.length < 2) return res.json({ ok: true, org, note: "ingen dubblett (färre än 2 poster)", records: recs.length, variants_tried: variants, key_used: orgKey });
 
     // Klassa via BRED operativ scan (auto-detekterat fält per typ)
     const analyzed = [];
