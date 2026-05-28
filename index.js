@@ -14694,17 +14694,28 @@ const CC_FIELD_CANDIDATES = [
 // Operativa typer (för kanonisk-klassning). FINANCIAL_LINK = direktlänkade som migreras.
 // ALLA används i pre-delete-svepet. Listan får gärna utökas – okända fält blockerar ändå.
 const OPERATIONAL_TYPES = [
-  "Matter", "MatterMessage", "grade", "Comission", "Coworker", "User", "Deal",
-  "Aktivitet", "Activity", "Fastighet", "Nyckel", "Narvaro", "Närvaro", "Office", "Kontor",
-  "Dokument", "caspecobooking", "Lead", "lead", "invoiceinquiry", "Offert", "Projekt", "Department"
+  "Matter", "grade", "Comission", "Coworker", "User", "Deal", "Activity", "Office",
+  "Fastighet", "caspecobooking", "Lead", "invoiceinquiry", "Nyckel", "Närvaro"
 ];
 const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "TengellaCustomer", "TengellaWorkorder"];
 const ALL_LINK_TYPES = [...new Set([...OPERATIONAL_TYPES, ...FINANCIAL_LINK_TYPES])];
 
-// Detektera vilket fält på en typ som pekar mot ClientCompany (unionera nycklar från flera
-// rader, eftersom Bubble utelämnar tomma fält). null = ingen koppling hittad. Cachas per process.
+// Explicit fält-karta (bekräftad av Christian) – används FÖRE auto-detektering så vi
+// aldrig gissar fel. Fastighet kopplar via list-fältet Hyresgäster (= list of ClientCompany).
+const CC_FIELD_OVERRIDES = {
+  Matter: "Kundföretag", grade: "Kundföretag", Comission: "Company",
+  Coworker: "Kundföretag", User: "Company", Deal: "kundföretag",
+  Activity: "clientcompany", Office: "Kundföretag", caspecobooking: "company",
+  Lead: "Company", invoiceinquiry: "client_company", Fastighet: "Hyresgäster",
+  FortnoxCustomer: "linked_company", TengellaCustomer: "company", TengellaWorkorder: "company"
+};
+
+// Detektera vilket fält på en typ som pekar mot ClientCompany. Override först, annars
+// unionera nycklar från flera rader (Bubble utelämnar tomma fält). Tengella-fält exkluderas
+// så en Tengella-referens aldrig misstas för en ClientCompany-koppling. null = ingen hittad.
 const _ccFieldCache = {};
 async function detectCcField(type) {
+  if (type in CC_FIELD_OVERRIDES) return CC_FIELD_OVERRIDES[type];
   if (type in _ccFieldCache) return _ccFieldCache[type];
   let field = null;
   try {
@@ -14719,7 +14730,7 @@ async function detectCcField(type) {
     const keys = new Set();
     for (const row of rows) for (const k of Object.keys(row)) keys.add(k);
     for (const c of CC_FIELD_CANDIDATES) if (keys.has(c)) { field = c; break; }
-    if (!field) for (const k of keys) if (/(företag|foretag|company)/i.test(k)) { field = k; break; }
+    if (!field) for (const k of keys) if (/(företag|foretag|company)/i.test(k) && !/tengella/i.test(k)) { field = k; break; }
   } catch (_) { /* lämna null */ }
   _ccFieldCache[type] = field;
   return field;
