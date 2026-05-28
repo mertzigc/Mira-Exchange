@@ -14744,9 +14744,24 @@ app.post("/customer/dedup/apply", async (req, res) => {
   const migrate_ops = Array.isArray(req.body?.migrate_ops) ? req.body.migrate_ops : [];
   if (!org) return res.status(400).json({ ok: false, error: "org krävs (en grupp i taget)" });
   try {
-    const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
-    const recs = (all || []).filter(cc => normalizeOrgNo(cc.Org_Number) === org);
-    if (recs.length < 2) return res.json({ ok: true, org, note: "ingen dubblett (färre än 2 poster)", records: recs.length });
+    // Hämta ENDAST poster för denna org via constraint (med alla 3 varianter), inte
+    // hela 4867-rader-listan. Snabbare, deterministiskt, ingen rate-limit-risk.
+    const orgKey = await detectClientCompanyOrgKey();
+    const rawOrg = req.body?.org ? String(req.body.org).trim() : "";
+    const digits = org;
+    const hyph = (digits.length === 10) ? (digits.slice(0, 6) + "-" + digits.slice(6)) : "";
+    const variants = [...new Set([rawOrg, digits, hyph].filter(Boolean))];
+    const seenIds = new Set();
+    const recs = [];
+    for (const v of variants) {
+      const found = await bubbleFindAll("ClientCompany", {
+        constraints: [{ key: orgKey, constraint_type: "equals", value: v }]
+      }).catch(() => []);
+      for (const cc of (found || [])) {
+        if (!seenIds.has(cc._id)) { seenIds.add(cc._id); recs.push(cc); }
+      }
+    }
+    if (recs.length < 2) return res.json({ ok: true, org, note: "ingen dubblett (färre än 2 poster)", records: recs.length, variants_tried: variants });
 
     // Klassa via BRED operativ scan (auto-detekterat fält per typ)
     const analyzed = [];
