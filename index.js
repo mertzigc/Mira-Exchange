@@ -14670,5 +14670,174 @@ app.post("/customer/dedup/scan", async (req, res) => {
   }
 });
 
+// ---- DEDUP APPLY: migrera financial-relationer dup→kanonisk, radera skal -----
+// Nyckelskyddad. En org i taget (säkerhet). Grindar:
+//   dry_run (default)      → visar bara planen, rör inget
+//   confirm:true           → utför migreringen (patchar relationer + kanonisk-fält)
+//   confirm:true+delete:true→ raderar dessutom skalet, MEN bara efter pre-delete-svep
+// Migrerar bara de DIREKTLÄNKADE financial-typerna; fakturor/ordrar/offerter följer med
+// via FortnoxCustomer-bryggan. Pre-delete-svep: dubbletten måste ha 0 operativa OCH 0
+// kvarvarande financial-referenser, annars avbryts raderingen för den gruppen.
+const MIGRATE_SPECS = [
+  { label: "fortnox_customers",  type: "FortnoxCustomer",   field: "linked_company" },
+  { label: "tengella_customers", type: "TengellaCustomer",  field: "company" },
+  { label: "tengella_workorders",type: "TengellaWorkorder", field: "company" }
+];
+
+// ── Generisk ClientCompany-koppling: detektera fält per typ + fail-safe räkning ──
+// Kandidat-fältnamn som kan peka mot ClientCompany (täcker svenska/engelska varianter).
+const CC_FIELD_CANDIDATES = [
+  "Kundföretag", "Kundforetag", "kundföretag", "kundforetag", "kund_företag", "kund_foretag",
+  "Company", "company", "linked_company", "client_company", "ClientCompany", "clientcompany",
+  "Företag", "företag", "foretag"
+];
+// Operativa typer (för kanonisk-klassning). FINANCIAL_LINK = direktlänkade som migreras.
+// ALLA används i pre-delete-svepet. Listan får gärna utökas – okända fält blockerar ändå.
+const OPERATIONAL_TYPES = [
+  "Matter", "MatterMessage", "grade", "Comission", "Coworker", "User", "Deal",
+  "Aktivitet", "Activity", "Fastighet", "Nyckel", "Narvaro", "Närvaro", "Office", "Kontor",
+  "Dokument", "caspecobooking", "Lead", "lead", "invoiceinquiry", "Offert", "Projekt", "Department"
+];
+const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "TengellaCustomer", "TengellaWorkorder"];
+const ALL_LINK_TYPES = [...new Set([...OPERATIONAL_TYPES, ...FINANCIAL_LINK_TYPES])];
+
+// Detektera vilket fält på en typ som pekar mot ClientCompany (unionera nycklar från flera
+// rader, eftersom Bubble utelämnar tomma fält). null = ingen koppling hittad. Cachas per process.
+const _ccFieldCache = {};
+async function detectCcField(type) {
+  if (type in _ccFieldCache) return _ccFieldCache[type];
+  let field = null;
+  try {
+    let rows = [];
+    for (const base of BUBBLE_BASES) {
+      const r = await fetch(`${base}/api/1.1/obj/${type}?limit=50`, { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } });
+      if (!r.ok) continue;
+      const j = await r.json().catch(() => ({}));
+      rows = j?.response?.results || [];
+      break;
+    }
+    const keys = new Set();
+    for (const row of rows) for (const k of Object.keys(row)) keys.add(k);
+    for (const c of CC_FIELD_CANDIDATES) if (keys.has(c)) { field = c; break; }
+    if (!field) for (const k of keys) if (/(företag|foretag|company)/i.test(k)) { field = k; break; }
+  } catch (_) { /* lämna null */ }
+  _ccFieldCache[type] = field;
+  return field;
+}
+// Räkna referenser till en ClientCompany-id för en typ. status: ok | no_field | error.
+// error (null count) = osäkert → ska blockera radering (fail-safe).
+async function countCcRefs(type, ccId) {
+  const field = await detectCcField(type);
+  if (!field) return { type, field: null, count: 0, status: "no_field" };
+  const rows = await bubbleFindAll(type, { constraints: [{ key: field, constraint_type: "equals", value: ccId }] }).catch(() => null);
+  if (!Array.isArray(rows)) return { type, field, count: null, status: "error" };
+  return { type, field, count: rows.length, status: "ok" };
+}
+app.post("/customer/dedup/apply", async (req, res) => {
+  const org     = req.body?.org ? normalizeOrgNo(req.body.org) : null;
+  const confirm = req.body?.confirm === true;
+  const doDelete= req.body?.delete === true;
+  if (!org) return res.status(400).json({ ok: false, error: "org krävs (en grupp i taget)" });
+  try {
+    const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
+    const recs = (all || []).filter(cc => normalizeOrgNo(cc.Org_Number) === org);
+    if (recs.length < 2) return res.json({ ok: true, org, note: "ingen dubblett (färre än 2 poster)", records: recs.length });
+
+    // Klassa via BRED operativ scan (auto-detekterat fält per typ)
+    const analyzed = [];
+    for (const cc of recs) {
+      const opsRes = await Promise.all(OPERATIONAL_TYPES.map(t => countCcRefs(t, cc._id)));
+      const ops = {};
+      let ops_score = 0;
+      for (const r of opsRes) { ops[r.type] = r.count; ops_score += (r.count || 0); }
+      analyzed.push({ cc, _id: cc._id, name: cc.Name_company, ops_score, ops });
+    }
+    const withOps = analyzed.filter(r => r.ops_score > 0);
+    if (withOps.length > 1) return res.json({ ok: false, org, error: "ops_split_unexpected: operativ data på flera poster – granska manuellt", analyzed: analyzed.map(a => ({ _id: a._id, name: a.name, ops_score: a.ops_score })) });
+    const canonical = [...analyzed].sort((a, b) => (b.ops_score - a.ops_score) || (new Date(a.cc["Created Date"] || 0) - new Date(b.cc["Created Date"] || 0)))[0];
+    // SPÄRR: ingen post har operativ data → kan ej avgöra kanonisk → blockera (invariant kräver att keepern har op.data)
+    if (canonical.ops_score === 0) return res.json({ ok: false, org, error: "ingen post har operativ data – kan ej avgöra kanonisk, granska manuellt", analyzed: analyzed.map(a => ({ _id: a._id, name: a.name, ops_score: a.ops_score })) });
+    const dups = analyzed.filter(r => r._id !== canonical._id);
+    if (dups.some(d => d.ops_score > 0)) return res.json({ ok: false, org, error: "en dubblett har operativ data – granska manuellt", dups: dups.map(d => ({ _id: d._id, name: d.name, ops_score: d.ops_score })) });
+
+    // Bygg plan per dubblett
+    const plan = [];
+    for (const d of dups) {
+      const rel = {};
+      await Promise.all(MIGRATE_SPECS.map(async s => {
+        const rows = await bubbleFindAll(s.type, { constraints: [{ key: s.field, constraint_type: "equals", value: d._id }] }).catch(() => null);
+        rel[s.label] = { field: s.field, ids: Array.isArray(rows) ? rows.map(r => r._id) : null };
+      }));
+      const setFields = {};
+      if ((canonical.cc.tengella_customer_id == null) && d.cc.tengella_customer_id != null) setFields.tengella_customer_id = d.cc.tengella_customer_id;
+      if ((canonical.cc.tengella_customer_no == null || canonical.cc.tengella_customer_no === "") && d.cc.tengella_customer_no) setFields.tengella_customer_no = d.cc.tengella_customer_no;
+      if ((canonical.cc.ft_customer_number == null) && d.cc.ft_customer_number != null) setFields.ft_customer_number = d.cc.ft_customer_number;
+      plan.push({ dup_id: d._id, dup_name: d.name, set_on_canonical: setFields, relink: rel });
+    }
+
+    // Fält-täckning: vilket fält detekterades per typ (null = ingen koppling/ingen data)
+    const link_field_coverage = {};
+    await Promise.all(ALL_LINK_TYPES.map(async t => { link_field_coverage[t] = await detectCcField(t); }));
+
+    const result = { ok: true, org, dry_run: !confirm, canonical: { _id: canonical._id, name: canonical.name, ops_score: canonical.ops_score }, link_field_coverage, plan };
+
+    if (!confirm) return res.json(result);
+
+    // --- UTFÖR migreringen ---
+    let patched = 0, patch_errors = 0;
+    const perDup = [];
+    for (const p of plan) {
+      // 1) Sätt kanonisk-fält
+      if (Object.keys(p.set_on_canonical).length) {
+        try { await bubblePatch("ClientCompany", canonical._id, p.set_on_canonical); patched++; } catch (e) { patch_errors++; }
+        await sleep(120);
+      }
+      // 2) Relänka direktlänkade financial-relationer → kanonisk
+      for (const spec of MIGRATE_SPECS) {
+        const r = p.relink[spec.label];
+        if (!r || !Array.isArray(r.ids)) continue;
+        for (const id of r.ids) {
+          try { await bubblePatch(spec.type, id, { [spec.field]: canonical._id }); patched++; } catch (e) { patch_errors++; }
+          await sleep(110);
+        }
+      }
+      // 3) Pre-delete-svep: GENERISK scan över ALLA kända typer. Fail-safe:
+      //    en träff (>0) ELLER en osäker koll (status≠ok) blockerar radering.
+      const sweep = await Promise.all(ALL_LINK_TYPES.map(t => countCcRefs(t, p.dup_id)));
+      const residual = {};
+      let residualTotal = 0, uncertain = [];
+      for (const s of sweep) {
+        residual[s.type] = { count: s.count, field: s.field, status: s.status };
+        if (s.status === "ok") residualTotal += (s.count || 0);
+        else if (s.status === "error") uncertain.push(s.type); // kunde ej räkna → osäkert
+      }
+      const clean = residualTotal === 0 && uncertain.length === 0;
+
+      let deleted = false, delete_error = null;
+      if (doDelete && clean) {
+        try {
+          const dr = await fetch(`${BUBBLE_PRIMARY_BASE}/api/1.1/obj/ClientCompany/${p.dup_id}`, {
+            method: "DELETE", headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+          });
+          if (dr.ok) deleted = true; else delete_error = "status " + dr.status;
+        } catch (e) { delete_error = e?.message || String(e); }
+      }
+      perDup.push({
+        dup_id: p.dup_id, dup_name: p.dup_name,
+        residual, residual_total: residualTotal, uncertain_types: uncertain,
+        deleted,
+        delete_skipped_reason: !doDelete ? "delete:true ej satt"
+          : (uncertain.length ? "osäkra typer (kunde ej räknas) – ej raderad"
+          : (residualTotal !== 0 ? "kvarvarande referenser – ej raderad" : null)),
+        delete_error
+      });
+    }
+
+    return res.json({ ...result, patched, patch_errors, dups_result: perDup });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
