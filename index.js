@@ -13876,5 +13876,153 @@ app.post("/tengella/invoices/peek", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// ROUTE: berika ft_pdf för Housekeeping-fakturor FRÅN TENGELLA.
+// Housekeeping-fakturor skapas i Tengella och importeras till Fortnox som
+// bokföringsposter UTAN utskrivbar PDF (därför 404 på /print och /preview).
+// Tengella har dock PDF:en på den enskilda endpointen /v2/Invoices/{InvoiceId}
+// i fältet Url (temporär länk → vi laddar ner och lagrar i Bubble).
+//
+// Strategi: Fortnox förblir källan för belopp/saldo. Vi rör BARA ft_pdf.
+// Driv från Tengella, matcha Fortnox-raden på (connection=Housekeeping,
+// ft_document_number == Tengella InvoiceNo) och patcha ft_pdf.
+async function downloadToBuffer(url) {
+  const r = await fetch(url);
+  if (!r.ok) return { ok: false, status: r.status };
+  const ab = await r.arrayBuffer();
+  return { ok: true, buf: Buffer.from(ab), contentType: r.headers.get("content-type") || "application/pdf" };
+}
+
+app.post("/tengella/enrich/invoice-pdfs", async (req, res) => {
+  const orgNo          = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
+  const singleCustomer = req.body?.customerId != null ? Number(req.body.customerId) : null;
+  const limit          = Number(req.body?.limit     ?? 100) || 100;
+  const maxPages       = Number(req.body?.maxPages  ?? 50)  || 50;
+  const pause_ms       = Number(req.body?.pause_ms  ?? 150);
+  const maxEnrich      = Number(req.body?.max_enrich ?? 0)  || 0;   // 0 = obegränsat
+  const overwrite      = req.body?.overwrite === true;             // patcha även om ft_pdf finns
+
+  req.socket?.setTimeout?.(0);
+  res.setTimeout?.(0);
+
+  if (!orgNo) return res.status(400).json({ ok: false, error: "orgNo krävs" });
+
+  try {
+    let token = await tengellaLogin(orgNo);
+
+    // customerIds: angiven, annars alla TengellaCustomer-ids från Bubble
+    let customerIds = [];
+    if (singleCustomer) {
+      customerIds = [singleCustomer];
+    } else {
+      let cur = 0;
+      while (true) {
+        const qs = new URLSearchParams({ limit: "100", cursor: String(cur) });
+        let done = false;
+        for (const base of BUBBLE_BASES) {
+          try {
+            const r = await fetch(`${base}/api/1.1/obj/TengellaCustomer?${qs}`, {
+              headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) break;
+            const results = j?.response?.results ?? [];
+            customerIds.push(...results.map(c => Number(c?.tengella_customer_id ?? 0)).filter(n => n > 0));
+            done = true;
+            if (results.length < 100) cur = -1; else cur += 100;
+            break;
+          } catch (_) {}
+        }
+        if (!done || cur === -1) break;
+      }
+    }
+
+    let listed = 0, matched = 0, enriched = 0, already = 0, no_fortnox_row = 0, errors = 0;
+    let first_error = null, processed = 0;
+    const samples = [];
+
+    outer:
+    for (const customerId of customerIds) {
+      let cursor = null, page = 0, more = true;
+      while (more && page < maxPages) {
+        page++;
+        let resp;
+        try {
+          resp = await listTengellaInvoices({ token, limit, cursor, customerId });
+        } catch (e) {
+          // token kan ha gått ut – logga in igen och försök sidan igen
+          token = await tengellaLogin(orgNo);
+          resp = await listTengellaInvoices({ token, limit, cursor, customerId });
+        }
+        const data = Array.isArray(resp?.Data) ? resp.Data : [];
+        listed += data.length;
+
+        for (const inv of data) {
+          const invoiceNo = String(inv?.InvoiceNo ?? "").trim();
+          const invoiceId = inv?.InvoiceId;
+          if (!invoiceNo || invoiceId == null) continue;
+
+          // Matcha Fortnox-raden (Housekeeping + docNo == InvoiceNo)
+          const row = await bubbleFindOne("FortnoxInvoice", [
+            { key: "connection_id",      constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
+            { key: "ft_document_number", constraint_type: "equals", value: invoiceNo }
+          ]).catch(() => null);
+
+          if (!row?._id) { no_fortnox_row++; continue; }
+          matched++;
+          if (row.ft_pdf && !overwrite) { already++; continue; }
+
+          try {
+            // Förnya Tengella-token periodiskt under långa körningar
+            if (processed > 0 && processed % 250 === 0) token = await tengellaLogin(orgNo);
+            processed++;
+
+            const single = await getTengellaInvoiceById({ token, invoiceId, customerId });
+            const url = String(single?.Url ?? "").trim();
+            if (!url) { errors++; if (!first_error) first_error = { invoiceNo, reason: "ingen Url" }; continue; }
+
+            const dl = await downloadToBuffer(url);
+            if (!dl.ok || !dl.buf?.length) { errors++; if (!first_error) first_error = { invoiceNo, reason: "download", status: dl.status }; continue; }
+
+            const fileUrl = await bubbleUploadFile({
+              filename:    `tengella_invoice_${invoiceNo}.pdf`,
+              contentType: dl.contentType || "application/pdf",
+              buffer:      dl.buf
+            });
+
+            await bubblePatch("FortnoxInvoice", row._id, {
+              ft_pdf:            fileUrl,
+              ft_pdf_fetched_at: new Date().toISOString(),
+              needs_pdf_sync:    false
+            });
+
+            enriched++;
+            if (samples.length < 5) samples.push({ invoiceNo, invoiceId, bytes: dl.buf.length });
+            if (maxEnrich && enriched >= maxEnrich) break outer;
+          } catch (e) {
+            errors++;
+            if (!first_error) first_error = { invoiceNo, error: e?.message || String(e) };
+          }
+
+          if (pause_ms) await sleep(pause_ms);
+        }
+
+        cursor = resp?.Next || null;
+        more   = normalizeBool(resp?.ExistsMoreData) && !!cursor;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      customers: customerIds.length,
+      listed, matched, enriched, already, no_fortnox_row, errors,
+      first_error,
+      samples
+    });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), details: e?.details || null });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
