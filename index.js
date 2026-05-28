@@ -14565,5 +14565,109 @@ app.post("/customer/diag-by-org", async (req, res) => {
   }
 });
 
+// ---- DEDUP SCAN: hitta dubbletter (normaliserat org-nr), klassa & planera ----
+// Nyckelskyddad, READ-ONLY. Grupperar ClientCompany på normalizeOrgNo, klassar kanonisk
+// vs dubblett (operativ data + created_by) och listar EXAKT vad en dedup skulle migrera/
+// radera. Rör ingenting. Valfritt: {org} för en grupp, {limit_groups} för att begränsa.
+const ADMIN_CREATOR = "admin_user_carotteconcierge_live";
+app.post("/customer/dedup/scan", async (req, res) => {
+  const orgFilter   = req.body?.org ? normalizeOrgNo(req.body.org) : null;
+  const limitGroups = Number(req.body?.limit_groups || 60);
+  try {
+    const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
+    // Gruppera på normaliserat org-nr
+    const groups = {};
+    for (const cc of (all || [])) {
+      const key = normalizeOrgNo(cc.Org_Number);
+      if (!key) continue;
+      if (orgFilter && key !== orgFilter) continue;
+      (groups[key] = groups[key] || []).push(cc);
+    }
+    const dupKeys = Object.keys(groups).filter(k => groups[k].length > 1).slice(0, limitGroups);
+
+    const out = [];
+    for (const key of dupKeys) {
+      const recs = groups[key];
+      const analyzed = [];
+      for (const cc of recs) {
+        const id = cc._id;
+        const matters    = await bubbleFindAll("Matter",    { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []);
+        const comissions = await bubbleFindAll("Comission", { constraints: [{ key: "Company",      constraint_type: "equals", value: id }] }).catch(() => []);
+        const grades     = await fetchGradesForCompanies([id]).catch(() => []);
+        const fcs        = await bubbleFindAll("FortnoxCustomer", { constraints: [{ key: "linked_company", constraint_type: "equals", value: id }] }).catch(() => []);
+        const opsScore = (matters || []).length + (comissions || []).length + (grades || []).length;
+        analyzed.push({
+          _id: id, name: cc.Name_company || null, org: cc.Org_Number || null,
+          ft_customer_number: cc.ft_customer_number ?? null,
+          tengella_customer_id: cc.tengella_customer_id ?? null,
+          tengella_customer_no: cc.tengella_customer_no ?? null,
+          created: cc["Created Date"] || null, created_by: cc["Created By"] || null,
+          is_auto_created: cc["Created By"] === ADMIN_CREATOR,
+          ops_score: opsScore,
+          counts: { matters: (matters || []).length, comissions: (comissions || []).length, grades: (grades || []).length },
+          fortnox_customers: (fcs || []).map(fc => ({ fc_id: fc._id, conn: fc.connection_id || null, num: fc.customer_number ?? null }))
+        });
+      }
+
+      // Välj kanonisk: högst ops_score → ej auto-skapad → äldst
+      const canonical = [...analyzed].sort((a, b) => {
+        if (b.ops_score !== a.ops_score) return b.ops_score - a.ops_score;
+        if (a.is_auto_created !== b.is_auto_created) return a.is_auto_created ? 1 : -1;
+        return new Date(a.created || 0) - new Date(b.created || 0);
+      })[0];
+
+      const dups = [];
+      for (const r of analyzed) {
+        if (r._id === canonical._id) continue;
+        // Vad pekar på dubbletten?
+        const tcs = await bubbleFindAll("TengellaCustomer", { constraints: [{ key: "company", constraint_type: "equals", value: r._id }] }).catch(() => []);
+        // Räkna fakturor för dubblettens FortnoxCustomers (det som riskeras vid radering)
+        const fcWithInv = [];
+        for (const fc of r.fortnox_customers) {
+          const inv = await bubbleFindAll("FortnoxInvoice", {
+            constraints: [
+              { key: "connection_id",      constraint_type: "equals", value: String(fc.conn || "") },
+              { key: "ft_customer_number", constraint_type: "equals", value: String(fc.num || "") }
+            ]
+          }).catch(() => []);
+          fcWithInv.push({ ...fc, invoice_count: (inv || []).length });
+        }
+        const safe = r.is_auto_created && r.ops_score === 0;
+        dups.push({
+          _id: r._id, name: r.name, org: r.org, created_by: r.created_by,
+          ops_score: r.ops_score, counts: r.counts,
+          safe_to_delete: safe,
+          reason: safe ? "auto-skapad + ingen operativ data"
+                       : (!r.is_auto_created ? "EJ auto-skapad – granska manuellt" : "har operativ data – granska manuellt"),
+          migrate: {
+            set_tengella_customer_id: (r.tengella_customer_id != null && canonical.tengella_customer_id == null) ? r.tengella_customer_id : null,
+            relink_fortnox_customers: fcWithInv,
+            repoint_tengella_customers: (tcs || []).map(t => t._id)
+          }
+        });
+      }
+
+      out.push({
+        org_norm: key,
+        canonical: { _id: canonical._id, name: canonical.name, org: canonical.org, ops_score: canonical.ops_score, counts: canonical.counts, ft_customer_number: canonical.ft_customer_number, tengella_customer_id: canonical.tengella_customer_id },
+        dups,
+        all_safe: dups.every(d => d.safe_to_delete)
+      });
+    }
+
+    return res.json({
+      ok: true,
+      total_client_companies: (all || []).length,
+      duplicate_groups_found: Object.keys(groups).filter(k => groups[k].length > 1).length,
+      groups_analyzed: out.length,
+      groups_all_safe: out.filter(g => g.all_safe).length,
+      groups_need_review: out.filter(g => !g.all_safe).length,
+      groups: out
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
