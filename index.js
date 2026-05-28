@@ -661,16 +661,9 @@ async function ensureClientCompanyByOrderOrgNo({
   const orgN = normalizeOrg(orgRaw);
   if (!orgN) return null;
 
-  // 1) hitta befintlig
-  let cc =
-    (await bubbleFindOne("ClientCompany", [
-      { key: "Org_Number", constraint_type: "equals", value: orgN }
-    ]).catch(() => null)) ||
-    (orgRaw
-      ? await bubbleFindOne("ClientCompany", [
-          { key: "Org_Number", constraint_type: "equals", value: String(orgRaw).trim() }
-        ]).catch(() => null)
-      : null);
+  // 1) hitta befintlig via helpern – provar digits, raw OCH hyphenated (XXXXXX-XXXX)
+  //    så att manuellt skapade poster med bindestreck inte dupliceras.
+  const cc = await findClientCompanyByOrgNo(orgRaw || orgN).catch(() => null);
 
   let ccId = bubbleId(cc);
   if (ccId) return ccId;
@@ -1143,17 +1136,9 @@ async function ensureClientCompanyForFortnoxCustomer(cust) {
   const email = asTextOrEmpty(cust?.Email || cust?.email).trim();
   const phone = cust?.Phone || cust?.phone;
 
-  // 1) hitta befintligt ClientCompany på Org_Number (digits-only)
-  let existing = await bubbleFindOne("ClientCompany", [
-    { key: CLIENTCOMPANY_ORG_FIELD, constraint_type: "equals", value: orgNoNorm }
-  ]);
-
-  // fallback: om någon gammal post råkat ligga med bindestreck (ovanligt)
-  if (!existing?._id && orgNoRaw) {
-    existing = await bubbleFindOne("ClientCompany", [
-      { key: CLIENTCOMPANY_ORG_FIELD, constraint_type: "equals", value: orgNoRaw }
-    ]);
-  }
+  // 1) hitta befintligt ClientCompany via helpern – provar digits, raw OCH hyphenated
+  //    (XXXXXX-XXXX) så att manuellt skapade poster med bindestreck inte dupliceras.
+  let existing = await findClientCompanyByOrgNo(orgNoRaw || orgNoNorm).catch(() => null);
 
   if (existing?._id) {
     const patch = {};
@@ -6672,21 +6657,16 @@ async function findClientCompanyByOrgNo(orgNoRaw) {
 
   const raw = String(orgNoRaw || "").trim();
   const digits = normalizeOrgNo(raw);
+  // Svenskt orgnr (10 siffror) hyphenat-format: XXXXXX-XXXX
+  const hyph = (digits.length === 10) ? (digits.slice(0, 6) + "-" + digits.slice(6)) : "";
 
-  // prova först raw (om ni sparar med bindestreck)
-  if (raw) {
-    const a = await bubbleFindOne("ClientCompany", [
-      { key, constraint_type: "equals", value: raw }
-    ]);
-    if (a?._id) return a;
-  }
-
-  // prova digits (om ni sparar utan bindestreck)
-  if (digits) {
-    const b = await bubbleFindOne("ClientCompany", [
-      { key, constraint_type: "equals", value: digits }
-    ]);
-    if (b?._id) return b;
+  // Bygg unik lista av varianter att prova
+  const variants = [...new Set([raw, digits, hyph].filter(Boolean))];
+  for (const v of variants) {
+    const hit = await bubbleFindOne("ClientCompany", [
+      { key, constraint_type: "equals", value: v }
+    ]).catch(() => null);
+    if (hit?._id) return hit;
   }
 
   return null;
@@ -6965,11 +6945,9 @@ async function ensureClientCompanyForTengellaCustomer(tCustomer) {
   const orgNoNorm = normalizeOrgNo(regNoRaw);
   if (!orgNoNorm) return null;
 
-  // 1) Find by Org_Number
-  const existing = await bubbleFindOne("ClientCompany", [
-    { key: "Org_Number", constraint_type: "equals", value: orgNoNorm }
-  ]);
-
+  // 1) Find via helpern – provar både digits, raw OCH hyphenated (XXXXXX-XXXX)
+  //    så att en manuellt skapad post med bindestreck hittas och INTE dupliceras.
+  const existing = await findClientCompanyByOrgNo(regNoRaw || orgNoNorm).catch(() => null);
   if (existing?._id) return existing._id;
 
   // 2) Create minimal ClientCompany (don’t overwrite CRM)
