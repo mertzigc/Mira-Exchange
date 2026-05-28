@@ -13777,5 +13777,77 @@ app.post("/fortnox/cleanup/ghost-invoices", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// DEBUG: Tengella invoice-peek (läs-bart).
+// Verifierar (1) att /v2/Invoices/{InvoiceId} ger en hämtbar PDF-Url, och
+// (2) hur InvoiceId/InvoiceNo ser ut (för att jämföra mot Fortnox docNo).
+// Skriver INGET till Bubble. Skyddas av global x-api-key.
+async function getTengellaInvoiceById({ token, invoiceId, customerId = null }) {
+  const query = {};
+  if (customerId !== null && customerId !== undefined) query.customerId = customerId;
+  return tengellaFetch(`/v2/Invoices/${encodeURIComponent(invoiceId)}`, { method: "GET", token, query });
+}
+
+app.post("/tengella/invoices/peek", async (req, res) => {
+  try {
+    const orgNo = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
+    if (!orgNo) return res.status(400).json({ ok: false, error: "orgNo krävs (eller sätt TENGELLA_DEFAULT_ORGNO)" });
+
+    const customerId = req.body?.customerId != null ? Number(req.body.customerId) : null;
+    const invoiceId  = req.body?.invoiceId  != null ? Number(req.body.invoiceId)  : null;
+    const limit      = Number(req.body?.limit ?? 5) || 5;
+
+    const token = await tengellaLogin(orgNo);
+
+    // 1) Lista några fakturor – visar InvoiceId/InvoiceNo (för docNo-jämförelse)
+    const listResp = await listTengellaInvoices({ token, limit, customerId });
+    const data = Array.isArray(listResp?.Data) ? listResp.Data : (Array.isArray(listResp) ? listResp : []);
+
+    // 2) Hämta EN enskild faktura för att se Url (PDF-länken)
+    const pickId = (invoiceId != null) ? invoiceId : (data[0]?.InvoiceId ?? null);
+    let single = null, url_probe = null;
+    if (pickId != null) {
+      single = await getTengellaInvoiceById({ token, invoiceId: pickId, customerId });
+      const pdfUrl = String(single?.Url ?? "").trim();
+      if (pdfUrl) {
+        try {
+          const h = await fetch(pdfUrl, { method: "HEAD" });
+          url_probe = {
+            status: h.status,
+            ok: h.ok,
+            content_type: h.headers.get("content-type"),
+            content_length: h.headers.get("content-length")
+          };
+        } catch (e) {
+          url_probe = { error: e?.message || String(e) };
+        }
+      } else {
+        url_probe = { note: "single.Url tom" };
+      }
+    }
+
+    return res.json({
+      ok: true,
+      orgNo,
+      customerId,
+      list_count: data.length,
+      list_sample: data.slice(0, limit).map(i => ({
+        InvoiceId:   i?.InvoiceId,
+        InvoiceNo:   i?.InvoiceNo,
+        TotalAmount: i?.TotalAmount,
+        PaidAmount:  i?.PaidAmount,
+        InvoiceDate: i?.InvoiceDate,
+        Void:        i?.Void,
+        InvoiceType: i?.InvoiceType
+      })),
+      single_invoice_id: pickId,
+      single_full: single,   // hela enskilda svaret inkl. Url
+      url_probe              // är PDF-länken hämtbar? (HEAD)
+    });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), details: e?.details || null });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
