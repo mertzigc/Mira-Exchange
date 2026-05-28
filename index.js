@@ -14265,5 +14265,97 @@ app.options("/kpi/company/refresh", (req, res) => {
   res.sendStatus(204);
 });
 
+// ---- DEBUG: returnera beräknad KPI utan att skriva (nyckelskyddad) --------
+// Ligger EJ i openPaths → kräver x-api-key. För snabb testning av KPI-utfall.
+app.post("/kpi/company/debug", async (req, res) => {
+  const companyId = String(req.body?.company_id || req.query.company_id || "").trim();
+  if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+  try {
+    const kpi = await buildKundKpi(companyId);
+    return res.json({ ok: true, company_id: companyId, kpi });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ---- DIAG: visa varför ekonomi-bryggan ger 0 (nyckelskyddad) --------------
+// Visar ClientCompany-fält, FortnoxCustomer-kopplingar + fakturaantal per par,
+// Tengella-vägen (ClientCompany.ft_customer_number → Housekeeping-fakturor),
+// och vad faktiska Housekeeping-fakturor (på namn) har för ft_customer_number.
+app.post("/kpi/company/diag", async (req, res) => {
+  const companyId = String(req.body?.company_id || "").trim();
+  if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+  try {
+    const cc = await bubbleGet("ClientCompany", companyId).catch(() => null);
+    const ccName  = cc?.name || cc?.company_name || cc?.["Företagsnamn"] || cc?.Namn || null;
+    const ccOrg   = cc?.org_no || cc?.organization_number || cc?.organisation_number || cc?.RegNo || null;
+    const ccFtNum = cc?.ft_customer_number ?? null;
+
+    // FortnoxCustomer kopplade till företaget
+    const fcs = await bubbleFindAll("FortnoxCustomer", {
+      constraints: [{ key: "linked_company", constraint_type: "equals", value: companyId }]
+    }).catch(() => []);
+    const fortnox_customers = [];
+    for (const fc of (fcs || [])) {
+      const inv = await bubbleFindAll("FortnoxInvoice", {
+        constraints: [
+          { key: "connection_id",      constraint_type: "equals", value: String(fc.connection_id || "") },
+          { key: "ft_customer_number", constraint_type: "equals", value: String(fc.customer_number || "") }
+        ]
+      }).catch(() => []);
+      fortnox_customers.push({
+        fc_id: fc._id,
+        connection_id: fc.connection_id || null,
+        customer_number: fc.customer_number ?? null,
+        org: fc.organisation_number || null,
+        name: fc.name || fc.customer_name || null,
+        invoice_count: (inv || []).length
+      });
+    }
+
+    // Tengella-vägen: ClientCompany.ft_customer_number → Housekeeping-fakturor
+    let tengella_path = { cc_ft_customer_number: ccFtNum, invoice_count: null, sample: [] };
+    if (ccFtNum !== null && ccFtNum !== "") {
+      const inv = await bubbleFindAll("FortnoxInvoice", {
+        constraints: [
+          { key: "connection_id",      constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
+          { key: "ft_customer_number", constraint_type: "equals", value: String(ccFtNum) }
+        ]
+      }).catch(() => []);
+      tengella_path.invoice_count = (inv || []).length;
+      tengella_path.sample = (inv || []).slice(0, 3).map(i => ({
+        docNo: i.ft_document_number, ft_customer_number: i.ft_customer_number,
+        total: i.ft_total, balance: i.ft_balance, date: i.ft_invoice_date
+      }));
+    }
+
+    // Vad har faktiska Housekeeping-fakturor (på namn) för ft_customer_number?
+    let housekeeping_invoices_by_name = [];
+    if (ccName) {
+      const inv = await bubbleFindAll("FortnoxInvoice", {
+        constraints: [
+          { key: "connection_id",   constraint_type: "equals",        value: TENGELLA_CONNECTION_ID },
+          { key: "ft_customer_name", constraint_type: "text contains", value: ccName }
+        ]
+      }).catch(() => []);
+      housekeeping_invoices_by_name = (inv || []).slice(0, 5).map(i => ({
+        docNo: i.ft_document_number, ft_customer_number: i.ft_customer_number, name: i.ft_customer_name
+      }));
+    }
+
+    return res.json({
+      ok: true,
+      company_id: companyId,
+      client_company: cc ? { _id: cc._id, name: ccName, org_no: ccOrg, ft_customer_number: ccFtNum } : null,
+      cc_fields: cc ? Object.keys(cc) : [],
+      fortnox_customers,
+      tengella_path,
+      housekeeping_invoices_by_name
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
