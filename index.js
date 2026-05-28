@@ -9879,14 +9879,19 @@ async function resolveTengellaInvoiceCustomer(customerId, token) {
   }
 
   const customerName   = String(tc?.name || tc?.customer_name || "").trim();
-  const customerNumber = custIdNum; // number för Bubble
+  // FIX (v85): skriv kundens Kundnr (CustomerNo, t.ex. 34) – samma nummer som Fortnox,
+  // ClientCompany.ft_customer_number och FortnoxCustomer.customer_number använder.
+  // Tidigare skrevs Tengellas INTERNA customerId (t.ex. 9) → bröt KPI-ekonomibryggan.
+  const _kundNr = String(tc?.tengella_customer_no ?? "").trim();
+  const customerNumber = _kundNr || custIdNum; // Kundnr om känt, annars internt id (fallback)
+  const _canonNum = _kundNr || custIdNum;       // för ClientCompany-sättning nedan
 
   if (!tc) return { customerName, customerNumber, companyId: null };
 
   // 3) Snabb väg: TengellaCustomer har redan company-relation
   if (tc.company) {
     // Säkerställ ft_customer_number på ClientCompany om det saknas
-    await ensureFtCustomerNumberOnClientCompany(tc.company, custIdNum).catch(() => null);
+    await ensureFtCustomerNumberOnClientCompany(tc.company, _canonNum).catch(() => null);
     return { customerName, customerNumber, companyId: tc.company };
   }
 
@@ -9907,7 +9912,7 @@ async function resolveTengellaInvoiceCustomer(customerId, token) {
 
   if (ccId) {
     // Sätt ft_customer_number på ClientCompany
-    await ensureFtCustomerNumberOnClientCompany(ccId, custIdNum).catch(() => null);
+    await ensureFtCustomerNumberOnClientCompany(ccId, _canonNum).catch(() => null);
     // Spara tillbaka på TengellaCustomer
     if (tc._id) {
       await bubblePatch("TengellaCustomer", tc._id, { company: ccId }).catch(() => null);
@@ -14168,6 +14173,19 @@ async function buildKundKpi(companyId) {
     .map(fc => ({ conn: String(fc.connection_id || "").trim(), cust: String(fc.customer_number || "").trim() }))
     .filter(p => p.conn && p.cust);
 
+  // FIX (v85): Dashboard-posten kan ha sin FortnoxCustomer på en annan connection (t.ex. F&E)
+  // och därför sakna Housekeeping-kopplingen. ft_customer_number på ClientCompany är kundens
+  // Kundnr (t.ex. 34) – samma nummer som Housekeeping-fakturorna använder. Lägg till det paret
+  // direkt så Tengella/Housekeeping-ekonomin syns även på dashboard-posten. Kollisionssäkert:
+  // 34 är det riktiga Fortnox-kundnr, inte ett internt Tengella-id.
+  try {
+    const _ccObj = await bubbleGet("ClientCompany", companyId).catch(() => null);
+    const _ccNum = String(_ccObj?.ft_customer_number ?? "").trim();
+    if (_ccNum && !pairs.some(p => p.conn === TENGELLA_CONNECTION_ID && p.cust === _ccNum)) {
+      pairs.push({ conn: TENGELLA_CONNECTION_ID, cust: _ccNum });
+    }
+  } catch (_) { /* icke-blockerande */ }
+
   let invoices = [];
   for (const p of pairs) {
     const inv = await bubbleFindAll(KUND_KPI.FORTNOXINVOICE_TYPE, {
@@ -14351,6 +14369,90 @@ app.post("/kpi/company/diag", async (req, res) => {
       fortnox_customers,
       tengella_path,
       housekeeping_invoices_by_name
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ---- FIX: rätta Tengella-fakturors ft_customer_number (internt id → Kundnr) ----
+// Nyckelskyddad. dry-run default. Skriver om endast Tengella-SKAPADE Housekeeping-rader
+// (ft_raw_json har InvoiceId) där numret är ett internt customerId och rätt Kundnr är känt.
+// Härleder Kundnr ur fakturans EGNA raw_json (CustomerNo direkt, annars CustomerId→Kundnr via
+// TengellaCustomer-mappen). Gissar aldrig på själva värdet. Idempotent (skippar redan-rätta).
+app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
+  const confirm = req.body?.confirm === true;
+  const maxFix  = Number(req.body?.max_fix || 500);
+  try {
+    // 1) Bygg map internt customerId → Kundnr, samt set av kända Kundnr
+    const tcs = await bubbleFindAll("TengellaCustomer", {}).catch(() => []);
+    const idToKundNr = {};
+    for (const tc of (tcs || [])) {
+      const intId  = tc?.tengella_customer_id != null ? String(tc.tengella_customer_id).trim() : "";
+      const kundNr = tc?.tengella_customer_no != null ? String(tc.tengella_customer_no).trim() : "";
+      if (intId && kundNr) idToKundNr[intId] = kundNr;
+    }
+
+    // 2) Hämta alla Housekeeping-fakturor
+    const invs = await bubbleFindAll(KUND_KPI.FORTNOXINVOICE_TYPE, {
+      constraints: [{ key: "connection_id", constraint_type: "equals", value: TENGELLA_CONNECTION_ID }]
+    }).catch(() => []);
+
+    const candidates = [];
+    let skipped_not_tengella = 0, skipped_unknown = 0, already_ok = 0;
+
+    for (const inv of (invs || [])) {
+      let raw = null;
+      try { raw = JSON.parse(inv.ft_raw_json || "{}"); } catch (_) { raw = null; }
+      const isTengella = raw && (raw.InvoiceId != null || raw.InvoiceNo != null) && raw.DocumentNumber == null;
+      if (!isTengella) { skipped_not_tengella++; continue; }
+
+      const cur = String(inv.ft_customer_number ?? "").trim();
+      // Härled rätt Kundnr ur fakturans egna data
+      let newNum = "";
+      let via = "";
+      if (raw.CustomerNo != null && String(raw.CustomerNo).trim() !== "") {
+        newNum = String(raw.CustomerNo).trim(); via = "raw.CustomerNo";
+      } else if (raw.CustomerId != null && idToKundNr[String(raw.CustomerId).trim()]) {
+        newNum = idToKundNr[String(raw.CustomerId).trim()]; via = "raw.CustomerId→map";
+      } else if (cur && idToKundNr[cur]) {
+        newNum = idToKundNr[cur]; via = "ft_customer_number→map";
+      }
+
+      if (!newNum) { skipped_unknown++; continue; }
+      if (newNum === cur) { already_ok++; continue; }
+
+      candidates.push({
+        invoice_id: inv._id, docNo: inv.ft_document_number,
+        from: cur, to: newNum, via,
+        raw_CustomerId: raw.CustomerId ?? null, raw_CustomerNo: raw.CustomerNo ?? null,
+        date: inv.ft_invoice_date
+      });
+    }
+
+    const toFix = candidates.slice(0, maxFix);
+    let patched = 0, errors = 0;
+    if (confirm) {
+      for (const c of toFix) {
+        try {
+          await bubblePatch(KUND_KPI.FORTNOXINVOICE_TYPE, c.invoice_id, { ft_customer_number: c.to });
+          patched++;
+        } catch (e) { errors++; }
+        await sleep(120);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dry_run: !confirm,
+      housekeeping_invoices_scanned: (invs || []).length,
+      tengella_customer_map_size: Object.keys(idToKundNr).length,
+      skipped_not_tengella, skipped_unknown, already_ok,
+      candidates_total: candidates.length,
+      candidates_to_fix: toFix.length,
+      patched: confirm ? patched : 0,
+      errors: confirm ? errors : 0,
+      sample: candidates.slice(0, 10)
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
