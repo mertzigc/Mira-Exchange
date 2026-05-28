@@ -14460,5 +14460,110 @@ app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
   }
 });
 
+// ---- DIAG: kund-360 per org/namn – hittar dubbletter & visar var data sitter ----
+// Nyckelskyddad, READ-ONLY. Hittar alla ClientCompany som matchar namn/org (inkl org-nr
+// med/utan bindestreck) och visar per post: Fortnox-nummer, Tengella-koppling, antal
+// ärenden/bokningar/betyg, FortnoxCustomer-bryggor + fakturaantal, samt Housekeeping-
+// fakturornas faktiska kundnummer. Underlag för dedup-beslut (vilken post är kanonisk).
+app.post("/customer/diag-by-org", async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const org  = String(req.body?.org  || "").trim();
+  if (!name && !org) return res.status(400).json({ ok: false, error: "name eller org krävs" });
+  try {
+    const set = new Map(); // _id → cc
+    if (name) {
+      const byName = await bubbleFindAll("ClientCompany", {
+        constraints: [{ key: "Name_company", constraint_type: "text contains", value: name }]
+      }).catch(() => []);
+      for (const c of (byName || [])) set.set(c._id, c);
+    }
+    if (org) {
+      const norm = (typeof normalizeOrgNo === "function") ? normalizeOrgNo(org) : org.replace(/\D/g, "");
+      const hyph = norm.replace(/^(\d{6})(\d{4})$/, "$1-$2");
+      for (const v of [...new Set([org, norm, hyph])].filter(Boolean)) {
+        const byOrg = await bubbleFindAll("ClientCompany", {
+          constraints: [{ key: "Org_Number", constraint_type: "equals", value: v }]
+        }).catch(() => []);
+        for (const c of (byOrg || [])) set.set(c._id, c);
+      }
+    }
+    const ccs = [...set.values()];
+
+    const records = [];
+    for (const cc of ccs) {
+      const id = cc._id;
+      const matters     = await bubbleFindAll("Matter",     { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []);
+      const comissions  = await bubbleFindAll("Comission",  { constraints: [{ key: "Company",      constraint_type: "equals", value: id }] }).catch(() => []);
+      const grades      = await fetchGradesForCompanies([id]).catch(() => []);
+      const arende_betyg = (grades || []).filter(g => g["ärende"]).length;
+      const qc_betyg     = (grades || []).filter(g => g["kvalitetskontroll"]).length;
+
+      const fcs = await bubbleFindAll("FortnoxCustomer", { constraints: [{ key: "linked_company", constraint_type: "equals", value: id }] }).catch(() => []);
+      const fortnox_customers = [];
+      for (const fc of (fcs || [])) {
+        const inv = await bubbleFindAll("FortnoxInvoice", {
+          constraints: [
+            { key: "connection_id",      constraint_type: "equals", value: String(fc.connection_id || "") },
+            { key: "ft_customer_number", constraint_type: "equals", value: String(fc.customer_number || "") }
+          ]
+        }).catch(() => []);
+        fortnox_customers.push({ conn: fc.connection_id || null, num: fc.customer_number ?? null, invoice_count: (inv || []).length });
+      }
+
+      const ccNum = String(cc.ft_customer_number ?? "").trim();
+      let hk_invoices_via_cc_ftnum = null;
+      if (ccNum) {
+        const inv = await bubbleFindAll("FortnoxInvoice", {
+          constraints: [
+            { key: "connection_id",      constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
+            { key: "ft_customer_number", constraint_type: "equals", value: ccNum }
+          ]
+        }).catch(() => []);
+        hk_invoices_via_cc_ftnum = (inv || []).length;
+      }
+
+      records.push({
+        _id: id,
+        name: cc.Name_company || null,
+        org: cc.Org_Number || null,
+        ft_customer_number: cc.ft_customer_number ?? null,
+        tengella_customer_id: cc.tengella_customer_id ?? null,
+        tengella_customer_no: cc.tengella_customer_no ?? null,
+        created: cc["Created Date"] || null,
+        created_by: cc["Created By"] || null,
+        has_kpi_json: !!(cc.kpi_json && String(cc.kpi_json).trim()),
+        counts: { matters: (matters || []).length, comissions: (comissions || []).length, grades_arende: arende_betyg, grades_qc: qc_betyg },
+        fortnox_customers,
+        hk_invoices_via_cc_ftnum
+      });
+    }
+
+    // Housekeeping-fakturor på namn – vilka kundnummer har de FAKTISKT?
+    let hk_distinct_numbers = [], hk_sample = [];
+    if (name) {
+      const inv = await bubbleFindAll("FortnoxInvoice", {
+        constraints: [
+          { key: "connection_id",   constraint_type: "equals",        value: TENGELLA_CONNECTION_ID },
+          { key: "ft_customer_name", constraint_type: "text contains", value: name }
+        ]
+      }).catch(() => []);
+      const nums = {};
+      for (const i of (inv || [])) { const n = String(i.ft_customer_number ?? ""); nums[n] = (nums[n] || 0) + 1; }
+      hk_distinct_numbers = Object.entries(nums).map(([num, count]) => ({ num, count })).sort((a, b) => b.count - a.count);
+      hk_sample = (inv || []).slice(0, 8).map(i => ({ docNo: i.ft_document_number, ft_customer_number: i.ft_customer_number, name: i.ft_customer_name, date: i.ft_invoice_date, total: i.ft_total }));
+    }
+
+    return res.json({
+      ok: true,
+      query: { name: name || null, org: org || null },
+      client_companies_found: records.length,
+      records,
+      housekeeping_by_name: { distinct_numbers: hk_distinct_numbers, sample: hk_sample }
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
