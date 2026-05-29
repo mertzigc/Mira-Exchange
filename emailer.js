@@ -152,6 +152,7 @@ async function buildEmail(item) {
     case "qc_updated":         return tmplQcUpdated(entity,      extra, toName, ctaLabel, ctx);
     case "news_new":           return tmplNewsNew(entity,        extra, toName, accent, ctaLabel, ctx);
     case "invoice_question":   return tmplInvoiceQuestion(entity, extra, toName, ctaLabel, ctx);
+    case "todo_new":           return tmplTodoNew(entity, extra, toName, ctaLabel, ctx);
       case "public_request_received": return tmplPublicRequestReceived(entity, extra, toName, ctaLabel, ctx);
     case "public_request_internal": return tmplPublicRequestInternal(entity, extra, toName, ctaLabel, ctx);
     case "invite_rsvp_confirmation": return tmplInviteRsvpConfirmation(entity, extra, toName, ctaLabel, ctx);
@@ -174,7 +175,8 @@ async function fetchEntity(slug, id) {
     qc_new:                "QualityControl",
     qc_updated:            "QualityControl",
     news_new:              "Invitation",
-    invoice_question:      "invoiceinquiry"
+    invoice_question:      "invoiceinquiry",
+    todo_new:              "Todo"
   };
   const type = typeMap[slug];
   if (!type) return {};
@@ -646,6 +648,47 @@ async function tmplInvoiceQuestion(e, extra, toName, ctaLabel, ctx) {
     ctaLabel: null,
     ctaUrl:   null,
     miraNote: "Läs och hantera ärendet på Mira."
+  });
+
+  return { subject, html };
+}
+
+
+// ────────────────────────────────────────────────────────────
+// MALL: todo_new  (Todo)
+// extra_data: ref_name, company_id, company_name,
+//             meddelande (Beskrivning), deadline (Sluttid), kategori (Display)
+// ────────────────────────────────────────────────────────────
+async function tmplTodoNew(e, extra, toName, ctaLabel, item) {
+  const companyId  = extra.company_id   || e.Företag || e.company || "";
+  const cc         = companyId ? await fetchClientCompany(companyId) : null;
+  const logoUrl    = cc?.logo_url    || cc?.Logo          || "";
+  const senderName = extra.company_name || cc?.Name_company || "";
+
+  const title     = e.Title          || e.title          || extra.title    || "Ny uppgift";
+  const message   = extra.meddelande || e.Beskrivning    || e.description  || "";
+  const deadline  = fmtDateTime(extra.deadline || e.Sluttid || e.deadline);
+  const category  = extra.kategori   || e.Kategori       || "";
+  const refName   = extra.ref_name   || "";
+  const createdAt = fmtDateTime(e["Created Date"] || e.created_date);
+  const subject   = item.subject_override || `Ny uppgift: ${title}`;
+
+  const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
+    tag: "Uppgift",
+    headline: title,
+    body: message
+      ? `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">${esc(message)}</p>`
+      : "",
+    details: detailRows([
+      senderName && ["Företag",    senderName],
+      category   && ["Kategori",   category],
+      deadline   && ["Sluttid",    `<span style="font-weight:600;color:#fbbf24;">${esc(deadline)}</span>`],
+      refName    && ["Skapad av",  refName],
+      createdAt  && ["Skapad",     createdAt]
+    ]),
+    ctaLabel: null,
+    ctaUrl:   null,
+    miraNote: "Hantera uppgiften på Mira."
   });
 
   return { subject, html };
