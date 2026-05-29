@@ -8075,6 +8075,20 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
   return { ok: true, mode: "create", id: createdId, docNo };
 }
 
+// Slår upp FortnoxCustomer-bryggan för att hitta ClientCompany (linked_company)
+// för en faktura med given connection_id + customer_number. Returnerar null om
+// inget hittas – då sätts inte linked_company på fakturan (inte överskriva med null).
+async function resolveLinkedCompanyFromInvoice(connection_id, customer_number) {
+  const cid = String(connection_id || "").trim();
+  const cn  = String(customer_number || "").trim();
+  if (!cid || !cn) return null;
+  const fc = await bubbleFindOne("FortnoxCustomer", [
+    { key: "connection_id",   constraint_type: "equals", value: cid },
+    { key: "customer_number", constraint_type: "equals", value: cn }
+  ]).catch(() => null);
+  return fc?.linked_company || null;
+}
+
 async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
   const docNo = String(invoice?.DocumentNumber || "").trim();
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
@@ -8123,6 +8137,10 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
     ft_url: String(invoice?.["@url"] || ""),
     ft_raw_json: JSON.stringify(invoice || {})
   };
+
+  // Sätt linked_company från FortnoxCustomer-bryggan om den finns
+  const linkedCompany = await resolveLinkedCompanyFromInvoice(connection_id, invoice?.CustomerNumber);
+  if (linkedCompany) payload.linked_company = linkedCompany;
 
   // 1) Försök först hitta på connection_id + dokumentnummer
   let existing = await bubbleFindOne("FortnoxInvoice", [
@@ -9964,10 +9982,12 @@ async function upsertTengellaInvoiceToBubble(inv, { customerId = null, token = n
   if (!invoiceNo) return { ok: false, skipped: true, reason: "missing_invoice_number" };
 
   // Hämta kundnamn + säkerställ ClientCompany
-  const { customerName, customerNumber } =
+  const { customerName, customerNumber, companyId } =
     await resolveTengellaInvoiceCustomer(customerId, token);
 
   const payload = mapTengellaInvoiceToFortnoxInvoicePayload(inv, { customerName, customerNumber });
+  // Sätt linked_company direkt från resolve (snabbare än ny FortnoxCustomer-lookup)
+  if (companyId) payload.linked_company = companyId;
 
   let existing = await bubbleFindOne("FortnoxInvoice", [
     { key: "connection_id",      constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
@@ -14360,6 +14380,82 @@ app.post("/kpi/company/diag", async (req, res) => {
 // TengellaCustomer är otvetydigt. Re-körning sätter samma värde (idempotent). Tvetydiga namn
 // (samma namn, flera Kundnr) hoppas över. Dry-run efter en tidigare körning fungerar som
 // VERIFIERING: candidates_total≈0 betyder att datat redan är korrekt.
+// ---- BACKFILL: linked_company på alla FortnoxInvoices (nyckelskyddad) ----
+// Slår upp varje fakturas (connection_id, ft_customer_number) i FortnoxCustomer-bryggan
+// och patchar linked_company på fakturan. Dry-run default. Idempotent (skippar redan-ok).
+app.post("/fortnox/backfill/invoice-linked-company", async (req, res) => {
+  const confirm = req.body?.confirm === true;
+  const maxFix  = Number(req.body?.max_fix || 1000);
+  try {
+    // 1) Bygg map (connection_id|customer_number) → linked_company från alla FortnoxCustomer
+    const fcs = await bubbleFindAll("FortnoxCustomer", {}).catch(() => []);
+    const bridgeMap = {};
+    let bridges_without_link = 0;
+    for (const fc of (fcs || [])) {
+      const cid = String(fc.connection_id || "").trim();
+      const cn  = String(fc.customer_number || "").trim();
+      const lc  = fc.linked_company || null;
+      if (!cid || !cn) continue;
+      if (!lc) { bridges_without_link++; continue; }
+      bridgeMap[`${cid}|${cn}`] = lc;
+    }
+
+    // 2) Hämta alla FortnoxInvoices
+    const invs = await bubbleFindAll("FortnoxInvoice", {}).catch(() => []);
+
+    const candidates = [];
+    let already_ok = 0, no_bridge = 0, missing_keys = 0;
+    for (const inv of (invs || [])) {
+      const cid = String(inv.connection_id || "").trim();
+      const cn  = String(inv.ft_customer_number || "").trim();
+      const cur = inv.linked_company || null;
+      if (!cid || !cn) { missing_keys++; continue; }
+      const expected = bridgeMap[`${cid}|${cn}`];
+      if (!expected) { no_bridge++; continue; }
+      if (cur === expected) { already_ok++; continue; }
+      candidates.push({
+        invoice_id: inv._id,
+        docNo: inv.ft_document_number,
+        connection_id: cid,
+        customer_number: cn,
+        from: cur,
+        to: expected,
+        date: inv.ft_invoice_date
+      });
+    }
+
+    const toFix = candidates.slice(0, maxFix);
+    let patched = 0, errors = 0;
+    if (confirm) {
+      for (const c of toFix) {
+        try {
+          await bubblePatch("FortnoxInvoice", c.invoice_id, { linked_company: c.to });
+          patched++;
+        } catch (e) { errors++; }
+        await sleep(110);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dry_run: !confirm,
+      invoices_scanned: (invs || []).length,
+      fortnox_customer_bridges: Object.keys(bridgeMap).length,
+      bridges_without_link,
+      already_ok,
+      no_bridge,
+      missing_keys,
+      candidates_total: candidates.length,
+      candidates_to_fix: toFix.length,
+      patched: confirm ? patched : 0,
+      errors: confirm ? errors : 0,
+      sample: candidates.slice(0, 10)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
   const confirm = req.body?.confirm === true;
   const maxFix  = Number(req.body?.max_fix || 500);
@@ -14658,6 +14754,7 @@ app.post("/customer/dedup/scan", async (req, res) => {
 // kvarvarande financial-referenser, annars avbryts raderingen för den gruppen.
 const MIGRATE_SPECS = [
   { label: "fortnox_customers",  type: "FortnoxCustomer",   field: "linked_company" },
+  { label: "fortnox_invoices",   type: "FortnoxInvoice",    field: "linked_company" },
   { label: "tengella_customers", type: "TengellaCustomer",  field: "company" },
   { label: "tengella_workorders",type: "TengellaWorkorder", field: "company" }
 ];
@@ -14675,7 +14772,7 @@ const OPERATIONAL_TYPES = [
   "Matter", "grade", "Comission", "Coworker", "User", "Deal", "Activity", "Office",
   "Fastighet", "caspecobooking", "Lead", "invoiceinquiry", "Nyckel", "Närvaro"
 ];
-const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "TengellaCustomer", "TengellaWorkorder"];
+const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "FortnoxInvoice", "TengellaCustomer", "TengellaWorkorder"];
 const ALL_LINK_TYPES = [...new Set([...OPERATIONAL_TYPES, ...FINANCIAL_LINK_TYPES])];
 
 // Explicit fält-karta (bekräftad av Christian) – används FÖRE auto-detektering så vi
