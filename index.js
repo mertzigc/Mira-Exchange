@@ -7984,6 +7984,10 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
     needs_rows_sync: true
   };
 
+  // Sätt linked_company från FortnoxCustomer-bryggan om den finns
+  const linkedCompany = await resolveLinkedCompanyFromInvoice(connection_id, order?.CustomerNumber);
+  if (linkedCompany) payload.linked_company = linkedCompany;
+
   const existing = await bubbleFindOne("FortnoxOrder", [
     { key: "connection", constraint_type: "equals", value: connection_id },
     { key: "ft_document_number", constraint_type: "equals", value: docNo }
@@ -8039,6 +8043,10 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
     ft_raw_json: JSON.stringify(offer || {}),
     needs_rows_sync: true
   };
+
+  // Sätt linked_company från FortnoxCustomer-bryggan om den finns
+  const linkedCompany = await resolveLinkedCompanyFromInvoice(connection_id, offer?.CustomerNumber);
+  if (linkedCompany) payload.linked_company = linkedCompany;
 
   const existing = await bubbleFindOne("FortnoxOffer", [
     { key: "connection", constraint_type: "equals", value: connection_id },
@@ -14456,6 +14464,91 @@ app.post("/fortnox/backfill/invoice-linked-company", async (req, res) => {
   }
 });
 
+// ---- BACKFILL: linked_company på godtycklig Fortnox-doctyp (generaliserad) ----
+// type-parameter: "FortnoxInvoice" | "FortnoxOrder" | "FortnoxOffer"
+// Skillnaden mot invoice-specifika varianten: FortnoxOrder/Offer använder
+// fältet "connection" (inte "connection_id") för connection-relationen.
+const BACKFILL_DOC_TYPES = {
+  FortnoxInvoice: { connKey: "connection_id", custKey: "ft_customer_number" },
+  FortnoxOrder:   { connKey: "connection",    custKey: "ft_customer_number" },
+  FortnoxOffer:   { connKey: "connection",    custKey: "ft_customer_number" }
+};
+
+app.post("/fortnox/backfill/document-linked-company", async (req, res) => {
+  const type = String(req.body?.type || "FortnoxInvoice").trim();
+  const cfg = BACKFILL_DOC_TYPES[type];
+  if (!cfg) {
+    return res.status(400).json({ ok: false, error: `okänd type, tillåtna: ${Object.keys(BACKFILL_DOC_TYPES).join(", ")}` });
+  }
+  const confirm = req.body?.confirm === true;
+  const maxFix  = Number(req.body?.max_fix || 1000);
+  try {
+    // Bygg FortnoxCustomer-bryggmap (samma som invoice-versionen)
+    const fcs = await bubbleFindAll("FortnoxCustomer", {}).catch(() => []);
+    const bridgeMap = {};
+    let bridges_without_link = 0;
+    for (const fc of (fcs || [])) {
+      const cid = String(fc.connection_id || "").trim();
+      const cn  = String(fc.customer_number || "").trim();
+      const lc  = fc.linked_company || null;
+      if (!cid || !cn) continue;
+      if (!lc) { bridges_without_link++; continue; }
+      bridgeMap[`${cid}|${cn}`] = lc;
+    }
+
+    // Hämta alla dokument av aktuell typ
+    const docs = await bubbleFindAll(type, {}).catch(() => []);
+
+    const candidates = [];
+    let already_ok = 0, no_bridge = 0, missing_keys = 0;
+    for (const d of (docs || [])) {
+      const cid = String(d[cfg.connKey] || "").trim();
+      const cn  = String(d[cfg.custKey] || "").trim();
+      const cur = d.linked_company || null;
+      if (!cid || !cn) { missing_keys++; continue; }
+      const expected = bridgeMap[`${cid}|${cn}`];
+      if (!expected) { no_bridge++; continue; }
+      if (cur === expected) { already_ok++; continue; }
+      candidates.push({
+        doc_id: d._id,
+        docNo: d.ft_document_number,
+        connection_id: cid,
+        customer_number: cn,
+        from: cur,
+        to: expected
+      });
+    }
+
+    const toFix = candidates.slice(0, maxFix);
+    let patched = 0, errors = 0;
+    if (confirm) {
+      for (const c of toFix) {
+        try {
+          await bubblePatch(type, c.doc_id, { linked_company: c.to });
+          patched++;
+        } catch (e) { errors++; }
+        await sleep(110);
+      }
+    }
+
+    return res.json({
+      ok: true, type,
+      dry_run: !confirm,
+      docs_scanned: (docs || []).length,
+      fortnox_customer_bridges: Object.keys(bridgeMap).length,
+      bridges_without_link,
+      already_ok, no_bridge, missing_keys,
+      candidates_total: candidates.length,
+      candidates_to_fix: toFix.length,
+      patched: confirm ? patched : 0,
+      errors: confirm ? errors : 0,
+      sample: candidates.slice(0, 10)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post("/tengella/fix/invoice-customer-numbers", async (req, res) => {
   const confirm = req.body?.confirm === true;
   const maxFix  = Number(req.body?.max_fix || 500);
@@ -14755,6 +14848,8 @@ app.post("/customer/dedup/scan", async (req, res) => {
 const MIGRATE_SPECS = [
   { label: "fortnox_customers",  type: "FortnoxCustomer",   field: "linked_company" },
   { label: "fortnox_invoices",   type: "FortnoxInvoice",    field: "linked_company" },
+  { label: "fortnox_orders",     type: "FortnoxOrder",      field: "linked_company" },
+  { label: "fortnox_offers",     type: "FortnoxOffer",      field: "linked_company" },
   { label: "tengella_customers", type: "TengellaCustomer",  field: "company" },
   { label: "tengella_workorders",type: "TengellaWorkorder", field: "company" }
 ];
@@ -14772,7 +14867,7 @@ const OPERATIONAL_TYPES = [
   "Matter", "grade", "Comission", "Coworker", "User", "Deal", "Activity", "Office",
   "Fastighet", "caspecobooking", "Lead", "invoiceinquiry", "Nyckel", "Närvaro"
 ];
-const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "FortnoxInvoice", "TengellaCustomer", "TengellaWorkorder"];
+const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "FortnoxInvoice", "FortnoxOrder", "FortnoxOffer", "TengellaCustomer", "TengellaWorkorder"];
 const ALL_LINK_TYPES = [...new Set([...OPERATIONAL_TYPES, ...FINANCIAL_LINK_TYPES])];
 
 // Explicit fält-karta (bekräftad av Christian) – används FÖRE auto-detektering så vi
