@@ -14627,12 +14627,25 @@ app.post("/fortnox/backfill/invoice-linked-company-from-csv", async (req, res) =
   const year = Number(req.body?.year || 2026);
   const confirm = req.body?.confirm === true;
   const maxFix = Number(req.body?.max_fix || 2000);
+  // Val A: skapa ClientCompany för kunder som har orgnr men ingen matchande CC.
+  // Använder vaccinet (findClientCompanyByOrgNo provar 3 varianter) → trygg mot dubletter.
+  const autoCreateCc = req.body?.auto_create_cc === true;
 
   if (!connection_id) return res.status(400).json({ ok: false, error: "connection_id krävs" });
   const mapKeys = Object.keys(map);
   if (!mapKeys.length)   return res.status(400).json({ ok: false, error: "customer_orgnr_map krävs (icke-tom)" });
 
+  // Stödja båda map-format: { cn: "orgnr" } eller { cn: { orgnr, name } }
+  function getEntry(cn) {
+    const v = map[cn];
+    if (!v) return null;
+    if (typeof v === "string") return { orgnr: v, name: "" };
+    return { orgnr: String(v.orgnr || v.org || "").trim(), name: String(v.name || "").trim() };
+  }
+
   try {
+    const orgKey = await detectClientCompanyOrgKey();
+
     // Hämta fakturor för connection
     const invs = await bubbleFindAll("FortnoxInvoice", {
       constraints: [{ key: "connection_id", constraint_type: "equals", value: connection_id }]
@@ -14647,26 +14660,57 @@ app.post("/fortnox/backfill/invoice-linked-company-from-csv", async (req, res) =
       return !inv.linked_company;
     });
 
-    // Cache: orgnr → ClientCompany (många fakturor kan dela kund)
+    // Cache: orgnr → ClientCompany
     const ccCache = {};
     const candidates = [];
     let no_orgnr_in_map = 0;
     let no_cc_match = 0;
     let lookups = 0;
+    let cc_created = 0, cc_create_errors = 0;
+    const created_cc_samples = [];
 
     for (const inv of targets) {
       const cn = String(inv.ft_customer_number || "").trim();
-      const orgnr = map[cn];
-      if (!orgnr) { no_orgnr_in_map++; continue; }
+      const entry = getEntry(cn);
+      if (!entry || !entry.orgnr) { no_orgnr_in_map++; continue; }
 
+      const orgnr = entry.orgnr;
+      const csvName = entry.name;
       let cc;
       if (Object.prototype.hasOwnProperty.call(ccCache, orgnr)) {
         cc = ccCache[orgnr];
       } else {
         cc = await findClientCompanyByOrgNo(orgnr).catch(() => null);
-        ccCache[orgnr] = cc;
         lookups++;
         await sleep(110);
+
+        // Auto-create ClientCompany om inte hittad
+        if (!cc?._id && autoCreateCc && confirm) {
+          const newName = csvName || inv.ft_customer_name || "";
+          if (newName) {
+            try {
+              const createPayload = {
+                Name_company: newName,
+                [orgKey]: orgnr
+              };
+              const created = await bubbleCreate("ClientCompany", createPayload);
+              const createdId =
+                (typeof created === "string" && created) ||
+                created?._id || created?.id ||
+                created?.response?._id || created?.response?.id || null;
+              if (createdId) {
+                cc = { _id: createdId, Name_company: newName, _created_by_backfill: true };
+                cc_created++;
+                if (created_cc_samples.length < 10) {
+                  created_cc_samples.push({ orgnr, name: newName, new_cc_id: createdId });
+                }
+              }
+            } catch (e) { cc_create_errors++; }
+            await sleep(110);
+          }
+        }
+
+        ccCache[orgnr] = cc;
       }
 
       if (!cc?._id) { no_cc_match++; continue; }
@@ -14678,7 +14722,8 @@ app.post("/fortnox/backfill/invoice-linked-company-from-csv", async (req, res) =
         customer_name: inv.ft_customer_name,
         orgnr,
         to: cc._id,
-        to_name: cc.Name_company || cc.name || ""
+        to_name: cc.Name_company || cc.name || "",
+        cc_newly_created: !!cc._created_by_backfill
       });
     }
 
@@ -14699,17 +14744,21 @@ app.post("/fortnox/backfill/invoice-linked-company-from-csv", async (req, res) =
       dry_run: !confirm,
       year,
       connection_id,
+      auto_create_cc: autoCreateCc,
       invoices_total_for_conn: (invs || []).length,
       invoices_in_year_without_lc: targets.length,
       customers_in_map: mapKeys.length,
       unique_orgnr_lookups: lookups,
       no_orgnr_in_map,
       no_cc_match,
+      cc_created,
+      cc_create_errors,
       can_fix: candidates.length,
       processed: toFix.length,
       patched: confirm ? patched : 0,
       errors: confirm ? errors : 0,
-      sample_can_fix: candidates.slice(0, 10)
+      sample_can_fix: candidates.slice(0, 10),
+      sample_created_cc: created_cc_samples
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
