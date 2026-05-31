@@ -14609,6 +14609,93 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
 // Patchar bryggan vid match. Dry-run default. Konservativ – skapar inga nya CC.
 // Efter denna körning ska invoice-backfillen (/fortnox/backfill/invoice-linked-company)
 // köras för att fakturorna ska få linked_company via den fyllda bryggan.
+// ---- BULK PATCH: organisation_number på FortnoxCustomer från CSV-export ----
+// Tar {connection_id, rows: [{customer_number, orgnr}], confirm}.
+// Bygger en in-memory map av alla FortnoxCustomer för connection_id (ETT bubbleFindAll),
+// loopar rows och patchar endast där orgnr saknas eller skiljer sig. Dry-run default.
+// Användning: läs CSV-export från Fortnox, filtrera till company med org_nr, batch i 1000-tal.
+app.post("/fortnox/customers/patch-orgnr-bulk", async (req, res) => {
+  const connection_id = String(req.body?.connection_id || "").trim();
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  const confirm = req.body?.confirm === true;
+  const overwrite = req.body?.overwrite === true; // default: skriv bara om Bubble saknar orgnr
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "connection_id krävs" });
+  if (!rows.length)   return res.status(400).json({ ok: false, error: "rows[] krävs" });
+
+  try {
+    // Hämta hela FortnoxCustomer-tabellen för connection_id en gång
+    const allFcs = await bubbleFindAll("FortnoxCustomer", {
+      constraints: [{ key: "connection_id", constraint_type: "equals", value: connection_id }]
+    }).catch(() => []);
+    const fcMap = {};
+    for (const fc of (allFcs || [])) {
+      const cn = String(fc.customer_number || "").trim();
+      if (cn) fcMap[cn] = fc;
+    }
+
+    let processed = 0;
+    let patched = 0, errors = 0;
+    let already_ok = 0, skipped_has_orgnr = 0, skipped_not_in_bubble = 0, skipped_empty_input = 0;
+    const samples_to_patch = [];
+    const samples_conflict = [];
+
+    for (const r of rows) {
+      processed++;
+      const cn = String(r?.customer_number || "").trim();
+      const newOrg = String(r?.orgnr || "").trim();
+      if (!cn || !newOrg) { skipped_empty_input++; continue; }
+
+      const fc = fcMap[cn];
+      if (!fc) { skipped_not_in_bubble++; continue; }
+
+      const curOrg = String(fc.organisation_number || "").trim();
+      if (curOrg === newOrg) { already_ok++; continue; }
+
+      if (curOrg && !overwrite) {
+        skipped_has_orgnr++;
+        if (samples_conflict.length < 5) samples_conflict.push({
+          customer_number: cn, name: fc.name, bubble_org: curOrg, csv_org: newOrg
+        });
+        continue;
+      }
+
+      if (confirm) {
+        try {
+          await bubblePatch("FortnoxCustomer", fc._id, { organisation_number: newOrg });
+          patched++;
+        } catch (e) { errors++; }
+        await sleep(80);
+      } else {
+        patched++; // dry-run: räkna vad som SKULLE patchats
+        if (samples_to_patch.length < 5) samples_to_patch.push({
+          customer_number: cn, name: fc.name, bubble_org: curOrg || "(tom)", csv_org: newOrg
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dry_run: !confirm,
+      connection_id,
+      fortnox_customers_in_bubble_for_conn: (allFcs || []).length,
+      rows_received: rows.length,
+      processed,
+      patched: confirm ? patched : 0,
+      would_patch: confirm ? null : patched,
+      already_ok,
+      skipped_has_orgnr,
+      skipped_not_in_bubble,
+      skipped_empty_input,
+      errors,
+      sample_to_patch: samples_to_patch,
+      sample_conflict_skipped: samples_conflict
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post("/fortnox/backfill/customer-linked-company", async (req, res) => {
   const confirm = req.body?.confirm === true;
   const maxFix  = Number(req.body?.max_fix || 1000);
