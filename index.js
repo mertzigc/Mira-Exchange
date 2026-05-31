@@ -7984,10 +7984,6 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
     needs_rows_sync: true
   };
 
-  // Sätt linked_company från FortnoxCustomer-bryggan om den finns
-  const linkedCompany = await resolveLinkedCompanyFromInvoice(connection_id, order?.CustomerNumber);
-  if (linkedCompany) payload.linked_company = linkedCompany;
-
   const existing = await bubbleFindOne("FortnoxOrder", [
     { key: "connection", constraint_type: "equals", value: connection_id },
     { key: "ft_document_number", constraint_type: "equals", value: docNo }
@@ -8043,10 +8039,6 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
     ft_raw_json: JSON.stringify(offer || {}),
     needs_rows_sync: true
   };
-
-  // Sätt linked_company från FortnoxCustomer-bryggan om den finns
-  const linkedCompany = await resolveLinkedCompanyFromInvoice(connection_id, offer?.CustomerNumber);
-  if (linkedCompany) payload.linked_company = linkedCompany;
 
   const existing = await bubbleFindOne("FortnoxOffer", [
     { key: "connection", constraint_type: "equals", value: connection_id },
@@ -14464,85 +14456,111 @@ app.post("/fortnox/backfill/invoice-linked-company", async (req, res) => {
   }
 });
 
-// ---- BACKFILL: linked_company på godtycklig Fortnox-doctyp (generaliserad) ----
-// type-parameter: "FortnoxInvoice" | "FortnoxOrder" | "FortnoxOffer"
-// Skillnaden mot invoice-specifika varianten: FortnoxOrder/Offer använder
-// fältet "connection" (inte "connection_id") för connection-relationen.
-const BACKFILL_DOC_TYPES = {
-  FortnoxInvoice: { connKey: "connection_id", custKey: "ft_customer_number" },
-  FortnoxOrder:   { connKey: "connection",    custKey: "ft_customer_number" },
-  FortnoxOffer:   { connKey: "connection",    custKey: "ft_customer_number" }
-};
-
-app.post("/fortnox/backfill/document-linked-company", async (req, res) => {
-  const type = String(req.body?.type || "FortnoxInvoice").trim();
-  const cfg = BACKFILL_DOC_TYPES[type];
-  if (!cfg) {
-    return res.status(400).json({ ok: false, error: `okänd type, tillåtna: ${Object.keys(BACKFILL_DOC_TYPES).join(", ")}` });
-  }
-  const confirm = req.body?.confirm === true;
-  const maxFix  = Number(req.body?.max_fix || 1000);
+// ---- DIAG: status för 2026-fakturor över alla 4 connections (read-only) ----
+// Räknar per connection och totalt: antal, linked_company-täckning, PDF-täckning,
+// och ev. dubletter (samma connection_id + ft_document_number förekommer flera gånger).
+// Används för att verifiera "100% komplett 2026"-kravet.
+app.post("/diag/invoices-2026-status", async (req, res) => {
   try {
-    // Bygg FortnoxCustomer-bryggmap (samma som invoice-versionen)
-    const fcs = await bubbleFindAll("FortnoxCustomer", {}).catch(() => []);
-    const bridgeMap = {};
-    let bridges_without_link = 0;
-    for (const fc of (fcs || [])) {
-      const cid = String(fc.connection_id || "").trim();
-      const cn  = String(fc.customer_number || "").trim();
-      const lc  = fc.linked_company || null;
-      if (!cid || !cn) continue;
-      if (!lc) { bridges_without_link++; continue; }
-      bridgeMap[`${cid}|${cn}`] = lc;
+    // Connection name-mapping
+    const conns = await bubbleFindAll("FortnoxConnection", {}).catch(() => []);
+    const connMap = {};
+    for (const c of (conns || [])) {
+      const cid = String(c._id || "").trim();
+      if (cid) connMap[cid] = c.name || c.connection_name || c.Name_Company || "(unnamed)";
     }
+    if (!connMap[TENGELLA_CONNECTION_ID]) connMap[TENGELLA_CONNECTION_ID] = "Housekeeping (Tengella)";
 
-    // Hämta alla dokument av aktuell typ
-    const docs = await bubbleFindAll(type, {}).catch(() => []);
+    // Hämta alla FortnoxInvoice
+    const invs = await bubbleFindAll("FortnoxInvoice", {}).catch(() => []);
 
-    const candidates = [];
-    let already_ok = 0, no_bridge = 0, missing_keys = 0;
-    for (const d of (docs || [])) {
-      const cid = String(d[cfg.connKey] || "").trim();
-      const cn  = String(d[cfg.custKey] || "").trim();
-      const cur = d.linked_company || null;
-      if (!cid || !cn) { missing_keys++; continue; }
-      const expected = bridgeMap[`${cid}|${cn}`];
-      if (!expected) { no_bridge++; continue; }
-      if (cur === expected) { already_ok++; continue; }
-      candidates.push({
-        doc_id: d._id,
-        docNo: d.ft_document_number,
-        connection_id: cid,
-        customer_number: cn,
-        from: cur,
-        to: expected
-      });
-    }
+    const startOf2026 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const byConn = {};        // connection_id → counters
+    const docnoCounts = {};   // connection_id → { docNo: count }
+    let total_2026 = 0;
+    let missing_lc = 0, missing_pdf = 0, complete = 0;
+    const incomplete_samples = [];
 
-    const toFix = candidates.slice(0, maxFix);
-    let patched = 0, errors = 0;
-    if (confirm) {
-      for (const c of toFix) {
-        try {
-          await bubblePatch(type, c.doc_id, { linked_company: c.to });
-          patched++;
-        } catch (e) { errors++; }
-        await sleep(110);
+    for (const inv of (invs || [])) {
+      const dateStr = inv.ft_invoice_date;
+      if (!dateStr) continue;
+      const t = new Date(dateStr).getTime();
+      if (!isFinite(t) || t < startOf2026) continue;
+
+      total_2026++;
+      const cid = String(inv.connection_id || "").trim();
+      if (!byConn[cid]) {
+        byConn[cid] = {
+          connection_id: cid,
+          name: connMap[cid] || "(unknown)",
+          total_2026: 0,
+          with_linked_company: 0,
+          with_pdf: 0,
+          missing_linked_company: 0,
+          missing_pdf: 0,
+          duplicate_docno_groups: 0
+        };
+        docnoCounts[cid] = {};
       }
+      const row = byConn[cid];
+      row.total_2026++;
+
+      const hasLc  = !!inv.linked_company;
+      const hasPdf = !!inv.ft_pdf && String(inv.ft_pdf).trim() !== "";
+
+      if (hasLc)  row.with_linked_company++; else { row.missing_linked_company++; missing_lc++; }
+      if (hasPdf) row.with_pdf++;             else { row.missing_pdf++;            missing_pdf++; }
+
+      if (hasLc && hasPdf) complete++;
+      else if (incomplete_samples.length < 10) {
+        incomplete_samples.push({
+          _id: inv._id,
+          connection: connMap[cid] || cid,
+          docNo: inv.ft_document_number,
+          date: dateStr,
+          customer: inv.ft_customer_name,
+          missing: [!hasLc && "linked_company", !hasPdf && "ft_pdf"].filter(Boolean)
+        });
+      }
+
+      const docNo = String(inv.ft_document_number || "").trim();
+      if (docNo) docnoCounts[cid][docNo] = (docnoCounts[cid][docNo] || 0) + 1;
+    }
+
+    // Räkna dubletter per connection
+    let total_dup_groups = 0;
+    const dup_samples = [];
+    for (const [cid, byDoc] of Object.entries(docnoCounts)) {
+      let groups = 0;
+      for (const [docNo, count] of Object.entries(byDoc)) {
+        if (count > 1) {
+          groups++;
+          if (dup_samples.length < 10) dup_samples.push({
+            connection: connMap[cid] || cid,
+            docNo, count
+          });
+        }
+      }
+      if (byConn[cid]) byConn[cid].duplicate_docno_groups = groups;
+      total_dup_groups += groups;
     }
 
     return res.json({
-      ok: true, type,
-      dry_run: !confirm,
-      docs_scanned: (docs || []).length,
-      fortnox_customer_bridges: Object.keys(bridgeMap).length,
-      bridges_without_link,
-      already_ok, no_bridge, missing_keys,
-      candidates_total: candidates.length,
-      candidates_to_fix: toFix.length,
-      patched: confirm ? patched : 0,
-      errors: confirm ? errors : 0,
-      sample: candidates.slice(0, 10)
+      ok: true,
+      generated_at: new Date().toISOString(),
+      total_invoices_in_db: (invs || []).length,
+      by_connection: Object.values(byConn).sort((a, b) => b.total_2026 - a.total_2026),
+      summary: {
+        total_2026,
+        complete_2026: complete,
+        incomplete_2026: total_2026 - complete,
+        missing_linked_company: missing_lc,
+        missing_pdf: missing_pdf,
+        duplicate_docno_groups_total: total_dup_groups,
+        is_100_percent: (total_2026 > 0 && complete === total_2026 && total_dup_groups === 0)
+      },
+      incomplete_samples,
+      duplicate_samples: dup_samples
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -14848,8 +14866,6 @@ app.post("/customer/dedup/scan", async (req, res) => {
 const MIGRATE_SPECS = [
   { label: "fortnox_customers",  type: "FortnoxCustomer",   field: "linked_company" },
   { label: "fortnox_invoices",   type: "FortnoxInvoice",    field: "linked_company" },
-  { label: "fortnox_orders",     type: "FortnoxOrder",      field: "linked_company" },
-  { label: "fortnox_offers",     type: "FortnoxOffer",      field: "linked_company" },
   { label: "tengella_customers", type: "TengellaCustomer",  field: "company" },
   { label: "tengella_workorders",type: "TengellaWorkorder", field: "company" }
 ];
@@ -14867,7 +14883,7 @@ const OPERATIONAL_TYPES = [
   "Matter", "grade", "Comission", "Coworker", "User", "Deal", "Activity", "Office",
   "Fastighet", "caspecobooking", "Lead", "invoiceinquiry", "Nyckel", "Närvaro"
 ];
-const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "FortnoxInvoice", "FortnoxOrder", "FortnoxOffer", "TengellaCustomer", "TengellaWorkorder"];
+const FINANCIAL_LINK_TYPES = ["FortnoxCustomer", "FortnoxInvoice", "TengellaCustomer", "TengellaWorkorder"];
 const ALL_LINK_TYPES = [...new Set([...OPERATIONAL_TYPES, ...FINANCIAL_LINK_TYPES])];
 
 // Explicit fält-karta (bekräftad av Christian) – används FÖRE auto-detektering så vi
