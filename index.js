@@ -14614,6 +14614,108 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
 // Bygger en in-memory map av alla FortnoxCustomer för connection_id (ETT bubbleFindAll),
 // loopar rows och patchar endast där orgnr saknas eller skiljer sig. Dry-run default.
 // Användning: läs CSV-export från Fortnox, filtrera till company med org_nr, batch i 1000-tal.
+// ---- DIREKT FIX: linked_company på 2026-fakturor via CSV-mappning ----
+// Tar {connection_id, customer_orgnr_map: {customer_number: orgnr}, year, confirm}.
+// För varje 2026-faktura UTAN linked_company:
+//   1. Slå upp ft_customer_number i mappen → orgnr
+//   2. findClientCompanyByOrgNo(orgnr) provar 3 format-varianter → ClientCompany
+//   3. Patcha linked_company på fakturan
+// Bryggans tillstånd irrelevant – vi går direkt från fakturan till CC via CSV.
+app.post("/fortnox/backfill/invoice-linked-company-from-csv", async (req, res) => {
+  const connection_id = String(req.body?.connection_id || "").trim();
+  const map = req.body?.customer_orgnr_map || {};
+  const year = Number(req.body?.year || 2026);
+  const confirm = req.body?.confirm === true;
+  const maxFix = Number(req.body?.max_fix || 2000);
+
+  if (!connection_id) return res.status(400).json({ ok: false, error: "connection_id krävs" });
+  const mapKeys = Object.keys(map);
+  if (!mapKeys.length)   return res.status(400).json({ ok: false, error: "customer_orgnr_map krävs (icke-tom)" });
+
+  try {
+    // Hämta fakturor för connection
+    const invs = await bubbleFindAll("FortnoxInvoice", {
+      constraints: [{ key: "connection_id", constraint_type: "equals", value: connection_id }]
+    }).catch(() => []);
+
+    const startOf = new Date(`${year}-01-01T00:00:00.000Z`).getTime();
+    const endOf   = new Date(`${year + 1}-01-01T00:00:00.000Z`).getTime();
+
+    const targets = (invs || []).filter(inv => {
+      const t = new Date(inv.ft_invoice_date).getTime();
+      if (!isFinite(t) || t < startOf || t >= endOf) return false;
+      return !inv.linked_company;
+    });
+
+    // Cache: orgnr → ClientCompany (många fakturor kan dela kund)
+    const ccCache = {};
+    const candidates = [];
+    let no_orgnr_in_map = 0;
+    let no_cc_match = 0;
+    let lookups = 0;
+
+    for (const inv of targets) {
+      const cn = String(inv.ft_customer_number || "").trim();
+      const orgnr = map[cn];
+      if (!orgnr) { no_orgnr_in_map++; continue; }
+
+      let cc;
+      if (Object.prototype.hasOwnProperty.call(ccCache, orgnr)) {
+        cc = ccCache[orgnr];
+      } else {
+        cc = await findClientCompanyByOrgNo(orgnr).catch(() => null);
+        ccCache[orgnr] = cc;
+        lookups++;
+        await sleep(110);
+      }
+
+      if (!cc?._id) { no_cc_match++; continue; }
+
+      candidates.push({
+        invoice_id: inv._id,
+        docNo: inv.ft_document_number,
+        customer_number: cn,
+        customer_name: inv.ft_customer_name,
+        orgnr,
+        to: cc._id,
+        to_name: cc.Name_company || cc.name || ""
+      });
+    }
+
+    const toFix = candidates.slice(0, maxFix);
+    let patched = 0, errors = 0;
+    if (confirm) {
+      for (const c of toFix) {
+        try {
+          await bubblePatch("FortnoxInvoice", c.invoice_id, { linked_company: c.to });
+          patched++;
+        } catch (e) { errors++; }
+        await sleep(110);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dry_run: !confirm,
+      year,
+      connection_id,
+      invoices_total_for_conn: (invs || []).length,
+      invoices_in_year_without_lc: targets.length,
+      customers_in_map: mapKeys.length,
+      unique_orgnr_lookups: lookups,
+      no_orgnr_in_map,
+      no_cc_match,
+      can_fix: candidates.length,
+      processed: toFix.length,
+      patched: confirm ? patched : 0,
+      errors: confirm ? errors : 0,
+      sample_can_fix: candidates.slice(0, 10)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.post("/fortnox/customers/patch-orgnr-bulk", async (req, res) => {
   const connection_id = String(req.body?.connection_id || "").trim();
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
