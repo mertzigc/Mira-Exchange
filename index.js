@@ -14458,8 +14458,18 @@ app.post("/fortnox/backfill/invoice-linked-company", async (req, res) => {
 
 // ---- DIAG: status för 2026-fakturor över alla 4 connections (read-only) ----
 // Räknar per connection och totalt: antal, linked_company-täckning, PDF-täckning,
-// och ev. dubletter (samma connection_id + ft_document_number förekommer flera gånger).
-// Används för att verifiera "100% komplett 2026"-kravet.
+// cancelled, och ev. dubletter (samma connection_id + ft_document_number).
+// Används för att verifiera "100% komplett 2026"-kravet. Cancelled exkluderas
+// från PDF-kravet eftersom Fortnox inte returnerar PDF för annullerade fakturor.
+function isCancelledFlag(val) {
+  if (val === true) return true;
+  if (typeof val === "string") {
+    const s = val.toLowerCase().trim();
+    return s === "ja" || s === "true" || s === "1" || s === "yes";
+  }
+  return false;
+}
+
 app.post("/diag/invoices-2026-status", async (req, res) => {
   try {
     // Connection name-mapping
@@ -14479,6 +14489,8 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
     const docnoCounts = {};   // connection_id → { docNo: count }
     let total_2026 = 0;
     let missing_lc = 0, missing_pdf = 0, complete = 0;
+    let cancelled_total = 0, cancelled_missing_pdf = 0;
+    let missing_pdf_active = 0;
     const incomplete_samples = [];
 
     for (const inv of (invs || [])) {
@@ -14494,10 +14506,13 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
           connection_id: cid,
           name: connMap[cid] || "(unknown)",
           total_2026: 0,
+          cancelled_2026: 0,
+          active_2026: 0,
           with_linked_company: 0,
           with_pdf: 0,
           missing_linked_company: 0,
           missing_pdf: 0,
+          missing_pdf_active: 0,
           duplicate_docno_groups: 0
         };
         docnoCounts[cid] = {};
@@ -14505,21 +14520,34 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
       const row = byConn[cid];
       row.total_2026++;
 
-      const hasLc  = !!inv.linked_company;
-      const hasPdf = !!inv.ft_pdf && String(inv.ft_pdf).trim() !== "";
+      const hasLc      = !!inv.linked_company;
+      const hasPdf     = !!inv.ft_pdf && String(inv.ft_pdf).trim() !== "";
+      const cancelled  = isCancelledFlag(inv.ft_cancelled);
+
+      if (cancelled) { row.cancelled_2026++; cancelled_total++; }
+      else           { row.active_2026++; }
 
       if (hasLc)  row.with_linked_company++; else { row.missing_linked_company++; missing_lc++; }
-      if (hasPdf) row.with_pdf++;             else { row.missing_pdf++;            missing_pdf++; }
+      if (hasPdf) row.with_pdf++;            else { row.missing_pdf++;            missing_pdf++; }
 
-      if (hasLc && hasPdf) complete++;
-      else if (incomplete_samples.length < 10) {
+      // PDF-luckor i aktiva (icke-cancelled) fakturor – det verkligen vi vill nå 100% på
+      if (!hasPdf) {
+        if (cancelled) cancelled_missing_pdf++;
+        else { row.missing_pdf_active++; missing_pdf_active++; }
+      }
+
+      // En faktura är "komplett" om den har linked_company OCH (har pdf ELLER är cancelled)
+      const isComplete = hasLc && (hasPdf || cancelled);
+      if (isComplete) complete++;
+      else if (incomplete_samples.length < 15) {
         incomplete_samples.push({
           _id: inv._id,
           connection: connMap[cid] || cid,
           docNo: inv.ft_document_number,
           date: dateStr,
           customer: inv.ft_customer_name,
-          missing: [!hasLc && "linked_company", !hasPdf && "ft_pdf"].filter(Boolean)
+          cancelled,
+          missing: [!hasLc && "linked_company", !hasPdf && !cancelled && "ft_pdf"].filter(Boolean)
         });
       }
 
@@ -14545,6 +14573,8 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
       total_dup_groups += groups;
     }
 
+    const active_2026 = total_2026 - cancelled_total;
+
     return res.json({
       ok: true,
       generated_at: new Date().toISOString(),
@@ -14552,15 +14582,111 @@ app.post("/diag/invoices-2026-status", async (req, res) => {
       by_connection: Object.values(byConn).sort((a, b) => b.total_2026 - a.total_2026),
       summary: {
         total_2026,
+        active_2026,
+        cancelled_2026: cancelled_total,
         complete_2026: complete,
         incomplete_2026: total_2026 - complete,
         missing_linked_company: missing_lc,
-        missing_pdf: missing_pdf,
+        missing_pdf_total: missing_pdf,
+        missing_pdf_cancelled: cancelled_missing_pdf,
+        missing_pdf_active,
         duplicate_docno_groups_total: total_dup_groups,
-        is_100_percent: (total_2026 > 0 && complete === total_2026 && total_dup_groups === 0)
+        // Det "ärliga" målet: 100% av aktiva fakturor har linked_company och pdf,
+        // cancelled-fakturor behöver bara linked_company.
+        is_100_percent_active: (total_2026 > 0 && missing_lc === 0 && missing_pdf_active === 0 && total_dup_groups === 0)
       },
       incomplete_samples,
       duplicate_samples: dup_samples
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ---- BACKFILL: linked_company på FortnoxCustomer-bryggan ----
+// Loopar FortnoxCustomer där linked_company saknas, försöker matcha mot
+// ClientCompany via organisation_number (3 varianter via findClientCompanyByOrgNo).
+// Patchar bryggan vid match. Dry-run default. Konservativ – skapar inga nya CC.
+// Efter denna körning ska invoice-backfillen (/fortnox/backfill/invoice-linked-company)
+// köras för att fakturorna ska få linked_company via den fyllda bryggan.
+app.post("/fortnox/backfill/customer-linked-company", async (req, res) => {
+  const confirm = req.body?.confirm === true;
+  const maxFix  = Number(req.body?.max_fix || 1000);
+
+  try {
+    const allFcs = await bubbleFindAll("FortnoxCustomer", {}).catch(() => []);
+    const unlinked = (allFcs || []).filter(fc => !fc.linked_company);
+
+    // Filtrera till de som har org-nr (kan matchas)
+    const candidates = [];
+    let no_orgnr = 0;
+    for (const fc of unlinked) {
+      const orgnr = String(fc.organisation_number || "").trim();
+      if (!orgnr) { no_orgnr++; continue; }
+      candidates.push({
+        fc_id: fc._id,
+        customer_number: fc.customer_number,
+        name: fc.name,
+        connection_id: fc.connection_id,
+        orgnr
+      });
+    }
+
+    // Cache: samma org-nr resolvas bara en gång (många FortnoxCustomers per CC)
+    const orgCache = {};
+    const toPatch = [];
+    let matched = 0, unmatched = 0, lookups = 0;
+    const slice = candidates.slice(0, maxFix);
+
+    for (const c of slice) {
+      let cc;
+      if (Object.prototype.hasOwnProperty.call(orgCache, c.orgnr)) {
+        cc = orgCache[c.orgnr];
+      } else {
+        cc = await findClientCompanyByOrgNo(c.orgnr).catch(() => null);
+        orgCache[c.orgnr] = cc;
+        lookups++;
+        await sleep(110);
+      }
+      if (cc?._id) {
+        matched++;
+        toPatch.push({
+          fc_id: c.fc_id, customer_number: c.customer_number, name: c.name,
+          orgnr: c.orgnr, to: cc._id, to_name: cc.Name_company || cc.name || ""
+        });
+      } else {
+        unmatched++;
+      }
+    }
+
+    let patched = 0, errors = 0;
+    if (confirm) {
+      for (const p of toPatch) {
+        try {
+          await bubblePatch("FortnoxCustomer", p.fc_id, { linked_company: p.to });
+          patched++;
+        } catch (e) { errors++; }
+        await sleep(110);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dry_run: !confirm,
+      total_fortnox_customers: (allFcs || []).length,
+      unlinked_total: unlinked.length,
+      no_orgnr,
+      candidates_with_orgnr: candidates.length,
+      processed: slice.length,
+      unique_orgnr_lookups: lookups,
+      matched,
+      unmatched,
+      patched: confirm ? patched : 0,
+      errors: confirm ? errors : 0,
+      sample_matched: toPatch.slice(0, 10),
+      sample_unmatched: candidates.filter(c => !orgCache[c.orgnr]?._id).slice(0, 10).map(c => ({
+        customer_number: c.customer_number, name: c.name, orgnr: c.orgnr
+      }))
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
