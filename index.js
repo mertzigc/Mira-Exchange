@@ -377,6 +377,9 @@ function requireApiKey(req, res, next) {
     // UTAN API-nyckel. Svaret innehåller ALDRIG data (bara {ok:true}); datan
     // plockas av Bubble scoped per företag. Rate-limitad via _publicRateLimited.
     "/kpi/company/refresh",
+    // Mira fakturamodul – HTML-blocket fetchar från kundens browser UTAN
+    // API-nyckel. CORS-allowlisten styr vilka origins som får svar.
+    "/api/invoices",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
