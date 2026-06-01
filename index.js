@@ -13605,25 +13605,32 @@ app.get("/api/invoices", async (req, res) => {
 
   const companyId = String(req.query.company_id || "").trim();
   const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+  const debug = String(req.query.debug || "") === "1";
 
   if (!companyId) return res.status(400).json({ error: "missing company_id" });
 
   try {
-    const yearStart = `${year}-01-01`;
-    const yearEnd   = `${year + 1}-01-01`;
-
-    // bubbleFindAll paginerar automatiskt – ingen 100-rad gräns
-    const rows = await bubbleFindAll("FortnoxInvoice", {
+    // Hämta ALLA fakturor för CC – ingen date-constraint, eftersom Bubble's
+    // "greater than"/"less than" på date-fält med string-värde är opålitligt.
+    // Filtrerar år lokalt nedan.
+    const allRows = await bubbleFindAll("FortnoxInvoice", {
       constraints: [
-        { key: "linked_company",  constraint_type: "equals",       value: companyId },
-        { key: "ft_invoice_date", constraint_type: "greater than", value: yearStart },
-        { key: "ft_invoice_date", constraint_type: "less than",    value: yearEnd   }
+        { key: "linked_company", constraint_type: "equals", value: companyId }
       ],
       sort_field: "ft_invoice_date",
       descending: true
     }).catch((e) => {
       console.error("[mira/invoices] bubbleFindAll error:", e?.message || e);
       return [];
+    });
+
+    // Lokal år-filtrering med getTime-jämförelse
+    const yearStartTs = new Date(`${year}-01-01T00:00:00Z`).getTime();
+    const yearEndTs   = new Date(`${year + 1}-01-01T00:00:00Z`).getTime();
+
+    const rows = (allRows || []).filter(r => {
+      const t = new Date(r.ft_invoice_date).getTime();
+      return isFinite(t) && t >= yearStartTs && t < yearEndTs;
     });
 
     // Hämta kundföretagets namn (case-sensitive: Name_company med stort N och C)
@@ -13636,7 +13643,7 @@ app.get("/api/invoices", async (req, res) => {
     const isoDay = (s) => String(s || "").slice(0, 10);
     const n = (v) => { const x = Number(v); return isFinite(x) ? x : 0; };
 
-    const invoices = (rows || []).map(r => ({
+    const invoices = rows.map(r => ({
       number:     r.ft_document_number || "",
       date:       isoDay(r.ft_invoice_date),
       due:        isoDay(r.ft_due_date),
@@ -13650,12 +13657,50 @@ app.get("/api/invoices", async (req, res) => {
 
     // Cacha kort i klientens browser (5 min)
     res.set("Cache-Control", "private, max-age=300");
-    res.json({
+
+    const response = {
       company:  companyName,
       year,
       currency: "SEK",
       invoices
-    });
+    };
+
+    // Debug-info: vad finns i datat
+    if (debug) {
+      const byConn = {};
+      for (const r of (allRows || [])) {
+        const cid = String(r.connection_id || "(empty)");
+        byConn[cid] = (byConn[cid] || 0) + 1;
+      }
+      const byConnYear = {};
+      for (const r of rows) {
+        const cid = String(r.connection_id || "(empty)");
+        byConnYear[cid] = (byConnYear[cid] || 0) + 1;
+      }
+      response._debug = {
+        total_invoices_for_cc: (allRows || []).length,
+        in_year_locally: rows.length,
+        by_connection_all_years: byConn,
+        by_connection_in_year: byConnYear,
+        sample_dates_in_year: rows.slice(0, 5).map(r => ({
+          docNo: r.ft_document_number,
+          date: r.ft_invoice_date,
+          connection_id: r.connection_id,
+          ft_customer_name: r.ft_customer_name
+        })),
+        sample_dates_other_years: (allRows || []).filter(r => {
+          const t = new Date(r.ft_invoice_date).getTime();
+          return !(isFinite(t) && t >= yearStartTs && t < yearEndTs);
+        }).slice(0, 5).map(r => ({
+          docNo: r.ft_document_number,
+          date: r.ft_invoice_date,
+          connection_id: r.connection_id,
+          ft_customer_name: r.ft_customer_name
+        }))
+      };
+    }
+
+    res.json(response);
   } catch (e) {
     console.error("[mira/invoices] error:", e?.message || e);
     res.status(500).json({ error: "internal", detail: e?.message || String(e) });
