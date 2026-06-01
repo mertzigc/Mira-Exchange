@@ -8380,6 +8380,78 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
   });
 });
 
+// POST /fortnox/enrich/invoices/zero-net
+// Som /fortnox/enrich/invoices men fångar fakturor där ft_net är EXPLICIT 0
+// (Bubble's is_empty-constraint fångar bara NULL, inte 0). Detta är vanligt
+// när sync skapat raden från ett listing-svar utan Net-fält och defaultat till 0.
+app.post("/fortnox/enrich/invoices/zero-net", requireApiKey, async (req, res) => {
+  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0 } = req.body || {};
+  const lim = Math.min(Number(limit) || 50, 200);
+
+  let connections = [];
+  if (connection_id) {
+    connections = [{ _id: connection_id }];
+  } else {
+    const all = await getAllFortnoxConnections();
+    connections = all.filter(c => c?._id);
+  }
+
+  const results = [];
+  let total_enriched = 0, total_skipped = 0, total_errors = 0;
+
+  for (const conn of connections) {
+    const cid = String(conn._id);
+    const tok = await ensureFortnoxAccessToken(cid);
+    if (!tok?.ok) {
+      results.push({ connection_id: cid, ok: false, error: "Token error" });
+      continue;
+    }
+
+    // Två constraints krävs för att fånga ft_net = 0 (inte NULL).
+    // Bubble's "equals 0" + connection_id-filter.
+    const list = await bubbleFind("FortnoxInvoice", {
+      constraints: [
+        { key: "connection_id", constraint_type: "equals", value: cid },
+        { key: "ft_net",        constraint_type: "equals", value: 0 }
+      ],
+      limit: lim,
+      cursor: Number(cursor) || 0,
+      sort_field: "Created Date",
+      descending: true
+    });
+
+    let enriched = 0, skipped = 0, errors = 0;
+    let first_error = null;
+
+    for (const inv of list) {
+      try {
+        const r = await enrichFortnoxInvoiceRef(cid, inv, tok.access_token);
+        if (r?.ok && !r?.skipped) enriched++;
+        else skipped++;
+        if (pause_ms) await sleep(Number(pause_ms));
+      } catch (e) {
+        errors++;
+        if (!first_error) first_error = { docNo: inv?.ft_document_number, message: e?.message || String(e) };
+      }
+    }
+
+    total_enriched += enriched;
+    total_skipped  += skipped;
+    total_errors   += errors;
+
+    const next_cursor = list.length === lim ? (Number(cursor) || 0) + lim : null;
+    results.push({ connection_id: cid, found: list.length, cursor: Number(cursor) || 0, next_cursor, counts: { enriched, skipped, errors }, first_error });
+  }
+
+  return res.json({
+    ok: true,
+    connections_run: connections.length,
+    cursor: Number(cursor) || 0,
+    totals: { enriched: total_enriched, skipped: total_skipped, errors: total_errors },
+    results
+  });
+});
+
 // POST /fortnox/enrich/offers
 app.post("/fortnox/enrich/offers", requireApiKey, async (req, res) => {
   const { connection_id, limit = 50, pause_ms = 400, cursor = 0, filter_field = "ft_delivery_date" } = req.body || {};
