@@ -13698,15 +13698,16 @@ app.get("/api/invoices", async (req, res) => {
   if (req.method === "OPTIONS") return res.status(204).end();
 
   const companyId = String(req.query.company_id || "").trim();
-  const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+  // year-param används bara som hint till klienten ("highlighted_year").
+  // Endpointen returnerar ALLA fakturor oavsett år; HTML-blocket filtrerar lokalt.
+  const highlightYear = parseInt(req.query.year, 10) || new Date().getFullYear();
   const debug = String(req.query.debug || "") === "1";
 
   if (!companyId) return res.status(400).json({ error: "missing company_id" });
 
   try {
-    // Hämta ALLA fakturor för CC – ingen date-constraint, eftersom Bubble's
-    // "greater than"/"less than" på date-fält med string-värde är opålitligt.
-    // Filtrerar år lokalt nedan.
+    // Hämta ALLA fakturor för CC – ingen date-constraint (Bubble's "greater than"
+    // / "less than" på date-fält med string-värde är opålitligt).
     const allRows = await bubbleFindAll("FortnoxInvoice", {
       constraints: [
         { key: "linked_company", constraint_type: "equals", value: companyId }
@@ -13718,79 +13719,61 @@ app.get("/api/invoices", async (req, res) => {
       return [];
     });
 
-    // Lokal år-filtrering med getTime-jämförelse
-    const yearStartTs = new Date(`${year}-01-01T00:00:00Z`).getTime();
-    const yearEndTs   = new Date(`${year + 1}-01-01T00:00:00Z`).getTime();
-
-    const rows = (allRows || []).filter(r => {
-      const t = new Date(r.ft_invoice_date).getTime();
-      return isFinite(t) && t >= yearStartTs && t < yearEndTs;
-    });
-
-    // Hämta kundföretagets namn (case-sensitive: Name_company med stort N och C)
+    // Hämta kundföretagets namn (case-sensitive: Name_company)
     let companyName = "";
     try {
       const c = await bubbleGet("ClientCompany", companyId);
       companyName = c?.Name_company || c?.name || "";
-    } catch (_) { /* icke-kritiskt – fortsätt utan namn */ }
+    } catch (_) { /* icke-kritiskt */ }
 
     const isoDay = (s) => String(s || "").slice(0, 10);
     const n = (v) => { const x = Number(v); return isFinite(x) ? x : 0; };
 
-    const invoices = rows.map(r => ({
-      number:     r.ft_document_number || "",
-      date:       isoDay(r.ft_invoice_date),
-      due:        isoDay(r.ft_due_date),
-      desc:       r.ft_remarks || r.ft_description || r.ft_our_reference || "",
-      category:   r.ft_category || "",
-      net:        n(r.ft_net),       // ex moms
-      vat:        n(r.ft_totalvat),  // moms
-      ft_balance: n(r.ft_balance),   // utestående saldo (inkl moms)
-      pdf:        r.ft_pdf || ""
-    }));
+    // Mappa till HTML-format. Skippa rader utan giltigt datum.
+    const invoices = [];
+    const yearsSet = new Set();
+    for (const r of (allRows || [])) {
+      const t = new Date(r.ft_invoice_date).getTime();
+      if (!isFinite(t)) continue;
+      const y = new Date(t).getUTCFullYear();
+      yearsSet.add(y);
+      invoices.push({
+        number:     r.ft_document_number || "",
+        date:       isoDay(r.ft_invoice_date),
+        due:        isoDay(r.ft_due_date),
+        desc:       r.ft_remarks || r.ft_description || r.ft_our_reference || "",
+        category:   r.ft_category || "",
+        net:        n(r.ft_net),
+        vat:        n(r.ft_totalvat),
+        ft_balance: n(r.ft_balance),
+        pdf:        r.ft_pdf || ""
+      });
+    }
+    const availableYears = Array.from(yearsSet).sort((a, b) => b - a); // nyast först
 
     // Cacha kort i klientens browser (5 min)
     res.set("Cache-Control", "private, max-age=300");
 
     const response = {
-      company:  companyName,
-      year,
-      currency: "SEK",
+      company:          companyName,
+      highlighted_year: highlightYear,
+      available_years:  availableYears,
+      currency:         "SEK",
       invoices
     };
 
-    // Debug-info: vad finns i datat
+    // Debug-info
     if (debug) {
       const byConn = {};
       for (const r of (allRows || [])) {
         const cid = String(r.connection_id || "(empty)");
         byConn[cid] = (byConn[cid] || 0) + 1;
       }
-      const byConnYear = {};
-      for (const r of rows) {
-        const cid = String(r.connection_id || "(empty)");
-        byConnYear[cid] = (byConnYear[cid] || 0) + 1;
-      }
       response._debug = {
         total_invoices_for_cc: (allRows || []).length,
-        in_year_locally: rows.length,
+        with_valid_date: invoices.length,
         by_connection_all_years: byConn,
-        by_connection_in_year: byConnYear,
-        sample_dates_in_year: rows.slice(0, 5).map(r => ({
-          docNo: r.ft_document_number,
-          date: r.ft_invoice_date,
-          connection_id: r.connection_id,
-          ft_customer_name: r.ft_customer_name
-        })),
-        sample_dates_other_years: (allRows || []).filter(r => {
-          const t = new Date(r.ft_invoice_date).getTime();
-          return !(isFinite(t) && t >= yearStartTs && t < yearEndTs);
-        }).slice(0, 5).map(r => ({
-          docNo: r.ft_document_number,
-          date: r.ft_invoice_date,
-          connection_id: r.connection_id,
-          ft_customer_name: r.ft_customer_name
-        }))
+        available_years: availableYears
       };
     }
 
