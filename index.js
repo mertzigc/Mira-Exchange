@@ -7967,6 +7967,11 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
   const docNo = String(order?.DocumentNumber || "").trim();
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
 
+  const netValue =
+    order?.Net === null || order?.Net === undefined ? undefined : toNumOrNull(order.Net);
+  const vatValue =
+    order?.TotalVAT === null || order?.TotalVAT === undefined ? undefined : toNumOrNull(order.TotalVAT);
+
   const payload = {
     connection: connection_id,
     ft_document_number: docNo,
@@ -7983,6 +7988,9 @@ async function upsertFortnoxOrderDirect(connection_id, order) {
     ft_raw_json: JSON.stringify(order || {}),
     needs_rows_sync: true
   };
+
+  if (netValue !== undefined) payload.ft_net = netValue;
+  if (vatValue !== undefined) payload.ft_totalvat = vatValue;
 
   const existing = await bubbleFindOne("FortnoxOrder", [
     { key: "connection", constraint_type: "equals", value: connection_id },
@@ -8022,6 +8030,11 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
   const docNo = String(offer?.DocumentNumber || "").trim();
   if (!docNo) return { ok: false, skipped: true, reason: "missing_document_number" };
 
+  const netValue =
+    offer?.Net === null || offer?.Net === undefined ? undefined : toNumOrNull(offer.Net);
+  const vatValue =
+    offer?.TotalVAT === null || offer?.TotalVAT === undefined ? undefined : toNumOrNull(offer.TotalVAT);
+
   const payload = {
     connection: connection_id,
     ft_document_number: docNo,
@@ -8039,6 +8052,9 @@ async function upsertFortnoxOfferDirect(connection_id, offer) {
     ft_raw_json: JSON.stringify(offer || {}),
     needs_rows_sync: true
   };
+
+  if (netValue !== undefined) payload.ft_net = netValue;
+  if (vatValue !== undefined) payload.ft_totalvat = vatValue;
 
   const existing = await bubbleFindOne("FortnoxOffer", [
     { key: "connection", constraint_type: "equals", value: connection_id },
@@ -8103,6 +8119,15 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
       ? ""
       : String(invoice.Balance);
 
+  // Net + TotalVAT från Fortnox API (Invoice.Net + Invoice.TotalVAT).
+  // Finns i detail-svar (/invoices/{number}) men oftast inte i list-svaret.
+  // Om värdet saknas, lämna fältet ifred (skriv inte tom sträng som överskriver
+  // ev. tidigare enrichad data).
+  const netValue =
+    invoice?.Net === null || invoice?.Net === undefined ? undefined : toNumOrNull(invoice.Net);
+  const vatValue =
+    invoice?.TotalVAT === null || invoice?.TotalVAT === undefined ? undefined : toNumOrNull(invoice.TotalVAT);
+
   const yourOrderNumber = String(invoice?.YourOrderNumber || "").trim();
   const yourReference = String(invoice?.YourReference || "").trim();
   const ourReference = String(invoice?.OurReference || "").trim();
@@ -8137,6 +8162,11 @@ async function upsertFortnoxInvoiceDirect(connection_id, invoice) {
     ft_url: String(invoice?.["@url"] || ""),
     ft_raw_json: JSON.stringify(invoice || {})
   };
+
+  // Skriv bara ft_net/ft_totalvat om vi faktiskt har värden (detail-fetch).
+  // List-svar saknar dessa och vi vill inte överskriva tidigare enrichad data.
+  if (netValue !== undefined) payload.ft_net = netValue;
+  if (vatValue !== undefined) payload.ft_totalvat = vatValue;
 
   // Sätt linked_company från FortnoxCustomer-bryggan om den finns
   const linkedCompany = await resolveLinkedCompanyFromInvoice(connection_id, invoice?.CustomerNumber);
@@ -8208,20 +8238,32 @@ async function enrichFortnoxInvoiceRef(connection_id, bubbleInvoice, accessToken
   const detail = r?.data?.Invoice || r?.data?.invoice || null;
   if (!detail) return { ok: false, reason: "no_invoice_in_response" };
 
+  const patch = {};
+
+  // Net / TotalVAT – fyll alltid på om detail innehåller dem
+  if (detail?.Net !== undefined && detail?.Net !== null) {
+    const n = toNumOrNull(detail.Net);
+    if (n !== null) patch.ft_net = n;
+  }
+  if (detail?.TotalVAT !== undefined && detail?.TotalVAT !== null) {
+    const v = toNumOrNull(detail.TotalVAT);
+    if (v !== null) patch.ft_totalvat = v;
+  }
+
+  // Reference-fält
   const yourOrderNumber = String(detail?.YourOrderNumber || "").trim();
   const yourReference   = String(detail?.YourReference   || "").trim();
   const ourReference    = String(detail?.OurReference    || "").trim();
   const dealLink        = yourReference || yourOrderNumber;
 
-  if (!dealLink && !ourReference) return { ok: true, skipped: true, reason: "still_empty_after_detail" };
+  if (yourOrderNumber) patch.ft_your_order_number = yourOrderNumber;
+  if (dealLink)        patch.ft_your_reference    = dealLink;
+  if (ourReference)    patch.ft_our_reference     = ourReference;
 
-  await bubblePatch("FortnoxInvoice", id, {
-    ft_your_order_number: yourOrderNumber,
-    ft_your_reference:    dealLink,
-    ft_our_reference:     ourReference
-  });
+  if (!Object.keys(patch).length) return { ok: true, skipped: true, reason: "nothing_to_patch" };
 
-  return { ok: true, docNo, dealLink, ourReference };
+  await bubblePatch("FortnoxInvoice", id, patch);
+  return { ok: true, docNo, patch };
 }
 
 async function enrichFortnoxOfferDelivery(connection_id, bubbleOffer, accessToken) {
@@ -8244,6 +8286,16 @@ async function enrichFortnoxOfferDelivery(connection_id, bubbleOffer, accessToke
   if (validUntil)    patch.ft_valid_until      = validUntil;
   if (yourReference) patch.ft_your_reference   = yourReference;
 
+  // Net / TotalVAT
+  if (detail?.Net !== undefined && detail?.Net !== null) {
+    const n = toNumOrNull(detail.Net);
+    if (n !== null) patch.ft_net = n;
+  }
+  if (detail?.TotalVAT !== undefined && detail?.TotalVAT !== null) {
+    const v = toNumOrNull(detail.TotalVAT);
+    if (v !== null) patch.ft_totalvat = v;
+  }
+
   if (!Object.keys(patch).length) return { ok: true, skipped: true, reason: "nothing_to_patch" };
 
   await bubblePatch("FortnoxOffer", id, patch);
@@ -8255,9 +8307,12 @@ async function enrichFortnoxOfferDelivery(connection_id, bubbleOffer, accessToke
 // Body: { connection_id, limit=50, pause_ms=300 }
 app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
   // connection_id är valfritt – om det saknas körs ALLA aktiva connections
-  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0 } = req.body || {};
+  // filter_field styr vilket fält som måste vara tomt (default ft_your_reference).
+  // Sätt till "ft_net" för att backfilla net/totalvat på fakturor som redan har your_reference.
+  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0, filter_field = "ft_your_reference" } = req.body || {};
 
   const lim = Math.min(Number(limit) || 50, 200);
+  const filterField = String(filter_field || "ft_your_reference").trim();
 
   // Bygg lista av connections att köra
   let connections = [];
@@ -8282,7 +8337,7 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
     const list = await bubbleFind("FortnoxInvoice", {
       constraints: [
         { key: "connection_id", constraint_type: "equals", value: cid },
-        { key: "ft_your_reference", constraint_type: "is_empty" }
+        { key: filterField, constraint_type: "is_empty" }
       ],
       limit: lim,
       cursor: Number(cursor) || 0,
@@ -8324,18 +8379,19 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
 
 // POST /fortnox/enrich/offers
 app.post("/fortnox/enrich/offers", requireApiKey, async (req, res) => {
-  const { connection_id, limit = 50, pause_ms = 400, cursor = 0 } = req.body || {};
+  const { connection_id, limit = 50, pause_ms = 400, cursor = 0, filter_field = "ft_delivery_date" } = req.body || {};
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
   const tok = await ensureFortnoxAccessToken(connection_id);
   if (!tok?.ok) return res.status(401).json({ ok: false, error: "Token error", detail: tok });
 
   const lim = Math.min(Number(limit) || 50, 200);
+  const filterField = String(filter_field || "ft_delivery_date").trim();
 
   const list = await bubbleFind("FortnoxOffer", {
     constraints: [
       { key: "connection", constraint_type: "equals", value: connection_id },
-      { key: "ft_delivery_date", constraint_type: "is_empty" }
+      { key: filterField, constraint_type: "is_empty" }
     ],
     limit: lim,
     cursor: Number(cursor) || 0,
@@ -8370,6 +8426,87 @@ app.post("/fortnox/enrich/offers", requireApiKey, async (req, res) => {
     first_error
   });
 });
+
+// POST /fortnox/enrich/orders
+// Berikar FortnoxOrder med Net + TotalVAT + delivery_date via detail-fetch.
+// Body: { connection_id, limit=50, pause_ms=400, filter_field="ft_net" }
+app.post("/fortnox/enrich/orders", requireApiKey, async (req, res) => {
+  const { connection_id, limit = 50, pause_ms = 400, cursor = 0, filter_field = "ft_net" } = req.body || {};
+  if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
+
+  const tok = await ensureFortnoxAccessToken(connection_id);
+  if (!tok?.ok) return res.status(401).json({ ok: false, error: "Token error", detail: tok });
+
+  const lim = Math.min(Number(limit) || 50, 200);
+  const filterField = String(filter_field || "ft_net").trim();
+
+  const list = await bubbleFind("FortnoxOrder", {
+    constraints: [
+      { key: "connection", constraint_type: "equals", value: connection_id },
+      { key: filterField, constraint_type: "is_empty" }
+    ],
+    limit: lim,
+    cursor: Number(cursor) || 0,
+    sort_field: "Created Date",
+    descending: true
+  });
+
+  let enriched = 0, skipped = 0, errors = 0;
+  let first_error = null;
+
+  for (const order of list) {
+    try {
+      const r = await enrichFortnoxOrderNetVat(connection_id, order, tok.access_token);
+      if (r?.ok && !r?.skipped) enriched++;
+      else skipped++;
+      if (pause_ms) await sleep(Number(pause_ms));
+    } catch (e) {
+      errors++;
+      if (!first_error) first_error = { docNo: order?.ft_document_number, message: e?.message || String(e) };
+    }
+  }
+
+  const next_cursor = list.length === lim ? (Number(cursor) || 0) + lim : null;
+
+  return res.json({
+    ok: true,
+    connection_id,
+    found: list.length,
+    cursor: Number(cursor) || 0,
+    next_cursor,
+    counts: { enriched, skipped, errors },
+    first_error
+  });
+});
+
+async function enrichFortnoxOrderNetVat(connection_id, bubbleOrder, accessToken) {
+  const docNo = String(bubbleOrder?.ft_document_number || "").trim();
+  const id    = bubbleOrder?._id || bubbleOrder?.id;
+  if (!docNo || !id) return { ok: false, reason: "missing_docno_or_id" };
+
+  const r = await fortnoxGet(`/orders/${encodeURIComponent(docNo)}`, accessToken);
+  if (!r?.ok) return { ok: false, reason: "fortnox_detail_failed", status: r?.status };
+
+  const detail = r?.data?.Order || r?.data?.order || null;
+  if (!detail) return { ok: false, reason: "no_order_in_response" };
+
+  const patch = {};
+  if (detail?.Net !== undefined && detail?.Net !== null) {
+    const n = toNumOrNull(detail.Net);
+    if (n !== null) patch.ft_net = n;
+  }
+  if (detail?.TotalVAT !== undefined && detail?.TotalVAT !== null) {
+    const v = toNumOrNull(detail.TotalVAT);
+    if (v !== null) patch.ft_totalvat = v;
+  }
+  const deliveryDate = toIsoDate(detail?.DeliveryDate);
+  if (deliveryDate) patch.ft_delivery_date = deliveryDate;
+
+  if (!Object.keys(patch).length) return { ok: true, skipped: true, reason: "nothing_to_patch" };
+
+  await bubblePatch("FortnoxOrder", id, patch);
+  return { ok: true, docNo, patch };
+}
 
 async function upsertFortnoxCustomerDirect(connection_id, customer, { link_company = true } = {}) {
   const customerNumber = asTextOrEmpty(
@@ -9933,6 +10070,11 @@ async function ensureFtCustomerNumberOnClientCompany(ccId, custIdNum) {
 // ────────────────────────────────────────────────────────────
 // Mappning: Tengella-faktura → FortnoxInvoice-payload
 // ────────────────────────────────────────────────────────────
+// Antagen momssats för Tengella-fakturor (Housekeeping).
+// Tengella API ger inte Net/VAT-uppdelning – bara TotalAmount inkl moms.
+// 25% är svensk standardmoms på städtjänster.
+const TENGELLA_DEFAULT_VAT_RATE = 0.25;
+
 function mapTengellaInvoiceToFortnoxInvoicePayload(inv, { customerName = "", customerNumber = "" } = {}) {
   const invoiceNo = String(inv?.InvoiceNo ?? "").trim() ||
                     String(inv?.InvoiceId  ?? "").trim();
@@ -9941,6 +10083,11 @@ function mapTengellaInvoiceToFortnoxInvoicePayload(inv, { customerName = "", cus
   const paid         = Number(inv?.PaidAmount  ?? 0);
   const total        = Number(inv?.TotalAmount ?? 0);
   const balanceValue = inv?.TotalAmount != null ? String(total - paid) : "";
+
+  // Net + TotalVAT härleds från TotalAmount med antagen 25% moms.
+  // Avrundat till heltal (Tengella verkar bara använda hela kronor).
+  const netVal = total > 0 ? Math.round(total / (1 + TENGELLA_DEFAULT_VAT_RATE)) : 0;
+  const vatVal = total > 0 ? total - netVal : 0;
 
   const ocr    = String(inv?.Ocr ?? inv?.OCR ?? inv?.OcrNumber ?? "").trim();
   const pdfUrl = String(inv?.Url ?? inv?.PdfUrl ?? inv?.Uri ?? "").trim();
@@ -9956,6 +10103,8 @@ function mapTengellaInvoiceToFortnoxInvoicePayload(inv, { customerName = "", cus
     ft_due_date:          toIsoDate(tengellaDate(inv?.DueDate)),
 
     ft_total:             totalValue,
+    ft_net:               netVal,
+    ft_totalvat:          vatVal,
     ft_balance:           balanceValue,
     ft_currency:          "SEK",
     ft_ocr:               ocr,
@@ -13426,6 +13575,90 @@ app.post("/public/request/create", async (req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────
+// MIRA FAKTURAMODUL – /api/invoices
+// Levererar färdig JSON till HTML-blocket i kundportalen.
+// Inline-version (ersätter mira_invoices_route.js från annan tråd).
+//
+// GET /api/invoices?company_id=<bubble_unique_id>&year=2026
+//
+// Returnerar: { company, year, currency, invoices: [...] }
+// Belopp är ex moms (ft_net). HTML-blocket räknar fram inkl moms via vat.
+// ────────────────────────────────────────────────────────────
+app.get("/api/invoices", async (req, res) => {
+  // CORS – samma allowlist som andra public-routes i denna fil
+  const allowedOrigins = [
+    "https://carotteconcierge.bubbleapps.io",
+    "https://mira-fm.com"
+  ];
+  const origin = req.get("origin") || "";
+  if (allowedOrigins.includes(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+  }
+  res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  res.set("Vary", "Origin");
+  if (req.method === "OPTIONS") return res.status(204).end();
+
+  const companyId = String(req.query.company_id || "").trim();
+  const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+
+  if (!companyId) return res.status(400).json({ error: "missing company_id" });
+
+  try {
+    const yearStart = `${year}-01-01`;
+    const yearEnd   = `${year + 1}-01-01`;
+
+    // bubbleFindAll paginerar automatiskt – ingen 100-rad gräns
+    const rows = await bubbleFindAll("FortnoxInvoice", {
+      constraints: [
+        { key: "linked_company",  constraint_type: "equals",       value: companyId },
+        { key: "ft_invoice_date", constraint_type: "greater than", value: yearStart },
+        { key: "ft_invoice_date", constraint_type: "less than",    value: yearEnd   }
+      ],
+      sort_field: "ft_invoice_date",
+      descending: true
+    }).catch((e) => {
+      console.error("[mira/invoices] bubbleFindAll error:", e?.message || e);
+      return [];
+    });
+
+    // Hämta kundföretagets namn (case-sensitive: Name_company med stort N och C)
+    let companyName = "";
+    try {
+      const c = await bubbleGet("ClientCompany", companyId);
+      companyName = c?.Name_company || c?.name || "";
+    } catch (_) { /* icke-kritiskt – fortsätt utan namn */ }
+
+    const isoDay = (s) => String(s || "").slice(0, 10);
+    const n = (v) => { const x = Number(v); return isFinite(x) ? x : 0; };
+
+    const invoices = (rows || []).map(r => ({
+      number:     r.ft_document_number || "",
+      date:       isoDay(r.ft_invoice_date),
+      due:        isoDay(r.ft_due_date),
+      desc:       r.ft_remarks || r.ft_description || r.ft_our_reference || "",
+      category:   r.ft_category || "",
+      net:        n(r.ft_net),       // ex moms
+      vat:        n(r.ft_totalvat),  // moms
+      ft_balance: n(r.ft_balance),   // utestående saldo (inkl moms)
+      pdf:        r.ft_pdf || ""
+    }));
+
+    // Cacha kort i klientens browser (5 min)
+    res.set("Cache-Control", "private, max-age=300");
+    res.json({
+      company:  companyName,
+      year,
+      currency: "SEK",
+      invoices
+    });
+  } catch (e) {
+    console.error("[mira/invoices] error:", e?.message || e);
+    res.status(500).json({ error: "internal", detail: e?.message || String(e) });
+  }
+});
+
 // ============================================================================
 //  TILLÄGG v76 – vattentät faktura-sync (saldo), faktura-PDF och health.
 //  Helt additivt: rör ingen befintlig route eller funktion. Alla routes
@@ -13983,16 +14216,25 @@ app.post("/tengella/enrich/invoice-pdfs", async (req, res) => {
           // fakturor (betalningar bokas i Tengella, inte Fortnox). Sätt ft_total
           // + ft_balance = TotalAmount resp. TotalAmount−PaidAmount. Patcha bara
           // om värdet faktiskt ändrats (jämför numeriskt, undvik onödiga skrivningar).
+          // Net + TotalVAT härleds via TENGELLA_DEFAULT_VAT_RATE (25%).
           const total = _tNum(inv.TotalAmount);
           const paid  = _tNum(inv.PaidAmount);
           const bal   = Math.round((total - paid) * 100) / 100;
+          const netVal = total > 0 ? Math.round(total / (1 + TENGELLA_DEFAULT_VAT_RATE)) : 0;
+          const vatVal = total > 0 ? total - netVal : 0;
           const balanceChanged =
             (_tNum(row.ft_balance) !== bal) || (_tNum(row.ft_total) !== total);
+          const netChanged =
+            (_tNum(row.ft_net) !== netVal) || (_tNum(row.ft_totalvat) !== vatVal);
 
           const patch = {};
           if (balanceChanged) {
             patch.ft_total   = String(total);
             patch.ft_balance = String(bal);
+          }
+          if (netChanged) {
+            patch.ft_net      = netVal;
+            patch.ft_totalvat = vatVal;
           }
 
           // ── PDF: bara om saknas (eller overwrite) och inom max_enrich-budget
@@ -14197,7 +14439,9 @@ async function buildKundKpi(companyId) {
   invoices = _kDedupByDoc(invoices)
     .filter(i => String(i.ft_invoice_date || "").startsWith(KUND_KPI.INVOICE_YEAR));
 
-  const invoiced = invoices.reduce((s, i) => s + _kNum(i.ft_total), 0);
+  // OBS: summerar ft_net (ex moms) – standard för affärsrapportering.
+  // ft_balance förblir inkl moms (det är vad som faktiskt ska betalas).
+  const invoiced = invoices.reduce((s, i) => s + _kNum(i.ft_net), 0);
   const balance  = invoices.reduce((s, i) => s + _kNum(i.ft_balance), 0);
 
   // Leverantörsfördelning: connection → FortnoxConnection.supplier → Företagsnamn (cachat)
@@ -14221,7 +14465,7 @@ async function buildKundKpi(companyId) {
   for (const i of invoices) {
     const nm = (await supplierName(i.connection_id)) || i.ft_customer_name || "Övrigt";
     if (!byKey[nm]) byKey[nm] = { name: nm, invoiced: 0, balance: 0 };
-    byKey[nm].invoiced += _kNum(i.ft_total);
+    byKey[nm].invoiced += _kNum(i.ft_net);
     byKey[nm].balance  += _kNum(i.ft_balance);
   }
   const by_supplier = Object.values(byKey).sort((a, b) => b.invoiced - a.invoiced);
