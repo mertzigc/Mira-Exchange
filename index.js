@@ -10755,6 +10755,170 @@ app.post("/kpi/summary/flush", requireApiKey, (req, res) => {
   _kpiCache.ts = 0;
   return res.json({ ok: true, message: "KPI cache flushed" });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /kpi/sales – Försäljning YTD per connection (exkl. Carotte Group)
+//
+// Beräknar:
+//   - total_net (innevarande år, ex moms, exkl. Group)
+//   - total_net_prev_year (för YoY-jämförelse)
+//   - by_connection: { connection_id: { name, value, count } }
+//   - overdue: { total_value, total_count, invoices[] } för förfallna fakturor
+//
+// In-memory cache 4h (samma pattern som /kpi/summary). ?force=true för manuell refresh.
+// ──────────────────────────────────────────────────────────────────────────────
+const GROUP_CONNECTION_ID = "1771579485842x995491391876972200";
+const CONNECTION_NAMES = {
+  "1771579463578x385222043661358460": "Food & Event",
+  "1771579472595x998707043537409700": "Staff",
+  "1771579485842x995491391876972200": "Group",          // exkluderas
+  "1771579481117x119544302020443410": "Housekeeping"
+};
+
+let _salesCache = { data: null, ts: 0 };
+const SALES_TTL = 4 * 60 * 60 * 1000; // 4h
+
+async function computeSalesKpi(year) {
+  const yearStartTs     = new Date(`${year}-01-01T00:00:00Z`).getTime();
+  const yearEndTs       = new Date(`${year + 1}-01-01T00:00:00Z`).getTime();
+  const prevYearStartTs = new Date(`${year - 1}-01-01T00:00:00Z`).getTime();
+  const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+  const todayTs = today.getTime();
+
+  // Hämta ALLA FortnoxInvoice. Bubble's date-constraint är opålitlig så vi
+  // filtrerar år lokalt. bubbleFindAll paginerar automatiskt (100/page).
+  // Detta är dyrt (kanske 20-60 sek) men resultatet cache:as i 4h.
+  const allRows = await bubbleFindAll("FortnoxInvoice", {
+    constraints: [],
+    sort_field: "ft_invoice_date",
+    descending: true
+  });
+
+  const byConn = {};
+  let totalNet = 0;
+  let totalNetPrev = 0;
+  let overdueValue = 0;
+  const overdueInvoices = [];
+
+  for (const r of (allRows || [])) {
+    const cid = String(r.connection_id || "");
+    if (cid === GROUP_CONNECTION_ID) continue; // exkludera Group
+
+    const t = new Date(r.ft_invoice_date).getTime();
+    const net = Number(r.ft_net) || 0;
+    const balance = Number(r.ft_balance) || 0;
+    const dueTs = r.ft_due_date ? new Date(r.ft_due_date).getTime() : null;
+    const isCancelled = String(r.ft_cancelled || "").toLowerCase() === "ja";
+
+    // Innevarande år
+    if (isFinite(t) && t >= yearStartTs && t < yearEndTs && !isCancelled) {
+      totalNet += net;
+      const key = cid || "(empty)";
+      if (!byConn[key]) {
+        byConn[key] = {
+          connection_id: key,
+          name: CONNECTION_NAMES[key] || ("Connection " + key.slice(-6)),
+          value: 0,
+          count: 0
+        };
+      }
+      byConn[key].value += net;
+      byConn[key].count += 1;
+    }
+
+    // Föregående år (för YoY)
+    if (isFinite(t) && t >= prevYearStartTs && t < yearStartTs && !isCancelled) {
+      totalNetPrev += net;
+    }
+
+    // Förfallna (oavsett år) – ej cancelled, balance > 0, due-date passerat
+    if (!isCancelled && balance > 0 && dueTs && dueTs < todayTs) {
+      overdueValue += balance;
+      overdueInvoices.push({
+        number:     r.ft_document_number || "",
+        customer:   r.ft_customer_name || "",
+        date:       String(r.ft_invoice_date || "").slice(0, 10),
+        due:        String(r.ft_due_date || "").slice(0, 10),
+        balance:    balance,
+        net:        net,
+        pdf:        r.ft_pdf || "",
+        connection: CONNECTION_NAMES[cid] || cid,
+        days_overdue: Math.floor((todayTs - dueTs) / (1000 * 60 * 60 * 24))
+      });
+    }
+  }
+
+  // Sortera förfallna äldst först (mest pressande överst)
+  overdueInvoices.sort((a, b) => new Date(a.due) - new Date(b.due));
+
+  // YoY (null om föregående år har 0 → odefinierat)
+  const yoyPercent = totalNetPrev > 0
+    ? ((totalNet - totalNetPrev) / totalNetPrev) * 100
+    : null;
+
+  return {
+    year,
+    total_net:             Math.round(totalNet),
+    total_net_prev_year:   Math.round(totalNetPrev),
+    yoy_percent:           yoyPercent !== null ? Math.round(yoyPercent * 10) / 10 : null,
+    by_connection:         Object.values(byConn).sort((a, b) => b.value - a.value),
+    overdue: {
+      total_value: Math.round(overdueValue),
+      total_count: overdueInvoices.length,
+      invoices:    overdueInvoices.slice(0, 200)  // cap för payload-storlek
+    },
+    invoices_scanned: (allRows || []).length
+  };
+}
+
+async function fetchSalesKpi({ year, force }) {
+  const now = Date.now();
+  if (!force && _salesCache.data && _salesCache.data.year === year && (now - _salesCache.ts) < SALES_TTL) {
+    return { ...(_salesCache.data), generated_at: new Date(_salesCache.ts).toISOString(), cached: true };
+  }
+  const data = await computeSalesKpi(year);
+  _salesCache = { data, ts: now };
+  return { ...data, generated_at: new Date(now).toISOString(), cached: false };
+}
+
+app.get("/kpi/sales", requireApiKey, async (req, res) => {
+  const kpiOrigin = req.headers.origin || "";
+  const kpiAllowed = ["https://carotteconcierge.bubbleapps.io", "https://mira-fm.com"];
+  if (kpiAllowed.includes(kpiOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", kpiOrigin);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+
+  try {
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    const force = req.query.force === "true";
+    const data = await fetchSalesKpi({ year, force });
+    return res.json({ ok: true, ...data });
+  } catch (e) {
+    console.error("[kpi/sales] error:", e?.message || e);
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || String(e)
+    });
+  }
+});
+
+app.options("/kpi/sales", (req, res) => {
+  const preOrigin = req.headers.origin || "";
+  const preAllowed = ["https://carotteconcierge.bubbleapps.io", "https://mira-fm.com"];
+  if (preAllowed.includes(preOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", preOrigin);
+  }
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
+});
+
+app.post("/kpi/sales/flush", requireApiKey, (req, res) => {
+  _salesCache.data = null;
+  _salesCache.ts = 0;
+  return res.json({ ok: true, message: "Sales KPI cache flushed" });
+});
 // ──────────────────────────────────────────────────────────────────────────────
 // GET /api/kpi/grades
 //
