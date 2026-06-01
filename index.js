@@ -10919,6 +10919,149 @@ app.post("/kpi/sales/flush", requireApiKey, (req, res) => {
   _salesCache.ts = 0;
   return res.json({ ok: true, message: "Sales KPI cache flushed" });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /kpi/sales/reconcile – månadsfördelning per connection + diagnostik
+//
+// Använd för att jämföra mot bokföring. Returnerar för varje connection × månad:
+//   - count: antal fakturor
+//   - net_sum_active: summa ft_net för icke-cancelled
+//   - net_sum_all: summa ft_net för ALLA (inkl cancelled)
+//   - cancelled_count: antal cancelled fakturor
+//   - zero_net_count: antal med ft_net = 0 eller saknat
+//   - credit_count: antal kreditfakturor (ft_net < 0)
+//   - top_5: 5 största fakturorna i månaden (för manuell sanity-check)
+// ──────────────────────────────────────────────────────────────────────────────
+app.get("/kpi/sales/reconcile", requireApiKey, async (req, res) => {
+  const kpiOrigin = req.headers.origin || "";
+  const kpiAllowed = ["https://carotteconcierge.bubbleapps.io", "https://mira-fm.com"];
+  if (kpiAllowed.includes(kpiOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", kpiOrigin);
+  }
+
+  try {
+    const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+    const monthFrom = Math.max(1, parseInt(req.query.month_from, 10) || 1);
+    const monthTo   = Math.min(12, parseInt(req.query.month_to, 10) || 12);
+
+    // Hämta alla fakturor – samma data som /kpi/sales men aggregerad annorlunda
+    const allRows = await bubbleFindAll("FortnoxInvoice", {
+      constraints: [],
+      sort_field: "ft_invoice_date",
+      descending: true
+    });
+
+    // Strukturera: { connection_name: { "2026-01": {count, net_sum_active, ...}, ... } }
+    const result = {};
+    const topPerConn = {}; // { conn_name: { "2026-01": [top5 invoices] } }
+
+    for (const r of (allRows || [])) {
+      const cid = String(r.connection_id || "");
+      if (cid === GROUP_CONNECTION_ID) continue;
+
+      const t = new Date(r.ft_invoice_date).getTime();
+      if (!isFinite(t)) continue;
+
+      const d = new Date(t);
+      const ry = d.getUTCFullYear();
+      const rm = d.getUTCMonth() + 1; // 1-12
+
+      if (ry !== year || rm < monthFrom || rm > monthTo) continue;
+
+      const connName = CONNECTION_NAMES[cid] || ("Connection " + cid.slice(-6));
+      const monthKey = `${ry}-${String(rm).padStart(2, "0")}`;
+      const net = Number(r.ft_net);
+      const isCancelled = String(r.ft_cancelled || "").toLowerCase() === "ja";
+      const hasValidNet = isFinite(net) && net !== 0;
+      const isCredit = isFinite(net) && net < 0;
+
+      if (!result[connName]) result[connName] = {};
+      if (!result[connName][monthKey]) {
+        result[connName][monthKey] = {
+          count: 0,
+          net_sum_active: 0,
+          net_sum_all: 0,
+          cancelled_count: 0,
+          zero_net_count: 0,
+          credit_count: 0,
+          credit_value: 0
+        };
+      }
+      const bucket = result[connName][monthKey];
+      bucket.count += 1;
+      bucket.net_sum_all += isFinite(net) ? net : 0;
+      if (!isCancelled) bucket.net_sum_active += isFinite(net) ? net : 0;
+      if (isCancelled)  bucket.cancelled_count += 1;
+      if (!hasValidNet) bucket.zero_net_count += 1;
+      if (isCredit) {
+        bucket.credit_count += 1;
+        bucket.credit_value += net;
+      }
+
+      // Top 5 fakturor per connection × månad
+      if (!topPerConn[connName]) topPerConn[connName] = {};
+      if (!topPerConn[connName][monthKey]) topPerConn[connName][monthKey] = [];
+      topPerConn[connName][monthKey].push({
+        number: r.ft_document_number || "",
+        customer: r.ft_customer_name || "",
+        date: String(r.ft_invoice_date || "").slice(0, 10),
+        net: isFinite(net) ? net : 0,
+        cancelled: isCancelled
+      });
+    }
+
+    // Trim top till 5 per connection × månad och avrunda
+    for (const conn of Object.keys(result)) {
+      for (const month of Object.keys(result[conn])) {
+        const b = result[conn][month];
+        b.net_sum_active = Math.round(b.net_sum_active);
+        b.net_sum_all = Math.round(b.net_sum_all);
+        b.credit_value = Math.round(b.credit_value);
+
+        if (topPerConn[conn] && topPerConn[conn][month]) {
+          topPerConn[conn][month].sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+          topPerConn[conn][month] = topPerConn[conn][month].slice(0, 5).map(x => ({
+            ...x,
+            net: Math.round(x.net)
+          }));
+        }
+      }
+    }
+
+    // Totaler per connection (för snabb sanity check mot bokföring)
+    const totals = {};
+    for (const conn of Object.keys(result)) {
+      let sumActive = 0, sumAll = 0, cnt = 0, cancelled = 0, zeroNet = 0;
+      for (const month of Object.keys(result[conn])) {
+        const b = result[conn][month];
+        sumActive += b.net_sum_active;
+        sumAll    += b.net_sum_all;
+        cnt       += b.count;
+        cancelled += b.cancelled_count;
+        zeroNet   += b.zero_net_count;
+      }
+      totals[conn] = {
+        net_sum_active: sumActive,
+        net_sum_all: sumAll,
+        count: cnt,
+        cancelled_count: cancelled,
+        zero_net_count: zeroNet
+      };
+    }
+
+    res.json({
+      ok: true,
+      year, month_from: monthFrom, month_to: monthTo,
+      totals,
+      by_month: result,
+      top_invoices: topPerConn,
+      invoices_scanned: (allRows || []).length
+    });
+  } catch (e) {
+    console.error("[kpi/sales/reconcile] error:", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 // ──────────────────────────────────────────────────────────────────────────────
 // GET /api/kpi/grades
 //
