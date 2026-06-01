@@ -13588,6 +13588,100 @@ app.post("/public/request/create", async (req, res) => {
 // Returnerar: { company, year, currency, invoices: [...] }
 // Belopp är ex moms (ft_net). HTML-blocket räknar fram inkl moms via vat.
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// MIRA FAKTURAMODUL – /api/invoices/diag-customer
+// Diagnostik för en kund – hitta varför fakturor INTE syns i kundportalen.
+// GET /api/invoices/diag-customer?name=EA Digital&org=556710-6520
+// ────────────────────────────────────────────────────────────
+app.get("/api/invoices/diag-customer", requireApiKey, async (req, res) => {
+  const name = String(req.query.name || "").trim();
+  const orgRaw = String(req.query.org || "").trim();
+  const orgDigits = orgRaw.replace(/\D+/g, "");
+
+  if (!name && !orgRaw) {
+    return res.status(400).json({ error: "Skicka ?name=... eller ?org=..." });
+  }
+
+  try {
+    const result = {
+      query: { name, org: orgRaw }
+    };
+
+    // 1. ClientCompany som matchar namnet
+    if (name) {
+      const ccs = await bubbleFindAll("ClientCompany", {
+        constraints: [{ key: "Name_company", constraint_type: "text contains", value: name }]
+      }).catch(() => []);
+      result.client_companies = ccs.map(c => ({
+        _id: c._id,
+        Name_company: c.Name_company,
+        Org_Number: c.Org_Number || c.org_number || c.OrganisationNumber || ""
+      }));
+    }
+
+    // 2. FortnoxCustomer som matchar namnet
+    if (name) {
+      const fcs = await bubbleFindAll("FortnoxCustomer", {
+        constraints: [{ key: "name", constraint_type: "text contains", value: name }]
+      }).catch(() => []);
+      result.fortnox_customers = fcs.map(f => ({
+        _id: f._id,
+        customer_number: f.customer_number,
+        name: f.name,
+        connection_id: f.connection_id,
+        organisation_number: f.organisation_number || "",
+        linked_company: f.linked_company || null
+      }));
+    }
+
+    // 3. FortnoxInvoice via ft_customer_name (matchar namnet)
+    if (name) {
+      const fis = await bubbleFindAll("FortnoxInvoice", {
+        constraints: [{ key: "ft_customer_name", constraint_type: "text contains", value: name }]
+      }).catch(() => []);
+
+      // Aggregera per connection och per linked_company
+      const byConn = {};
+      const byLc = {};
+      const noLc = [];
+      for (const f of (fis || [])) {
+        const cid = String(f.connection_id || "(empty)");
+        byConn[cid] = (byConn[cid] || 0) + 1;
+        const lc = String(f.linked_company || "(empty)");
+        byLc[lc] = (byLc[lc] || 0) + 1;
+        if (!f.linked_company && noLc.length < 5) {
+          noLc.push({
+            docNo: f.ft_document_number,
+            date: f.ft_invoice_date,
+            connection_id: f.connection_id,
+            customer_number: f.ft_customer_number,
+            customer_name: f.ft_customer_name
+          });
+        }
+      }
+      result.fortnox_invoices = {
+        total: (fis || []).length,
+        by_connection: byConn,
+        by_linked_company: byLc,
+        sample_without_linked_company: noLc
+      };
+    }
+
+    // 4. Om org-nr skickades, kör vaccinet och se vad det hittar
+    if (orgRaw) {
+      const cc = await findClientCompanyByOrgNo(orgRaw).catch(() => null);
+      result.vaccine_findClientCompanyByOrgNo = cc
+        ? { _id: cc._id, Name_company: cc.Name_company || cc.name || "" }
+        : null;
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error("[mira/diag-customer] error:", e?.message || e);
+    res.status(500).json({ error: "internal", detail: e?.message || String(e) });
+  }
+});
+
 app.get("/api/invoices", async (req, res) => {
   // CORS – samma allowlist som andra public-routes i denna fil
   const allowedOrigins = [
