@@ -13428,6 +13428,7 @@ app.delete("/admin/invite/guest/:id", async (req, res) => {
 // Markerar invite_sent=true efter köning → idempotent (säkert att köra om).
 // ══════════════════════════════════════════════════════════════════════════
 const PUBLIC_INVITE_URL = "https://mira-fm.com/invite";
+const PUBLIC_SURVEY_URL = process.env.PUBLIC_SURVEY_URL || "https://mira-fm.com/undersokning";
 const _sendList = {};
 function _inviteBrand(inv, cc) {
   return {
@@ -13445,8 +13446,10 @@ app.post("/admin/invite/:id/send", async (req, res) => {
 
     const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
     if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
-    const isNews = String(inv.kind || "").toLowerCase() === "news";
-    const slug = isNews ? "news_announcement" : "invite_invitation";
+    const kindStr = String(inv.kind || "").toLowerCase();
+    const isNews = kindStr === "news";
+    const isSurvey = kindStr === "survey";
+    const slug = isSurvey ? "survey_invitation" : (isNews ? "news_announcement" : "invite_invitation");
     const cc = inv.client_company ? await bubbleGet(ADM_CC, inv.client_company).catch(() => null) : null;
     const brand = _inviteBrand(inv, cc);
     const tplId = await getTemplateId(slug).catch(() => null);
@@ -13457,7 +13460,8 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
       list = guests
         .filter(g => g.invite_sent !== true)
-        .filter(g => (isNews || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending")
+        // För news och survey: skicka alla. Bara för invite filtrera på pending.
+        .filter(g => (isNews || isSurvey || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending")
         .filter(g => String(g.email || "").trim())
         .sort((a, b) => String(a.email).localeCompare(String(b.email)));
       _sendList[invId] = list;
@@ -13470,13 +13474,9 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
-      // Avsändarnamn i inkorgen: ALLTID ClientCompanyns namn, ignorera inv.host_name
-      // (host_name kan vara en person, t.ex. "Christian Mertzig" — det hör hemma i
-      // mejlets innehåll, inte på From-raden där det förvirrar mottagaren).
       from_name: _admName(cc || {}) || "Carotte",
-      cta_label: inv.cta_label || (isNews ? "Läs mer" : "Svara på inbjudan"),
+      cta_label: inv.cta_label || (isSurvey ? "Svara på undersökningen" : (isNews ? "Läs mer" : "Svara på inbjudan")),
       cta_url: isNews ? _admAbs(inv.cta_url || "") : "",
-      // Endast meningsfullt för news, men skadar inte att alltid skicka med
       published_at: inv["Created Date"] || inv.created_date || "",
       linkedin_url:  isNews ? _admAbs(inv.linkedin_url  || "") : "",
       facebook_url:  isNews ? _admAbs(inv.facebook_url  || "") : "",
@@ -13484,9 +13484,12 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     };
 
     const rows = slice.map(g => {
+      // Survey och invite får personlig länk; news är ren broadcast utan länk
+      // Survey-länken pekar på undersökningssidan, inte event-sidan
+      const baseUrl = isSurvey ? PUBLIC_SURVEY_URL : PUBLIC_INVITE_URL;
       const extra = isNews
         ? { ...baseExtra, guest_name: g.name || "", slug }
-        : { ...baseExtra, guest_name: g.name || "", invite_link: PUBLIC_INVITE_URL + "?g=" + encodeURIComponent(g.guest_token || ""), slug };
+        : { ...baseExtra, guest_name: g.name || "", invite_link: baseUrl + "?g=" + encodeURIComponent(g.guest_token || ""), slug };
       return {
         template_id: tplId || null, entity_id: g._id || g.id, entity_type: "invite",
         to_email: g.email, to_name: g.name || g.email, email_sent: false, extra_data: JSON.stringify(extra)
@@ -13576,9 +13579,11 @@ function inviteBrand(inv, cc) {
 
 function inviteConfigPayload(inv, cc, guest) {
   const deadlinePassed = inv.rsvp_deadline ? (new Date(inv.rsvp_deadline).getTime() < Date.now()) : false;
+  const kind = String(inv.kind || "invite").toLowerCase();
   return {
     ok: true,
     active: inv.active !== false,
+    kind,
     event: {
       title:         inv.title || "",
       description:   inv.description || "",
@@ -13663,13 +13668,17 @@ app.post("/invite/rsvp", async (req, res) => {
       inv = await getInvitationByToken(t);
     }
     if (!inv || inv.active === false) return res.status(404).json({ ok: false, error: "invitation_not_found" });
-    if (inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
+    const isSurvey = String(inv.kind || "").toLowerCase() === "survey";
+    // Survey: ingen deadline-check, inget OSA-status, inga plus_ones/allergens
+    if (!isSurvey && inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
       return res.status(403).json({ ok: false, error: "deadline_passed" });
 
     const nowIso        = toBubbleDate(new Date().toISOString());
     const allergensJson = JSON.stringify(allergens);
     const responseJson  = JSON.stringify(responses);
-    const isComing      = rsvp === "yes";
+    const isComing      = isSurvey ? true : (rsvp === "yes");
+    // För survey: alltid "yes" + arrived=yes (markerar att svar inkommit)
+    const finalRsvp     = isSurvey ? "yes" : rsvp;
 
     let guestId, guestName, guestEmail;
     if (guest) {
@@ -13677,11 +13686,13 @@ app.post("/invite/rsvp", async (req, res) => {
       guestName = guest.name || "";
       guestEmail = normEmail(guest.email || "");
       await bubblePatch(INVITE.GUEST_TYPE, guestId, {
-        rsvp_status:     rsvp,
+        rsvp_status:     finalRsvp,
         rsvp_at:         nowIso,
-        plus_ones_count: isComing ? plusOnes : 0,
-        allergens_json:  isComing ? allergensJson : "[]",
-        response_json:   responseJson
+        plus_ones_count: (isSurvey || !isComing) ? 0 : plusOnes,
+        allergens_json:  (isSurvey || !isComing) ? "[]" : allergensJson,
+        response_json:   responseJson,
+        arrived:         isSurvey ? "yes" : (guest.arrived || "no"),
+        arrived_at:      isSurvey ? nowIso : (guest.arrived_at || null)
       });
     } else {
       // öppet läge (?t=) — skapa ny gäst
@@ -13695,11 +13706,13 @@ app.post("/invite/rsvp", async (req, res) => {
         email:           guestEmail,
         phone:           safeText(d.phone || d.tel || "", 60),
         source:          "manual",
-        rsvp_status:     rsvp,
+        rsvp_status:     finalRsvp,
         rsvp_at:         nowIso,
-        plus_ones_count: isComing ? plusOnes : 0,
-        allergens_json:  isComing ? allergensJson : "[]",
-        response_json:   responseJson
+        plus_ones_count: (isSurvey || !isComing) ? 0 : plusOnes,
+        allergens_json:  (isSurvey || !isComing) ? "[]" : allergensJson,
+        response_json:   responseJson,
+        arrived:         isSurvey ? "yes" : "no",
+        arrived_at:      isSurvey ? nowIso : null
       }, {});
     }
 
@@ -13724,7 +13737,7 @@ app.post("/invite/rsvp", async (req, res) => {
       guest_name:       guestName,
       reference:        guestId || ""
     };
-    if (guestEmail) {
+    if (guestEmail && !isSurvey) {
       try {
         const tplId = await getTemplateId(INVITE.SLUG_CONFIRM);
         await safeCreate("emailqueue", {
@@ -13739,7 +13752,7 @@ app.post("/invite/rsvp", async (req, res) => {
       } catch (e) { console.warn("[invite/rsvp] bekräftelsemail:", e?.message); }
     }
 
-    return res.json({ ok: true, rsvp_status: rsvp });
+    return res.json({ ok: true, rsvp_status: finalRsvp, survey: isSurvey });
   } catch (e) {
     console.error("[invite/rsvp]", e?.message);
     return res.status(500).json({ ok: false, error: e?.message });
