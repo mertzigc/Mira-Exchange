@@ -12909,6 +12909,7 @@ app.post("/admin/invite/create", async (req, res) => {
     const exact = {
       token,
       active:          d.active !== false,
+      kind:            String(d.kind || "invite").toLowerCase() === "news" ? "news" : "invite",
       client_company:  d.client_company || null,
       title:           safeText(d.title, 200),
       description:     String(d.description || ""),
@@ -12921,7 +12922,9 @@ app.post("/admin/invite/create", async (req, res) => {
       allow_plus_ones: d.allow_plus_ones !== false,
       max_plus_ones:   asNumberOrNull(d.max_plus_ones) ?? 0,
       form_schema:     typeof d.form_schema === "string" ? d.form_schema : JSON.stringify(d.form_schema || []),
-      host_name:       safeText(d.host_name || "", 120)
+      host_name:       safeText(d.host_name || "", 120),
+      cta_label:       safeText(d.cta_label || "", 80),
+      cta_url:         _admAbs(d.cta_url || "")
     };
     // image hanteras hedgat: image-fältet i Bubble är image-typ och tar oftast inte
     // emot en extern URL via Data API. Lägg ev. till ett TEXT-fält image_url så fastnar URL:en.
@@ -12941,7 +12944,9 @@ app.patch("/admin/invite/update", async (req, res) => {
       title: v => safeText(v, 200), description: v => String(v), accent_color: v => v,
       event_address: v => safeText(v, 300), location_name: v => safeText(v, 200),
       host_name: v => safeText(v, 120), max_plus_ones: v => asNumberOrNull(v) ?? 0,
-      form_schema: v => (typeof v === "string" ? v : JSON.stringify(v || []))
+      form_schema: v => (typeof v === "string" ? v : JSON.stringify(v || [])),
+      cta_label: v => safeText(v, 80), cta_url: v => _admAbs(v || ""),
+      kind: v => String(v || "invite").toLowerCase() === "news" ? "news" : "invite"
     };
     Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
     ["start_date", "end_date", "rsvp_deadline"].forEach(k => { if (b[k] !== undefined) f[k] = b[k] ? toBubbleDate(b[k]) : null; });
@@ -12958,10 +12963,19 @@ app.patch("/admin/invite/update", async (req, res) => {
 app.get("/admin/invite/list", async (req, res) => {
   try {
     const rows = await bubbleFind(ADM_INVITATION, { limit: 60 }).catch(() => []);
-    const out = (rows || []).map(i => ({
+    // kind-filter: default = invite (bakåtkompat), ?kind=news = bara news, ?kind=all = båda
+    const kindParam = String(req.query.kind || "invite").toLowerCase();
+    const filtered = (kindParam === "all")
+      ? (rows || [])
+      : (kindParam === "news"
+          ? (rows || []).filter(r => String(r.kind || "").toLowerCase() === "news")
+          : (rows || []).filter(r => String(r.kind || "").toLowerCase() !== "news"));
+    const out = filtered.map(i => ({
       id: i._id || i.id, title: i.title || "", active: i.active !== false, token: i.token || "",
+      kind: String(i.kind || "invite").toLowerCase() === "news" ? "news" : "invite",
       start_date: i.start_date || null, rsvp_deadline: i.rsvp_deadline || null,
-      location_name: i.location_name || "", client_company: i.client_company || null
+      location_name: i.location_name || "", client_company: i.client_company || null,
+      cta_label: i.cta_label || "", cta_url: i.cta_url || ""
     }));
     out.sort((a, b) => (new Date(b.start_date || 0)) - (new Date(a.start_date || 0)));
     res.json({ ok: true, invitations: out });
@@ -12975,11 +12989,13 @@ app.get("/admin/invite/:id", async (req, res) => {
     if (!i) return res.status(404).json({ ok: false, error: "not_found" });
     res.json({ ok: true, invite: {
       id: i._id || i.id, token: i.token || "", active: i.active !== false,
+      kind: String(i.kind || "invite").toLowerCase() === "news" ? "news" : "invite",
       client_company: i.client_company || "", title: i.title || "", description: i.description || "",
       accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
       allow_plus_ones: i.allow_plus_ones !== false, max_plus_ones: asNumberOrNull(i.max_plus_ones) ?? 0,
-      image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]"
+      image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]",
+      cta_label: i.cta_label || "", cta_url: i.cta_url || ""
     }});
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
@@ -13422,9 +13438,11 @@ app.post("/admin/invite/:id/send", async (req, res) => {
 
     const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
     if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+    const isNews = String(inv.kind || "").toLowerCase() === "news";
+    const slug = isNews ? "news_announcement" : "invite_invitation";
     const cc = inv.client_company ? await bubbleGet(ADM_CC, inv.client_company).catch(() => null) : null;
     const brand = _inviteBrand(inv, cc);
-    const tplId = await getTemplateId("invite_invitation").catch(() => null);
+    const tplId = await getTemplateId(slug).catch(() => null);
 
     // Seeda sändlistan vid start (stabil ordning för offset/limit)
     let list = _sendList[invId];
@@ -13432,7 +13450,7 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
       list = guests
         .filter(g => g.invite_sent !== true)
-        .filter(g => onlyPending ? String(g.rsvp_status || "pending").toLowerCase() === "pending" : true)
+        .filter(g => (isNews || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending")
         .filter(g => String(g.email || "").trim())
         .sort((a, b) => String(a.email).localeCompare(String(b.email)));
       _sendList[invId] = list;
@@ -13444,11 +13462,15 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_title: inv.title || "", event_address: inv.event_address || "", event_location: inv.location_name || "",
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
-      logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name
+      logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
+      cta_label: inv.cta_label || (isNews ? "Läs mer" : "Svara på inbjudan"),
+      cta_url: isNews ? _admAbs(inv.cta_url || "") : ""
     };
 
     const rows = slice.map(g => {
-      const extra = { ...baseExtra, guest_name: g.name || "", invite_link: PUBLIC_INVITE_URL + "?g=" + encodeURIComponent(g.guest_token || ""), slug: "invite_invitation" };
+      const extra = isNews
+        ? { ...baseExtra, guest_name: g.name || "", slug }
+        : { ...baseExtra, guest_name: g.name || "", invite_link: PUBLIC_INVITE_URL + "?g=" + encodeURIComponent(g.guest_token || ""), slug };
       return {
         template_id: tplId || null, entity_id: g._id || g.id, entity_type: "invite",
         to_email: g.email, to_name: g.name || g.email, email_sent: false, extra_data: JSON.stringify(extra)
