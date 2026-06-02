@@ -73,11 +73,20 @@ async function processEmailQueue() {
     try {
       const { subject, html } = await buildEmail(item);
 
+      // Per-utskick avsändarnamn (sätts i index.js från ClientCompany.name).
+      // Fallback till global FROM_NAME ("Mira") om saknas.
+      let fromName;
+      try {
+        const ex = safeParseJson(item.extra_data);
+        if (ex && ex.from_name) fromName = String(ex.from_name).trim() || undefined;
+      } catch (_) {}
+
       await sendViaSendGrid({
         to:      item.to_email,
         toName:  item.to_name || "",
         subject,
-        html
+        html,
+        fromName
       });
 
       await _bubblePatch("emailqueue", item._id, {
@@ -1215,12 +1224,12 @@ async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
 // ────────────────────────────────────────────────────────────
 // SendGrid REST (ingen SDK – matcher befintligt mönster i index.js)
 // ────────────────────────────────────────────────────────────
-async function sendViaSendGrid({ to, toName, subject, html }) {
+async function sendViaSendGrid({ to, toName, subject, html, fromName }) {
   if (!SENDGRID_API_KEY) throw new Error("SENDGRID_API_KEY saknas");
 
   const body = {
     personalizations: [{ to: [{ email: to, name: toName || "" }] }],
-    from: { email: FROM_EMAIL, name: FROM_NAME },
+    from: { email: FROM_EMAIL, name: (fromName && fromName.trim()) || FROM_NAME },
     subject,
     content: [{ type: "text/html", value: html }]
   };
