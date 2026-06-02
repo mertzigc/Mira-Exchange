@@ -12790,6 +12790,18 @@ function _admToken() {
 function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
 // Normalisera kind: "news", "survey" eller default "invite"
 function _normKind(v) { const k = String(v || "invite").toLowerCase(); return (k === "news" || k === "survey") ? k : "invite"; }
+// Extrahera Bubbles faktiska felmeddelande ur ett bubbleCreate/bubblePatch-fel
+function _bubbleErrText(e) {
+  const d = (e && e.detail) || {};
+  // bubbleCreate lägger Bubble-JSON i d.body; bubblePatch i d.bodyJson + d.bodyText
+  const j = d.body || d.bodyJson || {};
+  const msg = (j && (j.body?.message || j.message))
+            || d.bodyText
+            || d.error
+            || (e && e.message)
+            || "";
+  return String(msg || "").trim();
+}
 function _admName(cc) { return cc?.Name_company || cc?.name || cc?.Company_name || cc?.company_name || cc?.Namn || ""; }
 function _admUserEmail(u) { return String(u?.email || u?.Email || u?.email_address || u?.authentication?.email?.email || "").trim(); }
 function _admUserName(u) {
@@ -12936,7 +12948,11 @@ app.post("/admin/invite/create", async (req, res) => {
     const uncertain = (d.image || d.image_url) ? { image_url: _admAbs(d.image || d.image_url) } : {};
     const id = await safeCreate(ADM_INVITATION, exact, uncertain);
     res.json({ ok: true, id, token });
-  } catch (e) { console.error("[admin/invite/create]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+  } catch (e) {
+    const detail = _bubbleErrText(e);
+    console.error("[admin/invite/create]", e?.message, detail, e?.detail);
+    res.status(500).json({ ok: false, error: e?.message, detail });
+  }
 });
 
 // ── Uppdatera inbjudan ────────────────────────────────────────────────────────
@@ -12964,7 +12980,11 @@ app.patch("/admin/invite/update", async (req, res) => {
     if (b.image !== undefined || b.image_url !== undefined) f.image_url = _admAbs(b.image || b.image_url || "");
     await bubblePatch(ADM_INVITATION, b.id, f);
     res.json({ ok: true });
-  } catch (e) { console.error("[admin/invite/update]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+  } catch (e) {
+    const detail = _bubbleErrText(e);
+    console.error("[admin/invite/update]", e?.message, detail, e?.detail);
+    res.status(500).json({ ok: false, error: e?.message, detail });
+  }
 });
 
 // ── Lista inbjudningar ────────────────────────────────────────────────────────
