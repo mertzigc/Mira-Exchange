@@ -13078,6 +13078,57 @@ app.post("/admin/audience/preview", async (req, res) => {
   } catch (e) { console.error("[admin/audience/preview]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// SPARADE URVAL (AudienceSegment) — spara/återanvänd filtreringar
+// Bubble-typ: AudienceSegment med fält (text): name, regions, fastigheter, company, notes
+// regions/fastigheter lagras som JSON-strängar. Exponera typen via Data API.
+// ════════════════════════════════════════════════════════════════════════════
+function _segParse(s) { try { return JSON.parse(s || "[]"); } catch (_) { return []; } }
+
+// ── GET /admin/audience/segments — lista sparade urval ──
+app.get("/admin/audience/segments", async (req, res) => {
+  try {
+    let rows = [];
+    try { rows = await bubbleFindAll("AudienceSegment", {}); } catch (_) { rows = []; }
+    const list = (rows || []).map(s => ({
+      id: s._id,
+      name: s.name || "(utan namn)",
+      regions: _segParse(s.regions),
+      fastigheter: _segParse(s.fastigheter),
+      company: s.company || null,
+      notes: s.notes || "",
+      created_at: s["Created Date"] || null
+    })).sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
+    res.json({ ok: true, segments: list });
+  } catch (e) { console.error("[admin/audience/segments/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── POST /admin/audience/segments — spara nytt urval ──
+app.post("/admin/audience/segments", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const name = safeText(b.name || "", 120);
+    if (!name) return res.status(400).json({ ok: false, error: "name_required" });
+    const id = await safeCreate("AudienceSegment", {
+      name,
+      regions:     JSON.stringify(Array.isArray(b.regions) ? b.regions : []),
+      fastigheter: JSON.stringify(Array.isArray(b.fastigheter) ? b.fastigheter : []),
+      company:     b.company || null,
+      notes:       safeText(b.notes || "", 500)
+    }, {});
+    res.json({ ok: true, id });
+  } catch (e) { console.error("[admin/audience/segments/create]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── DELETE /admin/audience/segments/:id — ta bort sparat urval ──
+app.delete("/admin/audience/segments/:id", async (req, res) => {
+  try {
+    if (!req.params.id) return res.status(400).json({ ok: false, error: "id_required" });
+    await bubbleDelete("AudienceSegment", req.params.id);
+    res.json({ ok: true });
+  } catch (e) { console.error("[admin/audience/segments/delete]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // DELTAGARLISTOR – skapa InviteGuest-rader från en målgrupp
 // Batchat (drivs av frontend) + Bubble bulk-create → undviker timeout.
