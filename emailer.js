@@ -157,6 +157,7 @@ async function buildEmail(item) {
     case "public_request_internal": return tmplPublicRequestInternal(entity, extra, toName, ctaLabel, ctx);
     case "invite_rsvp_confirmation": return tmplInviteRsvpConfirmation(entity, extra, toName, ctaLabel, ctx);
     case "invite_invitation": return tmplInviteInvitation(entity, extra, toName, ctaLabel, ctx);
+    case "news_announcement": return tmplNewsAnnouncement(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1105,6 +1106,36 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
     ctaLabel: ctaLabel || "Svara p\u00e5 inbjudan",
     ctaUrl: x.invite_link || null,
     miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 inbjudan."
+  });
+  return { subject, html };
+}
+
+// slug: news_announcement
+// extra: { title (via event_title), description, image_url, logo_url, accent_color,
+//          company_name, host_name, cta_label, cta_url, guest_name }
+async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.company_name || "";
+  const accent     = x.accent_color || "#df6f39";
+  const guest      = x.guest_name || toName || "";
+  const title      = x.event_title || "Nyhet";
+
+  const subject = item.subject_override || title;
+  const body    = x.description
+    ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
+    : "";
+  const ctaUrl  = String(x.cta_url || "").trim();
+  const finalCtaLabel = (ctaLabel || x.cta_label || "Läs mer").trim();
+
+  const html = wrapLayout({
+    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    tag: "Nyhetsutskick",
+    headline: title,
+    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>',
+    details: null,
+    ctaLabel: ctaUrl ? finalCtaLabel : null,
+    ctaUrl: ctaUrl || null,
+    miraNote: null
   });
   return { subject, html };
 }
