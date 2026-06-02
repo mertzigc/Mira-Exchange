@@ -167,6 +167,7 @@ async function buildEmail(item) {
     case "invite_rsvp_confirmation": return tmplInviteRsvpConfirmation(entity, extra, toName, ctaLabel, ctx);
     case "invite_invitation": return tmplInviteInvitation(entity, extra, toName, ctaLabel, ctx);
     case "news_announcement": return tmplNewsAnnouncement(entity, extra, toName, ctaLabel, ctx);
+    case "survey_invitation": return tmplSurveyInvitation(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1179,6 +1180,36 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
     ctaUrl: ctaUrl || null,
     miraNote: null,
     socialBlock
+  });
+  return { subject, html };
+}
+
+// slug: survey_invitation
+// extra: { event_title, description, image_url, logo_url, accent_color, company_name,
+//          host_name, cta_label, guest_name, invite_link (→ survey-landningssida) }
+async function tmplSurveyInvitation(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.company_name || "";
+  const accent     = x.accent_color || "#df6f39";
+  const guest      = x.guest_name || toName || "";
+  const title      = x.event_title || "Undersökning";
+
+  const subject = item.subject_override || title;
+  const body    = x.description
+    ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
+    : "Vi skulle uppskatta om du kan ta några minuter att besvara vår undersökning.";
+  // CTA: per-utskick (x.cta_label) > template-default > hårdkodad fallback
+  const finalCtaLabel = (x.cta_label || ctaLabel || "Svara på undersökningen").trim();
+
+  const html = wrapLayout({
+    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    tag: "Undersökning",
+    headline: title,
+    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>',
+    details: null,
+    ctaLabel: finalCtaLabel,
+    ctaUrl: x.invite_link || null,
+    miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 unders\u00f6kningen."
   });
   return { subject, html };
 }
