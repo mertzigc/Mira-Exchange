@@ -447,6 +447,25 @@ async function bubblePatch(typeName, id, payload) {
   err.detail = lastErr;
   throw err;
 }
+// ── bubbleDelete: DELETE /api/1.1/obj/{type}/{id} (auth + multi-base fallback) ──
+async function bubbleDelete(typeName, id) {
+  let lastErr = null;
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}/${id}`;
+    try {
+      const r = await fetch(url, {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY }
+      });
+      if (r.status === 204 || r.ok) return true;
+      const text = await r.text().catch(() => "");
+      lastErr = { base, status: r.status, body: text };
+    } catch (e) { lastErr = { base, error: String(e?.message || e) }; }
+  }
+  const err = new Error("bubbleDelete failed");
+  err.detail = lastErr;
+  throw err;
+}
 async function fetchBubbleUser(user_unique_id) {
   const variants = [
     ...BUBBLE_BASES.map(b => b + "/api/1.1/obj/user/" + user_unique_id)
@@ -13224,6 +13243,7 @@ app.post("/admin/invite/:id/guests/import", async (req, res) => {
         guest_token:     _admToken(),
         name:            String(r?.name || r?.namn || email).trim().slice(0, 120),
         email,
+        phone:           String(r?.phone || r?.tel || r?.telefon || "").trim().slice(0, 60) || undefined,
         client_company:  match?.id || undefined,
         region:          String(r?.region || match?.region || "").trim() || undefined,
         source:          "import",
@@ -13252,6 +13272,80 @@ app.get("/admin/invite/:id/guests/stats", async (req, res) => {
     });
     res.json({ ok: true, total: guests.length, yes, no, pending, arrived, sent, sendable });
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── GET /admin/invite/:id/guests — full deltagarlista, berikad med företagsnamn ──
+app.get("/admin/invite/:id/guests", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    if (!invId) return res.status(400).json({ ok: false, error: "id_required" });
+    await _syncCache("ClientCompany");
+    const ccs = _cacheRows("ClientCompany");
+    const ccById = new Map(ccs.map(c => [c._id, c]));
+    const guests = await bubbleFindAll(INVITE.GUEST_TYPE, {
+      constraints: [{ key: "invitation", constraint_type: "equals", value: invId }]
+    });
+    const list = (guests || []).map(g => {
+      const cc = g.client_company ? ccById.get(g.client_company) : null;
+      return {
+        id: g._id,
+        name: g.name || "",
+        email: g.email || "",
+        phone: g.phone || "",
+        company_id: g.client_company || null,
+        company_name: cc ? _admName(cc) : "",
+        region: g.region || (cc ? (cc.Region || cc.region || "") : ""),
+        rsvp_status: g.rsvp_status || "pending",
+        rsvp_at: g.rsvp_at || null,
+        plus_ones_count: Number(g.plus_ones_count) || 0,
+        allergens_json: g.allergens_json || "[]",
+        arrived: g.arrived === true,
+        arrived_at: g.arrived_at || null,
+        invited_at: g.invited_at || null,
+        invite_sent: g.invite_sent === true,
+        source: g.source || "",
+        guest_token: g.guest_token || "",
+        created_at: g["Created Date"] || null
+      };
+    });
+    // Sortera: ej anlända först, sedan på namn
+    list.sort((a, b) => {
+      if (a.arrived !== b.arrived) return a.arrived ? 1 : -1;
+      return String(a.name || a.email).localeCompare(String(b.name || b.email), "sv");
+    });
+    res.json({ ok: true, guests: list });
+  } catch (e) { console.error("[admin/invite/guests/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── PATCH /admin/invite/guest/:id — uppdatera enskild gäst (anlänt, namn, mejl, ...) ──
+app.patch("/admin/invite/guest/:id", async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const b = req.body || {};
+    const f = {};
+    if (b.name !== undefined)        f.name        = String(b.name || "");
+    if (b.email !== undefined)       f.email       = String(b.email || "").toLowerCase().trim();
+    if (b.phone !== undefined)       f.phone       = String(b.phone || "");
+    if (b.notes !== undefined)       f.notes       = String(b.notes || "");
+    if (b.rsvp_status !== undefined) f.rsvp_status = String(b.rsvp_status || "pending");
+    if (b.arrived !== undefined) {
+      f.arrived = !!b.arrived;
+      f.arrived_at = b.arrived ? new Date().toISOString() : null;
+    }
+    if (!Object.keys(f).length) return res.status(400).json({ ok: false, error: "no_fields" });
+    await bubblePatch(INVITE.GUEST_TYPE, gid, f);
+    res.json({ ok: true });
+  } catch (e) { console.error("[admin/invite/guest/patch]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── DELETE /admin/invite/guest/:id — ta bort en enskild deltagare ──
+app.delete("/admin/invite/guest/:id", async (req, res) => {
+  try {
+    const gid = req.params.id;
+    if (!gid) return res.status(400).json({ ok: false, error: "id_required" });
+    await bubbleDelete(INVITE.GUEST_TYPE, gid);
+    res.json({ ok: true });
+  } catch (e) { console.error("[admin/invite/guest/delete]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
 // ══════════════════════════════════════════════════════════════════════════
