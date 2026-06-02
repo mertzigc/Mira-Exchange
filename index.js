@@ -12788,6 +12788,8 @@ function _admToken() {
   return (Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).replace(/[^a-z0-9]/gi, "").slice(0, 32);
 }
 function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
+// Normalisera kind: "news", "survey" eller default "invite"
+function _normKind(v) { const k = String(v || "invite").toLowerCase(); return (k === "news" || k === "survey") ? k : "invite"; }
 function _admName(cc) { return cc?.Name_company || cc?.name || cc?.Company_name || cc?.company_name || cc?.Namn || ""; }
 function _admUserEmail(u) { return String(u?.email || u?.Email || u?.email_address || u?.authentication?.email?.email || "").trim(); }
 function _admUserName(u) {
@@ -12909,7 +12911,7 @@ app.post("/admin/invite/create", async (req, res) => {
     const exact = {
       token,
       active:          d.active !== false,
-      kind:            String(d.kind || "invite").toLowerCase() === "news" ? "news" : "invite",
+      kind:            _normKind(d.kind),
       client_company:  d.client_company || null,
       title:           safeText(d.title, 200),
       description:     String(d.description || ""),
@@ -12952,7 +12954,7 @@ app.patch("/admin/invite/update", async (req, res) => {
       linkedin_url: v => _admAbs(v || ""),
       facebook_url: v => _admAbs(v || ""),
       instagram_url: v => _admAbs(v || ""),
-      kind: v => String(v || "invite").toLowerCase() === "news" ? "news" : "invite"
+      kind: v => _normKind(v)
     };
     Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
     ["start_date", "end_date", "rsvp_deadline"].forEach(k => { if (b[k] !== undefined) f[k] = b[k] ? toBubbleDate(b[k]) : null; });
@@ -12969,16 +12971,19 @@ app.patch("/admin/invite/update", async (req, res) => {
 app.get("/admin/invite/list", async (req, res) => {
   try {
     const rows = await bubbleFind(ADM_INVITATION, { limit: 60 }).catch(() => []);
-    // kind-filter: default = invite (bakåtkompat), ?kind=news = bara news, ?kind=all = båda
+    // kind-filter: default = invite (bakåtkompat), ?kind=news = bara news,
+    // ?kind=survey = bara survey, ?kind=all = alla
     const kindParam = String(req.query.kind || "invite").toLowerCase();
     const filtered = (kindParam === "all")
       ? (rows || [])
-      : (kindParam === "news"
+      : (kindParam === "news")
           ? (rows || []).filter(r => String(r.kind || "").toLowerCase() === "news")
-          : (rows || []).filter(r => String(r.kind || "").toLowerCase() !== "news"));
+          : (kindParam === "survey")
+              ? (rows || []).filter(r => String(r.kind || "").toLowerCase() === "survey")
+              : (rows || []).filter(r => { const k = String(r.kind || "").toLowerCase(); return k !== "news" && k !== "survey"; });
     const out = filtered.map(i => ({
       id: i._id || i.id, title: i.title || "", active: i.active !== false, token: i.token || "",
-      kind: String(i.kind || "invite").toLowerCase() === "news" ? "news" : "invite",
+      kind: _normKind(i.kind),
       start_date: i.start_date || null, rsvp_deadline: i.rsvp_deadline || null,
       location_name: i.location_name || "", client_company: i.client_company || null,
       cta_label: i.cta_label || "", cta_url: i.cta_url || ""
@@ -12995,7 +13000,7 @@ app.get("/admin/invite/:id", async (req, res) => {
     if (!i) return res.status(404).json({ ok: false, error: "not_found" });
     res.json({ ok: true, invite: {
       id: i._id || i.id, token: i.token || "", active: i.active !== false,
-      kind: String(i.kind || "invite").toLowerCase() === "news" ? "news" : "invite",
+      kind: _normKind(i.kind),
       client_company: i.client_company || "", title: i.title || "", description: i.description || "",
       accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
@@ -13373,6 +13378,7 @@ app.get("/admin/invite/:id/guests", async (req, res) => {
         rsvp_at: g.rsvp_at || null,
         plus_ones_count: Number(g.plus_ones_count) || 0,
         allergens_json: g.allergens_json || "[]",
+        response_json: g.response_json || "{}",
         arrived: g.arrived === true,
         arrived_at: g.arrived_at || null,
         invited_at: g.invited_at || null,
