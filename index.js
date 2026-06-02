@@ -13470,8 +13470,10 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
-      // Dynamiskt avsändarnamn i mottagarens inkorg (e-postadressen förblir support@mira-fm.com)
-      from_name: brand.company_name,
+      // Avsändarnamn i inkorgen: ALLTID ClientCompanyns namn, ignorera inv.host_name
+      // (host_name kan vara en person, t.ex. "Christian Mertzig" — det hör hemma i
+      // mejlets innehåll, inte på From-raden där det förvirrar mottagaren).
+      from_name: _admName(cc || {}) || "Carotte",
       cta_label: inv.cta_label || (isNews ? "Läs mer" : "Svara på inbjudan"),
       cta_url: isNews ? _admAbs(inv.cta_url || "") : "",
       // Endast meningsfullt för news, men skadar inte att alltid skicka med
