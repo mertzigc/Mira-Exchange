@@ -12924,7 +12924,10 @@ app.post("/admin/invite/create", async (req, res) => {
       form_schema:     typeof d.form_schema === "string" ? d.form_schema : JSON.stringify(d.form_schema || []),
       host_name:       safeText(d.host_name || "", 120),
       cta_label:       safeText(d.cta_label || "", 80),
-      cta_url:         _admAbs(d.cta_url || "")
+      cta_url:         _admAbs(d.cta_url || ""),
+      linkedin_url:    _admAbs(d.linkedin_url || ""),
+      facebook_url:    _admAbs(d.facebook_url || ""),
+      instagram_url:   _admAbs(d.instagram_url || "")
     };
     // image hanteras hedgat: image-fältet i Bubble är image-typ och tar oftast inte
     // emot en extern URL via Data API. Lägg ev. till ett TEXT-fält image_url så fastnar URL:en.
@@ -12946,6 +12949,9 @@ app.patch("/admin/invite/update", async (req, res) => {
       host_name: v => safeText(v, 120), max_plus_ones: v => asNumberOrNull(v) ?? 0,
       form_schema: v => (typeof v === "string" ? v : JSON.stringify(v || [])),
       cta_label: v => safeText(v, 80), cta_url: v => _admAbs(v || ""),
+      linkedin_url: v => _admAbs(v || ""),
+      facebook_url: v => _admAbs(v || ""),
+      instagram_url: v => _admAbs(v || ""),
       kind: v => String(v || "invite").toLowerCase() === "news" ? "news" : "invite"
     };
     Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
@@ -12995,7 +13001,8 @@ app.get("/admin/invite/:id", async (req, res) => {
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
       allow_plus_ones: i.allow_plus_ones !== false, max_plus_ones: asNumberOrNull(i.max_plus_ones) ?? 0,
       image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]",
-      cta_label: i.cta_label || "", cta_url: i.cta_url || ""
+      cta_label: i.cta_label || "", cta_url: i.cta_url || "",
+      linkedin_url: i.linkedin_url || "", facebook_url: i.facebook_url || "", instagram_url: i.instagram_url || ""
     }});
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
@@ -13464,7 +13471,12 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
       cta_label: inv.cta_label || (isNews ? "Läs mer" : "Svara på inbjudan"),
-      cta_url: isNews ? _admAbs(inv.cta_url || "") : ""
+      cta_url: isNews ? _admAbs(inv.cta_url || "") : "",
+      // Endast meningsfullt för news, men skadar inte att alltid skicka med
+      published_at: inv["Created Date"] || inv.created_date || "",
+      linkedin_url:  isNews ? _admAbs(inv.linkedin_url  || "") : "",
+      facebook_url:  isNews ? _admAbs(inv.facebook_url  || "") : "",
+      instagram_url: isNews ? _admAbs(inv.instagram_url || "") : ""
     };
 
     const rows = slice.map(g => {
