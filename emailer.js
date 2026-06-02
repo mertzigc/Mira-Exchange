@@ -701,7 +701,8 @@ async function tmplTodoNew(e, extra, toName, ctaLabel, item) {
 function wrapLayout({
   toName, logoUrl, senderName, imageUrl,
   accent = "#db6923", tag, headline, body,
-  details, ctaLabel, ctaUrl, miraNote = null
+  details, ctaLabel, ctaUrl, miraNote = null,
+  subhead = null, socialBlock = null
 }) {
   // E-postklienter (Outlook m.fl.) laddar inte protokoll-relativa "//"-URL:er
   const _abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
@@ -777,7 +778,8 @@ function wrapLayout({
                  color:#e8eaf0;line-height:1.25;letter-spacing:-.3px;">
         ${esc(headline)}
       </h1>
-      <p style="margin:0 0 6px;font-size:14px;color:#8892aa;">Hej ${esc(toName)},</p>
+      ${subhead ? `<p style="margin:0 0 14px;font-size:11px;color:#8892aa;letter-spacing:.06em;text-transform:uppercase;font-weight:600;">${esc(subhead)}</p>` : ""}
+      ${toName ? `<p style="margin:0 0 6px;font-size:14px;color:#8892aa;">Hej ${esc(toName)},</p>` : ""}
       <div style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:12px 0 0;">
         ${body || ""}
       </div>
@@ -797,6 +799,9 @@ function wrapLayout({
       ${ctaBlock}
     </td></tr>
 
+    <!-- Sociala ikoner (om angivna) -->
+    ${socialBlock ? `<tr><td style="padding:18px 36px 8px;">${socialBlock}</td></tr>` : ""}
+
     <!-- Footer -->
     <tr><td style="padding:24px 36px;border-top:1px solid #1e2437;margin-top:24px;">
       <p style="font-size:11px;color:#3a4055;line-height:1.6;margin:0;">
@@ -809,6 +814,25 @@ function wrapLayout({
 </table>
 </body>
 </html>`;
+}
+
+// ────────────────────────────────────────────────────────────
+// Sociala ikoner i mailfot — färgade rutor med bokstavsförkortning.
+// Mejl-säker: ren HTML-tabell, inga externa bilder, fungerar i Outlook.
+// ────────────────────────────────────────────────────────────
+function buildSocialBlock(linkedin, facebook, instagram) {
+  linkedin  = String(linkedin  || "").trim();
+  facebook  = String(facebook  || "").trim();
+  instagram = String(instagram || "").trim();
+  if (!linkedin && !facebook && !instagram) return "";
+  const btn = (url, label, bg, title) => url
+    ? `<td style="padding:0 5px;"><a href="${esc(url)}" title="${esc(title)}" style="display:inline-block;width:34px;height:34px;line-height:34px;background:${bg};color:#ffffff;text-decoration:none;font-size:13px;font-weight:700;border-radius:8px;text-align:center;font-family:Arial,sans-serif;">${label}</a></td>`
+    : "";
+  return `<table cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;"><tr>
+    ${btn(linkedin,  'in', '#0a66c2', 'LinkedIn')}
+    ${btn(facebook,  'f',  '#1877f2', 'Facebook')}
+    ${btn(instagram, '@',  '#e1306c', 'Instagram')}
+  </tr></table>`;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1117,7 +1141,6 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
   const x = extra || {};
   const senderName = x.company_name || "";
   const accent     = x.accent_color || "#df6f39";
-  const guest      = x.guest_name || toName || "";
   const title      = x.event_title || "Nyhet";
 
   const subject = item.subject_override || title;
@@ -1125,17 +1148,28 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
     ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
     : "";
   const ctaUrl  = String(x.cta_url || "").trim();
-  const finalCtaLabel = (ctaLabel || x.cta_label || "Läs mer").trim();
+  // CTA-precedens: per-utskick (x.cta_label) > template-default (ctaLabel) > hårdkodad fallback
+  const finalCtaLabel = (x.cta_label || ctaLabel || "Läs mer").trim();
+
+  // "Publicerat: <datum>" — när kampanjen skapades
+  const pubDate = fmtDate(x.published_at);
+  const subhead = pubDate ? `Publicerat: ${pubDate}` : null;
+
+  // Sociala ikoner i mailfot (om angivna)
+  const socialBlock = buildSocialBlock(x.linkedin_url, x.facebook_url, x.instagram_url);
 
   const html = wrapLayout({
-    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    // toName tomt = ingen "Hej Namn,"-hälsning för nyhetsutskick
+    toName: "", logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
     tag: "Nyhetsutskick",
     headline: title,
+    subhead,
     body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>',
     details: null,
     ctaLabel: ctaUrl ? finalCtaLabel : null,
     ctaUrl: ctaUrl || null,
-    miraNote: null
+    miraNote: null,
+    socialBlock
   });
   return { subject, html };
 }
