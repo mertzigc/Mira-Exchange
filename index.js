@@ -8331,7 +8331,8 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
   // connection_id är valfritt – om det saknas körs ALLA aktiva connections
   // filter_field styr vilket fält som måste vara tomt (default ft_your_reference).
   // Sätt till "ft_net" för att backfilla net/totalvat på fakturor som redan har your_reference.
-  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0, filter_field = "ft_your_reference" } = req.body || {};
+  // since_invoice_date: ISO-datum (t.ex. "2026-01-01") - begränsar enrich till fakturor med ft_invoice_date >= detta.
+  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0, filter_field = "ft_your_reference", since_invoice_date = null } = req.body || {};
 
   const lim = Math.min(Number(limit) || 50, 200);
   const filterField = String(filter_field || "ft_your_reference").trim();
@@ -8356,11 +8357,16 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
       continue;
     }
 
+    const constraints = [
+      { key: "connection_id", constraint_type: "equals", value: cid },
+      { key: filterField, constraint_type: "is_empty" }
+    ];
+    if (since_invoice_date) {
+      constraints.push({ key: "ft_invoice_date", constraint_type: "greater than", value: since_invoice_date });
+    }
+
     const list = await bubbleFind("FortnoxInvoice", {
-      constraints: [
-        { key: "connection_id", constraint_type: "equals", value: cid },
-        { key: filterField, constraint_type: "is_empty" }
-      ],
+      constraints,
       limit: lim,
       cursor: Number(cursor) || 0,
       sort_field: "Created Date",
@@ -8404,7 +8410,7 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
 // (Bubble's is_empty-constraint fångar bara NULL, inte 0). Detta är vanligt
 // när sync skapat raden från ett listing-svar utan Net-fält och defaultat till 0.
 app.post("/fortnox/enrich/invoices/zero-net", requireApiKey, async (req, res) => {
-  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0 } = req.body || {};
+  const { connection_id = null, limit = 50, pause_ms = 300, cursor = 0, since_invoice_date = null } = req.body || {};
   const lim = Math.min(Number(limit) || 50, 200);
 
   let connections = [];
@@ -8428,11 +8434,16 @@ app.post("/fortnox/enrich/invoices/zero-net", requireApiKey, async (req, res) =>
 
     // Två constraints krävs för att fånga ft_net = 0 (inte NULL).
     // Bubble's "equals 0" + connection_id-filter.
+    const constraints = [
+      { key: "connection_id", constraint_type: "equals", value: cid },
+      { key: "ft_net",        constraint_type: "equals", value: 0 }
+    ];
+    if (since_invoice_date) {
+      constraints.push({ key: "ft_invoice_date", constraint_type: "greater than", value: since_invoice_date });
+    }
+
     const list = await bubbleFind("FortnoxInvoice", {
-      constraints: [
-        { key: "connection_id", constraint_type: "equals", value: cid },
-        { key: "ft_net",        constraint_type: "equals", value: 0 }
-      ],
+      constraints,
       limit: lim,
       cursor: Number(cursor) || 0,
       sort_field: "Created Date",
