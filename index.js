@@ -8361,17 +8361,26 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
       { key: "connection_id", constraint_type: "equals", value: cid },
       { key: filterField, constraint_type: "is_empty" }
     ];
-    if (since_invoice_date) {
-      constraints.push({ key: "ft_invoice_date", constraint_type: "greater than", value: since_invoice_date });
-    }
+    // OBS: ingen Bubble-side constraint på ft_invoice_date (text-fält → opålitlig).
+    // Lokal filtrering nedan istället.
 
-    const list = await bubbleFind("FortnoxInvoice", {
+    const list_raw = await bubbleFind("FortnoxInvoice", {
       constraints,
       limit: lim,
       cursor: Number(cursor) || 0,
       sort_field: "Created Date",
       descending: true
     });
+
+    // Lokal filtrering på ft_invoice_date om since_invoice_date angetts
+    const sinceDateStr = since_invoice_date ? String(since_invoice_date).slice(0, 10) : null;
+    const list = sinceDateStr
+      ? list_raw.filter(inv => {
+          const d = String(inv?.ft_invoice_date || "").slice(0, 10);
+          return d && d >= sinceDateStr;
+        })
+      : list_raw;
+    const filtered_out = list_raw.length - list.length;
 
     let enriched = 0, skipped = 0, errors = 0;
     let first_error = null;
@@ -8392,8 +8401,8 @@ app.post("/fortnox/enrich/invoices", requireApiKey, async (req, res) => {
     total_skipped  += skipped;
     total_errors   += errors;
 
-    const next_cursor = list.length === lim ? (Number(cursor) || 0) + lim : null;
-    results.push({ connection_id: cid, found: list.length, cursor: Number(cursor) || 0, next_cursor, counts: { enriched, skipped, errors }, first_error });
+    const next_cursor = list_raw.length === lim ? (Number(cursor) || 0) + lim : null;
+    results.push({ connection_id: cid, found: list_raw.length, filtered_out, processed: list.length, cursor: Number(cursor) || 0, next_cursor, counts: { enriched, skipped, errors }, first_error });
   }
 
   return res.json({
@@ -8438,17 +8447,26 @@ app.post("/fortnox/enrich/invoices/zero-net", requireApiKey, async (req, res) =>
       { key: "connection_id", constraint_type: "equals", value: cid },
       { key: "ft_net",        constraint_type: "equals", value: 0 }
     ];
-    if (since_invoice_date) {
-      constraints.push({ key: "ft_invoice_date", constraint_type: "greater than", value: since_invoice_date });
-    }
+    // OBS: ingen Bubble-side constraint på ft_invoice_date (text-fält → opålitlig).
+    // Lokal filtrering nedan istället.
 
-    const list = await bubbleFind("FortnoxInvoice", {
+    const list_raw = await bubbleFind("FortnoxInvoice", {
       constraints,
       limit: lim,
       cursor: Number(cursor) || 0,
       sort_field: "Created Date",
       descending: true
     });
+
+    // Lokal filtrering på ft_invoice_date om since_invoice_date angetts
+    const sinceDateStr = since_invoice_date ? String(since_invoice_date).slice(0, 10) : null;
+    const list = sinceDateStr
+      ? list_raw.filter(inv => {
+          const d = String(inv?.ft_invoice_date || "").slice(0, 10);
+          return d && d >= sinceDateStr;
+        })
+      : list_raw;
+    const filtered_out = list_raw.length - list.length;
 
     let enriched = 0, skipped = 0, errors = 0;
     let first_error = null;
@@ -8469,8 +8487,8 @@ app.post("/fortnox/enrich/invoices/zero-net", requireApiKey, async (req, res) =>
     total_skipped  += skipped;
     total_errors   += errors;
 
-    const next_cursor = list.length === lim ? (Number(cursor) || 0) + lim : null;
-    results.push({ connection_id: cid, found: list.length, cursor: Number(cursor) || 0, next_cursor, counts: { enriched, skipped, errors }, first_error });
+    const next_cursor = list_raw.length === lim ? (Number(cursor) || 0) + lim : null;
+    results.push({ connection_id: cid, found: list_raw.length, filtered_out, processed: list.length, cursor: Number(cursor) || 0, next_cursor, counts: { enriched, skipped, errors }, first_error });
   }
 
   return res.json({
