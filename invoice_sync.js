@@ -290,11 +290,15 @@ export function createSyncEngine(deps) {
       errors: [],
     };
 
-    const addReconcile = (conn, ym, net) => {
-      const r = report.reconcile[conn] || (report.reconcile[conn] = { total: 0, by_month: {} });
+    const addReconcile = (conn, ym, net, type) => {
+      const r = report.reconcile[conn] || (report.reconcile[conn] = { total: 0, by_month: {}, by_type: {} });
       r.total += net;
-      const key = ym || "unknown";
-      r.by_month[key] = (r.by_month[key] || 0) + net;
+      const mk = ym || "unknown";
+      r.by_month[mk] = (r.by_month[mk] || 0) + net;
+      const tk = type || "unknown";
+      const t = r.by_type[tk] || (r.by_type[tk] = { net: 0, count: 0 });
+      t.net += net;
+      t.count++;
     };
 
     for await (const ref of adapter.iterateRefs(auth, opts)) {
@@ -320,7 +324,7 @@ export function createSyncEngine(deps) {
         const tsYM = payload.ft_invoice_ts
           ? new Date(payload.ft_invoice_ts).toISOString().slice(0, 7)
           : (ym || "unknown");
-        addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0));
+        addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type);
 
         if (r.action !== "noop" && report.sample_diffs.length < maxSample) {
           report.sample_diffs.push({
