@@ -263,6 +263,22 @@ export function createSyncEngine(deps) {
     },
   };
 
+  // Robusta Fortnox-anrop: retry med exponentiell backoff på 429/5xx (transienta).
+  // Permanenta 4xx ger upp direkt. Skyddar mot rate-limit mitt i paginering.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function fortnoxGetRetry(path, token, query, tries = 4) {
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      const r = await fortnox.get(path, token, query);
+      if (r?.ok) return r;
+      last = r;
+      const st = r?.status || 0;
+      if (st && st !== 429 && st < 500) break;       // permanent fel → ge upp
+      await sleep(600 * Math.pow(2, i));             // 600ms, 1.2s, 2.4s, 4.8s
+    }
+    return last;
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Adapter: Fortnox faktura (F&E, Staff, ...)
   // Fortnox detail har Net/TotalVAT KORREKT signerade (credits negativa) → ingen
@@ -279,7 +295,9 @@ export function createSyncEngine(deps) {
       if (!tok?.ok || !tok?.access_token) {
         throw new Error("Fortnox token-fel: " + (tok?.error || "okänt"));
       }
-      return { connection_id: connId, accessToken: tok.access_token };
+      // Throttle mot Fortnox rate-limit (ms mellan detail-anrop). 0 = av.
+      const throttleMs = opts.throttleMs != null ? Number(opts.throttleMs) : 200;
+      return { connection_id: connId, accessToken: tok.access_token, throttleMs };
     },
 
     // Discovery: paginerar /invoices (page + MetaInformation.@TotalPages).
@@ -290,7 +308,7 @@ export function createSyncEngine(deps) {
       const todate   = opts.todate || null;
       let page = 1, totalPages = 1;
       do {
-        const r = await fortnox.get("/invoices", auth.accessToken, { page, limit, fromdate, todate });
+        const r = await fortnoxGetRetry("/invoices", auth.accessToken, { page, limit, fromdate, todate });
         if (!r?.ok) throw new Error(`fortnox /invoices listing fel sida ${page} (status ${r?.status})`);
         const list = Array.isArray(r.data?.Invoices) ? r.data.Invoices : [];
         totalPages = Number(r.data?.MetaInformation?.["@TotalPages"] ?? 1) || 1;
@@ -304,7 +322,8 @@ export function createSyncEngine(deps) {
     },
 
     async fetchComplete(auth, ref) {
-      const r = await fortnox.get(`/invoices/${encodeURIComponent(ref.docNo)}`, auth.accessToken);
+      if (auth.throttleMs) await sleep(auth.throttleMs);   // håll under Fortnox rate-limit
+      const r = await fortnoxGetRetry(`/invoices/${encodeURIComponent(ref.docNo)}`, auth.accessToken);
       if (!r?.ok) throw new Error(`fortnox detail fel docNo=${ref.docNo} status=${r?.status}`);
       const detail = r.data?.Invoice || r.data?.invoice || null;
       if (!detail) throw new Error(`fortnox detail saknar Invoice docNo=${ref.docNo}`);
