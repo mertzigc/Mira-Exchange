@@ -1,5 +1,6 @@
 // Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
 import { startEmailPoller } from "./emailer.js";
+import { createSyncEngine } from "./invoice_sync.js";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -15884,5 +15885,28 @@ async function countCcRefs(type, ccId) {
   }
   return { type, field, count, status: "ok", method: "list-filter" };
 }
+// ── Sync v2: NIR-baserad sync-kärna (se invoice_sync.js + ARKITEKTUR_OCH_OMTAG.md §8) ──
+// Diff-läge skriver INGENTING. mode:"write" krävs explicit för att spara.
+const syncEngine = createSyncEngine({
+  bubbleFindOne, bubbleCreate, bubblePatch, bubbleFindAll,
+  tengella: {
+    login:                  tengellaLogin,
+    listInvoices:           listTengellaInvoices,
+    getInvoiceById:         getTengellaInvoiceById,
+    resolveInvoiceCustomer: resolveTengellaInvoiceCustomer,
+  },
+  helpers:   { toIsoDate, tengellaDate, normalizeBool },
+  constants: { TENGELLA_CONNECTION_ID, TENGELLA_DEFAULT_ORGNO, TENGELLA_DEFAULT_VAT_RATE },
+});
+
+app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
+  try {
+    const report = await syncEngine.syncForSource(req.params.source, req.body || {});
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
