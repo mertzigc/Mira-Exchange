@@ -306,9 +306,18 @@ export function createSyncEngine(deps) {
       const limit    = Number(opts.limit ?? 100) || 100;
       const fromdate = opts.fromdate || (opts.sinceYM ? opts.sinceYM + "-01" : null);
       const todate   = opts.todate || null;
+      // modifiedDaysBack → lastmodified-sweep: fångar nya OCH saldo/betalnings-
+      // ändringar på äldre fakturor. Format "YYYY-MM-DD HH:MM" UTC (Fortnox-krav).
+      let lastmodified = null;
+      if (opts.modifiedDaysBack != null) {
+        const s = new Date(Date.now() - Number(opts.modifiedDaysBack) * 864e5);
+        const p = (n) => String(n).padStart(2, "0");
+        lastmodified = `${s.getUTCFullYear()}-${p(s.getUTCMonth() + 1)}-${p(s.getUTCDate())} ${p(s.getUTCHours())}:${p(s.getUTCMinutes())}`;
+      }
+      const window = lastmodified ? { lastmodified } : { fromdate, todate };
       let page = 1, totalPages = 1;
       do {
-        const r = await fortnoxGetRetry("/invoices", auth.accessToken, { page, limit, fromdate, todate });
+        const r = await fortnoxGetRetry("/invoices", auth.accessToken, { page, limit, ...window });
         if (!r?.ok) throw new Error(`fortnox /invoices listing fel sida ${page} (status ${r?.status})`);
         const list = Array.isArray(r.data?.Invoices) ? r.data.Invoices : [];
         totalPages = Number(r.data?.MetaInformation?.["@TotalPages"] ?? 1) || 1;
