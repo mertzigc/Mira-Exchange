@@ -290,9 +290,15 @@ export function createSyncEngine(deps) {
       errors: [],
     };
 
-    const addReconcile = (conn, ym, net, type) => {
-      const r = report.reconcile[conn] || (report.reconcile[conn] = { total: 0, by_month: {}, by_type: {} });
+    // Facit-likvärdig: makulerade (Void) exkluderas från active-summan (samma
+    // bas som computeSalesKpi / bokföring), men redovisas separat.
+    const addReconcile = (conn, ym, net, type, cancelled) => {
+      const r = report.reconcile[conn] || (report.reconcile[conn] = {
+        total: 0, total_active: 0, cancelled_net: 0, cancelled_count: 0, by_month: {}, by_type: {},
+      });
       r.total += net;
+      if (cancelled) { r.cancelled_net += net; r.cancelled_count++; return; }
+      r.total_active += net;
       const mk = ym || "unknown";
       r.by_month[mk] = (r.by_month[mk] || 0) + net;
       const tk = type || "unknown";
@@ -324,7 +330,7 @@ export function createSyncEngine(deps) {
         const tsYM = payload.ft_invoice_ts
           ? new Date(payload.ft_invoice_ts).toISOString().slice(0, 7)
           : (ym || "unknown");
-        addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type);
+        addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type, payload.ft_cancelled);
 
         if (r.action !== "noop" && report.sample_diffs.length < maxSample) {
           report.sample_diffs.push({
