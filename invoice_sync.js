@@ -96,8 +96,11 @@ export function createSyncEngine(deps) {
     "ft_invoice_type", "ft_tax_reduction_type", "ft_tax_reduction_amount",
     "ft_invoice_ts", "ft_invoice_date", "ft_due_date",
     "ft_our_reference", "ft_your_reference",
-    "ft_customer_number", "ft_customer_name", "ft_cancelled", "ft_url", "ft_ocr",
+    "ft_customer_number", "ft_customer_name", "ft_cancelled", "ft_ocr",
   ];
+  // OBS: ft_url EXKLUDERAS medvetet från diff. Tengellas PDF-länk är en temporär
+  // signerad URL som regenereras varje hämtning → annars flaggas varje faktura som
+  // ändrad vid varje sync (brus + onödiga writes). Permanent PDF lagras i ft_pdf.
 
   function eqLoose(a, b) {
     if (a == null && b == null) return true;
