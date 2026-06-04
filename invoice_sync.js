@@ -20,6 +20,7 @@ export function createSyncEngine(deps) {
     bubbleFindAll,
     // Tengella-fetchers + helpers (befintliga i index.js)
     tengella,   // { login, listInvoices, getInvoiceById, resolveInvoiceCustomer }
+    fortnox,    // { ensureAccessToken, get, resolveLinkedCompany }
     helpers,    // { toIsoDate, tengellaDate, normalizeBool }
     constants,  // { TENGELLA_CONNECTION_ID, TENGELLA_DEFAULT_ORGNO, TENGELLA_DEFAULT_VAT_RATE }
   } = deps;
@@ -71,9 +72,11 @@ export function createSyncEngine(deps) {
       ft_tax_reduction_type:   nir.taxReductionType || "",      // NYTT (Bug 2)
       ft_tax_reduction_amount: Number(nir.taxReductionAmount ?? 0), // NYTT
 
-      ft_our_reference:        "",                              // tömt (Bug 2 — Tengella saknar motsv.)
-      ft_your_reference:       "",                              // tömt (Bug 2)
-      ft_your_order_number:    "",
+      // Referensfält bärs av NIR: Tengella lämnar dem tomma (Bug 2),
+      // Fortnox sätter dem (deal-link via YourReference).
+      ft_our_reference:        nir.ourReference || "",
+      ft_your_reference:       nir.yourReference || "",
+      ft_your_order_number:    nir.yourOrderNumber || "",
 
       ft_raw_json:             JSON.stringify(nir.raw || {}),
     };
@@ -254,8 +257,97 @@ export function createSyncEngine(deps) {
     },
   };
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // Adapter: Fortnox faktura (F&E, Staff, ...)
+  // Fortnox detail har Net/TotalVAT KORREKT signerade (credits negativa) → ingen
+  // härledning eller teckenflip. Referensfält behålls (Tengella tömmer dem).
+  // OBS: fast-läge passar INTE Fortnox (listing saknar Net) → kör alltid detail.
+  // ───────────────────────────────────────────────────────────────────────────
+  const fortnoxInvoiceAdapter = {
+    source: "fortnox-invoice",
+
+    async resolveAuth(opts) {
+      const connId = opts.connection_id;
+      if (!connId) throw new Error("connection_id krävs för fortnox-invoice");
+      const tok = await fortnox.ensureAccessToken(connId);
+      if (!tok?.ok || !tok?.access_token) {
+        throw new Error("Fortnox token-fel: " + (tok?.error || "okänt"));
+      }
+      return { connection_id: connId, accessToken: tok.access_token };
+    },
+
+    // Discovery: paginerar /invoices (page + MetaInformation.@TotalPages).
+    // Datumfönster skickas serverside via fromdate/todate (InvoiceDate).
+    async *iterateRefs(auth, opts) {
+      const limit    = Number(opts.limit ?? 100) || 100;
+      const fromdate = opts.fromdate || (opts.sinceYM ? opts.sinceYM + "-01" : null);
+      const todate   = opts.todate || null;
+      let page = 1, totalPages = 1;
+      do {
+        const r = await fortnox.get("/invoices", auth.accessToken, { page, limit, fromdate, todate });
+        if (!r?.ok) throw new Error(`fortnox /invoices listing fel sida ${page} (status ${r?.status})`);
+        const list = Array.isArray(r.data?.Invoices) ? r.data.Invoices : [];
+        totalPages = Number(r.data?.MetaInformation?.["@TotalPages"] ?? 1) || 1;
+        for (const inv of list) {
+          const docNo = String(inv?.DocumentNumber ?? "").trim();
+          if (!docNo) continue;
+          yield { docNo, ym: String(inv?.InvoiceDate ?? "").slice(0, 7), listRow: inv };
+        }
+        page++;
+      } while (page <= totalPages);
+    },
+
+    async fetchComplete(auth, ref) {
+      const r = await fortnox.get(`/invoices/${encodeURIComponent(ref.docNo)}`, auth.accessToken);
+      if (!r?.ok) throw new Error(`fortnox detail fel docNo=${ref.docNo} status=${r?.status}`);
+      const detail = r.data?.Invoice || r.data?.invoice || null;
+      if (!detail) throw new Error(`fortnox detail saknar Invoice docNo=${ref.docNo}`);
+      return { detail, ref };
+    },
+
+    async normalize(raw, auth, { fast } = {}) {
+      const inv = raw.detail || {};
+      const total = Number(inv?.Total ?? 0);
+      const yourOrderNumber = String(inv?.YourOrderNumber || "").trim();
+      const yourReference   = String(inv?.YourReference || "").trim();
+      const ourReference    = String(inv?.OurReference || "").trim();
+
+      // linked_company via FortnoxCustomer-bryggan (READ-ONLY). Hoppa i fast för fart.
+      const companyId = fast ? null
+        : await fortnox.resolveLinkedCompany(auth.connection_id, inv?.CustomerNumber).catch(() => null);
+
+      return {
+        connection_id:      auth.connection_id,
+        documentNumber:     String(inv?.DocumentNumber ?? "").trim(),
+        invoiceDate:        helpers.toIsoDate(inv?.InvoiceDate),
+        dueDate:            helpers.toIsoDate(inv?.DueDate),
+        total,
+        net:                inv?.Net != null ? Number(inv.Net) : null,        // korrekt signerat av Fortnox
+        vat:                inv?.TotalVAT != null ? Number(inv.TotalVAT) : null,
+        vatRate:            0.25,   // endast fallback om Net saknas (ovanligt i detail)
+        paid:               null,
+        balance:            inv?.Balance != null ? Number(inv.Balance) : null,
+        currency:           String(inv?.Currency || "SEK"),
+        ocr:                String(inv?.OCR || "").trim(),
+        customerName:       String(inv?.CustomerName || ""),
+        customerNumber:     String(inv?.CustomerNumber || ""),
+        companyId,
+        cancelled:          inv?.Cancelled === true,
+        type:               "",
+        taxReductionType:   "",
+        taxReductionAmount: 0,
+        url:                String(inv?.["@url"] || ""),
+        ourReference,
+        yourOrderNumber,
+        yourReference:      yourReference || yourOrderNumber,   // deal-link (som gamla synken)
+        raw:                inv,
+      };
+    },
+  };
+
   const registry = {
     "tengella-invoice": tengellaInvoiceAdapter,
+    "fortnox-invoice":  fortnoxInvoiceAdapter,
   };
 
   // ───────────────────────────────────────────────────────────────────────────

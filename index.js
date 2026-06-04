@@ -1091,13 +1091,24 @@ async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, s
     const url = `${base}/api/1.1/obj/${typeName}?${qs.toString()}`;
     try {
       const r = await fetch(url, { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } });
-      const j = await r.json().catch(() => ({}));
 
       if (!r.ok) {
-        lastErr = { base, status: r.status, body: j, url };
+        const body = await r.text().catch(() => "");
+        lastErr = { base, status: r.status, body: body?.slice(0, 500), url };
         continue;
       }
-      return Array.isArray(j?.response?.results) ? j.response.results : [];
+      // Härdat (Fynd C): ett 200-svar med trasig/trunkerad JSON eller saknad
+      // "response" får INTE tolkas som tom lista – då skulle en write-upsert tro
+      // att posten saknas och skapa en dublett. Behandla det som fel → nästa bas/throw.
+      const text = await r.text();
+      let j;
+      try { j = JSON.parse(text); }
+      catch { lastErr = { base, status: r.status, parseError: true, body: text?.slice(0, 500), url }; continue; }
+      if (!j || typeof j.response !== "object" || j.response === null) {
+        lastErr = { base, status: r.status, badShape: true, body: text?.slice(0, 500), url };
+        continue;
+      }
+      return Array.isArray(j.response.results) ? j.response.results : [];
     } catch (e) {
       lastErr = { base, error: String(e?.message || e), url };
     }
@@ -1257,20 +1268,25 @@ async function bubbleCreate(typeName, payload) {
         },
         body: JSON.stringify(payload)
       });
-      const j = await r.json().catch(() => ({}));
+      const text = await r.text().catch(() => "");
+      let j; try { j = text ? JSON.parse(text) : {}; } catch { j = null; }
 
       if (!r.ok) {
-        console.error("[bubbleCreate] 400 payload rejected", {
-    base,
-    typeName,
-    payload,
-    status: r.status,
-    body: j
-  });
-        lastErr = { base, status: r.status, body: j };
+        console.error("[bubbleCreate] payload rejected", {
+          base, typeName, payload, status: r.status, body: j ?? text?.slice(0, 500)
+        });
+        lastErr = { base, status: r.status, body: j ?? text?.slice(0, 500) };
         continue;
       }
-      return j?.id || j?.response?.id || null;
+      const newId = j?.id || j?.response?.id || null;
+      // Härdat: ett lyckat svar UTAN id (parse-fel/oväntad form) får INTE returnera
+      // null som anroparen tolkar som "skapad". Behandla som fel → nästa bas/throw.
+      if (!newId) {
+        console.error("[bubbleCreate] success without id", { base, typeName, status: r.status, body: j ?? text?.slice(0, 500) });
+        lastErr = { base, status: r.status, noId: true, body: j ?? text?.slice(0, 500) };
+        continue;
+      }
+      return newId;
     } catch (e) {
       lastErr = { base, error: String(e?.message || e) };
     }
@@ -15894,6 +15910,11 @@ const syncEngine = createSyncEngine({
     listInvoices:           listTengellaInvoices,
     getInvoiceById:         getTengellaInvoiceById,
     resolveInvoiceCustomer: resolveTengellaInvoiceCustomer,
+  },
+  fortnox: {
+    ensureAccessToken:    ensureFortnoxAccessToken,
+    get:                  fortnoxGet,
+    resolveLinkedCompany: resolveLinkedCompanyFromInvoice,
   },
   helpers:   { toIsoDate, tengellaDate, normalizeBool },
   constants: { TENGELLA_CONNECTION_ID, TENGELLA_DEFAULT_ORGNO, TENGELLA_DEFAULT_VAT_RATE },
