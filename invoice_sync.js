@@ -56,10 +56,13 @@ export function createSyncEngine(deps) {
       ft_invoice_ts:           Number.isFinite(ts) ? ts : null,  // NYTT: numeriskt → pålitliga constraints + scaling
       ft_due_date:             nir.dueDate || null,
 
-      ft_total:                total,                            // numeriskt + signerat (idag sträng)
+      // ft_total/ft_balance är TEXT-fält i Bubble (gamla synken skrev String(...)).
+      // Behåll text för att slippa fälttyp-migrering. Tecknet finns ändå i strängen.
+      // ft_net/ft_totalvat är number-fält (KPI/reconcile summerar dessa).
+      ft_total:                String(total),
       ft_net:                  net,                              // signerat (Bug 3)
       ft_totalvat:             vat,                              // signerat (Bug 3)
-      ft_balance:              balance,
+      ft_balance:              String(balance),
       ft_currency:             nir.currency || "SEK",
       ft_ocr:                  nir.ocr || "",
 
@@ -99,11 +102,14 @@ export function createSyncEngine(deps) {
   function eqLoose(a, b) {
     if (a == null && b == null) return true;
     if (typeof a === "boolean" || typeof b === "boolean") return Boolean(a) === Boolean(b);
-    if (typeof a === "number" || typeof b === "number") {
-      const na = Number(a), nb = Number(b);
+    const sa = String(a ?? ""), sb = String(b ?? "");
+    // Numerisk jämförelse om båda ser ut som tal (t.ex. "29688.00" == "29688",
+    // eller text-fält mot number-fält). Annars exakt sträng.
+    if (sa !== "" && sb !== "") {
+      const na = Number(sa), nb = Number(sb);
       if (Number.isFinite(na) && Number.isFinite(nb)) return na === nb;
     }
-    return String(a ?? "") === String(b ?? "");
+    return sa === sb;
   }
 
   function diffPayload(payload, existing) {
