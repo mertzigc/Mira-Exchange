@@ -284,11 +284,16 @@ export function createSyncEngine(deps) {
     const report = {
       source, mode,
       started_at: new Date().toISOString(),
-      counts: { seen: 0, processed: 0, create: 0, update: 0, noop: 0, error: 0, skipped_window: 0 },
-      reconcile: {},        // connection_id → { total, by_month: { "YYYY-MM": net } }
+      counts: { seen: 0, processed: 0, create: 0, update: 0, noop: 0, error: 0, skipped_window: 0, duplicate: 0 },
+      reconcile: {},        // connection_id → { total, total_active, by_month, by_type }
+      creates: [],          // alla create-fakturor (saknas i Bubble idag)
       sample_diffs: [],
       errors: [],
     };
+
+    // Reconcile dedupar på (connection_id, dokumentnummer): Tengella-listing är
+    // per kund, samma faktura kan dyka upp under flera customerId → annars dubbelräkning.
+    const seenDocs = new Set();
 
     // Facit-likvärdig: makulerade (Void) exkluderas från active-summan (samma
     // bas som computeSalesKpi / bokföring), men redovisas separat.
@@ -330,7 +335,20 @@ export function createSyncEngine(deps) {
         const tsYM = payload.ft_invoice_ts
           ? new Date(payload.ft_invoice_ts).toISOString().slice(0, 7)
           : (ym || "unknown");
-        addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type, payload.ft_cancelled);
+
+        const dkey = payload.connection_id + "|" + payload.ft_document_number;
+        if (seenDocs.has(dkey)) {
+          report.counts.duplicate++;
+        } else {
+          seenDocs.add(dkey);
+          addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type, payload.ft_cancelled);
+          if (r.action === "create" && report.creates.length < 500) {
+            report.creates.push({
+              doc: payload.ft_document_number, net: Number(payload.ft_net || 0),
+              type: payload.ft_invoice_type, ym: tsYM,
+            });
+          }
+        }
 
         if (r.action !== "noop" && report.sample_diffs.length < maxSample) {
           report.sample_diffs.push({
