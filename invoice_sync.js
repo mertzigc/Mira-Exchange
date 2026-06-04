@@ -404,9 +404,9 @@ export function createSyncEngine(deps) {
       t.count++;
     };
 
+    let attempts = 0;
     for await (const ref of adapter.iterateRefs(auth, opts)) {
       report.counts.seen++;
-      if (report.counts.processed >= maxRecords) break;
 
       // Datum-förfilter via listRow → undvik onödiga detail-anrop
       const ym = ref.ym || "";
@@ -414,6 +414,10 @@ export function createSyncEngine(deps) {
         report.counts.skipped_window++;
         continue;
       }
+
+      // Bounded på FÖRSÖK (inte träffar) → scoped test stoppar även vid fel.
+      if (attempts >= maxRecords) break;
+      attempts++;
 
       try {
         const raw     = fast ? { detail: ref.listRow, ref } : await adapter.fetchComplete(auth, ref);
@@ -451,8 +455,9 @@ export function createSyncEngine(deps) {
         report.counts.error++;
         if (report.errors.length < 50) {
           report.errors.push({
-            invoiceId: ref.invoiceId, customerId: ref.customerId,
+            invoiceId: ref.invoiceId, customerId: ref.customerId, docNo: ref.docNo,
             message: e?.message || String(e),
+            detail: e?.detail || null,
           });
         }
       }
