@@ -7,7 +7,8 @@
 
 ## 0. TL;DR — var vi står
 - **Fakturaspåret är KLART, validerat krona-för-krona och självgående** (cron live). F&E/Staff/HK 2026 stämmer exakt mot Fortnox/facit.
-- **Pågår nu: order/offer/workorder-adaptrarna (§9).** Design + beslut klara. **Steg 9a (kärn-utbyggnad för rader) är NÄSTA konkreta kodsteg — ej påbörjat i kod.**
+- **Steg 9a (kärn-utbyggnad för rader) är KODAT + lokalt testat (2026-06-05).** Generaliserad upsert (adapter.bubbleType/keyFields), ny `upsertDocWithRows` med delete-reconciliation (städar spökrader), `bubbleDelete` injicerad. Faktura-adaptrar har tomt rows-config → enkel-dokument-vägen, oförändrad. **Väntar: Christian pushar → diff-revalidering av HK/F&E/Staff (måste vara noop-dominerat) innan vi går vidare.**
+- **NÄSTA konkreta kodsteg: 9b** — `fortnox-order` + `fortnox-offer`-adaptrar (huvud + rader) ovanpå 9a-kärnan.
 - Efter order/offer/workorder: **ClientGroup-fasen** (kundkort-bundling).
 
 ---
@@ -84,12 +85,13 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 4. **PDF för order+offer:** lagra allt nu, TTL/GC senare (kräver Bubble `delete_file`-workflow för äkta fil-frigöring).
 
 ### Byggordning
-- **9a — KÄRN-UTBYGGNAD (nästa kodsteg):** generalisera `invoice_sync.js`:
-  - Adapter deklarerar `bubbleType` + nyckel-constraints (faktura: `connection_id`; order/offer: `connection`). Generalisera `upsertToBubble` (idag hårdkodad till "FortnoxInvoice" + connection_id, rad 132–151).
-  - `normalize` får returnera `rows: [...]`. Ny `upsertDocWithRows`: upserta huvud → hämta befintliga rader → upserta inkommande → **RADERA rader vars nyckel saknas i källan (set-reconciliation)**. Detta är den största kvalitetsvinsten — gamla synken städar ALDRIG borttagna rader.
-  - Rad-nyckel = källans rad-id (`RowId`/`WorkOrderRowId`); fallback parentdoc#index (flagga som positionskänslig).
-  - Faktura-adaptrarna får tomt rows-config → MÅSTE bete sig exakt som idag (re-validera HK/F&E/Staff efteråt).
-  - `buildPayload` är per-dokumentklass (faktura ≠ order ≠ offer ≠ workorder olika fält).
+- **9a — KÄRN-UTBYGGNAD ✅ KODAT + lokalt testat (2026-06-05), väntar deploy + revalidering:**
+  - KLART: `upsertToBubble(adapter, payload, {mode})` adapter-driven (`adapter.bubbleType` + `adapter.keyFields` + valfri `adapter.compareFields`). Faktura-adaptrarna deklarerar `bubbleType:"FortnoxInvoice"`, `keyFields:["connection_id","ft_document_number"]`.
+  - KLART: `upsertDocWithRows(adapter, payload, rowNirs, {mode})` — upserta huvud → hämta befintliga rader via `adapter.rows.parentField`-relation (`bubbleFindAll`) → upserta inkommande (nyckel `adapter.rows.keyField`) → **RADERA rader vars nyckel saknas i källan**. Diff-läge skriver inget, rapporterar tänkt create/update/delete. `bubbleDelete` injicerad i wiring.
+  - KLART: `diffPayload(payload, existing, fields)` tar nu compareFields-param. Drivern: `adapter.buildPayload || buildPayload`, dispatchar `adapter.rows ? upsertDocWithRows : upsertToBubble`. `report.counts.rows` aggregeras; connection-nyckel källagnostisk (`keyFields[0]`).
+  - Lokalt verifierat med mockad Bubble-store: 2 rader create → R2 borttagen ger delete, R1 update, R3 create; diff skriver inget. (Smoke-test borttaget, ej committat.)
+  - **ÅTERSTÅR för 9a:** Christian pushar → kör diff-curl för HK/F&E/Staff (se §0/§4) och bekräftar **noop-dominans** (faktura oförändrad). Rad-nyckel-fallback parentdoc#index (positionskänslig) byggs i 9b där order-rader faktiskt finns.
+  - `buildPayload` är per-dokumentklass (faktura ≠ order ≠ offer); 9b-adaptrar sätter egen `adapter.buildPayload`.
 - **9b — fortnox-order + fortnox-offer:** fetchComplete=detail (ger rader OCH Net/VAT). Diff → scoped write → full write → reconcile mot Fortnox order/offer-totaler. Behåll fältnamn `connection`. Radbelopp som strängar. Nya number-fält ft_order_ts/ft_offer_ts.
 - **9c — PDF:** generisk `fetchAndStoreOrderPdf` mot `/orders/{n}/preview` (ALDRIG `/print` = sidoeffekt markerar utskriven). Mönster: `fortnoxGetBinary(path)` → `bubbleUploadFile` → patcha `ft_pdf`+`ft_pdf_fetched_at`+`needs_pdf_sync=false`. Separat flaggat PDF-cron. Offer har redan `fetchAndStoreOfferPdf` (rad ~3536).
 - **9d — tengella-workorder → FortnoxOrder:** `/v2/WorkOrders` listing-only (rader inbäddade), GLOBAL discovery (ingen kund-loop), icke-ekonomiskt huvud → härled `ft_total`=Σ(pris×antal). Rader → FortnoxOrderRow.

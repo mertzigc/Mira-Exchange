@@ -18,6 +18,7 @@ export function createSyncEngine(deps) {
     bubbleCreate,
     bubblePatch,
     bubbleFindAll,
+    bubbleDelete,   // 9a: krävs för rad-delete-reconciliation (städa spökrader)
     // Tengella-fetchers + helpers (befintliga i index.js)
     tengella,   // { login, listInvoices, getInvoiceById, resolveInvoiceCustomer }
     fortnox,    // { ensureAccessToken, get, resolveLinkedCompany }
@@ -115,9 +116,9 @@ export function createSyncEngine(deps) {
     return sa === sb;
   }
 
-  function diffPayload(payload, existing) {
+  function diffPayload(payload, existing, fields = COMPARE_FIELDS) {
     const changed = [];
-    for (const f of COMPARE_FIELDS) {
+    for (const f of fields) {
       const a = existing ? existing[f] : undefined;
       if (!eqLoose(a, payload[f])) changed.push({ field: f, old: a ?? null, new: payload[f] ?? null });
     }
@@ -125,17 +126,24 @@ export function createSyncEngine(deps) {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // upsertToBubble: idempotent på (connection_id, ft_document_number).
+  // upsertToBubble: idempotent på adapterns keyFields (faktura:
+  // [connection_id, ft_document_number]; order/offer: [connection, ...]).
   // mode="diff" → läser bara, returnerar tänkt action + ändrade fält.
   // mode="write" → skapar/patchar.
+  // 9a: tar adapter (bubbleType + keyFields + valfri compareFields) i stället för
+  //     hårdkodad FortnoxInvoice/connection_id. Faktura beter sig identiskt.
   // ───────────────────────────────────────────────────────────────────────────
-  async function upsertToBubble(payload, { mode }) {
-    const existing = await bubbleFindOne(INVOICE_TYPE, [
-      { key: "connection_id",      constraint_type: "equals", value: payload.connection_id },
-      { key: "ft_document_number", constraint_type: "equals", value: payload.ft_document_number },
-    ]);
+  async function upsertToBubble(adapter, payload, { mode }) {
+    const bubbleType   = adapter.bubbleType;
+    const keyFields    = adapter.keyFields || ["connection_id", "ft_document_number"];
+    const compareFields = adapter.compareFields || COMPARE_FIELDS;
+
+    const constraints = keyFields.map((f) => ({
+      key: f, constraint_type: "equals", value: payload[f],
+    }));
+    const existing   = await bubbleFindOne(bubbleType, constraints);
     const existingId = existing?._id || existing?.id || null;
-    const changed    = diffPayload(payload, existing);
+    const changed    = diffPayload(payload, existing, compareFields);
     const action     = !existingId ? "create" : (changed.length ? "update" : "noop");
 
     const base = { action, id: existingId, doc: payload.ft_document_number, net: payload.ft_net, changed };
@@ -143,11 +151,95 @@ export function createSyncEngine(deps) {
     if (mode === "diff" || action === "noop") return base;
 
     if (existingId) {
-      await bubblePatch(INVOICE_TYPE, existingId, payload);
+      await bubblePatch(bubbleType, existingId, payload);
       return { ...base, action: "update" };
     }
-    const newId = await bubbleCreate(INVOICE_TYPE, payload);
+    const newId = await bubbleCreate(bubbleType, payload);
     return { ...base, action: "create", id: newId };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // upsertDocWithRows: dokument + rader (order/offer/workorder). 9a-kärnan.
+  //   1. Upserta huvudet (upsertToBubble) → parent-id.
+  //   2. Hämta ALLA befintliga rader för parent (via parent-relationen).
+  //   3. Upserta varje inkommande rad (nyckel = adapter.rows.keyField).
+  //   4. RADERA rader vars nyckel saknas i inkommande set (set-reconciliation)
+  //      → fixar den största kvalitetsluckan: gamla synken städar aldrig spökrader.
+  // diff-läge skriver INGET; rapporterar tänkta row-create/update/delete.
+  //
+  // adapter.rows-config:
+  //   { bubbleType, parentField, keyField, compareFields, buildRowPayload(rowNir, parentId, headNir) }
+  // ───────────────────────────────────────────────────────────────────────────
+  async function upsertDocWithRows(adapter, payload, rowNirs, { mode }) {
+    const head = await upsertToBubble(adapter, payload, { mode });
+    const cfg  = adapter.rows;
+    if (!cfg || !Array.isArray(rowNirs)) return head;
+
+    const parentId = head.id || null;   // null i diff-läge för ett nytt huvud
+    const rowCompare = cfg.compareFields || cfg.compare || [];
+
+    // Bygg inkommande rad-payloads. keyField måste finnas på varje payload.
+    const incoming = rowNirs.map((rn) => cfg.buildRowPayload(rn, parentId, payload));
+    const incomingByKey = new Map();
+    for (const rp of incoming) {
+      const k = String(rp[cfg.keyField] ?? "").trim();
+      if (k) incomingByKey.set(k, rp);
+    }
+
+    // Befintliga rader: bara hämtbara när parent finns (annars allt = create).
+    let existingRows = [];
+    if (parentId) {
+      existingRows = await bubbleFindAll(cfg.bubbleType, {
+        constraints: [{ key: cfg.parentField, constraint_type: "equals", value: parentId }],
+      }).catch(() => []);
+    }
+    const existingByKey = new Map();
+    for (const er of existingRows) {
+      const k = String(er?.[cfg.keyField] ?? "").trim();
+      if (k) existingByKey.set(k, er);
+    }
+
+    const rowReport = { create: 0, update: 0, noop: 0, delete: 0, error: 0, samples: [] };
+    const pushSample = (action, key, changed) => {
+      if (rowReport.samples.length < 12) rowReport.samples.push({ action, key, changed: (changed || []).slice(0, 8) });
+    };
+
+    // Upserta inkommande rader.
+    for (const [key, rp] of incomingByKey) {
+      try {
+        const existing = existingByKey.get(key) || null;
+        const existingId = existing?._id || existing?.id || null;
+        const changed = diffPayload(rp, existing, rowCompare);
+        const action = !existingId ? "create" : (changed.length ? "update" : "noop");
+        rowReport[action]++;
+        if (action !== "noop") pushSample(action, key, changed);
+
+        if (mode === "write" && action !== "noop") {
+          if (existingId) {
+            await bubblePatch(cfg.bubbleType, existingId, rp);
+          } else {
+            await bubbleCreate(cfg.bubbleType, rp);
+          }
+        }
+      } catch (e) {
+        rowReport.error++;
+        pushSample("error", key, [{ field: "_error", new: e?.message || String(e) }]);
+      }
+    }
+
+    // RADERA rader som inte längre finns i källan (set-reconciliation).
+    for (const [key, er] of existingByKey) {
+      if (incomingByKey.has(key)) continue;
+      const erId = er?._id || er?.id || null;
+      rowReport.delete++;
+      pushSample("delete", key, []);
+      if (mode === "write" && erId) {
+        try { await bubbleDelete(cfg.bubbleType, erId); }
+        catch (e) { rowReport.error++; pushSample("error", key, [{ field: "_delete", new: e?.message || String(e) }]); }
+      }
+    }
+
+    return { ...head, rows: rowReport };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -174,6 +266,9 @@ export function createSyncEngine(deps) {
   // ───────────────────────────────────────────────────────────────────────────
   const tengellaInvoiceAdapter = {
     source: "tengella-invoice",
+    bubbleType: INVOICE_TYPE,                              // "FortnoxInvoice"
+    keyFields: ["connection_id", "ft_document_number"],    // idempotensnyckel
+    // rows: undefined → enkel-dokument-väg (beter sig exakt som före 9a)
 
     async resolveAuth(opts) {
       const orgNo = (opts.orgNo || constants.TENGELLA_DEFAULT_ORGNO || "").trim();
@@ -290,6 +385,9 @@ export function createSyncEngine(deps) {
   // ───────────────────────────────────────────────────────────────────────────
   const fortnoxInvoiceAdapter = {
     source: "fortnox-invoice",
+    bubbleType: INVOICE_TYPE,                              // "FortnoxInvoice"
+    keyFields: ["connection_id", "ft_document_number"],    // idempotensnyckel
+    // rows: undefined → enkel-dokument-väg (beter sig exakt som före 9a)
 
     async resolveAuth(opts) {
       const connId = opts.connection_id;
@@ -459,22 +557,35 @@ export function createSyncEngine(deps) {
       try {
         const raw     = fast ? { detail: ref.listRow, ref } : await adapter.fetchComplete(auth, ref);
         const nir     = await adapter.normalize(raw, auth, { mode, fast });
-        const payload = buildPayload(nir);
-        const r       = await upsertToBubble(payload, { mode });
+        // Per-adapter buildPayload (order/offer ≠ faktura), default = faktura-byggaren.
+        const build   = adapter.buildPayload || buildPayload;
+        const payload = build(nir);
+        // Dokument MED rader (adapter.rows) → set-reconciliation; annars enkel upsert.
+        const r       = adapter.rows
+          ? await upsertDocWithRows(adapter, payload, nir.rows, { mode })
+          : await upsertToBubble(adapter, payload, { mode });
 
         report.counts.processed++;
         report.counts[r.action]++;
+
+        // Aggregera rad-räknare när adaptern levererar rader.
+        if (r.rows) {
+          const agg = report.counts.rows || (report.counts.rows = { create: 0, update: 0, noop: 0, delete: 0, error: 0 });
+          for (const k of ["create", "update", "noop", "delete", "error"]) agg[k] += (r.rows[k] || 0);
+        }
 
         const tsYM = payload.ft_invoice_ts
           ? new Date(payload.ft_invoice_ts).toISOString().slice(0, 7)
           : (ym || "unknown");
 
-        const dkey = payload.connection_id + "|" + payload.ft_document_number;
+        // Connection-nyckeln är källagnostisk: faktura=connection_id, order/offer=connection.
+        const connKey = payload[(adapter.keyFields && adapter.keyFields[0]) || "connection_id"];
+        const dkey = connKey + "|" + payload.ft_document_number;
         if (seenDocs.has(dkey)) {
           report.counts.duplicate++;
         } else {
           seenDocs.add(dkey);
-          addReconcile(payload.connection_id, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type, payload.ft_cancelled);
+          addReconcile(connKey, tsYM, Number(payload.ft_net || 0), payload.ft_invoice_type, payload.ft_cancelled);
           if (r.action === "create" && report.creates.length < 500) {
             report.creates.push({
               doc: payload.ft_document_number, net: Number(payload.ft_net || 0),
@@ -483,9 +594,11 @@ export function createSyncEngine(deps) {
           }
         }
 
-        if (r.action !== "noop" && report.sample_diffs.length < maxSample) {
+        const hasRowChurn = r.rows && (r.rows.create || r.rows.update || r.rows.delete || r.rows.error);
+        if ((r.action !== "noop" || hasRowChurn) && report.sample_diffs.length < maxSample) {
           report.sample_diffs.push({
             doc: r.doc, action: r.action, net: r.net, changed: r.changed.slice(0, 12),
+            ...(r.rows ? { rows: { create: r.rows.create, update: r.rows.update, delete: r.rows.delete, error: r.rows.error, samples: r.rows.samples } } : {}),
           });
         }
       } catch (e) {

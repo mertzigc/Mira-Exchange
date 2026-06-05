@@ -15518,7 +15518,7 @@ async function countCcRefs(type, ccId) {
 // ── Sync v2: NIR-baserad sync-kärna (se invoice_sync.js + ARKITEKTUR_OCH_OMTAG.md §8) ──
 // Diff-läge skriver INGENTING. mode:"write" krävs explicit för att spara.
 const syncEngine = createSyncEngine({
-  bubbleFindOne, bubbleCreate, bubblePatch, bubbleFindAll,
+  bubbleFindOne, bubbleCreate, bubblePatch, bubbleFindAll, bubbleDelete,
   tengella: {
     login:                  tengellaLogin,
     listInvoices:           listTengellaInvoices,
