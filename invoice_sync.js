@@ -480,9 +480,401 @@ export function createSyncEngine(deps) {
     },
   };
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 9b — Fortnox order/offer-adaptrar (dokument MED rader).
+  //
+  // Speglar fortnox-invoice (detail-fetch ger huvud + Net/VAT + rader → Bug 1 löst
+  // för order/offer också). Skillnad mot faktura: huvudet har rader (rows[]) →
+  // upsertDocWithRows + delete-reconciliation städar spökrader.
+  //
+  // VIKTIGT om coexistence: gamla cron (fortnox_cron_v1.sh m.fl.) skriver fortfarande
+  // FortnoxOrder/Offer + rader. Därför speglar vi EXAKT befintliga fältnamn, beloppstyper
+  // (order-rad=STRÄNG, offer-rad=NUMBER) och ft_unique_key-format — annars uppstår
+  // create/delete-krig under övergången. Nyckel-STANDARDISERING är medvetet uppskjuten
+  // till 9e (cron-cutover), då gamla synken stängs av. Connection-fältet heter `connection`
+  // (inte connection_id som faktura).
+  // ───────────────────────────────────────────────────────────────────────────
+  function makeFortnoxDocAdapter(cfg) {
+    return {
+      source:     cfg.source,
+      bubbleType: cfg.bubbleType,
+      keyFields:  ["connection", "ft_document_number"],
+      compareFields: cfg.headCompareFields,
+      buildPayload:  cfg.buildPayload,
+      rows: {
+        bubbleType:    cfg.rowBubbleType,
+        parentField:   cfg.rowParentField,        // "order" | "offer"
+        keyField:      "ft_unique_key",
+        compareFields: cfg.rowCompareFields,
+        buildRowPayload: cfg.buildRowPayload,
+      },
+
+      async resolveAuth(opts) {
+        const connId = opts.connection_id;
+        if (!connId) throw new Error(`connection_id krävs för ${cfg.source}`);
+        const tok = await fortnox.ensureAccessToken(connId);
+        if (!tok?.ok || !tok?.access_token) {
+          throw new Error("Fortnox token-fel: " + (tok?.error || "okänt"));
+        }
+        const throttleMs = opts.throttleMs != null ? Number(opts.throttleMs) : 200;
+        return { connection_id: connId, accessToken: tok.access_token, throttleMs };
+      },
+
+      // Discovery: paginera /orders resp /offers (page + @TotalPages), eller
+      // lastmodified-sweep för nightly. Datumfönster via fromdate/todate.
+      async *iterateRefs(auth, opts) {
+        const limit    = Number(opts.limit ?? 100) || 100;
+        const fromdate = opts.fromdate || (opts.sinceYM ? opts.sinceYM + "-01" : null);
+        const todate   = opts.todate || null;
+        let lastmodified = null;
+        if (opts.modifiedDaysBack != null) {
+          const s = new Date(Date.now() - Number(opts.modifiedDaysBack) * 864e5);
+          const p = (n) => String(n).padStart(2, "0");
+          lastmodified = `${s.getUTCFullYear()}-${p(s.getUTCMonth() + 1)}-${p(s.getUTCDate())} ${p(s.getUTCHours())}:${p(s.getUTCMinutes())}`;
+        }
+        const window = lastmodified ? { lastmodified } : { fromdate, todate };
+        let page = 1, totalPages = 1;
+        do {
+          const r = await fortnoxGetRetry(cfg.listPath, auth.accessToken, { page, limit, ...window });
+          if (!r?.ok) throw new Error(`fortnox ${cfg.listPath} listing fel sida ${page} (status ${r?.status})`);
+          const list = Array.isArray(r.data?.[cfg.listArrayKey]) ? r.data[cfg.listArrayKey] : [];
+          totalPages = Number(r.data?.MetaInformation?.["@TotalPages"] ?? 1) || 1;
+          for (const row of list) {
+            const docNo = String(row?.DocumentNumber ?? "").trim();
+            if (!docNo) continue;
+            yield { docNo, ym: String(row?.[cfg.dateField] ?? "").slice(0, 7), listRow: row };
+          }
+          page++;
+        } while (page <= totalPages);
+      },
+
+      async fetchComplete(auth, ref) {
+        if (auth.throttleMs) await sleep(auth.throttleMs);
+        const r = await fortnoxGetRetry(`${cfg.listPath}/${encodeURIComponent(ref.docNo)}`, auth.accessToken);
+        if (!r?.ok) throw new Error(`fortnox ${cfg.source} detail fel docNo=${ref.docNo} status=${r?.status}`);
+        const detail = r.data?.[cfg.detailKey] || r.data?.[cfg.detailKey.toLowerCase()] || null;
+        if (!detail) throw new Error(`fortnox ${cfg.source} detail saknar ${cfg.detailKey} docNo=${ref.docNo}`);
+        return { detail, ref };
+      },
+
+      async normalize(raw, auth, { fast } = {}) {
+        const doc  = raw.detail || {};
+        const rows = Array.isArray(doc?.[cfg.rowsKey]) ? doc[cfg.rowsKey] : [];
+
+        // linked_company via FortnoxCustomer-bryggan (READ-ONLY), som faktura. Hoppa i fast.
+        const companyId = fast ? null
+          : await fortnox.resolveLinkedCompany(auth.connection_id, doc?.CustomerNumber).catch(() => null);
+
+        return {
+          connection:      auth.connection_id,
+          documentNumber:  String(doc?.DocumentNumber ?? "").trim(),
+          companyId,
+          raw:             doc,
+          // rad-NIR: bär råraden + index; buildRowPayload formaterar per typ.
+          rows: rows.map((row, i) => ({ row, index: i, connection: auth.connection_id, docNo: String(doc?.DocumentNumber ?? "").trim() })),
+        };
+      },
+    };
+  }
+
+  // Order-radens stabila nyckel: RowId när det finns, annars positions-fallback (flaggas).
+  function orderRowKey(row, connection, docNo, index) {
+    const rowId = row?.RowId ?? row?.RowID ?? null;
+    return rowId != null
+      ? `ROWID_${rowId}__CONN_${connection}__ORDDOC_${docNo}`
+      : `FALLBACK__CONN_${connection}__ORDDOC_${docNo}__IDX_${String(index + 1).padStart(3, "0")}`;
+  }
+
+  const fortnoxOrderAdapter = makeFortnoxDocAdapter({
+    source: "fortnox-order",
+    bubbleType: "FortnoxOrder",
+    rowBubbleType: "FortnoxOrderRow",
+    rowParentField: "order",
+    listPath: "/orders",
+    listArrayKey: "Orders",
+    detailKey: "Order",
+    rowsKey: "OrderRows",
+    dateField: "OrderDate",
+    headCompareFields: [
+      "ft_net", "ft_totalvat", "ft_total", "ft_order_ts",
+      "ft_order_date", "ft_delivery_date", "ft_your_reference",
+      "ft_customer_number", "ft_customer_name", "ft_cancelled", "ft_sent", "ft_currency",
+    ],
+    rowCompareFields: ["ft_article_number", "ft_description", "ft_quantity", "ft_unit", "ft_price", "ft_discount", "ft_vat", "ft_total"],
+    // FortnoxOrder-huvud — speglar upsertFortnoxOrderDirect; ft_total/radbelopp = STRÄNG.
+    buildPayload(nir) {
+      const o = nir.raw || {};
+      const ts = o?.OrderDate ? Date.parse(o.OrderDate) : NaN;
+      const yourRef = String(o?.YourReferenceNumber || o?.YourReference || o?.YourOrderNumber || "").trim();
+      const payload = {
+        connection:          nir.connection,
+        ft_document_number:  String(o?.DocumentNumber ?? "").trim(),
+        ft_customer_number:  String(o?.CustomerNumber ?? ""),
+        ft_customer_name:    String(o?.CustomerName ?? ""),
+        ft_your_reference:   yourRef,
+        ft_order_date:       o?.OrderDate ? helpers.toIsoDate(o.OrderDate) : null,
+        ft_delivery_date:    o?.DeliveryDate ? helpers.toIsoDate(o.DeliveryDate) : null,
+        ft_order_ts:         Number.isFinite(ts) ? ts : null,      // NYTT number-fält
+        ft_total:            o?.Total == null ? "" : String(o.Total),     // STRÄNG (befintlig fälttyp)
+        ft_net:              o?.Net != null ? Number(o.Net) : null,       // number, korrekt signerat av Fortnox
+        ft_totalvat:         o?.TotalVAT != null ? Number(o.TotalVAT) : null,
+        ft_currency:         String(o?.Currency ?? ""),
+        ft_cancelled:        !!o?.Cancelled,
+        ft_sent:             !!o?.Sent,
+        ft_url:              String(o?.["@url"] ?? ""),
+        ft_raw_json:         JSON.stringify(o || {}),
+        source:              "fortnox",   // §9.8: spårbarhet i unified ordermodell
+        // 9c: flagga PDF-hämtning. Skrivs bara vid create/update (noop rör inget);
+        // ej i compareFields → triggar ingen egen diff. PDF-cron nollar den.
+        needs_pdf_sync:      true,
+      };
+      if (nir.companyId) payload.linked_company = nir.companyId;
+      return payload;
+    },
+    // FortnoxOrderRow — speglar befintlig payload; belopp som STRÄNG.
+    buildRowPayload(rn, parentId, head) {
+      const row = rn.row || {};
+      return {
+        connection:               rn.connection,
+        order:                    parentId,                       // parent-relation
+        ft_order_document_number: rn.docNo,
+        ft_row_index:             rn.index + 1,
+        ft_row_no:                row?.RowNumber ?? row?.RowNo ?? row?.Row ?? (rn.index + 1),
+        ft_article_number:        String(row?.ArticleNumber ?? ""),
+        ft_description:           String(row?.Description ?? ""),
+        ft_your_reference:        head?.ft_your_reference ?? "",
+        ft_quantity:              row?.DeliveredQuantity ?? row?.Quantity ?? null,
+        ft_unit:                  String(row?.Unit ?? ""),
+        ft_price:                 row?.Price    == null ? "" : String(row.Price),
+        ft_discount:              row?.Discount == null ? "" : String(row.Discount),
+        ft_vat:                   row?.VAT      == null ? "" : String(row.VAT),
+        ft_total:                 row?.Total    == null ? "" : String(row.Total),
+        ft_unique_key:            orderRowKey(row, rn.connection, rn.docNo, rn.index),
+        ft_raw_json:              JSON.stringify(row || {}),
+      };
+    },
+  });
+
+  const fortnoxOfferAdapter = makeFortnoxDocAdapter({
+    source: "fortnox-offer",
+    bubbleType: "FortnoxOffer",
+    rowBubbleType: "FortnoxOfferRow",
+    rowParentField: "offer",
+    listPath: "/offers",
+    listArrayKey: "Offers",
+    detailKey: "Offer",
+    rowsKey: "OfferRows",
+    dateField: "OfferDate",
+    headCompareFields: [
+      "ft_net", "ft_totalvat", "ft_total", "ft_offer_ts",
+      "ft_offer_date", "ft_delivery_date", "ft_valid_until", "ft_your_reference",
+      "ft_customer_number", "ft_customer_name", "ft_cancelled", "ft_sent", "ft_currency",
+    ],
+    rowCompareFields: ["ft_article_number", "ft_description", "ft_quantity", "ft_unit", "ft_price", "ft_total"],
+    // FortnoxOffer-huvud — speglar upsertFortnoxOfferDirect; ft_total = NUMBER (avviker från order!).
+    buildPayload(nir) {
+      const o = nir.raw || {};
+      const ts = o?.OfferDate ? Date.parse(o.OfferDate) : NaN;
+      const payload = {
+        connection:          nir.connection,
+        ft_document_number:  String(o?.DocumentNumber ?? "").trim(),
+        ft_customer_number:  String(o?.CustomerNumber ?? ""),
+        ft_customer_name:    String(o?.CustomerName ?? ""),
+        ft_delivery_date:    o?.DeliveryDate ? helpers.toIsoDate(o.DeliveryDate) : null,
+        ft_your_reference:   String(o?.YourReferenceNumber ?? "").trim(),
+        ft_offer_date:       o?.OfferDate ? helpers.toIsoDate(o.OfferDate) : null,
+        ft_valid_until:      o?.ExpireDate ? helpers.toIsoDate(o.ExpireDate) : null,
+        ft_offer_ts:         Number.isFinite(ts) ? ts : null,      // NYTT number-fält
+        ft_total:            o?.Total != null ? Number(o.Total) : null,   // NUMBER (befintlig fälttyp)
+        ft_net:              o?.Net != null ? Number(o.Net) : null,
+        ft_totalvat:         o?.TotalVAT != null ? Number(o.TotalVAT) : null,
+        ft_currency:         String(o?.Currency ?? ""),
+        ft_cancelled:        !!o?.Cancelled,
+        ft_sent:             !!o?.Sent,
+        ft_url:              String(o?.["@url"] ?? ""),
+        ft_raw_json:         JSON.stringify(o || {}),
+        // 9c: flagga PDF-hämtning (FortnoxOffer har redan fältet). Ej i compareFields.
+        needs_pdf_sync:      true,
+      };
+      if (nir.companyId) payload.linked_company = nir.companyId;
+      return payload;
+    },
+    // FortnoxOfferRow — speglar befintlig payload; belopp som NUMBER (toNumOrNull-stil).
+    buildRowPayload(rn, parentId, head) {
+      const row = rn.row || {};
+      const num = (v) => (v == null || v === "" ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
+      return {
+        connection:               rn.connection,
+        offer:                    parentId,                       // parent-relation
+        ft_offer_document_number: rn.docNo,
+        ft_row_index:             rn.index + 1,
+        ft_article_number:        String(row?.ArticleNumber ?? ""),
+        ft_description:           String(row?.Description ?? ""),
+        ft_quantity:              row?.Quantity ?? null,
+        ft_unit:                  String(row?.Unit ?? ""),
+        ft_price:                 num(row?.Price),                 // NUMBER
+        ft_total:                 num(row?.Total),                 // NUMBER
+        ft_unique_key:            `OFFERROW_${row?.RowId ?? rn.index}_${rn.connection}_${rn.docNo}`,
+        ft_raw_json:              JSON.stringify(row || {}),
+      };
+    },
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 9d — Tengella workorder → FortnoxOrder (unified ordermodell, §9.8).
+  //
+  // Avviker från fortnox-order: ingen detail-endpoint (rader inbäddade i listing),
+  // GLOBAL discovery (ingen kund-loop), icke-ekonomiskt huvud → härled ft_total =
+  // Σ(pris×antal) från rader, net via Tengella-momssats (jämförbar med HK-faktura;
+  // markera dock att order ≠ intäkt i KPI). Skriver till SAMMA FortnoxOrder/
+  // FortnoxOrderRow-typer som fortnox-order, men connection = TENGELLA → egna records,
+  // ingen kollision. source="tengella-workorder". Operativa workorder-fält i ft_raw_json.
+  // Ingen needs_pdf_sync (Tengella saknar Fortnox PDF-endpoint).
+  // ───────────────────────────────────────────────────────────────────────────
+  const tengellaWorkorderAdapter = {
+    source: "tengella-workorder",
+    bubbleType: "FortnoxOrder",
+    keyFields: ["connection", "ft_document_number"],
+    compareFields: [
+      "ft_net", "ft_totalvat", "ft_total", "ft_order_ts",
+      "ft_order_date", "ft_customer_number", "ft_customer_name", "ft_cancelled",
+    ],
+    rows: {
+      bubbleType: "FortnoxOrderRow",
+      parentField: "order",
+      keyField: "ft_unique_key",
+      compareFields: ["ft_article_number", "ft_description", "ft_quantity", "ft_price", "ft_total"],
+      buildRowPayload(rn, parentId) {
+        const row = rn.row || {};
+        const qty   = row?.Quantity != null ? Number(row.Quantity) : null;
+        const price = row?.Price != null ? Number(row.Price) : null;
+        const lineTotal = (qty != null && price != null) ? qty * price : null;
+        const rowId = row?.WorkOrderRowId ?? row?.workOrderRowId ?? null;
+        return {
+          connection:               rn.connection,
+          order:                    parentId,
+          ft_order_document_number: rn.docNo,
+          ft_row_index:             rn.index + 1,
+          ft_article_number:        row?.ItemNo != null ? String(row.ItemNo) : "",
+          ft_description:           String(row?.ItemName ?? ""),
+          ft_quantity:              qty,
+          ft_unit:                  "",
+          ft_price:                 price == null ? "" : String(price),        // STRÄNG (order-rad-typen)
+          ft_discount:              "",
+          ft_vat:                   "",
+          ft_total:                 lineTotal == null ? "" : String(lineTotal), // härlett Σ-rad
+          ft_unique_key:            rowId != null
+            ? `WORID_${rowId}__CONN_${rn.connection}__ORDDOC_${rn.docNo}`
+            : `FALLBACK__CONN_${rn.connection}__ORDDOC_${rn.docNo}__IDX_${String(rn.index + 1).padStart(3, "0")}`,
+          ft_raw_json:              JSON.stringify(row || {}),   // operativa fält (cost_price, invoiced, status)
+        };
+      },
+    },
+
+    async resolveAuth(opts) {
+      const orgNo = (opts.orgNo || constants.TENGELLA_DEFAULT_ORGNO || "").trim();
+      if (!orgNo) throw new Error("orgNo krävs (eller sätt TENGELLA_DEFAULT_ORGNO)");
+      const token = await tengella.login(orgNo);
+      return { connection: constants.TENGELLA_CONNECTION_ID, token, orgNo };
+    },
+
+    // GLOBAL discovery: paginera /v2/WorkOrders (cursor), rader inbäddade. Ingen kund-loop.
+    async *iterateRefs(auth, opts) {
+      const maxPages = Number(opts.maxPages ?? 50) || 50;
+      const limit    = Number(opts.limit ?? 100) || 100;
+      let cursor = null, page = 0, more = true;
+      while (more && page < maxPages) {
+        page++;
+        const resp = await tengella.listWorkOrders({ token: auth.token, limit, cursor });
+        const data = Array.isArray(resp?.Data) ? resp.Data : (Array.isArray(resp) ? resp : []);
+        for (const wo of data) {
+          if (wo?.WorkOrderId == null) continue;
+          yield {
+            workOrderId: wo.WorkOrderId,
+            ym:          String(wo?.OrderDate ?? "").slice(0, 7),
+            listRow:     wo,
+          };
+        }
+        cursor = resp?.Next || null;
+        more   = helpers.normalizeBool(resp?.ExistsMoreData) && !!cursor;
+      }
+    },
+
+    // Pass-through: raderna finns redan i listing-raden (ingen detail-endpoint).
+    async fetchComplete(auth, ref) {
+      return { detail: ref.listRow, ref };
+    },
+
+    async normalize(raw, auth, { mode, fast } = {}) {
+      const wo   = raw.detail || {};
+      const rows = Array.isArray(wo?.WorkOrderRows) ? wo.WorkOrderRows : [];
+
+      // Härled ekonomi: Σ(pris×antal); net via Tengella-momssats (jämförbart med HK-faktura).
+      const vatRate = Number(constants.TENGELLA_DEFAULT_VAT_RATE ?? 0.25);
+      let total = 0;
+      for (const r of rows) {
+        const q = Number(r?.Quantity ?? 0), p = Number(r?.Price ?? 0);
+        if (Number.isFinite(q) && Number.isFinite(p)) total += q * p;
+      }
+      const net = Math.round(total / (1 + vatRate));
+      const vat = total - net;
+
+      // Kundupplösning: read-only i diff, full (ClientCompany-ensure) i write — som faktura.
+      const customerId = wo?.CustomerId;
+      const cust = (fast || !customerId)
+        ? { customerName: "", customerNumber: "", companyId: null }
+        : (mode === "write"
+            ? await tengella.resolveInvoiceCustomer(customerId, auth.token)
+            : await readOnlyTengellaCustomer(customerId));
+
+      const docNo = String(wo?.WorkOrderNo ?? "").trim() || String(wo?.WorkOrderId ?? "").trim();
+      const orderDate = helpers.toIsoDate(helpers.tengellaDate(wo?.OrderDate));
+
+      return {
+        connection:     auth.connection,
+        documentNumber: docNo,
+        orderDate,
+        total, net, vat,
+        customerName:   cust.customerName,
+        customerNumber: cust.customerNumber,
+        companyId:      cust.companyId,
+        cancelled:      helpers.normalizeBool(wo?.IsDeleted),
+        raw:            wo,
+        rows: rows.map((row, i) => ({ row, index: i, connection: auth.connection, docNo })),
+      };
+    },
+
+    // Egen buildPayload: icke-ekonomiskt huvud, härledd ekonomi, source-flagga.
+    buildPayload(nir) {
+      const ts = nir.orderDate ? Date.parse(nir.orderDate) : NaN;
+      const payload = {
+        connection:          nir.connection,
+        ft_document_number:  String(nir.documentNumber ?? "").trim(),
+        ft_customer_number:  nir.customerNumber != null ? String(nir.customerNumber) : "",
+        ft_customer_name:    nir.customerName || "",
+        ft_order_date:       nir.orderDate || null,
+        ft_order_ts:         Number.isFinite(ts) ? ts : null,
+        ft_total:            String(Number(nir.total ?? 0)),     // STRÄNG (FortnoxOrder ft_total)
+        ft_net:              Number(nir.net ?? 0),               // härlett (order ≠ intäkt i KPI)
+        ft_totalvat:         Number(nir.vat ?? 0),
+        ft_currency:         "SEK",
+        ft_cancelled:        !!nir.cancelled,
+        ft_sent:             false,
+        ft_url:              "",
+        ft_raw_json:         JSON.stringify(nir.raw || {}),      // operativa workorder-fält bevaras
+        source:              "tengella-workorder",
+      };
+      if (nir.companyId) payload.linked_company = nir.companyId;
+      return payload;
+    },
+  };
+
   const registry = {
-    "tengella-invoice": tengellaInvoiceAdapter,
-    "fortnox-invoice":  fortnoxInvoiceAdapter,
+    "tengella-invoice":   tengellaInvoiceAdapter,
+    "fortnox-invoice":    fortnoxInvoiceAdapter,
+    "fortnox-order":      fortnoxOrderAdapter,
+    "fortnox-offer":      fortnoxOfferAdapter,
+    "tengella-workorder": tengellaWorkorderAdapter,
   };
 
   // ───────────────────────────────────────────────────────────────────────────

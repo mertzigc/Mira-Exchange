@@ -8,8 +8,17 @@
 ## 0. TL;DR — var vi står
 - **Fakturaspåret är KLART, validerat krona-för-krona och självgående** (cron live). F&E/Staff/HK 2026 stämmer exakt mot Fortnox/facit.
 - **Steg 9a (kärn-utbyggnad för rader) är KODAT + lokalt testat (2026-06-05).** Generaliserad upsert (adapter.bubbleType/keyFields), ny `upsertDocWithRows` med delete-reconciliation (städar spökrader), `bubbleDelete` injicerad. Faktura-adaptrar har tomt rows-config → enkel-dokument-vägen, oförändrad. **Väntar: Christian pushar → diff-revalidering av HK/F&E/Staff (måste vara noop-dominerat) innan vi går vidare.**
-- **NÄSTA konkreta kodsteg: 9b** — `fortnox-order` + `fortnox-offer`-adaptrar (huvud + rader) ovanpå 9a-kärnan.
+- **Steg 9b är KODAT + lokalt e2e-testat (2026-06-05).** `fortnox-order` + `fortnox-offer`-adaptrar (huvud + rader) på 9a-kärnan, registrerade → nåbara via `POST /sync/v2/fortnox-order|fortnox-offer` direkt efter deploy. **Väntar: (1) skapa nya number-fält `ft_order_ts`/`ft_offer_ts` i Bubble, (2) diff-revalidering mot Fortnox order/offer-totaler innან write.**
+- **Steg 9c är KODAT (2026-06-05).** Sync flaggar `needs_pdf_sync=true` på order/offer (create+update); generisk `fetchAndStoreOrderPdf` (index.js, `/orders/{n}/preview`, ingen Offert-wrapper); separat PDF-cron `POST /sync/v2-pdf/:source` (token cacheat per connection, bundet av `maxRecords`).
+- **Steg 9d är KODAT + lokalt e2e-testat (2026-06-05).** `tengella-workorder`-adapter → unified `FortnoxOrder`/`FortnoxOrderRow` (connection=TENGELLA, `source="tengella-workorder"`). Global discovery `/v2/WorkOrders` (cursor, inbäddade rader, pass-through fetchComplete), härled `ft_total`=Σ(pris×antal) + net via 25%. `listWorkOrders` injicerad.
+- **NÄSTA konkreta kodsteg: 9e** (cron-cutover — lägg order/offer/workorder + PDF i `sync_v2_cron.sh`, stäng av gamla synken). **MEN:** allt 9b–9d är ren kod utan deploy/live-validering än — gör diff-revalidering + Bubble-fält FÖRST.
 - Efter order/offer/workorder: **ClientGroup-fasen** (kundkort-bundling).
+
+### ⚠️ ÖPPET före 9b/9c-write (läs!)
+1. **Skapa i Bubble:** `ft_order_ts` (number) på FortnoxOrder, `ft_offer_ts` (number) på FortnoxOffer. Annars ignoreras fältet vid write (Bubble droppar okända fält tyst) → datumfilter saknar pålitlig nyckel.
+1b. **Skapa på FortnoxOrder i Bubble (9c):** `needs_pdf_sync` (yes/no), `ft_pdf` (file), `ft_pdf_fetched_at` (text). FortnoxOffer har dem redan. Utan dessa nollar PDF-cronen aldrig flaggan → samma dokument hämtas om och om.
+1c. **Skapa på FortnoxOrder i Bubble (9d):** `source` (text). Sätts till `"fortnox"` (fortnox-order) resp `"tengella-workorder"` (workorder) för spårbarhet i unified-modellen. Skrivs additivt vid varje write, ej i compareFields (ingen diff-brus). Utan fältet droppas det tyst.
+2. **Coexistence-krig:** gamla cron (`fortnox_cron_v1.sh` m.fl.) skriver fortfarande FortnoxOrder/Offer + rader. Nya adaptern speglar EXAKT befintliga fältnamn, beloppstyper (order-rad=STRÄNG, offer-rad=NUMBER) och `ft_unique_key`-format just för att undvika create/delete-krig — men kör INTE nya order/offer-write i cron parallellt med gamla på samma dokument. Manuell scoped write OK för validering. Full cron-cutover = 9e (stäng av gamla först). Nyckel-standardisering medvetet uppskjuten till dess.
 
 ---
 
@@ -92,9 +101,22 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
   - Lokalt verifierat med mockad Bubble-store: 2 rader create → R2 borttagen ger delete, R1 update, R3 create; diff skriver inget. (Smoke-test borttaget, ej committat.)
   - **ÅTERSTÅR för 9a:** Christian pushar → kör diff-curl för HK/F&E/Staff (se §0/§4) och bekräftar **noop-dominans** (faktura oförändrad). Rad-nyckel-fallback parentdoc#index (positionskänslig) byggs i 9b där order-rader faktiskt finns.
   - `buildPayload` är per-dokumentklass (faktura ≠ order ≠ offer); 9b-adaptrar sätter egen `adapter.buildPayload`.
-- **9b — fortnox-order + fortnox-offer:** fetchComplete=detail (ger rader OCH Net/VAT). Diff → scoped write → full write → reconcile mot Fortnox order/offer-totaler. Behåll fältnamn `connection`. Radbelopp som strängar. Nya number-fält ft_order_ts/ft_offer_ts.
-- **9c — PDF:** generisk `fetchAndStoreOrderPdf` mot `/orders/{n}/preview` (ALDRIG `/print` = sidoeffekt markerar utskriven). Mönster: `fortnoxGetBinary(path)` → `bubbleUploadFile` → patcha `ft_pdf`+`ft_pdf_fetched_at`+`needs_pdf_sync=false`. Separat flaggat PDF-cron. Offer har redan `fetchAndStoreOfferPdf` (rad ~3536).
-- **9d — tengella-workorder → FortnoxOrder:** `/v2/WorkOrders` listing-only (rader inbäddade), GLOBAL discovery (ingen kund-loop), icke-ekonomiskt huvud → härled `ft_total`=Σ(pris×antal). Rader → FortnoxOrderRow.
+- **9b — fortnox-order + fortnox-offer ✅ KODAT + lokalt e2e-testat (2026-06-05), väntar Bubble-fält + revalidering:**
+  - KLART: `makeFortnoxDocAdapter`-factory i `invoice_sync.js` (efter fortnox-faktura-adaptern) → `fortnoxOrderAdapter` + `fortnoxOfferAdapter`, båda i registry. fetchComplete=detail (`/orders/{n}`, `/offers/{n}`) ger rader + Net/VAT. Egen `buildPayload` per typ (per-dokumentklass).
+  - KLART: speglar EXAKT befintliga fältnamn/typer: `connection` (ej connection_id), **order ft_total + radbelopp = STRÄNG**, **offer ft_total + radbelopp = NUMBER** (avviker!). Rad-nyckelformat behållet: order `ROWID_${rowId}__CONN_${conn}__ORDDOC_${doc}` (fallback `FALLBACK__..__IDX_nnn`), offer `OFFERROW_${RowId||idx}_${conn}_${doc}`. Parent-relation: order-rad→`order`, offer-rad→`offer`.
+  - KLART: nya number-fält `ft_order_ts`/`ft_offer_ts` skrivs (huvud). `linked_company` sätts nu via FortnoxCustomer-bryggan (read-only, additivt — gamla synken satte den ej). lastmodified-sweep + fromdate/todate i iterateRefs som faktura.
+  - Lokalt verifierat: huvud-create med rätt fälttyper, ROWID-nyckel, 2 rader → en borttagen ger delete (set-reconciliation), update, diff skriver inget.
+  - **ÅTERSTÅR:** (1) skapa `ft_order_ts`/`ft_offer_ts` i Bubble; (2) `curl POST /sync/v2/fortnox-order` (resp -offer) i diff, granska reconcile (Σ ft_net per connection) mot Fortnox order/offer-totaler; (3) scoped write (`maxRecords`) → verifiera ett dokuments rader i Bubble; (4) full write. Kör EJ parallellt i cron med gamla order/offer-synken (se ⚠️ §0).
+- **9c — PDF ✅ KODAT (2026-06-05), väntar Bubble-fält + test:**
+  - KLART: `fetchAndStoreOrderPdf` (index.js ~3610, efter `fetchAndStoreOfferPdf`) mot `/orders/{n}/preview` (ALDRIG `/print`). Mönster: `fortnoxGetBinary` → `bubbleUploadFile` → patcha `ft_pdf`+`ft_pdf_fetched_at`+`needs_pdf_sync=false`. Ingen Offert/Dokument-wrapper (bara offer har den, beslut 9.6.3).
+  - KLART: sync-adaptrarna (9b) sätter `needs_pdf_sync:true` i order/offer-huvudet (skrivs vid create/update, ej i compareFields → triggar ingen egen diff). PDF-cronen nollar den.
+  - KLART: route `POST /sync/v2-pdf/:source` (`fortnox-order`|`fortnox-offer`) i index.js intill `/sync/v2/:source`. Hämtar `needs_pdf_sync=true` via `bubbleFindAll`, token cacheat per connection, bundet av `maxRecords` (default 25), `throttleMs` (default 300). Body: `{connection_id?, maxRecords?, throttleMs?}`.
+  - **ÅTERSTÅR:** skapa Bubble-fälten på FortnoxOrder (se §0 punkt 1b); kör `/sync/v2-pdf/fortnox-order` med litet `maxRecords` och verifiera att PDF dyker upp på FortnoxOrder + flaggan nollas. Offer-PDF i denna cron: kör EJ parallellt med gamla `/fortnox/upsert/offers`-PDF-flödet förrän cutover (9e).
+- **9d — tengella-workorder → FortnoxOrder ✅ KODAT + lokalt e2e-testat (2026-06-05), väntar source-fält + diff-test:**
+  - KLART: `tengellaWorkorderAdapter` (invoice_sync.js, före registry). `bubbleType:"FortnoxOrder"`, rows→`FortnoxOrderRow` (samma typer som fortnox-order; connection=TENGELLA → egna records, ingen kollision). GLOBAL discovery `/v2/WorkOrders` (cursor, `resp.Data`/`Next`/`ExistsMoreData`, ingen kund-loop), rader inbäddade, `fetchComplete` pass-through.
+  - KLART: härled ekonomi — `ft_total`=Σ(Quantity×Price) som STRÄNG, `ft_net`=round(total/1.25), `ft_totalvat`=total−net (order ≠ intäkt i KPI, markerat). Egen `buildPayload`. Operativa workorder-fält bevaras i `ft_raw_json` (head + rad). Kundupplösning read-only/diff, full/write (som faktura). Rad-nyckel `WORID_${WorkOrderRowId}__CONN_${conn}__ORDDOC_${docNo}` (fallback IDX).
+  - KLART: `listWorkOrders` (=`listTengellaWorkOrders`) injicerad i tengella-deps.
+  - **ÅTERSTÅR:** skapa `source` på FortnoxOrder (§0 punkt 1c); `curl POST /sync/v2/tengella-workorder` diff (orgNo default), granska sample_diffs/rad-churn; scoped write; verifiera ett WO i Bubble. Gamla `/tengella/workorders/sync` + UnifiedOrder-hook kör kvar tills 9e-cutover (UnifiedOrder utfasas, beslut 9.6.1).
 - **9e — cron:** lägg order/offer/workorder + PDF i `sync_v2_cron.sh`.
 
 ### Nyckelfakta om befintlig order/offer/workorder-kod (från audit)

@@ -3608,6 +3608,35 @@ async function fetchAndStoreOfferPdf({
   };
 }
 // ────────────────────────────────────────────────────────────
+// 9c: fetchAndStoreOrderPdf — generisk PDF-hämtning för FortnoxOrder.
+// Speglar fetchAndStoreOfferPdf men UTAN Offert/Dokument-wrapper (den behålls
+// bara för offer, beslut 9.6.3). Använd /preview (ALDRIG /print = markerar
+// dokumentet utskrivet i Fortnox = sidoeffekt).
+async function fetchAndStoreOrderPdf({ connection_id, order_docno, bubble_order_id, access_token }) {
+  const docNo = String(order_docno || "").trim();
+  if (!docNo) return { ok: false, status: 400, error: "Missing order_docno" };
+
+  const pdf = await fortnoxGetBinary(`/orders/${encodeURIComponent(docNo)}/preview`, access_token);
+  if (!pdf.ok || !pdf.buf?.length) {
+    return { ok: false, status: pdf.status || 500, error: "Failed to fetch order PDF", detail: pdf };
+  }
+
+  const fileName = `fortnox_order_${connection_id}_${docNo}.pdf`;
+  const fileUrl = await bubbleUploadFile({
+    filename: fileName,
+    contentType: pdf.contentType || "application/pdf",
+    buffer: pdf.buf
+  });
+
+  await bubblePatch("FortnoxOrder", bubble_order_id, {
+    ft_pdf: fileUrl,
+    ft_pdf_fetched_at: new Date().toISOString(),
+    needs_pdf_sync: false
+  });
+
+  return { ok: true, ft_pdf: fileUrl, bytes: pdf.buf.length, order_docno: docNo };
+}
+// ────────────────────────────────────────────────────────────
 // /fortnox/upsert/offers  (delta-friendly)
 // Body:
 // - connection_id (required)
@@ -15524,6 +15553,7 @@ const syncEngine = createSyncEngine({
     listInvoices:           listTengellaInvoices,
     getInvoiceById:         getTengellaInvoiceById,
     resolveInvoiceCustomer: resolveTengellaInvoiceCustomer,
+    listWorkOrders:         listTengellaWorkOrders,   // 9d: workorder → FortnoxOrder
   },
   fortnox: {
     ensureAccessToken:    ensureFortnoxAccessToken,
@@ -15537,6 +15567,75 @@ const syncEngine = createSyncEngine({
 app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
   try {
     const report = await syncEngine.syncForSource(req.params.source, req.body || {});
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// 9c: separat flaggad PDF-cron — betar av dokument med needs_pdf_sync=true i egen
+// takt (frikopplat från huvudsynken; kan pausas oberoende). Bundet av maxRecords.
+// Body: { connection_id?, maxRecords?, throttleMs? }. source = fortnox-order | fortnox-offer.
+// OBS coexistence: kör EJ fortnox-offer här parallellt med gamla offer-PDF-flödet
+// (/fortnox/upsert/offers) på samma dokument förrän cutover (9e).
+const PDF_SYNC_TARGETS = {
+  "fortnox-order": {
+    bubbleType: "FortnoxOrder",
+    run: ({ row, token }) => fetchAndStoreOrderPdf({
+      connection_id: row.connection, order_docno: row.ft_document_number,
+      bubble_order_id: row._id, access_token: token,
+    }),
+  },
+  "fortnox-offer": {
+    bubbleType: "FortnoxOffer",
+    run: ({ row, token }) => fetchAndStoreOfferPdf({
+      connection_id: row.connection, offer_docno: row.ft_document_number,
+      bubble_offer_id: row._id, access_token: token,
+      deal_id: row.ft_your_reference || null,   // deal-länk bärs i ft_your_reference
+    }),
+  },
+};
+
+app.post("/sync/v2-pdf/:source", requireSyncSecret, async (req, res) => {
+  try {
+    const target = PDF_SYNC_TARGETS[req.params.source];
+    if (!target) return res.status(400).json({ ok: false, error: `Unknown pdf source: ${req.params.source}` });
+
+    const { connection_id = null, maxRecords = 25, throttleMs = 300 } = req.body || {};
+    const cap = Number(maxRecords) || 25;
+
+    const constraints = [{ key: "needs_pdf_sync", constraint_type: "equals", value: true }];
+    if (connection_id) constraints.push({ key: "connection", constraint_type: "equals", value: connection_id });
+    const flagged = await bubbleFindAll(target.bubbleType, { constraints });
+
+    const report = { source: req.params.source, flagged: flagged.length,
+      counts: { processed: 0, fetched: 0, error: 0, skipped: 0 }, errors: [] };
+    const tokenCache = new Map();   // connection_id → access_token (resolva en gång per connection)
+
+    for (const row of flagged) {
+      if (report.counts.processed >= cap) break;
+      report.counts.processed++;
+      const conn = row.connection;
+      try {
+        if (!conn) { report.counts.skipped++; continue; }
+        let token = tokenCache.get(conn);
+        if (token === undefined) {
+          const tok = await ensureFortnoxAccessToken(conn);
+          token = (tok?.ok && tok?.access_token) ? tok.access_token : null;
+          tokenCache.set(conn, token);
+        }
+        if (!token) { report.counts.error++; if (report.errors.length < 25) report.errors.push({ doc: row.ft_document_number, error: "token-fel" }); continue; }
+
+        if (throttleMs) await new Promise((r) => setTimeout(r, Number(throttleMs)));
+        const r = await target.run({ row, token });
+        if (r?.ok) report.counts.fetched++;
+        else { report.counts.error++; if (report.errors.length < 25) report.errors.push({ doc: row.ft_document_number, error: r?.error || "okänt", status: r?.status || null }); }
+      } catch (e) {
+        report.counts.error++;
+        if (report.errors.length < 25) report.errors.push({ doc: row.ft_document_number, error: e?.message || String(e) });
+      }
+    }
+
     return res.json({ ok: true, report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
