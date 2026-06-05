@@ -304,3 +304,93 @@ Motorn (iterate → fetchComplete → normalize → buildPayload → upsert → 
 
 ### 8.8 Förutsättningar innan write-läge (recap)
 Nya Bubble-fält på `fortnoxinvoice`: `ft_invoice_type` (text), `ft_tax_reduction_type` (text), `ft_tax_reduction_amount` (number), `ft_invoice_ts` (number). `ft_total` bör bli numeriskt (är sträng idag).
+
+---
+
+## 9. Order / Offer / Workorder — designdesign (2026-06-05)
+
+### 9.1 Vad auditen visar (utgångsläge)
+| | Fortnox Order | Fortnox Offer | Tengella Workorder |
+|---|---|---|---|
+| Detail-endpoint | `/orders/{n}` | `/offers/{n}` | **finns ej** — bara `/v2/WorkOrders` listing |
+| Rader i detail? | Ja (`OrderRows`) | Ja (`OfferRows`) | Ja, **inbäddade i listing** (`WorkOrderRows`) |
+| Net/TotalVAT på huvud | Ja (i detail) | Ja (i detail) | **Nej** — huvudet är icke-ekonomiskt |
+| Ekonomi på rad | Price/Discount/VAT/Total | Price/Total | Price/CostPrice (ingen moms) |
+| Discovery | listing (page) | listing (page) | listing **global** (ingen kund-loop) |
+| PDF | finns ej (Fortnox `/orders/{n}/preview` funkar) | `/offers/{n}/preview` (byggt) | — |
+| Bubble-typ | `FortnoxOrder` + `FortnoxOrderRow` | `FortnoxOffer` + `FortnoxOfferRow` | `TengellaWorkorder` + `TengellaWorkorderRow` |
+| Nyckelfält connection | **`connection`** | **`connection`** | (snake_case, ingen prefix) |
+
+**Gemensamma brister i nuvarande kod (att fixa i nya adaptern):**
+1. **Borttagna rader städas ALDRIG** — alla tre gör bara create/update på inkommande rader. Ändras ett dokument blir gamla rader kvar som spökrader. **Detta är den största kvalitetsluckan.**
+2. **Net/TotalVAT sätts inte på order-huvudet** (direct-upsert matas med listing utan detail → samma Bug 1 som faktura hade).
+3. Radbelopp lagras som strängar; två olika unique-key-format (Order vs Offer); `connection` vs `connection_id`-inkonsekvens.
+4. Ingen fil-GC: varje PDF-omskrivning läcker den gamla filen i Bubble-lagringen.
+
+### 9.2 Kärn-utbyggnad: dokument MED rader (children)
+Fakturakärnan hanterar ETT record per dokument. Order/offer/workorder kräver **dokument + rader**. Generalisering av `invoice_sync.js`:
+
+- Varje adapter deklarerar nu: `bubbleType` (t.ex. `"FortnoxOrder"`), `keyFields` (t.ex. `["connection","ft_document_number"]`), och valfritt `rows`-config.
+- `normalize` returnerar NIR med valfri `rows: [...]` (array av rad-NIR).
+- Ny `upsertDocWithRows(payload, rows, {mode})`:
+  1. Upserta huvudet (som idag) → få parent `_id`.
+  2. Hämta **alla befintliga rader** för parent (via parent-relation).
+  3. Upserta varje inkommande rad (nyckel = stabil unik nyckel, se nedan).
+  4. **Radera rader vars nyckel saknas i nya setet** (set-reconciliation) → fixar lucka #1.
+- I `diff`-läge: skriver inget, rapporterar tänkta create/update/**delete** per rad.
+
+**Rad-unik-nyckel:** alltid källans rad-id när det finns — `RowId` (Fortnox), `WorkOrderRowId` (Tengella). Saknas RowId (kan hända för Fortnox-orderrader) → fallback `parentdoc#index`, men den är positionskänslig; flaggas i rapport. Stabil rad-id är förutsättning för pålitlig delete-reconciliation.
+
+### 9.3 Adapter-specar
+**`fortnox-order` / `fortnox-offer`** (nästan identiska):
+- `resolveAuth` = som fortnox-invoice (ensureAccessToken + throttle + retry).
+- `iterateRefs` = paginera `/orders` resp `/offers` (page + `@TotalPages`), eller `lastmodified` för nightly. Datumfönster `fromdate/todate`.
+- `fetchComplete` = **detail** (`/orders/{n}` / `/offers/{n}`) → ger huvud + Net/VAT + rader. (Fixar Bug 1 för order/offer.)
+- `normalize` → NIR med huvudfält (net/vat från Fortnox, korrekt signerat), `ft_*_ts` (numeriskt datum), referensfält bevaras, + `rows[]`.
+- `buildPayload` återanvänds (NIR→ft_*). Belopp som matchar befintlig fälttyp (se 9.5).
+- Reconcile: summera `ft_net` per connection (validera mot Fortnox order/offer-totaler, som faktura).
+
+**`tengella-workorder`** (avviker):
+- Ingen detail — `iterateRefs` paginerar `/v2/WorkOrders` **globalt** (cursor), raderna finns inbäddade.
+- `fetchComplete` = pass-through (returnera listing-raden; rader redan med).
+- `normalize` → huvud (icke-ekonomiskt: beskrivning, noter, datum, `is_deleted`) + `rows[]` (price/cost, ingen moms).
+- **Ingen revenue-reconcile** (workorders är operativa, inte intäkt; intäkten är Tengella-fakturan). Ev. sanity: summera radpriser.
+- Kundupplösning: read-only i diff, full (med ClientCompany-ensure) i write — som faktura.
+
+### 9.4 PDF — för offer OCH order (Christians nya önskemål)
+Mönstret är redan generiskt och bevisat (faktura + offer): `fortnoxGetBinary(path)` → `bubbleUploadFile` → patcha `ft_pdf` + `ft_pdf_fetched_at` + `needs_pdf_sync=false`.
+- **Order:** ny `fetchAndStoreOrderPdf` mot `/orders/{n}/preview` (kopia av offer-helpern). Använd `/preview`, INTE `/print` (print markerar dokumentet utskrivet i Fortnox = sidoeffekt).
+- **Frikopplat flöde:** synken sätter `needs_pdf_sync=true` på create/ändring; en **separat PDF-cron** betar av flaggade i egen takt (som offer gör idag). Skäl: PDF-volymen är stor och ska inte sakta ner eller riskera huvudsynken. Kan pausas oberoende.
+- **Retention (Christians "kasta efter X tid"):** `ft_pdf_fetched_at` finns redan. En framtida cleanup-cron kan nolla `ft_pdf` för dokument äldre än X. **Öppen fråga:** Bubble raderar inte själva filen när man nollar fältet (ingen publik file-delete i Data API) → äkta lagringsfrigöring kräver en **Bubble backend-workflow `delete_file`** som vi anropar. Annars frigörs inte utrymmet, bara pekaren tas bort. Beslut om retention tas separat; lagring nu, GC-mekanik senare.
+
+### 9.5 Datatyp-beslut (lärdom från faktura)
+- **Behåll befintliga fältnamn per typ** (`connection` på order/offer, inte `connection_id`) — annars bryts Bubble-UI-referenser. Inkonsekvensen är kosmetisk; migrera ej nu.
+- **Radbelopp:** matcha befintlig Bubble-fälttyp (strängar idag) för att undvika `INVALID_DATA` (samma som `ft_total` på faktura). KPI summerar inte radnivå, så numeriskt krävs ej. Lägg ev. `ft_*_ts` (number) på huvudet för pålitlig datumfiltrering.
+- **Nya huvud-fält att skapa i Bubble:** `ft_order_ts`/`ft_offer_ts` (number) på FortnoxOrder/Offer; ev. `needs_pdf_sync`/`ft_pdf`/`ft_pdf_fetched_at` på FortnoxOrder (Offer har dem).
+
+### 9.6 Beslut (låsta 2026-06-05)
+1. **UnifiedOrder UTFASAS.** Ersätts av unifierad FortnoxOrder (se 9.8). Frontend anpassas.
+2. **Workorder → FortnoxOrder** (connection = Tengella/HK), speglar Tengella-faktura → FortnoxInvoice. En ordermodell över alla bolag. Operativa workorder-fält bevaras i `ft_raw_json`. Verifiera att frontend inte läser strukturerade `TengellaWorkorder`-fält innan den typen pensioneras.
+3. **Offert-wrapper BEHÅLLS** för offer (Mira-native författaryta). Förbered both-ways: NIR som pivot, round-trip-bara offer-rader (artikelnr/antal/pris), solid FortnoxOffer↔Offert-länk. Ingen order-wrapper ännu.
+4. **PDF-retention:** lagra allt nu, TTL/GC senare (kräver Bubble `delete_file`-workflow).
+
+### 9.8 Unifierad ordermodell (ersätter UnifiedOrder)
+Som FortnoxInvoice rymmer alla fakturakällor rymmer **FortnoxOrder alla orderkällor**:
+- Fortnox F&E/Staff-ordrar (connection = resp. Fortnox-id) — detail-fetch ger net/vat/rader.
+- HK-workorders (connection = TENGELLA) — listing ger rader inbäddade; huvud icke-ekonomiskt → härled `ft_total` = Σ(pris×antal) från rader, net via 25% (som HK-faktura) om vi vill ha jämförbar siffra; markera att order ≠ intäkt i KPI.
+- Rader → **FortnoxOrderRow** (en radtyp): mappa item_no→article, item_name→description, quantity, price; workorder-extra (cost_price, invoice-status, arbetstider) i `ft_raw_json`.
+- `source`-fält på FortnoxOrder (`"fortnox"` / `"tengella-workorder"`) för spårbarhet.
+
+### 9.9 Both-ways-förberedelse (offer push, framtid)
+NIR är pivoten åt båda håll:
+- **Läs (nu):** `Fortnox → fetchComplete → normalize → NIR → buildPayload → Bubble`.
+- **Skriv (senare):** `Mira Offert → buildNIR → buildFortnoxPayload → POST /offers → DocumentNumber → länka FortnoxOffer↔Offert`.
+Krav som byggs in redan nu så push blir möjlig utan omskrivning: (a) offer-rader lagrar artikelnr/antal/pris/enhet komplett; (b) `Offert`↔`FortnoxOffer`-länk via deal_id hålls solid; (c) inga destruktiva fält-överskrivningar på Mira-authored offerter som ännu inte pushats (en `source`/`origin`-flagga skiljer Mira-skapade från Fortnox-synkade).
+
+### 9.7 Föreslagen byggordning
+- **9a** Kärn-utbyggnad: `bubbleType`/`keyFields` per adapter + `upsertDocWithRows` med delete-reconciliation. (Faktura oförändrad — den får tomt rows-config.)
+- **9b** `fortnox-order` + `fortnox-offer` (huvud + rader), diff → scoped write → full write → reconcile mot Fortnox.
+- **9c** PDF: generisk `fetchAndStoreOrderPdf` + flaggat PDF-flöde + PDF-cron (order + offer; verifiera faktura-PDF ostörd).
+- **9d** `tengella-workorder` (global discovery, inbäddade rader, icke-ekonomiskt huvud).
+- **9e** Cron: lägg order/offer/workorder + PDF i `sync_v2_cron.sh` (nightly modified + full).
+- Genomgående samma kvalitetsgrind som faktura: diff-läge bevisar innan write, reconcile validerar.
