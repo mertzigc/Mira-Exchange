@@ -1532,14 +1532,16 @@ async function getConnectionOrThrow(connection_id) {
   return conn;
 }
 
-async function ensureFortnoxAccessToken(connection_id) {
+async function ensureFortnoxAccessToken(connection_id, force = false) {
   const conn = await getConnectionOrThrow(connection_id);
 
   const access = conn.access_token || null;
   const refresh = conn.refresh_token || null;
   const expiresAt = conn.expires_at || null;
 
-  if (access && !needsRefresh(expiresAt, 2)) {
+  // force=true: förnya oavsett expires_at (används vid 401 mitt i körning, där
+  // token var ogiltig trots att expires_at såg giltig ut — klock-skew/marginal).
+  if (access && !force && !needsRefresh(expiresAt, 2)) {
     return { ok: true, access_token: access, connection: conn, refreshed: false };
   }
 

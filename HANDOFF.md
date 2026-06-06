@@ -12,8 +12,12 @@
 - **Steg 9c är KODAT (2026-06-05).** Sync flaggar `needs_pdf_sync=true` på order/offer (create+update); generisk `fetchAndStoreOrderPdf` (index.js, `/orders/{n}/preview`, ingen Offert-wrapper); separat PDF-cron `POST /sync/v2-pdf/:source` (token cacheat per connection, bundet av `maxRecords`).
 - **Steg 9d är KODAT + lokalt e2e-testat (2026-06-05).** `tengella-workorder`-adapter → unified `FortnoxOrder`/`FortnoxOrderRow` (connection=TENGELLA, `source="tengella-workorder"`). Global discovery `/v2/WorkOrders` (cursor, inbäddade rader, pass-through fetchComplete), härled `ft_total`=Σ(pris×antal) + net via 25%. `listWorkOrders` injicerad.
 - **Steg 9e FÖRBEREDD i kod (2026-06-05), EJ aktiverad.** `sync_v2_cron.sh` har order/offer/workorder + `pdf`-läge bakom env-flagga `SYNC_V2_ORDERS` (default 0). Aktivering = operativ cutover (stäng av gamla cron FÖRST), se §5 9e runbook.
-- **LIVE-STATUS 2026-06-05:** fortnox-order + fortnox-offer + tengella-workorder deployade & diff-validerade mot live; order-rader write-validerade (idempotent ned till radnivå). Återstår före cutover: offer write-test, Bubble-fält, fulla writes per source.
+- **LIVE-STATUS 2026-06-05:** alla tre källor deployade & diff-validerade. **Order OCH offer write-validerade** (write maxRecords:1 → re-diff = huvud noop + rader noop, ROWID & OFFERROW round-trippar, 0 dubblering). **Bubble-fälten skapade, all kod deployad.** Återstår före cutover: workorder write-test (1-doc round-trip), fulla writes per source m. reconcile-koll, sen 9e-aktivering.
 - Efter order/offer/workorder: **ClientGroup-fasen** (kundkort-bundling).
+
+### 📌 SCOPE-FAKTA (2026-06-05): order/offer = BARA F&E
+- **Staff har endast faktura i Fortnox.** Staffs order/offert skapas i **Intelliplan** (separat system) → `/orders` på Staff-kontot ger `400` (modulen finns ej). Kör därför `fortnox-order`/`fortnox-offer` **enbart för F&E** (`1771579463578x385222043661358460`). Cron uppdaterad därefter.
+- **Intelliplan order/offert = framtida egen källa** (egen adapter → samma unified FortnoxOrder/FortnoxOffer, connection=Staff eller egen). Ej i scope nu.
 
 ### ⚠️ ÖPPET före 9b/9c-write (läs!)
 1. **Skapa i Bubble:** `ft_order_ts` (number) på FortnoxOrder, `ft_offer_ts` (number) på FortnoxOffer. Annars ignoreras fältet vid write (Bubble droppar okända fält tyst) → datumfilter saknar pålitlig nyckel.
@@ -155,6 +159,12 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 - Gamla cron (PAUSADE/delvis kvar för ej-migrerat): `fortnox_cron_v1.sh`, `tengella_cron.sh`, `fortnox_offers_recent_10min.sh` — hanterar offer/order/artiklar/PDF som ej flyttats än. Stäng inte av de delarna förrän migrerade.
 
 ---
+
+## 8b. Order/offer-write — lärda (2026-06-05, live-backfill)
+- **`linked_company` måste finnas på FortnoxOrder + FortnoxOffer** (skapat). Saknas fältet → Bubble 400 `Unrecognized field` → HELA skrivningen failar. Skrivs bara på create/update (noop backfillar EJ) → historisk backfill görs i ClientGroup-fasen. Bubble case-sensitive: fältet heter exakt `linked_company` (som FortnoxInvoice).
+- **Token-utgång mid-svep (401):** fixat med `fortnoxGetAuthed`-wrapper i invoice_sync.js — force-refreshar (`ensureFortnoxAccessToken(id, true)`) och kör om vid 401. `ensureFortnoxAccessToken` har nu `force`-param. Gäller faktura+order+offer, list+detail.
+- **F&E orderволym: ~500–600/månad.** `sinceYM` (utan övre gräns) listar månad→årsslut = O(n²) sidor + långa requests → använd `fromdate`+`todate` (riktiga månadsfönster) vid manuell backfill. Detail-anrop sker per dok även vid noop (Bug 1-design) → backfill är tung men engångs; nightly använder `modifiedDaysBack`.
+- **Order/offer = BARA F&E** (Staff = faktura only; order/offert i Intelliplan → /orders 400 på Staff).
 
 ## 8. Fallgropar (lärda)
 - Fortnox rate-limit: krävde retry+backoff (`fortnoxGetRetry`) + throttle (`throttleMs`, default 200, april behövde 350). Listing-fel mitt i paginering → kastar → 500 på hela requesten; idempotent så kör om.

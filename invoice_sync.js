@@ -377,6 +377,21 @@ export function createSyncEngine(deps) {
     return last;
   }
 
+  // Token-medveten Fortnox-GET: vid 401 (token utgången mitt i körning) force-refresha
+  // och kör om EN gång. auth.accessToken muteras så efterföljande anrop återanvänder
+  // den nya token. Skyddar långa svep (helår = många listsidor + detail-anrop).
+  async function fortnoxGetAuthed(auth, path, query) {
+    let r = await fortnoxGetRetry(path, auth.accessToken, query);
+    if (r?.status === 401) {
+      const tok = await fortnox.ensureAccessToken(auth.connection_id, true);   // force
+      if (tok?.ok && tok?.access_token) {
+        auth.accessToken = tok.access_token;
+        r = await fortnoxGetRetry(path, auth.accessToken, query);
+      }
+    }
+    return r;
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Adapter: Fortnox faktura (F&E, Staff, ...)
   // Fortnox detail har Net/TotalVAT KORREKT signerade (credits negativa) → ingen
@@ -418,7 +433,7 @@ export function createSyncEngine(deps) {
       const window = lastmodified ? { lastmodified } : { fromdate, todate };
       let page = 1, totalPages = 1;
       do {
-        const r = await fortnoxGetRetry("/invoices", auth.accessToken, { page, limit, ...window });
+        const r = await fortnoxGetAuthed(auth, "/invoices", { page, limit, ...window });
         if (!r?.ok) throw new Error(`fortnox /invoices listing fel sida ${page} (status ${r?.status})`);
         const list = Array.isArray(r.data?.Invoices) ? r.data.Invoices : [];
         totalPages = Number(r.data?.MetaInformation?.["@TotalPages"] ?? 1) || 1;
@@ -433,7 +448,7 @@ export function createSyncEngine(deps) {
 
     async fetchComplete(auth, ref) {
       if (auth.throttleMs) await sleep(auth.throttleMs);   // håll under Fortnox rate-limit
-      const r = await fortnoxGetRetry(`/invoices/${encodeURIComponent(ref.docNo)}`, auth.accessToken);
+      const r = await fortnoxGetAuthed(auth, `/invoices/${encodeURIComponent(ref.docNo)}`);
       if (!r?.ok) throw new Error(`fortnox detail fel docNo=${ref.docNo} status=${r?.status}`);
       const detail = r.data?.Invoice || r.data?.invoice || null;
       if (!detail) throw new Error(`fortnox detail saknar Invoice docNo=${ref.docNo}`);
@@ -535,7 +550,7 @@ export function createSyncEngine(deps) {
         const window = lastmodified ? { lastmodified } : { fromdate, todate };
         let page = 1, totalPages = 1;
         do {
-          const r = await fortnoxGetRetry(cfg.listPath, auth.accessToken, { page, limit, ...window });
+          const r = await fortnoxGetAuthed(auth, cfg.listPath, { page, limit, ...window });
           if (!r?.ok) throw new Error(`fortnox ${cfg.listPath} listing fel sida ${page} (status ${r?.status})`);
           const list = Array.isArray(r.data?.[cfg.listArrayKey]) ? r.data[cfg.listArrayKey] : [];
           totalPages = Number(r.data?.MetaInformation?.["@TotalPages"] ?? 1) || 1;
@@ -550,7 +565,7 @@ export function createSyncEngine(deps) {
 
       async fetchComplete(auth, ref) {
         if (auth.throttleMs) await sleep(auth.throttleMs);
-        const r = await fortnoxGetRetry(`${cfg.listPath}/${encodeURIComponent(ref.docNo)}`, auth.accessToken);
+        const r = await fortnoxGetAuthed(auth, `${cfg.listPath}/${encodeURIComponent(ref.docNo)}`);
         if (!r?.ok) throw new Error(`fortnox ${cfg.source} detail fel docNo=${ref.docNo} status=${r?.status}`);
         const detail = r.data?.[cfg.detailKey] || r.data?.[cfg.detailKey.toLowerCase()] || null;
         if (!detail) throw new Error(`fortnox ${cfg.source} detail saknar ${cfg.detailKey} docNo=${ref.docNo}`);

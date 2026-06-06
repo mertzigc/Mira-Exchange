@@ -60,11 +60,11 @@ if [ "$MODE" = "full" ]; then
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
-    echo "[sync_v2] FULL order/offer/workorder $YEAR"
+    echo "[sync_v2] FULL order/offer (F&E) + workorder $YEAR"
+    # OBS: order/offer BARA F&E. Staff har bara faktura i Fortnox; Staffs order/offert
+    # skapas i Intelliplan (egen framtida källa) → /orders ger 400 på Staff-kontot.
     post /sync/v2/fortnox-order      "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
-    post /sync/v2/fortnox-order      "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
     post /sync/v2/fortnox-offer      "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
-    post /sync/v2/fortnox-offer      "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
     # Workorder: global discovery (ingen kund-loop), ingen modified-filter → kör hela setet.
     post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"throttleMs\":300}"
   fi
@@ -77,11 +77,10 @@ else
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
-    echo "[sync_v2] NIGHTLY order/offer (modified=${DB}d) + workorder (since=${TSINCE})"
+    echo "[sync_v2] NIGHTLY order/offer F&E (modified=${DB}d) + workorder (since=${TSINCE})"
+    # Order/offer BARA F&E (Staff = endast faktura; order/offert ligger i Intelliplan).
     post /sync/v2/fortnox-order      "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
-    post /sync/v2/fortnox-order      "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
     post /sync/v2/fortnox-offer      "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
-    post /sync/v2/fortnox-offer      "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
     # Workorder saknar modified-filter → window:a på OrderDate (skippar gamla; pagar dock globalt).
     post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\",\"throttleMs\":250}"
   fi
