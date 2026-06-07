@@ -13160,6 +13160,7 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
     const limit = Math.min(60, Math.max(1, parseInt(req.body?.limit, 10) || 40));
     const onlyPending = req.body?.only_pending !== false;   // default: bara obesvarade
+    const isReminder = req.body?.reminder === true;          // påminnelse → de som FÅTT men ej svarat
 
     const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
     if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
@@ -13171,17 +13172,27 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     const brand = _inviteBrand(inv, cc);
     const tplId = await getTemplateId(slug).catch(() => null);
 
-    // Seeda sändlistan vid start (stabil ordning för offset/limit)
-    let list = _sendList[invId];
+    // "Inte svarat" = saknar svar (survey: tomt response_json; annars rsvp_status pending)
+    const notAnswered = g => {
+      if (isSurvey) { const rj = String(g.response_json || "").trim(); return !rj || rj === "{}" || rj === "[]"; }
+      return String(g.rsvp_status || "pending").toLowerCase() === "pending";
+    };
+
+    // Seeda sändlistan vid start (stabil ordning för offset/limit).
+    // Separat cache-nyckel för påminnelser så de inte blandas med ordinarie utskick.
+    const cacheKey = invId + (isReminder ? ":r" : "");
+    let list = _sendList[cacheKey];
     if (offset === 0 || !list) {
       const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
       list = guests
-        .filter(g => g.invite_sent !== true)
-        // För news och survey: skicka alla. Bara för invite filtrera på pending.
-        .filter(g => (isNews || isSurvey || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending")
+        .filter(g => isReminder
+          ? (g.invite_sent === true && notAnswered(g))        // påminnelse: fått men ej svarat
+          : (g.invite_sent !== true))                          // ordinarie: ej skickat än
+        // För ordinarie news/survey: skicka alla obesvarade. Invite: bara pending om only_pending.
+        .filter(g => isReminder ? true : ((isNews || isSurvey || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending"))
         .filter(g => String(g.email || "").trim())
         .sort((a, b) => String(a.email).localeCompare(String(b.email)));
-      _sendList[invId] = list;
+      _sendList[cacheKey] = list;
     }
     const total = list.length;
     const slice = list.slice(offset, offset + limit);
@@ -13214,12 +13225,15 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     });
     let queued = 0;
     if (rows.length) { const r = await _bulkCreate("emailqueue", rows); queued = r.created; }
-    // Markera som skickade (parallellt) → undviker dubbelutskick vid omkörning
-    await Promise.all(slice.map(g => bubblePatch(ADM_GUEST, g._id || g.id, { invite_sent: true }).catch(() => null)));
+    // Markera som skickade (parallellt) → undviker dubbelutskick vid omkörning.
+    // Vid påminnelse är invite_sent redan true → ingen ommarkering behövs.
+    if (!isReminder) {
+      await Promise.all(slice.map(g => bubblePatch(ADM_GUEST, g._id || g.id, { invite_sent: true }).catch(() => null)));
+    }
 
     const nextOffset = offset + limit;
     const done = nextOffset >= total;
-    if (done) delete _sendList[invId];
+    if (done) delete _sendList[cacheKey];
     res.json({ ok: true, total, processed: Math.min(nextOffset, total), queued, next_offset: done ? null : nextOffset, done });
   } catch (e) { console.error("[invite/send]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
@@ -13386,8 +13400,9 @@ app.post("/invite/rsvp", async (req, res) => {
     }
     if (!inv || inv.active === false) return res.status(404).json({ ok: false, error: "invitation_not_found" });
     const isSurvey = String(inv.kind || "").toLowerCase() === "survey";
-    // Survey: ingen deadline-check, inget OSA-status, inga plus_ones/allergens
-    if (!isSurvey && inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
+    // Deadline-check gäller ALLA kinds (survey stänger automatiskt efter slutdatum).
+    // För survey saknas OSA-status/plus_ones/allergens — men stängning respekteras.
+    if (inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
       return res.status(403).json({ ok: false, error: "deadline_passed" });
 
     const nowIso        = toBubbleDate(new Date().toISOString());
