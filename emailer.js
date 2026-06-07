@@ -712,7 +712,7 @@ function wrapLayout({
   toName, logoUrl, senderName, imageUrl,
   accent = "#db6923", tag, headline, body,
   details, ctaLabel, ctaUrl, miraNote = null,
-  subhead = null, socialBlock = null
+  subhead = null, socialBlock = null, footer = null
 }) {
   // E-postklienter (Outlook m.fl.) laddar inte protokoll-relativa "//"-URL:er
   const _abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
@@ -813,10 +813,8 @@ function wrapLayout({
     ${socialBlock ? `<tr><td style="padding:18px 36px 8px;">${socialBlock}</td></tr>` : ""}
 
     <!-- Footer -->
-    <tr><td style="padding:24px 36px;border-top:1px solid #1e2437;margin-top:24px;">
-      <p style="font-size:11px;color:#3a4055;line-height:1.6;margin:0;">
-        Mira · Carotte Group AB
-      </p>
+    <tr><td style="padding:24px 36px;border-top:1px solid #1e2437;">
+      ${footer ? buildFooterBlock(footer, senderName) : `<p style="font-size:11px;color:#3a4055;line-height:1.6;margin:0;">Mira · Carotte Group AB</p>`}
     </td></tr>
 
   </table>
@@ -824,6 +822,35 @@ function wrapLayout({
 </table>
 </body>
 </html>`;
+}
+
+// ────────────────────────────────────────────────────────────
+// Boilerplate-footer för utgående mejl: kontaktuppgifter + copyright + policy.
+// Mejl-säker (ren HTML, inga externa bilder). Renderar bara ifyllda fält.
+// ────────────────────────────────────────────────────────────
+function buildFooterBlock(f, fallbackName) {
+  f = f || {};
+  const abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
+  const showUrl = u => String(u || "").replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  const year = new Date().getFullYear();
+  const org  = String(f.org_name || f.company_name || fallbackName || "Carotte Group AB").trim();
+  const link = "color:#8892aa;text-decoration:none;";
+  const rows = [];
+
+  const contact = [];
+  if (f.website) contact.push(`<a href="${esc(abs(f.website))}" style="${link}">${esc(showUrl(f.website))}</a>`);
+  if (f.email)   contact.push(`<a href="mailto:${esc(f.email)}" style="${link}">${esc(f.email)}</a>`);
+  if (f.phone)   contact.push(`<span style="color:#8892aa;">${esc(f.phone)}</span>`);
+  if (contact.length) rows.push(contact.join(" &nbsp;·&nbsp; "));
+
+  if (f.address) rows.push(`<span style="color:#606880;">${esc(f.address)}</span>`);
+
+  let legal = `© ${year} ${esc(org)}. Alla rättigheter förbehållna.`;
+  if (f.privacy_url) legal += ` &nbsp;·&nbsp; <a href="${esc(abs(f.privacy_url))}" style="color:#606880;text-decoration:underline;">Integritetspolicy</a>`;
+  rows.push(`<span style="color:#606880;">${legal}</span>`);
+
+  return rows.map(r => `<p style="font-size:11px;line-height:1.7;margin:0 0 4px;">${r}</p>`).join("")
+       + `<p style="font-size:10px;color:#3a4055;margin:8px 0 0;">Drivs av Mira</p>`;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1139,7 +1166,8 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
     ]),
     ctaLabel: ctaLabel || "Svara p\u00e5 inbjudan",
     ctaUrl: x.invite_link || null,
-    miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 inbjudan."
+    miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 inbjudan.",
+    footer: x.footer || null
   });
   return { subject, html };
 }
@@ -1179,7 +1207,8 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
     ctaLabel: ctaUrl ? finalCtaLabel : null,
     ctaUrl: ctaUrl || null,
     miraNote: null,
-    socialBlock
+    socialBlock,
+    footer: x.footer || null
   });
   return { subject, html };
 }
@@ -1209,7 +1238,8 @@ async function tmplSurveyInvitation(e, extra, toName, ctaLabel, item) {
     details: null,
     ctaLabel: finalCtaLabel,
     ctaUrl: x.invite_link || null,
-    miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 unders\u00f6kningen."
+    miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 unders\u00f6kningen.",
+    footer: x.footer || null
   });
   return { subject, html };
 }
@@ -1248,7 +1278,8 @@ async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
       (coming && x.allergens_summary) && ["Specialkost", esc(x.allergens_summary)]
     ]),
     ctaLabel: null, ctaUrl: null,
-    miraNote: "Beh\u00f6ver du \u00e4ndra ditt svar? Anv\u00e4nd samma l\u00e4nk som i din inbjudan."
+    miraNote: "Beh\u00f6ver du \u00e4ndra ditt svar? Anv\u00e4nd samma l\u00e4nk som i din inbjudan.",
+    footer: x.footer || null
   });
   return { subject, html };
 }
