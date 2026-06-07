@@ -763,7 +763,7 @@ export function createSyncEngine(deps) {
         const row = rn.row || {};
         const qty   = row?.Quantity != null ? Number(row.Quantity) : null;
         const price = row?.Price != null ? Number(row.Price) : null;
-        const lineTotal = (qty != null && price != null) ? qty * price : null;
+        const lineTotal = (qty != null && price != null) ? Math.round(qty * price * 100) / 100 : null;
         const rowId = row?.WorkOrderRowId ?? row?.workOrderRowId ?? null;
         return {
           connection:               rn.connection,
@@ -826,13 +826,15 @@ export function createSyncEngine(deps) {
 
       // Härled ekonomi: Σ(pris×antal); net via Tengella-momssats (jämförbart med HK-faktura).
       const vatRate = Number(constants.TENGELLA_DEFAULT_VAT_RATE ?? 0.25);
+      const round2 = (n) => Math.round(n * 100) / 100;   // bort med float-artefakter (idempotens)
       let total = 0;
       for (const r of rows) {
         const q = Number(r?.Quantity ?? 0), p = Number(r?.Price ?? 0);
         if (Number.isFinite(q) && Number.isFinite(p)) total += q * p;
       }
+      total = round2(total);
       const net = Math.round(total / (1 + vatRate));
-      const vat = total - net;
+      const vat = round2(total - net);
 
       // Kundupplösning: read-only i diff, full (ClientCompany-ensure) i write — som faktura.
       const customerId = wo?.CustomerId;
