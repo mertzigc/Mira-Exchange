@@ -661,8 +661,8 @@ export function createSyncEngine(deps) {
         ft_quantity:              row?.DeliveredQuantity ?? row?.Quantity ?? null,
         ft_unit:                  String(row?.Unit ?? ""),
         ft_price:                 row?.Price    == null ? "" : String(row.Price),
-        ft_discount:              row?.Discount == null ? "" : String(row.Discount),
-        ft_vat:                   row?.VAT      == null ? "" : String(row.VAT),
+        ft_discount:              row?.Discount == null ? null : Number(row.Discount),   // NUMBER-fält i Bubble (ej "")
+        ft_vat:                   row?.VAT      == null ? null : Number(row.VAT),         // NUMBER-fält i Bubble (ej "")
         ft_total:                 row?.Total    == null ? "" : String(row.Total),
         ft_unique_key:            orderRowKey(row, rn.connection, rn.docNo, rn.index),
         ft_raw_json:              JSON.stringify(row || {}),
@@ -775,8 +775,8 @@ export function createSyncEngine(deps) {
           ft_quantity:              qty,
           ft_unit:                  "",
           ft_price:                 price == null ? "" : String(price),        // STRÄNG (order-rad-typen)
-          ft_discount:              "",
-          ft_vat:                   "",
+          ft_discount:              null,   // NUMBER-fält i Bubble → null (ej "") för "saknas". Workorder har ingen rabatt.
+          ft_vat:                   null,   // NUMBER-fält i Bubble → null. Workorder har ingen moms på rad.
           ft_total:                 lineTotal == null ? "" : String(lineTotal), // härlett Σ-rad
           ft_unique_key:            rowId != null
             ? `WORID_${rowId}__CONN_${rn.connection}__ORDDOC_${rn.docNo}`
