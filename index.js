@@ -12481,6 +12481,18 @@ function _admToken() {
 function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
 // Normalisera kind: "news", "survey" eller default "invite"
 function _normKind(v) { const k = String(v || "invite").toLowerCase(); return (k === "news" || k === "survey") ? k : "invite"; }
+// Boilerplate-footer (kontakt + copyright + policy) — styrs via env-vars.
+// Tomma fält renderas inte. Sätt i Render → Environment.
+function _footerData() {
+  return {
+    org_name:    process.env.COMPANY_NAME    || "Carotte Group AB",
+    website:     process.env.COMPANY_WEBSITE || "",
+    email:       process.env.COMPANY_EMAIL   || "",
+    phone:       process.env.COMPANY_PHONE   || "",
+    address:     process.env.COMPANY_ADDRESS || "",
+    privacy_url: process.env.COMPANY_PRIVACY_URL || ""
+  };
+}
 // Extrahera Bubbles faktiska felmeddelande ur ett bubbleCreate/bubblePatch-fel
 function _bubbleErrText(e) {
   const d = (e && e.detail) || {};
@@ -12615,6 +12627,7 @@ app.post("/admin/invite/create", async (req, res) => {
       token,
       active:          d.active !== false,
       kind:            _normKind(d.kind),
+      anonymous:       d.anonymous === true,
       client_company:  d.client_company || null,
       title:           safeText(d.title, 200),
       description:     String(d.description || ""),
@@ -12666,6 +12679,7 @@ app.patch("/admin/invite/update", async (req, res) => {
     Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
     ["start_date", "end_date", "rsvp_deadline"].forEach(k => { if (b[k] !== undefined) f[k] = b[k] ? toBubbleDate(b[k]) : null; });
     if (b.active !== undefined) f.active = !!b.active;
+    if (b.anonymous !== undefined) f.anonymous = !!b.anonymous;
     if (b.allow_plus_ones !== undefined) f.allow_plus_ones = !!b.allow_plus_ones;
     if (b.client_company !== undefined) f.client_company = b.client_company || null;
     if (b.image !== undefined || b.image_url !== undefined) f.image_url = _admAbs(b.image || b.image_url || "");
@@ -12695,6 +12709,7 @@ app.get("/admin/invite/list", async (req, res) => {
     const out = filtered.map(i => ({
       id: i._id || i.id, title: i.title || "", active: i.active !== false, token: i.token || "",
       kind: _normKind(i.kind),
+      anonymous: i.anonymous === true,
       start_date: i.start_date || null, rsvp_deadline: i.rsvp_deadline || null,
       location_name: i.location_name || "", client_company: i.client_company || null,
       cta_label: i.cta_label || "", cta_url: i.cta_url || ""
@@ -12712,6 +12727,7 @@ app.get("/admin/invite/:id", async (req, res) => {
     res.json({ ok: true, invite: {
       id: i._id || i.id, token: i.token || "", active: i.active !== false,
       kind: _normKind(i.kind),
+      anonymous: i.anonymous === true,
       client_company: i.client_company || "", title: i.title || "", description: i.description || "",
       accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
@@ -13108,6 +13124,29 @@ app.get("/admin/invite/:id/guests", async (req, res) => {
   } catch (e) { console.error("[admin/invite/guests/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
+// ── GET /admin/invite/:id/responses — anonyma svar (frikopplade från person) ──
+// Används av analysvyn för anonyma undersökningar. Returnerar SurveyResponse-poster
+// som INTE har någon koppling till InviteGuest/person.
+app.get("/admin/invite/:id/responses", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    if (!invId) return res.status(400).json({ ok: false, error: "id_required" });
+    const rows = await bubbleFindAll("SurveyResponse", {
+      constraints: [{ key: "invitation", constraint_type: "equals", value: invId }]
+    }).catch(() => []);
+    const responses = (rows || []).map(r => {
+      let meta = {};
+      try { meta = JSON.parse(r.anon_meta || "{}"); } catch (_) { meta = {}; }
+      return {
+        response_json: r.response_json || "{}",
+        anon_meta:     meta,
+        created_at:    r["Created Date"] || null
+      };
+    });
+    res.json({ ok: true, responses });
+  } catch (e) { console.error("[admin/invite/responses]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── PATCH /admin/invite/guest/:id — uppdatera enskild gäst (anlänt, namn, mejl, ...) ──
 app.patch("/admin/invite/guest/:id", async (req, res) => {
   try {
@@ -13160,6 +13199,7 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
     const limit = Math.min(60, Math.max(1, parseInt(req.body?.limit, 10) || 40));
     const onlyPending = req.body?.only_pending !== false;   // default: bara obesvarade
+    const isReminder = req.body?.reminder === true;          // påminnelse → de som FÅTT men ej svarat
 
     const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
     if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
@@ -13171,17 +13211,27 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     const brand = _inviteBrand(inv, cc);
     const tplId = await getTemplateId(slug).catch(() => null);
 
-    // Seeda sändlistan vid start (stabil ordning för offset/limit)
-    let list = _sendList[invId];
+    // "Inte svarat" = saknar svar (survey: tomt response_json; annars rsvp_status pending)
+    const notAnswered = g => {
+      if (isSurvey) { const rj = String(g.response_json || "").trim(); return !rj || rj === "{}" || rj === "[]"; }
+      return String(g.rsvp_status || "pending").toLowerCase() === "pending";
+    };
+
+    // Seeda sändlistan vid start (stabil ordning för offset/limit).
+    // Separat cache-nyckel för påminnelser så de inte blandas med ordinarie utskick.
+    const cacheKey = invId + (isReminder ? ":r" : "");
+    let list = _sendList[cacheKey];
     if (offset === 0 || !list) {
       const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
       list = guests
-        .filter(g => g.invite_sent !== true)
-        // För news och survey: skicka alla. Bara för invite filtrera på pending.
-        .filter(g => (isNews || isSurvey || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending")
+        .filter(g => isReminder
+          ? (g.invite_sent === true && notAnswered(g))        // påminnelse: fått men ej svarat
+          : (g.invite_sent !== true))                          // ordinarie: ej skickat än
+        // För ordinarie news/survey: skicka alla obesvarade. Invite: bara pending om only_pending.
+        .filter(g => isReminder ? true : ((isNews || isSurvey || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending"))
         .filter(g => String(g.email || "").trim())
         .sort((a, b) => String(a.email).localeCompare(String(b.email)));
-      _sendList[invId] = list;
+      _sendList[cacheKey] = list;
     }
     const total = list.length;
     const slice = list.slice(offset, offset + limit);
@@ -13191,7 +13241,10 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
-      from_name: _admName(cc || {}) || "Carotte",
+      // Avsändarnamn i inkorgen: använd ifyllt "Avsändarnamn i mail" (host_name) om satt,
+      // annars ClientCompanyns namn, annars Carotte. Tomt fält läcker aldrig.
+      from_name: (inv.host_name && String(inv.host_name).trim()) || _admName(cc || {}) || "Carotte",
+      footer: _footerData(),
       cta_label: inv.cta_label || (isSurvey ? "Svara på undersökningen" : (isNews ? "Läs mer" : "Svara på inbjudan")),
       cta_url: isNews ? _admAbs(inv.cta_url || "") : "",
       published_at: inv["Created Date"] || inv.created_date || "",
@@ -13214,12 +13267,15 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     });
     let queued = 0;
     if (rows.length) { const r = await _bulkCreate("emailqueue", rows); queued = r.created; }
-    // Markera som skickade (parallellt) → undviker dubbelutskick vid omkörning
-    await Promise.all(slice.map(g => bubblePatch(ADM_GUEST, g._id || g.id, { invite_sent: true }).catch(() => null)));
+    // Markera som skickade (parallellt) → undviker dubbelutskick vid omkörning.
+    // Vid påminnelse är invite_sent redan true → ingen ommarkering behövs.
+    if (!isReminder) {
+      await Promise.all(slice.map(g => bubblePatch(ADM_GUEST, g._id || g.id, { invite_sent: true }).catch(() => null)));
+    }
 
     const nextOffset = offset + limit;
     const done = nextOffset >= total;
-    if (done) delete _sendList[invId];
+    if (done) delete _sendList[cacheKey];
     res.json({ ok: true, total, processed: Math.min(nextOffset, total), queued, next_offset: done ? null : nextOffset, done });
   } catch (e) { console.error("[invite/send]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
@@ -13301,6 +13357,7 @@ function inviteConfigPayload(inv, cc, guest) {
     ok: true,
     active: inv.active !== false,
     kind,
+    anonymous: inv.anonymous === true,
     event: {
       title:         inv.title || "",
       description:   inv.description || "",
@@ -13316,6 +13373,7 @@ function inviteConfigPayload(inv, cc, guest) {
     max_plus_ones:   asNumberOrNull(inv.max_plus_ones) ?? 0,
     form_schema:     _jArr(inv.form_schema),
     deadline_passed: deadlinePassed,
+    footer:          _footerData(),
     guest: guest ? {
       name:            guest.name || "",
       email:           guest.email || "",
@@ -13386,8 +13444,9 @@ app.post("/invite/rsvp", async (req, res) => {
     }
     if (!inv || inv.active === false) return res.status(404).json({ ok: false, error: "invitation_not_found" });
     const isSurvey = String(inv.kind || "").toLowerCase() === "survey";
-    // Survey: ingen deadline-check, inget OSA-status, inga plus_ones/allergens
-    if (!isSurvey && inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
+    // Deadline-check gäller ALLA kinds (survey stänger automatiskt efter slutdatum).
+    // För survey saknas OSA-status/plus_ones/allergens — men stängning respekteras.
+    if (inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
       return res.status(403).json({ ok: false, error: "deadline_passed" });
 
     const nowIso        = toBubbleDate(new Date().toISOString());
@@ -13396,6 +13455,31 @@ app.post("/invite/rsvp", async (req, res) => {
     const isComing      = isSurvey ? true : (rsvp === "yes");
     // För survey: alltid "yes" + arrived=yes (markerar att svar inkommit)
     const finalRsvp     = isSurvey ? "yes" : rsvp;
+
+    // ── ANONYM UNDERSÖKNING ──────────────────────────────────────────────────
+    // Svaret lagras HELT frikopplat från person (egen datatyp SurveyResponse,
+    // ingen guest-relation). Om vi vet vilken gäst (personlig ?g=-länk) markerar
+    // vi bara ATT de svarat (för påminnelse-spårning) — aldrig VAD de svarade.
+    const isAnon = isSurvey && inv.anonymous === true;
+    if (isAnon) {
+      const invId = inv._id || inv.id;
+      await safeCreate("SurveyResponse", {
+        invitation:    invId,
+        response_json: responseJson,
+        anon_meta:     JSON.stringify({ region: (guest && guest.region) || "" })
+      }, {});
+      if (guest) {
+        const gid = guest._id || guest.id;
+        await bubblePatch(INVITE.GUEST_TYPE, gid, {
+          rsvp_status:   "yes",
+          rsvp_at:       nowIso,
+          arrived:       "yes",
+          arrived_at:    nowIso,
+          response_json: ""   // ingen koppling person ↔ svar
+        }).catch(() => null);
+      }
+      return res.json({ ok: true, rsvp_status: "yes", survey: true, anonymous: true });
+    }
 
     let guestId, guestName, guestEmail;
     if (guest) {
@@ -13452,7 +13536,8 @@ app.post("/invite/rsvp", async (req, res) => {
       plus_ones_count:  isComing ? plusOnes : 0,
       allergens_summary: isComing ? kostSummary : "",
       guest_name:       guestName,
-      reference:        guestId || ""
+      reference:        guestId || "",
+      footer:           _footerData()
     };
     if (guestEmail && !isSurvey) {
       try {
