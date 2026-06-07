@@ -12481,6 +12481,18 @@ function _admToken() {
 function _admAbs(u) { u = String(u || "").trim(); if (!u) return ""; if (u.startsWith("//")) u = "https:" + u; return u.replace(/^(https?:)\/{2,}/i, "$1//"); }
 // Normalisera kind: "news", "survey" eller default "invite"
 function _normKind(v) { const k = String(v || "invite").toLowerCase(); return (k === "news" || k === "survey") ? k : "invite"; }
+// Boilerplate-footer (kontakt + copyright + policy) — styrs via env-vars.
+// Tomma fält renderas inte. Sätt i Render → Environment.
+function _footerData() {
+  return {
+    org_name:    process.env.COMPANY_NAME    || "Carotte Group AB",
+    website:     process.env.COMPANY_WEBSITE || "",
+    email:       process.env.COMPANY_EMAIL   || "",
+    phone:       process.env.COMPANY_PHONE   || "",
+    address:     process.env.COMPANY_ADDRESS || "",
+    privacy_url: process.env.COMPANY_PRIVACY_URL || ""
+  };
+}
 // Extrahera Bubbles faktiska felmeddelande ur ett bubbleCreate/bubblePatch-fel
 function _bubbleErrText(e) {
   const d = (e && e.detail) || {};
@@ -13229,7 +13241,10 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
-      from_name: _admName(cc || {}) || "Carotte",
+      // Avsändarnamn i inkorgen: använd ifyllt "Avsändarnamn i mail" (host_name) om satt,
+      // annars ClientCompanyns namn, annars Carotte. Tomt fält läcker aldrig.
+      from_name: (inv.host_name && String(inv.host_name).trim()) || _admName(cc || {}) || "Carotte",
+      footer: _footerData(),
       cta_label: inv.cta_label || (isSurvey ? "Svara på undersökningen" : (isNews ? "Läs mer" : "Svara på inbjudan")),
       cta_url: isNews ? _admAbs(inv.cta_url || "") : "",
       published_at: inv["Created Date"] || inv.created_date || "",
@@ -13358,6 +13373,7 @@ function inviteConfigPayload(inv, cc, guest) {
     max_plus_ones:   asNumberOrNull(inv.max_plus_ones) ?? 0,
     form_schema:     _jArr(inv.form_schema),
     deadline_passed: deadlinePassed,
+    footer:          _footerData(),
     guest: guest ? {
       name:            guest.name || "",
       email:           guest.email || "",
@@ -13520,7 +13536,8 @@ app.post("/invite/rsvp", async (req, res) => {
       plus_ones_count:  isComing ? plusOnes : 0,
       allergens_summary: isComing ? kostSummary : "",
       guest_name:       guestName,
-      reference:        guestId || ""
+      reference:        guestId || "",
+      footer:           _footerData()
     };
     if (guestEmail && !isSurvey) {
       try {
