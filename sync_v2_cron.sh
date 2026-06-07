@@ -41,6 +41,21 @@ post() {  # $1=path  $2=json
   echo
 }
 
+# Veckovis order/offer-resync. Tunga F&E-månader (~500-600 ordrar, rad-tunga offerter)
+# timeoutar som helårs- eller månadssvep → kör 7-dagarsfönster. $1=år. Kräver GNU date
+# (Render Linux). Idempotent → ev. overlap i sista fönstret är ofarlig.
+order_offer_weekly() {
+  local Y="$1" d to END
+  d="$Y-01-01"; END="$((Y + 1))-01-01"
+  while [[ "$d" < "$END" ]]; do
+    to="$(date -u -d "$d +6 days" +%F)"
+    echo "[sync_v2] FULL order/offer $d..$to"
+    post /sync/v2/fortnox-order "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$to\",\"throttleMs\":250}"
+    post /sync/v2/fortnox-offer "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$to\",\"throttleMs\":250}"
+    d="$(date -u -d "$d +7 days" +%F)"
+  done
+}
+
 if [ "$MODE" = "pdf" ]; then
   # 9c/9e: betar av needs_pdf_sync=true i egen takt. Kräver SYNC_V2_ORDERS=1.
   # Offer-PDF körs INTE här förrän cutover (gamla /fortnox/upsert/offers äger den än).
@@ -60,13 +75,12 @@ if [ "$MODE" = "full" ]; then
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
-    echo "[sync_v2] FULL order/offer (F&E) + workorder $YEAR"
+    echo "[sync_v2] FULL order/offer (F&E, veckovis) + workorder $YEAR"
     # OBS: order/offer BARA F&E. Staff har bara faktura i Fortnox; Staffs order/offert
     # skapas i Intelliplan (egen framtida källa) → /orders ger 400 på Staff-kontot.
-    post /sync/v2/fortnox-order      "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
-    post /sync/v2/fortnox-offer      "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
-    # Workorder: global discovery (ingen kund-loop), ingen modified-filter → kör hela setet.
-    post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"throttleMs\":300}"
+    order_offer_weekly "$YEAR"
+    # Workorder: global discovery (listar allt, billigt), window:ad write till året.
+    post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\",\"untilYM\":\"$YEAR-12\",\"throttleMs\":300}"
   fi
 else
   DB="${MODIFIED_DAYS_BACK:-3}"

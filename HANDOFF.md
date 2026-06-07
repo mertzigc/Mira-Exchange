@@ -12,7 +12,7 @@
 - **Steg 9c är KODAT (2026-06-05).** Sync flaggar `needs_pdf_sync=true` på order/offer (create+update); generisk `fetchAndStoreOrderPdf` (index.js, `/orders/{n}/preview`, ingen Offert-wrapper); separat PDF-cron `POST /sync/v2-pdf/:source` (token cacheat per connection, bundet av `maxRecords`).
 - **Steg 9d är KODAT + lokalt e2e-testat (2026-06-05).** `tengella-workorder`-adapter → unified `FortnoxOrder`/`FortnoxOrderRow` (connection=TENGELLA, `source="tengella-workorder"`). Global discovery `/v2/WorkOrders` (cursor, inbäddade rader, pass-through fetchComplete), härled `ft_total`=Σ(pris×antal) + net via 25%. `listWorkOrders` injicerad.
 - **Steg 9e FÖRBEREDD i kod (2026-06-05), EJ aktiverad.** `sync_v2_cron.sh` har order/offer/workorder + `pdf`-läge bakom env-flagga `SYNC_V2_ORDERS` (default 0). Aktivering = operativ cutover (stäng av gamla cron FÖRST), se §5 9e runbook.
-- **LIVE-STATUS 2026-06-05:** alla tre källor deployade & diff-validerade. **Order OCH offer write-validerade** (write maxRecords:1 → re-diff = huvud noop + rader noop, ROWID & OFFERROW round-trippar, 0 dubblering). **Bubble-fälten skapade, all kod deployad.** Återstår före cutover: workorder write-test (1-doc round-trip), fulla writes per source m. reconcile-koll, sen 9e-aktivering.
+- **LIVE-STATUS 2026-06-07: BACKFILL KLAR + idempotent för alla tre källor.** order F&E (2026, maj veckodelad), offer F&E (2026, feb+maj veckodelade), workorder→FortnoxOrder (2025+2026) — alla kör nu rent noop på omkörning (heads u=0, rows u=0/del=0, err=0). Bubble-fält skapade. **ENDA som återstår = 9e operativ cutover** (stäng gamla cron → `SYNC_V2_ORDERS=1` → pdf-cron). Buggar lösta under backfill: linked_company-fält saknades, 401-token-refresh, tunga månader måste chunkas, FortnoxOrderRow ft_discount/ft_vat är NUMBER (ej ""), härledda belopp måste round2.
 - Efter order/offer/workorder: **ClientGroup-fasen** (kundkort-bundling).
 
 ### 📌 SCOPE-FAKTA (2026-06-05): order/offer = BARA F&E
@@ -132,6 +132,8 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
     4. Lägg ett separat cron-jobb för PDF: `bash sync_v2_cron.sh pdf` (t.ex. var 30:e min) — betar av `needs_pdf_sync` i egen takt.
     5. Verifiera grönt (counts noop-dominerat efter första full), slå sen av sista resterna av gammal order/offer-kod.
   - **Workorder nightly-not:** saknar modified-filter → window:as på OrderDate (skippar gamla docs men pagar /v2/WorkOrders globalt varje natt). OK nu; optimera vid behov.
+  - **`full` chunkar order/offer i 7-dagarsfönster** (`order_offer_weekly`, GNU date → Render Linux) — tunga F&E-månader timeoutar annars. Workorder window:ad till året. Invoices kör helår (klarar det).
+  - **PDF-cron:** separat Render-jobb `bash sync_v2_cron.sh pdf` (*/30), egen env (HOST, MIRA_RENDER_API_KEY, SYNC_SECRET, **SYNC_V2_ORDERS=1** — annars exit). `SYNC_V2_ORDERS` ska på varje cron som kör sync_v2_cron.sh, EJ på web-tjänsten. Backfill flaggade ~3000+ order → drän tar ~1-2 dygn vid maxRecords 50 (höj tillfälligt vid behov). Offer-PDF stannar på gamla flödet tills separat cutover.
 
 ### Nyckelfakta om befintlig order/offer/workorder-kod (från audit)
 - Fortnox order/offer DETAIL (`/orders/{n}`, `/offers/{n}`) innehåller rader (OrderRows/OfferRows) + Net/TotalVAT. Listing saknar dem (samma Bug 1).
