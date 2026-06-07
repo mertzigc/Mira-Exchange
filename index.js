@@ -12615,6 +12615,7 @@ app.post("/admin/invite/create", async (req, res) => {
       token,
       active:          d.active !== false,
       kind:            _normKind(d.kind),
+      anonymous:       d.anonymous === true,
       client_company:  d.client_company || null,
       title:           safeText(d.title, 200),
       description:     String(d.description || ""),
@@ -12666,6 +12667,7 @@ app.patch("/admin/invite/update", async (req, res) => {
     Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
     ["start_date", "end_date", "rsvp_deadline"].forEach(k => { if (b[k] !== undefined) f[k] = b[k] ? toBubbleDate(b[k]) : null; });
     if (b.active !== undefined) f.active = !!b.active;
+    if (b.anonymous !== undefined) f.anonymous = !!b.anonymous;
     if (b.allow_plus_ones !== undefined) f.allow_plus_ones = !!b.allow_plus_ones;
     if (b.client_company !== undefined) f.client_company = b.client_company || null;
     if (b.image !== undefined || b.image_url !== undefined) f.image_url = _admAbs(b.image || b.image_url || "");
@@ -12695,6 +12697,7 @@ app.get("/admin/invite/list", async (req, res) => {
     const out = filtered.map(i => ({
       id: i._id || i.id, title: i.title || "", active: i.active !== false, token: i.token || "",
       kind: _normKind(i.kind),
+      anonymous: i.anonymous === true,
       start_date: i.start_date || null, rsvp_deadline: i.rsvp_deadline || null,
       location_name: i.location_name || "", client_company: i.client_company || null,
       cta_label: i.cta_label || "", cta_url: i.cta_url || ""
@@ -12712,6 +12715,7 @@ app.get("/admin/invite/:id", async (req, res) => {
     res.json({ ok: true, invite: {
       id: i._id || i.id, token: i.token || "", active: i.active !== false,
       kind: _normKind(i.kind),
+      anonymous: i.anonymous === true,
       client_company: i.client_company || "", title: i.title || "", description: i.description || "",
       accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
@@ -13108,6 +13112,29 @@ app.get("/admin/invite/:id/guests", async (req, res) => {
   } catch (e) { console.error("[admin/invite/guests/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
+// ── GET /admin/invite/:id/responses — anonyma svar (frikopplade från person) ──
+// Används av analysvyn för anonyma undersökningar. Returnerar SurveyResponse-poster
+// som INTE har någon koppling till InviteGuest/person.
+app.get("/admin/invite/:id/responses", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    if (!invId) return res.status(400).json({ ok: false, error: "id_required" });
+    const rows = await bubbleFindAll("SurveyResponse", {
+      constraints: [{ key: "invitation", constraint_type: "equals", value: invId }]
+    }).catch(() => []);
+    const responses = (rows || []).map(r => {
+      let meta = {};
+      try { meta = JSON.parse(r.anon_meta || "{}"); } catch (_) { meta = {}; }
+      return {
+        response_json: r.response_json || "{}",
+        anon_meta:     meta,
+        created_at:    r["Created Date"] || null
+      };
+    });
+    res.json({ ok: true, responses });
+  } catch (e) { console.error("[admin/invite/responses]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── PATCH /admin/invite/guest/:id — uppdatera enskild gäst (anlänt, namn, mejl, ...) ──
 app.patch("/admin/invite/guest/:id", async (req, res) => {
   try {
@@ -13315,6 +13342,7 @@ function inviteConfigPayload(inv, cc, guest) {
     ok: true,
     active: inv.active !== false,
     kind,
+    anonymous: inv.anonymous === true,
     event: {
       title:         inv.title || "",
       description:   inv.description || "",
@@ -13411,6 +13439,31 @@ app.post("/invite/rsvp", async (req, res) => {
     const isComing      = isSurvey ? true : (rsvp === "yes");
     // För survey: alltid "yes" + arrived=yes (markerar att svar inkommit)
     const finalRsvp     = isSurvey ? "yes" : rsvp;
+
+    // ── ANONYM UNDERSÖKNING ──────────────────────────────────────────────────
+    // Svaret lagras HELT frikopplat från person (egen datatyp SurveyResponse,
+    // ingen guest-relation). Om vi vet vilken gäst (personlig ?g=-länk) markerar
+    // vi bara ATT de svarat (för påminnelse-spårning) — aldrig VAD de svarade.
+    const isAnon = isSurvey && inv.anonymous === true;
+    if (isAnon) {
+      const invId = inv._id || inv.id;
+      await safeCreate("SurveyResponse", {
+        invitation:    invId,
+        response_json: responseJson,
+        anon_meta:     JSON.stringify({ region: (guest && guest.region) || "" })
+      }, {});
+      if (guest) {
+        const gid = guest._id || guest.id;
+        await bubblePatch(INVITE.GUEST_TYPE, gid, {
+          rsvp_status:   "yes",
+          rsvp_at:       nowIso,
+          arrived:       "yes",
+          arrived_at:    nowIso,
+          response_json: ""   // ingen koppling person ↔ svar
+        }).catch(() => null);
+      }
+      return res.json({ ok: true, rsvp_status: "yes", survey: true, anonymous: true });
+    }
 
     let guestId, guestName, guestEmail;
     if (guest) {
