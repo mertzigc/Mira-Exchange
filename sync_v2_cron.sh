@@ -33,11 +33,15 @@ STAFF="1771579472595x998707043537409700"   # Staff
 # HK/Tengella körs via source tengella-invoice (connection sätts i adaptern)
 
 post() {  # $1=path  $2=json
-  curl -sS --max-time 3600 -X POST "$HOST$1" \
+  # Resilient: ett hängt/trasigt anrop får INTE döda hela körningen (set -e). Logga och
+  # fortsätt — nästa nattliga/veckosvep tar igen (idempotent). max-time 30 min/anrop.
+  local rc=0
+  curl -sS --max-time 1800 -X POST "$HOST$1" \
     -H "x-api-key: $MIRA_RENDER_API_KEY" \
     -H "x-sync-secret: $SYNC_SECRET" \
     -H "Content-Type: application/json" \
-    -d "$2"
+    -d "$2" || rc=$?
+  if [ "$rc" -ne 0 ]; then echo "[sync_v2] WARN: POST $1 misslyckades (curl $rc) — fortsätter"; fi
   echo
 }
 
@@ -71,8 +75,12 @@ fi
 if [ "$MODE" = "full" ]; then
   YEAR="${SYNC_YEAR:-$(date -u +%Y)}"
   echo "[sync_v2] FULL resync $YEAR @ $(date -u +%FT%TZ)"
-  post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
-  post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-01-01\",\"todate\":\"$YEAR-12-31\",\"throttleMs\":300}"
+  # Invoices kvartalsvis (helår i ETT anrop kan hänga >max-time). bash ordsplittar $Q.
+  for Q in "01-01 03-31" "04-01 06-30" "07-01 09-30" "10-01 12-31"; do
+    set -- $Q; QF="$1"; QT="$2"
+    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-$QF\",\"todate\":\"$YEAR-$QT\",\"throttleMs\":300}"
+    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-$QF\",\"todate\":\"$YEAR-$QT\",\"throttleMs\":300}"
+  done
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
     echo "[sync_v2] FULL order/offer (F&E, veckovis) + workorder $YEAR"
