@@ -16,6 +16,9 @@
 export function createClientGroupEngine(deps) {
   const {
     bubbleFindAll,
+    bubbleFindOne,
+    bubbleCreate,
+    bubblePatch,
     helpers = {},   // { normalizeOrgNo }
   } = deps;
 
@@ -169,5 +172,129 @@ export function createClientGroupEngine(deps) {
     };
   }
 
-  return { suggestClusters, normName };
+  function slugify(name) {
+    return normName(name).replace(/\s+/g, "-").slice(0, 80);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // CG-2: applyClusters — skapar/uppdaterar ClientGroup-poster (status="suggested")
+  // från klustren. DURABELT: rör ALDRIG en confirmed grupps medlemskap, och hoppar
+  // kluster vars CC redan ligger i en confirmed grupp (människans beslut vinner).
+  // mode="diff" (default) skriver inget — rapporterar tänkta create/update.
+  // opts: { mode, minConfidence ("high"|"medium"|"low"), sampleLimit }
+  // ───────────────────────────────────────────────────────────────────────────
+  async function applyClusters(opts = {}) {
+    const mode = opts.mode === "write" ? "write" : "diff";
+    const confOrder = { high: 3, medium: 2, low: 1 };
+    const minConf = opts.minConfidence ? (confOrder[opts.minConfidence] || 0) : 0;
+    const sampleLimit = Number(opts.sampleLimit ?? 100) || 100;
+
+    const suggestion = await suggestClusters({ minClusterSize: 2, sampleLimit: 1e9 });
+    const clusters = suggestion.clusters;
+
+    // Befintliga grupper: confirmed-medlemmar är "låsta", suggested kan uppdateras.
+    const groups = await bubbleFindAll("ClientGroup", { constraints: [] }).catch(() => []);
+    const confirmedCompanyIds = new Set();
+    const groupBySlug = new Map();
+    for (const g of groups) {
+      const slug = String(g?.slug || "").trim();
+      if (slug) groupBySlug.set(slug, g);
+      if (String(g?.status || "").toLowerCase() === "confirmed") {
+        for (const cid of (Array.isArray(g?.companies) ? g.companies : [])) confirmedCompanyIds.add(cid);
+      }
+    }
+
+    const result = {
+      mode, generated_at: new Date().toISOString(),
+      created: 0, updated: 0, skipped_confirmed_slug: 0, skipped_member_in_confirmed: 0,
+      actions: [],
+    };
+    const usedSlugs = new Set();
+
+    for (const c of clusters) {
+      if (minConf && (confOrder[c.confidence] || 0) < minConf) continue;
+      const memberIds = c.companies.map((m) => m.id).filter(Boolean);
+      if (!memberIds.length) continue;
+
+      // Människans bekräftade gruppering vinner: hoppa om någon CC redan är confirmed-medlem.
+      if (memberIds.some((id) => confirmedCompanyIds.has(id))) { result.skipped_member_in_confirmed++; continue; }
+
+      let slug = slugify(c.suggested_name) || ("grp-" + String(c.suggested_primary_id || "").slice(-6));
+      // Slug-krock inom samma körning → suffix från primary-id (undvik överskrivning).
+      if (usedSlugs.has(slug)) slug = slug + "-" + String(c.suggested_primary_id || "").slice(-4);
+      usedSlugs.add(slug);
+
+      const payload = {
+        name: c.suggested_name,
+        slug,
+        companies: memberIds,
+        primary_company: c.suggested_primary_id || null,
+        org_numbers: c.org_numbers || [],
+        aliases: c.aliases || [],
+        status: "suggested",
+      };
+
+      const existing = groupBySlug.get(slug);
+      if (existing) {
+        if (String(existing.status || "").toLowerCase() === "confirmed") { result.skipped_confirmed_slug++; continue; }
+        result.updated++;
+        if (result.actions.length < sampleLimit) result.actions.push({ action: "update", slug, name: c.suggested_name, members: memberIds.length, confidence: c.confidence, org_conflate: !!c.org_conflate });
+        if (mode === "write") await bubblePatch("ClientGroup", existing._id || existing.id, payload);
+      } else {
+        result.created++;
+        if (result.actions.length < sampleLimit) result.actions.push({ action: "create", slug, name: c.suggested_name, members: memberIds.length, confidence: c.confidence, org_conflate: !!c.org_conflate });
+        if (mode === "write") await bubbleCreate("ClientGroup", payload);
+      }
+    }
+    result.total_clusters = clusters.length;
+    return result;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // CG-2: rollupGroup — aggregerad vy för en ClientGroup (omsättning/antal över
+  // medlems-CCs). READ-ONLY. opts: { id } eller { slug }.
+  // ───────────────────────────────────────────────────────────────────────────
+  async function rollupGroup(opts = {}) {
+    let group = null;
+    if (opts.id) {
+      group = await bubbleFindOne("ClientGroup", [{ key: "_id", constraint_type: "equals", value: opts.id }]).catch(() => null);
+    } else if (opts.slug) {
+      group = await bubbleFindOne("ClientGroup", [{ key: "slug", constraint_type: "equals", value: opts.slug }]).catch(() => null);
+    }
+    if (!group) throw Object.assign(new Error("ClientGroup hittades inte (ange id eller slug)"), { status: 404 });
+
+    const members = (Array.isArray(group.companies) ? group.companies : []).filter(Boolean);
+    const base = {
+      group: { id: group._id || group.id, name: group.name, slug: group.slug, status: group.status, members: members.length },
+      revenue_net: 0, invoice_count: 0, cancelled_count: 0, order_count: 0, order_net: 0, by_company: [],
+    };
+    if (!members.length) return base;
+
+    // Fakturor: linked_company IN medlemmar (en query, paginerad).
+    const invoices = await bubbleFindAll("FortnoxInvoice", {
+      constraints: [{ key: "linked_company", constraint_type: "in", value: members }],
+    }).catch(() => []);
+    const perCompany = new Map();
+    for (const inv of invoices) {
+      const cancelled = inv?.ft_cancelled === true || String(inv?.ft_cancelled || "").toLowerCase() === "ja";
+      if (cancelled) { base.cancelled_count++; continue; }
+      const net = Number(inv?.ft_net || 0);
+      base.revenue_net += net; base.invoice_count++;
+      const cc = inv?.linked_company;
+      perCompany.set(cc, (perCompany.get(cc) || 0) + net);
+    }
+
+    // Ordrar (F&E + workorder via FortnoxOrder).
+    const orders = await bubbleFindAll("FortnoxOrder", {
+      constraints: [{ key: "linked_company", constraint_type: "in", value: members }],
+    }).catch(() => []);
+    base.order_count = orders.length;
+    base.order_net = orders.reduce((s, o) => s + Number(o?.ft_net || 0), 0);
+
+    base.revenue_net = Math.round(base.revenue_net);
+    base.by_company = [...perCompany.entries()].map(([id, net]) => ({ id, net: Math.round(net) })).sort((a, b) => b.net - a.net);
+    return base;
+  }
+
+  return { suggestClusters, applyClusters, rollupGroup, normName, slugify };
 }

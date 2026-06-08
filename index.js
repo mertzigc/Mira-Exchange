@@ -15663,12 +15663,30 @@ app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
 
 // CG-1: ClientGroup kluster-FÖRSLAG (READ-ONLY, skriver inget). Mänsklig granskning.
 const clientGroupEngine = createClientGroupEngine({
-  bubbleFindAll,
+  bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch,
   helpers: { normalizeOrgNo },
 });
 app.post("/clientgroup/suggest", requireSyncSecret, async (req, res) => {
   try {
     const report = await clientGroupEngine.suggestClusters(req.body || {});
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+// CG-2: skapar ClientGroup-poster (status="suggested") från klustren. Default diff (skriver inget).
+app.post("/clientgroup/apply", requireSyncSecret, async (req, res) => {
+  try {
+    const report = await clientGroupEngine.applyClusters(req.body || {});
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+// CG-2: aggregerad vy (omsättning/antal) för en ClientGroup. Body: { id } eller { slug }.
+app.post("/clientgroup/rollup", requireSyncSecret, async (req, res) => {
+  try {
+    const report = await clientGroupEngine.rollupGroup(req.body || {});
     return res.json({ ok: true, report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
