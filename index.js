@@ -16081,6 +16081,143 @@ app.post("/sync/v2-linkcustomer", requireSyncSecret, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DEDUP-HÄRDNING (orgnr) — roten till dubbletter som Cecil: Org_Number lagrat i
+// blandat format (bindestreck vs siffror) → findClientCompanyByOrgNo missar → ny
+// CC skapas. Två routes:
+//   1) normalize-orgno : kanonisera Org_Number till siffror-bara + visa kollisioner
+//   2) dedupe-orgno    : merga ÄKTA dubbletter (samma orgnr + samma namn), FLAGGA
+//                        conflate-fall (samma orgnr, olika namn — Alecta) för människa
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Engångs-migration: normalisera ClientCompany.Org_Number → siffror-bara. Diff visar
+// vad som skulle ändras + kollisioner (orgnr med >1 CC efter normalisering = kandidat-
+// dubbletter, hanteras av dedupe-orgno). Body: { mode:"diff"|"write" }
+app.post("/admin/clientcompany/normalize-orgno", requireSyncSecret, async (req, res) => {
+  try {
+    const write = (req.body?.mode === "write");
+    const all = await bubbleFindAll("ClientCompany", {});
+    const report = {
+      mode: write ? "write" : "diff", scanned: all.length,
+      counts: { alreadyDigits: 0, wouldChange: 0, patched: 0, emptyOrg: 0, errors: 0 },
+      collisionGroups: 0, collisions: [], sample: [],
+    };
+
+    const byNorm = new Map();   // digits-org → [{id, name, current}]
+    for (const cc of all) {
+      const cur = String(cc?.[CLIENTCOMPANY_ORG_FIELD] ?? "").trim();
+      if (!cur) { report.counts.emptyOrg++; continue; }
+      const norm = normalizeOrgNo(cur);
+      if (!norm) { report.counts.emptyOrg++; continue; }
+
+      let arr = byNorm.get(norm); if (!arr) { arr = []; byNorm.set(norm, arr); }
+      arr.push({ id: cc._id, name: cc.Name_company || "", current: cur });
+
+      if (cur === norm) { report.counts.alreadyDigits++; continue; }
+      report.counts.wouldChange++;
+      if (report.sample.length < 30) report.sample.push({ id: cc._id, name: cc.Name_company, from: cur, to: norm });
+      if (write) {
+        try { await bubblePatch("ClientCompany", cc._id, { [CLIENTCOMPANY_ORG_FIELD]: norm }); report.counts.patched++; }
+        catch (e) { report.counts.errors++; }
+      }
+    }
+    for (const [norm, list] of byNorm) {
+      if (list.length > 1) report.collisions.push({
+        orgno: norm, count: list.length,
+        companies: list.map((x) => ({ id: x.id, name: x.name, org_now: x.current })),
+      });
+    }
+    report.collisionGroups = report.collisions.length;
+    return res.json({ ok: true, report });
+  } catch (e) { return res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+});
+
+// Helpers för dedupe.
+function ccCreatedMs(id) {                       // Bubble _id inleds med epoch-ms
+  const m = String(id || "").match(/^(\d+)x/);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+function canonName(s) {                            // namn-normalisering för dubblett-test
+  return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Dedupe ClientCompany på normaliserat orgnr.
+//   mode:"diff" (default) → REPORTERAR dubblettgrupper, mergar inget.
+//   mode:"write"          → mergar bara ÄKTA dubbletter (samma orgnr + samma namn):
+//      survivor = äldsta CC; pekar om FortnoxCustomer.linked_company,
+//      TengellaCustomer.company och dokumentens linked_company (Invoice/Order/Offer)
+//      → survivor, raderar dubbletterna. Conflate-fall (olika namn) mergas ALDRIG,
+//      bara flaggas (din linje: källidentitet bevaras, människa avgör).
+// Body: { mode, maxGroups? }
+app.post("/admin/clientcompany/dedupe-orgno", requireSyncSecret, async (req, res) => {
+  try {
+    const write = (req.body?.mode === "write");
+    const maxGroups = req.body?.maxGroups != null ? Number(req.body.maxGroups) : null;
+
+    const all = await bubbleFindAll("ClientCompany", {});
+    const byNorm = new Map();
+    for (const cc of all) {
+      const norm = normalizeOrgNo(cc?.[CLIENTCOMPANY_ORG_FIELD]);
+      if (!norm) continue;
+      let arr = byNorm.get(norm); if (!arr) { arr = []; byNorm.set(norm, arr); }
+      arr.push(cc);
+    }
+
+    const report = {
+      mode: write ? "write" : "diff",
+      counts: { dupGroups: 0, mergeableGroups: 0, conflateGroups: 0, merged: 0, ccDeleted: 0,
+                repointed: { fortnoxCustomer: 0, tengellaCustomer: 0, invoice: 0, order: 0, offer: 0 }, errors: 0 },
+      mergeable: [], conflate: [],
+    };
+
+    let groupsWritten = 0;
+    for (const [norm, list] of byNorm) {
+      if (list.length < 2) continue;
+      report.counts.dupGroups++;
+
+      const names = new Set(list.map((c) => canonName(c.Name_company)).filter(Boolean));
+      const sameName = names.size <= 1;
+      const sorted = [...list].sort((a, b) => ccCreatedMs(a._id) - ccCreatedMs(b._id));
+      const survivor = sorted[0];
+      const dups = sorted.slice(1);
+      const entry = {
+        orgno: norm, survivor: { id: survivor._id, name: survivor.Name_company },
+        dups: dups.map((d) => ({ id: d._id, name: d.Name_company })),
+      };
+
+      if (!sameName) { report.counts.conflateGroups++; report.conflate.push(entry); continue; }
+
+      report.counts.mergeableGroups++;
+      report.mergeable.push(entry);
+      if (!write) continue;
+      if (maxGroups && groupsWritten >= maxGroups) continue;
+      groupsWritten++;
+
+      // Peka om alla referenser från dups → survivor, radera sen dup.
+      for (const d of dups) {
+        try {
+          const repoint = async (type, field, key) => {
+            const rows = await bubbleFindAll(type, { constraints: [{ key: field, constraint_type: "equals", value: d._id }] });
+            for (const r of rows) { await bubblePatch(type, r._id, { [field]: survivor._id }); report.counts.repointed[key]++; }
+          };
+          await repoint("FortnoxCustomer", "linked_company", "fortnoxCustomer");
+          await repoint("TengellaCustomer", "company",        "tengellaCustomer");
+          await repoint("FortnoxInvoice",   "linked_company", "invoice");
+          await repoint("FortnoxOrder",     "linked_company", "order");
+          await repoint("FortnoxOffer",     "linked_company", "offer");
+          await bubbleDelete("ClientCompany", d._id);
+          report.counts.ccDeleted++;
+        } catch (e) {
+          report.counts.errors++;
+        }
+      }
+      report.counts.merged++;
+    }
+
+    return res.json({ ok: true, report });
+  } catch (e) { return res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+});
+
 // CG-1: ClientGroup kluster-FÖRSLAG (READ-ONLY, skriver inget). Mänsklig granskning.
 const clientGroupEngine = createClientGroupEngine({
   bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch,
