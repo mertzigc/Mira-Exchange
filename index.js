@@ -1,6 +1,7 @@
 // Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
 import { startEmailPoller } from "./emailer.js";
 import { createSyncEngine } from "./invoice_sync.js";
+import { createClientGroupEngine } from "./clientgroup.js";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -15654,6 +15655,20 @@ const syncEngine = createSyncEngine({
 app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
   try {
     const report = await syncEngine.syncForSource(req.params.source, req.body || {});
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// CG-1: ClientGroup kluster-FÖRSLAG (READ-ONLY, skriver inget). Mänsklig granskning.
+const clientGroupEngine = createClientGroupEngine({
+  bubbleFindAll,
+  helpers: { normalizeOrgNo },
+});
+app.post("/clientgroup/suggest", requireSyncSecret, async (req, res) => {
+  try {
+    const report = await clientGroupEngine.suggestClusters(req.body || {});
     return res.json({ ok: true, report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
