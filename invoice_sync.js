@@ -1059,28 +1059,37 @@ export function createSyncEngine(deps) {
   async function buildCompanyBridges() {
     // Fortnox: `${connection_id}|${customer_number}` → linked_company
     const fortnoxMap = new Map();
+    // keySet = ALLA kundposter (oavsett om linked_company finns) → låter oss skilja
+    // "kundpost saknas helt" från "kundpost finns men linked_company tom".
+    const fortnoxKeySet = new Set();
     const fcs = await bubbleFindAll("FortnoxCustomer", {});
     for (const fc of fcs) {
       const cid = String(fc?.connection_id || "").trim();
       const cn  = String(fc?.customer_number || "").trim();
       const lc  = fc?.linked_company || null;
-      if (cid && cn && lc) fortnoxMap.set(`${cid}|${cn}`, lc);
+      if (cid && cn) {
+        fortnoxKeySet.add(`${cid}|${cn}`);
+        if (lc) fortnoxMap.set(`${cid}|${cn}`, lc);
+      }
     }
 
     // Tengella: ft_customer_number kan vara tengella_customer_no ELLER (fallback i
     // synken) Number(customerId) = tengella_customer_id → mappa BÅDA nycklarna.
     const tengMap = new Map();
+    const tengKeySet = new Set();
     const tcs = await bubbleFindAll("TengellaCustomer", {});
     for (const tc of tcs) {
       const company = tc?.company || null;
-      if (!company) continue;
       const no = String(tc?.tengella_customer_no ?? "").trim();
       const id = String(tc?.tengella_customer_id ?? "").trim();
-      if (no) tengMap.set(`no|${no}`, company);
-      if (id) tengMap.set(`id|${id}`, company);
+      if (no) { tengKeySet.add(`no|${no}`); if (company) tengMap.set(`no|${no}`, company); }
+      if (id) { tengKeySet.add(`id|${id}`); if (company) tengMap.set(`id|${id}`, company); }
     }
 
-    return { fortnoxMap, tengMap, fcCount: fcs.length, tcCount: tcs.length };
+    return {
+      fortnoxMap, tengMap, fortnoxKeySet, tengKeySet,
+      fcCount: fcs.length, tcCount: tcs.length,
+    };
   }
 
   function resolveBackfillCompany(bridges, connVal, custNo) {
@@ -1091,6 +1100,18 @@ export function createSyncEngine(deps) {
       return bridges.tengMap.get(`no|${cn}`) || bridges.tengMap.get(`id|${cn}`) || null;
     }
     return bridges.fortnoxMap.get(`${conn}|${cn}`) || null;
+  }
+
+  // Varför resolvar en kund inte? "no_customer" = ingen kundpost alls; "no_link" =
+  // kundpost finns men linked_company/company är tom (rätta vid källan).
+  function unresolvedReason(bridges, connVal, custNo) {
+    const conn = String(connVal || "").trim();
+    const cn   = String(custNo || "").trim();
+    if (conn === String(constants.TENGELLA_CONNECTION_ID)) {
+      const exists = bridges.tengKeySet.has(`no|${cn}`) || bridges.tengKeySet.has(`id|${cn}`);
+      return exists ? "no_link" : "no_customer";
+    }
+    return bridges.fortnoxKeySet.has(`${conn}|${cn}`) ? "no_link" : "no_customer";
   }
 
   async function backfillLinkedCompanyForType(target, bridges, opts) {
@@ -1114,6 +1135,9 @@ export function createSyncEngine(deps) {
       writes: 0,
       sampleResolved: [], sampleUnresolved: [], sampleMismatch: [],
     };
+
+    // Distinkta unresolved-kunder: key `conn|cust` → { conn, cust, name, docs, reason }
+    const unresolvedCust = new Map();
 
     for (const doc of docs) {
       if (maxRecords && report.writes >= maxRecords) break;
@@ -1144,8 +1168,16 @@ export function createSyncEngine(deps) {
       report.counts.missing++;
       if (!resolved) {
         report.counts.unresolved++;
+        const cust = String(custNo);
+        const ckey = `${connVal}|${cust}`;
+        const entry = unresolvedCust.get(ckey);
+        if (entry) entry.docs++;
+        else unresolvedCust.set(ckey, {
+          conn: connVal, cust, name: String(doc.ft_customer_name || ""),
+          docs: 1, reason: unresolvedReason(bridges, connVal, cust),
+        });
         if (report.sampleUnresolved.length < sampleSize)
-          report.sampleUnresolved.push({ doc: doc.ft_document_number, conn: connVal, cust: String(custNo) });
+          report.sampleUnresolved.push({ doc: doc.ft_document_number, conn: connVal, cust });
         continue;
       }
       report.counts.resolved++;
@@ -1156,6 +1188,15 @@ export function createSyncEngine(deps) {
         report.counts.patched++; report.writes++;
       }
     }
+
+    // Distinkt-kund-sammanfattning för unresolved (svaret på "hur många kunder berörs").
+    const custList = [...unresolvedCust.values()].sort((a, b) => b.docs - a.docs);
+    report.unresolvedCustomers = {
+      total:       custList.length,
+      noCustomer:  custList.filter((c) => c.reason === "no_customer").length,
+      noLink:      custList.filter((c) => c.reason === "no_link").length,
+      top:         custList.slice(0, 50),   // alla distinkta kunder, mest-drabbade först (cap 50)
+    };
 
     return report;
   }
@@ -1185,6 +1226,25 @@ export function createSyncEngine(deps) {
       return a;
     }, { scanned: 0, writes: 0 });
 
+    // Distinkta unresolved-kunder ÖVER alla typer (samma kund kan ligga bakom både
+    // order- och offert-dokument → räkna unikt på conn|cust).
+    const globalCust = new Map();
+    for (const t of types) {
+      for (const c of (t.unresolvedCustomers?.top || [])) {
+        const key = `${c.conn}|${c.cust}`;
+        const e = globalCust.get(key);
+        if (e) e.docs += c.docs;
+        else globalCust.set(key, { ...c });
+      }
+    }
+    const globalList = [...globalCust.values()];
+    const unresolvedCustomersTotal = {
+      distinctCustomers: globalList.length,
+      noCustomer: globalList.filter((c) => c.reason === "no_customer").length,
+      noLink:     globalList.filter((c) => c.reason === "no_link").length,
+      note: "distinkta över alla typer; per-typ-listor (top 50) finns i types[].unresolvedCustomers",
+    };
+
     return {
       mode, overwrite, connection_id, onlyMissing,
       bridges: {
@@ -1192,6 +1252,7 @@ export function createSyncEngine(deps) {
         tengellaCustomers: bridges.tcCount, tengellaMapped: bridges.tengMap.size,
       },
       totals,
+      unresolvedCustomersTotal,
       types,
     };
   }

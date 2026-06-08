@@ -9,6 +9,7 @@
 - **Fakturaspåret: KLART, validerat krona-för-krona, självgående** (cron live). F&E/Staff/HK 2026 stämmer mot Fortnox/facit.
 - **§9 Order/Offer/Workorder: KLART & LIVE.** Hela omtaget (9a kärn-generalisering med delete-reconciliation → 9b fortnox-order/offer → 9c PDF → 9d tengella-workorder→unified FortnoxOrder → 9e cron-cutover) är kodat, backfillat 2026 (workorder 2025+2026), idempotensbevisat (omkörning = rent noop, 0 dubbletter) och i drift. `SYNC_V2_ORDERS=1` live, nightly grön, PDF-cron drar undan ~2600 flaggade order, weekly safety-net härdad. Gamla order/offer/workorder-cron avstängda. **Inget öppet här.** Detaljer + lärda buggar i §5/§8.
 - **ClientGroup-fasen: ⛔ AVBRUTET 2026-06-08** (Christians beslut — mjuka variabler + smutsig källdata gör auto-klustring opålitlig; manuell metodik finns; rätt lever = ren data vid inmatning). Kod ligger kvar oanvänd, 0 poster skrivna. Se §6.
+- **linked_company-backfill: KODAT 2026-06-08, väntar diff-resultat.** Egen route `POST /sync/v2-linkcompany/:source` (frikopplad från ClientGroup — den vägen aktivt bortvald). Fyller bryggfältet på FortnoxInvoice/Order/Offer (Fortnox + Tengella) som synkens noop-väg aldrig satte. Bubble-intern, diff-default. Se §8c.
 - **Nästa möjliga spår (inget pågår):** (a) datakvalitet-vid-ingest — orgnr-validering/normalisering när kund→ClientCompany skapas (det verkliga ClientGroup-fundamentet); (b) Intelliplan-adapter för Staffs order/offert; (c) both-ways offer-push (Mira→Fortnox); (d) bryt upp index.js (~15,6k rader) i moduler.
 - **§9-DETALJSTATUS (historik, allt KLART):**
 - **Steg 9b är KODAT + lokalt e2e-testat (2026-06-05).** `fortnox-order` + `fortnox-offer`-adaptrar (huvud + rader) på 9a-kärnan, registrerade → nåbara via `POST /sync/v2/fortnox-order|fortnox-offer` direkt efter deploy. **Väntar: (1) skapa nya number-fält `ft_order_ts`/`ft_offer_ts` i Bubble, (2) diff-revalidering mot Fortnox order/offer-totaler innან write.**
@@ -142,7 +143,7 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 - Fortnox order/offer DETAIL (`/orders/{n}`, `/offers/{n}`) innehåller rader (OrderRows/OfferRows) + Net/TotalVAT. Listing saknar dem (samma Bug 1).
 - Rad-typer: `FortnoxOrderRow` (nyckel `ft_unique_key` = `ROWID_..__CONN_..__ORDDOC_..`), `FortnoxOfferRow` (`OFFERROW_..`). **Standardisera nyckelformat i ny adapter.**
 - FortnoxOrder/Offer använder fältet **`connection`** (inte `connection_id` som faktura). Radbelopp lagras som strängar.
-- `linked_company` sätts EJ på order/offer idag (men resolvbart via FortnoxCustomer-bryggan som faktura).
+- `linked_company` sattes EJ på order/offer i den GAMLA koden (men resolvbart via FortnoxCustomer-bryggan som faktura). Nya adaptern sätter det på create/update; historiska/oförändrade dokument backfillas via §8c.
 - Workorder: `upsertTengellaWorkorderToBubble` (~7259), rader `upsertTengellaWorkorderRowToBubble` (~7362). Ekonomi bara på rad (price/cost_price, ingen moms). Blir EJ faktura automatiskt (indirekt via rad-`invoiced`).
 - **Ingen av de tre städar borttagna rader idag** = luckan 9a fixar.
 - **Ingen Bubble fil-GC** finns → PDF-omskrivning läcker gamla filer.
@@ -152,6 +153,7 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 ## 6. Senare faser
 - **ClientGroup (kundkort-bundling) — ⛔ AVBRUTET 2026-06-08 (Christians beslut).**
   - **Varför avbrutet:** gruppkomposition styrs av för många mjuka variabler för att (semi-)automatiseras tillförlitligt. Dessutom är grundorsaken till "strul" SMUTSIG KÄLLDATA — felskrivna/felformaterade orgnr — inte saknad klustringslogik. Christian har redan en manuell metodik för att skapa grupper och addera företag.
+  - **linked_company-backfill frikopplad (2026-06-08):** att fylla bryggfältet `linked_company` på dokumenten var tidigare inplanerat som en del av ClientGroup-fasen. Det är nu AKTIVT BORTVALT från ClientGroup och görs i stället via egen route (§8c). Skälet: backfillen är ren bryggdata (FortnoxCustomer/TengellaCustomer → ClientCompany), inte gruppering — den behöver varken klustring eller mjuka beslut. Gruppering (ClientGroup-kundkort) gör Christian separat och manuellt i Bubble i de fall det bedöms lämpligt. De två är skilda lager och hålls isär.
   - **Rätt lever framåt (ej auto-klustring):** få in företagen KORREKT vid inmatning (validerade orgnr) så blir datan självstädande. En framtida "datakvalitet vid ingest"-insats (orgnr-validering/normalisering när FortnoxCustomer/TengellaCustomer→ClientCompany skapas) är den verkliga grunden, inte retroaktiv klustring.
   - **Kod-status:** `clientgroup.js` + routes (`/clientgroup/suggest`, `/clientgroup/apply`, `/clientgroup/rollup`) finns deployade men OANVÄNDA. `apply write` lyckades aldrig (bubbleCreate-fel mot ClientGroup, ej felsökt) → **0 ClientGroup-poster skrevs**, ren tavla. `rollupGroup` (omsättning/order per grupp över medlems-CCs) kan återanvändas för Christians MANUELLT skapade grupper om så önskas. Auto-klustring (suggest/apply) bör tas bort eller lämnas vilande. CG-1-kartläggningen finns kvar nedan som referens.
   - **Historik/referens (CG-1 kartläggning, kan vara nyttig för datakvalitets-arbetet):** rörig kunddata — samma företag har flera orgnr/Fortnox-ID/Tengella-ID. Org 556718-6654 (Alecta Fastigheter) har 3 FortnoxCustomers med olika namn (Alfab Göteborg 3/4, Ullevi Park) → org-matchning konflaterar fastigheter. Plan: ClientCompany = faktureringsenhet (källidentitet, ej org); ClientGroup (Bubble-typ: companies[], primary_company, name, logo, slug — lägg till org_numbers[], aliases[]) = kundkort som buntar. **Beslut 2026-06-08: orgnr = HINT (ej facit), conflate-fall flaggas för människa, källidentitet bevaras.**
@@ -176,7 +178,7 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 ---
 
 ## 8b. Order/offer-write — lärda (2026-06-05, live-backfill)
-- **`linked_company` måste finnas på FortnoxOrder + FortnoxOffer** (skapat). Saknas fältet → Bubble 400 `Unrecognized field` → HELA skrivningen failar. Skrivs bara på create/update (noop backfillar EJ) → historisk backfill görs i ClientGroup-fasen. Bubble case-sensitive: fältet heter exakt `linked_company` (som FortnoxInvoice).
+- **`linked_company` måste finnas på FortnoxOrder + FortnoxOffer** (skapat). Saknas fältet → Bubble 400 `Unrecognized field` → HELA skrivningen failar. Skrivs bara på create/update (noop backfillar EJ → ett oförändrat dokument får aldrig fältet). Bubble case-sensitive: fältet heter exakt `linked_company` (som FortnoxInvoice). **Historisk backfill: se §8c — egen dedikerad route, INTE längre kopplad till ClientGroup-fasen (den vägen aktivt bortvald, se §6).**
 - **FortnoxOrderRow `ft_discount`/`ft_vat` är NUMBER-fält i Bubble** (inte text, trots tidigare audit). Skicka ALDRIG `""` → Bubble 400 `INVALID_DATA: Expected a number, but got a string (original data: "")` → bubbleCreate kastar → rad-create failar tyst som `rows.error`. Workorder-rader (saknar rabatt/moms) sänkte hela rad-persisteringen pga detta → fixat: skicka `null` för tomma number-fält. Order-rader härdade likadant (Number/null, ej String/""). Lärdom: empty-string-fallback funkar bara för TEXT-fält; number-fält kräver null. (ft_price/ft_total är text-fält → "" OK där.)
 - **Härledda belopp måste avrundas (2 dec) för idempotens.** Workorder härleder `ft_total`/`ft_net`/`ft_totalvat` (huvud) och rad-`ft_total` = qty×price → float-artefakter (`950.4000000000001`) → `eqLoose` ser ≠ lagrat `950.4` → evig `update`-churn. Fix: `Math.round(n*100)/100` på alla härledda belopp. Order/offer opåverkade (använder Fortnox råa belopp). Efter deploy: en sista städ-update per workorder, sen konvergerar allt till noop.
 - **Token-utgång mid-svep (401):** fixat med `fortnoxGetAuthed`-wrapper i invoice_sync.js — force-refreshar (`ensureFortnoxAccessToken(id, true)`) och kör om vid 401. `ensureFortnoxAccessToken` har nu `force`-param. Gäller faktura+order+offer, list+detail.
@@ -184,6 +186,29 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 - **TUNGA MÅNADER måste delas vid full-resync:** en enskild månad-request kan timeouta (>25 min). Maj F&E behövde veckofönster (`fromdate`/`todate` per vecka). Cron `full` kör helår i ett svep per source → kan timeouta på tunga konton; överväg månads-/vecko-chunkning i cron `full` om det smäller. Nightly (`modifiedDaysBack`) är litet och opåverkat.
 - **F&E orderволym: ~500–600/månad.** `sinceYM` (utan övre gräns) listar månad→årsslut = O(n²) sidor + långa requests → använd `fromdate`+`todate` (riktiga månadsfönster) vid manuell backfill. Detail-anrop sker per dok även vid noop (Bug 1-design) → backfill är tung men engångs; nightly använder `modifiedDaysBack`.
 - **Order/offer = BARA F&E** (Staff = faktura only; order/offert i Intelliplan → /orders 400 på Staff).
+
+## 8c. linked_company-backfill — tillvägagångssätt (2026-06-08)
+
+**Problemet (verifierat mot live-databasen):** `linked_company` var glest ifyllt på FortnoxInvoice/Order/Offer. Rotorsak: synken sätter fältet bara på create/update OCH det ligger INTE i `COMPARE_FIELDS` ([invoice_sync.js](invoice_sync.js) `COMPARE_FIELDS`) → ett oförändrat dokument blir `noop` och skrivningen hoppas helt (`upsertToBubble`, rad ~151). Allt som synkats men aldrig ändrats sedan linked_company-logiken kom in saknar därför fältet. Den ursprungligt planerade historiska backfillen låg i ClientGroup-fasen — som avbröts 2026-06-08 → kördes aldrig.
+
+**BESLUT 2026-06-08: ClientGroup-vägen för detta är AKTIVT BORTVALD.** linked_company-backfill görs via en egen dedikerad route, helt frikopplad från ClientGroup/auto-klustring. Gruppering (ClientGroup) hanterar Christian separat och manuellt i Bubble i de fall det bedöms lämpligt — det är ett annat lager (icke-destruktiv överblick) och ska inte blandas ihop med att fylla bryggfältet på dokumenten. Se §6.
+
+**Lösningen — `POST /sync/v2-linkcompany/:source`** (index.js, intill `/sync/v2/:source`; `backfillLinkedCompany` i invoice_sync.js):
+- `source` = `invoice` | `order` | `offer` | `all`. Auth: `x-api-key` + `x-sync-secret` (som /sync/v2).
+- **BUBBLE-INTERN — inga Fortnox/Tengella-anrop.** All bryggdata finns redan i Bubble. Bygger båda bryggorna till lookup-maps EN gång (inte en find per dokument), sen ren minnesuppslagning per dokument.
+- Bryggval per dokument: `connection == TENGELLA_CONNECTION_ID` → TengellaCustomer-bryggan (`tengella_customer_no` ELLER `tengella_customer_id == ft_customer_number` → `.company`), annars FortnoxCustomer-bryggan (`connection_id|customer_number → linked_company`). Täcker Fortnox (F&E/Staff/Group) OCH Tengella i samma svep per typ. OBS fältnamn: FortnoxInvoice använder `connection_id`, FortnoxOrder/Offer använder `connection`.
+- **`mode:"diff"` (default) skriver INGET.** Rapport per typ: `missing` (saknar fältet), `resolved` (kan fyllas), `unresolved` (brygga saknas → granska `sampleUnresolved`; betyder oftast att FortnoxCustomer/TengellaCustomer-posten saknas, dvs kundbryggan måste fyllas först), `mismatch` (har en länk som skiljer sig från bryggan), `alreadyOk`. Plus `totals` över alla typer.
+- **Robust default: FULL skanning** (inte `is_empty`-genväg). Skäl: `is_empty` är ett känt fotgevär (Fynd A i designdoc) som tyst kan returnera 0 träffar och få det att SE klart ut fast det inte är det — exakt felläget vi precis städade. `onlyMissing:true` finns som opt-in snabbväg när man medvetet vill det.
+- **Default rör INTE `mismatch`** (bara tomma fält fylls). `overwrite:true` korrigerar även fel-länkade — men kör diff och granska `sampleMismatch` först.
+- Idempotent: omkörning i write → `resolved`/`patched` mot 0, `alreadyOk` upp. Chunka per bolag med `connection_id` om `all` timeoutar (computeSalesKpi skannar redan alla fakturor i prod så full skanning är beprövat genomförbar, men stora typer kan vara tunga).
+
+**Curl-mall (Christian kör):**
+```bash
+curl -sS -X POST "$HOST/sync/v2-linkcompany/all" \
+  -H "x-api-key: $KEY" -H "x-sync-secret: $SYNC_SECRET" -H "Content-Type: application/json" \
+  --max-time 1800 -d '{"mode":"diff"}'
+```
+Byt `"mode":"diff"` → `"mode":"write"` när diffen ser rätt ut. Connection IDs i §4.
 
 ## 8. Fallgropar (lärda)
 - Fortnox rate-limit: krävde retry+backoff (`fortnoxGetRetry`) + throttle (`throttleMs`, default 200, april behövde 350). Listing-fel mitt i paginering → kastar → 500 på hela requesten; idempotent så kör om.
