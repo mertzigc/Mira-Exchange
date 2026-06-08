@@ -12551,6 +12551,7 @@ const ADM_COWORKER   = "Coworker";
 const ADM_GUEST      = "InviteGuest";
 const ADM_FASTIGHET  = "Fastighet";
 const ADM_OPTOUT     = "EmailOptout";   // global avregistrering (GDPR): { email }
+const ADM_MEDIA      = "MediaAsset";    // mediaarkiv: { url, name, content_type }
 
 // Taggar på utskick: fritext, kommaseparerat. Inte option-set → safeCreate kastar aldrig.
 // Trimmar, tar bort tomma, dedupar (case-insensitivt), behåller första stavningen, kapar längd.
@@ -12696,7 +12697,8 @@ app.post("/admin/invite/create", async (req, res) => {
       cta_url:         _admAbs(d.cta_url || ""),
       linkedin_url:    _admAbs(d.linkedin_url || ""),
       facebook_url:    _admAbs(d.facebook_url || ""),
-      instagram_url:   _admAbs(d.instagram_url || "")
+      instagram_url:   _admAbs(d.instagram_url || ""),
+      video_url:       _admAbs(d.video_url || "")
     };
     // image hanteras hedgat: image-fältet i Bubble är image-typ och tar oftast inte
     // emot en extern URL via Data API. Lägg ev. till ett TEXT-fält image_url så fastnar URL:en.
@@ -12725,6 +12727,7 @@ app.patch("/admin/invite/update", async (req, res) => {
       linkedin_url: v => _admAbs(v || ""),
       facebook_url: v => _admAbs(v || ""),
       instagram_url: v => _admAbs(v || ""),
+      video_url: v => _admAbs(v || ""),
       kind: v => _normKind(v),
       tags: v => _normTags(v)
     };
@@ -12791,7 +12794,8 @@ app.get("/admin/invite/:id", async (req, res) => {
       allow_plus_ones: i.allow_plus_ones !== false, max_plus_ones: asNumberOrNull(i.max_plus_ones) ?? 0,
       image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]",
       cta_label: i.cta_label || "", cta_url: i.cta_url || "",
-      linkedin_url: i.linkedin_url || "", facebook_url: i.facebook_url || "", instagram_url: i.instagram_url || ""
+      linkedin_url: i.linkedin_url || "", facebook_url: i.facebook_url || "", instagram_url: i.instagram_url || "",
+      video_url: i.video_url || ""
     }});
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
@@ -13237,6 +13241,57 @@ app.post("/admin/invite/:id/checkin/share", async (req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// MEDIAARKIV — bilduppladdning via Bubble file storage (samma som Fortnox-PDF:er)
+// Klienten komprimerar + skickar base64; vi laddar upp till Bubble och sparar en
+// MediaAsset-rad så bilden kan återanvändas. Lagrar URL (https-normaliserad).
+// ════════════════════════════════════════════════════════════════════════════
+const _MEDIA_MAX_BYTES = 6 * 1024 * 1024;   // tak efter klientkomprimering
+function _httpsUrl(u) {
+  u = String(u || "").trim();
+  if (!u) return "";
+  if (u.startsWith("//")) return "https:" + u;
+  return u;
+}
+app.post("/admin/media/upload", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const b64 = String(b.data_base64 || "").replace(/^data:[^;]+;base64,/, "");
+    if (!b64) return res.status(400).json({ ok: false, error: "no_data" });
+    const buffer = Buffer.from(b64, "base64");
+    if (!buffer.length) return res.status(400).json({ ok: false, error: "empty" });
+    if (buffer.length > _MEDIA_MAX_BYTES) return res.status(413).json({ ok: false, error: "too_large" });
+    const ct = String(b.content_type || "image/jpeg");
+    if (!/^image\//i.test(ct)) return res.status(400).json({ ok: false, error: "not_image" });
+    const filename = safeText(b.filename || ("bild_" + Date.now() + ".jpg"), 140).replace(/[^\w.\-]/g, "_");
+    const url = _httpsUrl(await bubbleUploadFile({ filename, contentType: ct, buffer }));
+    if (!url) return res.status(502).json({ ok: false, error: "upload_failed" });
+    let id = null;
+    try { id = await safeCreate(ADM_MEDIA, { url, name: filename, content_type: ct }, {}); } catch (_) {}
+    res.json({ ok: true, url, id });
+  } catch (e) {
+    const detail = e?.detail || _bubbleErrText(e);
+    console.error("[media/upload]", e?.message, detail);
+    res.status(500).json({ ok: false, error: e?.message, detail });
+  }
+});
+app.get("/admin/media/list", async (req, res) => {
+  try {
+    const rows = await bubbleFindAll(ADM_MEDIA, {}).catch(() => []);
+    const out = (rows || []).map(r => ({
+      id: r._id || r.id, url: _httpsUrl(r.url), name: r.name || "", created_at: r["Created Date"] || null
+    })).filter(x => x.url);
+    out.sort((a, b) => (new Date(b.created_at || 0)) - (new Date(a.created_at || 0)));
+    res.json({ ok: true, media: out });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+app.delete("/admin/media/:id", async (req, res) => {
+  try {
+    await bubbleDelete(ADM_MEDIA, req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── GET /admin/invite/:id/responses — anonyma svar (frikopplade från person) ──
 // Används av analysvyn för anonyma undersökningar. Returnerar SurveyResponse-poster
 // som INTE har någon koppling till InviteGuest/person.
@@ -13543,7 +13598,8 @@ function inviteConfigPayload(inv, cc, guest) {
       location_name: inv.location_name || "",
       start_date:    inv.start_date || null,
       end_date:      inv.end_date || null,
-      rsvp_deadline: inv.rsvp_deadline || null
+      rsvp_deadline: inv.rsvp_deadline || null,
+      video_url:     inv.video_url || ""
     },
     brand:           inviteBrand(inv, cc),
     allow_plus_ones: inv.allow_plus_ones !== false,

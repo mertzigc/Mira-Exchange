@@ -265,6 +265,29 @@
 .ck-share-row code { flex:1;min-width:0;background:var(--sf);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-family:ui-monospace,monospace;font-size:12px;color:var(--tx);word-break:break-all; }
 .ck-share-code { letter-spacing:.2em;font-weight:700;font-size:16px!important;text-align:center;color:var(--ac)!important; }
 
+/* ── Mediaarkiv ── */
+.ck-media-row { display:flex;gap:8px;align-items:center; }
+.ck-media-row input { flex:1;min-width:0; }
+.ck-media-btn { flex:0 0 auto;white-space:nowrap;font-size:11px;padding:8px 10px; }
+#media-overlay { position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:30px 16px;overflow-y:auto; }
+.media-modal { width:100%;max-width:560px;background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:20px 22px; }
+.media-head { display:flex;align-items:center;justify-content:space-between;margin-bottom:14px; }
+.media-title { font-size:16px;font-weight:700; }
+.media-x { width:36px;height:36px;border-radius:9px;border:1px solid var(--bd);background:var(--bg);color:var(--mu);font-size:22px;line-height:1;cursor:pointer; }
+.media-drop { display:block;text-align:center;border:1.5px dashed var(--bd);border-radius:12px;padding:22px 16px;cursor:pointer;transition:.12s;margin-bottom:16px; }
+.media-drop:hover { border-color:var(--ac);background:var(--acb); }
+.media-drop.busy { opacity:.6;pointer-events:none; }
+.media-drop-ic { font-size:26px;margin-bottom:6px; }
+.media-drop-t { font-size:14px;font-weight:600;color:var(--tx); }
+.media-drop-s { font-size:11.5px;color:var(--mu);margin-top:4px; }
+.media-grid-h { font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--fa);margin-bottom:8px; }
+.media-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px; }
+.media-cell { position:relative;aspect-ratio:1;border:1px solid var(--bd);border-radius:9px;overflow:hidden;cursor:pointer;background:var(--bg); }
+.media-cell img { width:100%;height:100%;object-fit:cover;display:block; }
+.media-cell:hover { border-color:var(--ac); }
+.media-del { position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:6px;border:none;background:rgba(0,0,0,.6);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:none; }
+.media-cell:hover .media-del { display:block; }
+
 /* ── Sparade urval ── */
 .ck-seg-item { display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--bd);background:var(--bg);border-radius:7px;margin-bottom:6px;cursor:pointer;transition:.12s;position:relative; }
 .ck-seg-item:hover { border-color:var(--ac);background:var(--acb); }
@@ -343,7 +366,8 @@
               </div>
               <div class="ea-2col">
                 <div class="ea-fg"><label class="ea-fl">Sista anmälan</label><input class="ea-fi ck-date" id="iv-deadline" type="datetime-local" onclick="try{this.showPicker()}catch(e){}"></div>
-                <div class="ea-fg"><label class="ea-fl">Bild-URL (valfri)</label><input class="ea-fi" id="iv-image" placeholder="https://…"></div>
+                <div class="ea-fg"><label class="ea-fl">Bild (valfri)</label><div class="ck-media-row"><input class="ea-fi" id="iv-image" placeholder="https://… eller ladda upp"><button type="button" class="ck-btn-gh ck-media-btn" data-media-target="iv-image">📤 Arkiv</button></div></div>
+                <div class="ea-fg"><label class="ea-fl">Video (valfri)</label><input class="ea-fi" id="iv-video" placeholder="Vimeo- eller YouTube-länk"><span class="ea-fh">Visas inbäddad på landningssidan.</span></div>
               </div>
               <div class="ea-fg"><label class="ea-fl">Avsändarnamn i mail (valfritt)</label><input class="ea-fi" id="iv-host" placeholder="Annars värdföretagets namn"></div>
               <div class="ea-fg"><label class="ea-fl">Taggar (valfritt)</label><input class="ea-fi" id="iv-tags" placeholder="T.ex. kundevent, 2026, vip"><span class="ea-fh">Kommaseparerat. För organisering och filtrering i listan.</span></div>
@@ -563,7 +587,7 @@
                 <div class="ea-fg"><label class="ea-fl">CTA-länk</label><input class="ea-fi" id="nv-cta-url" placeholder="https://…"></div>
               </div>
               <div class="ea-2col">
-                <div class="ea-fg"><label class="ea-fl">Bild-URL (valfri)</label><input class="ea-fi" id="nv-image" placeholder="https://…"></div>
+                <div class="ea-fg"><label class="ea-fl">Bild (valfri)</label><div class="ck-media-row"><input class="ea-fi" id="nv-image" placeholder="https://… eller ladda upp"><button type="button" class="ck-btn-gh ck-media-btn" data-media-target="nv-image">📤 Arkiv</button></div></div>
                 <div class="ea-fg"><label class="ea-fl">Accentfärg</label>
                   <div style="display:flex;gap:8px;align-items:center">
                     <input class="ea-fi ea-color" id="nv-accent" type="color" value="#df6f39" style="width:46px;flex:none;padding:3px">
@@ -675,7 +699,8 @@
               </div>
               <div class="ea-fg"><label class="ea-fl">Beskrivning</label><textarea class="ea-fta" id="sv-desc" placeholder="Kort introduktion till undersökningen…" style="min-height:80px"></textarea><span class="ea-fh">Visas överst på landningssidan.</span></div>
               <div class="ea-2col">
-                <div class="ea-fg"><label class="ea-fl">Bild-URL (valfri)</label><input class="ea-fi" id="sv-image" placeholder="https://…"></div>
+                <div class="ea-fg"><label class="ea-fl">Bild (valfri)</label><div class="ck-media-row"><input class="ea-fi" id="sv-image" placeholder="https://… eller ladda upp"><button type="button" class="ck-btn-gh ck-media-btn" data-media-target="sv-image">📤 Arkiv</button></div></div>
+                <div class="ea-fg"><label class="ea-fl">Video (valfri)</label><input class="ea-fi" id="sv-video" placeholder="Vimeo- eller YouTube-länk"><span class="ea-fh">Visas inbäddad på landningssidan.</span></div>
                 <div class="ea-fg"><label class="ea-fl">Accentfärg</label>
                   <div style="display:flex;gap:8px;align-items:center">
                     <input class="ea-fi ea-color" id="sv-accent" type="color" value="#df6f39" style="width:46px;flex:none;padding:3px">
@@ -800,6 +825,21 @@
         <label class="ci-toggle"><input type="checkbox" id="ci-only"> Visa bara ej incheckade</label>
       </div>
       <div class="ci-list" id="ci-list"></div>
+    </div>
+
+    <!-- ═══════════ MEDIAARKIV (bilduppladdning + återanvändning) ═══════════ -->
+    <div id="media-overlay" style="display:none">
+      <div class="media-modal">
+        <div class="media-head"><div class="media-title">Mediaarkiv</div><button id="media-close" class="media-x" title="Stäng">×</button></div>
+        <label class="media-drop" id="media-drop">
+          <input type="file" id="media-file" accept="image/*" style="display:none">
+          <div class="media-drop-ic">📤</div>
+          <div class="media-drop-t">Ladda upp bild</div>
+          <div class="media-drop-s" id="media-upinfo">Klicka för att välja en bild. Den komprimeras automatiskt.</div>
+        </label>
+        <div class="media-grid-h">Tidigare uppladdade</div>
+        <div id="media-grid" class="media-grid"><div class="ck-mut" style="grid-column:1/-1;padding:14px 0">Laddar…</div></div>
+      </div>
     </div>
 
     <!-- ═══════════ E-POST (din befintliga admin, inflyttad) ═══════════ -->
@@ -1068,7 +1108,7 @@
     g('iv-title').value=inv.title||''; g('iv-desc').value=inv.description||'';
     g('iv-tags').value=(Array.isArray(inv.tags)?inv.tags:String(inv.tags||'').split(',')).filter(Boolean).join(', ');
     g('iv-loc').value=inv.location_name||''; g('iv-addr').value=inv.event_address||'';
-    g('iv-host').value=inv.host_name||''; g('iv-image').value=inv.image_url||'';
+    g('iv-host').value=inv.host_name||''; g('iv-image').value=inv.image_url||''; g('iv-video').value=inv.video_url||'';
     g('iv-accent').value=inv.accent_color||'#df6f39'; g('iv-accent-hex').value=inv.accent_color||'#df6f39';
     g('iv-start').value=fromISOLocalDT(inv.start_date); g('iv-end').value=fromISOLocalDT(inv.end_date);
     g('iv-deadline').value=fromISOLocalDT(inv.rsvp_deadline);
@@ -1089,7 +1129,7 @@
   }
   function resetInviteForm(){
     EDIT_ID=null;
-    ['iv-title','iv-desc','iv-tags','iv-loc','iv-addr','iv-host','iv-image','iv-start','iv-end','iv-deadline','iv-cc','iv-cc-search'].forEach(function(id){ g(id).value=''; });
+    ['iv-title','iv-desc','iv-tags','iv-loc','iv-addr','iv-host','iv-image','iv-video','iv-start','iv-end','iv-deadline','iv-cc','iv-cc-search'].forEach(function(id){ g(id).value=''; });
     g('iv-accent').value='#df6f39'; g('iv-accent-hex').value='#df6f39';
     g('iv-active').checked=true; g('iv-maxplus').value=2;
     g('q-plus').checked=false; g('q-allerg').checked=false; g('q-plus-max').style.display='none';
@@ -1119,7 +1159,7 @@
       tags:g('iv-tags').value,
       location_name:g('iv-loc').value, accent_color:g('iv-accent').value, event_address:g('iv-addr').value,
       start_date:toISO(g('iv-start').value), end_date:toISO(g('iv-end').value), rsvp_deadline:toISO(g('iv-deadline').value),
-      image:g('iv-image').value||'', image_url:g('iv-image').value||'', host_name:g('iv-host').value, active:g('iv-active').checked,
+      image:g('iv-image').value||'', image_url:g('iv-image').value||'', video_url:g('iv-video').value||'', host_name:g('iv-host').value, active:g('iv-active').checked,
       allow_plus_ones:g('q-plus').checked, max_plus_ones:Number(g('iv-maxplus').value)||0,
       form_schema:JSON.stringify(buildSchema())
     };
@@ -1821,6 +1861,74 @@
     else { flashBtn(btn,'Markera själv'); }
   });
 
+  // ── Mediaarkiv: ladda upp bild (klient-komprimerad) + återanvänd ──
+  var MEDIA_TARGET=null, MEDIA_ITEMS=[];
+  function openMedia(targetId){
+    MEDIA_TARGET=targetId;
+    g('media-overlay').style.display='flex'; document.body.style.overflow='hidden';
+    g('media-upinfo').textContent='Klicka för att välja en bild. Den komprimeras automatiskt.';
+    loadMedia();
+  }
+  function closeMedia(){ g('media-overlay').style.display='none'; document.body.style.overflow=''; }
+  function loadMedia(){
+    g('media-grid').innerHTML='<div class="ck-mut" style="grid-column:1/-1;padding:14px 0">Laddar…</div>';
+    fetch(api('/admin/media/list'),{headers:H()}).then(function(r){return r.json();}).then(function(j){
+      MEDIA_ITEMS=(j.ok && j.media)||[]; renderMedia();
+    }).catch(function(){ g('media-grid').innerHTML='<div class="ck-mut" style="grid-column:1/-1">Kunde inte ladda arkivet.</div>'; });
+  }
+  function renderMedia(){
+    if(!MEDIA_ITEMS.length){ g('media-grid').innerHTML='<div class="ck-mut" style="grid-column:1/-1;padding:8px 0">Inga bilder än — ladda upp ovan.</div>'; return; }
+    g('media-grid').innerHTML=MEDIA_ITEMS.map(function(m){
+      return '<div class="media-cell" data-url="'+esc(m.url)+'" title="'+esc(m.name||'')+'"><img src="'+esc(m.url)+'" alt="" loading="lazy"><button class="media-del" data-del-id="'+esc(m.id)+'" title="Ta bort ur arkivet">×</button></div>';
+    }).join('');
+  }
+  g('media-grid').addEventListener('click', function(e){
+    var del=e.target.closest('[data-del-id]');
+    if(del){ e.stopPropagation(); var id=del.getAttribute('data-del-id');
+      if(!confirm('Ta bort bilden ur arkivet? (Påverkar inte utskick som redan använder den.)')) return;
+      fetch(api('/admin/media/'+encodeURIComponent(id)),{method:'DELETE',headers:H()}).then(function(r){return r.json();}).then(function(j){ if(j.ok){ MEDIA_ITEMS=MEDIA_ITEMS.filter(function(x){return x.id!==id;}); renderMedia(); } });
+      return;
+    }
+    var cell=e.target.closest('[data-url]'); if(!cell) return;
+    if(MEDIA_TARGET) g(MEDIA_TARGET).value=cell.getAttribute('data-url');
+    closeMedia();
+  });
+  // Klient-komprimering: skala till max 1600px och exportera JPEG
+  function compressImage(file, maxDim, quality){
+    return new Promise(function(resolve, reject){
+      var reader=new FileReader();
+      reader.onload=function(ev){
+        var img=new Image();
+        img.onload=function(){
+          var scale=Math.min(1, maxDim/Math.max(img.width, img.height));
+          var cw=Math.max(1,Math.round(img.width*scale)), ch=Math.max(1,Math.round(img.height*scale));
+          var c=document.createElement('canvas'); c.width=cw; c.height=ch;
+          c.getContext('2d').drawImage(img,0,0,cw,ch);
+          resolve(c.toDataURL('image/jpeg', quality));
+        };
+        img.onerror=function(){ reject(new Error('Ogiltig bildfil')); }; img.src=ev.target.result;
+      };
+      reader.onerror=function(){ reject(new Error('Kunde inte läsa filen')); }; reader.readAsDataURL(file);
+    });
+  }
+  g('media-file').addEventListener('change', function(e){
+    var file=e.target.files[0]; if(!file) return;
+    var drop=g('media-drop'); drop.classList.add('busy'); g('media-upinfo').textContent='Komprimerar & laddar upp…';
+    compressImage(file, 1600, 0.82).then(function(dataUrl){
+      return fetch(api('/admin/media/upload'),{method:'POST',headers:H(),body:JSON.stringify({filename:file.name||'bild.jpg', content_type:'image/jpeg', data_base64:dataUrl})});
+    }).then(function(r){return r.json();}).then(function(j){
+      if(!j.ok) throw new Error(j.error==='too_large'?'Bilden är för stor.':(j.error||'fel'));
+      if(MEDIA_TARGET) g(MEDIA_TARGET).value=j.url;
+      closeMedia();
+    }).catch(function(err){ g('media-upinfo').textContent='Kunde inte ladda upp: '+(err.message||''); })
+      .finally(function(){ drop.classList.remove('busy'); g('media-file').value=''; });
+  });
+  g('media-close').addEventListener('click', closeMedia);
+  g('media-overlay').addEventListener('click', function(e){ if(e.target===g('media-overlay')) closeMedia(); });
+  Array.prototype.forEach.call(document.querySelectorAll('.ck-media-btn'), function(btn){
+    btn.addEventListener('click', function(){ openMedia(btn.getAttribute('data-media-target')); });
+  });
+
   // Lägg till enskild (återanvänder /guests/import med en rad)
   g('iv-g-a-btn').addEventListener('click', function(){
     if(!IVG_INVITE_ID) return;
@@ -2426,7 +2534,7 @@
       tags:g('sv-tags').value,
       client_company:g('sv-cc').value||null,
       accent_color:g('sv-accent').value,
-      image:g('sv-image').value||'', image_url:g('sv-image').value||'',
+      image:g('sv-image').value||'', image_url:g('sv-image').value||'', video_url:g('sv-video').value||'',
       host_name:g('sv-host').value,
       cta_label:g('sv-cta-label').value || 'Svara på undersökningen',
       cta_url:'', // ej använd för survey, länken byggs per gäst
@@ -2502,6 +2610,7 @@
     g('sv-accent-hex').value = inv.accent_color || '#df6f39';
     g('sv-cta-label').value = inv.cta_label || '';
     g('sv-image').value = inv.image_url || inv.image || '';
+    g('sv-video').value = inv.video_url || '';
     g('sv-host').value = inv.host_name || '';
     g('sv-active').checked = !!inv.active;
     g('sv-anon').checked = !!inv.anonymous;
@@ -2526,7 +2635,7 @@
   function resetSurveyForm(){
     SV_EDIT_ID = null;
     SV_TOKEN = '';
-    ['sv-title','sv-desc','sv-tags','sv-cta-label','sv-image','sv-host','sv-cc','sv-cc-search','sv-deadline'].forEach(function(id){ g(id).value=''; });
+    ['sv-title','sv-desc','sv-tags','sv-cta-label','sv-image','sv-video','sv-host','sv-cc','sv-cc-search','sv-deadline'].forEach(function(id){ g(id).value=''; });
     g('sv-accent').value='#df6f39'; g('sv-accent-hex').value='#df6f39';
     g('sv-active').checked=true; g('sv-anon').checked=false;
     SV_QUESTIONS = []; renderSvQuestions();

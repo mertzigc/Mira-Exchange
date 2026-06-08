@@ -97,6 +97,14 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 - **Endpoints (publika, i `openPaths`):** `POST /checkin/auth {e,email,code}` → `{session,event,guests}`; `POST /checkin/list {session}`; `POST /checkin/toggle {session,gid,arrived}`. Admin genererar/visar länk+kod via `POST /admin/invite/:id/checkin/share {regenerate?}` (knapp "🔗 Dela länk" i deltagar-kortet).
 - **Flöde:** admin → 🔗 Dela länk → skicka länk + kod (helst olika kanaler) → personal öppnar länken på valfri mobil, anger mejl + kod → listan → tryck rad i dörren. Flera enheter samtidigt funkar (↻ uppdaterar).
 
+### 3j. Mediaarkiv + bilduppladdning
+- Bild-fälten (event/nyhet/undersökning) har "📤 Arkiv"-knapp → modal med **uppladdning** + **återanvändning** av tidigare bilder + radering.
+- Uppladdning: klienten komprimerar (canvas, max 1600px, JPEG ~0.82) → base64 → `POST /admin/media/upload` → laddar upp via **Bubble file storage** (`bubbleUploadFile`, samma som Fortnox-PDF:er, ingen ny infra) → sparar `MediaAsset`-rad → fyller fältets URL. `GET /admin/media/list`, `DELETE /admin/media/:id`. Tak 6 MB efter komprimering.
+
+### 3k. Karta + video på landningssidor
+- Nytt fält `video_url` på `Invitation`. Vimeo/YouTube-länk → responsiv 16:9-embed på landningssidan (`mira-undersokning.html` + `invite.html`). Video-fält i event- + survey-formuläret (nyhet saknar landningssida).
+- **Karta:** nyckel-fri Google Maps-embed via eventets `event_address` (ingen API-nyckel). Endast landningssida — *inte* i mejl (skulle kräva Google Static Maps-nyckel; medvetet bortvalt för v1.0).
+
 ---
 
 ## 4. Bubble-setup som KRÄVS (förutsättningar)
@@ -110,6 +118,8 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 | Fält på `Invitation` | `tags` (**text** — inte list-of-texts) | taggar/dotterbolags-sortering |
 | Ny datatyp `EmailOptout` | fält: `email` (text). En rad per avregistrerad adress. | unsubscribe (GDPR) |
 | Fält på `Invitation` | `checkin_token` (text), `checkin_code` (text) | fristående avprickningssida (3i b) |
+| Fält på `Invitation` | `video_url` (text) | video på landningssida (3k) |
+| Ny datatyp `MediaAsset` | fält: `url` (text), `name` (text), `content_type` (text) | mediaarkiv (3j) |
 
 > Den **inbyggda** avprickningen (3i a) kräver ingen Bubble-setup. Den **fristående** sidan (3i b) kräver `checkin_token` + `checkin_code` ovan.
 
@@ -150,20 +160,25 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 4. Klistra in `mira-kommunikation-admin.html` i `dashboard_crm` (📋 Avprickning + 🔗 Dela länk).
 5. Hosta `mira-deltagarhantering.html` på `mira-fm.com/deltagarhantering`.
 
+**Bunt 4 (mediaarkiv + karta/video) — oncommittad i working tree:**
+1. Bubble: ny datatyp `MediaAsset` (`url`, `name`, `content_type` — text) + fält `video_url` (text) på `Invitation`.
+2. Push `index.js` (media-endpoints + `video_url`).
+3. Klistra in `mira-kommunikation-admin.html` i `dashboard_crm` (📤 Arkiv-knapp + video-fält).
+4. Hosta uppdaterade `mira-undersokning.html` + `invite.html` (karta + video-embed).
+
 ---
 
 ## 7. Kvar att göra
 
-> ✅ **Klart 2026-06-08:** Taggar (3f), dubblettkoll mot befintliga (3g), unsubscribe (3h), avprickning både inbyggd och fristående kod-skyddad sida (3i). Se sektion 3.
+> 🎉 **v1.0 av kommunikations-/undersökningsmodulen klar 2026-06-08.**
+> ✅ Klart idag: Taggar (3f), dubblettkoll (3g), unsubscribe (3h), avprickning inbyggd + fristående kod-sida (3i), mediaarkiv + bilduppladdning (3j), karta + video på landningssidor (3k).
 
-### Snabbt (timmar — nästa naturliga steg)
+### Snabbt (timmar)
 - **Mer filtrering** i deltagarlistan.
 
 ### Medel (≈ en dag styck)
-- **Bilduppladdning + pixelinstruktion** (idag bara URL). Kräver upload-endpoint. Hänger ihop med Mediaarkiv.
-- **Dotterbolag-filter** i målgrupp (leverantör/företagsnamn) — **parkerat**: löses i steg 1 via taggar (3f). Bygg det dedikerade filtret om taggar inte räcker.
-- **Karta** på landningssida + mejl (mejl = statisk bild via Google Static Maps).
-- **Video på landningssida** — Vimeo-länk räcker (bekräftat). Embed, enkelt.
+- **Karta i mejl** — statisk bild via Google Static Maps (kräver API-nyckel). Bortvalt i v1.0; landningssida har redan karta.
+- **Dotterbolag-filter** i målgrupp (leverantör/företagsnamn) — **parkerat**: löses via taggar (3f). Bygg dedikerat filter om taggar inte räcker.
 - **Importera Excel direkt till Coworker** (permanenta poster, inte bara deltagarlista) + komplettera målgrupp.
 
 ### Stort (eget projekt vardera)
@@ -171,7 +186,7 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 - **Benchmarksiffra per fråga** — inputfält per fråga med målsiffra; sammanställning jämförs mot den. (Relaterar till projekt om benchmark = föregående period.) Bekräftat: manuellt inmatad målsiffra.
 - **WYSIWYG-editor** — enkel rich-text på beskrivningsfält (landningssidor för undersökning/invite). Bekräftat scope: bara där man skriver löptext.
 - **Nyhetsbrev med block** (bild/text/CTA-sektioner). Besläktat med WYSIWYG.
-- **Mediaarkiv + bildkomprimering.**
+- ~~Mediaarkiv + bildkomprimering~~ ✅ klart (3j).
 
 ### Öppna trådar
 - **Footer på `mira-invite.html`:** väntar på att Christian laddar upp sin live-version (för att undvika drift). Data finns redan i `/invite/config` (`cfg.footer`).
@@ -194,6 +209,6 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 
 ## 9. Snabb startprompt för nästa session
 
-> "Vi fortsätter på Mira FM:s kommunikations-/undersökningsmodul. Du finner handoff-dokumentet plus alla filer i repo (`Mira-Exchange/`). Senaste filer: index.js, emailer.js, mira-kommunikation-admin.html, mira-undersokning.html. Backend ändras av båda → kolla versionsdrift först. Nästa steg: [mer filtrering i deltagarlistan / bilduppladdning / annan punkt]."
+> "Vi fortsätter på Mira FM:s kommunikations-/undersökningsmodul. Du finner handoff-dokumentet plus alla filer i repo (`Mira-Exchange/`). Senaste filer: index.js, emailer.js, mira-kommunikation-admin.html, mira-undersokning.html. Backend ändras av båda → kolla versionsdrift först. v1.0 är klar — nästa steg: [mer filtrering i deltagarlistan / WYSIWYG / nyhetsbrev med block / annan punkt]."
 
-*Senast uppdaterad 2026-06-08: taggar, dubblettkoll, unsubscribe, avprickningsvy tillagda.*
+*Senast uppdaterad 2026-06-08: v1.0 klar — taggar, dubblettkoll, unsubscribe, avprickning (inbyggd + fristående), mediaarkiv, karta + video.*

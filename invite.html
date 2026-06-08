@@ -55,6 +55,9 @@
   .mp-fact { display: grid; grid-template-columns: 116px 1fr; gap: 12px; background: var(--bg-soft); padding: 14px 16px; }
   .mp-fact dt { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-dim); font-weight: 600; }
   .mp-fact dd { margin: 0; font-size: 15px; color: var(--ink); }
+  .mp-media { position: relative; width: 100%; padding-top: 56.25%; margin: 0 0 24px; border-radius: 12px; overflow: hidden; background: var(--bg-soft); }
+  .mp-media iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .mp-map { padding-top: 0; height: 260px; }
 
   /* card */
   .mp-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px 24px; }
@@ -163,7 +166,11 @@
       <h1 id="mp-title" class="mp-title"></h1>
       <p id="mp-desc" class="mp-desc mp-hidden"></p>
 
+      <div id="mp-video" class="mp-media mp-hidden"></div>
+
       <dl id="mp-facts" class="mp-facts"></dl>
+
+      <div id="mp-map" class="mp-media mp-map mp-hidden"></div>
 
       <!-- FORMULÄR -->
       <div id="mp-form-card" class="mp-card">
@@ -298,6 +305,13 @@ function render(){
   $("mp-facts").innerHTML = facts.map(([k,v]) =>
     `<div class="mp-fact"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
   if (!facts.length) hide("mp-facts");
+
+  // video (Vimeo/YouTube)
+  const vsrc = videoEmbedSrc(ev.video_url);
+  if (vsrc){ $("mp-video").innerHTML = `<iframe src="${esc(vsrc)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen loading="lazy"></iframe>`; show("mp-video"); }
+
+  // karta (nyckel-fri Google Maps-embed via adress)
+  if (ev.address){ $("mp-map").innerHTML = `<iframe src="https://maps.google.com/maps?q=${encodeURIComponent(ev.address)}&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`; show("mp-map"); }
 
   show("mp-main");
 
@@ -519,6 +533,15 @@ function done(coming){
 }
 
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
+
+// Vimeo/YouTube-länk → embed-src. Okänt format → "".
+function videoEmbedSrc(url){
+  url = String(url||"").trim(); if(!url) return "";
+  let m;
+  if ((m = url.match(/youtu\.be\/([\w-]{6,})/)) || (m = url.match(/[?&]v=([\w-]{6,})/)) || (m = url.match(/youtube\.com\/embed\/([\w-]{6,})/))) return "https://www.youtube.com/embed/" + m[1];
+  if ((m = url.match(/vimeo\.com\/(?:video\/)?(\d+)/)) || (m = url.match(/player\.vimeo\.com\/video\/(\d+)/))) return "https://player.vimeo.com/video/" + m[1];
+  return "";
+}
 
 load();
 </script>
