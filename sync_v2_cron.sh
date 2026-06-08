@@ -31,6 +31,9 @@ ORDERS_ENABLED="${SYNC_V2_ORDERS:-0}"   # 9e feature-flag (off by default)
 FE="1771579463578x385222043661358460"      # Food & Event
 STAFF="1771579472595x998707043537409700"   # Staff
 # HK/Tengella körs via source tengella-invoice (connection sätts i adaptern)
+TENGELLA_ORGNO="${TENGELLA_ORGNO:-746-0509}"   # Tengella-tenant (för kund-synk)
+CUST_DAYS="${CUST_DAYS:-${MODIFIED_DAYS_BACK:-3}}"  # lastmodified-fönster för kund-synk
+CUST_PAGES="${CUST_PAGES:-3}"                       # max sidor/kund-synk (inkrementell → litet)
 
 post() {  # $1=path  $2=json
   # Resilient: ett hängt/trasigt anrop får INTE döda hela körningen (set -e). Logga och
@@ -58,6 +61,24 @@ order_offer_weekly() {
     post /sync/v2/fortnox-offer "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$to\",\"throttleMs\":250}"
     d="$(date -u -d "$d +7 days" +%F)"
   done
+}
+
+# ── ClientCompany-grund: kund-synk (orgnr → FortnoxCustomer/TengellaCustomer + ensure
+#    ClientCompany) + reconcile av linked_company-länken på dokumenten. Gör systemet
+#    SJÄLVLÄKANDE: ny/städad grunddata i Fortnox/Tengella → bryggor + dokument-länk
+#    uppdateras automatiskt. Ersätter de gamla (suspenderade) fortnox_cron_v1/
+#    tengella_cron-kundstegen UTAN att dra med deras gamla order/offer-synk (krockar v2).
+reconcile_clientcompany() {
+  echo "[sync_v2] CLIENTCOMPANY reconcile @ $(date -u +%FT%TZ)"
+  # 1) Inkrementell Fortnox-kundsynk (bara nya/ändrade via lastmodified) → FortnoxCustomer + CC + linked_company
+  post /fortnox/upsert/customers/all "{\"connection_id\":\"$FE\",\"days_back\":$CUST_DAYS,\"max_pages\":$CUST_PAGES,\"limit\":100,\"pause_ms\":150}"
+  post /fortnox/upsert/customers/all "{\"connection_id\":\"$STAFF\",\"days_back\":$CUST_DAYS,\"max_pages\":$CUST_PAGES,\"limit\":100,\"pause_ms\":150}"
+  # 2) Tengella-kunder (119 totalt → full synk billig; matchar/sätter company-länk)
+  post /tengella/customers/sync "{\"orgNo\":\"$TENGELLA_ORGNO\"}"
+  # 3) Fyll customer→ClientCompany-bryggan för kunder med orgnr men tom länk (båda källor)
+  post /sync/v2-linkcustomer "{\"mode\":\"write\",\"target\":\"both\"}"
+  # 4) Propagera linked_company ut på dokumenten (fångar noop-hoppade historiska docs)
+  post /sync/v2-linkcompany/all "{\"mode\":\"write\"}"
 }
 
 if [ "$MODE" = "pdf" ]; then
@@ -107,5 +128,10 @@ else
     post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\",\"throttleMs\":250}"
   fi
 fi
+
+# Självläkande kund/ClientCompany-reconcile — körs för både nightly och full (ej pdf,
+# som exitar ovan). Idempotent: vid steady state noop. Sist så dagens nya dokument
+# (synkade ovan) hinner få sin länk om kunden just synkats in.
+reconcile_clientcompany
 
 echo "[sync_v2] klart @ $(date -u +%FT%TZ)"

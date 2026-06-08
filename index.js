@@ -1872,13 +1872,20 @@ app.post("/fortnox/connection/refresh", async (req, res) => {
 // Fortnox: sync customers (Render-first, read-only)
 app.post("/fortnox/sync/customers", async (req, res) => {
   try {
-    const { connection_id, page = 1, limit = 100 } = req.body || {};
+    const { connection_id, page = 1, limit = 100, days_back = null, lastmodified = null } = req.body || {};
     if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
 
     const tok = await ensureFortnoxAccessToken(connection_id);
     if (!tok?.ok || !tok?.access_token) return res.status(401).json(tok || { ok: false, error: "Token error" });
 
-    const r = await fortnoxGet("/customers", tok.access_token, { page, limit });
+    // Inkrementell: lastmodified-filter (days_back → fönster) så vi bara drar NYA/ändrade
+    // kunder. Utan filter drar Fortnox ALLA → tungt och 502:ar vid full backfill.
+    let lm = lastmodified ? String(lastmodified).trim() : "";
+    if (!lm && days_back != null && Number.isFinite(Number(days_back))) {
+      const d = new Date(); d.setUTCDate(d.getUTCDate() - Number(days_back));
+      lm = fmtFortnoxLastModifiedUtc(d);
+    }
+    const r = await fortnoxGet("/customers", tok.access_token, { page, limit, ...(lm ? { lastmodified: lm } : {}) });
 
     if (!r?.ok) {
       return res.status(r?.status || 502).json({
@@ -2373,7 +2380,9 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
     page = 1,
     limit = 100,
     skip_without_orgnr = true,
-    link_company = true
+    link_company = true,
+    days_back = null,
+    lastmodified = null
   } = req.body || {};
 
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
@@ -2388,7 +2397,7 @@ app.post("/fortnox/upsert/customers", requireApiKey, async (req, res) => {
         "Content-Type": "application/json",
         "x-api-key": process.env.MIRA_RENDER_API_KEY
       },
-      body: JSON.stringify({ connection_id, page, limit })
+      body: JSON.stringify({ connection_id, page, limit, days_back, lastmodified })
     });
 
     const j = await r.json().catch(() => ({}));
@@ -2492,7 +2501,9 @@ app.post("/fortnox/upsert/customers/all", requireApiKey, async (req, res) => {
     max_pages = 10,
     pause_ms = 0,
     skip_without_orgnr = true,
-    link_company = true
+    link_company = true,
+    days_back = null,
+    lastmodified = null
   } = req.body || {};
 
   if (!connection_id) return res.status(400).json({ ok: false, error: "Missing connection_id" });
@@ -2520,7 +2531,9 @@ app.post("/fortnox/upsert/customers/all", requireApiKey, async (req, res) => {
           page,
           limit: lim,
           skip_without_orgnr,
-          link_company
+          link_company,
+          days_back,
+          lastmodified
         })
       });
 
