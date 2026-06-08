@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Undersökning</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #1a1f33;
+    color: #e8eaf0;
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  .wrap {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  .card {
+    background: #232841;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,.3);
+  }
+  .header {
+    padding: 28px 32px 0;
+  }
+  .logo {
+    max-width: 140px;
+    max-height: 48px;
+    object-fit: contain;
+    margin-bottom: 12px;
+  }
+  .accent-bar { height: 4px; background: var(--accent, #df6f39); }
+  .hero {
+    width: 100%;
+    aspect-ratio: 16/9;
+    object-fit: cover;
+    background: #1a1f33;
+    margin: 20px 0 0;
+    display: block;
+  }
+  .body { padding: 28px 32px; }
+  .tag {
+    display: inline-block;
+    padding: 5px 12px;
+    background: var(--accent, #df6f39);
+    color: #fff;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 600;
+    color: #e8eaf0;
+    line-height: 1.25;
+    letter-spacing: -.3px;
+    margin: 0 0 12px;
+  }
+  .lead {
+    color: #c0c4d6;
+    font-size: 15px;
+    line-height: 1.65;
+    margin-bottom: 28px;
+    white-space: pre-wrap;
+  }
+  .question {
+    margin: 0 0 24px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(255,255,255,.06);
+  }
+  .question:first-child { border-top: none; padding-top: 0; }
+  .sv-section { margin: 14px 0 4px; padding-top: 20px; border-top: 2px solid var(--accent, #df6f39); }
+  .sv-section:first-child { border-top: none; padding-top: 0; }
+  .sv-section h2 { font-size: 17px; font-weight: 700; color: var(--accent, #df6f39); letter-spacing: .02em; margin: 0; }
+  .sv-anon-note { background: rgba(223,111,57,.1); border: 1px solid rgba(223,111,57,.3); border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #c0c4d6; line-height: 1.55; margin-bottom: 22px; }
+  .sv-anon-note b { color: #e8eaf0; }
+  .q-anon { font-size: 11px; font-weight: 600; color: var(--accent, #df6f39); background: rgba(223,111,57,.12); padding: 2px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
+  .q-label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: #e8eaf0;
+    margin: 0 0 10px;
+    line-height: 1.4;
+  }
+  .q-label .req { color: var(--accent, #df6f39); margin-left: 3px; }
+  .q-help {
+    font-size: 12px;
+    color: #8892aa;
+    margin: -6px 0 10px;
+  }
+  input[type="text"], input[type="email"], input[type="number"], input[type="date"], textarea, select {
+    width: 100%;
+    padding: 12px 14px;
+    background: #1a1f33;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px;
+    color: #e8eaf0;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color .15s;
+  }
+  input[type="text"]:focus, input[type="email"]:focus, input[type="number"]:focus,
+  input[type="date"]:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--accent, #df6f39);
+  }
+  textarea { min-height: 96px; resize: vertical; }
+  select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238892aa' d='M6 8L0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
+  .checks { display: flex; flex-direction: column; gap: 10px; }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: #1a1f33;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: border-color .15s;
+  }
+  .check:hover { border-color: rgba(255,255,255,.2); }
+  .check.on { border-color: var(--accent, #df6f39); background: rgba(223,111,57,.08); }
+  .check input { accent-color: var(--accent, #df6f39); margin: 0; }
+  .stars {
+    display: flex;
+    gap: 6px;
+  }
+  .star {
+    width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    background: #1a1f33;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    color: #8892aa;
+    transition: all .15s;
+    user-select: none;
+  }
+  .star:hover { border-color: var(--accent, #df6f39); }
+  .star.on { background: var(--accent, #df6f39); border-color: var(--accent, #df6f39); color: #fff; }
+  .scale {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .scale-btn {
+    flex: 1 1 0;
+    min-width: 36px;
+    padding: 10px 4px;
+    background: #1a1f33;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: #c0c4d6;
+    text-align: center;
+    transition: all .15s;
+    user-select: none;
+  }
+  .scale-btn:hover { border-color: var(--accent, #df6f39); }
+  .scale-btn.on { background: var(--accent, #df6f39); border-color: var(--accent, #df6f39); color: #fff; }
+  .scale-legend {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #8892aa;
+    margin-top: 6px;
+    padding: 0 2px;
+  }
+  .yesno {
+    display: flex;
+    gap: 10px;
+  }
+  .yn {
+    flex: 1;
+    padding: 14px;
+    background: #1a1f33;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    transition: all .15s;
+    user-select: none;
+  }
+  .yn:hover { border-color: rgba(255,255,255,.25); }
+  .yn.on { background: var(--accent, #df6f39); border-color: var(--accent, #df6f39); color: #fff; }
+  .submit-area {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255,255,255,.08);
+  }
+  .submit {
+    width: 100%;
+    padding: 14px 24px;
+    background: var(--accent, #df6f39);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: filter .15s, transform .05s;
+    font-family: inherit;
+  }
+  .submit:hover:not(:disabled) { filter: brightness(1.08); }
+  .submit:active:not(:disabled) { transform: scale(.98); }
+  .submit:disabled { opacity: .5; cursor: not-allowed; }
+  .err {
+    color: #ff6b6b;
+    background: rgba(255,107,107,.08);
+    padding: 12px 14px;
+    border-radius: 8px;
+    margin: 16px 0 0;
+    font-size: 13px;
+    display: none;
+  }
+  .err.on { display: block; }
+  .footer-note {
+    text-align: center;
+    padding: 18px 32px 28px;
+    color: #8892aa;
+    font-size: 12px;
+    border-top: 1px solid rgba(255,255,255,.04);
+  }
+  .footer-note .mira-tag { color: var(--accent, #df6f39); font-weight: 600; }
+  .state-msg {
+    padding: 60px 32px;
+    text-align: center;
+  }
+  .state-msg .icon {
+    width: 72px; height: 72px;
+    margin: 0 auto 18px;
+    background: var(--accent, #df6f39);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px;
+    color: #fff;
+  }
+  .state-msg h2 {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    color: #e8eaf0;
+  }
+  .state-msg p {
+    color: #c0c4d6;
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .loading {
+    padding: 80px 32px;
+    text-align: center;
+    color: #8892aa;
+    font-size: 14px;
+  }
+  @media (max-width: 480px) {
+    .body { padding: 24px 20px; }
+    .header { padding: 24px 20px 0; }
+    .footer-note { padding: 16px 20px 24px; }
+    h1 { font-size: 22px; }
+    .star { width: 32px; height: 32px; font-size: 16px; }
+    .scale-btn { padding: 8px 2px; min-width: 30px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="accent-bar" id="accent-bar"></div>
+    <div id="content">
+      <div class="loading">Laddar undersökning…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Config ──────────────────────────────────────────────
+  // Justera om din backend ligger på en annan URL
+  var API_BASE = "https://mira-exchange.onrender.com";
+
+  // ── Query-params ────────────────────────────────────────
+  var qs = new URLSearchParams(location.search);
+  var guestToken = qs.get('g') || '';
+  var invToken = qs.get('t') || '';
+  var content = document.getElementById('content');
+  var card = document.getElementById('card');
+  var accentBar = document.getElementById('accent-bar');
+
+  if (!guestToken && !invToken) {
+    return showState('error', 'Ogiltig länk', 'Länken saknar identifierare. Vänligen kontrollera mejlet du fick.');
+  }
+
+  // ── Fetch config ────────────────────────────────────────
+  var params = guestToken ? ('g=' + encodeURIComponent(guestToken)) : ('t=' + encodeURIComponent(invToken));
+  fetch(API_BASE + '/invite/config?' + params)
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+    .then(function (resp) {
+      if (!resp.ok || !resp.body || resp.body.ok === false) {
+        var err = resp.body && resp.body.error;
+        if (err === 'guest_not_found' || err === 'invitation_not_found') {
+          return showState('error', 'Hittades inte', 'Vi kunde inte hitta undersökningen. Kontrollera att länken är korrekt.');
+        }
+        if (err === 'inactive') {
+          return showState('error', 'Undersökningen är stängd', 'Den här undersökningen tar inte emot fler svar.');
+        }
+        return showState('error', 'Ett fel uppstod', err || 'Försök igen om en stund.');
+      }
+      renderSurvey(resp.body);
+    })
+    .catch(function (e) {
+      showState('error', 'Anslutningsfel', 'Vi kunde inte ladda undersökningen. Försök igen om en stund.');
+    });
+
+  // ── Render ──────────────────────────────────────────────
+  function renderSurvey(cfg) {
+    if (cfg.kind && cfg.kind !== 'survey') {
+      return showState('error', 'Fel typ av länk', 'Den här länken leder till en ' + (cfg.kind === 'news' ? 'nyhet' : 'inbjudan') + ', inte en undersökning.');
+    }
+    var accent = (cfg.brand && cfg.brand.accent_color) || '#df6f39';
+    document.documentElement.style.setProperty('--accent', accent);
+    accentBar.style.background = accent;
+
+    // Stängd: inaktiverad manuellt eller efter slutdatum
+    if (cfg.active === false || cfg.deadline_passed === true) {
+      return showState('closed', 'Undersökningen är stängd', 'Tack för ditt intresse — den här undersökningen tar tyvärr inte emot fler svar.');
+    }
+
+    // Om gästen redan har svarat — visa tack
+    if (cfg.guest && cfg.guest.responses && Object.keys(cfg.guest.responses).length > 0 && cfg.guest.rsvp_status === 'yes') {
+      return showThanks(cfg, true);
+    }
+
+    var schema = Array.isArray(cfg.form_schema) ? cfg.form_schema : [];
+    if (!schema.length) {
+      return showState('error', 'Ingen fråga ställd', 'Den här undersökningen har inga frågor konfigurerade ännu.');
+    }
+
+    var html = '';
+    // Header
+    html += '<div class="header">';
+    if (cfg.brand && cfg.brand.logo_url) {
+      html += '<img class="logo" src="' + esc(cfg.brand.logo_url) + '" alt="">';
+    }
+    html += '</div>';
+    if (cfg.event && cfg.event.image_url) {
+      html += '<img class="hero" src="' + esc(cfg.event.image_url) + '" alt="">';
+    }
+    html += '<div class="body">';
+    html += '<span class="tag">Undersökning</span>';
+    html += '<h1>' + esc(cfg.event.title || 'Undersökning') + '</h1>';
+    if (cfg.event.description) {
+      html += '<div class="lead">' + esc(cfg.event.description) + '</div>';
+    }
+    if (cfg.anonymous) {
+      html += '<div class="sv-anon-note">🔒 <b>Dina svar är anonyma.</b> Svaren lagras helt frikopplat från dig — det går inte att se vem som svarat vad.</div>';
+    }
+    html += '<form id="survey-form" novalidate>';
+
+    // Render varje fråga
+    schema.forEach(function (q, i) {
+      html += renderQuestion(q, i, cfg.guest && cfg.guest.responses, cfg.anonymous);
+    });
+
+    html += '<div class="submit-area">';
+    html += '<div class="err" id="err"></div>';
+    html += '<button type="submit" class="submit" id="submit">Skicka in svar</button>';
+    html += '</div>';
+    html += '</form>';
+    html += '</div>';
+    html += '<div class="footer-note">Drivs av <span class="mira-tag">Mira FM</span></div>';
+
+    content.innerHTML = html;
+    wireForm(cfg);
+  }
+
+  function renderQuestion(q, i, savedResponses, surveyAnon) {
+    var qid = q.id || ('q' + i);
+    // Sektion/rubrik: ingen fråga, bara en rubrik som delar upp formuläret
+    if (String(q.type || '').toLowerCase() === 'section') {
+      return '<div class="sv-section"><h2>' + esc(q.label || '') + '</h2></div>';
+    }
+    var saved = savedResponses && savedResponses[qid];
+    var req = q.required ? '<span class="req">*</span>' : '';
+    var anonTag = (q.anonymous && !surveyAnon) ? ' <span class="q-anon">🔒 anonym</span>' : '';
+    var label = '<label class="q-label">' + esc(q.label || 'Fråga ' + (i + 1)) + req + anonTag + '</label>';
+    var help = q.help ? '<div class="q-help">' + esc(q.help) + '</div>' : '';
+    var control = '';
+
+    switch (String(q.type || 'text').toLowerCase()) {
+      case 'text':
+        control = '<input type="text" name="' + qid + '" data-qid="' + qid + '" placeholder="' + esc(q.placeholder || '') + '" value="' + esc(saved || '') + '">';
+        break;
+      case 'textarea':
+        control = '<textarea name="' + qid + '" data-qid="' + qid + '" placeholder="' + esc(q.placeholder || '') + '">' + esc(saved || '') + '</textarea>';
+        break;
+      case 'email':
+        control = '<input type="email" name="' + qid + '" data-qid="' + qid + '" placeholder="' + esc(q.placeholder || 'din@email.se') + '" value="' + esc(saved || '') + '">';
+        break;
+      case 'number':
+        control = '<input type="number" name="' + qid + '" data-qid="' + qid + '" placeholder="' + esc(q.placeholder || '') + '" value="' + esc(saved || '') + '"' + (q.min != null ? ' min="' + q.min + '"' : '') + (q.max != null ? ' max="' + q.max + '"' : '') + '>';
+        break;
+      case 'date':
+        control = '<input type="date" name="' + qid + '" data-qid="' + qid + '" value="' + esc(saved || '') + '">';
+        break;
+      case 'select':
+        control = '<select name="' + qid + '" data-qid="' + qid + '"><option value="">– Välj –</option>';
+        (q.options || []).forEach(function (opt) {
+          var sel = (saved === opt) ? ' selected' : '';
+          control += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+        });
+        control += '</select>';
+        break;
+      case 'multiselect':
+      case 'checkboxes':
+        control = '<div class="checks" data-qid="' + qid + '" data-type="multi">';
+        var savedArr = Array.isArray(saved) ? saved : [];
+        (q.options || []).forEach(function (opt) {
+          var on = savedArr.indexOf(opt) >= 0;
+          control += '<label class="check' + (on ? ' on' : '') + '"><input type="checkbox" value="' + esc(opt) + '"' + (on ? ' checked' : '') + '><span>' + esc(opt) + '</span></label>';
+        });
+        control += '</div>';
+        break;
+      case 'rating':
+        var maxR = parseInt(q.max, 10) || 5;
+        control = '<div class="stars" data-qid="' + qid + '" data-type="rating" data-value="' + (saved || '') + '">';
+        for (var r = 1; r <= maxR; r++) {
+          control += '<div class="star' + (saved && r <= Number(saved) ? ' on' : '') + '" data-v="' + r + '">★</div>';
+        }
+        control += '</div>';
+        break;
+      case 'nps':
+      case 'scale':
+        var minS = q.min != null ? parseInt(q.min, 10) : (String(q.type).toLowerCase() === 'nps' ? 0 : 1);
+        var maxS = q.max != null ? parseInt(q.max, 10) : (String(q.type).toLowerCase() === 'nps' ? 10 : 5);
+        control = '<div class="scale" data-qid="' + qid + '" data-type="scale" data-value="' + (saved || '') + '">';
+        for (var s = minS; s <= maxS; s++) {
+          control += '<div class="scale-btn' + (String(saved) === String(s) ? ' on' : '') + '" data-v="' + s + '">' + s + '</div>';
+        }
+        control += '</div>';
+        if (String(q.type).toLowerCase() === 'nps') {
+          control += '<div class="scale-legend"><span>Inte alls troligt</span><span>Mycket troligt</span></div>';
+        } else if (q.scale_low || q.scale_high) {
+          control += '<div class="scale-legend"><span>' + esc(q.scale_low || '') + '</span><span>' + esc(q.scale_high || '') + '</span></div>';
+        }
+        break;
+      case 'yesno':
+        control = '<div class="yesno" data-qid="' + qid + '" data-type="yesno" data-value="' + (saved || '') + '">';
+        control += '<div class="yn' + (saved === 'yes' ? ' on' : '') + '" data-v="yes">Ja</div>';
+        control += '<div class="yn' + (saved === 'no' ? ' on' : '') + '" data-v="no">Nej</div>';
+        control += '</div>';
+        break;
+      default:
+        control = '<input type="text" name="' + qid + '" data-qid="' + qid + '" value="' + esc(saved || '') + '">';
+    }
+
+    return '<div class="question">' + label + help + control + '</div>';
+  }
+
+  function wireForm(cfg) {
+    var form = document.getElementById('survey-form');
+
+    // Multi-select toggles
+    form.querySelectorAll('[data-type="multi"] .check').forEach(function (lbl) {
+      var cb = lbl.querySelector('input');
+      cb.addEventListener('change', function () {
+        lbl.classList.toggle('on', cb.checked);
+      });
+    });
+
+    // Stars
+    form.querySelectorAll('[data-type="rating"]').forEach(function (box) {
+      box.querySelectorAll('.star').forEach(function (s) {
+        s.addEventListener('click', function () {
+          var v = Number(s.getAttribute('data-v'));
+          box.setAttribute('data-value', String(v));
+          box.querySelectorAll('.star').forEach(function (s2) {
+            s2.classList.toggle('on', Number(s2.getAttribute('data-v')) <= v);
+          });
+        });
+      });
+    });
+
+    // Scale (nps/scale)
+    form.querySelectorAll('[data-type="scale"]').forEach(function (box) {
+      box.querySelectorAll('.scale-btn').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var v = b.getAttribute('data-v');
+          box.setAttribute('data-value', v);
+          box.querySelectorAll('.scale-btn').forEach(function (b2) {
+            b2.classList.toggle('on', b2.getAttribute('data-v') === v);
+          });
+        });
+      });
+    });
+
+    // Yes/No
+    form.querySelectorAll('[data-type="yesno"]').forEach(function (box) {
+      box.querySelectorAll('.yn').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var v = b.getAttribute('data-v');
+          box.setAttribute('data-value', v);
+          box.querySelectorAll('.yn').forEach(function (b2) {
+            b2.classList.toggle('on', b2.getAttribute('data-v') === v);
+          });
+        });
+      });
+    });
+
+    // Submit
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      submitSurvey(cfg);
+    });
+  }
+
+  function collectResponses() {
+    var responses = {};
+    var schema = (window.__SCHEMA__ || []);
+    document.querySelectorAll('#survey-form [data-qid]').forEach(function (el) {
+      var qid = el.getAttribute('data-qid');
+      var type = el.getAttribute('data-type');
+      if (type === 'multi') {
+        var arr = [];
+        el.querySelectorAll('input[type="checkbox"]:checked').forEach(function (cb) {
+          arr.push(cb.value);
+        });
+        responses[qid] = arr;
+      } else if (type === 'rating' || type === 'scale' || type === 'yesno') {
+        var v = el.getAttribute('data-value');
+        if (v !== '' && v != null) {
+          responses[qid] = (type === 'yesno') ? v : Number(v);
+        }
+      } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+        var val = String(el.value || '').trim();
+        if (val !== '') responses[qid] = val;
+      }
+    });
+    return responses;
+  }
+
+  function validateSchema(cfg, responses) {
+    var schema = Array.isArray(cfg.form_schema) ? cfg.form_schema : [];
+    for (var i = 0; i < schema.length; i++) {
+      var q = schema[i];
+      if (String(q.type || '').toLowerCase() === 'section') continue;
+      if (!q.required) continue;
+      var qid = q.id || ('q' + i);
+      var v = responses[qid];
+      if (v == null || v === '' || (Array.isArray(v) && !v.length)) {
+        return 'Fyll i frågan: "' + (q.label || ('Fråga ' + (i + 1))) + '"';
+      }
+      if (String(q.type || '').toLowerCase() === 'email' && !/^\S+@\S+\.\S+$/.test(String(v))) {
+        return 'Ogiltig e-postadress för: "' + (q.label || ('Fråga ' + (i + 1))) + '"';
+      }
+    }
+    return null;
+  }
+
+  function submitSurvey(cfg) {
+    var responses = collectResponses();
+    var errMsg = validateSchema(cfg, responses);
+    var errBox = document.getElementById('err');
+    if (errMsg) {
+      errBox.textContent = errMsg;
+      errBox.classList.add('on');
+      errBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    errBox.classList.remove('on');
+
+    var btn = document.getElementById('submit');
+    btn.disabled = true;
+    btn.textContent = 'Skickar…';
+
+    var body = {
+      responses: responses,
+      rsvp_status: 'yes'  // backend behandlar som survey-submit baserat på inv.kind
+    };
+    if (guestToken) body.g = guestToken;
+    if (invToken) body.t = invToken;
+
+    fetch(API_BASE + '/invite/rsvp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (resp) {
+        if (!resp.ok || !resp.body || resp.body.ok === false) {
+          errBox.textContent = 'Kunde inte spara svaret: ' + ((resp.body && resp.body.error) || 'okänt fel');
+          errBox.classList.add('on');
+          btn.disabled = false;
+          btn.textContent = 'Skicka in svar';
+          return;
+        }
+        showThanks(cfg, false);
+      })
+      .catch(function () {
+        errBox.textContent = 'Anslutningsfel. Försök igen om en stund.';
+        errBox.classList.add('on');
+        btn.disabled = false;
+        btn.textContent = 'Skicka in svar';
+      });
+  }
+
+  function showThanks(cfg, alreadyAnswered) {
+    var html = '<div class="state-msg">';
+    html += '<div class="icon">✓</div>';
+    html += '<h2>' + (alreadyAnswered ? 'Du har redan svarat' : 'Tack för ditt svar!') + '</h2>';
+    html += '<p>' + (alreadyAnswered ? 'Vi har registrerat dina svar. Behöver du ändra något, kontakta avsändaren.' : 'Vi har registrerat dina svar och uppskattar att du tog dig tid.') + '</p>';
+    html += '</div>';
+    html += '<div class="footer-note">Drivs av <span class="mira-tag">Mira FM</span></div>';
+    content.innerHTML = html;
+  }
+
+  function showState(type, title, msg) {
+    var html = '<div class="state-msg">';
+    html += '<div class="icon" style="background:#5a6480">!</div>';
+    html += '<h2>' + esc(title) + '</h2>';
+    html += '<p>' + esc(msg) + '</p>';
+    html += '</div>';
+    content.innerHTML = html;
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+})();
+</script>
+</body>
+</html>
