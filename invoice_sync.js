@@ -1195,8 +1195,11 @@ export function createSyncEngine(deps) {
       total:       custList.length,
       noCustomer:  custList.filter((c) => c.reason === "no_customer").length,
       noLink:      custList.filter((c) => c.reason === "no_link").length,
-      top:         custList.slice(0, 50),   // alla distinkta kunder, mest-drabbade först (cap 50)
+      top:         custList.slice(0, 50),   // mest-drabbade först (cap 50 för payload)
     };
+    // FULLA distinkt-nycklarna (lättviktiga) för korrekt global dedup — strippas
+    // innan retur så payloaden inte sväller.
+    report._allCust = custList.map((c) => ({ key: `${c.conn}|${c.cust}`, reason: c.reason, docs: c.docs }));
 
     return report;
   }
@@ -1227,14 +1230,14 @@ export function createSyncEngine(deps) {
     }, { scanned: 0, writes: 0 });
 
     // Distinkta unresolved-kunder ÖVER alla typer (samma kund kan ligga bakom både
-    // order- och offert-dokument → räkna unikt på conn|cust).
+    // order- och offert-dokument → räkna unikt på conn|cust). Aggregera från de
+    // FULLA nyckellistorna (_allCust), inte top-50.
     const globalCust = new Map();
     for (const t of types) {
-      for (const c of (t.unresolvedCustomers?.top || [])) {
-        const key = `${c.conn}|${c.cust}`;
-        const e = globalCust.get(key);
+      for (const c of (t._allCust || [])) {
+        const e = globalCust.get(c.key);
         if (e) e.docs += c.docs;
-        else globalCust.set(key, { ...c });
+        else globalCust.set(c.key, { reason: c.reason, docs: c.docs });
       }
     }
     const globalList = [...globalCust.values()];
@@ -1244,6 +1247,8 @@ export function createSyncEngine(deps) {
       noLink:     globalList.filter((c) => c.reason === "no_link").length,
       note: "distinkta över alla typer; per-typ-listor (top 50) finns i types[].unresolvedCustomers",
     };
+
+    for (const t of types) delete t._allCust;   // strippa innan retur (håll payload lätt)
 
     return {
       mode, overwrite, connection_id, onlyMissing,
