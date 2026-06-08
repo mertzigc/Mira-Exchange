@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inbjudan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ───────── Inbäddningsvänligt: allt scopas under .mira-portal ───────── */
+  .mira-portal {
+    --bg: #0f1b2d;
+    --bg-soft: #16263d;
+    --card: #1b2e49;
+    --line: rgba(255,255,255,.10);
+    --ink: #eaf0f8;
+    --ink-soft: #a9b8cc;
+    --ink-dim: #7488a3;
+    --accent: #2bb6a3;            /* sätts dynamiskt från config */
+    --accent-ink: #06241f;
+    --danger: #e2655a;
+    --radius: 18px;
+    --maxw: 680px;
+
+    position: relative;
+    min-height: 100%;
+    font-family: "Hanken Grotesk", system-ui, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(43,182,163,.14), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(223,111,57,.10), transparent 55%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+    box-sizing: border-box;
+  }
+  .mira-portal *, .mira-portal *::before, .mira-portal *::after { box-sizing: border-box; }
+
+  .mp-wrap { max-width: var(--maxw); margin: 0 auto; padding: 28px 20px 96px; }
+
+  /* topbar / brand */
+  .mp-top { display: flex; align-items: center; gap: 14px; padding: 6px 2px 22px; }
+  .mp-logo { height: 40px; max-width: 180px; object-fit: contain; }
+  .mp-logo-fallback { font-family: "Fraunces", serif; font-size: 22px; font-weight: 600; letter-spacing: .2px; }
+
+  /* hero */
+  .mp-hero-img { width: 100%; aspect-ratio: 16/7; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); margin-bottom: 22px; background: var(--bg-soft); }
+  .mp-eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 0 0 12px; }
+  .mp-eyebrow::before { content: ""; width: 22px; height: 1px; background: var(--accent); display: inline-block; }
+  h1.mp-title { font-family: "Fraunces", serif; font-weight: 600; font-size: clamp(28px, 5vw, 40px); line-height: 1.08; margin: 0 0 14px; letter-spacing: -.01em; }
+  .mp-desc { font-size: 16px; line-height: 1.65; color: var(--ink-soft); margin: 0 0 24px; white-space: pre-line; }
+
+  /* fakta-rader */
+  .mp-facts { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 0 0 28px; }
+  .mp-fact { display: grid; grid-template-columns: 116px 1fr; gap: 12px; background: var(--bg-soft); padding: 14px 16px; }
+  .mp-fact dt { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-dim); font-weight: 600; }
+  .mp-fact dd { margin: 0; font-size: 15px; color: var(--ink); }
+
+  /* card */
+  .mp-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px 24px; }
+  .mp-card h2 { font-family: "Fraunces", serif; font-weight: 600; font-size: 22px; margin: 0 0 4px; }
+  .mp-card .mp-sub { font-size: 14px; color: var(--ink-soft); margin: 0 0 22px; }
+
+  .mp-field { margin: 0 0 20px; }
+  .mp-label { display: block; font-size: 14px; font-weight: 600; margin: 0 0 9px; color: var(--ink); }
+  .mp-req { color: var(--accent); }
+  .mp-input, .mp-textarea, .mp-select {
+    width: 100%; background: var(--bg-soft); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 11px; padding: 12px 14px; font: inherit; font-size: 15px; outline: none; transition: border-color .15s, box-shadow .15s;
+  }
+  .mp-textarea { min-height: 92px; resize: vertical; }
+  .mp-input:focus, .mp-textarea:focus, .mp-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .mp-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23a9b8cc' d='M6 8 0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 38px; }
+
+  /* attending toggle */
+  .mp-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .mp-toggle button {
+    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+    background: var(--bg-soft); color: var(--ink); border: 1.5px solid var(--line);
+    border-radius: 12px; padding: 14px 12px; transition: all .15s;
+  }
+  .mp-toggle button .mp-tg-sub { display: block; font-weight: 400; font-size: 12px; color: var(--ink-dim); margin-top: 3px; }
+  .mp-toggle button[aria-pressed="true"][data-val="yes"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-soft)); }
+  .mp-toggle button[aria-pressed="true"][data-val="no"]  { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--bg-soft)); }
+
+  /* stepper */
+  .mp-stepper { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; background: var(--bg-soft); }
+  .mp-stepper button { font: inherit; width: 44px; height: 46px; font-size: 20px; background: transparent; color: var(--ink); border: none; cursor: pointer; }
+  .mp-stepper button:hover { background: rgba(255,255,255,.06); }
+  .mp-stepper span { min-width: 48px; text-align: center; font-size: 16px; font-weight: 600; }
+
+  /* allergener */
+  .mp-allergens { display: flex; flex-wrap: wrap; gap: 8px; }
+  .mp-chip {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    background: var(--bg-soft); border: 1.5px solid var(--line); color: var(--ink-soft);
+    border-radius: 999px; padding: 8px 14px; font-size: 13.5px; font-weight: 500; transition: all .15s;
+  }
+  .mp-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mp-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 14%, var(--bg-soft)); }
+  .mp-chip .mp-chip-step { display: none; align-items: center; gap: 6px; margin-left: 2px; }
+  .mp-chip[aria-pressed="true"] .mp-chip-step { display: inline-flex; }
+  .mp-chip .mp-chip-step button { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; font-size: 14px; line-height: 1; }
+  .mp-chip .mp-chip-step button:hover { background: rgba(255,255,255,.08); }
+  .mp-chip .mp-chip-step b { min-width: 16px; text-align: center; font-weight: 700; }
+
+  /* submit */
+  .mp-actions { margin-top: 26px; }
+  .mp-btn {
+    width: 100%; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); border: none; border-radius: 12px; padding: 15px; transition: transform .08s, filter .15s;
+  }
+  .mp-btn:hover { filter: brightness(1.06); }
+  .mp-btn:active { transform: translateY(1px); }
+  .mp-btn[disabled] { opacity: .55; cursor: not-allowed; }
+
+  .mp-note { font-size: 13px; color: var(--ink-dim); text-align: center; margin: 14px 0 0; }
+
+  /* states */
+  .mp-state { text-align: center; padding: 60px 20px; }
+  .mp-state .mp-ic { font-size: 40px; margin-bottom: 14px; }
+  .mp-state h2 { font-family: "Fraunces", serif; font-weight: 600; font-size: 26px; margin: 0 0 10px; }
+  .mp-state p { color: var(--ink-soft); font-size: 15px; line-height: 1.6; margin: 0 auto; max-width: 420px; }
+
+  .mp-hidden { display: none !important; }
+  .mp-honey { position: absolute; left: -9999px; opacity: 0; height: 0; width: 0; }
+
+  .mp-powered { position: fixed; right: 14px; bottom: 12px; font-size: 11px; letter-spacing: .04em; color: #df6f39; opacity: .8; z-index: 5; }
+  .mp-powered b { font-weight: 700; }
+
+  @media (max-width: 520px) {
+    .mp-fact { grid-template-columns: 1fr; gap: 3px; }
+    .mp-toggle { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="mira-portal">
+  <div class="mp-wrap">
+
+    <!-- LADDAR -->
+    <div id="mp-loading" class="mp-state">
+      <div class="mp-ic">✦</div>
+      <p>Hämtar inbjudan…</p>
+    </div>
+
+    <!-- FEL -->
+    <div id="mp-error" class="mp-state mp-hidden">
+      <div class="mp-ic">✕</div>
+      <h2>Inbjudan kunde inte hittas</h2>
+      <p id="mp-error-msg">Länken verkar vara ogiltig eller har upphört. Kontrollera att du använt hela länken från din inbjudan.</p>
+    </div>
+
+    <!-- HUVUDINNEHÅLL -->
+    <div id="mp-main" class="mp-hidden">
+      <div class="mp-top">
+        <img id="mp-logo" class="mp-logo mp-hidden" alt="">
+        <span id="mp-logo-fallback" class="mp-logo-fallback mp-hidden"></span>
+      </div>
+
+      <img id="mp-hero" class="mp-hero-img mp-hidden" alt="">
+      <p id="mp-eyebrow" class="mp-eyebrow">Inbjudan</p>
+      <h1 id="mp-title" class="mp-title"></h1>
+      <p id="mp-desc" class="mp-desc mp-hidden"></p>
+
+      <dl id="mp-facts" class="mp-facts"></dl>
+
+      <!-- FORMULÄR -->
+      <div id="mp-form-card" class="mp-card">
+        <h2 id="mp-form-title">Ditt svar</h2>
+        <p id="mp-form-sub" class="mp-sub">Låt oss veta om du kan komma.</p>
+
+        <!-- kontaktuppgifter: visas bara i öppet läge (?t=), när ingen känd gäst finns -->
+        <div id="mp-contact" class="mp-hidden">
+          <div class="mp-field">
+            <label class="mp-label" for="mp-name">Namn <span class="mp-req">*</span></label>
+            <input type="text" id="mp-name" class="mp-input" autocomplete="name" placeholder="För- och efternamn">
+          </div>
+          <div class="mp-field">
+            <label class="mp-label" for="mp-email">E-post <span class="mp-req">*</span></label>
+            <input type="email" id="mp-email" class="mp-input" autocomplete="email" placeholder="namn@exempel.se">
+          </div>
+        </div>
+
+        <!-- attending -->
+        <div class="mp-field">
+          <label class="mp-label" id="mp-attend-label">Kan du komma? <span class="mp-req">*</span></label>
+          <div class="mp-toggle" id="mp-attend">
+            <button type="button" data-val="yes" aria-pressed="false">Ja, jag kommer<span class="mp-tg-sub">Räkna med mig</span></button>
+            <button type="button" data-val="no" aria-pressed="false">Nej, jag kan inte<span class="mp-tg-sub">Tyvärr inte den här gången</span></button>
+          </div>
+        </div>
+
+        <!-- dynamiska fält (plus_ones / allergener / text / select / yesno) -->
+        <div id="mp-dynamic"></div>
+
+        <!-- honeypot -->
+        <input type="text" id="mp-hp" class="mp-honey" tabindex="-1" autocomplete="off" name="company_website">
+
+        <div class="mp-actions">
+          <button type="button" id="mp-submit" class="mp-btn" disabled>Skicka svar</button>
+          <p class="mp-note" id="mp-deadline-note"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- KLAR -->
+    <div id="mp-done" class="mp-state mp-hidden">
+      <div class="mp-ic" id="mp-done-ic">✓</div>
+      <h2 id="mp-done-title">Tack för ditt svar!</h2>
+      <p id="mp-done-msg"></p>
+    </div>
+
+    <!-- STÄNGD (deadline passerad) -->
+    <div id="mp-closed" class="mp-state mp-hidden">
+      <div class="mp-ic">⏳</div>
+      <h2>Anmälan är stängd</h2>
+      <p>Sista anmälningsdag har passerat. Hör av dig direkt till värden om du har frågor.</p>
+    </div>
+
+  </div>
+  <div class="mp-powered">Powered by <b>Carotte</b></div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+const API_BASE = "https://mira-exchange.onrender.com";   // ← din Render-URL
+// ════════════════════════════════════════════════════════════════════════════
+
+const ALLERGENS = ["Gluten","Skaldjur","Ägg","Fisk","Jordnötter","Sojabönor",
+  "Mjölk/laktos","Nötter","Selleri","Senap","Sesamfrö","Svaveldioxid/sulfit","Lupin","Blötdjur"];
+
+const $ = id => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+const G_TOKEN = (qs.get("g") || "").trim();
+const T_TOKEN = (qs.get("t") || "").trim();
+const OPEN_MODE = !G_TOKEN;   // ?t= (eller ingen g) → öppet läge: kräv namn + e-post
+
+let CFG = null;
+let STATE = { attending: null, plusOnes: 0, allergens: {}, responses: {} };
+
+function show(id){ $(id).classList.remove("mp-hidden"); }
+function hide(id){ $(id).classList.add("mp-hidden"); }
+
+function fmtWhen(start, end){
+  if (!start) return "";
+  const opt = { weekday:"long", day:"numeric", month:"long", hour:"2-digit", minute:"2-digit" };
+  try {
+    const s = new Date(start);
+    let out = s.toLocaleString("sv-SE", opt);
+    if (end){ const e = new Date(end); out += "–" + e.toLocaleTimeString("sv-SE",{hour:"2-digit",minute:"2-digit"}); }
+    return out.charAt(0).toUpperCase() + out.slice(1);
+  } catch { return ""; }
+}
+function fmtDate(d){ try { return new Date(d).toLocaleDateString("sv-SE",{day:"numeric",month:"long",year:"numeric"}); } catch { return ""; } }
+
+async function load(){
+  if (!G_TOKEN && !T_TOKEN){ return fail("Ingen inbjudningslänk angiven."); }
+  try {
+    const url = API_BASE + "/invite/config?" + (G_TOKEN ? "g="+encodeURIComponent(G_TOKEN) : "t="+encodeURIComponent(T_TOKEN));
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!r.ok || !j.ok){ return fail(); }
+    CFG = j;
+    render();
+  } catch(e){ fail(); }
+}
+function fail(msg){
+  hide("mp-loading");
+  if (msg) $("mp-error-msg").textContent = msg;
+  show("mp-error");
+}
+
+function applyAccent(c){ document.querySelector(".mira-portal").style.setProperty("--accent", c || "#2bb6a3"); }
+
+function render(){
+  hide("mp-loading");
+  const b = CFG.brand || {}, ev = CFG.event || {};
+  applyAccent(b.accent_color);
+
+  // brand
+  if (b.logo_url){ $("mp-logo").src = b.logo_url; show("mp-logo"); }
+  else if (b.company_name){ $("mp-logo-fallback").textContent = b.company_name; show("mp-logo-fallback"); }
+
+  // hero
+  if (ev.image_url){ $("mp-hero").src = ev.image_url; show("mp-hero"); }
+  if (b.company_name) $("mp-eyebrow").textContent = "Inbjudan · " + b.company_name;
+  $("mp-title").textContent = ev.title || "Inbjudan";
+  if (ev.description){ $("mp-desc").textContent = ev.description; show("mp-desc"); }
+
+  // fakta
+  const facts = [];
+  const when = fmtWhen(ev.start_date, ev.end_date);
+  if (when) facts.push(["När", when]);
+  if (ev.location_name) facts.push(["Plats", ev.location_name]);
+  if (ev.address) facts.push(["Adress", ev.address]);
+  if (ev.rsvp_deadline) facts.push(["Sista anmälan", fmtDate(ev.rsvp_deadline)]);
+  $("mp-facts").innerHTML = facts.map(([k,v]) =>
+    `<div class="mp-fact"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+  if (!facts.length) hide("mp-facts");
+
+  show("mp-main");
+
+  // deadline passerad → visa info men lås formuläret
+  if (CFG.deadline_passed){ hide("mp-form-card"); show("mp-closed"); return; }
+
+  buildDynamic();
+  wireAttending();
+  prefill();
+
+  // öppet läge (?t=) utan känd gäst → samla in namn + e-post
+  if (OPEN_MODE && !CFG.guest) show("mp-contact");
+
+  $("mp-submit").addEventListener("click", submit);
+}
+
+// bygg dynamiska fält ur form_schema (utöver attending som alltid finns)
+function buildDynamic(){
+  const wrap = $("mp-dynamic");
+  wrap.innerHTML = "";
+  const schema = Array.isArray(CFG.form_schema) ? CFG.form_schema : [];
+
+  schema.forEach(q => {
+    if (q.type === "rsvp") return;  // hanteras av attending-toggeln
+    const field = document.createElement("div");
+    field.className = "mp-field mp-cond";   // mp-cond = döljs vid "nej"
+    const reqStar = q.required ? ' <span class="mp-req">*</span>' : "";
+
+    if (q.type === "plus_ones"){
+      if (CFG.allow_plus_ones === false) return;
+      const max = Number(q.max ?? CFG.max_plus_ones ?? 0);
+      field.dataset.max = max;
+      field.innerHTML = `
+        <label class="mp-label">${esc(q.label || "Tar du med gäster?")}</label>
+        <div class="mp-stepper" data-role="plusones">
+          <button type="button" data-d="-1">−</button>
+          <span id="mp-po-val">0</span>
+          <button type="button" data-d="1">+</button>
+        </div>`;
+      wrap.appendChild(field);
+      const valEl = field.querySelector("#mp-po-val");
+      field.querySelectorAll("[data-d]").forEach(btn => btn.addEventListener("click", () => {
+        const d = Number(btn.dataset.d);
+        STATE.plusOnes = Math.min(max, Math.max(0, STATE.plusOnes + d));
+        valEl.textContent = STATE.plusOnes;
+      }));
+    }
+    else if (q.type === "allergens"){
+      field.innerHTML = `<label class="mp-label">${esc(q.label || "Specialkost / allergier")}</label>
+        <div class="mp-allergens" data-role="allergens"></div>`;
+      wrap.appendChild(field);
+      const box = field.querySelector(".mp-allergens");
+      ALLERGENS.forEach(name => {
+        // OBS: chippet är en <div role="button">, INTE en <button>.
+        // Nästlade <button> (för −/+) är ogiltig HTML och bröt avmarkeringen.
+        const chip = document.createElement("div");
+        chip.className = "mp-chip";
+        chip.setAttribute("role","button");
+        chip.setAttribute("tabindex","0");
+        chip.setAttribute("aria-pressed","false");
+        chip.innerHTML = `<span>${esc(name)}</span>
+          <span class="mp-chip-step"><button type="button" data-a="-1" aria-label="Minska">−</button><b>1</b><button type="button" data-a="1" aria-label="Öka">+</button></span>`;
+        const countEl = chip.querySelector("b");
+        function toggle(){
+          const on = chip.getAttribute("aria-pressed") === "true";
+          chip.setAttribute("aria-pressed", on ? "false" : "true");
+          if (on) delete STATE.allergens[name];
+          else STATE.allergens[name] = Number(countEl.textContent) || 1;
+        }
+        chip.addEventListener("click", e => {
+          if (e.target.closest(".mp-chip-step")) return;   // klick på −/+ ska inte toggla
+          toggle();
+        });
+        chip.addEventListener("keydown", e => {
+          if (e.key === "Enter" || e.key === " "){ e.preventDefault(); toggle(); }
+        });
+        chip.querySelectorAll("[data-a]").forEach(btn => btn.addEventListener("click", e => {
+          e.stopPropagation();
+          const dir = Number(btn.dataset.a);
+          const cur = Number(countEl.textContent) || 1;
+          // "−" vid 1 → avmarkera helt (0 = bort)
+          if (dir < 0 && cur <= 1) {
+            chip.setAttribute("aria-pressed", "false");
+            delete STATE.allergens[name];
+            countEl.textContent = 1;
+            return;
+          }
+          let c = cur + dir;
+          c = Math.max(1, Math.min(99, c)); countEl.textContent = c;
+          if (chip.getAttribute("aria-pressed") === "true") STATE.allergens[name] = c;
+        }));
+        box.appendChild(chip);
+      });
+    }
+    else if (q.type === "select"){
+      const opts = (q.options||[]).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join("");
+      field.innerHTML = `<label class="mp-label">${esc(q.label||"")}${reqStar}</label>
+        <select class="mp-select" data-qid="${esc(q.id)}"><option value="">Välj…</option>${opts}</select>`;
+      wrap.appendChild(field);
+      field.querySelector("select").addEventListener("change", e => STATE.responses[q.id] = e.target.value);
+    }
+    else if (q.type === "yesno"){
+      field.innerHTML = `<label class="mp-label">${esc(q.label||"")}${reqStar}</label>
+        <select class="mp-select" data-qid="${esc(q.id)}"><option value="">Välj…</option><option value="ja">Ja</option><option value="nej">Nej</option></select>`;
+      wrap.appendChild(field);
+      field.querySelector("select").addEventListener("change", e => STATE.responses[q.id] = e.target.value);
+    }
+    else { // text
+      field.innerHTML = `<label class="mp-label">${esc(q.label||"")}${reqStar}</label>
+        <textarea class="mp-textarea" data-qid="${esc(q.id)}" placeholder="Skriv här…"></textarea>`;
+      wrap.appendChild(field);
+      field.querySelector("textarea").addEventListener("input", e => STATE.responses[q.id] = e.target.value);
+    }
+  });
+}
+
+function wireAttending(){
+  $("mp-attend").querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      STATE.attending = btn.dataset.val;
+      $("mp-attend").querySelectorAll("button").forEach(b =>
+        b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+      // dölj villkorade fält vid "nej"
+      const coming = STATE.attending === "yes";
+      document.querySelectorAll(".mp-cond").forEach(f => f.classList.toggle("mp-hidden", !coming));
+      $("mp-submit").disabled = !STATE.attending;
+    });
+  });
+}
+
+function prefill(){
+  const g = CFG.guest;
+  if (!g) return;
+  // förifyll namn/e-post om de finns (skadar inte i öppet läge heller)
+  if (g.name && $("mp-name")) $("mp-name").value = g.name;
+  if (g.email && $("mp-email")) $("mp-email").value = g.email;
+  if (g.rsvp_status === "pending") return;
+  // attending
+  const val = g.rsvp_status === "yes" ? "yes" : "no";
+  const btn = $("mp-attend").querySelector(`[data-val="${val}"]`);
+  if (btn) btn.click();
+  // plus ones
+  if (g.plus_ones_count){
+    STATE.plusOnes = Number(g.plus_ones_count) || 0;
+    const v = $("mp-po-val"); if (v) v.textContent = STATE.plusOnes;
+  }
+  // allergener
+  (g.allergens||[]).forEach(a => {
+    const chips = document.querySelectorAll(".mp-chip");
+    chips.forEach(chip => {
+      if (chip.querySelector("span")?.textContent === a.name){
+        chip.setAttribute("aria-pressed","true");
+        const b = chip.querySelector("b"); if (b && a.count) b.textContent = a.count;
+        STATE.allergens[a.name] = Number(a.count)||1;
+      }
+    });
+  });
+  // svar
+  Object.entries(g.responses||{}).forEach(([k,v]) => {
+    const el = document.querySelector(`[data-qid="${CSS.escape(k)}"]`);
+    if (el){ el.value = v; STATE.responses[k] = v; }
+  });
+  $("mp-form-sub").textContent = "Du har redan svarat – du kan ändra ditt svar nedan.";
+}
+
+async function submit(){
+  if ($("mp-hp").value) return;          // honeypot
+  if (!STATE.attending) return;
+
+  // öppet läge kräver namn + giltig e-post
+  let nm = "", em = "";
+  if (OPEN_MODE){
+    nm = ($("mp-name").value || "").trim();
+    em = ($("mp-email").value || "").trim();
+    if (!nm){ alert("Fyll i ditt namn."); $("mp-name").focus(); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){ alert("Fyll i en giltig e-postadress."); $("mp-email").focus(); return; }
+  }
+
+  const btn = $("mp-submit");
+  btn.disabled = true; btn.textContent = "Skickar…";
+
+  const allergens = Object.entries(STATE.allergens).map(([name,count]) => ({ name, count }));
+  const payload = {
+    rsvp_status: STATE.attending,
+    plus_ones_count: STATE.attending === "yes" ? STATE.plusOnes : 0,
+    allergens: STATE.attending === "yes" ? allergens : [],
+    responses: STATE.responses,
+    company_website: ""
+  };
+  if (G_TOKEN){ payload.g = G_TOKEN; }
+  else { payload.t = T_TOKEN; payload.name = nm; payload.email = em; }
+
+  try {
+    const r = await fetch(API_BASE + "/invite/rsvp", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok){
+      if (j.error === "deadline_passed"){ hide("mp-main"); show("mp-closed"); return; }
+      if (j.error === "email_required"){ btn.disabled = false; btn.textContent = "Skicka svar"; alert("E-post krävs för att svara."); return; }
+      throw new Error(j.error || "fel");
+    }
+    done(STATE.attending === "yes");
+  } catch(e){
+    btn.disabled = false; btn.textContent = "Skicka svar";
+    alert("Något gick fel. Försök igen om en stund.");
+  }
+}
+
+function done(coming){
+  hide("mp-main");
+  $("mp-done-ic").textContent = coming ? "✓" : "✦";
+  $("mp-done-title").textContent = coming ? "Tack – vi ses!" : "Tack för ditt svar";
+  $("mp-done-msg").textContent = coming
+    ? "Vi har registrerat att du kommer. En bekräftelse är på väg till din e-post."
+    : "Vi har registrerat ditt svar. En bekräftelse är på väg till din e-post.";
+  show("mp-done");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
+
+load();
+</script>
+</body>
+</html>
