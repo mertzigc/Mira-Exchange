@@ -1026,5 +1026,175 @@ export function createSyncEngine(deps) {
     return report;
   }
 
-  return { syncForSource, buildPayload, registry };
+  // ───────────────────────────────────────────────────────────────────────────
+  // BACKFILL: linked_company för befintliga dokument (FortnoxInvoice/Order/Offer).
+  //
+  // Varför behövs den: linked_company sätts bara på create/update i synken och
+  // ligger INTE i COMPARE_FIELDS → ett oförändrat dokument blir "noop" och
+  // skrivningen hoppas helt (rad ~151). Dokument som synkats men aldrig ändrats
+  // sedan linked_company-logiken kom in saknar därför fältet. Den utlovade
+  // historiska backfillen låg i ClientGroup-fasen (avbruten 2026-06-08) → kördes
+  // aldrig. Detta är den backfillen.
+  //
+  // BUBBLE-INTERN: inga Fortnox/Tengella-anrop. All bryggdata finns redan i Bubble.
+  // Bygger lookup-map en gång, patchar bara dokument som saknar (eller, med
+  // overwrite, har fel) linked_company.
+  //
+  // Bryggor:
+  //   Fortnox-connections (F&E/Staff/Group):
+  //     FortnoxCustomer(connection_id, customer_number).linked_company
+  //   Tengella (connection == TENGELLA_CONNECTION_ID):
+  //     TengellaCustomer(tengella_customer_no ELLER tengella_customer_id
+  //                      == ft_customer_number).company
+  //
+  // mode="diff" (default) skriver INGET — rapporterar tänkta patchar + olösta.
+  // mode="write" patchar linked_company.
+  // ───────────────────────────────────────────────────────────────────────────
+  const BACKFILL_TARGETS = {
+    invoice: { bubbleType: "FortnoxInvoice", connField: "connection_id" },
+    order:   { bubbleType: "FortnoxOrder",   connField: "connection" },
+    offer:   { bubbleType: "FortnoxOffer",   connField: "connection" },
+  };
+
+  async function buildCompanyBridges() {
+    // Fortnox: `${connection_id}|${customer_number}` → linked_company
+    const fortnoxMap = new Map();
+    const fcs = await bubbleFindAll("FortnoxCustomer", {});
+    for (const fc of fcs) {
+      const cid = String(fc?.connection_id || "").trim();
+      const cn  = String(fc?.customer_number || "").trim();
+      const lc  = fc?.linked_company || null;
+      if (cid && cn && lc) fortnoxMap.set(`${cid}|${cn}`, lc);
+    }
+
+    // Tengella: ft_customer_number kan vara tengella_customer_no ELLER (fallback i
+    // synken) Number(customerId) = tengella_customer_id → mappa BÅDA nycklarna.
+    const tengMap = new Map();
+    const tcs = await bubbleFindAll("TengellaCustomer", {});
+    for (const tc of tcs) {
+      const company = tc?.company || null;
+      if (!company) continue;
+      const no = String(tc?.tengella_customer_no ?? "").trim();
+      const id = String(tc?.tengella_customer_id ?? "").trim();
+      if (no) tengMap.set(`no|${no}`, company);
+      if (id) tengMap.set(`id|${id}`, company);
+    }
+
+    return { fortnoxMap, tengMap, fcCount: fcs.length, tcCount: tcs.length };
+  }
+
+  function resolveBackfillCompany(bridges, connVal, custNo) {
+    const conn = String(connVal || "").trim();
+    const cn   = String(custNo || "").trim();
+    if (!conn || !cn) return null;
+    if (conn === String(constants.TENGELLA_CONNECTION_ID)) {
+      return bridges.tengMap.get(`no|${cn}`) || bridges.tengMap.get(`id|${cn}`) || null;
+    }
+    return bridges.fortnoxMap.get(`${conn}|${cn}`) || null;
+  }
+
+  async function backfillLinkedCompanyForType(target, bridges, opts) {
+    const { mode, overwrite, connection_id, maxRecords, sampleSize, onlyMissing } = opts;
+    const { bubbleType, connField } = target;
+
+    const constraints = [];
+    if (connection_id) constraints.push({ key: connField, constraint_type: "equals", value: connection_id });
+    // onlyMissing snabbar upp (läser bara tomma) men is_empty är ett känt fotgevär
+    // (Fynd A) → default OFF, robust full-skanning. Slå på medvetet för fart.
+    if (onlyMissing) constraints.push({ key: "linked_company", constraint_type: "is_empty", value: true });
+    const docs = await bubbleFindAll(bubbleType, { constraints });
+
+    const report = {
+      bubbleType,
+      scanned: docs.length,
+      counts: {
+        alreadyOk: 0, missing: 0, resolved: 0, patched: 0,
+        unresolved: 0, mismatch: 0, mismatchPatched: 0, skippedNoKey: 0,
+      },
+      writes: 0,
+      sampleResolved: [], sampleUnresolved: [], sampleMismatch: [],
+    };
+
+    for (const doc of docs) {
+      if (maxRecords && report.writes >= maxRecords) break;
+      const id      = doc?._id || doc?.id || null;
+      const connVal = doc?.[connField];
+      const custNo  = doc?.ft_customer_number;
+      const current = doc?.linked_company || null;
+
+      if (!connVal || !custNo) { report.counts.skippedNoKey++; continue; }
+
+      const resolved = resolveBackfillCompany(bridges, connVal, custNo);
+
+      if (current) {
+        if (resolved && resolved !== current) {
+          report.counts.mismatch++;
+          if (report.sampleMismatch.length < sampleSize)
+            report.sampleMismatch.push({ doc: doc.ft_document_number, conn: connVal, cust: String(custNo), current, resolved });
+          if (overwrite && mode === "write" && id) {
+            await bubblePatch(bubbleType, id, { linked_company: resolved });
+            report.counts.mismatchPatched++; report.writes++;
+          }
+        } else {
+          report.counts.alreadyOk++;
+        }
+        continue;
+      }
+
+      report.counts.missing++;
+      if (!resolved) {
+        report.counts.unresolved++;
+        if (report.sampleUnresolved.length < sampleSize)
+          report.sampleUnresolved.push({ doc: doc.ft_document_number, conn: connVal, cust: String(custNo) });
+        continue;
+      }
+      report.counts.resolved++;
+      if (report.sampleResolved.length < sampleSize)
+        report.sampleResolved.push({ doc: doc.ft_document_number, conn: connVal, cust: String(custNo), resolved });
+      if (mode === "write" && id) {
+        await bubblePatch(bubbleType, id, { linked_company: resolved });
+        report.counts.patched++; report.writes++;
+      }
+    }
+
+    return report;
+  }
+
+  async function backfillLinkedCompany(source, opts = {}) {
+    const mode          = opts.mode === "write" ? "write" : "diff";   // SÄKER default
+    const overwrite     = !!opts.overwrite;                            // korrigera fel-länkade?
+    const connection_id = opts.connection_id || null;                 // chunka per bolag
+    const onlyMissing   = !!opts.onlyMissing;                         // is_empty-snabbväg (opt-in)
+    const maxRecords    = opts.maxRecords != null ? Number(opts.maxRecords) : null;
+    const sampleSize    = opts.sampleSize != null ? Number(opts.sampleSize) : 25;
+
+    const keys = source === "all" ? Object.keys(BACKFILL_TARGETS) : [source];
+    for (const k of keys) {
+      if (!BACKFILL_TARGETS[k]) throw new Error(`Unknown backfill source: ${source} (giltiga: invoice|order|offer|all)`);
+    }
+
+    const bridges = await buildCompanyBridges();
+    const o = { mode, overwrite, connection_id, maxRecords, sampleSize, onlyMissing };
+
+    const types = [];
+    for (const k of keys) types.push(await backfillLinkedCompanyForType(BACKFILL_TARGETS[k], bridges, o));
+
+    const totals = types.reduce((a, t) => {
+      for (const key of Object.keys(t.counts)) a[key] = (a[key] || 0) + t.counts[key];
+      a.scanned += t.scanned; a.writes += t.writes;
+      return a;
+    }, { scanned: 0, writes: 0 });
+
+    return {
+      mode, overwrite, connection_id, onlyMissing,
+      bridges: {
+        fortnoxCustomers: bridges.fcCount, fortnoxMapped: bridges.fortnoxMap.size,
+        tengellaCustomers: bridges.tcCount, tengellaMapped: bridges.tengMap.size,
+      },
+      totals,
+      types,
+    };
+  }
+
+  return { syncForSource, buildPayload, registry, backfillLinkedCompany };
 }

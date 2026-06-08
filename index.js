@@ -16010,6 +16010,20 @@ app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
   }
 });
 
+// Backfill av linked_company för befintliga FortnoxInvoice/Order/Offer (inkl
+// Tengella-poster). Synken sätter fältet bara på create/update (ej i COMPARE_FIELDS
+// → noop hoppar det) → historiska/oförändrade dokument saknar det. Bubble-intern,
+// inga externa API-anrop. source = invoice | order | offer | all.
+// Body: { mode:"diff"|"write", connection_id?, overwrite?, onlyMissing?, maxRecords?, sampleSize? }
+app.post("/sync/v2-linkcompany/:source", requireSyncSecret, async (req, res) => {
+  try {
+    const report = await syncEngine.backfillLinkedCompany(req.params.source, req.body || {});
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // CG-1: ClientGroup kluster-FÖRSLAG (READ-ONLY, skriver inget). Mänsklig granskning.
 const clientGroupEngine = createClientGroupEngine({
   bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch,
