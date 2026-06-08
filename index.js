@@ -16033,47 +16033,92 @@ app.post("/sync/v2-linkcompany/:source", requireSyncSecret, async (req, res) => 
 // Fixar INTE "noCustomer" (kunder som saknas helt i Bubble — kräver Fortnox-pull).
 // Efter detta: kör /sync/v2-linkcompany write så prop ageras länken ut på dokumenten.
 // Body: { mode:"diff"|"write", connection_id?, maxRecords? }
+// Fortnox-gren: FortnoxCustomer.linked_company via ensureClientCompanyForFortnoxCustomer.
+async function backfillFortnoxCustomerLinks({ write, connection_id, cap }) {
+  const constraints = [];
+  if (connection_id) constraints.push({ key: "connection_id", constraint_type: "equals", value: connection_id });
+  const all = await bubbleFindAll("FortnoxCustomer", { constraints });
+
+  const report = {
+    source: "fortnox", scanned: all.length,
+    counts: { alreadyLinked: 0, noOrgno: 0, candidates: 0, patched: 0, errors: 0 },
+    writes: 0, sample: [], errors: [],
+  };
+
+  for (const fc of all) {
+    if (cap && report.writes >= cap) break;
+    if (fc?.linked_company) { report.counts.alreadyLinked++; continue; }
+    const orgno = String(fc?.organisation_number || "").trim();
+    if (!orgno) { report.counts.noOrgno++; continue; }
+
+    report.counts.candidates++;
+    if (report.sample.length < 50) report.sample.push({ customer_number: fc.customer_number, name: fc.name, orgno });
+
+    if (!write) continue;
+    try {
+      const ccId = await ensureClientCompanyForFortnoxCustomer(fc);
+      if (ccId) { await bubblePatch("FortnoxCustomer", fc._id, { linked_company: ccId }); report.counts.patched++; report.writes++; }
+      else { report.counts.errors++; if (report.errors.length < 25) report.errors.push({ customer_number: fc.customer_number, error: "ingen ClientCompany (ogiltigt orgnr?)" }); }
+    } catch (e) {
+      report.counts.errors++;
+      if (report.errors.length < 25) report.errors.push({ customer_number: fc.customer_number, error: e?.message || String(e) });
+    }
+  }
+  return report;
+}
+
+// Tengella-gren: TengellaCustomer.company. Bryggan = ClientCompany.Org_Number ==
+// TengellaCustomer.org_no (siffror) — samma nyckel som vi just normaliserade, så
+// findClientCompanyByOrgNo matchar nu rent. Skapar minimal CC om orgnr finns men CC saknas.
+async function backfillTengellaCustomerLinks({ write, cap }) {
+  const all = await bubbleFindAll("TengellaCustomer", {});
+  const report = {
+    source: "tengella", scanned: all.length,
+    counts: { alreadyLinked: 0, noOrgno: 0, candidates: 0, linkedExisting: 0, created: 0, patched: 0, errors: 0 },
+    writes: 0, sample: [], errors: [],
+  };
+
+  for (const tc of all) {
+    if (cap && report.writes >= cap) break;
+    if (tc?.company) { report.counts.alreadyLinked++; continue; }
+    const org = normalizeOrgNo(tc?.org_no || tc?.org_no_raw);
+    if (!org) { report.counts.noOrgno++; continue; }
+
+    report.counts.candidates++;
+    if (report.sample.length < 50) report.sample.push({ tengella_customer_no: tc.tengella_customer_no, name: tc.name, org });
+
+    if (!write) continue;
+    try {
+      const cc = await findClientCompanyByOrgNo(org);
+      let ccId = cc?._id || cc?.id || null;
+      if (ccId) { report.counts.linkedExisting++; }
+      else {
+        ccId = await bubbleCreate("ClientCompany", { Name_company: tc.name || org, [CLIENTCOMPANY_ORG_FIELD]: org });
+        if (ccId) report.counts.created++;
+      }
+      if (ccId) { await bubblePatch("TengellaCustomer", tc._id, { company: ccId }); report.counts.patched++; report.writes++; }
+      else { report.counts.errors++; if (report.errors.length < 25) report.errors.push({ tengella_customer_no: tc.tengella_customer_no, error: "ingen ClientCompany (skapande misslyckades?)" }); }
+    } catch (e) {
+      report.counts.errors++;
+      if (report.errors.length < 25) report.errors.push({ tengella_customer_no: tc.tengella_customer_no, error: e?.message || String(e) });
+    }
+  }
+  return report;
+}
+
+// Backfillar customer→ClientCompany-länken för kunder som har orgnr men saknar länk
+// ("noLink"). target = fortnox | tengella | both (default). BUBBLE-INTERN, inga
+// externa API-anrop. Efter detta: kör /sync/v2-linkcompany write så länken propageras
+// ut på dokumenten. Body: { mode:"diff"|"write", target?, connection_id?, maxRecords? }
 app.post("/sync/v2-linkcustomer", requireSyncSecret, async (req, res) => {
   try {
-    const { mode = "diff", connection_id = null, maxRecords = null } = req.body || {};
+    const { mode = "diff", connection_id = null, maxRecords = null, target = "both" } = req.body || {};
     const write = mode === "write";
     const cap = maxRecords != null ? Number(maxRecords) : null;
 
-    const constraints = [];
-    if (connection_id) constraints.push({ key: "connection_id", constraint_type: "equals", value: connection_id });
-    const all = await bubbleFindAll("FortnoxCustomer", { constraints });
-
-    const report = {
-      mode, connection_id, scanned: all.length,
-      counts: { alreadyLinked: 0, noOrgno: 0, candidates: 0, patched: 0, errors: 0 },
-      writes: 0, sample: [], errors: [],
-    };
-
-    for (const fc of all) {
-      if (cap && report.writes >= cap) break;
-      if (fc?.linked_company) { report.counts.alreadyLinked++; continue; }
-      const orgno = String(fc?.organisation_number || "").trim();
-      if (!orgno) { report.counts.noOrgno++; continue; }
-
-      report.counts.candidates++;
-      if (report.sample.length < 50)
-        report.sample.push({ customer_number: fc.customer_number, name: fc.name, orgno });
-
-      if (!write) continue;
-      try {
-        const ccId = await ensureClientCompanyForFortnoxCustomer(fc);
-        if (ccId) {
-          await bubblePatch("FortnoxCustomer", fc._id, { linked_company: ccId });
-          report.counts.patched++; report.writes++;
-        } else {
-          report.counts.errors++;
-          if (report.errors.length < 25) report.errors.push({ customer_number: fc.customer_number, error: "ingen ClientCompany (ogiltigt orgnr?)" });
-        }
-      } catch (e) {
-        report.counts.errors++;
-        if (report.errors.length < 25) report.errors.push({ customer_number: fc.customer_number, error: e?.message || String(e) });
-      }
-    }
+    const report = { mode, target, connection_id };
+    if (target === "fortnox" || target === "both") report.fortnox = await backfillFortnoxCustomerLinks({ write, connection_id, cap });
+    if (target === "tengella" || target === "both") report.tengella = await backfillTengellaCustomerLinks({ write, cap });
 
     return res.json({ ok: true, report });
   } catch (e) {

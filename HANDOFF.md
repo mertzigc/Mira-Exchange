@@ -210,6 +210,19 @@ curl -sS -X POST "$HOST/sync/v2-linkcompany/all" \
 ```
 Byt `"mode":"diff"` → `"mode":"write"` när diffen ser rätt ut. Connection IDs i §4.
 
+### 8c.1 Körningsresultat + kringverktyg (2026-06-08)
+- **Backfill körd: unresolved 3 245 → 1 778** (order 3 910 + offer 2 825 patchade på create/update-gapet; faktura `resolved:0` = de resolvbara hade redan länk). Två rundor: först doc-backfill, sen kund-bryggan ifylld → ytterligare 1 467 docs.
+- **Rapporten har distinkt-kund-statistik:** `unresolvedCustomersTotal.distinctCustomers` + per typ `unresolvedCustomers {total, noCustomer, noLink, top[50]}`. `noCustomer` = FortnoxCustomer/TengellaCustomer saknas helt; `noLink` = kundpost finns men `linked_company`/`company` tom.
+- **`POST /sync/v2-linkcustomer`** (index.js) — fyller customer→ClientCompany-länken (noLink). `target: fortnox|tengella|both`. Fortnox-grenen kör `ensureClientCompanyForFortnoxCustomer` (hittar/skapar CC på orgnr); Tengella-grenen matchar `ClientCompany.Org_Number == TengellaCustomer.org_no`. BUBBLE-INTERN. Body `{mode, target, connection_id?, maxRecords?}`. Ersätter den blunta `/fortnox/upsert/customers/all` som **502:ar på volym** (self-HTTP per sida + returnerar hela kundlistor — använd INTE för stor backfill).
+- **Restposten (~1 700) är till >80% RÄTT olänkad:** privatpersoner (offerter), "EJ FAKTURERA"-interna platshållare, utländska bolag utan svenskt orgnr. Ska inte länkas. Värda manuell orgnr-inmatning i källan: Kungliga Borgen (30 dok), POWER Sverige, Tapto Home Hotel, DNB Bank ASA, Norstat.
+- **99 Tengella-mismatch** (HK) = fakturans `linked_company` ≠ `TengellaCustomer.company` nu (länk har driftat). Backfillen rör dem ej (overwrite=false). `{"mode":"write","overwrite":true}` på `invoice` riktar in dem om bryggan är facit — granska `sampleMismatch` först.
+
+### 8c.2 Dedup-härdning (orgnr) — 2026-06-08
+Rot till dubbletter (Cecil-fallet): `Org_Number` lagrat i blandat format (bindestreck vs siffror) → `findClientCompanyByOrgNo` missar → `ensureClientCompany` skapar ny CC. Fix:
+- **`POST /admin/clientcompany/normalize-orgno`** (diff/write) — kanoniserar `Org_Number` → siffror-bara. **Kört write 2026-06-08: 87 patchade, 0 kollisioner** (= inga org-dubbletter kvar; Cecil-dubbletten var redan manuellt rensad). Detta gör auto-create framöver säker (matchar alltid befintlig CC).
+- **`POST /admin/clientcompany/dedupe-orgno`** (diff/write) — grupperar CC på normaliserat orgnr; `mergeable` (samma orgnr+namn) mergas i write (survivor=äldsta, pekar om FortnoxCustomer/TengellaCustomer/dokument → survivor, raderar dup); `conflate` (samma orgnr, OLIKA namn — Alecta-fastigheter) FLAGGAS, mergas aldrig (källidentitet bevaras, människa avgör). `maxGroups` chunkar.
+- **Datamodell-beslut bekräftat:** ClientCompany = en-per-bolag för rena fall (samma namn mergas), list-of källid läggs INTE på ClientCompany. ClientGroup = överblickslager (manuellt, se §6). Conflate-fall människostyrda.
+
 ## 8. Fallgropar (lärda)
 - Fortnox rate-limit: krävde retry+backoff (`fortnoxGetRetry`) + throttle (`throttleMs`, default 200, april behövde 350). Listing-fel mitt i paginering → kastar → 500 på hela requesten; idempotent så kör om.
 - Render long-running: curl `--max-time` högt; idempotent så timeout ofarlig.
