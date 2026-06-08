@@ -849,7 +849,13 @@ function buildFooterBlock(f, fallbackName) {
   if (f.privacy_url) legal += ` &nbsp;·&nbsp; <a href="${esc(abs(f.privacy_url))}" style="color:#606880;text-decoration:underline;">Integritetspolicy</a>`;
   rows.push(`<span style="color:#606880;">${legal}</span>`);
 
+  // Avregistrering (GDPR): per-mottagare-länk injicerad i send-flödet. Renderas bara om satt.
+  const unsub = f.unsubscribe_url
+    ? `<p style="font-size:11px;line-height:1.7;margin:6px 0 0;"><a href="${esc(abs(f.unsubscribe_url))}" style="color:#606880;text-decoration:underline;">Avregistrera dig från utskick</a></p>`
+    : "";
+
   return rows.map(r => `<p style="font-size:11px;line-height:1.7;margin:0 0 4px;">${r}</p>`).join("")
+       + unsub
        + `<p style="font-size:10px;color:#3a4055;margin:8px 0 0;">Drivs av Mira</p>`;
 }
 

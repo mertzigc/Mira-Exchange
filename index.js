@@ -375,6 +375,7 @@ function requireApiKey(req, res, next) {
   "/invoice/submit",    // ← lägg till
     "/invite/config",
     "/invite/rsvp",
+    "/unsubscribe",   // klickas i mottagarens browser från mejlfoten (ingen API-nyckel)
     // Kund-KPI: HTML-blocket triggar refresh direkt från kundens webbläsare
     // UTAN API-nyckel. Svaret innehåller ALDRIG data (bara {ok:true}); datan
     // plockas av Bubble scoped per företag. Rate-limitad via _publicRateLimited.
@@ -12494,6 +12495,31 @@ function _footerData() {
     privacy_url: process.env.COMPANY_PRIVACY_URL || ""
   };
 }
+// Publik bas-URL för länkar som klickas i mottagarens browser (t.ex. avregistrering).
+// Pekar på Render-servern själv, inte Bubble.
+const PUBLIC_API_BASE = (process.env.PUBLIC_API_BASE || "https://mira-exchange.onrender.com").replace(/\/+$/, "");
+
+// ── Avregistrering (unsubscribe) — global opt-out per mejladress ──────────────
+// Cachas kort så send-flödet inte hämtar hela listan per batch.
+let _optoutCache = { at: 0, set: null };
+async function _loadOptoutSet() {
+  const now = Date.now();
+  if (_optoutCache.set && (now - _optoutCache.at) < 60000) return _optoutCache.set;
+  const rows = await bubbleFindAll(ADM_OPTOUT, {}).catch(() => []);
+  const set = new Set();
+  (rows || []).forEach(r => { const e = String(r.email || "").trim().toLowerCase(); if (e) set.add(e); });
+  _optoutCache = { at: now, set };
+  return set;
+}
+async function _addOptout(email) {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e) return false;
+  const set = await _loadOptoutSet();
+  if (set.has(e)) return true;                       // redan avregistrerad → idempotent
+  await safeCreate(ADM_OPTOUT, { email: e }, {}).catch(() => null);
+  set.add(e);                                        // håll cachen färsk
+  return true;
+}
 // Extrahera Bubbles faktiska felmeddelande ur ett bubbleCreate/bubblePatch-fel
 function _bubbleErrText(e) {
   const d = (e && e.detail) || {};
@@ -12520,6 +12546,25 @@ const ADM_USER       = "User";
 const ADM_COWORKER   = "Coworker";
 const ADM_GUEST      = "InviteGuest";
 const ADM_FASTIGHET  = "Fastighet";
+const ADM_OPTOUT     = "EmailOptout";   // global avregistrering (GDPR): { email }
+
+// Taggar på utskick: fritext, kommaseparerat. Inte option-set → safeCreate kastar aldrig.
+// Trimmar, tar bort tomma, dedupar (case-insensitivt), behåller första stavningen, kapar längd.
+function _normTags(v) {
+  const arr = Array.isArray(v) ? v : String(v || "").split(",");
+  const seen = new Set(); const out = [];
+  for (const t of arr) {
+    const s = String(t || "").trim().slice(0, 40);
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(s);
+    if (out.length >= 20) break;
+  }
+  return out.join(", ");
+}
+// Tagg-sträng → array (för filter/jämförelse)
+function _tagsArr(v) { return String(v || "").split(",").map(s => s.trim()).filter(Boolean); }
 // Namn på en fastighet (fältnamn varierar)
 function _admFastName(f) { return f?.Titel || f?.titel || f?.name || f?.Name || f?.Namn || f?.title || f?.Title || f?.address || f?.Adress || f?.Fastighetsbeteckning || f?.beteckning || f?.label || ""; }
 // Fastighets-id:n i en ClientCompanys lista (fältnamn varierar; värden kan vara id/objekt)
@@ -12632,6 +12677,7 @@ app.post("/admin/invite/create", async (req, res) => {
       client_company:  d.client_company || null,
       title:           safeText(d.title, 200),
       description:     String(d.description || ""),
+      tags:            _normTags(d.tags),
       accent_color:    d.accent_color || "#df6f39",
       event_address:   safeText(d.event_address || "", 300),
       location_name:   safeText(d.location_name || "", 200),
@@ -12675,7 +12721,8 @@ app.patch("/admin/invite/update", async (req, res) => {
       linkedin_url: v => _admAbs(v || ""),
       facebook_url: v => _admAbs(v || ""),
       instagram_url: v => _admAbs(v || ""),
-      kind: v => _normKind(v)
+      kind: v => _normKind(v),
+      tags: v => _normTags(v)
     };
     Object.keys(map).forEach(k => { if (b[k] !== undefined) f[k] = map[k](b[k]); });
     ["start_date", "end_date", "rsvp_deadline"].forEach(k => { if (b[k] !== undefined) f[k] = b[k] ? toBubbleDate(b[k]) : null; });
@@ -12700,17 +12747,21 @@ app.get("/admin/invite/list", async (req, res) => {
     // kind-filter: default = invite (bakåtkompat), ?kind=news = bara news,
     // ?kind=survey = bara survey, ?kind=all = alla
     const kindParam = String(req.query.kind || "invite").toLowerCase();
-    const filtered = (kindParam === "all")
+    let filtered = (kindParam === "all")
       ? (rows || [])
       : (kindParam === "news")
           ? (rows || []).filter(r => String(r.kind || "").toLowerCase() === "news")
           : (kindParam === "survey")
               ? (rows || []).filter(r => String(r.kind || "").toLowerCase() === "survey")
               : (rows || []).filter(r => { const k = String(r.kind || "").toLowerCase(); return k !== "news" && k !== "survey"; });
+    // Tagg-filter (?tag=foo) — matchar case-insensitivt mot taggsträngen
+    const tagParam = String(req.query.tag || "").trim().toLowerCase();
+    if (tagParam) filtered = filtered.filter(r => _tagsArr(r.tags).some(t => t.toLowerCase() === tagParam));
     const out = filtered.map(i => ({
       id: i._id || i.id, title: i.title || "", active: i.active !== false, token: i.token || "",
       kind: _normKind(i.kind),
       anonymous: i.anonymous === true,
+      tags: _tagsArr(i.tags),
       start_date: i.start_date || null, rsvp_deadline: i.rsvp_deadline || null,
       location_name: i.location_name || "", client_company: i.client_company || null,
       cta_label: i.cta_label || "", cta_url: i.cta_url || ""
@@ -12729,6 +12780,7 @@ app.get("/admin/invite/:id", async (req, res) => {
       id: i._id || i.id, token: i.token || "", active: i.active !== false,
       kind: _normKind(i.kind),
       anonymous: i.anonymous === true,
+      tags: _tagsArr(i.tags),
       client_company: i.client_company || "", title: i.title || "", description: i.description || "",
       accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
@@ -12961,6 +13013,24 @@ async function _seedGuestSet(invId) {
   return set;
 }
 
+// Global "finns redan i systemet"-set: alla mejl som redan är gäster (tvärs ALLA
+// utskick) + alla medarbetare (Coworker). Används av import-dubblettkoll när admin
+// kryssar i "hoppa över befintliga". Cachas kort (60s) eftersom det kan vara stort.
+let _existingEmailCache = { at: 0, set: null };
+async function _buildExistingEmailSet() {
+  const now = Date.now();
+  if (_existingEmailCache.set && (now - _existingEmailCache.at) < 60000) return _existingEmailCache.set;
+  const set = new Set();
+  const [guests, coworkers] = await Promise.all([
+    bubbleFindAll(ADM_GUEST, {}).catch(() => []),
+    bubbleFindAll(ADM_COWORKER, {}).catch(() => [])
+  ]);
+  (guests || []).forEach(g => { const e = String(g.email || "").trim().toLowerCase(); if (e) set.add(e); });
+  (coworkers || []).forEach(c => { const e = _admUserEmail(c).toLowerCase(); if (e) set.add(e); });
+  _existingEmailCache = { at: now, set };
+  return set;
+}
+
 // POST /admin/invite/:id/guests/build  body: { regions:[], fastigheter:[], company, offset:0, limit:100, refresh? }
 app.post("/admin/invite/:id/guests/build", async (req, res) => {
   try {
@@ -13023,6 +13093,7 @@ app.post("/admin/invite/:id/guests/import", async (req, res) => {
     const invId = req.params.id;
     const inRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
     const first = req.body?.first === true;
+    const skipExisting = req.body?.skip_existing === true;   // hoppa över mejl som redan finns i systemet
 
     const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
     if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
@@ -13034,14 +13105,18 @@ app.post("/admin/invite/:id/guests/import", async (req, res) => {
 
     let set = _guestEmailSet[invId];
     if (first || !set) set = await _seedGuestSet(invId);
+    // Global dubblettkoll (opt-in): känner igen mejl som redan finns på andra utskick
+    // eller som medarbetare. Rapporteras separat så admin ser hur många som filtrerades.
+    const existing = skipExisting ? await _buildExistingEmailSet() : null;
 
     const nowIso = new Date().toISOString();
     const rows = [];
-    let skipped = 0, invalid = 0;
+    let skipped = 0, invalid = 0, skippedExisting = 0;
     for (const r of inRows) {
       const email = String(r?.email || "").trim().toLowerCase();
       if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { invalid++; continue; }
       if (set.has(email)) { skipped++; continue; }
+      if (existing && existing.has(email)) { skippedExisting++; set.add(email); continue; }
       set.add(email);
       const cName = String(r?.company || "").trim().toLowerCase();
       const match = cName ? nameMap[cName] : null;
@@ -13060,7 +13135,7 @@ app.post("/admin/invite/:id/guests/import", async (req, res) => {
       });
     }
     const result = rows.length ? await _bulkCreate(ADM_GUEST, rows) : { created: 0 };
-    res.json({ ok: true, created: result.created, skipped, invalid });
+    res.json({ ok: true, created: result.created, skipped, invalid, skipped_existing: skippedExisting });
   } catch (e) { console.error("[guests/import]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
@@ -13224,6 +13299,7 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     let list = _sendList[cacheKey];
     if (offset === 0 || !list) {
       const guests = await bubbleFindAll(ADM_GUEST, { constraints: [{ key: "invitation", constraint_type: "equals", value: invId }] }).catch(() => []);
+      const optout = await _loadOptoutSet();                  // GDPR: avregistrerade mottagare hoppas över
       list = guests
         .filter(g => isReminder
           ? (g.invite_sent === true && notAnswered(g))        // påminnelse: fått men ej svarat
@@ -13231,6 +13307,7 @@ app.post("/admin/invite/:id/send", async (req, res) => {
         // För ordinarie news/survey: skicka alla obesvarade. Invite: bara pending om only_pending.
         .filter(g => isReminder ? true : ((isNews || isSurvey || !onlyPending) ? true : String(g.rsvp_status || "pending").toLowerCase() === "pending"))
         .filter(g => String(g.email || "").trim())
+        .filter(g => !optout.has(String(g.email).trim().toLowerCase()))
         .sort((a, b) => String(a.email).localeCompare(String(b.email)));
       _sendList[cacheKey] = list;
     }
@@ -13258,9 +13335,14 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       // Survey och invite får personlig länk; news är ren broadcast utan länk
       // Survey-länken pekar på undersökningssidan, inte event-sidan
       const baseUrl = isSurvey ? PUBLIC_SURVEY_URL : PUBLIC_INVITE_URL;
+      // Per-mottagare avregistreringslänk (GDPR). guest_token identifierar mejladressen
+      // som ska opt-outas. Pekar på Render-servern (route /unsubscribe), inte Bubble.
+      const footer = g.guest_token
+        ? { ...baseExtra.footer, unsubscribe_url: PUBLIC_API_BASE + "/unsubscribe?g=" + encodeURIComponent(g.guest_token) }
+        : baseExtra.footer;
       const extra = isNews
-        ? { ...baseExtra, guest_name: g.name || "", slug }
-        : { ...baseExtra, guest_name: g.name || "", invite_link: baseUrl + "?g=" + encodeURIComponent(g.guest_token || ""), slug };
+        ? { ...baseExtra, footer, guest_name: g.name || "", slug }
+        : { ...baseExtra, footer, guest_name: g.name || "", invite_link: baseUrl + "?g=" + encodeURIComponent(g.guest_token || ""), slug };
       return {
         template_id: tplId || null, entity_id: g._id || g.id, entity_type: "invite",
         to_email: g.email, to_name: g.name || g.email, email_sent: false, extra_data: JSON.stringify(extra)
@@ -13408,6 +13490,61 @@ app.get("/invite/config", async (req, res) => {
   } catch (e) {
     console.error("[invite/config]", e?.message);
     return res.status(500).json({ ok: false, error: e?.message });
+  }
+});
+
+// ── Avregistrering (unsubscribe) ─────────────────────────────────────────────
+// Klickas i mottagarens browser från mejlfoten. ?g=<guest_token> identifierar
+// mejladressen. Tvåstegs för att mejl-skannrar (SafeLinks o.dyl.) inte ska
+// avregistrera av misstag: första GET visar en bekräftelseknapp, ?confirm=1 utför.
+function _unsubPage({ title, body, accent = "#df6f39" }) {
+  return `<!doctype html><html lang="sv"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>${esc(title)}</title>
+<style>
+  body{margin:0;background:#0b0e14;color:#e6e9f2;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;}
+  .card{max-width:440px;width:100%;background:#11151f;border:1px solid #1c2230;border-radius:16px;padding:36px 32px;text-align:center;}
+  h1{font-size:20px;margin:0 0 12px;font-weight:600;}
+  p{font-size:14px;line-height:1.6;color:#aab0c4;margin:0 0 22px;}
+  .btn{display:inline-block;background:${esc(accent)};color:#fff;text-decoration:none;font-weight:600;
+       font-size:14px;padding:12px 22px;border-radius:10px;}
+  .muted{font-size:12px;color:#5a6178;margin-top:24px;}
+</style></head><body><div class="card">${body}
+<p class="muted">Drivs av Mira</p></div></body></html>`;
+}
+function esc(v){return String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
+
+app.get("/unsubscribe", async (req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  try {
+    const g = String(req.query.g || "").trim();
+    const confirm = String(req.query.confirm || "") === "1";
+    const accent = (process.env.COMPANY_ACCENT || "#df6f39");
+    if (!g) return res.status(400).send(_unsubPage({ title: "Ogiltig länk",
+      body: `<h1>Ogiltig länk</h1><p>Avregistreringslänken saknar information. Kontakta avsändaren om du vill tas bort.</p>`, accent }));
+
+    const guest = await getGuestByToken(g);
+    const email = guest ? String(guest.email || "").trim() : "";
+    if (!guest || !email) return res.status(404).send(_unsubPage({ title: "Hittades inte",
+      body: `<h1>Hittades inte</h1><p>Vi kunde inte koppla länken till en mottagare. Den kan redan vara borttagen.</p>`, accent }));
+
+    if (!confirm) {
+      return res.send(_unsubPage({ title: "Avregistrera", accent, body:
+        `<h1>Vill du avregistrera dig?</h1>
+         <p>Du kommer inte längre få utskick till <strong>${esc(email)}</strong>.</p>
+         <a class="btn" href="/unsubscribe?g=${encodeURIComponent(g)}&confirm=1">Bekräfta avregistrering</a>` }));
+    }
+
+    await _addOptout(email);
+    return res.send(_unsubPage({ title: "Avregistrerad", accent, body:
+      `<h1>Du är avregistrerad</h1>
+       <p><strong>${esc(email)}</strong> kommer inte längre få utskick från oss. Du kan stänga den här sidan.</p>` }));
+  } catch (e) {
+    console.error("[unsubscribe]", e?.message);
+    return res.status(500).send(_unsubPage({ title: "Något gick fel",
+      body: `<h1>Något gick fel</h1><p>Försök igen om en stund, eller kontakta avsändaren.</p>` }));
   }
 });
 

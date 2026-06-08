@@ -154,6 +154,10 @@
 .ck-item:last-child { border-bottom:none; }
 .ck-item-t { font-weight:600;font-size:13px;color:var(--tx); }
 .ck-item-m { font-size:11px;color:var(--fa);margin-top:1px; }
+.ck-tag { display:inline-block;font-size:10px;color:var(--fa);background:rgba(223,111,57,.12);border:1px solid rgba(223,111,57,.3);border-radius:6px;padding:1px 6px;margin:2px 3px 0 0;white-space:nowrap; }
+.ck-tagbar { display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px; }
+.ck-tagf { font-size:11px;color:var(--fa);background:transparent;border:1px solid var(--bd,#1c2230);border-radius:999px;padding:3px 11px;cursor:pointer;user-select:none; }
+.ck-tagf.on { color:#fff;background:#df6f39;border-color:#df6f39; }
 .ck-chips { display:flex;flex-wrap:wrap;gap:8px; }
 .ck-chip { cursor:pointer;user-select:none;font-size:12.5px;font-weight:600;border:1.5px solid var(--bd);background:var(--sf2);color:var(--mu);border-radius:999px;padding:7px 15px;transition:.15s; }
 .ck-chip[aria-pressed="true"] { border-color:var(--ac);color:var(--tx);background:var(--acb); }
@@ -303,6 +307,7 @@
                 <div class="ea-fg"><label class="ea-fl">Bild-URL (valfri)</label><input class="ea-fi" id="iv-image" placeholder="https://…"></div>
               </div>
               <div class="ea-fg"><label class="ea-fl">Avsändarnamn i mail (valfritt)</label><input class="ea-fi" id="iv-host" placeholder="Annars värdföretagets namn"></div>
+              <div class="ea-fg"><label class="ea-fl">Taggar (valfritt)</label><input class="ea-fi" id="iv-tags" placeholder="T.ex. kundevent, 2026, vip"><span class="ea-fh">Kommaseparerat. För organisering och filtrering i listan.</span></div>
               <div class="ck-swrow"><label class="ea-tog"><input type="checkbox" id="iv-active" checked><div class="ea-togt"></div><div class="ea-togb"></div></label> Aktiv (publik sida tillgänglig)</div>
             </div>
           </div>
@@ -389,6 +394,7 @@
         <div>
           <div class="ck-card">
             <p class="ck-sl">Befintliga inbjudningar</p>
+            <div id="inviteTagFilter" class="ck-tagbar" style="display:none"></div>
             <div id="inviteList"><div class="ea-lr"><div class="ea-spin"></div> Laddar…</div></div>
           </div>
           <div class="ck-card">
@@ -469,6 +475,7 @@
           <div class="ck-hint" style="margin-bottom:10px">Filen ska ha kolumner <code>namn</code> och <code>epost</code> (valfritt: <code>foretag</code>, <code>region</code>). Skapas för inbjudan vald ovan. Dubbletter hoppas över.</div>
           <input type="file" id="impFile" accept=".xlsx,.xls,.csv">
           <div id="impInfo" class="ck-mut" style="margin-top:8px"></div>
+          <label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:var(--fa);cursor:pointer"><input type="checkbox" id="impSkip"> Hoppa över kontakter som redan finns (andra utskick + medarbetare)</label>
           <div class="ck-row-actions" style="margin-top:10px"><button class="ck-btn-lg" id="impBtn" disabled>Importera till vald inbjudan</button></div>
           <div id="impProgWrap" style="display:none;margin-top:12px"><div class="ck-prog"><div class="ck-prog-bar" id="impBar"></div></div><div class="ck-mut" id="impText" style="margin-top:6px"></div></div>
         </div>
@@ -514,6 +521,7 @@
                 </div>
               </div>
               <div class="ea-fg"><label class="ea-fl">Avsändarnamn i mail (valfritt)</label><input class="ea-fi" id="nv-host" placeholder="Annars värdföretagets namn"></div>
+              <div class="ea-fg"><label class="ea-fl">Taggar (valfritt)</label><input class="ea-fi" id="nv-tags" placeholder="T.ex. nyhetsbrev, 2026"><span class="ea-fh">Kommaseparerat. För organisering och filtrering i listan.</span></div>
               <div class="ea-fg" style="border-top:1px solid var(--bd,#e5e5e5);padding-top:12px;margin-top:4px"><label class="ea-fl" style="font-weight:600">Sociala länkar i mailfot (valfritt)</label></div>
               <div class="ea-2col">
                 <div class="ea-fg"><label class="ea-fl">LinkedIn-URL</label><input class="ea-fi" id="nv-linkedin" placeholder="https://linkedin.com/…"></div>
@@ -587,6 +595,7 @@
         <div>
           <div class="ck-card">
             <p class="ck-sl">Befintliga nyhetsutskick</p>
+            <div id="newsTagFilter" class="ck-tagbar" style="display:none"></div>
             <div id="newsList"><div class="ea-lr"><div class="ea-spin"></div> Laddar…</div></div>
           </div>
           <div class="ck-card">
@@ -625,6 +634,7 @@
               </div>
               <div class="ea-fg"><label class="ea-fl">CTA-knapptext (i mejlet)</label><input class="ea-fi" id="sv-cta-label" placeholder="T.ex. Svara på undersökningen"></div>
               <div class="ea-fg"><label class="ea-fl">Avsändarnamn i mail (valfritt)</label><input class="ea-fi" id="sv-host" placeholder="Annars värdföretagets namn"></div>
+              <div class="ea-fg"><label class="ea-fl">Taggar (valfritt)</label><input class="ea-fi" id="sv-tags" placeholder="T.ex. medarbetare, 2026, NKI"><span class="ea-fh">Kommaseparerat. För organisering och filtrering i listan.</span></div>
               <div class="ea-fg"><label class="ea-fl">Stäng automatiskt (valfritt)</label><input class="ea-fi ck-date" id="sv-deadline" type="datetime-local" onclick="try{this.showPicker()}catch(e){}"><span class="ea-fh">Efter denna tidpunkt går det inte längre att svara. Lämna tomt för att hålla öppen tills du stänger manuellt.</span></div>
               <div class="ck-swrow"><label class="ea-tog"><input type="checkbox" id="sv-active" checked><div class="ea-togt"></div><div class="ea-togb"></div></label> Aktiv (öppen för svar)</div>
               <div class="ck-swrow"><label class="ea-tog"><input type="checkbox" id="sv-anon"><div class="ea-togt"></div><div class="ea-togb"></div></label> Anonyma svar <span class="ck-mut" style="font-size:11px">— svaren lagras helt frikopplat från person. Du ser aggregat men aldrig vem som svarat vad.</span></div>
@@ -706,6 +716,7 @@
         <div>
           <div class="ck-card">
             <p class="ck-sl">Befintliga undersökningar</p>
+            <div id="surveyTagFilter" class="ck-tagbar" style="display:none"></div>
             <div id="surveyList"><div class="ea-lr"><div class="ea-spin"></div> Laddar…</div></div>
           </div>
           <div class="ck-card">
@@ -817,6 +828,28 @@
   function sh(id){ var e=g(id);if(e)e.style.display=''; }
   function hd(id){ var e=g(id);if(e)e.style.display='none'; }
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  // ── Taggar (återanvänds av alla tre listor) ───────────────────────────────
+  function tagsOf(i){ return Array.isArray(i.tags)?i.tags:String(i.tags||'').split(',').map(function(s){return s.trim();}).filter(Boolean); }
+  function tagChipsHtml(i){ var t=tagsOf(i); return t.length? '<div>'+t.map(function(x){return '<span class="ck-tag">'+esc(x)+'</span>';}).join('')+'</div>' : ''; }
+  function tagDataAttr(i){ return tagsOf(i).map(function(t){return t.toLowerCase();}).join('|'); }
+  // Bygger en klickbar filterrad ovanför en lista och visar/döljer items via data-tags.
+  function buildTagFilter(filterBox, listBox){
+    if(!filterBox||!listBox) return;
+    var items = Array.prototype.slice.call(listBox.querySelectorAll('[data-tags]'));
+    var all = {};
+    items.forEach(function(el){ (el.getAttribute('data-tags')||'').split('|').filter(Boolean).forEach(function(t){ all[t]=true; }); });
+    var tags = Object.keys(all).sort();
+    if(tags.length<1){ filterBox.innerHTML=''; filterBox.style.display='none'; return; }
+    filterBox.style.display='';
+    var active='';
+    function apply(){ items.forEach(function(el){ var ts=(el.getAttribute('data-tags')||'').split('|').filter(Boolean); el.style.display=(!active||ts.indexOf(active)>=0)?'':'none'; }); }
+    function render(){
+      filterBox.innerHTML = '<span class="ck-tagf'+(active===''?' on':'')+'" data-t="">Alla</span>' +
+        tags.map(function(t){ return '<span class="ck-tagf'+(active===t?' on':'')+'" data-t="'+esc(t)+'">'+esc(t)+'</span>'; }).join('');
+      filterBox.querySelectorAll('.ck-tagf').forEach(function(c){ c.addEventListener('click', function(){ active=c.getAttribute('data-t'); apply(); render(); }); });
+    }
+    render();
+  }
   function fd(v) { if(!v)return'–';try{return new Date(v).toLocaleString('sv-SE',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}catch(e){return v;} }
   function fdDate(v){ if(!v)return'—';try{return new Date(v).toLocaleDateString('sv-SE',{day:'numeric',month:'short',year:'numeric'});}catch(e){return v;} }
   // datetime-local saknar tidszon → tolka som lokal (Stockholm) och skicka korrekt UTC-ISO
@@ -968,6 +1001,7 @@
   function fillInviteForm(inv){
     EDIT_ID=inv.id;
     g('iv-title').value=inv.title||''; g('iv-desc').value=inv.description||'';
+    g('iv-tags').value=(Array.isArray(inv.tags)?inv.tags:String(inv.tags||'').split(',')).filter(Boolean).join(', ');
     g('iv-loc').value=inv.location_name||''; g('iv-addr').value=inv.event_address||'';
     g('iv-host').value=inv.host_name||''; g('iv-image').value=inv.image_url||'';
     g('iv-accent').value=inv.accent_color||'#df6f39'; g('iv-accent-hex').value=inv.accent_color||'#df6f39';
@@ -990,7 +1024,7 @@
   }
   function resetInviteForm(){
     EDIT_ID=null;
-    ['iv-title','iv-desc','iv-loc','iv-addr','iv-host','iv-image','iv-start','iv-end','iv-deadline','iv-cc','iv-cc-search'].forEach(function(id){ g(id).value=''; });
+    ['iv-title','iv-desc','iv-tags','iv-loc','iv-addr','iv-host','iv-image','iv-start','iv-end','iv-deadline','iv-cc','iv-cc-search'].forEach(function(id){ g(id).value=''; });
     g('iv-accent').value='#df6f39'; g('iv-accent-hex').value='#df6f39';
     g('iv-active').checked=true; g('iv-maxplus').value=2;
     g('q-plus').checked=false; g('q-allerg').checked=false; g('q-plus-max').style.display='none';
@@ -1017,6 +1051,7 @@
     var btn=g('iv-save'); btn.disabled=true; g('iv-status').textContent=EDIT_ID?'Sparar…':'Skapar…';
     var body={
       title:title, client_company:g('iv-cc').value||null, description:g('iv-desc').value,
+      tags:g('iv-tags').value,
       location_name:g('iv-loc').value, accent_color:g('iv-accent').value, event_address:g('iv-addr').value,
       start_date:toISO(g('iv-start').value), end_date:toISO(g('iv-end').value), rsvp_deadline:toISO(g('iv-deadline').value),
       image:g('iv-image').value||'', image_url:g('iv-image').value||'', host_name:g('iv-host').value, active:g('iv-active').checked,
@@ -1048,10 +1083,11 @@
         if(!list.length){ box.innerHTML='<div class="ea-empty"><div class="ea-empty-ico">📭</div>Inga inbjudningar ännu</div>'; return; }
         box.innerHTML=list.map(function(i){
           var d=i.start_date?fdDate(i.start_date):'—';
-          return '<div class="ck-item ck-item-clk" data-id="'+esc(i.id)+'" title="Klicka för att redigera"><div><div class="ck-item-t">'+esc(i.title||'(namnlös)')+'</div><div class="ck-item-m">'+esc(i.location_name||'')+(i.location_name?' · ':'')+d+'</div></div>'+
+          return '<div class="ck-item ck-item-clk" data-id="'+esc(i.id)+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att redigera"><div><div class="ck-item-t">'+esc(i.title||'(namnlös)')+'</div><div class="ck-item-m">'+esc(i.location_name||'')+(i.location_name?' · ':'')+d+'</div>'+tagChipsHtml(i)+'</div>'+
             '<span class="ea-bdg '+(i.active?'bi':'bg2')+'">'+(i.active?'Aktiv':'Av')+'</span></div>';
         }).join('');
         box.querySelectorAll('.ck-item-clk').forEach(function(el){ el.addEventListener('click', function(){ openInviteForEdit(el.dataset.id); }); });
+        buildTagFilter(g('inviteTagFilter'), box);
       })
       .catch(function(){ box.innerHTML='<div class="ea-empty">Kunde inte ladda.</div>'; });
   }
@@ -1324,20 +1360,21 @@
     if(!confirm('Importera '+IMP_ROWS.length+' rader till vald inbjudan? (Dubbletter hoppas över.)')) return;
     IMP_BUSY=true; g('impBtn').disabled=true; g('dlInvite').disabled=true;
     g('impProgWrap').style.display='block'; g('impBar').style.width='0%'; g('impText').textContent='Startar…';
-    var total=IMP_ROWS.length, created=0, skipped=0, invalid=0;
+    var skipEx=!!(g('impSkip') && g('impSkip').checked);
+    var total=IMP_ROWS.length, created=0, skipped=0, invalid=0, skippedExisting=0;
     function step(offset){
       var batch=IMP_ROWS.slice(offset,offset+100);
       fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/import'),
-        {method:'POST',headers:H(),body:JSON.stringify({rows:batch,first:offset===0})})
+        {method:'POST',headers:H(),body:JSON.stringify({rows:batch,first:offset===0,skip_existing:skipEx})})
         .then(function(r){return r.json();})
         .then(function(j){
           if(!j.ok) throw new Error(j.error||'fel');
-          created+=j.created||0; skipped+=j.skipped||0; invalid+=j.invalid||0;
+          created+=j.created||0; skipped+=j.skipped||0; invalid+=j.invalid||0; skippedExisting+=j.skipped_existing||0;
           var done=offset+100>=total, proc=Math.min(offset+100,total);
           g('impBar').style.width=Math.round(proc/total*100)+'%';
-          g('impText').textContent='Bearbetar '+proc+'/'+total+' · '+created+' skapade'+(skipped?' · '+skipped+' fanns redan':'')+(invalid?' · '+invalid+' ogiltiga':'');
+          g('impText').textContent='Bearbetar '+proc+'/'+total+' · '+created+' skapade'+(skipped?' · '+skipped+' fanns redan':'')+(skippedExisting?' · '+skippedExisting+' fanns i systemet':'')+(invalid?' · '+invalid+' ogiltiga':'');
           if(!done) step(offset+100);
-          else { IMP_BUSY=false; g('dlInvite').disabled=false; g('impBtn').disabled=false; g('impText').textContent='Klart — '+created+' nya deltagare skapade'+(skipped?', '+skipped+' fanns redan':'')+(invalid?', '+invalid+' ogiltiga':'')+'.'; finishDl(invId, created, skipped); }
+          else { IMP_BUSY=false; g('dlInvite').disabled=false; g('impBtn').disabled=false; g('impText').textContent='Klart — '+created+' nya deltagare skapade'+(skipped?', '+skipped+' fanns redan':'')+(skippedExisting?', '+skippedExisting+' fanns i systemet':'')+(invalid?', '+invalid+' ogiltiga':'')+'.'; finishDl(invId, created, skipped); }
         })
         .catch(function(e){ g('impText').textContent='Fel: '+(e.message||''); IMP_BUSY=false; g('dlInvite').disabled=false; g('impBtn').disabled=false; });
     }
@@ -1839,6 +1876,7 @@
     var btn=g('nv-save'); btn.disabled=true; g('nv-status').textContent=NV_EDIT_ID?'Sparar…':'Skapar…';
     var body={
       kind:'news', title:title, description:desc,
+      tags:g('nv-tags').value,
       client_company:g('nv-cc').value||null,
       accent_color:g('nv-accent').value,
       image:g('nv-image').value||'', image_url:g('nv-image').value||'',
@@ -1881,10 +1919,11 @@
         var list=j.invitations||[];
         if(!list.length){ box.innerHTML='<div class="ea-empty"><div class="ea-empty-ico">📭</div>Inga nyhetsutskick ännu</div>'; return; }
         box.innerHTML=list.map(function(i){
-          return '<div class="ck-item ck-item-clk" data-id="'+esc(i.id)+'" title="Klicka för att redigera"><div><div class="ck-item-t">'+esc(i.title||'(namnlös)')+'</div><div class="ck-item-m">'+(i.cta_url?esc(i.cta_url.replace(/^https?:\/\//,'').slice(0,40))+'…':'(ingen CTA-länk)')+'</div></div>'+
+          return '<div class="ck-item ck-item-clk" data-id="'+esc(i.id)+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att redigera"><div><div class="ck-item-t">'+esc(i.title||'(namnlös)')+'</div><div class="ck-item-m">'+(i.cta_url?esc(i.cta_url.replace(/^https?:\/\//,'').slice(0,40))+'…':'(ingen CTA-länk)')+'</div>'+tagChipsHtml(i)+'</div>'+
             '<span class="ea-bdg '+(i.active?'bi':'bg2')+'">'+(i.active?'Aktiv':'Av')+'</span></div>';
         }).join('');
         box.querySelectorAll('.ck-item-clk').forEach(function(el){ el.addEventListener('click', function(){ openNewsForEdit(el.dataset.id); }); });
+        buildTagFilter(g('newsTagFilter'), box);
       })
       .catch(function(){ box.innerHTML='<div class="ea-empty">Kunde inte ladda.</div>'; });
   }
@@ -1892,6 +1931,7 @@
   function fillNewsForm(inv){
     NV_EDIT_ID=inv.id; NV_TOKEN=inv.token||'';
     g('nv-title').value=inv.title||''; g('nv-desc').value=inv.description||'';
+    g('nv-tags').value=(Array.isArray(inv.tags)?inv.tags:String(inv.tags||'').split(',')).filter(Boolean).join(', ');
     g('nv-cta-label').value=inv.cta_label||''; g('nv-cta-url').value=inv.cta_url||'';
     g('nv-image').value=inv.image_url||''; g('nv-host').value=inv.host_name||'';
     g('nv-linkedin').value=inv.linkedin_url||''; g('nv-facebook').value=inv.facebook_url||''; g('nv-instagram').value=inv.instagram_url||'';
@@ -1910,7 +1950,7 @@
   }
   function resetNewsForm(){
     NV_EDIT_ID=null; NV_TOKEN='';
-    ['nv-title','nv-desc','nv-cta-label','nv-cta-url','nv-image','nv-host','nv-cc','nv-cc-search','nv-linkedin','nv-facebook','nv-instagram'].forEach(function(id){ g(id).value=''; });
+    ['nv-title','nv-desc','nv-tags','nv-cta-label','nv-cta-url','nv-image','nv-host','nv-cc','nv-cc-search','nv-linkedin','nv-facebook','nv-instagram'].forEach(function(id){ g(id).value=''; });
     g('nv-accent').value='#df6f39'; g('nv-accent-hex').value='#df6f39';
     g('nv-active').checked=true;
     g('nv-formhead').textContent='Skapa nyhetsutskick'; g('nv-save').textContent='Skapa nyhetsutskick';
@@ -2223,6 +2263,7 @@
     if(!schema.length){ g('sv-err').textContent='Minst en fråga måste ha en label.'; g('sv-err').classList.add('show'); g('sv-status').textContent=''; return; }
     var body = {
       kind:'survey', title:title, description:g('sv-desc').value,
+      tags:g('sv-tags').value,
       client_company:g('sv-cc').value||null,
       accent_color:g('sv-accent').value,
       image:g('sv-image').value||'', image_url:g('sv-image').value||'',
@@ -2268,11 +2309,12 @@
         box.innerHTML = invites.map(function(i){
           var name = esc(i.title||'(utan rubrik)');
           var meta = (i.active?'<span class="ea-bdg bi">Aktiv</span>':'<span class="ea-bdg bg2">Av</span>');
-          return '<div class="ck-item ck-item-clk" data-sv-id="'+esc(i.id||'')+'" title="Klicka för att öppna"><div><div class="ck-item-t">'+name+'</div><div class="ck-item-m">'+meta+'</div></div></div>';
+          return '<div class="ck-item ck-item-clk" data-sv-id="'+esc(i.id||'')+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att öppna"><div><div class="ck-item-t">'+name+'</div><div class="ck-item-m">'+meta+'</div>'+tagChipsHtml(i)+'</div></div>';
         }).join('');
         box.querySelectorAll('[data-sv-id]').forEach(function(el){
           el.addEventListener('click', function(){ openSurveyForEdit(el.getAttribute('data-sv-id')); });
         });
+        buildTagFilter(g('surveyTagFilter'), box);
       })
       .catch(function(){ g('surveyList').innerHTML='<div class="ck-mut">Kunde inte ladda lista.</div>'; });
   }
@@ -2290,6 +2332,7 @@
     SV_TOKEN = inv.token || '';
     g('sv-title').value = inv.title || '';
     g('sv-desc').value  = inv.description || '';
+    g('sv-tags').value  = (Array.isArray(inv.tags) ? inv.tags : String(inv.tags||'').split(',')).filter(Boolean).join(', ');
     g('sv-cc').value    = inv.client_company || '';
     if(inv.client_company && (CCS||[]).length){
       var c = (CCS||[]).find(function(x){return x.id===inv.client_company;});
@@ -2323,7 +2366,7 @@
   function resetSurveyForm(){
     SV_EDIT_ID = null;
     SV_TOKEN = '';
-    ['sv-title','sv-desc','sv-cta-label','sv-image','sv-host','sv-cc','sv-cc-search','sv-deadline'].forEach(function(id){ g(id).value=''; });
+    ['sv-title','sv-desc','sv-tags','sv-cta-label','sv-image','sv-host','sv-cc','sv-cc-search','sv-deadline'].forEach(function(id){ g(id).value=''; });
     g('sv-accent').value='#df6f39'; g('sv-accent-hex').value='#df6f39';
     g('sv-active').checked=true; g('sv-anon').checked=false;
     SV_QUESTIONS = []; renderSvQuestions();
@@ -2718,6 +2761,7 @@
         '<div class="ck-hint" style="margin-bottom:8px;font-size:11px">Kolumner: <code>namn</code>, <code>epost</code> (valfritt <code>foretag</code>, <code>region</code>). Dubbletter hoppas över.</div>' +
         '<input type="file" id="'+P+'-imp-file" accept=".xlsx,.xls,.csv">' +
         '<div class="ck-mut" id="'+P+'-imp-info" style="margin-top:6px;font-size:11px"></div>' +
+        '<label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:11.5px;color:var(--fa);cursor:pointer"><input type="checkbox" id="'+P+'-imp-skip"> Hoppa över kontakter som redan finns (andra utskick + medarbetare)</label>' +
         '<div class="ck-row-actions" style="margin-top:8px"><button class="ck-btn-gh" id="'+P+'-imp-btn" disabled>Importera</button></div>' +
         '<div id="'+P+'-aud-prog" style="display:none;margin-top:10px"><div class="ck-prog"><div class="ck-prog-bar" id="'+P+'-aud-bar"></div></div><div class="ck-mut" id="'+P+'-aud-text" style="margin-top:6px;font-size:11.5px"></div></div>' +
       '</div>';
@@ -2801,20 +2845,21 @@
       var prog=g(P+'-aud-prog'), bar=g(P+'-aud-bar'), txt=g(P+'-aud-text');
       prog.style.display='block'; bar.style.width='0%'; txt.textContent='Startar…';
       g(P+'-imp-btn').disabled=true;
-      var total=impRows.length, created=0, skipped=0, invalid=0;
+      var skipEx=!!(g(P+'-imp-skip') && g(P+'-imp-skip').checked);
+      var total=impRows.length, created=0, skipped=0, invalid=0, skippedExisting=0;
       function step(offset){
         var batch=impRows.slice(offset,offset+100);
         fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/import'),
-          {method:'POST',headers:H(),body:JSON.stringify({rows:batch,first:offset===0})})
+          {method:'POST',headers:H(),body:JSON.stringify({rows:batch,first:offset===0,skip_existing:skipEx})})
           .then(function(r){return r.json();})
           .then(function(j){
             if(!j.ok) throw new Error(j.error||'fel');
-            created+=j.created||0; skipped+=j.skipped||0; invalid+=j.invalid||0;
+            created+=j.created||0; skipped+=j.skipped||0; invalid+=j.invalid||0; skippedExisting+=j.skipped_existing||0;
             var done=offset+100>=total, proc=Math.min(offset+100,total);
             bar.style.width=Math.round(proc/total*100)+'%';
-            txt.textContent='Bearbetar '+proc+'/'+total+' · '+created+' skapade'+(skipped?' · '+skipped+' fanns redan':'')+(invalid?' · '+invalid+' ogiltiga':'');
+            txt.textContent='Bearbetar '+proc+'/'+total+' · '+created+' skapade'+(skipped?' · '+skipped+' fanns redan':'')+(skippedExisting?' · '+skippedExisting+' fanns i systemet':'')+(invalid?' · '+invalid+' ogiltiga':'');
             if(!done) step(offset+100);
-            else { txt.textContent='Klart — '+created+' skapade'+(skipped?', '+skipped+' fanns redan':'')+(invalid?', '+invalid+' ogiltiga':'')+'.'; g(P+'-imp-btn').disabled=false; cfg.reload(); }
+            else { txt.textContent='Klart — '+created+' skapade'+(skipped?', '+skipped+' fanns redan':'')+(skippedExisting?', '+skippedExisting+' fanns i systemet':'')+(invalid?', '+invalid+' ogiltiga':'')+'.'; g(P+'-imp-btn').disabled=false; cfg.reload(); }
           })
           .catch(function(e){ txt.textContent='Fel: '+(e.message||''); g(P+'-imp-btn').disabled=false; });
       }
