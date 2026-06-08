@@ -16024,6 +16024,63 @@ app.post("/sync/v2-linkcompany/:source", requireSyncSecret, async (req, res) => 
   }
 });
 
+// Backfill av customer→ClientCompany-länken (FortnoxCustomer.linked_company) för
+// kunder som har orgnr men saknar länk ("noLink" från linkcompany-rapporten).
+// BUBBLE-INTERN: läser FortnoxCustomer som redan finns i Bubble, anropar den
+// validerade ensureClientCompanyForFortnoxCustomer (hittar ELLER skapar ClientCompany
+// på orgnr) och patchar länken. INGA Fortnox-anrop, inget self-HTTP → robust + lätt
+// svar (till skillnad från /fortnox/upsert/customers/all som 502:ar på volym).
+// Fixar INTE "noCustomer" (kunder som saknas helt i Bubble — kräver Fortnox-pull).
+// Efter detta: kör /sync/v2-linkcompany write så prop ageras länken ut på dokumenten.
+// Body: { mode:"diff"|"write", connection_id?, maxRecords? }
+app.post("/sync/v2-linkcustomer", requireSyncSecret, async (req, res) => {
+  try {
+    const { mode = "diff", connection_id = null, maxRecords = null } = req.body || {};
+    const write = mode === "write";
+    const cap = maxRecords != null ? Number(maxRecords) : null;
+
+    const constraints = [];
+    if (connection_id) constraints.push({ key: "connection_id", constraint_type: "equals", value: connection_id });
+    const all = await bubbleFindAll("FortnoxCustomer", { constraints });
+
+    const report = {
+      mode, connection_id, scanned: all.length,
+      counts: { alreadyLinked: 0, noOrgno: 0, candidates: 0, patched: 0, errors: 0 },
+      writes: 0, sample: [], errors: [],
+    };
+
+    for (const fc of all) {
+      if (cap && report.writes >= cap) break;
+      if (fc?.linked_company) { report.counts.alreadyLinked++; continue; }
+      const orgno = String(fc?.organisation_number || "").trim();
+      if (!orgno) { report.counts.noOrgno++; continue; }
+
+      report.counts.candidates++;
+      if (report.sample.length < 50)
+        report.sample.push({ customer_number: fc.customer_number, name: fc.name, orgno });
+
+      if (!write) continue;
+      try {
+        const ccId = await ensureClientCompanyForFortnoxCustomer(fc);
+        if (ccId) {
+          await bubblePatch("FortnoxCustomer", fc._id, { linked_company: ccId });
+          report.counts.patched++; report.writes++;
+        } else {
+          report.counts.errors++;
+          if (report.errors.length < 25) report.errors.push({ customer_number: fc.customer_number, error: "ingen ClientCompany (ogiltigt orgnr?)" });
+        }
+      } catch (e) {
+        report.counts.errors++;
+        if (report.errors.length < 25) report.errors.push({ customer_number: fc.customer_number, error: e?.message || String(e) });
+      }
+    }
+
+    return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // CG-1: ClientGroup kluster-FÖRSLAG (READ-ONLY, skriver inget). Mänsklig granskning.
 const clientGroupEngine = createClientGroupEngine({
   bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch,
