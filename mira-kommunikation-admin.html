@@ -226,6 +226,45 @@
 .iv-arrived-row td { opacity:.55; }
 .iv-arrived-row td:first-child { text-decoration:line-through;text-decoration-color:var(--fa); }
 
+/* ── Avprickningsvy (mobil check-in) ── */
+#ci-overlay { position:fixed;inset:0;z-index:10000;background:var(--bg);flex-direction:column; }
+.ci-head { flex:0 0 auto;padding:14px 16px 12px;border-bottom:1px solid var(--bd);background:var(--sf); }
+.ci-head-top { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+.ci-title { font-size:17px;font-weight:700;color:var(--tx);line-height:1.25;overflow:hidden;text-overflow:ellipsis; }
+.ci-close { flex:0 0 auto;width:40px;height:40px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--mu);font-size:24px;line-height:1;cursor:pointer; }
+.ci-counts { display:flex;gap:8px;margin:12px 0;flex-wrap:wrap; }
+.ci-cbox { flex:1;min-width:72px;text-align:center;background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:8px 4px; }
+.ci-cbox .n { font-size:22px;font-weight:800;color:var(--tx);line-height:1; }
+.ci-cbox .l { font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--fa);margin-top:3px; }
+.ci-cbox.ok .n { color:#3fb950; }
+.ci-search { width:100%;box-sizing:border-box;font-size:16px;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;outline:none; }
+.ci-toggle { display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--mu);cursor:pointer; }
+.ci-toggle input { width:18px;height:18px; }
+.ci-list { flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 12px 40px; }
+.ci-row { display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:8px;cursor:pointer;min-height:64px;box-sizing:border-box;transition:background .12s,border-color .12s; }
+.ci-row:active { background:var(--sf2); }
+.ci-row.on { background:rgba(63,185,80,.10);border-color:rgba(63,185,80,.45); }
+.ci-row.busy { opacity:.5;pointer-events:none; }
+.ci-info { flex:1 1 auto;min-width:0; }
+.ci-name { font-size:15px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.ci-sub { font-size:12px;color:var(--fa);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.ci-row.on .ci-name { text-decoration:line-through;text-decoration-color:var(--fa); }
+.ci-rsvp { flex:0 0 auto;font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 7px;border-radius:6px; }
+.ci-rsvp.y { color:#3fb950;background:rgba(63,185,80,.12); }
+.ci-rsvp.n { color:#f0883e;background:rgba(240,136,62,.12); }
+.ci-rsvp.w { color:var(--mu);background:var(--bg); }
+.ci-mark { flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:2px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:18px;color:transparent; }
+.ci-row.on .ci-mark { border-color:#3fb950;background:#3fb950;color:#fff; }
+.ci-empty { text-align:center;color:var(--fa);font-size:13px;padding:40px 16px; }
+
+/* ── Dela avprickningslänk (admin) ── */
+.ck-share { background:var(--bg);border:1px solid var(--ac);border-radius:10px;padding:14px 16px;margin-bottom:14px; }
+.ck-share-h { font-size:13px;font-weight:700;color:var(--ac);margin-bottom:6px; }
+.ck-share-p { font-size:11.5px;color:var(--mu);line-height:1.5;margin:0 0 12px; }
+.ck-share-row { display:flex;gap:8px;align-items:center;margin-top:4px; }
+.ck-share-row code { flex:1;min-width:0;background:var(--sf);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-family:ui-monospace,monospace;font-size:12px;color:var(--tx);word-break:break-all; }
+.ck-share-code { letter-spacing:.2em;font-weight:700;font-size:16px!important;text-align:center;color:var(--ac)!important; }
+
 /* ── Sparade urval ── */
 .ck-seg-item { display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--bd);background:var(--bg);border-radius:7px;margin-bottom:6px;cursor:pointer;transition:.12s;position:relative; }
 .ck-seg-item:hover { border-color:var(--ac);background:var(--acb); }
@@ -329,11 +368,23 @@
           <div class="ck-card" id="iv-guests-card" style="display:none">
             <div class="ck-sl-row" data-collapsible><p class="ck-sl">Deltagare <span class="ck-mut" id="iv-g-count" style="font-weight:400">(0)</span></p>
               <span style="display:flex;gap:8px;align-items:center">
+                <button class="ck-btn-gh" id="iv-g-checkin" style="font-size:11px;padding:5px 10px" title="Öppna avprickning här">📋 Avprickning</button>
+                <button class="ck-btn-gh" id="iv-g-share" style="font-size:11px;padding:5px 10px" title="Dela hemlig avprickningslänk till personal">🔗 Dela länk</button>
                 <button class="ck-btn-gh" id="iv-g-refresh" style="font-size:11px;padding:5px 10px" title="Uppdatera">↻</button>
                 <span class="ck-chev">▾</span>
               </span>
             </div>
             <div id="iv-g-stats" class="ck-stats" style="margin-bottom:14px"></div>
+
+            <div id="iv-share-box" class="ck-share" style="display:none">
+              <div class="ck-share-h">🔗 Avprickningslänk för personal</div>
+              <p class="ck-share-p">Dela länken med betrodd personal. Listan visas först efter att de angett <b>koden</b> nedan. Tips: skicka länk och kod via olika kanaler.</p>
+              <label class="ea-fl">Länk</label>
+              <div class="ck-share-row"><code id="iv-share-url"></code><button class="ck-btn-gh" id="iv-share-copy">Kopiera</button></div>
+              <label class="ea-fl" style="margin-top:10px">Kod</label>
+              <div class="ck-share-row"><code id="iv-share-code" class="ck-share-code"></code><button class="ck-btn-gh" id="iv-share-recode" title="Skapa ny kod (gamla slutar gälla)">Ny kod</button></div>
+              <div class="ck-mut" id="iv-share-exp" style="font-size:11px;margin-top:8px"></div>
+            </div>
 
             <details id="iv-g-add-wrap" style="margin-bottom:10px">
               <summary class="ck-btn-gh" style="display:inline-block;list-style:none">+ Lägg till deltagare</summary>
@@ -735,6 +786,20 @@
         <button id="sv-ov-close" style="position:absolute;top:14px;right:14px;background:none;border:none;font-size:24px;cursor:pointer;color:var(--mu,#666);line-height:1">×</button>
         <div id="sv-ov-content">Laddar…</div>
       </div>
+    </div>
+
+    <!-- ═══════════ AVPRICKNINGS-OVERLAY (mobil check-in för event) ═══════════ -->
+    <div id="ci-overlay" style="display:none">
+      <div class="ci-head">
+        <div class="ci-head-top">
+          <div class="ci-title" id="ci-title">Avprickning</div>
+          <button id="ci-close" class="ci-close" title="Stäng">×</button>
+        </div>
+        <div class="ci-counts" id="ci-counts"></div>
+        <input class="ci-search" id="ci-search" placeholder="Sök namn, företag eller mejl…" autocomplete="off" autocapitalize="off">
+        <label class="ci-toggle"><input type="checkbox" id="ci-only"> Visa bara ej incheckade</label>
+      </div>
+      <div class="ci-list" id="ci-list"></div>
     </div>
 
     <!-- ═══════════ E-POST (din befintliga admin, inflyttad) ═══════════ -->
@@ -1563,6 +1628,7 @@
   function loadGuests(invId){
     IVG_INVITE_ID = invId;
     g('iv-guests-card').style.display='';
+    var sb=g('iv-share-box'); if(sb) sb.style.display='none';   // dölj ev. stale länk från annat event
     g('iv-g-tbody').innerHTML='<tr><td colspan="7" class="iv-g-empty">Laddar deltagare…</td></tr>';
     fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests'),{headers:H()})
       .then(function(r){return r.json();})
@@ -1659,6 +1725,100 @@
         renderGuestStats(); renderGuestsTable();
       })
       .catch(function(err){ btn.disabled=false; alert('Kunde inte ta bort: '+(err.message||'')); });
+  });
+
+  // ── Avprickningsvy (mobil check-in för event) ────────────────────────────
+  // Fullskärms-overlay som återanvänder gästlistan + PATCH {arrived}. Stora
+  // touch-ytor, live-räknare, sök och "visa bara kvar". Körs inuti admin → auth
+  // (Bubble-login + API-nyckel) är redan löst.
+  var CI_INVITE_ID=null, CI_GUESTS=[], CI_DIRTY=false;
+  function ciOpen(){
+    if(!IVG_INVITE_ID){ alert('Öppna ett event (spara/öppna inbjudan) först.'); return; }
+    CI_INVITE_ID=IVG_INVITE_ID; CI_DIRTY=false;
+    g('ci-title').textContent=(g('iv-title').value||'').trim()||'Avprickning';
+    g('ci-search').value=''; g('ci-only').checked=false;
+    g('ci-list').innerHTML='<div class="ci-empty">Laddar…</div>';
+    g('ci-counts').innerHTML='';
+    g('ci-overlay').style.display='flex';
+    document.body.style.overflow='hidden';
+    fetch(api('/admin/invite/'+encodeURIComponent(CI_INVITE_ID)+'/guests'),{headers:H()})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(!j.ok) throw new Error(j.error||'fel'); CI_GUESTS=j.guests||[]; ciRender(); })
+      .catch(function(e){ g('ci-list').innerHTML='<div class="ci-empty">Kunde inte ladda: '+esc(e.message||'')+'</div>'; });
+  }
+  function ciClose(){
+    g('ci-overlay').style.display='none';
+    document.body.style.overflow='';
+    if(CI_DIRTY && IVG_INVITE_ID===CI_INVITE_ID) loadGuests(IVG_INVITE_ID);  // resynka desktop-tabellen
+  }
+  function ciCounts(){
+    var total=CI_GUESTS.length, arrived=0, yes=0;
+    CI_GUESTS.forEach(function(x){ if(x.arrived) arrived++; if((x.rsvp_status||'')==='yes') yes++; });
+    g('ci-counts').innerHTML=
+      '<div class="ci-cbox ok"><div class="n">'+arrived+'</div><div class="l">Incheckade</div></div>'+
+      '<div class="ci-cbox"><div class="n">'+(total-arrived)+'</div><div class="l">Kvar</div></div>'+
+      '<div class="ci-cbox"><div class="n">'+yes+'</div><div class="l">OSA ja</div></div>';
+  }
+  function ciRender(){
+    ciCounts();
+    var q=(g('ci-search').value||'').toLowerCase().trim(), only=g('ci-only').checked;
+    var rows=CI_GUESTS.filter(function(x){
+      if(only && x.arrived) return false;
+      if(!q) return true;
+      return [x.name,x.email,x.company_name,x.phone].some(function(v){ return String(v||'').toLowerCase().indexOf(q)>=0; });
+    });
+    rows.sort(function(a,b){ if(!!a.arrived!==!!b.arrived) return a.arrived?1:-1; return String(a.name||a.email).localeCompare(String(b.name||b.email),'sv'); });
+    if(!rows.length){ g('ci-list').innerHTML='<div class="ci-empty">'+(CI_GUESTS.length?'Inga matchar.':'Inga deltagare i listan än.')+'</div>'; return; }
+    g('ci-list').innerHTML=rows.map(function(x){
+      var rs=(x.rsvp_status||'pending');
+      var rsvp=rs==='yes'?'<span class="ci-rsvp y">Ja</span>':rs==='no'?'<span class="ci-rsvp n">Nej</span>':'<span class="ci-rsvp w">Väntar</span>';
+      var sub=[x.company_name,x.region,x.email].filter(Boolean).join(' · ');
+      return '<button class="ci-row'+(x.arrived?' on':'')+'" data-ci-gid="'+esc(x.id)+'">'+
+        '<div class="ci-info"><div class="ci-name">'+esc(x.name||x.email||'(inget namn)')+(x.plus_ones_count?' +'+x.plus_ones_count:'')+'</div><div class="ci-sub">'+esc(sub)+'</div></div>'+
+        rsvp+'<div class="ci-mark">✓</div></button>';
+    }).join('');
+  }
+  function ciToggle(gid, rowEl){
+    var x=CI_GUESTS.find(function(y){return y.id===gid;}); if(!x || rowEl.classList.contains('busy')) return;
+    var next=!x.arrived;
+    rowEl.classList.add('busy');
+    fetch(api('/admin/invite/guest/'+encodeURIComponent(gid)),{method:'PATCH',headers:H(),body:JSON.stringify({arrived:next})})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(!j.ok) throw new Error(j.error||'fel');
+        x.arrived=next; x.arrived_at=next?new Date().toISOString():null; CI_DIRTY=true;
+        rowEl.classList.toggle('on', next); ciCounts();
+        if(g('ci-only').checked && next) rowEl.style.display='none';
+      })
+      .catch(function(e){ alert('Kunde inte spara: '+(e.message||'')); })
+      .finally(function(){ rowEl.classList.remove('busy'); });
+  }
+  g('iv-g-checkin').addEventListener('click', ciOpen);
+  g('ci-close').addEventListener('click', ciClose);
+  ['ci-search','ci-only'].forEach(function(id){ g(id).addEventListener('input', ciRender); g(id).addEventListener('change', ciRender); });
+  g('ci-list').addEventListener('click', function(e){ var b=e.target.closest('[data-ci-gid]'); if(b) ciToggle(b.getAttribute('data-ci-gid'), b); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && g('ci-overlay').style.display==='flex') ciClose(); });
+
+  // ── Dela hemlig avprickningslänk + kod till personal ──
+  function ciShare(regen){
+    if(!IVG_INVITE_ID){ alert('Öppna ett event (spara/öppna inbjudan) först.'); return; }
+    var btn=g('iv-g-share'); btn.disabled=true;
+    fetch(api('/admin/invite/'+encodeURIComponent(IVG_INVITE_ID)+'/checkin/share'),{method:'POST',headers:H(),body:JSON.stringify({regenerate:!!regen})})
+      .then(function(r){return r.json();})
+      .then(function(j){ if(!j.ok) throw new Error(j.error||'fel');
+        g('iv-share-url').textContent=j.url;
+        g('iv-share-code').textContent=j.code;
+        g('iv-share-exp').textContent=j.expires_at ? ('Koden slutar gälla '+fd(j.expires_at)+' (≈12h efter eventets slut).') : 'Koden gäller tills du skapar en ny (eventet saknar slut-/startdatum).';
+        g('iv-share-box').style.display='';
+      })
+      .catch(function(e){ alert('Kunde inte skapa länk: '+(e.message||'')); })
+      .finally(function(){ btn.disabled=false; });
+  }
+  g('iv-g-share').addEventListener('click', function(){ ciShare(false); });
+  g('iv-share-recode').addEventListener('click', function(){ if(confirm('Skapa ny kod? Den gamla slutar fungera direkt — alla som redan loggat in påverkas inte förrän deras session går ut.')) ciShare(true); });
+  g('iv-share-copy').addEventListener('click', function(){
+    var btn=g('iv-share-copy'), url=g('iv-share-url').textContent;
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(url).then(function(){ flashBtn(btn,'✓ Kopierad'); }).catch(function(){ flashBtn(btn,'Markera själv'); }); }
+    else { flashBtn(btn,'Markera själv'); }
   });
 
   // Lägg till enskild (återanvänder /guests/import med en rad)

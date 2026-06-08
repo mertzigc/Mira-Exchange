@@ -71,6 +71,32 @@ Segment skapas fortfarande under Målgrupp-fliken; dropdownen speglar dem.
 - **Footer** i alla utgående mejl (invite/news/survey/RSVP-bekräftelse) + survey-landning: kontaktrad (hemsida · e-post · telefon), adress, `© år bolag, alla rättigheter förbehållna` + integritetspolicy-länk. Tomma fält renderas inte.
 - **Avsändarnamn** — fältet "Avsändarnamn i mail" styr nu From-namnet i inkorgen (ifyllt → används; annars ClientCompany; annars Carotte). Tomt fält läcker aldrig (gammal bugg åtgärdad).
 
+### 3f. Taggar på utskick
+- **Fritext, kommaseparerat** `tags`-fält på `Invitation` (text, *inte* option-set/list-of-texts → `safeCreate` kastar aldrig; `_normTags`/`_tagsArr` hanterar sträng↔array). Finns på alla tre flikar (event/nyhet/undersökning).
+- Skrivs i create/update, returneras i list/get; `?tag=`-filter i list-endpointen.
+- Admin: tagg-input i formuläret, tagg-chips på listobjekt + klickbar filterrad ovanför varje lista (`buildTagFilter`).
+- **Dotterbolags-sortering (steg 1):** tagga utskick med dotterbolagets namn och filtrera på taggen. Ersätter tills vidare det dedikerade leverantörs-/företagsfiltret i Målgrupp (parkerat).
+
+### 3g. Dubblettkoll vid import (global, opt-in)
+- Import-panelen har checkbox **"Hoppa över kontakter som redan finns (andra utskick + medarbetare)"**. Default **av** → dagens beteende ändras inte tyst.
+- På: dedup-setet utökas med alla `InviteGuest`-mejl (tvärs utskick) + alla `Coworker`-mejl (`_buildExistingEmailSet`, cachad 60s). Rapporteras separat som `skipped_existing` ("fanns i systemet"). Finns i både invite-panelen och den återanvändbara `attachAudienceTools` (alla tre flikar).
+
+### 3h. Avregistrering / unsubscribe (GDPR)
+- Global opt-out per mejladress (egen datatyp `EmailOptout`, fält `email`). Ett mejl = bort från **allt**.
+- Send-flödet filtrerar bort opt-outade innan kö (`_loadOptoutSet`, cachad 60s). Per-mottagare unsub-länk (via `guest_token`) injiceras i mejlfoten; `buildFooterBlock` renderar "Avregistrera dig från utskick" när länk finns.
+- Route `GET /unsubscribe?g=<token>` (tvåstegs-bekräftelse mot mejl-skannrar), i `openPaths`. Ny env `PUBLIC_API_BASE`.
+- **Soft-fail:** saknas `EmailOptout` i Bubble visar sidan ändå "avregistrerad" men persisteras inte → verifiera att en rad faktiskt skapas vid första testet.
+
+### 3i. Avprickning (mobil event-incheckning) — TVÅ vägar
+Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:id {arrived}`.
+
+**a) Inbyggd i admin (för dig själv):** "📋 Avprickning"-knapp i deltagar-kortet → fullskärms mobil-overlay (live-räknare, sök, "visa bara ej incheckade", stora tappbara rader). Kräver admin-inlogg. Stänger man synkas desktop-tabellen om.
+
+**b) Fristående kod-skyddad sida (för betrodd personal utan Bubble-konto):** ny fil `mira-deltagarhantering.html` hostad på `mira-fm.com/deltagarhantering`.
+- **Säkerhet:** hemlig länk `?e=<checkin_token>` + tillfällig **kod** (`checkin_code`) = grind. Länken ensam ger inget. Mejl loggas (spårbarhet, ingen allowlist). Kod auto-genereras, slutar gälla ~12h efter eventets slut (`end_date`/`start_date` + grace), kan regenereras. Rate-limit 10 kodförsök/min/IP. Kortlivad in-memory-session (8h) efter inloggning → vid Render-omstart loggar man in igen.
+- **Endpoints (publika, i `openPaths`):** `POST /checkin/auth {e,email,code}` → `{session,event,guests}`; `POST /checkin/list {session}`; `POST /checkin/toggle {session,gid,arrived}`. Admin genererar/visar länk+kod via `POST /admin/invite/:id/checkin/share {regenerate?}` (knapp "🔗 Dela länk" i deltagar-kortet).
+- **Flöde:** admin → 🔗 Dela länk → skicka länk + kod (helst olika kanaler) → personal öppnar länken på valfri mobil, anger mejl + kod → listan → tryck rad i dörren. Flera enheter samtidigt funkar (↻ uppdaterar).
+
 ---
 
 ## 4. Bubble-setup som KRÄVS (förutsättningar)
@@ -81,6 +107,11 @@ Segment skapas fortfarande under Målgrupp-fliken; dropdownen speglar dem.
 | Option-set `kind` | lägg till värdet `survey` | survey sparas |
 | Fält på `Invitation` | `anonymous` (yes/no) | anonymisering |
 | Ny datatyp `SurveyResponse` | fält: `invitation` (text), `response_json` (text), `anon_meta` (text). Inga personfält. | anonyma svar |
+| Fält på `Invitation` | `tags` (**text** — inte list-of-texts) | taggar/dotterbolags-sortering |
+| Ny datatyp `EmailOptout` | fält: `email` (text). En rad per avregistrerad adress. | unsubscribe (GDPR) |
+| Fält på `Invitation` | `checkin_token` (text), `checkin_code` (text) | fristående avprickningssida (3i b) |
+
+> Den **inbyggda** avprickningen (3i a) kräver ingen Bubble-setup. Den **fristående** sidan (3i b) kräver `checkin_token` + `checkin_code` ovan.
 
 ---
 
@@ -95,34 +126,44 @@ Segment skapas fortfarande under Målgrupp-fliken; dropdownen speglar dem.
 | `COMPANY_PHONE` | footer telefon | (döljs) |
 | `COMPANY_ADDRESS` | footer adress | (döljs) |
 | `COMPANY_PRIVACY_URL` | footer policy-länk | (döljs) |
+| `PUBLIC_API_BASE` | bas-URL för unsubscribe-länk i mejlfoten (Render-servern, inte Bubble) | `https://mira-exchange.onrender.com` |
+| `PUBLIC_CHECKIN_URL` | bas-URL till fristående avprickningssidan (i delningslänken) | `https://mira-fm.com/deltagarhantering` |
 
 ---
 
-## 6. Deploy-checklista (senaste bunten)
+## 6. Deploy-checklista
 
-1. Bubble: skapa `SurveyResponse`-datatyp + `anonymous`-fält + `survey`-option + EmailTemplate-rad (om ej redan gjort).
-2. Render env-vars (åtminstone `PUBLIC_SURVEY_URL`; footer-vars valfritt).
-3. `index-83.js` → `index.js`.
-4. `emailer-11.js` → `emailer.js`.
-5. `mira-kommunikation-admin.html` → Bubble dashboard_crm.
-6. `mira-undersokning.html` → host (mira-fm.com/undersokning).
+**Bunt 1 (survey-modulen) — tidigare:**
+1. Bubble: `SurveyResponse`-datatyp + `anonymous`-fält + `survey`-option + EmailTemplate-rad.
+2. Render env-vars (`PUBLIC_SURVEY_URL`; footer-vars valfritt).
+3. `index.js`, `emailer.js`, `mira-kommunikation-admin.html`, `mira-undersokning.html`.
+
+**Bunt 2 (taggar / dubblettkoll / unsubscribe) — committad `bc5124b "komms"`:**
+1. Bubble: fält `tags` (text) på `Invitation` + ny datatyp `EmailOptout` (fält `email`, text).
+2. Render env (valfritt): `PUBLIC_API_BASE`.
+3. Push `index.js` + `emailer.js`; klistra in `mira-kommunikation-admin.html` i `dashboard_crm`.
+
+**Bunt 3 (avprickning: inbyggd + fristående kod-sida) — oncommittad i working tree:**
+1. Bubble: fält `checkin_token` (text) + `checkin_code` (text) på `Invitation`.
+2. Render env (valfritt): `PUBLIC_CHECKIN_URL` om sidan inte ligger på `mira-fm.com/deltagarhantering`.
+3. Push `index.js` (nya `/checkin/*`-endpoints + share).
+4. Klistra in `mira-kommunikation-admin.html` i `dashboard_crm` (📋 Avprickning + 🔗 Dela länk).
+5. Hosta `mira-deltagarhantering.html` på `mira-fm.com/deltagarhantering`.
 
 ---
 
 ## 7. Kvar att göra
 
+> ✅ **Klart 2026-06-08:** Taggar (3f), dubblettkoll mot befintliga (3g), unsubscribe (3h), avprickning både inbyggd och fristående kod-skyddad sida (3i). Se sektion 3.
+
 ### Snabbt (timmar — nästa naturliga steg)
-- **Taggar** på utskick (organisering + filter). Kräver `tags`-fält på Invitation.
-- **Dubblettkoll mot befintliga** vid Excel-import (idag dedup inom utskicket; utöka mot redan importerade/Coworkers).
 - **Mer filtrering** i deltagarlistan.
 
 ### Medel (≈ en dag styck)
-- **Avregistrera-länk (unsubscribe)** — route + `unsubscribed`-fält + footer-länk. GDPR-relevant.
 - **Bilduppladdning + pixelinstruktion** (idag bara URL). Kräver upload-endpoint. Hänger ihop med Mediaarkiv.
-- **Dotterbolag-filter** i målgrupp — Christian bekräftade: filtrera på leverantör/företagsnamn (gör det enkelt).
+- **Dotterbolag-filter** i målgrupp (leverantör/företagsnamn) — **parkerat**: löses i steg 1 via taggar (3f). Bygg det dedikerade filtret om taggar inte räcker.
 - **Karta** på landningssida + mejl (mejl = statisk bild via Google Static Maps).
 - **Video på landningssida** — Vimeo-länk räcker (bekräftat). Embed, enkelt.
-- **Mobilanpassad avprickningsvy** för deltagare (event-incheckning via `arrived`).
 - **Importera Excel direkt till Coworker** (permanenta poster, inte bara deltagarlista) + komplettera målgrupp.
 
 ### Stort (eget projekt vardera)
@@ -144,9 +185,15 @@ Segment skapas fortfarande under Målgrupp-fliken; dropdownen speglar dem.
 - Avsändarnamn: ifyllt fält > ClientCompany > "Carotte". Tomt läcker aldrig.
 - Footer: global via env-vars (boilerplate till alla), ej per-dotterbolag i v1.
 - Datum/tid: lagras ISO (UTC), visas/redigeras lokal svensk tid.
+- Taggar: fritext-`text` (kommaseparerat), inte option-set/list-of-texts. Dotterbolags-sortering görs via taggar i steg 1.
+- Dubblettkoll mot befintliga: opt-in, default av (tvångsskippa befintliga vore fel — man vill ofta bjuda in en medarbetare till ny undersökning).
+- Unsubscribe: global per mejladress (egen datatyp), inte per utskick.
+- Avprickning: två vägar — inbyggd i admin (Bubble-auth) + fristående sida på mira-fm.com med kod-grind. Kod = enda grinden (mejl loggas, ingen allowlist), auto-genererad + auto-utgång efter eventet. Sessioner in-memory (8h).
 
 ---
 
 ## 9. Snabb startprompt för nästa session
 
-> "Vi fortsätter på Mira FM:s kommunikations-/undersökningsmodul. Här är handoff-dokumentet [bifoga]. Senaste filer: index-83.js, emailer-11.js, mira-kommunikation-admin.html, mira-undersokning.html. Jag laddar upp min senaste index.js + emailer.js först om backend ska röras. Nästa steg: [taggar / dubblettkoll / annan punkt]."
+> "Vi fortsätter på Mira FM:s kommunikations-/undersökningsmodul. Du finner handoff-dokumentet plus alla filer i repo (`Mira-Exchange/`). Senaste filer: index.js, emailer.js, mira-kommunikation-admin.html, mira-undersokning.html. Backend ändras av båda → kolla versionsdrift först. Nästa steg: [mer filtrering i deltagarlistan / bilduppladdning / annan punkt]."
+
+*Senast uppdaterad 2026-06-08: taggar, dubblettkoll, unsubscribe, avprickningsvy tillagda.*

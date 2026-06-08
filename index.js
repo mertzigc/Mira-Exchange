@@ -376,6 +376,10 @@ function requireApiKey(req, res, next) {
     "/invite/config",
     "/invite/rsvp",
     "/unsubscribe",   // klickas i mottagarens browser från mejlfoten (ingen API-nyckel)
+    // Avprickning: fristående mobilsida på mira-fm.com (grind = checkin_code)
+    "/checkin/auth",
+    "/checkin/list",
+    "/checkin/toggle",
     // Kund-KPI: HTML-blocket triggar refresh direkt från kundens webbläsare
     // UTAN API-nyckel. Svaret innehåller ALDRIG data (bara {ok:true}); datan
     // plockas av Bubble scoped per företag. Rate-limitad via _publicRateLimited.
@@ -13157,47 +13161,80 @@ app.get("/admin/invite/:id/guests/stats", async (req, res) => {
 });
 
 // ── GET /admin/invite/:id/guests — full deltagarlista, berikad med företagsnamn ──
+// Bygger normaliserad gästlista för ett event (delas av admin-vyn + avprickningssidan).
+async function _buildGuestList(invId) {
+  await _syncCache("ClientCompany");
+  const ccById = new Map(_cacheRows("ClientCompany").map(c => [c._id, c]));
+  const guests = await bubbleFindAll(INVITE.GUEST_TYPE, {
+    constraints: [{ key: "invitation", constraint_type: "equals", value: invId }]
+  });
+  const list = (guests || []).map(g => {
+    const cc = g.client_company ? ccById.get(g.client_company) : null;
+    return {
+      id: g._id,
+      name: g.name || "",
+      email: g.email || "",
+      phone: g.phone || "",
+      company_id: g.client_company || null,
+      company_name: cc ? _admName(cc) : "",
+      region: g.region || (cc ? (cc.Region || cc.region || "") : ""),
+      rsvp_status: g.rsvp_status || "pending",
+      rsvp_at: g.rsvp_at || null,
+      plus_ones_count: Number(g.plus_ones_count) || 0,
+      allergens_json: g.allergens_json || "[]",
+      response_json: g.response_json || "{}",
+      arrived: g.arrived === true,
+      arrived_at: g.arrived_at || null,
+      invited_at: g.invited_at || null,
+      invite_sent: g.invite_sent === true,
+      source: g.source || "",
+      guest_token: g.guest_token || "",
+      created_at: g["Created Date"] || null
+    };
+  });
+  // Sortera: ej anlända först, sedan på namn
+  list.sort((a, b) => {
+    if (a.arrived !== b.arrived) return a.arrived ? 1 : -1;
+    return String(a.name || a.email).localeCompare(String(b.name || b.email), "sv");
+  });
+  return list;
+}
 app.get("/admin/invite/:id/guests", async (req, res) => {
   try {
     const invId = req.params.id;
     if (!invId) return res.status(400).json({ ok: false, error: "id_required" });
-    await _syncCache("ClientCompany");
-    const ccs = _cacheRows("ClientCompany");
-    const ccById = new Map(ccs.map(c => [c._id, c]));
-    const guests = await bubbleFindAll(INVITE.GUEST_TYPE, {
-      constraints: [{ key: "invitation", constraint_type: "equals", value: invId }]
-    });
-    const list = (guests || []).map(g => {
-      const cc = g.client_company ? ccById.get(g.client_company) : null;
-      return {
-        id: g._id,
-        name: g.name || "",
-        email: g.email || "",
-        phone: g.phone || "",
-        company_id: g.client_company || null,
-        company_name: cc ? _admName(cc) : "",
-        region: g.region || (cc ? (cc.Region || cc.region || "") : ""),
-        rsvp_status: g.rsvp_status || "pending",
-        rsvp_at: g.rsvp_at || null,
-        plus_ones_count: Number(g.plus_ones_count) || 0,
-        allergens_json: g.allergens_json || "[]",
-        response_json: g.response_json || "{}",
-        arrived: g.arrived === true,
-        arrived_at: g.arrived_at || null,
-        invited_at: g.invited_at || null,
-        invite_sent: g.invite_sent === true,
-        source: g.source || "",
-        guest_token: g.guest_token || "",
-        created_at: g["Created Date"] || null
-      };
-    });
-    // Sortera: ej anlända först, sedan på namn
-    list.sort((a, b) => {
-      if (a.arrived !== b.arrived) return a.arrived ? 1 : -1;
-      return String(a.name || a.email).localeCompare(String(b.name || b.email), "sv");
-    });
+    const list = await _buildGuestList(invId);
     res.json({ ok: true, guests: list });
   } catch (e) { console.error("[admin/invite/guests/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// POST /admin/invite/:id/checkin/share  body: { regenerate?:bool }
+// Säkerställer checkin_token + checkin_code (genererar vid behov / regenerate),
+// returnerar delningsbar länk + kod + när koden slutar gälla.
+app.post("/admin/invite/:id/checkin/share", async (req, res) => {
+  try {
+    const invId = req.params.id;
+    const regenerate = req.body?.regenerate === true;
+    const inv = await bubbleGet(ADM_INVITATION, invId).catch(() => null);
+    if (!inv) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+    const patch = {};
+    let token = inv.checkin_token;
+    let code  = inv.checkin_code;
+    if (!token) { token = _inviteToken(); patch.checkin_token = token; }
+    if (!code || regenerate) { code = _genCheckinCode(); patch.checkin_code = code; }
+    if (Object.keys(patch).length) await bubblePatch(ADM_INVITATION, invId, patch);
+    const expiry = _checkinExpiry(inv);
+    res.json({
+      ok: true,
+      url: PUBLIC_CHECKIN_URL + "?e=" + encodeURIComponent(token),
+      code,
+      expires_at: expiry ? new Date(expiry).toISOString() : null
+    });
+  } catch (e) {
+    const detail = _bubbleErrText(e);
+    console.error("[checkin/share]", e?.message, detail);
+    res.status(500).json({ ok: false, error: e?.message, detail });
+  }
 });
 
 // ── GET /admin/invite/:id/responses — anonyma svar (frikopplade från person) ──
@@ -13261,6 +13298,63 @@ app.delete("/admin/invite/guest/:id", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 const PUBLIC_INVITE_URL = "https://mira-fm.com/invite";
 const PUBLIC_SURVEY_URL = process.env.PUBLIC_SURVEY_URL || "https://mira-fm.com/undersokning";
+const PUBLIC_CHECKIN_URL = process.env.PUBLIC_CHECKIN_URL || "https://mira-fm.com/deltagarhantering";
+
+// ── Avprickning: fristående mobilsida med kod-grind ──────────────────────────
+// Säkerhetsmodell: hemlig länk (?e=checkin_token) + tillfällig kod = grind.
+// Koden auto-genereras och slutar gälla ~12h efter eventets slut. Mejlet loggas.
+const CHECKIN_GRACE_MS = 12 * 3600 * 1000;       // hur länge koden gäller efter eventets slut
+const CHECKIN_SESSION_MS = 8 * 3600 * 1000;      // sessionslängd efter inloggning
+// Kod utan lättförväxlade tecken (0/O, 1/I/L)
+function _genCheckinCode() {
+  const ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < 6; i++) s += ABC[Math.floor(Math.random() * ABC.length)];
+  return s;
+}
+// När slutar koden gälla? (eventets end_date, annars start_date, + grace). Saknas datum → ingen auto-utgång.
+function _checkinExpiry(inv) {
+  const base = inv.end_date || inv.start_date || null;
+  if (!base) return null;
+  const t = new Date(base).getTime();
+  return Number.isFinite(t) ? (t + CHECKIN_GRACE_MS) : null;
+}
+function _checkinExpired(inv) {
+  const exp = _checkinExpiry(inv);
+  return exp != null && Date.now() > exp;
+}
+async function getInvitationByCheckinToken(tok) {
+  if (!tok) return null;
+  try {
+    const rows = await bubbleFind(INVITE.INVITATION_TYPE, {
+      constraints: [{ key: "checkin_token", constraint_type: "equals", value: tok }], limit: 1
+    });
+    return (rows && rows[0]) || null;
+  } catch (_) { return null; }
+}
+// Kortlivade avprickningssessioner (i minnet; vid Render-omstart loggar man in igen)
+const _checkinSessions = new Map();
+function _newCheckinSession(invId, email) {
+  const tok = _inviteToken();
+  _checkinSessions.set(tok, { invId, email: String(email || ""), exp: Date.now() + CHECKIN_SESSION_MS });
+  // enkel städning av utgångna
+  if (_checkinSessions.size > 500) for (const [k, v] of _checkinSessions) if (v.exp < Date.now()) _checkinSessions.delete(k);
+  return tok;
+}
+function _getCheckinSession(tok) {
+  const s = tok && _checkinSessions.get(tok);
+  if (!s) return null;
+  if (s.exp < Date.now()) { _checkinSessions.delete(tok); return null; }
+  return s;
+}
+// Rate-limit per IP för kod-försök (mot brute force)
+const _checkinAuthHits = new Map();
+function _checkinAuthRate(ip) {
+  const n = (_checkinAuthHits.get(ip) || 0) + 1;
+  _checkinAuthHits.set(ip, n);
+  setTimeout(() => _checkinAuthHits.delete(ip), 60000);
+  return n <= 10;   // max 10 kod-försök per minut per IP
+}
 const _sendList = {};
 function _inviteBrand(inv, cc) {
   return {
@@ -13546,6 +13640,68 @@ app.get("/unsubscribe", async (req, res) => {
     return res.status(500).send(_unsubPage({ title: "Något gick fel",
       body: `<h1>Något gick fel</h1><p>Försök igen om en stund, eller kontakta avsändaren.</p>` }));
   }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AVPRICKNING (publika endpoints för fristående mobilsida /deltagarhantering)
+// Grind = checkin_code. Länken (?e=checkin_token) ensam ger inget. Mejl loggas.
+// ════════════════════════════════════════════════════════════════════════════
+// POST /checkin/auth  body: { e:<checkin_token>, email, code }
+app.post("/checkin/auth", async (req, res) => {
+  try {
+    const ip = req.headers["x-forwarded-for"] || req.ip || "";
+    if (!_checkinAuthRate(String(ip))) return res.status(429).json({ ok: false, error: "rate" });
+    const tok   = String(req.body?.e || "").trim();
+    const email = String(req.body?.email || "").trim();
+    const code  = String(req.body?.code || "").trim().toUpperCase();
+    if (!tok || !email || !code) return res.status(400).json({ ok: false, error: "missing_fields" });
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ ok: false, error: "bad_email" });
+
+    const inv = await getInvitationByCheckinToken(tok);
+    // Samma svar oavsett om token eller kod är fel → läcker inte vilket som var rätt
+    if (!inv || !inv.checkin_code || String(inv.checkin_code).trim().toUpperCase() !== code)
+      return res.status(401).json({ ok: false, error: "invalid" });
+    if (inv.active === false) return res.status(403).json({ ok: false, error: "inactive" });
+    if (_checkinExpired(inv)) return res.status(403).json({ ok: false, error: "expired" });
+
+    const invId = inv._id || inv.id;
+    console.log("[checkin/auth] OK", { invId, email });
+    const session = _newCheckinSession(invId, email);
+    const guests = await _buildGuestList(invId);
+    res.json({
+      ok: true, session,
+      event: { title: inv.title || "", start_date: inv.start_date || null, end_date: inv.end_date || null, location_name: inv.location_name || "" },
+      guests
+    });
+  } catch (e) { console.error("[checkin/auth]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// POST /checkin/list  body: { session }  → färsk gästlista (för omladdning / multi-device)
+app.post("/checkin/list", async (req, res) => {
+  try {
+    const s = _getCheckinSession(String(req.body?.session || "").trim());
+    if (!s) return res.status(401).json({ ok: false, error: "session_expired" });
+    const guests = await _buildGuestList(s.invId);
+    res.json({ ok: true, guests });
+  } catch (e) { console.error("[checkin/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// POST /checkin/toggle  body: { session, gid, arrived }  → checka in/ut en gäst
+app.post("/checkin/toggle", async (req, res) => {
+  try {
+    const s = _getCheckinSession(String(req.body?.session || "").trim());
+    if (!s) return res.status(401).json({ ok: false, error: "session_expired" });
+    const gid = String(req.body?.gid || "").trim();
+    const arrived = req.body?.arrived === true;
+    if (!gid) return res.status(400).json({ ok: false, error: "gid_required" });
+    // Verifiera att gästen hör till sessionens event (annars kan en session röra andra event)
+    const guest = await bubbleGet(INVITE.GUEST_TYPE, gid).catch(() => null);
+    if (!guest || guest.invitation !== s.invId) return res.status(404).json({ ok: false, error: "guest_not_found" });
+    const nowIso = new Date().toISOString();
+    await bubblePatch(INVITE.GUEST_TYPE, gid, { arrived, arrived_at: arrived ? nowIso : null });
+    console.log("[checkin/toggle]", { invId: s.invId, by: s.email, gid, arrived });
+    res.json({ ok: true, arrived, arrived_at: arrived ? nowIso : null });
+  } catch (e) { console.error("[checkin/toggle]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
 // ── Enkel rate-limit (per IP) ────────────────────────────────────────────────

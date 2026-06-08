@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Avprickning · Mira</title>
+<style>
+  :root{
+    --bg:#0d1117;--sf:#161c2d;--sf2:#1e2437;--bd:#262b42;
+    --tx:#e8eaf0;--mu:#8892aa;--fa:#4a5068;--ac:#db6923;--ok:#3fb950;
+    --f:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font-family:var(--f);background:var(--bg);color:var(--tx);font-size:15px;-webkit-text-size-adjust:100%}
+  .hide{display:none!important}
+
+  /* ── Inloggningsgrind ── */
+  #gate{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .gate-card{width:100%;max-width:380px;background:var(--sf);border:1px solid var(--bd);border-radius:16px;padding:30px 26px}
+  .gate-logo{font-weight:800;letter-spacing:.04em;color:var(--ac);font-size:14px;margin-bottom:18px}
+  .gate-card h1{font-size:20px;margin:0 0 6px}
+  .gate-card p{font-size:13px;color:var(--mu);line-height:1.55;margin:0 0 20px}
+  .fld{margin-bottom:14px}
+  .fld label{display:block;font-size:12px;color:var(--mu);margin-bottom:6px}
+  .fld input{width:100%;font-size:16px;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:13px 14px;outline:none}
+  .fld input:focus{border-color:var(--ac)}
+  #f-code{letter-spacing:.25em;text-transform:uppercase;font-weight:600}
+  .gate-btn{width:100%;border:none;border-radius:10px;background:var(--ac);color:#fff;font-size:15px;font-weight:700;padding:14px;cursor:pointer;margin-top:6px}
+  .gate-btn:disabled{opacity:.5}
+  .gate-err{color:#f0883e;font-size:13px;margin-top:14px;min-height:18px;text-align:center}
+  .gate-foot{text-align:center;color:var(--fa);font-size:11px;margin-top:22px}
+
+  /* ── Listvy ── */
+  #app{min-height:100dvh;display:flex;flex-direction:column}
+  .hd{flex:0 0 auto;padding:14px 16px 12px;border-bottom:1px solid var(--bd);background:var(--sf);padding-top:calc(14px + env(safe-area-inset-top))}
+  .hd-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  .hd-title{font-size:17px;font-weight:700;line-height:1.25}
+  .hd-sub{font-size:12px;color:var(--mu);margin-top:2px}
+  .hd-out{flex:0 0 auto;font-size:12px;color:var(--mu);background:var(--bg);border:1px solid var(--bd);border-radius:9px;padding:8px 12px;cursor:pointer}
+  .counts{display:flex;gap:8px;margin:12px 0}
+  .cbox{flex:1;text-align:center;background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:8px 4px}
+  .cbox .n{font-size:22px;font-weight:800;line-height:1}
+  .cbox .l{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--fa);margin-top:3px}
+  .cbox.ok .n{color:var(--ok)}
+  .toolbar{display:flex;gap:8px;align-items:center}
+  .search{flex:1;font-size:16px;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;outline:none}
+  .refresh{flex:0 0 auto;width:46px;height:46px;border:1px solid var(--bd);background:var(--bg);color:var(--mu);border-radius:10px;font-size:18px;cursor:pointer}
+  .only{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--mu);cursor:pointer}
+  .only input{width:18px;height:18px}
+  .list{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 12px calc(40px + env(safe-area-inset-bottom))}
+  .row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:8px;cursor:pointer;min-height:64px;transition:background .12s,border-color .12s}
+  .row:active{background:var(--sf2)}
+  .row.on{background:rgba(63,185,80,.10);border-color:rgba(63,185,80,.45)}
+  .row.busy{opacity:.5;pointer-events:none}
+  .info{flex:1 1 auto;min-width:0}
+  .nm{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row.on .nm{text-decoration:line-through;text-decoration-color:var(--fa)}
+  .sb{font-size:12px;color:var(--fa);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rsvp{flex:0 0 auto;font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 7px;border-radius:6px}
+  .rsvp.y{color:var(--ok);background:rgba(63,185,80,.12)}
+  .rsvp.n{color:#f0883e;background:rgba(240,136,62,.12)}
+  .rsvp.w{color:var(--mu);background:var(--bg)}
+  .mark{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:2px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:18px;color:transparent}
+  .row.on .mark{border-color:var(--ok);background:var(--ok);color:#fff}
+  .empty{text-align:center;color:var(--fa);font-size:13px;padding:40px 16px}
+  .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#f0883e;color:#1b0f06;font-size:13px;font-weight:600;padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+  <!-- ── Inloggningsgrind ── -->
+  <div id="gate">
+    <form class="gate-card" id="gate-form" autocomplete="off">
+      <div class="gate-logo">MIRA</div>
+      <h1>Avprickning</h1>
+      <p>Ange din mejladress och koden du fått för att se deltagarlistan.</p>
+      <div class="fld"><label for="f-email">Din mejladress</label><input id="f-email" type="email" inputmode="email" autocapitalize="off" autocomplete="email" placeholder="namn@foretag.se"></div>
+      <div class="fld"><label for="f-code">Kod</label><input id="f-code" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" maxlength="6" placeholder="ABC123"></div>
+      <button class="gate-btn" id="f-btn" type="submit">Visa lista</button>
+      <div class="gate-err" id="f-err"></div>
+      <div class="gate-foot">Drivs av Mira · Endast behörig personal</div>
+    </form>
+  </div>
+
+  <!-- ── Listvy ── -->
+  <div id="app" class="hide">
+    <div class="hd">
+      <div class="hd-top">
+        <div><div class="hd-title" id="ev-title">—</div><div class="hd-sub" id="ev-sub"></div></div>
+        <button class="hd-out" id="btn-out">Logga ut</button>
+      </div>
+      <div class="counts" id="counts"></div>
+      <div class="toolbar">
+        <input class="search" id="search" placeholder="Sök namn, företag eller mejl…" autocomplete="off" autocapitalize="off">
+        <button class="refresh" id="btn-refresh" title="Uppdatera">↻</button>
+      </div>
+      <label class="only"><input type="checkbox" id="only"> Visa bara ej incheckade</label>
+    </div>
+    <div class="list" id="list"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  var HOST = "https://mira-exchange.onrender.com";
+  var qs = new URLSearchParams(location.search);
+  var EVTOKEN = (qs.get("e")||"").trim();
+  var SESSION = "", GUESTS = [];
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function post(path, body){
+    return fetch(HOST+path, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) })
+      .then(function(r){ return r.json().then(function(j){ return { status:r.status, j:j }; }); });
+  }
+  var _tt;
+  function toast(msg){ var t=$("toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(_tt); _tt=setTimeout(function(){ t.classList.remove("show"); },2600); }
+
+  function fmtDate(v){
+    if(!v) return "";
+    try{ return new Date(v).toLocaleDateString("sv-SE",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}); }catch(_){ return ""; }
+  }
+
+  // ── Inloggning ──
+  $("gate-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var email=$("f-email").value.trim(), code=$("f-code").value.trim().toUpperCase();
+    $("f-err").textContent="";
+    if(!EVTOKEN){ $("f-err").textContent="Länken är ofullständig — be om en ny avprickningslänk."; return; }
+    if(!email || !code){ $("f-err").textContent="Fyll i både mejladress och kod."; return; }
+    $("f-btn").disabled=true; $("f-btn").textContent="Loggar in…";
+    post("/checkin/auth", { e:EVTOKEN, email:email, code:code }).then(function(res){
+      if(res.status===200 && res.j.ok){
+        SESSION=res.j.session; GUESTS=res.j.guests||[];
+        try{ sessionStorage.setItem("mira_ci_"+EVTOKEN, SESSION); sessionStorage.setItem("mira_ev_"+EVTOKEN, JSON.stringify(res.j.event||{})); }catch(_){}
+        showApp(res.j.event); render();
+      } else {
+        var m = res.j.error==="expired" ? "Koden gäller inte längre (eventet har passerat)."
+              : res.j.error==="inactive" ? "Eventet är inte aktivt."
+              : res.j.error==="rate" ? "För många försök — vänta en minut och prova igen."
+              : "Fel mejladress eller kod.";
+        $("f-err").textContent=m;
+      }
+    }).catch(function(){ $("f-err").textContent="Kunde inte ansluta. Kontrollera nätet och försök igen."; })
+      .finally(function(){ $("f-btn").disabled=false; $("f-btn").textContent="Visa lista"; });
+  });
+
+  function showApp(ev){
+    ev=ev||{};
+    $("ev-title").textContent=ev.title||"Avprickning";
+    var bits=[]; if(ev.location_name) bits.push(ev.location_name); if(ev.start_date) bits.push(fmtDate(ev.start_date));
+    $("ev-sub").textContent=bits.join(" · ");
+    $("gate").classList.add("hide"); $("app").classList.remove("hide");
+  }
+
+  function logout(){
+    try{ sessionStorage.removeItem("mira_ci_"+EVTOKEN); }catch(_){}
+    SESSION=""; GUESTS=[];
+    $("app").classList.add("hide"); $("gate").classList.remove("hide");
+    $("f-code").value=""; $("f-err").textContent="";
+  }
+  $("btn-out").addEventListener("click", logout);
+
+  // ── Rendering ──
+  function counts(){
+    var total=GUESTS.length, arrived=0, yes=0;
+    GUESTS.forEach(function(x){ if(x.arrived) arrived++; if((x.rsvp_status||"")==="yes") yes++; });
+    $("counts").innerHTML=
+      '<div class="cbox ok"><div class="n">'+arrived+'</div><div class="l">Incheckade</div></div>'+
+      '<div class="cbox"><div class="n">'+(total-arrived)+'</div><div class="l">Kvar</div></div>'+
+      '<div class="cbox"><div class="n">'+yes+'</div><div class="l">OSA ja</div></div>';
+  }
+  function render(){
+    counts();
+    var q=($("search").value||"").toLowerCase().trim(), only=$("only").checked;
+    var rows=GUESTS.filter(function(x){
+      if(only && x.arrived) return false;
+      if(!q) return true;
+      return [x.name,x.email,x.company_name,x.phone].some(function(v){ return String(v||"").toLowerCase().indexOf(q)>=0; });
+    });
+    rows.sort(function(a,b){ if(!!a.arrived!==!!b.arrived) return a.arrived?1:-1; return String(a.name||a.email).localeCompare(String(b.name||b.email),"sv"); });
+    if(!rows.length){ $("list").innerHTML='<div class="empty">'+(GUESTS.length?"Inga matchar.":"Inga deltagare i listan än.")+'</div>'; return; }
+    $("list").innerHTML=rows.map(function(x){
+      var rs=(x.rsvp_status||"pending");
+      var rsvp=rs==="yes"?'<span class="rsvp y">Ja</span>':rs==="no"?'<span class="rsvp n">Nej</span>':'<span class="rsvp w">Väntar</span>';
+      var sub=[x.company_name,x.region,x.email].filter(Boolean).join(" · ");
+      return '<button class="row'+(x.arrived?" on":"")+'" data-gid="'+esc(x.id)+'">'+
+        '<div class="info"><div class="nm">'+esc(x.name||x.email||"(inget namn)")+(x.plus_ones_count?" +"+x.plus_ones_count:"")+'</div><div class="sb">'+esc(sub)+'</div></div>'+
+        rsvp+'<div class="mark">✓</div></button>';
+    }).join("");
+  }
+  ["search","only"].forEach(function(id){ $(id).addEventListener("input", render); $(id).addEventListener("change", render); });
+
+  // ── Toggle ──
+  $("list").addEventListener("click", function(e){
+    var btn=e.target.closest("[data-gid]"); if(!btn) return;
+    var gid=btn.getAttribute("data-gid");
+    var x=GUESTS.find(function(y){return y.id===gid;}); if(!x || btn.classList.contains("busy")) return;
+    var next=!x.arrived;
+    btn.classList.add("busy");
+    post("/checkin/toggle", { session:SESSION, gid:gid, arrived:next }).then(function(res){
+      if(res.status===401){ toast("Sessionen har gått ut — logga in igen."); logout(); return; }
+      if(!(res.status===200 && res.j.ok)) throw new Error(res.j.error||"fel");
+      x.arrived=next; x.arrived_at=res.j.arrived_at||null;
+      btn.classList.toggle("on", next); counts();
+      if($("only").checked && next) btn.style.display="none";
+    }).catch(function(){ toast("Kunde inte spara — försök igen."); })
+      .finally(function(){ btn.classList.remove("busy"); });
+  });
+
+  // ── Uppdatera (multi-device sync) ──
+  $("btn-refresh").addEventListener("click", function(){
+    if(!SESSION) return;
+    var b=$("btn-refresh"); b.disabled=true; b.textContent="…";
+    post("/checkin/list", { session:SESSION }).then(function(res){
+      if(res.status===401){ toast("Sessionen har gått ut — logga in igen."); logout(); return; }
+      if(res.status===200 && res.j.ok){ GUESTS=res.j.guests||[]; render(); }
+    }).catch(function(){ toast("Kunde inte uppdatera."); })
+      .finally(function(){ b.disabled=false; b.textContent="↻"; });
+  });
+
+  // ── Återuppta session vid sidladdning ──
+  (function resume(){
+    if(!EVTOKEN){ $("f-err").textContent="Länken saknar event — be om en ny avprickningslänk."; return; }
+    var saved=""; try{ saved=sessionStorage.getItem("mira_ci_"+EVTOKEN)||""; }catch(_){}
+    if(!saved) return;
+    SESSION=saved;
+    var ev={}; try{ ev=JSON.parse(sessionStorage.getItem("mira_ev_"+EVTOKEN)||"{}"); }catch(_){}
+    post("/checkin/list", { session:SESSION }).then(function(res){
+      if(res.status===200 && res.j.ok){ GUESTS=res.j.guests||[]; showApp(ev); render(); }
+      else { SESSION=""; try{ sessionStorage.removeItem("mira_ci_"+EVTOKEN); }catch(_){} }
+    }).catch(function(){});
+  })();
+})();
+</script>
+</body>
+</html>
