@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bokningsöversikt – Carotte</title>
+<style>
+  :root {
+    --base:        #1e2235;
+    --panel:       #23283f;
+    --card:        #262b42;
+    --chart-bg:    #2a2f4a;
+    --deep:        #2c314e;
+    --input:       #2e3350;
+    --toggle-off:  #363b56;
+    --orange:      #F47B30;
+    --orange-dim:  rgba(244,123,48,0.13);
+    --orange-glow: rgba(244,123,48,0.06);
+    --white:       #FFFFFF;
+    --white-70:    rgba(255,255,255,0.70);
+    --white-40:    rgba(255,255,255,0.40);
+    --white-10:    rgba(255,255,255,0.07);
+    --green:       #4CAF7D;
+    --yellow:      #F5C842;
+    --red:         #E05A5A;
+    --border:      rgba(255,255,255,0.07);
+    --font:        'Arial Black', 'Arial Bold', Arial, sans-serif;
+    --font-body:   Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--base);
+    color: var(--white);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 0px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo-dot {
+    width: 10px; height: 10px;
+    background: var(--orange);
+    border-radius: 50%;
+    box-shadow: 0 0 10px var(--orange);
+    flex-shrink: 0;
+  }
+  .header-title {
+    font-family: var(--font);
+    font-size: 17px;
+    font-weight: 900;
+    letter-spacing: -0.3px;
+    text-transform: uppercase;
+  }
+  .header-subtitle {
+    font-size: 10px;
+    color: var(--white-40);
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    margin-top: 1px;
+    font-family: var(--font-body);
+  }
+  .week-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .week-label {
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--white-70);
+    min-width: 140px;
+    text-align: center;
+    font-weight: 700;
+  }
+  .nav-btn {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--white-70);
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    transition: all 0.15s;
+    font-family: var(--font-body);
+  }
+  .nav-btn:hover { background: var(--orange-dim); color: var(--orange); border-color: var(--orange); }
+  .today-btn {
+    width: auto; padding: 0 10px;
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 0px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .filter-label {
+    font-size: 10px;
+    color: var(--white-40);
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  select {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--white-70);
+    padding: 5px 22px 5px 8px;
+    border-radius: 5px;
+    font-family: var(--font-body);
+    font-size: 11px;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='rgba(255,255,255,0.4)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    transition: border-color 0.15s;
+    white-space: nowrap;
+    max-width: 130px;
+  }
+  select:focus { outline: none; border-color: var(--orange); color: var(--white); }
+  select:hover { border-color: rgba(255,255,255,0.2); }
+
+  .filter-sep { width: 1px; height: 18px; background: var(--border); }
+
+  .total-badge {
+    margin-left: auto;
+    background: var(--orange-dim);
+    border: 1px solid rgba(244,123,48,0.3);
+    color: var(--orange);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-family: var(--font-body);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .summary-row {
+    display: flex;
+    gap: 8px;
+    padding: 8px 0px;
+    border-bottom: 1px solid var(--border);
+    background: var(--base);
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  .summary-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--white-70);
+    font-family: var(--font-body);
+  }
+  .chip-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .chip-count { font-weight: 700; color: var(--white); }
+
+  .calendar-wrap {
+    padding: 16px 28px 28px;
+    overflow-x: auto;
+  }
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+    min-width: 860px;
+  }
+
+  .day-col { display: flex; flex-direction: column; gap: 6px; }
+
+  .day-header {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 10px 10px 8px;
+    text-align: center;
+    position: relative;
+  }
+  .day-header.today {
+    background: var(--orange-dim);
+    border-color: rgba(244,123,48,0.35);
+  }
+  .day-name {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: var(--white-40);
+    font-family: var(--font-body);
+  }
+  .day-header.today .day-name { color: var(--orange); }
+  .day-num {
+    font-family: var(--font);
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1.1;
+    margin-top: 3px;
+    letter-spacing: -1px;
+  }
+  .day-header.today .day-num { color: var(--orange); }
+  .day-count {
+    font-size: 9px;
+    color: var(--white-40);
+    margin-top: 3px;
+    font-family: var(--font-body);
+  }
+  .today-dot {
+    position: absolute; top: 8px; right: 8px;
+    width: 6px; height: 6px;
+    background: var(--orange); border-radius: 50%;
+    box-shadow: 0 0 6px var(--orange);
+  }
+
+  .booking-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 9px 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+  .booking-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+  }
+  .booking-card.s-confirmed::before  { background: var(--green); }
+  .booking-card.s-tentative::before  { background: var(--yellow); }
+  .booking-card.s-cancelled::before  { background: var(--red); }
+  .booking-card.s-default::before    { background: var(--orange); }
+
+  .booking-card:hover {
+    background: var(--chart-bg);
+    border-color: rgba(255,255,255,0.14);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  }
+  .booking-card.expanded { background: var(--deep); border-color: rgba(255,255,255,0.14); }
+
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  .card-time {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--orange);
+    white-space: nowrap;
+    font-family: var(--font-body);
+  }
+  .card-status-pill {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    padding: 2px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-family: var(--font-body);
+  }
+  .s-confirmed .card-status-pill  { background: rgba(76,175,125,0.15);  color: var(--green); }
+  .s-tentative .card-status-pill  { background: rgba(245,200,66,0.15);   color: var(--yellow); }
+  .s-cancelled .card-status-pill  { background: rgba(224,90,90,0.15);    color: var(--red); }
+  .s-default .card-status-pill    { background: var(--orange-dim);        color: var(--orange); }
+
+  .card-room {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--white);
+    margin-top: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--font-body);
+  }
+  .card-company {
+    font-size: 11px;
+    color: var(--white-70);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--font-body);
+  }
+  .card-guests {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 5px;
+    font-size: 10px;
+    color: var(--white-40);
+    font-family: var(--font-body);
+  }
+
+  .card-details {
+    display: none;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+    animation: fadeIn 0.18s ease;
+  }
+  .booking-card.expanded .card-details { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; } }
+
+  .detail-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 4px;
+    align-items: flex-start;
+  }
+  .dk {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--white-40);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    min-width: 56px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    font-family: var(--font-body);
+  }
+  .dv {
+    font-size: 11px;
+    color: var(--white-70);
+    word-break: break-word;
+    font-family: var(--font-body);
+  }
+  .dv.hi { color: var(--white); font-weight: 600; }
+
+  .note-box {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: var(--white-70);
+    margin-top: 7px;
+    font-style: italic;
+    line-height: 1.55;
+    font-family: var(--font-body);
+  }
+  .note-box.internal {
+    border-color: rgba(244,123,48,0.25);
+    background: var(--orange-glow);
+    color: rgba(244,123,48,0.85);
+    font-style: normal;
+    font-weight: 600;
+  }
+  .note-lbl {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 3px;
+    opacity: 0.55;
+    font-family: var(--font-body);
+  }
+
+  .empty-day {
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: 7px;
+    text-align: center;
+    color: var(--white-40);
+    font-size: 11px;
+    flex: 1;
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-body);
+  }
+
+  .autocomplete-wrap { position: relative; }
+  .company-input {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--white-70);
+    padding: 5px 24px 5px 8px;
+    border-radius: 5px;
+    font-family: var(--font-body);
+    font-size: 11px;
+    width: 120px;
+    transition: border-color 0.15s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.35)' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+  }
+  .company-input:focus { outline: none; border-color: var(--orange); color: var(--white); }
+  .company-input::placeholder { color: var(--white-40); }
+  .autocomplete-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 200px;
+    background: var(--deep);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px;
+    z-index: 999;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .autocomplete-dropdown.open { display: block; }
+  .ac-item {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--white-70);
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: background 0.1s;
+    border-bottom: 1px solid var(--border);
+  }
+  .ac-item:last-child { border-bottom: none; }
+  .ac-item:hover, .ac-item.active { background: var(--orange-dim); color: var(--white); }
+  .ac-item mark { background: none; color: var(--orange); font-weight: 700; }
+  .ac-clear {
+    position: absolute;
+    right: 26px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--white-40);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    display: none;
+  }
+  .ac-clear.visible { display: block; }
+  .ac-clear:hover { color: var(--white); }
+
+  .refresh-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 10px 28px;
+  }
+  .refresh-loading {
+    font-size: 11px;
+    color: rgba(255,255,255,0.20);
+    font-family: var(--font-body);
+    animation: ck-pulse 1.4s ease-in-out infinite;
+    display: none;
+  }
+  @keyframes ck-pulse { 0%,100%{opacity:0.2} 50%{opacity:0.7} }
+  .refresh-updated {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.20);
+    font-family: var(--font-body);
+  }
+  .refresh-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 5px rgba(16,185,129,0.6);
+    flex-shrink: 0;
+    animation: ck-blink 2.5s ease-in-out infinite;
+  }
+  @keyframes ck-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .refresh-btn {
+    font-size: 11px;
+    color: rgba(255,255,255,0.28);
+    background: none;
+    border: 0.5px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: all 0.2s;
+  }
+  .refresh-btn:hover { color: rgba(255,255,255,0.65); border-color: rgba(255,255,255,0.28); }
+  .refresh-btn.spinning { opacity: 0.5; pointer-events: none; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo-dot"></div>
+    <div>
+      <div class="header-title">Bokningsöversikt</div>
+      <div class="header-subtitle">Carotte Food &amp; Event</div>
+    </div>
+  </div>
+  <div class="week-nav">
+    <button class="nav-btn" onclick="changeWeek(-1)">‹</button>
+    <div class="week-label" id="weekLabel">–</div>
+    <button class="nav-btn" onclick="changeWeek(1)">›</button>
+    <button class="nav-btn today-btn" onclick="changeWeek(0)">Idag</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <span class="filter-label">Filter</span>
+  <select id="fUnit"    onchange="renderCalendar()"><option value="">Alla enheter</option></select>
+  <select id="fRoom"    onchange="renderCalendar()"><option value="">Alla rum</option></select>
+  <div class="filter-sep"></div>
+  <div class="autocomplete-wrap" id="acWrap">
+    <input id="companyInput" class="company-input" type="text"
+      placeholder="Sök företag…"
+      autocomplete="off"
+      oninput="acOnInput()"
+      onkeydown="acOnKey(event)"
+      onfocus="acOpen()"
+    >
+    <span class="ac-clear" id="acClear" onclick="acClear()">×</span>
+    <div class="autocomplete-dropdown" id="acDrop"></div>
+  </div>
+  <div class="filter-sep"></div>
+  <select id="fStatus"  onchange="renderCalendar()">
+    <option value="">Alla statusar</option>
+    <option value="s-confirmed">Bekräftad</option>
+    <option value="s-tentative">Preliminär</option>
+    <option value="s-cancelled">Avbokad</option>
+  </select>
+  <div class="total-badge" id="totalBadge">0 bokningar</div>
+</div>
+
+<div class="summary-row" id="summaryRow"></div>
+<div class="calendar-wrap">
+  <div class="calendar-grid" id="calGrid"></div>
+</div>
+
+<script>
+(function() {
+  // Läs-proxy i Mira-Exchange (backend håller Bubbles master-nyckel server-side).
+  // ADMIN_TOKEN gränsar BARA denna endpoint och är rotérbar i en env-var — den
+  // gamla Bubble Data API-nyckeln (som läste ALLA exponerade typer) är borttagen.
+  var API         = 'https://mira-exchange.onrender.com/caspeco/admin/bookings';
+  var ADMIN_TOKEN = 'SÄTT_SAMMA_VÄRDE_SOM_CASPECO_ADMIN_TOKEN';
+
+  var UNIT_NAMES = {
+    '13': 'Klockan Norra Bantorget',
+    '14': 'Werket',
+    '15': 'Nasdaq',
+    '16': 'Konserthuset',
+    '17': 'Agdas'
+  };
+
+  var DAYS   = ['Sön','Mån','Tis','Ons','Tor','Fre','Lör'];
+  var MONTHS = ['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
+
+  var allBookings = [];
+  var weekOffset  = 0;
+
+  function weekDays(off) {
+    off = off || 0;
+    var now = new Date(), day = now.getDay();
+    var mon = new Date(now);
+    mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1) + off * 7);
+    mon.setHours(0,0,0,0);
+    return Array.from({length:7}, function(_,i) { var d = new Date(mon); d.setDate(mon.getDate()+i); return d; });
+  }
+
+  function yyyymmdd(d) { return d.toISOString().slice(0,10); }
+  function hhmm(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    return d.toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit'});
+  }
+
+  function statusClass(s) {
+    var v = String(s||'').toLowerCase();
+    if (v.includes('confirm') || v==='102') return 's-confirmed';
+    if (v.includes('tentative') || v==='101') return 's-tentative';
+    if (v.includes('cancel')) return 's-cancelled';
+    return 's-default';
+  }
+  function statusLabel(s) {
+    var v = String(s||'').toLowerCase();
+    if (v.includes('confirm') || v==='102') return 'Bekräftad';
+    if (v.includes('tentative') || v==='101') return 'Preliminär';
+    if (v.includes('cancel')) return 'Avbokad';
+    return s || '–';
+  }
+  function unitName(id) {
+    return UNIT_NAMES[String(id)] || ('Enhet ' + id);
+  }
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+  async function fetchBookings() {
+    try {
+      // Inget datumfönster här: backend defaultar till −60d … +18 mån och pagar
+      // igenom HELA spannet (Bubbles 100-cap kringgås server-side). Veckonavet i
+      // vyn rör sig fritt inom det fönstret utan att tappa aktuella bokningar.
+      var r = await fetch(API, {headers:{'x-admin-token': ADMIN_TOKEN}});
+      if (!r.ok) { console.error('[caspeco] API error', r.status); return []; }
+      var j   = await r.json();
+      var res = j && Array.isArray(j.results) ? j.results : [];
+      console.log('[caspeco] fetched', res.length, 'bookings');
+      return res;
+    } catch(e) { console.error('[caspeco] fetch error', e); return []; }
+  }
+
+  function populateFilters(bks) {
+    var units = [...new Set(bks.map(function(b){return b.unit_id;}).filter(Boolean))].sort();
+    var rooms  = [...new Set(bks.map(function(b){return b.section_name;}).filter(Boolean))].sort();
+    var comps  = [...new Set(bks.map(function(b){return b.contact_customer_name;}).filter(Boolean))].sort();
+
+    var uv = document.getElementById('fUnit').value;
+    var rv = document.getElementById('fRoom').value;
+
+    document.getElementById('fUnit').innerHTML =
+      '<option value="">Alla enheter</option>' +
+      units.map(function(u){ return '<option ' + (uv===String(u)?'selected':'') + ' value="' + esc(u) + '">' + unitName(u) + '</option>'; }).join('');
+    document.getElementById('fRoom').innerHTML =
+      '<option value="">Alla rum</option>' +
+      rooms.map(function(r){ return '<option ' + (rv===r?'selected':'') + ' value="' + esc(r) + '">' + r + '</option>'; }).join('');
+    window._acCompanies = comps;
+  }
+
+  function getFiltered() {
+    var u = document.getElementById('fUnit').value;
+    var r = document.getElementById('fRoom').value;
+    var c = window._acSelected || '';
+    var s = document.getElementById('fStatus').value;
+    return allBookings.filter(function(b) {
+      if (u && String(b.unit_id) !== u) return false;
+      if (r && b.section_name !== r)    return false;
+      if (c && b.contact_customer_name !== c) return false;
+      if (s && statusClass(b.status) !== s)   return false;
+      return true;
+    });
+  }
+
+  function renderSummary(bks) {
+    var cnt = {confirmed:0, tentative:0, cancelled:0};
+    var guests = 0;
+    bks.forEach(function(b) {
+      var sc = statusClass(b.status).replace('s-','');
+      if (cnt[sc] !== undefined) cnt[sc]++;
+      guests += Number(b.guest_count||0);
+    });
+    document.getElementById('summaryRow').innerHTML = [
+      {l:'Bekräftade',  c:'#4CAF7D', n:cnt.confirmed},
+      {l:'Preliminära', c:'#F5C842', n:cnt.tentative},
+      {l:'Avbokade',    c:'#E05A5A', n:cnt.cancelled},
+      {l:'Gäster totalt', c:'#F47B30', n:guests},
+    ].map(function(x){ return '<div class="summary-chip"><div class="chip-dot" style="background:'+x.c+'"></div><span class="chip-count">'+x.n+'</span><span>'+x.l+'</span></div>'; }).join('');
+  }
+
+  function cardHtml(b) {
+    var sc    = statusClass(b.status);
+    var t1    = hhmm(b.start_time), t2 = hhmm(b.end_time);
+    var time  = t1&&t2 ? t1+'–'+t2 : t1||'–';
+    var room  = b.section_name || unitName(b.unit_id) || '–';
+    var comp  = b.contact_customer_name || '';
+    var name  = b.contact_name || '';
+
+    var details = [
+      name  && '<div class="detail-row"><span class="dk">Kontakt</span><span class="dv hi">'+esc(name)+'</span></div>',
+      b.contact_email && '<div class="detail-row"><span class="dk">E-post</span><span class="dv">'+esc(b.contact_email)+'</span></div>',
+      b.contact_phone && '<div class="detail-row"><span class="dk">Tel</span><span class="dv">'+esc(b.contact_phone)+'</span></div>',
+      b.contact_org_nr && '<div class="detail-row"><span class="dk">Org.nr</span><span class="dv">'+esc(b.contact_org_nr)+'</span></div>',
+      b.arrangement_name && '<div class="detail-row"><span class="dk">Arr.</span><span class="dv">'+esc(b.arrangement_name)+'</span></div>',
+      b.booking_guid && '<div class="detail-row"><span class="dk">Ref</span><span class="dv" style="font-size:9px;opacity:.45">'+b.booking_guid.slice(0,8)+'…</span></div>',
+      b.message && '<div class="note-box"><div class="note-lbl">Gästmeddelande</div>'+esc(b.message)+'</div>',
+      b.message_internal && '<div class="note-box internal"><div class="note-lbl">⚑ Intern notering</div>'+esc(b.message_internal)+'</div>',
+    ].filter(Boolean).join('');
+
+    return '<div class="booking-card '+sc+'" onclick="this.classList.toggle(\'expanded\')">' +
+      '<div class="card-top">' +
+        '<div class="card-time">'+time+'</div>' +
+        '<div class="card-status-pill">'+statusLabel(b.status)+'</div>' +
+      '</div>' +
+      '<div class="card-room">'+esc(room)+'</div>' +
+      (comp ? '<div class="card-company">'+esc(comp)+'</div>' : '') +
+      '<div class="card-guests">' +
+        '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity=".5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>' +
+        (b.guest_count||0)+' gäster' +
+      '</div>' +
+      '<div class="card-details">'+details+'</div>' +
+    '</div>';
+  }
+
+  window.renderCalendar = function() {
+    var days   = weekDays(weekOffset);
+    var today  = yyyymmdd(new Date());
+    var weekDs = new Set(days.map(function(d){ return yyyymmdd(d); }));
+    var bks    = getFiltered().filter(function(b){ return b.start_time && weekDs.has(yyyymmdd(new Date(b.start_time))); });
+
+    var d0 = days[0], d6 = days[6];
+    document.getElementById('weekLabel').textContent =
+      d0.getDate()+' '+MONTHS[d0.getMonth()]+' – '+d6.getDate()+' '+MONTHS[d6.getMonth()]+' '+d6.getFullYear();
+    document.getElementById('totalBadge').textContent =
+      bks.length+' bokning'+(bks.length!==1?'ar':'');
+
+    renderSummary(bks);
+
+    var grid = document.getElementById('calGrid');
+    grid.innerHTML = '';
+
+    days.forEach(function(day) {
+      var ds   = yyyymmdd(day);
+      var isT  = ds === today;
+      var dBks = bks
+        .filter(function(b){ return b.start_time && yyyymmdd(new Date(b.start_time)) === ds; })
+        .sort(function(a,b){ return (a.start_time||'') > (b.start_time||'') ? 1 : -1; });
+
+      var col = document.createElement('div');
+      col.className = 'day-col';
+      col.innerHTML =
+        '<div class="day-header'+(isT?' today':'')+'">'+
+          (isT?'<div class="today-dot"></div>':'')+
+          '<div class="day-name">'+DAYS[day.getDay()]+'</div>'+
+          '<div class="day-num">'+day.getDate()+'</div>'+
+          '<div class="day-count">'+(dBks.length ? dBks.length+' st' : '–')+'</div>'+
+        '</div>'+
+        (dBks.length ? dBks.map(cardHtml).join('') : '<div class="empty-day">–</div>');
+      grid.appendChild(col);
+    });
+  };
+
+  window.changeWeek = function(delta) {
+    weekOffset = delta===0 ? 0 : weekOffset+delta;
+    renderCalendar();
+  };
+
+  // ── AUTOCOMPLETE ──
+  window._acSelected  = '';
+  window._acCompanies = [];
+  var _acIdx = -1;
+
+  window.acOpen = function() {
+    acRender(document.getElementById('companyInput').value);
+    document.getElementById('acDrop').classList.add('open');
+  };
+
+  window.acOnInput = function() {
+    var val = document.getElementById('companyInput').value;
+    document.getElementById('acClear').classList.toggle('visible', val.length > 0);
+    _acIdx = -1;
+    if (!val) { window._acSelected = ''; renderCalendar(); }
+    acRender(val);
+    document.getElementById('acDrop').classList.add('open');
+  };
+
+  function acRender(query) {
+    var q = query.toLowerCase().trim();
+    var drop = document.getElementById('acDrop');
+    var matches = q
+      ? window._acCompanies.filter(function(c){ return c.toLowerCase().includes(q); })
+      : window._acCompanies;
+
+    if (!matches.length) {
+      drop.innerHTML = '<div class="ac-item" style="opacity:.5;cursor:default">Inga träffar</div>';
+      return;
+    }
+    drop.innerHTML = matches.map(function(c, i) {
+      var hi = q ? c.replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')', 'gi'), '<mark>$1</mark>') : c;
+      return '<div class="ac-item'+(i===_acIdx?' active':'')+'" onmousedown="acSelect(\''+esc(c)+'\')">'+hi+'</div>';
+    }).join('');
+  }
+
+  window.acSelect = function(val) {
+    window._acSelected = val;
+    document.getElementById('companyInput').value = val;
+    document.getElementById('acClear').classList.add('visible');
+    document.getElementById('acDrop').classList.remove('open');
+    renderCalendar();
+  };
+
+  window.acClear = function() {
+    window._acSelected = '';
+    document.getElementById('companyInput').value = '';
+    document.getElementById('acClear').classList.remove('visible');
+    document.getElementById('acDrop').classList.remove('open');
+    renderCalendar();
+  };
+
+  window.acOnKey = function(e) {
+    var drop  = document.getElementById('acDrop');
+    var items = drop.querySelectorAll('.ac-item');
+    if (e.key === 'ArrowDown') { e.preventDefault(); _acIdx = Math.min(_acIdx+1, items.length-1); acRender(document.getElementById('companyInput').value); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _acIdx = Math.max(_acIdx-1, 0); acRender(document.getElementById('companyInput').value); }
+    else if (e.key === 'Enter' && _acIdx >= 0) { e.preventDefault(); acSelect((items[_acIdx] && items[_acIdx].textContent || '').replace(/\s+/g,' ').trim()); }
+    else if (e.key === 'Escape') { drop.classList.remove('open'); }
+  };
+
+  document.addEventListener('click', function(e) {
+    if (!document.getElementById('acWrap').contains(e.target)) {
+      document.getElementById('acDrop').classList.remove('open');
+    }
+  });
+
+  // ── REFRESH ──
+  function setLoading(on) {
+    var ld = document.getElementById('refreshLoading');
+    var up = document.getElementById('refreshUpdated');
+    if (ld) ld.style.display = on ? 'inline' : 'none';
+    if (up) up.style.display = on ? 'none' : 'flex';
+  }
+
+  function setRefreshLabel(ts) {
+    var d = new Date(ts);
+    var pad = function(n){ return String(n).padStart(2,'0'); };
+    var label = 'Uppdaterad '+d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+    document.getElementById('refreshLabel').textContent = label;
+  }
+
+  window.manualRefresh = function() {
+    var btn = document.getElementById('refreshBtn');
+    btn.classList.add('spinning');
+    setLoading(true);
+    fetchBookings().then(function(bks) {
+      allBookings = bks;
+      populateFilters(allBookings);
+      renderCalendar();
+      setRefreshLabel(Date.now());
+      setLoading(false);
+      btn.classList.remove('spinning');
+    });
+  };
+
+  function ckInit() {
+    setLoading(true);
+    fetchBookings().then(function(bks) {
+      allBookings = bks;
+      populateFilters(allBookings);
+      renderCalendar();
+      setRefreshLabel(Date.now());
+      setLoading(false);
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ckInit);
+  } else {
+    setTimeout(ckInit, 0);
+  }
+})();
+</script>
+
+<div class="refresh-bar">
+  <span class="refresh-loading" id="refreshLoading">Hämtar data…</span>
+  <span class="refresh-updated" id="refreshUpdated">
+    <div class="refresh-dot"></div>
+    <span id="refreshLabel"></span>
+  </span>
+  <button class="refresh-btn" id="refreshBtn" onclick="manualRefresh()">&#8635; Uppdatera</button>
+</div>
+
+</body>
+</html>

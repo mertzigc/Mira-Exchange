@@ -384,6 +384,10 @@ function requireApiKey(req, res, next) {
     // UTAN API-nyckel. Svaret innehåller ALDRIG data (bara {ok:true}); datan
     // plockas av Bubble scoped per företag. Rate-limitad via _publicRateLimited.
     "/kpi/company/refresh",
+    // Caspeco-adminvy: läs-proxy som browsern hittar utan x-api-key. Egen grind =
+    // CASPECO_ADMIN_TOKEN (x-admin-token), rate-limitad. Master-Bubble-nyckeln
+    // stannar server-side. PII (namn/mejl/tel) → fail closed om token saknas/fel.
+    "/caspeco/admin/bookings",
     // Mira fakturamodul – HTML-blocket fetchar från kundens browser UTAN
     // API-nyckel. CORS-allowlisten styr vilka origins som får svar.
     "/api/invoices",
@@ -9180,6 +9184,11 @@ const CASPECO_BASE_URL = "https://rms.caspeco.se/api/booking/v1";
 const CASPECO_SYSTEM   = pick(process.env.CASPECO_SYSTEM, "se_carsto3");
 const CASPECO_PAT      = pick(process.env.CASPECO_PAT);
 
+// Dedikerad läs-token för adminvyn (mira-bokningsoversikt.html). Gränsar BARA
+// /caspeco/admin/bookings — exponerar ALDRIG Bubbles master-API-nyckel i klienten.
+// Läcker den → rotera EN env-var; den kan inte röra något annat i Bubble.
+const CASPECO_ADMIN_TOKEN = pick(process.env.CASPECO_ADMIN_TOKEN);
+
 // Multi-unit: läs CASPECO_UNIT_IDS (komma-sep) → array av numbers
 // Fallback: CASPECO_UNIT_ID (singular, bakåtkompatibelt)
 const CASPECO_UNIT_IDS = (() => {
@@ -9753,6 +9762,72 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
     });
   }
 });
+
+// ────────────────────────────────────────────────────────────
+// GET /caspeco/admin/bookings
+// Publik läs-proxy för adminvyn (mira-bokningsoversikt.html). Ersätter direkt-
+// anropet mot Bubble Data API → master-nyckeln stannar server-side. Gränsas av
+// CASPECO_ADMIN_TOKEN (x-admin-token-header eller ?t=). Rate-limitad.
+//
+// Datumfönster (löser oldest-first-buggen): Bubble Data API cappar limit till 100
+// per anrop → gamla vyn (limit=200, sort_field=start_time stigande) fick bara de
+// 100 ÄLDSTA bokningarna och tappade tyst aktuella/framtida veckor när datan växte.
+// Här pagar vi via bubbleFindAll INOM ett fönster (default −60d … +18 mån) så hela
+// det relevanta spannet alltid kommer med, oavsett totalt antal poster.
+// ────────────────────────────────────────────────────────────
+function _caspecoAdminAuthed(req) {
+  if (!CASPECO_ADMIN_TOKEN) return false;
+  const t = String(req.headers["x-admin-token"] || req.query.t || "").trim();
+  return t && t === CASPECO_ADMIN_TOKEN;
+}
+
+app.get("/caspeco/admin/bookings", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token");
+
+  if (!CASPECO_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "CASPECO_ADMIN_TOKEN ej konfigurerad på servern" });
+  }
+  if (_publicRateLimited(_clientIp(req), 120)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+  if (!_caspecoAdminAuthed(req)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const now = Date.now();
+    // Default-fönster: 60 dygn bakåt → 18 mån framåt. Override via ?from/?to (ISO).
+    const from = String(req.query.from || new Date(now - 60  * 864e5).toISOString());
+    const to   = String(req.query.to   || new Date(now + 540 * 864e5).toISOString());
+    const unitId = req.query.unit_id ? String(req.query.unit_id).trim() : null;
+
+    const constraints = [
+      { key: "start_time", constraint_type: "greater than", value: from },
+      { key: "start_time", constraint_type: "less than",    value: to   }
+    ];
+    if (unitId) constraints.push({ key: "unit_id", constraint_type: "equals", value: unitId });
+
+    const results = await bubbleFindAll("caspecobooking", {
+      constraints,
+      sort_field: "start_time",
+      descending: false
+    });
+
+    return res.json({ ok: true, count: results.length, from, to, results });
+  } catch (e) {
+    console.error("[/caspeco/admin/bookings]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.options("/caspeco/admin/bookings", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
+});
+
 // ────────────────────────────────────────────────────────────
 // Tengella – Fakturor
 // Bubble-datatyp: FortnoxInvoice (återanvänder befintlig modell)
