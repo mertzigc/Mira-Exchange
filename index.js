@@ -7089,16 +7089,26 @@ async function ensureClientCompanyForCaspecoBooking(detail) {
   return createdId || null;
 }
 
-// Extrahera section-namn från articles-arrayen
-function caspecoSectionName(detail) {
+// Extrahera rum/sektion ur articles-arrayen (detail-svaret).
+// Rummet ligger på den artikel som har isTable:true — articleGroupName = rumsnamn
+// ("Norrsken"), sectionId = stabil nyckel (5). Catering ligger i nonTableArticles
+// (isTable:false) och ska INTE räknas som rum. List-endpointen ger tom articles →
+// då blir allt tomt (bokning utan placerat rum), vilket är korrekt.
+function caspecoSection(detail) {
   const articles = Array.isArray(detail?.articles) ? detail.articles : [];
-  const tableArticle = articles.find(a => a?.isTable);
-  return String(
-    tableArticle?.articleGroupName ??
-    tableArticle?.tableName ??
-    articles[0]?.articleGroupName ??
-    ""
-  ).trim();
+  const t = articles.find(a => a?.isTable) || null;
+  return {
+    // Stabil nyckel (text för Bubble-konsekvens). Tom om inget rum placerats.
+    section_id:   t?.sectionId != null ? String(t.sectionId) : "",
+    // Visningsnamn: articleGroupName först (rent), tableName som fallback.
+    section_name: String(t?.articleGroupName ?? t?.tableName ?? "").trim(),
+    table_number: String(t?.tableNumber ?? "").trim()
+  };
+}
+
+// Bakåtkompatibel: returnerar bara namnet (gammalt anrop kan finnas kvar).
+function caspecoSectionName(detail) {
+  return caspecoSection(detail).section_name;
 }
 
 function toBubbleDate(v) {
@@ -9536,7 +9546,7 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
 
         // Resolve ClientCompany via customer.orgNr (bekräftat Caspeco-fält)
         const companyId = await ensureClientCompanyForCaspecoBooking(bd).catch(() => null);
-        const sectionName = caspecoSectionName(bd);
+        const section = caspecoSection(bd);
 
         const payload = {
           // ── Identifiering ──────────────────────────────────────
@@ -9561,8 +9571,10 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
           guest_count:           Number(bd?.guests         ?? 0) || null,
           guest_count_children:  Number(bd?.guestsChildren ?? 0) || null,
 
-          // ── Sektion (från articles i detail-svaret) ────────────
-          section_name:          sectionName,
+          // ── Rum/sektion (isTable-artikeln i detail-svaret) ─────
+          section_id:            section.section_id,
+          section_name:          section.section_name,
+          table_number:          section.table_number,
 
           // ── Meddelanden ────────────────────────────────────────
           message:               String(bd?.message         ?? "").trim(),
@@ -9677,7 +9689,7 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
             const bd = detail || b;
 
             const companyId   = await ensureClientCompanyForCaspecoBooking(bd).catch(() => null);
-            const sectionName = caspecoSectionName(bd);
+            const section     = caspecoSection(bd);
 
             const payload = {
               booking_guid:    bookingId,
@@ -9694,7 +9706,9 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
               sub_status:            String(bd?.subStatus ?? ""),
               guest_count:           Number(bd?.guests         ?? 0) || null,
               guest_count_children:  Number(bd?.guestsChildren ?? 0) || null,
-              section_name:          sectionName,
+              section_id:            section.section_id,
+              section_name:          section.section_name,
+              table_number:          section.table_number,
               message:               String(bd?.message         ?? "").trim(),
               message_internal:      String(bd?.messageInternal ?? "").trim(),
               contact_name:          String(
