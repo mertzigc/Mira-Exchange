@@ -609,7 +609,15 @@
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (resp) {
         if (!resp.ok || !resp.body || resp.body.ok === false) {
-          errBox.textContent = 'Kunde inte spara svaret: ' + ((resp.body && resp.body.error) || 'okänt fel');
+          var serr = resp.body && resp.body.error;
+          // Deadline hann passera medan formuläret var öppet → visa stängt-läge
+          if (serr === 'deadline_passed') {
+            return showState('closed', 'Undersökningen är stängd', 'Sista svarsdatum har tyvärr passerat — dina svar kunde inte sparas.');
+          }
+          var msg = serr === 'survey_save_failed'
+            ? 'Något gick fel när svaret skulle sparas. Försök igen om en stund — kvarstår det, hör av dig till avsändaren.'
+            : 'Kunde inte spara svaret: ' + (serr || 'okänt fel');
+          errBox.textContent = msg;
           errBox.classList.add('on');
           btn.disabled = false;
           btn.textContent = 'Skicka in svar';

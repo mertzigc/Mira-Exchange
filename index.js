@@ -13684,8 +13684,27 @@ function inviteBrand(inv, cc) {
   };
 }
 
+// Robust deadline-parsning. Bubbles Data API kan ge datum som ISO-sträng,
+// ms-timestamp (tal ELLER numerisk sträng) eller sekund-timestamp.
+// `new Date("1749481200000")` ger Invalid Date → måste hanteras explicit,
+// annars blir "NaN < now" = false och deadline stänger ALDRIG. Returnerar ms eller NaN.
+function _deadlineMs(v) {
+  if (v === null || v === undefined || v === "") return NaN;
+  if (typeof v === "number") return v < 1e11 ? v * 1000 : v;        // sekunder → ms
+  const s = String(v).trim();
+  if (/^\d{10,}$/.test(s)) { const n = Number(s); return n < 1e11 ? n * 1000 : n; }
+  return Date.parse(s);                                              // ISO/datumsträng → ms (NaN om oparserbar)
+}
+function _deadlinePassed(inv) {
+  const raw = inv && inv.rsvp_deadline;
+  if (!raw) return false;
+  const ms = _deadlineMs(raw);
+  if (!Number.isFinite(ms)) { console.warn("[deadline] oparserbar rsvp_deadline:", JSON.stringify(raw)); return false; }
+  return ms < Date.now();
+}
+
 function inviteConfigPayload(inv, cc, guest) {
-  const deadlinePassed = inv.rsvp_deadline ? (new Date(inv.rsvp_deadline).getTime() < Date.now()) : false;
+  const deadlinePassed = _deadlinePassed(inv);
   const kind = String(inv.kind || "invite").toLowerCase();
   return {
     ok: true,
@@ -13898,8 +13917,10 @@ app.post("/invite/rsvp", async (req, res) => {
     const isSurvey = String(inv.kind || "").toLowerCase() === "survey";
     // Deadline-check gäller ALLA kinds (survey stänger automatiskt efter slutdatum).
     // För survey saknas OSA-status/plus_ones/allergens — men stängning respekteras.
-    if (inv.rsvp_deadline && new Date(inv.rsvp_deadline).getTime() < Date.now())
+    if (_deadlinePassed(inv)) {
+      console.log("[invite/rsvp] blockerad (deadline passerad)", { deadline: inv.rsvp_deadline, parsed: _deadlineMs(inv.rsvp_deadline), now: Date.now() });
       return res.status(403).json({ ok: false, error: "deadline_passed" });
+    }
 
     const nowIso        = toBubbleDate(new Date().toISOString());
     const allergensJson = JSON.stringify(allergens);
@@ -13915,11 +13936,21 @@ app.post("/invite/rsvp", async (req, res) => {
     const isAnon = isSurvey && inv.anonymous === true;
     if (isAnon) {
       const invId = inv._id || inv.id;
-      await safeCreate("SurveyResponse", {
-        invitation:    invId,
-        response_json: responseJson,
-        anon_meta:     JSON.stringify({ region: (guest && guest.region) || "" })
-      }, {});
+      // Svaret MÅSTE lagras i SurveyResponse — vi kan inte falla tillbaka på gästen
+      // (det skulle bryta anonymiteten). Misslyckas det → logga Bubbles exakta avslag
+      // och returnera ett begripligt fel, utan att markera gästen som svarad.
+      try {
+        await safeCreate("SurveyResponse", {
+          invitation:    invId,
+          response_json: responseJson,
+          anon_meta:     JSON.stringify({ region: (guest && guest.region) || "" })
+        }, {});
+      } catch (e) {
+        console.error("[invite/rsvp] anonymt svar kunde inte sparas (SurveyResponse)", {
+          invId, bubble: e?.detail || e?.message
+        });
+        return res.status(502).json({ ok: false, error: "survey_save_failed" });
+      }
       if (guest) {
         const gid = guest._id || guest.id;
         await bubblePatch(INVITE.GUEST_TYPE, gid, {
