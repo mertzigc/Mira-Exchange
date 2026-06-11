@@ -1,0 +1,357 @@
+<!--
+  MIRA – KUND-DASHBOARD KPI-BLOCK  (A-spåret: Render räknar, Bubble lagrar)
+  ------------------------------------------------------------------
+  Klistras in i ett HTML-element i Bubble på kundens dashboard-sida.
+
+  KOPPLING I BUBBLE (fyll value="" med dynamiska uttryck):
+    #mira_data        =
+    #mira_company_id  =
+    #mira_api_host    = https://mira-exchange.onrender.com   (eller statiskt nedan)
+
+  FLÖDE:
+    • Läsning: blocket renderar Current User's Company's kpi_json direkt.
+      Ingen nyckel, ingen fetch. Isolering sköts av Bubble privacy rules på
+      ClientCompany.kpi_json (gör fältet läsbart endast för företagets users).
+    • Uppdatera: POST:ar company_id till /kpi/company/refresh (Render räknar +
+      skriver tillbaka kpi_json) och laddar sedan om sidan. Ingen backend workflow.
+    • Är #mira_company_id tomt (t.ex. preview) visas DEMO_DATA.
+-->
+
+<style>
+  .mc-wrap * { box-sizing: border-box; }
+  .mc-wrap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    width: 100%;
+    --bg:#262b42; --line:rgba(255,255,255,0.07); --acc:#db6923;
+    --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35);
+    --t4:rgba(255,255,255,0.20); --up:#10b981; --down:#f87171;
+  }
+  .mc-row { display:grid; gap:14px; margin-bottom:14px; }
+  .mc-row.r1 { grid-template-columns:repeat(3,1fr); }
+  .mc-row.r2 { grid-template-columns:3fr 3fr; margin-bottom:0; }
+  @media (max-width:820px){ .mc-row.r1,.mc-row.r2 { grid-template-columns:1fr; } }
+
+  .mc-card { background:var(--bg); border:0.5px solid var(--line); border-radius:11px;
+    padding:16px 18px 18px; position:relative; overflow:hidden; display:flex; flex-direction:column; }
+  .mc-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px;
+    background:var(--acc); border-radius:11px 11px 0 0; }
+  .mc-label { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.10em; color:var(--t3); margin-bottom:12px; }
+  .mc-sub { font-size:13px; color:var(--t3); }
+  .mc-divider { border:none; border-top:0.5px solid var(--line); margin:12px 0 10px; }
+  .mc-delta { font-size:12px; font-weight:700; }
+  .mc-delta.up{color:var(--up);} .mc-delta.down{color:var(--down);} .mc-delta.same{color:var(--t4);}
+
+  .mc-big { font-size:40px; font-weight:800; letter-spacing:-0.03em; color:var(--acc); line-height:1; }
+  .mc-big span { font-size:14px; font-weight:500; color:var(--t3); letter-spacing:0; margin-left:6px; }
+  .mc-mini-stat { display:flex; align-items:baseline; gap:6px; margin-top:10px; font-size:13px; color:var(--t2); }
+  .mc-mini-stat .sep { color:var(--t4); }
+  .mc-spark { height:40px; margin-top:14px; }
+  .mc-spark svg { width:100%; height:100%; overflow:visible; }
+
+  .mc-donut-wrap { display:flex; align-items:center; gap:16px; }
+  .mc-donut-center { position:relative; flex-shrink:0; }
+  .mc-donut-center .mc-dc-num { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .mc-dc-val { font-size:22px; font-weight:800; color:var(--t1); line-height:1; }
+  .mc-dc-lbl { font-size:9px; text-transform:uppercase; letter-spacing:0.08em; color:var(--t4); margin-top:2px; }
+  .mc-legend { display:flex; flex-direction:column; gap:9px; flex:1; }
+  .mc-leg-row { display:flex; align-items:center; gap:8px; }
+  .mc-leg-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+  .mc-leg-name { font-size:13px; color:var(--t2); flex:1; }
+  .mc-leg-val { font-size:15px; font-weight:700; color:var(--t1); }
+
+  .mc-rate-block { margin-bottom:4px; }
+  .mc-rate-head { font-size:12px; color:var(--t3); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:5px; }
+  .mc-rate-row { display:flex; align-items:center; gap:8px; }
+  .mc-stars { display:flex; gap:2px; }
+  .mc-star { font-size:15px; } .mc-star.on{color:var(--acc);} .mc-star.off{color:rgba(255,255,255,0.15);}
+  .mc-rate-val { font-size:16px; font-weight:800; color:var(--acc); letter-spacing:-0.02em; }
+  .mc-rate-max { font-size:13px; color:var(--t3); }
+  .mc-rate-cnt { font-size:12px; color:var(--t4); margin-left:2px; }
+  .mc-rate-cmp { font-size:12px; color:var(--t3); margin-top:3px; display:flex; align-items:center; gap:4px; }
+
+  /* Tjänstefördelning – highlight av mest använda tjänsten */
+  .mc-top-service { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .mc-ts-left { min-width:0; }
+  .mc-ts-name { font-size:18px; font-weight:800; color:var(--t1); letter-spacing:-0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-ts-amt { font-size:13px; color:var(--t3); margin-top:3px; }
+  .mc-ts-pill { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--acc);
+    background:rgba(219,105,35,0.15); border:0.5px solid rgba(219,105,35,0.35); border-radius:20px; padding:2px 8px; margin-top:7px; display:inline-block; }
+  .mc-ts-share { flex-shrink:0; text-align:right; }
+  .mc-ts-pct { font-size:30px; font-weight:800; color:var(--acc); letter-spacing:-0.03em; line-height:1; }
+  .mc-ts-pct-lbl { font-size:9px; text-transform:uppercase; letter-spacing:0.08em; color:var(--t4); margin-top:3px; }
+
+  /* Aktivitet & utfall-kortet */
+  .mc-out-hero-lbl { font-size:12px; color:var(--t3); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:6px; }
+  .mc-out-hero-lbl span { text-transform:none; letter-spacing:0; color:var(--t4); }
+  .mc-out-hero { font-size:34px; font-weight:800; letter-spacing:-0.03em; color:var(--acc); line-height:1; }
+  .mc-out-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
+  .mc-out-lbl { font-size:11px; color:var(--t3); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px; }
+  .mc-out-val { font-size:19px; font-weight:700; color:var(--t1); letter-spacing:-0.02em; }
+  .mc-status-line { display:flex; align-items:center; gap:8px; margin-top:16px; padding-top:13px; border-top:0.5px solid var(--line); font-size:13px; font-weight:600; }
+  .mc-status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .mc-status-line.ok { color:var(--up); } .mc-status-line.ok .mc-status-dot { background:var(--up); box-shadow:0 0 5px rgba(16,185,129,0.6); }
+  .mc-status-line.warn { color:var(--down); } .mc-status-line.warn .mc-status-dot { background:var(--down); box-shadow:0 0 5px rgba(248,113,113,0.6); }
+  .mc-supp { display:flex; flex-direction:column; gap:9px; }
+  .mc-supp-row { display:grid; grid-template-columns:1fr auto; gap:4px 10px; align-items:center; }
+  .mc-supp-name { font-size:13px; color:var(--t2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-supp-amt { font-size:13px; font-weight:700; color:var(--t1); text-align:right; }
+  .mc-supp-track { grid-column:1 / -1; height:5px; border-radius:4px; background:rgba(255,255,255,0.07); overflow:hidden; }
+  .mc-supp-fill { height:5px; border-radius:4px; background:var(--acc); width:0; transition:width 0.6s ease; }
+
+  .mc-empty { font-size:13px; color:var(--t4); padding:8px 0; }
+
+  .mc-footer { display:flex; justify-content:flex-end; align-items:center; gap:12px; padding-top:12px; }
+  .mc-foot-status { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--t4); }
+  .mc-foot-dot { width:5px; height:5px; border-radius:50%; background:var(--up); box-shadow:0 0 5px rgba(16,185,129,0.6); }
+  .mc-foot-status.loading { color:var(--t3); animation:mc-pulse 1.4s ease-in-out infinite; }
+  .mc-foot-status.error { color:var(--down); }
+  @keyframes mc-pulse { 0%,100%{opacity:0.3} 50%{opacity:0.8} }
+  .mc-refresh-btn { font-size:11px; color:var(--t3); background:none; border:0.5px solid rgba(255,255,255,0.12);
+    border-radius:5px; padding:4px 11px; cursor:pointer; font-family:inherit; transition:all 0.2s; }
+  .mc-refresh-btn:hover { color:var(--t1); border-color:rgba(255,255,255,0.30); }
+  .mc-refresh-btn:disabled { opacity:0.4; cursor:default; }
+  .mc-dots { color:var(--t4); }
+</style>
+
+<!-- Bubble fyller dessa (lämna tomma för preview med demo-data) -->
+<input type="hidden" id="mira_data"       value="">
+<input type="hidden" id="mira_company_id" value="">
+<input type="hidden" id="mira_api_host"   value="https://mira-exchange.onrender.com">
+
+<div class="mc-wrap">
+  <div class="mc-row r1">
+    <div class="mc-card">
+      <div class="mc-label">Bokningar</div>
+      <div class="mc-big" id="mc-book-total"><span class="mc-dots">···</span></div>
+      <div class="mc-mini-stat" id="mc-book-mini"></div>
+      <div class="mc-spark"><svg id="mc-book-spark" viewBox="0 0 100 40" preserveAspectRatio="none">
+        <defs><linearGradient id="mc-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#db6923" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="#db6923" stop-opacity="0"/>
+        </linearGradient></defs>
+        <polyline id="mc-spark-fill" points="" fill="url(#mc-grad)" stroke="none"/>
+        <polyline id="mc-spark-line" points="" fill="none" stroke="#db6923" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg></div>
+    </div>
+    <div class="mc-card">
+      <div class="mc-label">Ärenden</div>
+      <div id="mc-matters"><span class="mc-dots">···</span></div>
+    </div>
+    <div class="mc-card">
+      <div class="mc-label">Kvalitet &amp; betyg</div>
+      <div id="mc-ratings"><span class="mc-dots">···</span></div>
+    </div>
+  </div>
+
+  <div class="mc-row r2">
+    <div class="mc-card">
+      <div class="mc-label">Tjänstefördelning</div>
+      <div class="mc-top-service" id="mc-top-service"><span class="mc-dots">···</span></div>
+      <hr class="mc-divider">
+      <div class="mc-supp" id="mc-suppliers"><span class="mc-dots" style="font-size:12px">···</span></div>
+    </div>
+    <div class="mc-card">
+      <div class="mc-label">Investering</div>
+      <div class="mc-out-hero-lbl">Fakturerat i år <span>· ex moms</span></div>
+      <div class="mc-out-hero" id="mc-out-invoiced">–</div>
+      <div class="mc-out-row">
+        <div><div class="mc-out-lbl">Utestående</div><div class="mc-out-val" id="mc-out-balance">–</div></div>
+        <div><div class="mc-out-lbl">Kommande bokningar</div><div class="mc-out-val" id="mc-out-upcoming">–</div></div>
+      </div>
+      <div class="mc-status-line ok" id="mc-status-line"><span class="mc-status-dot"></span><span>–</span></div>
+    </div>
+  </div>
+
+  <div class="mc-footer">
+    <span class="mc-foot-status" id="mc-foot-status"></span>
+    <button class="mc-refresh-btn" id="mc-refresh-btn">&#8635; Uppdatera</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var DEMO_DATA = {
+    generated_at: new Date().toISOString(),
+    bookings: { total:128, this_month:14, upcoming:6,
+      monthly:{ "2025-12":11, "2026-01":9, "2026-02":13, "2026-03":16, "2026-04":12, "2026-05":14 } },
+    matters: { pagaende:12, avslutade:47, avvikelser:3 },
+    ratings: { arende:{avg:4.3,count:22,prev:null}, qc:{avg:4.6,count:15,prev:null} },
+    economy: { invoiced_2026:482000, balance:56250, by_supplier:[
+      {name:"Carotte Housekeeping",invoiced:295000,balance:31000},
+      {name:"Carotte Food & Event",invoiced:142000,balance:18250},
+      {name:"Carotte Staff",invoiced:45000,balance:7000} ] }
+  };
+
+  var MATTER_CFG = [
+    { key:"pagaende",  label:"Pågående",  color:"#5b8dee" },
+    { key:"avslutade", label:"Avslutade", color:"#10b981" },
+    { key:"avvikelser",label:"Avvikelser",color:"#f87171" }
+  ];
+
+  function el(id){ return document.getElementById(id); }
+  function val(id){ var e=el(id); return e ? (e.value||'').trim() : ''; }
+  function num(v){ return (v===null||v===undefined||isNaN(v))?0:Number(v); }
+
+  function fmtKr(v){
+    var n=Math.round(num(v));
+    if(n>=1000000) return (n/1000000).toFixed(1).replace('.',',')+' Mkr';
+    if(n>=1000) return Math.round(n/1000)+' tkr';
+    return n.toLocaleString('sv-SE')+' kr';
+  }
+  function deltaHtml(c,p){
+    if(p===null||p===undefined||c===null||c===undefined) return '<span class="mc-delta same">–</span>';
+    var d=c-p; if(Math.abs(d)<0.05) return '<span class="mc-delta same">±0</span>';
+    var s=Math.abs(d); s=Number.isInteger(s)?s:s.toFixed(1);
+    return d>0?'<span class="mc-delta up">▲'+s+'</span>':'<span class="mc-delta down">▼'+s+'</span>';
+  }
+  function starsHtml(score){
+    var h='<div class="mc-stars">';
+    for(var i=1;i<=5;i++) h+='<span class="mc-star '+(i<=Math.round(num(score))?'on':'off')+'">★</span>';
+    return h+'</div>';
+  }
+  function fmtTs(ts){ var d=new Date(ts); if(isNaN(d)) return ''; return d.toLocaleDateString('sv-SE')+' '+d.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}); }
+
+  function renderBookings(b){
+    if(!b) return;
+    el('mc-book-total').innerHTML = num(b.total).toLocaleString('sv-SE')+'<span>totalt</span>';
+    var bits=[];
+    if(b.this_month!==undefined) bits.push('<strong style="color:var(--acc);font-weight:700">+'+num(b.this_month)+'</strong> denna månad');
+    if(b.upcoming!==undefined && num(b.upcoming)>0) bits.push('<span class="sep">·</span> '+num(b.upcoming)+' kommande');
+    el('mc-book-mini').innerHTML = bits.join(' ');
+    var m=b.monthly||{}, keys=Object.keys(m).sort();
+    if(keys.length<2){ el('mc-book-spark').style.display='none'; return; }
+    el('mc-book-spark').style.display='';
+    var vals=keys.map(function(k){return num(m[k]);});
+    var max=Math.max.apply(null,vals)||1, W=100,H=38,pad=2;
+    var pts=vals.map(function(v,i){
+      var x=pad+(i/(vals.length-1))*(W-pad*2);
+      var y=H-pad-(v/max)*(H-pad*2);
+      return x.toFixed(1)+','+y.toFixed(1);
+    });
+    el('mc-spark-line').setAttribute('points',pts.join(' '));
+    el('mc-spark-fill').setAttribute('points',pts.join(' ')+' '+(W-pad)+','+H+' '+pad+','+H);
+  }
+
+  function renderMatters(m){
+    if(!m) return;
+    var total=MATTER_CFG.reduce(function(s,c){return s+num(m[c.key]);},0);
+    var R=26,cx=32,cy=32,sw=9,circ=2*Math.PI*R,offset=0,segs='',denom=total||1;
+    MATTER_CFG.forEach(function(c){
+      var v=num(m[c.key]); if(v<=0) return;
+      var dash=(v/denom)*circ, gap=circ-dash;
+      segs+='<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+c.color+'" stroke-width="'+sw+'" stroke-dasharray="'+dash.toFixed(2)+' '+gap.toFixed(2)+'" stroke-dashoffset="'+(-offset).toFixed(2)+'" transform="rotate(-90 '+cx+' '+cy+')"/>';
+      offset+=dash;
+    });
+    var svg='<svg width="64" height="64" viewBox="0 0 64 64"><circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="'+sw+'"/>'+segs+'</svg>';
+    var legend=MATTER_CFG.map(function(c){
+      return '<div class="mc-leg-row"><div class="mc-leg-dot" style="background:'+c.color+'"></div><span class="mc-leg-name">'+c.label+'</span><span class="mc-leg-val">'+num(m[c.key])+'</span></div>';
+    }).join('');
+    el('mc-matters').innerHTML='<div class="mc-donut-wrap"><div class="mc-donut-center">'+svg+'<div class="mc-dc-num"><div class="mc-dc-val">'+total+'</div><div class="mc-dc-lbl">Totalt</div></div></div><div class="mc-legend">'+legend+'</div></div>';
+  }
+
+  function rateBlock(head,r){
+    if(!r || r.avg===null || r.avg===undefined)
+      return '<div class="mc-rate-block"><div class="mc-rate-head">'+head+'</div><div class="mc-empty">Inga betyg ännu</div></div>';
+    var cmp=(r.prev!==null && r.prev!==undefined)?'<div class="mc-rate-cmp">Föreg. mån: '+num(r.prev).toFixed(1)+'&nbsp;'+deltaHtml(num(r.avg),num(r.prev))+'</div>':'';
+    return '<div class="mc-rate-block"><div class="mc-rate-head">'+head+'</div><div class="mc-rate-row">'+starsHtml(r.avg)+'<span class="mc-rate-val">'+num(r.avg).toFixed(1)+'</span><span class="mc-rate-max">/ 5</span><span class="mc-rate-cnt">('+num(r.count)+' st)</span></div>'+cmp+'</div>';
+  }
+  function renderRatings(r){
+    if(!r) return;
+    el('mc-ratings').innerHTML=rateBlock('Betyg ärenden',r.arende)+'<hr class="mc-divider">'+rateBlock('Kvalitetskontroll',r.qc);
+  }
+
+  // Tjänstefördelning: highlighta mest använda tjänsten (= största by_supplier-posten)
+  // och rita resten som andels-barer. by_supplier är Carottes tjänstelinjer, inte artiklar.
+  function renderServices(e){
+    var host=el('mc-top-service'), bars=el('mc-suppliers');
+    var list=((e&&e.by_supplier)||[]).slice()
+      .filter(function(s){return num(s.invoiced)>0;})
+      .sort(function(a,b){return num(b.invoiced)-num(a.invoiced);});
+    if(!list.length){
+      if(host) host.innerHTML='<div class="mc-empty">Ingen tjänstedata ännu</div>';
+      if(bars) bars.innerHTML='';
+      return;
+    }
+    var total=list.reduce(function(s,x){return s+num(x.invoiced);},0)||1;
+    var top=list[0], share=Math.round(num(top.invoiced)/total*100);
+    if(host) host.innerHTML=
+      '<div class="mc-ts-left"><div class="mc-ts-name">'+(top.name||'–')+'</div>'+
+      '<div class="mc-ts-amt">'+fmtKr(top.invoiced)+' i år</div>'+
+      '<span class="mc-ts-pill">Mest använd</span></div>'+
+      '<div class="mc-ts-share"><div class="mc-ts-pct">'+share+'%</div><div class="mc-ts-pct-lbl">av volym</div></div>';
+    if(bars) bars.innerHTML=list.map(function(s){
+      var sh=Math.round(num(s.invoiced)/total*100);   // andel av total, både text och stapel
+      return '<div class="mc-supp-row"><span class="mc-supp-name">'+(s.name||'–')+'</span><span class="mc-supp-amt">'+sh+'%</span><div class="mc-supp-track"><div class="mc-supp-fill" style="width:'+sh+'%"></div></div></div>';
+    }).join('');
+  }
+
+  // Aktivitet & utfall: reella siffror från ekonomi (2026) + bokningar + ärenden.
+  function renderOutcome(e,m,b){
+    e=e||{}; m=m||{}; b=b||{};
+    el('mc-out-invoiced').textContent=fmtKr(e.invoiced_2026);
+    el('mc-out-balance').textContent=fmtKr(e.balance);
+    el('mc-out-upcoming').textContent=num(b.upcoming);
+    var av=num(m.avvikelser), line=el('mc-status-line');
+    if(!line) return;
+    if(av>0){
+      line.className='mc-status-line warn';
+      line.innerHTML='<span class="mc-status-dot"></span><span>'+av+' '+(av===1?'avvikelse registrerad':'avvikelser registrerade')+'</span>';
+    } else {
+      line.className='mc-status-line ok';
+      line.innerHTML='<span class="mc-status-dot"></span><span>Inga avvikelser</span>';
+    }
+  }
+
+  function renderAll(d){
+    renderBookings(d.bookings); renderMatters(d.matters); renderRatings(d.ratings);
+    renderServices(d.economy); renderOutcome(d.economy, d.matters, d.bookings);
+  }
+
+  function setStatus(mode,text){
+    var s=el('mc-foot-status'); if(!s) return;
+    s.className='mc-foot-status'+(mode?(' '+mode):'');
+    if(mode==='ok') s.innerHTML='<span class="mc-foot-dot"></span><span>'+text+'</span>';
+    else s.textContent=text||'';
+  }
+  function hasParam(p){ return new RegExp('[?&]'+p+'=').test(location.search); }
+
+  function triggerRefresh(isInit){
+    var host=val('mira_api_host')||'https://mira-exchange.onrender.com';
+    var companyId=val('mira_company_id');
+    if(!companyId){ setStatus('error','Saknar company_id'); return; }
+    var btn=el('mc-refresh-btn'); if(btn) btn.disabled=true;
+    setStatus('loading','Hämtar data…');
+    fetch(host+'/kpi/company/refresh',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ company_id:companyId })
+    })
+    .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
+    .then(function(j){
+      if(!j||!j.ok){ setStatus('error','Kunde inte uppdatera'); if(btn) btn.disabled=false; return; }
+      // Ladda om så Bubble matar in färska kpi_json. Sätt ?kpiinit för att undvika loop vid tom data.
+      var url=new URL(location.href);
+      if(isInit) url.searchParams.set('kpiinit','1');
+      location.replace(url.toString());
+    })
+    .catch(function(){ setStatus('error','Nätverksfel'); if(btn) btn.disabled=false; });
+  }
+
+  function load(){
+    var raw=val('mira_data'), companyId=val('mira_company_id');
+    if(raw){
+      var data=DEMO_DATA;
+      try { data=JSON.parse(raw); } catch(e){ console.warn('kpi_json ogiltig JSON',e); }
+      renderAll(data);
+      setStatus('ok', data.generated_at ? ('Uppdaterad '+fmtTs(data.generated_at)) : '');
+      return;
+    }
+    if(!companyId){ renderAll(DEMO_DATA); setStatus('', 'Demo'); return; }   // preview / ej kopplat
+    // Kopplat men ingen data än → trigga EN gång, annars visa tomt (loop-skydd via ?kpiinit)
+    if(hasParam('kpiinit')){ renderAll({bookings:{total:0,monthly:{}},matters:{},ratings:{},economy:{by_supplier:[]}}); setStatus('', 'Ingen data ännu – klicka Uppdatera'); }
+    else { triggerRefresh(true); }
+  }
+
+  var btn=el('mc-refresh-btn'); if(btn) btn.addEventListener('click',function(){ triggerRefresh(false); });
+  load();
+})();
+</script>
