@@ -30,7 +30,11 @@ ORDERS_ENABLED="${SYNC_V2_ORDERS:-0}"   # 9e feature-flag (off by default)
 
 FE="1771579463578x385222043661358460"      # Food & Event
 STAFF="1771579472595x998707043537409700"   # Staff
-# HK/Tengella körs via source tengella-invoice (connection sätts i adaptern)
+GROUP="1771579485842x995491391876972200"   # Group (Fortnox-native; exkl i KPI men har fakturor)
+# HK/Tengella körs via source tengella-invoice (connection sätts i adaptern).
+# OBS: TENGELLA-connectionen får ALDRIG skickas till Fortnox-routerna (404 "Kan inte
+# hitta fakturan") — HK-PDF hämtas via /tengella/enrich/invoice-pdfs.
+FORTNOX_NATIVE="$FE $STAFF $GROUP"
 TENGELLA_ORGNO="${TENGELLA_ORGNO:-746-0509}"   # Tengella-tenant (för kund-synk)
 CUST_DAYS="${CUST_DAYS:-${MODIFIED_DAYS_BACK:-3}}"  # lastmodified-fönster för kund-synk
 CUST_PAGES="${CUST_PAGES:-3}"                       # max sidor/kund-synk (inkrementell → litet)
@@ -82,13 +86,25 @@ reconcile_clientcompany() {
 }
 
 if [ "$MODE" = "pdf" ]; then
-  # 9c/9e: betar av needs_pdf_sync=true i egen takt. Kräver SYNC_V2_ORDERS=1.
-  # Offer-PDF körs INTE här förrän cutover (gamla /fortnox/upsert/offers äger den än).
-  if [ "$ORDERS_ENABLED" != "1" ]; then
-    echo "[sync_v2] pdf-läge hoppar (SYNC_V2_ORDERS!=1)"; exit 0
-  fi
   echo "[sync_v2] PDF-drän @ $(date -u +%FT%TZ)"
-  post /sync/v2-pdf/fortnox-order "{\"maxRecords\":50,\"throttleMs\":300}"
+  # ── Invoice-PDF (KÄRNDATA för kundportalen) ──────────────────────────────────
+  # sync_v2-fakturasynken hämtar INTE PDF (bara data) → fyll saknade ft_pdf via den
+  # idempotenta enrich-routen (söker ft_pdf is_empty + ej makulerad). Körs ALLTID,
+  # oberoende av SYNC_V2_ORDERS. Loopar för att beta av backlog; steady-state räcker
+  # första varvet. all_connections = F&E + Staff (+ ev. fler native Fortnox-conn).
+  # Per connection (EJ all_connections → undviker att TENGELLA-conn skickas till Fortnox → 404).
+  for i in 1 2 3 4 5 6; do
+    for CID in $FORTNOX_NATIVE; do
+      post /fortnox/enrich/invoice-pdfs "{\"connection_id\":\"$CID\",\"limit\":40,\"pause_ms\":250,\"pdf_path\":\"preview\"}"
+    done
+  done
+  # Tengella/HK invoice-PDF (egen route — Tengella-API, ej Fortnox).
+  post /tengella/enrich/invoice-pdfs "{\"pause_ms\":150,\"max_enrich\":300}"
+
+  # ── Order-PDF (9c) — bara om order/offer-cutover aktiv ───────────────────────
+  if [ "$ORDERS_ENABLED" = "1" ]; then
+    post /sync/v2-pdf/fortnox-order "{\"maxRecords\":50,\"throttleMs\":300}"
+  fi
   echo "[sync_v2] pdf klart @ $(date -u +%FT%TZ)"
   exit 0
 fi
