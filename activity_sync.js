@@ -40,8 +40,8 @@ export const ACTIVITY_CONFIG = {
   C_ADDRESS: "delivery_address",
 
   // Matter-fält
-  M_TITLE:   "Rubrik",              // ⚠️ VERIFIERA Matter-titel (annars Title/title)
-  M_CATEGORY:"Category",
+  M_TITLE:   "Rubrik",              // bekräftat (emailer.js)
+  M_CATEGORY:"Category",            // Christian la till samma 4-familjs-Category på Matter 2026-06-15
   M_STATUS:  "status",
   M_COMPANY: "Kundföretag",
   M_DESC:    "Beskrivning",
@@ -242,16 +242,24 @@ export function createActivityEngine(deps) {
   const upsertActivityForRemember = (r, { write = true } = {}) =>
     upsertBySourceId(bubbleId(r), mapRemember(r), { write, compareFields: COMPARE });
 
-  // ── Modified-constraint-byggare ────────────────────────────────────────────
-  function modifiedConstraints(opts) {
-    if (opts.modifiedSince) {
-      return [{ key: "Modified Date", constraint_type: "greater than", value: opts.modifiedSince }];
+  // ── Constraint-byggare ─────────────────────────────────────────────────────
+  // Default: bara innevarande år och framåt (filtrerar på KÄLLANS egna datum, ej
+  // Modified Date — annars drar en gammal-men-nyligen-ändrad post med). Override
+  // med sinceDate / untilDate. modifiedDaysBack/modifiedSince läggs till (AND) för
+  // nattlig inkrementell körning.
+  function defaultSince() {
+    return `${new Date().getFullYear()}-01-01T00:00:00.000Z`;
+  }
+  function buildConstraints(opts, dateField) {
+    const cons = [];
+    const since = opts.sinceDate === null ? null : (opts.sinceDate || defaultSince());
+    if (since && dateField) cons.push({ key: dateField, constraint_type: "greater than", value: since });
+    if (opts.untilDate && dateField) cons.push({ key: dateField, constraint_type: "less than", value: opts.untilDate });
+    if (opts.modifiedSince) cons.push({ key: "Modified Date", constraint_type: "greater than", value: opts.modifiedSince });
+    else if (opts.modifiedDaysBack) {
+      cons.push({ key: "Modified Date", constraint_type: "greater than", value: new Date(Date.now() - opts.modifiedDaysBack * 86400000).toISOString() });
     }
-    if (opts.modifiedDaysBack) {
-      const since = new Date(Date.now() - opts.modifiedDaysBack * 86400000).toISOString();
-      return [{ key: "Modified Date", constraint_type: "greater than", value: since }];
-    }
-    return [];
+    return cons;
   }
   function tally(report, r) {
     if (!r) { report.errors++; return; }
@@ -269,7 +277,7 @@ export function createActivityEngine(deps) {
     let rows, index;
     try {
       index = sharedIndex || await loadActivityIndex();
-      rows = await bubbleFindAll(C.COMISSION_TYPE, { constraints: modifiedConstraints(opts) });
+      rows = await bubbleFindAll(C.COMISSION_TYPE, { constraints: buildConstraints(opts, C.C_DELIVERY) });
     } catch (e) { return { ...report, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const c of rows) {
@@ -285,7 +293,7 @@ export function createActivityEngine(deps) {
     let rows, index;
     try {
       index = sharedIndex || await loadActivityIndex();
-      rows = await bubbleFindAll(C.MATTER_TYPE, { constraints: modifiedConstraints(opts) });
+      rows = await bubbleFindAll(C.MATTER_TYPE, { constraints: buildConstraints(opts, "Created Date") });
     } catch (e) { return { ...report, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const m of rows) {
@@ -309,7 +317,7 @@ export function createActivityEngine(deps) {
     let rows, index;
     try {
       index = sharedIndex || await loadActivityIndex();
-      rows = await bubbleFindAll(C.REMEMBER_TYPE, { constraints: modifiedConstraints(opts) });
+      rows = await bubbleFindAll(C.REMEMBER_TYPE, { constraints: buildConstraints(opts, C.R_START) });
     } catch (e) { return { ...report, skipped: `typ "${C.REMEMBER_TYPE}" ej läsbar — verifiera REMEMBER_TYPE`, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const r of rows) {
@@ -366,6 +374,29 @@ export function createActivityEngine(deps) {
     return report;
   }
 
+  // ── Purge: ta bort materialiserade Activity-rader före ett datum ────────────
+  // Rör BARA våra materialiserade rader (source_id satt + vår ActivityType).
+  // MS-/manuella Activity lämnas orörda. Diff-läge listar bara (would_delete).
+  async function purgeOld(opts) {
+    const write = !!opts.write;
+    const before = opts.before || defaultSince();
+    const ours = new Set([C.AT_BOKNING, C.AT_ARENDE, C.AT_KOM_IHAG, C.AT_HOUSEKEEPING]);
+    const report = { source: "purge", before, candidates: 0, deleted: 0, would_delete: 0, errors: 0 };
+    let all;
+    try { all = await bubbleFindAll(C.ACTIVITY_TYPE, {}); }
+    catch (e) { return { ...report, scan_error: errInfo(e) }; }
+    const victims = all.filter((a) =>
+      a.source_id && ours.has(a.ActivityType) && a.Startdatum && String(a.Startdatum) < before);
+    report.candidates = victims.length;
+    for (const v of victims) {
+      try {
+        if (write) { await bubbleDelete(C.ACTIVITY_TYPE, bubbleId(v)); if (opts.throttleMs) await sleep(opts.throttleMs); report.deleted++; }
+        else report.would_delete++;
+      } catch (e) { report.errors++; report.last_error = errInfo(e); }
+    }
+    return report;
+  }
+
   // ── Dispatcher ───────────────────────────────────────────────────────────────
   async function syncForSource(source, opts = {}) {
     switch (source) {
@@ -373,6 +404,7 @@ export function createActivityEngine(deps) {
       case "matter":    return syncMatters(opts);
       case "remember":  return syncRemembers(opts);
       case "tengella":  return syncTengella(opts);
+      case "purge":     return purgeOld(opts);
       case "all": {
         // Ett delat Activity-index för hela körningen (en läsning, inte fyra).
         let index = null;
