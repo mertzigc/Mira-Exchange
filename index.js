@@ -1,7 +1,7 @@
 // Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
 import { startEmailPoller } from "./emailer.js";
 import { createSyncEngine } from "./invoice_sync.js";
-import { createActivityEngine } from "./activity_sync.js";
+import { createActivityEngine, ACTIVITY_CONFIG } from "./activity_sync.js";
 import { createClientGroupEngine } from "./clientgroup.js";
 import express from "express";
 import cors from "cors";
@@ -392,6 +392,10 @@ function requireApiKey(req, res, next) {
     // Mira fakturamodul – HTML-blocket fetchar från kundens browser UTAN
     // API-nyckel. CORS-allowlisten styr vilka origins som får svar.
     "/api/invoices",
+    // Mira kalender/planering – HTML-blocket läser/skriver Activity via
+    // x-admin-token (PLANNING_ADMIN_TOKEN). Master-Bubble-nyckeln stannar server-side.
+    "/admin/planning/activities",
+    "/admin/planning/activity/action",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
@@ -16163,6 +16167,122 @@ app.post("/sync/activities/:source", requireSyncSecret, async (req, res) => {
     return res.json({ ok: true, mode: opts.write ? "write" : "diff", report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Mira kalender/planering — läs-proxy + popup-skriv för mira-kalender.html
+// Läser/skriver den enhetliga Activity-typen. Gränsas av PLANNING_ADMIN_TOKEN
+// (x-admin-token), faller tillbaka till CASPECO_ADMIN_TOKEN. Master-nyckeln
+// stannar server-side. (Samma trade-off som caspeco: token ligger i HTML:t →
+// per-kund-isolering sköts av att Bubble injicerar rätt company_id; för hård
+// isolering krävs per-user-token, ej i scope nu.)
+// ════════════════════════════════════════════════════════════════════════════
+const PLANNING_ADMIN_TOKEN = pick(process.env.PLANNING_ADMIN_TOKEN, CASPECO_ADMIN_TOKEN);
+function _planningAuthed(req) {
+  if (!PLANNING_ADMIN_TOKEN) return false;
+  const t = String(req.headers["x-admin-token"] || req.query.t || "").trim();
+  return t && t === PLANNING_ADMIN_TOKEN;
+}
+function _planningCors(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+}
+// Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)
+const PLANNING_SRC = {
+  [ACTIVITY_CONFIG.AT_BOKNING]: { type: ACTIVITY_CONFIG.COMISSION_TYPE, status: ACTIVITY_CONFIG.C_STATUS, thread: "Tråd", start: ACTIVITY_CONFIG.C_DELIVERY, end: ACTIVITY_CONFIG.C_END },
+  [ACTIVITY_CONFIG.AT_ARENDE]:  { type: ACTIVITY_CONFIG.MATTER_TYPE,    status: ACTIVITY_CONFIG.M_STATUS, thread: "Tråd", start: null, end: null },
+  [ACTIVITY_CONFIG.AT_TODO]:    { type: ACTIVITY_CONFIG.TODO_TYPE,      status: ACTIVITY_CONFIG.TODO_STATUS, thread: ACTIVITY_CONFIG.TODO_THREAD, start: ACTIVITY_CONFIG.TODO_START, end: ACTIVITY_CONFIG.TODO_END },
+};
+
+app.options("/admin/planning/activities", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+app.options("/admin/planning/activity/action", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+
+// GET /admin/planning/activities?company=<id>&from=&to=
+// company utelämnat = CRM-läge (alla). Default-fönster = innevarande år.
+app.get("/admin/planning/activities", async (req, res) => {
+  _planningCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
+  if (_publicRateLimited(_clientIp(req), 240)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
+  try {
+    const y = new Date().getFullYear();
+    const from = String(req.query.from || `${y}-01-01T00:00:00.000Z`);
+    const to   = String(req.query.to   || `${y}-12-31T23:59:59.999Z`);
+    const company = req.query.company ? String(req.query.company).trim() : null;
+    const constraints = [
+      { key: "Startdatum", constraint_type: "greater than", value: from },
+      { key: "Startdatum", constraint_type: "less than",    value: to   },
+    ];
+    if (company) constraints.push({ key: ACTIVITY_CONFIG.A_COMPANY, constraint_type: "equals", value: company });
+    const results = await bubbleFindAll(ACTIVITY_CONFIG.ACTIVITY_TYPE, { constraints, sort_field: "Startdatum", descending: false });
+    return res.json({ ok: true, count: results.length, from, to, company, results });
+  } catch (e) {
+    console.error("[/admin/planning/activities]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// POST /admin/planning/activity/action
+// body: { activity_id, source_id, activity_type, action: "status"|"comment"|"copy", value }
+//   status  → value = nytt statusvärde (patchar källa + Activity-spegel)
+//   comment → value = text (appendas till källans Tråd-lista)
+//   copy    → value = { newStart, newEnd? } (klonar källan med nytt datum + materialiserar)
+app.post("/admin/planning/activity/action", async (req, res) => {
+  _planningCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
+  if (_publicRateLimited(_clientIp(req), 120)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
+  try {
+    const { activity_id, source_id, activity_type, action, value } = req.body || {};
+    const src = PLANNING_SRC[activity_type];
+    if (!src) return res.status(400).json({ ok: false, error: `okänd activity_type: ${activity_type}` });
+    if (!source_id) return res.status(400).json({ ok: false, error: "source_id krävs" });
+
+    if (action === "load") {
+      const obj = await bubbleGet(src.type, source_id);
+      const thread = Array.isArray(obj?.[src.thread]) ? obj[src.thread] : [];
+      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread });
+    }
+
+    if (action === "status") {
+      await bubblePatch(src.type, source_id, { [src.status]: value });
+      if (activity_id) await bubblePatch(ACTIVITY_CONFIG.ACTIVITY_TYPE, activity_id, { status: value }).catch(() => {});
+      return res.json({ ok: true, action, source_id, status: value });
+    }
+
+    if (action === "comment") {
+      const obj = await bubbleGet(src.type, source_id);
+      const cur = Array.isArray(obj?.[src.thread]) ? obj[src.thread] : [];
+      const next = cur.concat([String(value || "")]);
+      await bubblePatch(src.type, source_id, { [src.thread]: next });
+      return res.json({ ok: true, action, source_id, thread_len: next.length });
+    }
+
+    if (action === "copy") {
+      if (!src.start) return res.status(400).json({ ok: false, error: `kopiering stöds ej för ${activity_type}` });
+      const obj = await bubbleGet(src.type, source_id);
+      if (!obj) return res.status(404).json({ ok: false, error: "källa ej funnen" });
+      const clone = { ...obj };
+      ["_id", "Created Date", "Modified Date", "Creator", "Slug"].forEach((k) => delete clone[k]);
+      const v = value || {};
+      if (src.start && v.newStart) clone[src.start] = v.newStart;
+      if (src.end && v.newEnd) clone[src.end] = v.newEnd;
+      const newId = await bubbleCreate(src.type, clone);
+      // materialisera den nya posten direkt (write-through)
+      try {
+        const fresh = await bubbleGet(src.type, newId);
+        if (activity_type === ACTIVITY_CONFIG.AT_BOKNING) await activityEngine.upsertActivityForComission(fresh);
+        else if (activity_type === ACTIVITY_CONFIG.AT_TODO) await activityEngine.upsertActivityForTodo(fresh);
+      } catch (e) { console.warn("[planning copy] materialize failed", e?.message); }
+      return res.json({ ok: true, action, new_source_id: newId });
+    }
+
+    return res.status(400).json({ ok: false, error: `okänd action: ${action}` });
+  } catch (e) {
+    console.error("[/admin/planning/activity/action]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 

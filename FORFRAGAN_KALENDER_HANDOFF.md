@@ -122,8 +122,25 @@ Första körning: per-rad "bubbleFind failed" (source_id) + topp-500 (Tengella "
 
 **TODO BLOCKERAD på fältnamn:** typen `Todo` hittas nu, men diff gav `Field not found Startdatum for type Todo` → mina gissade TODO_*-fält stämmer inte. Väntar exakta Bubble-fältnamn för Todo: titel, start, slut, Category, Status, ClientCompany-fält. Sen rätta ACTIVITY_CONFIG + todo diff→write.
 
+## BYGGT 2026-06-15 (kväll 3) — kalendern live mot Activity
+
+Alla 4 källor materialiserade (todo-fält fixade: Titel/Starttid/Sluttid/Kategori/Status/Företag; knownCat-guard mot ogiltiga Category-värden).
+
+**Render-endpoints (i index.js, openPaths + PLANNING_ADMIN_TOKEN m. fallback CASPECO_ADMIN_TOKEN):**
+- `GET /admin/planning/activities?company=&from=&to=` — läs-proxy, paginerar Activity, default-fönster innevarande år, filtrerar på Clientcompany. company utelämnat = CRM (alla).
+- `POST /admin/planning/activity/action` — `load` (källans Tråd+status), `status` (patch källa + Activity-spegel), `comment` (append källans Tråd-lista), `copy` (klona källa m. nytt datum + write-through-materialisera). Källtyp-karta PLANNING_SRC per ActivityType.
+
+**`mira-kalender.html`** (ny produktionsmodul, prototyp kvar som referens): KPI-injektionsmönster (#mira_company_id/#mira_admin_crm/#mira_api_host/#mira_planning_token). Läser feeden, färg=color_hex, ikon=ActivityType, zoom År→Dag, lager-toggles per ActivityType, statusfilter, kund/CRM via admin_crm, klick-popup (Tråd+status+kommentar+kopiera). Demo-fallback utan company_id.
+
+**Att testa:** sätt token i HTML + env, curl /admin/planning/activities, embedda i Bubble. node --check grön.
+
+**Öppet:** CRM-lägets kundsök filtrerar client-side (saknar company-namn → ev. egen /admin/planning/companies senare). Status i popup är fritext (status-optionvärden ej enumererade). Per-kund-isolering = samma trade-off som caspeco (token i HTML).
+
 ## Nästa steg
-1. Kör tengella write (full-year) + todo diff→write.
+1. Testa kalendern (deploy + curl + Bubble-embed).
+2. **Bygg förfrågan-wizarden** (HTML 2) + endpoints: offers/kontor/leverantör/underkategori-läsning, spar-kedja (commission+recurrence-serie+Activity-write-through+notify via emailer+lead per beställare+coworker per beställare), specialkost.
+3. Lägg /sync/activities i nattliga cron.
+4. (tidigare) Kör tengella write (full-year) + todo diff→write. KLART.
 2. Render: läs-endpoint för kalendern (`/admin/planning/activities?company=`, spegla caspeco-läsproxyn) + popup-skriv (status/Tråd/kopiera, anropar write-through) + skapa-förfrågan-kedjan (commission+recurrence+notify via emailer+lead+coworker).
 3. Lägg /sync/activities i nattliga cron.
 4. Bygg om prototyperna: kalendern läser Activity-feed (Category=färg, ActivityType=ikon), klick-popup, recurrence-serie i skapa-flödet.

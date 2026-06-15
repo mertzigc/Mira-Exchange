@@ -1,0 +1,368 @@
+<!--
+  MIRA – KALENDER / PLANERING
+  ------------------------------------------------------------------
+  Klistras in i ett HTML-element i Bubble (kundens dashboard ELLER Carotte CRM).
+  Läser den enhetliga Activity-typen via Render-proxy (master-Bubble-nyckeln
+  stannar server-side). Allt redan materialiserat dit: Bokning/Ärende/Kom ihåg/Housekeeping.
+
+  KOPPLING I BUBBLE (value=""):
+    #mira_company_id      = Current User's Company's unique id   (kund-läge: lås till denna kund)
+    #mira_admin_crm       = Current User's admin_crm  ("yes" → CRM-läge, annars kund-läge)
+    #mira_api_host        = https://mira-exchange.onrender.com   (redan ifyllt)
+    #mira_planning_token  = (sätt = PLANNING_ADMIN_TOKEN, annars CASPECO_ADMIN_TOKEN)
+
+  Tomt company_id + ej admin → DEMO_DATA (preview).
+-->
+<input type="hidden" id="mira_company_id" value="">
+<input type="hidden" id="mira_admin_crm" value="">
+<input type="hidden" id="mira_api_host" value="https://mira-exchange.onrender.com">
+<input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+
+<style>
+  .mk-wrap, .mk-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .mk-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e;
+    --input:#2e3350; --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w25:rgba(255,255,255,.25); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --yellow:#F5C842; --red:#E05A5A; --blue:#4C9AFF;
+    --border:rgba(255,255,255,.07);
+    --font:'Arial Black','Arial Bold',Arial,sans-serif; --fb:Arial,sans-serif;
+    background:var(--base); color:var(--white); font-family:var(--fb); font-size:13px; line-height:1.5;
+    border-radius:14px; padding:0 18px 26px; display:block; width:100%;
+  }
+  .mk-top{display:flex;align-items:center;justify-content:space-between;padding:15px 0 12px;border-bottom:1px solid var(--border);margin-bottom:14px}
+  .mk-brand{display:flex;align-items:center;gap:10px}
+  .mk-dot{width:10px;height:10px;border-radius:50%;background:var(--orange);box-shadow:0 0 10px var(--orange)}
+  .mk-brand h1{font-family:var(--font);font-size:15px;font-weight:900;letter-spacing:-.3px;text-transform:uppercase}
+  .mk-brand p{font-size:10px;color:var(--w40);letter-spacing:1.7px;text-transform:uppercase;margin-top:1px}
+  .mk-search{display:none;align-items:center;gap:7px;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:0 10px;height:32px;min-width:220px}
+  .mk-search.on{display:flex}
+  .mk-search input{background:transparent;border:none;color:var(--white);font-size:12px;outline:none;width:100%;font-family:var(--fb)}
+
+  .mk-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .mk-seg{display:flex;background:var(--input);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .mk-seg button{background:transparent;border:none;color:var(--w40);padding:8px 13px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--fb)}
+  .mk-seg button:hover{color:var(--w70)} .mk-seg button.on{background:var(--orange-dim);color:var(--orange)}
+  .mk-nav{display:flex;align-items:center;gap:7px}
+  .mk-nb{background:var(--input);border:1px solid var(--border);color:var(--w70);width:30px;height:30px;border-radius:7px;cursor:pointer;font-size:15px}
+  .mk-nb:hover{color:var(--orange);border-color:var(--orange)}
+  .mk-today{width:auto;padding:0 12px;font-size:12px;font-weight:700;height:30px;border-radius:7px;background:var(--input);border:1px solid var(--border);color:var(--w70);cursor:pointer}
+  .mk-period{font-family:var(--font);font-size:15px;font-weight:900;min-width:175px;text-align:center;text-transform:capitalize}
+  .mk-sp{flex:1}
+  .mk-count{font-size:11px;color:var(--w40)}
+
+  .mk-filters{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+  .mk-chip{display:flex;align-items:center;gap:7px;background:var(--input);border:1px solid var(--border);border-radius:20px;padding:6px 12px 6px 10px;font-size:12px;cursor:pointer;color:var(--w40);user-select:none}
+  .mk-chip .ic{font-size:13px;line-height:1} .mk-chip.on{color:var(--white);border-color:var(--w25)} .mk-chip.off{opacity:.42}
+  .mk-chip .ct{font-size:10px;color:var(--w40);background:var(--base);border-radius:9px;padding:0 6px}
+  .mk-div{width:1px;height:22px;background:var(--border)}
+  select.mk-flt{background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--w70);padding:7px 9px;font-size:12px;font-family:var(--fb)}
+  select.mk-flt:focus{outline:none;border-color:var(--orange)}
+
+  .mk-yeargrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .mk-mcell{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:13px;cursor:pointer;min-height:118px;transition:.15s}
+  .mk-mcell:hover{border-color:rgba(244,123,48,.45);background:var(--deep)} .mk-mcell.cur{border-color:var(--orange)}
+  .mk-mh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+  .mk-mn{font-family:var(--font);font-size:13px;text-transform:uppercase} .mk-mt{font-size:11px;color:var(--w40)}
+  .mk-bar{display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:4px}
+  .mk-bar .tr{flex:1;height:5px;background:var(--w10);border-radius:3px;overflow:hidden} .mk-bar .fl{height:100%;border-radius:3px}
+  .mk-bar .bn{width:16px;text-align:right;color:var(--w40);font-size:10px}
+
+  .mk-qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
+  .mk-qm{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:13px}
+  .mk-qm .mn{font-family:var(--font);font-size:12px;text-transform:uppercase;margin-bottom:9px;cursor:pointer} .mk-qm .mn:hover{color:var(--orange)}
+  .mk-mini{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+  .mk-mini .h{font-size:9px;color:var(--w40);text-align:center} .mk-mini .d{aspect-ratio:1;border-radius:5px;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:var(--w70);cursor:pointer;gap:2px;padding-top:3px}
+  .mk-mini .d:hover{background:var(--deep)} .mk-mini .d.e{background:transparent;cursor:default} .mk-mini .d.t{outline:1.5px solid var(--orange)}
+  .mk-dots{display:flex;gap:2px}.mk-dots .dd{width:4px;height:4px;border-radius:50%}
+
+  .mk-month{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .mk-dh{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--w40);text-align:center;padding:4px 0;font-weight:700}
+  .mk-day{background:var(--panel);border:1px solid var(--border);border-radius:9px;min-height:104px;padding:6px;display:flex;flex-direction:column;gap:3px}
+  .mk-day.out{opacity:.4} .mk-day.t{border-color:var(--orange)}
+  .mk-dn{font-size:12px;font-weight:700;color:var(--w70);align-self:flex-end} .mk-day.t .mk-dn{color:var(--orange)}
+  .mk-ev{font-size:10.5px;padding:3px 6px;border-radius:5px;border-left:3px solid;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--white);cursor:pointer;display:flex;align-items:center;gap:5px}
+  .mk-ev .eic{font-size:10px;flex-shrink:0;opacity:.9}
+  .mk-more{font-size:10px;color:var(--w40);padding-left:3px;cursor:pointer}
+
+  .mk-tw{display:flex;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .mk-ax{width:50px;flex-shrink:0;border-right:1px solid var(--border)} .mk-ax .ah{height:30px} .mk-ax .hr{height:50px;font-size:10px;color:var(--w40);text-align:right;padding:2px 7px 0 0;border-top:1px solid var(--border)}
+  .mk-cols{display:flex;flex:1} .mk-col{flex:1;border-right:1px solid var(--border);position:relative} .mk-col:last-child{border-right:none}
+  .mk-ch{height:30px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-bottom:1px solid var(--border)} .mk-ch .wd{font-size:9px;color:var(--w40);text-transform:uppercase} .mk-ch .dd{font-size:13px;font-weight:700} .mk-ch.t .dd{color:var(--orange)}
+  .mk-tb{position:relative} .mk-hl{height:50px;border-top:1px solid var(--border)}
+  .mk-tev{position:absolute;left:3px;right:3px;border-radius:6px;border-left:3px solid;padding:3px 6px;font-size:10.5px;overflow:hidden;color:var(--white);cursor:pointer}
+  .mk-tev .tt{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .mk-tev .ts{font-size:9.5px;color:var(--w70)}
+
+  .mk-daywrap{display:grid;grid-template-columns:1fr 300px;gap:15px}
+  .mk-ag{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:15px} .mk-ag h3{font-family:var(--font);font-size:13px;text-transform:uppercase;margin-bottom:11px}
+  .mk-ai{display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer} .mk-ai:hover{opacity:.85}
+  .mk-ai .b2{width:3px;border-radius:2px;flex-shrink:0} .mk-ai .at{font-size:12px;font-weight:600} .mk-ai .as{font-size:11px;color:var(--w40)}
+
+  .mk-hint{font-size:11px;color:var(--w40);margin-top:13px}
+  .mk-load{padding:40px;text-align:center;color:var(--w40);font-size:12px}
+
+  .mk-ov{position:fixed;inset:0;background:rgba(12,15,28,.7);display:none;align-items:center;justify-content:center;z-index:60;padding:20px}
+  .mk-ov.on{display:flex}
+  .mk-modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;max-height:88vh;overflow:auto;padding:0}
+  .mk-mhd{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:18px 20px;border-bottom:1px solid var(--border)}
+  .mk-mtag{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:4px 9px;border-radius:6px;margin-bottom:8px}
+  .mk-mt2{font-family:var(--font);font-size:16px;font-weight:900;line-height:1.25}
+  .mk-x{background:var(--input);border:1px solid var(--border);color:var(--w70);border-radius:7px;width:30px;height:30px;cursor:pointer;flex-shrink:0;font-size:14px}
+  .mk-x:hover{color:var(--orange);border-color:var(--orange)}
+  .mk-mbody{padding:16px 20px}
+  .mk-row{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border)}
+  .mk-row .k{color:var(--w40)} .mk-row .v{text-align:right;font-weight:600;max-width:62%}
+  .mk-sec{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--w40);margin:16px 0 8px}
+  .mk-thread{display:flex;flex-direction:column;gap:7px;max-height:160px;overflow:auto}
+  .mk-tc{background:var(--card);border-left:3px solid var(--orange);border-radius:0 7px 7px 0;padding:8px 11px;font-size:12px;color:var(--w70);line-height:1.5}
+  .mk-fld{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb);margin-top:8px}
+  .mk-fld:focus{outline:none;border-color:var(--orange)}
+  textarea.mk-fld{min-height:60px;resize:vertical}
+  .mk-btn{padding:9px 15px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--input);color:var(--white)}
+  .mk-btn:hover{border-color:var(--w40)} .mk-btn.pri{background:var(--orange);border-color:var(--orange);color:#1c1206} .mk-btn.pri:hover{background:#ff8c45}
+  .mk-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .mk-badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px}
+</style>
+
+<div class="mk-wrap">
+  <div class="mk-top">
+    <div class="mk-brand"><div class="mk-dot"></div><div><h1 id="mkTitle">Planering</h1><p>Mira · Carotte</p></div></div>
+    <div class="mk-search" id="mkSearch"><span style="color:var(--w40)">🔍</span><input id="mkSearchInput" placeholder="Sök i kalendern…" oninput="mkOnSearch(this.value)"></div>
+  </div>
+  <div class="mk-tools">
+    <div class="mk-seg" id="mkZoom"></div>
+    <div class="mk-nav"><button class="mk-nb" onclick="mkNav(-1)">‹</button><div class="mk-period" id="mkPeriod"></div><button class="mk-nb" onclick="mkNav(1)">›</button><button class="mk-today" onclick="mkToday()">Idag</button></div>
+    <div class="mk-sp"></div><div class="mk-count" id="mkCount"></div>
+  </div>
+  <div class="mk-filters" id="mkFilters"></div>
+  <div id="mkView"><div class="mk-load">Laddar planering…</div></div>
+  <div class="mk-hint" id="mkHint"></div>
+</div>
+
+<div class="mk-ov" id="mkOverlay" onclick="if(event.target===this)mkCloseModal()">
+  <div class="mk-modal" id="mkModal"></div>
+</div>
+
+<script>
+(function(){
+  var HOST  = (document.getElementById('mira_api_host').value || 'https://mira-exchange.onrender.com').replace(/\/$/,'');
+  var TOKEN = document.getElementById('mira_planning_token').value || '';
+  var COMPANY = (document.getElementById('mira_company_id').value || '').trim();
+  var ADMIN = (document.getElementById('mira_admin_crm').value || '').trim().toLowerCase() === 'yes';
+
+  // ActivityType → lager (etikett + ikon). Färg på objekten = Activity.color_hex (kategori).
+  var TYPES = [
+    {key:'Bokning',   label:'Bokningar',   ic:'●'},
+    {key:'Housekeeping', label:'Housekeeping', ic:'⬢'},
+    {key:'Ärende',    label:'Ärenden',     ic:'▲'},
+    {key:'Kom ihåg',  label:'Todos',       ic:'✓'}
+  ];
+  var WD=['Mån','Tis','Ons','Tor','Fre','Lör','Sön'], MSHORT=['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'], MONTHS=['Januari','Februari','Mars','April','Maj','Juni','Juli','Augusti','September','Oktober','November','December'];
+  var TODAY=new Date(); TODAY.setHours(0,0,0,0);
+  var ZOOMS=[{k:'ar',l:'År'},{k:'kvartal',l:'Kvartal'},{k:'manad',l:'Månad'},{k:'vecka',l:'Vecka'},{k:'dag',l:'Dag'}];
+  var H0=6,H1=23;
+
+  var DEMO=[
+    {id:'d1',type:'Bokning',title:'Julfest EA (demo)',start:iso(11,18,17),end:iso(11,18,22),color:'#F47B30',status:'Bekräftad',category:'Food & Event',sourceId:null,company:''},
+    {id:'d2',type:'Housekeeping',title:'Pass: Anna (demo)',start:iso(TODAY.getMonth(),TODAY.getDate(),7),end:iso(TODAY.getMonth(),TODAY.getDate(),15),color:'#4C9AFF',status:'',category:'Housekeeping',sourceId:null,company:''},
+    {id:'d3',type:'Ärende',title:'Reklamation (demo)',start:iso(TODAY.getMonth(),TODAY.getDate(),10),end:null,color:'#9F77DD',status:'Pågående',category:'Staff',sourceId:null,company:''},
+    {id:'d4',type:'Kom ihåg',title:'Ring kund (demo)',start:iso(TODAY.getMonth(),TODAY.getDate()+1,9),end:iso(TODAY.getMonth(),TODAY.getDate()+1,10),color:'#4CAF7D',status:'Öppen',category:'Other facility services',sourceId:null}
+  ];
+  function iso(m,d,h){var x=new Date(TODAY.getFullYear(),m,d,h||0,0,0);return x.toISOString();}
+
+  var EVENTS=[], st={level:'ar',anchor:new Date(TODAY),on:{Bokning:true,Housekeeping:true,'Ärende':true,'Kom ihåg':true},status:'',q:''};
+
+  function typeMeta(t){return TYPES.find(function(x){return x.key===t})||{label:t,ic:'•'};}
+  function pad(n){return (n<10?'0':'')+n;}
+  function dParse(s){return s?new Date(s):null;}
+  function sameDay(a,b){return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();}
+  function endOf(ev){ if(ev.end) return ev.end; return ev.type==='Ärende'? new Date() : ev.start; }
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+  function mapRow(a){
+    return {
+      id:a._id, sourceId:a.source_id||null, type:a.ActivityType||'',
+      title:a.Title||'(utan titel)', start:dParse(a.Startdatum), end:dParse(a.Slutdatum),
+      color:a.color_hex||'#888888', status:a.status||'', category:a.Category||'',
+      company:a.Clientcompany||'', desc:a.Beskrivning||'',
+      emp:a.tengella_employee_name||'', region:a.tengella_region_name||'',
+      project:a.tengella_project_name||'', supervisor:a.tengella_supervisor_name||''
+    };
+  }
+
+  function visible(ev){
+    if(!st.on[ev.type]) return false;
+    if(st.status && ev.status!==st.status) return false;
+    if(st.q){var q=st.q.toLowerCase(); var hay=(ev.title+' '+ev.emp+' '+ev.region+' '+ev.status+' '+ev.company).toLowerCase(); if(hay.indexOf(q)<0) return false;}
+    return true;
+  }
+  function evOn(d){return EVENTS.filter(function(e){return e.start&&visible(e)&&e.start<=endDay(d)&&endOf(e)>=startDay(d);}).sort(function(a,b){return a.start-b.start;});}
+  function startDay(d){var x=new Date(d);x.setHours(0,0,0,0);return x;} function endDay(d){var x=new Date(d);x.setHours(23,59,59,999);return x;}
+
+  // ── fetch ──
+  function windowFor(){
+    var y=st.anchor.getFullYear();
+    return {from:new Date(y-1,11,1).toISOString(), to:new Date(y+1,1,1).toISOString()};
+  }
+  function load(){
+    if(!COMPANY && !ADMIN){ EVENTS=DEMO.map(function(d){return {id:d.id,sourceId:d.sourceId,type:d.type,title:d.title,start:dParse(d.start),end:dParse(d.end),color:d.color,status:d.status,category:d.category,company:d.company||'',desc:'',emp:'',region:'',project:'',supervisor:''};}); render(); setHint(true); return; }
+    var w=windowFor();
+    var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(COMPANY?'&company='+encodeURIComponent(COMPANY):'');
+    document.getElementById('mkView').innerHTML='<div class="mk-load">Laddar planering…</div>';
+    fetch(url,{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
+      EVENTS=(j&&j.results?j.results:[]).map(mapRow);
+      render(); setHint(false);
+    }).catch(function(e){ document.getElementById('mkView').innerHTML='<div class="mk-load">Kunde inte ladda ('+esc(e.message)+')</div>'; });
+  }
+  function setHint(demo){
+    document.getElementById('mkHint').textContent = demo
+      ? 'Förhandsvisning (demo-data) – inget company_id. I drift visas kundens riktiga planering.'
+      : (ADMIN? 'CRM-läge: sök filtrerar alla lager. Klicka månad → dag för att zooma, klicka ett objekt för detaljer.'
+              : 'Kund-läge: denna kunds planering. Färg = kategori, ikon = typ. Klicka ett objekt för detaljer och åtgärder.');
+  }
+
+  // ── toolbar ──
+  function renderZoom(){var s=document.getElementById('mkZoom');s.innerHTML='';ZOOMS.forEach(function(z){s.innerHTML+='<button class="'+(st.level===z.k?'on':'')+'" onclick="mkLevel(\''+z.k+'\')">'+z.l+'</button>';});}
+  function renderFilters(){
+    var f=document.getElementById('mkFilters'),h='';
+    TYPES.forEach(function(t){var cnt=EVENTS.filter(function(e){return e.type===t.key;}).length;
+      h+='<div class="mk-chip '+(st.on[t.key]?'on':'off')+'" onclick="mkToggle(\''+t.key.replace(/'/g,"\\'")+'\')"><span class="ic">'+t.ic+'</span>'+t.label+'<span class="ct">'+cnt+'</span></div>';});
+    h+='<div class="mk-div"></div>';
+    var stats=[''].concat(uniq(EVENTS.map(function(e){return e.status;}).filter(Boolean)));
+    h+='<select class="mk-flt" onchange="mkStatus(this.value)">'+stats.map(function(s){return '<option value="'+esc(s)+'"'+(st.status===s?' selected':'')+'>'+(s?esc(s):'Status: alla')+'</option>';}).join('')+'</select>';
+    f.innerHTML=h;
+  }
+  function uniq(a){return a.filter(function(v,i){return a.indexOf(v)===i;}).sort();}
+
+  function periodLabel(){var a=st.anchor;
+    if(st.level==='ar')return ''+a.getFullYear();
+    if(st.level==='kvartal')return 'Q'+(Math.floor(a.getMonth()/3)+1)+' '+a.getFullYear();
+    if(st.level==='manad')return MONTHS[a.getMonth()]+' '+a.getFullYear();
+    if(st.level==='vecka'){var m=weekStart(a),s=new Date(m);s.setDate(m.getDate()+6);return MSHORT[m.getMonth()]+' '+m.getDate()+'–'+s.getDate();}
+    return WD[(a.getDay()+6)%7]+' '+a.getDate()+' '+MSHORT[a.getMonth()];}
+  function weekStart(d){var m=new Date(d),o=(m.getDay()+6)%7;m.setDate(m.getDate()-o);m.setHours(0,0,0,0);return m;}
+
+  // ── views ──
+  function renderYear(){var h='<div class="mk-yeargrid">',y=st.anchor.getFullYear();
+    for(var m=0;m<12;m++){var counts={},max=0,tot=0;
+      TYPES.forEach(function(t){var c=EVENTS.filter(function(e){return visible(e)&&e.start&&e.start.getFullYear()===y&&e.start.getMonth()===m&&e.type===t.key;}).length;counts[t.key]=c;tot+=c;if(c>max)max=c;});
+      var cur=(m===TODAY.getMonth()&&y===TODAY.getFullYear())?' cur':'';
+      h+='<div class="mk-mcell'+cur+'" onclick="mkDrillM('+m+')"><div class="mk-mh"><span class="mk-mn">'+MSHORT[m]+'</span><span class="mk-mt">'+tot+'</span></div>';
+      TYPES.forEach(function(t){var c=counts[t.key],w=max?Math.round(c/max*100):0,col=catColorForType(t.key);
+        h+='<div class="mk-bar"><span class="ic" style="font-size:10px;color:'+col+'">'+t.ic+'</span><div class="tr"><div class="fl" style="width:'+w+'%;background:'+col+'"></div></div><span class="bn">'+c+'</span></div>';});
+      h+='</div>';}
+    document.getElementById('mkView').innerHTML=h+'</div>';}
+  function catColorForType(t){ if(t==='Housekeeping')return '#4C9AFF'; if(t==='Bokning')return '#F47B30'; if(t==='Ärende')return '#9F77DD'; return '#4CAF7D';}
+
+  function renderQuarter(){var q=Math.floor(st.anchor.getMonth()/3),y=st.anchor.getFullYear(),h='<div class="mk-qgrid">';for(var i=0;i<3;i++)h+=mini(q*3+i,y);document.getElementById('mkView').innerHTML=h+'</div>';}
+  function mini(m,y){var first=new Date(y,m,1),off=(first.getDay()+6)%7,dim=new Date(y,m+1,0).getDate();
+    var h='<div class="mk-qm"><div class="mn" onclick="mkDrillM('+m+')">'+MONTHS[m]+'</div><div class="mk-mini">';
+    WD.forEach(function(w){h+='<div class="h">'+w[0]+'</div>';});
+    for(var i=0;i<off;i++)h+='<div class="d e"></div>';
+    for(var dd=1;dd<=dim;dd++){var date=new Date(y,m,dd),evs=evOn(date),t=sameDay(date,TODAY)?' t':'',dots='',seen={};
+      evs.forEach(function(e){if(!seen[e.color]){seen[e.color]=1;dots+='<span class="dd" style="background:'+e.color+'"></span>';}});
+      h+='<div class="d'+t+'" onclick="mkDrillD('+y+','+m+','+dd+')">'+dd+'<div class="mk-dots">'+dots+'</div></div>';}
+    return h+'</div></div>';}
+
+  function renderMonth(){var y=st.anchor.getFullYear(),m=st.anchor.getMonth(),first=new Date(y,m,1),off=(first.getDay()+6)%7,start=new Date(y,m,1-off);
+    var h='<div class="mk-month">';WD.forEach(function(w){h+='<div class="mk-dh">'+w+'</div>';});
+    for(var i=0;i<42;i++){var d=new Date(start);d.setDate(start.getDate()+i);var out=d.getMonth()!==m?' out':'',t=sameDay(d,TODAY)?' t':'',evs=evOn(d);
+      h+='<div class="mk-day'+out+t+'"><span class="mk-dn">'+d.getDate()+'</span>';
+      evs.slice(0,3).forEach(function(e){h+=evChip(e);});
+      if(evs.length>3)h+='<div class="mk-more" onclick="mkDrillD('+d.getFullYear()+','+d.getMonth()+','+d.getDate()+')">+'+(evs.length-3)+' till</div>';
+      h+='</div>';}
+    document.getElementById('mkView').innerHTML=h+'</div>';}
+  function evChip(e){return '<div class="mk-ev" style="border-left-color:'+e.color+';background:'+e.color+'22" onclick="mkOpen(\''+e.id+'\')"><span class="eic">'+typeMeta(e.type).ic+'</span>'+(e.start?pad(e.start.getHours())+' ':'')+esc(e.title)+'</div>';}
+
+  function renderWeek(){var m=weekStart(st.anchor),days=[];for(var i=0;i<7;i++){var d=new Date(m);d.setDate(m.getDate()+i);days.push(d);}document.getElementById('mkView').innerHTML=timeGrid(days);}
+  function renderDay(){var d=new Date(st.anchor),h='<div class="mk-daywrap"><div>'+timeGrid([d])+'</div>';var evs=evOn(d);
+    h+='<div class="mk-ag"><h3>'+WD[(d.getDay()+6)%7]+' '+d.getDate()+' '+MSHORT[d.getMonth()]+'</h3>';
+    if(!evs.length)h+='<div class="mk-hint" style="margin:0">Inga händelser.</div>';
+    evs.forEach(function(e){h+='<div class="mk-ai" onclick="mkOpen(\''+e.id+'\')"><div class="b2" style="background:'+e.color+'"></div><div><div class="at">'+typeMeta(e.type).ic+' '+esc(e.title)+'</div><div class="as">'+timeRange(e)+(e.status?' · '+esc(e.status):'')+'</div></div></div>';});
+    document.getElementById('mkView').innerHTML=h+'</div></div>';}
+  function timeRange(e){if(!e.start)return '';var s=pad(e.start.getHours())+':'+pad(e.start.getMinutes());if(!e.end)return s;return s+'–'+pad(e.end.getHours())+':'+pad(e.end.getMinutes());}
+  function timeGrid(days){var h='<div class="mk-tw"><div class="mk-ax"><div class="ah"></div>';for(var hr=H0;hr<=H1;hr++)h+='<div class="hr">'+pad(hr)+'</div>';h+='</div><div class="mk-cols">';
+    days.forEach(function(d){var t=sameDay(d,TODAY)?' t':'';h+='<div class="mk-col"><div class="mk-ch'+t+'"><span class="wd">'+WD[(d.getDay()+6)%7]+'</span><span class="dd">'+d.getDate()+'</span></div><div class="mk-tb">';
+      for(var hr=H0;hr<=H1;hr++)h+='<div class="mk-hl"></div>';
+      evOn(d).forEach(function(e){var sh=e.start?e.start.getHours()+e.start.getMinutes()/60:H0,eh=e.end?e.end.getHours()+e.end.getMinutes()/60:sh+1;
+        var top=(Math.max(sh,H0)-H0)*50,hgt=Math.max(Math.min(eh,H1+1)-Math.max(sh,H0),0.4)*50-3;
+        h+='<div class="mk-tev" style="top:'+top+'px;height:'+hgt+'px;border-left-color:'+e.color+';background:'+e.color+'26" onclick="mkOpen(\''+e.id+'\')"><div class="tt">'+typeMeta(e.type).ic+' '+esc(e.title)+'</div><div class="ts">'+timeRange(e)+'</div></div>';});
+      h+='</div></div>';});
+    return h+'</div></div>';}
+
+  function render(){renderZoom();renderFilters();document.getElementById('mkPeriod').textContent=periodLabel();
+    document.getElementById('mkCount').textContent=EVENTS.filter(visible).length+' händelser';
+    if(st.level==='ar')renderYear();else if(st.level==='kvartal')renderQuarter();else if(st.level==='manad')renderMonth();else if(st.level==='vecka')renderWeek();else renderDay();}
+
+  // ── popup ──
+  function fmtDateTime(d){if(!d)return '–';return d.getDate()+' '+MSHORT[d.getMonth()]+' '+d.getFullYear()+' '+pad(d.getHours())+':'+pad(d.getMinutes());}
+  window.mkOpen=function(id){
+    var e=EVENTS.filter(function(x){return x.id===id;})[0]; if(!e)return;
+    var m=document.getElementById('mkModal'); var tm=typeMeta(e.type);
+    var rows=''
+      +row('Typ',tm.label)+row('Status',e.status?'<span class="mk-badge" style="background:'+e.color+'33;color:'+e.color+'">'+esc(e.status)+'</span>':'–')
+      +row('Kategori',e.category||'–')+row('Start',fmtDateTime(e.start))+row('Slut',e.end?fmtDateTime(e.end):(e.type==='Ärende'?'pågående':'–'));
+    if(e.emp)rows+=row('Utförare',esc(e.emp));
+    if(e.region)rows+=row('Plats/region',esc(e.region));
+    if(e.project)rows+=row('Projekt',esc(e.project));
+    if(e.supervisor)rows+=row('Ansvarig',esc(e.supervisor));
+    var canEdit = !!e.sourceId;
+    m.innerHTML=''
+      +'<div class="mk-mhd"><div><span class="mk-mtag" style="background:'+e.color+'33;color:'+e.color+'">'+tm.ic+' '+tm.label+'</span><div class="mk-mt2">'+esc(e.title)+'</div></div><button class="mk-x" onclick="mkCloseModal()">✕</button></div>'
+      +'<div class="mk-mbody">'+rows
+      +(e.desc?'<div class="mk-sec">Beskrivning</div><div style="font-size:12px;color:var(--w70);white-space:pre-wrap">'+esc(e.desc)+'</div>':'')
+      +(canEdit?(
+          '<div class="mk-sec">Tråd</div><div class="mk-thread" id="mkThread"><div style="font-size:11px;color:var(--w40)">Laddar…</div></div>'
+        + '<textarea class="mk-fld" id="mkComment" placeholder="Skriv en kommentar…"></textarea>'
+        + '<div class="mk-actions"><button class="mk-btn" onclick="mkAddComment()">Kommentera</button></div>'
+        + '<div class="mk-sec">Uppdatera status</div><input class="mk-fld" id="mkStatus" value="'+esc(e.status)+'">'
+        + '<div class="mk-actions"><button class="mk-btn pri" onclick="mkSaveStatus()">Spara status</button>'
+        + (canCopy(e)?'<button class="mk-btn" onclick="mkCopy()">Kopiera till nytt datum</button>':'')
+        + '</div>'
+        ):'<div class="mk-hint" style="margin-top:14px">Synkad post (Tengella/extern) – redigeras i källsystemet.</div>')
+      +'</div>';
+    document.getElementById('mkOverlay').classList.add('on');
+    window._mkCur=e;
+    if(canEdit)loadThread(e);
+  };
+  function canCopy(e){return e.type==='Bokning'||e.type==='Kom ihåg';}
+  function row(k,v){return '<div class="mk-row"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>';}
+  window.mkCloseModal=function(){document.getElementById('mkOverlay').classList.remove('on');window._mkCur=null;};
+
+  function action(payload,cb){
+    fetch(HOST+'/admin/planning/activity/action',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify(payload)})
+      .then(function(r){return r.json();}).then(cb).catch(function(e){alert('Fel: '+e.message);});
+  }
+  function loadThread(e){
+    action({action:'load',source_id:e.sourceId,activity_type:e.type},function(j){
+      var el=document.getElementById('mkThread'); if(!el)return;
+      var t=(j&&j.thread)||[];
+      el.innerHTML=t.length?t.slice().reverse().map(function(c){return '<div class="mk-tc">'+esc(c)+'</div>';}).join(''):'<div style="font-size:11px;color:var(--w40)">Inga kommentarer än.</div>';
+    });
+  }
+  window.mkAddComment=function(){var e=window._mkCur,txt=document.getElementById('mkComment').value.trim();if(!e||!txt)return;
+    action({action:'comment',source_id:e.sourceId,activity_type:e.type,value:txt},function(j){if(j&&j.ok){document.getElementById('mkComment').value='';loadThread(e);}else alert('Kunde inte spara kommentar');});};
+  window.mkSaveStatus=function(){var e=window._mkCur,v=document.getElementById('mkStatus').value.trim();if(!e)return;
+    action({action:'status',activity_id:e.id,source_id:e.sourceId,activity_type:e.type,value:v},function(j){if(j&&j.ok){e.status=v;mkCloseModal();load();}else alert('Kunde inte spara status');});};
+  window.mkCopy=function(){var e=window._mkCur;if(!e)return;var def=e.start?e.start.toISOString().slice(0,10):'';
+    var ds=prompt('Nytt startdatum (ÅÅÅÅ-MM-DD):',def);if(!ds)return;
+    var newStart=new Date(ds+'T'+(e.start?pad(e.start.getHours())+':'+pad(e.start.getMinutes()):'09:00')+':00').toISOString();
+    var newEnd=e.end?new Date(ds+'T'+pad(e.end.getHours())+':'+pad(e.end.getMinutes())+':00').toISOString():null;
+    action({action:'copy',source_id:e.sourceId,activity_type:e.type,value:{newStart:newStart,newEnd:newEnd}},function(j){if(j&&j.ok){mkCloseModal();load();}else alert('Kunde inte kopiera');});};
+
+  // ── controls ──
+  window.mkLevel=function(k){st.level=k;render();};
+  window.mkToggle=function(k){st.on[k]=!st.on[k];render();};
+  window.mkStatus=function(v){st.status=v;render();};
+  window.mkOnSearch=function(v){st.q=v;render();};
+  window.mkNav=function(dir){var a=st.anchor;if(st.level==='ar')a.setFullYear(a.getFullYear()+dir);else if(st.level==='kvartal')a.setMonth(a.getMonth()+dir*3);else if(st.level==='manad')a.setMonth(a.getMonth()+dir);else if(st.level==='vecka')a.setDate(a.getDate()+dir*7);else a.setDate(a.getDate()+dir);
+    var ny=a.getFullYear(); if(st.level==='ar'){ load(); } else { render(); } };
+  window.mkToday=function(){st.anchor=new Date(TODAY);render();};
+  window.mkDrillM=function(m){st.anchor=new Date(st.anchor.getFullYear(),m,1);st.level='manad';render();};
+  window.mkDrillD=function(y,m,d){st.anchor=new Date(y,m,d);st.level='dag';render();};
+
+  document.getElementById('mkSearch').classList.toggle('on',ADMIN);
+  document.getElementById('mkTitle').textContent=ADMIN?'Carotte CRM · Planering':'Planering';
+  load();
+})();
+</script>
