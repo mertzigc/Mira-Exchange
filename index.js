@@ -16752,27 +16752,29 @@ const FORFRAGAN = {
   CC_SUPPLIER_FIELDS: ["leverantör", "Leverantör", "leverantor", "supplier", "Supplier"],
   CC_NAME_FIELDS:     ["Name_company", "name", "Namn"],
 
-  // Office (kontor) — adress + namn + relation till company
+  // Office (kontor) — adress + namn + relation till company (bekräftat /schema 2026-06-15)
   OFFICE_ADDRESS_FIELDS: ["office_address", "Office_address", "address", "Adress"],
-  OFFICE_NAME_FIELDS:    ["Name", "name", "office_name", "Titel", "title"],
-  OFFICE_COMPANY_FIELDS: ["ClientCompany", "client_company", "Company", "company", "Företag"],
+  OFFICE_NAME_FIELDS:    ["Office_title", "Name", "name"],
+  OFFICE_COMPANY_FIELDS: ["Kundföretag", "ClientCompany", "client_company", "Company"],
 
   // Erbjudande-fält (bekräftade i spec — pass-through med fallback)
   OFFER_CLIENT_COMPANY_FIELDS: ["client_company", "Client_company", "ClientCompany", "kund"],
   OFFER_STATUS_FIELDS:  ["Status", "status"],
   OFFER_STATUS_PUBLISHED: "Publicerat",   // option set "Status erbjudande": Utkast/Publicerat/Utgånget
-  OFFER_START_FIELDS:   ["Startdatum", "startdatum", "start_date"],
-  OFFER_END_FIELDS:     ["Slutdatum", "slutdatum", "end_date"],
+  OFFER_START_FIELDS:   ["startdatum", "Startdatum"],   // bekräftat lowercase /schema
+  OFFER_END_FIELDS:     ["slutdatum", "Slutdatum"],
 
   // Comission-fält — fältet är "Commission_title" (Christian bekräftat 2026-06-15).
   // safeCreate hedgar första-bokstavs-casing → "commission_title" droppas tyst om fel.
   C_TITLE_KEYS:   ["Commission_title"],
   C_DELIVERY:     "delivery_date",
-  C_DELIVERY_END: "delivery_date_end",
+  C_DELIVERY_END: "Slutdatum",             // bekräftat /schema (EJ delivery_date_end)
   C_CATEGORY:     "Category",
   C_STATUS:       "commission_status",
   C_COMPANY:      "Company",
   C_DESC:         "Description",
+  C_MESSAGE:      "commission_message",    // kundens råa meddelande (Description = strukturerad backup)
+  C_SUPPLIER:     "Leverantör",            // sätts från ClientCompany.leverantör
   C_BUDGET:       "budget",
   C_OFFICE:       "Office",
   C_INTERNSERVICE:"Internservice",         // ALLTID false (NO)
@@ -16788,12 +16790,12 @@ const FORFRAGAN = {
   STATUS_SENT:  "Ny",
   STATUS_DRAFT: "Utkast",
 
-  // Underkategori-fält per kategori — BÅDA casing-varianterna hedgas (Subcategory/SubCategory)
+  // Underkategori-fält per kategori — casing = SubCategoryXX (bekräftat SubCategoryHK /schema)
   SUBCAT_FIELDS: {
-    "Food & Event":            ["SubcategoryFE", "SubCategoryFE"],
-    "Housekeeping":            ["SubcategoryHK", "SubCategoryHK"],
-    "Staff":                   ["SubcategorySP", "SubCategorySP"],
-    "Other facility services": ["SubcategoryFM", "SubCategoryFM"],
+    "Food & Event":            ["SubCategoryFE"],
+    "Housekeeping":            ["SubCategoryHK"],
+    "Staff":                   ["SubCategorySP"],
+    "Other facility services": ["SubCategoryFM"],
   },
 
   // Lead-fält (per beställare) — allt hedgas
@@ -17054,6 +17056,13 @@ app.post("/admin/forfragan/create", async (req, res) => {
       return res.status(400).json({ ok: false, error: `Antal (${antal}) överstiger Capacity (${capacity})` });
     }
 
+    // ── Leverantör = current users company's leverantör (resolva om ej skickad) ──
+    let supplierId = d.supplier_id ? String(d.supplier_id).trim() : null;
+    if (!supplierId) {
+      const cc = await bubbleGet(FORFRAGAN.CLIENTCOMPANY_TYPE, companyId).catch(() => null);
+      if (cc) supplierId = _ffIdOf(_ffPick(cc, FORFRAGAN.CC_SUPPLIER_FIELDS));
+    }
+
     // ── Datum + recurrence-serie ──
     const deliveryIso = toBubbleDate(d.delivery_date) || new Date(Date.now() + 5 * 864e5).toISOString();
     const endIso = d.delivery_date_end ? toBubbleDate(d.delivery_date_end) : null;
@@ -17068,27 +17077,42 @@ app.post("/admin/forfragan/create", async (req, res) => {
       ? allergens.map((a) => `${safeText(a.name || a.allergen || "", 60)}${Number(a.count) > 1 ? " ×" + Number(a.count) : ""}`).filter(Boolean).join(", ")
       : safeText(d.specialkost || "", 500);
 
+    // ── Strukturerad Description (backup för fält Comission saknar dedikerat: antal/plats/po/
+    // specialkost/underkat). Kundens råa meddelande hamnar separat i commission_message. ──
+    const rawMsg = safeText(d.description || "", 5000);
+    const descrParts = [
+      rawMsg,
+      (antal != null)        ? `Antal deltagare: ${antal}` : "",
+      (d.plats || d.delivery_address) ? `Plats/leveransadress: ${safeText(d.plats || d.delivery_address || "", 300)}` : "",
+      d.po                   ? `PO-nummer: ${safeText(d.po, 120)}` : "",
+      subcategory            ? `Underkategori: ${safeText(subcategory, 120)}` : "",
+      kostSummary            ? `Specialkost: ${kostSummary}` : "",
+      d.offer_id             ? `Erbjudande: ${safeText(d.offer_id, 120)}` : "",
+    ].filter(Boolean);
+    const fullText = descrParts.join("\n\n");
+
     // ── Bygg en Comission-payload för ett givet datum (master/instans) ──
     const buildComission = (startIso, isMaster) => {
       const exact = {
         [FORFRAGAN.C_DELIVERY]:      startIso,
-        [FORFRAGAN.C_DESC]:          safeText(d.description || "", 5000),
+        [FORFRAGAN.C_DESC]:          fullText,               // strukturerad backup
         [FORFRAGAN.C_STATUS]:        statusValue,
         [FORFRAGAN.C_COMPANY]:       companyId,
         [FORFRAGAN.C_INTERNSERVICE]: false,                 // ALLTID NO
       };
       const uncertain = {};
       FORFRAGAN.C_TITLE_KEYS.forEach((k) => { uncertain[k] = title; });
+      if (rawMsg)    uncertain[FORFRAGAN.C_MESSAGE] = rawMsg;
+      if (supplierId) uncertain[FORFRAGAN.C_SUPPLIER] = supplierId;
       if (category)  uncertain[FORFRAGAN.C_CATEGORY] = category;
       if (endIso)    uncertain[FORFRAGAN.C_DELIVERY_END] = endIso;
       if (d.budget != null) uncertain[FORFRAGAN.C_BUDGET] = asNumberOrNull(d.budget);
       if (d.office_id) uncertain[FORFRAGAN.C_OFFICE] = String(d.office_id);
       if (bestallare.length) uncertain[FORFRAGAN.C_BESTALLARE] = bestallare.map((b) => b.user_id || b.coworker_id).filter(Boolean);
-      // underkategori → matchande SubcategoryXX-fält (båda casing-varianter hedgas)
+      // underkategori → matchande SubCategoryXX-fält (per kategori)
       if (subcategory && category && FORFRAGAN.SUBCAT_FIELDS[category]) {
         FORFRAGAN.SUBCAT_FIELDS[category].forEach((f) => { uncertain[f] = subcategory; });
       }
-      if (kostSummary) FORFRAGAN.C_SPECIALKOST_KEYS.forEach((k) => { uncertain[k] = kostSummary; });
       if (rule) {
         uncertain[FORFRAGAN.C_REC_RULE]   = rule;
         uncertain[FORFRAGAN.C_REC_GROUP]  = recurrenceGroup;
@@ -17168,7 +17192,8 @@ app.post("/admin/forfragan/create", async (req, res) => {
     for (const b of bestallare) {
       try {
         const leadId = await safeCreate(FORFRAGAN.LEAD_TYPE, { Source: FORFRAGAN.LEAD_SOURCE_VALUE }, {
-          Category: category, Delivery_date: occDates[0], Title: title, Description: safeText(d.description || "", 5000),
+          Name: title, Title: title,                       // Lead-typen har "Name" (ej Title) — båda hedgas
+          Category: category, Delivery_date: occDates[0], Description: safeText(d.description || "", 5000),
           Client_company: companyId, Comission: masterId, Email: normEmail(b.email),
         });
         result.leads.push({ email: b.email, lead_id: leadId });

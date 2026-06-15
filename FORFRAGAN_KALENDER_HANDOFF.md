@@ -163,8 +163,16 @@ Inline-block i `index.js` FÖRE `app.listen` (mönster som `LANDING`/`public/req
 - **Comission title-fältet = `Commission_title`** (stor C, underscore). C_TITLE_KEYS=["Commission_title"], safeCreate hedgar bort fel casing.
 - **Notify-mottagare = Users där `associated_company` CONTAINS commissionens Company** (ClientCompany). Listfält, kopplar även Carotte (medvetet). Implementerat via `_ffNotifyUsers()` (ersätter getCompanyUsers i notify-vägen).
 
+**FÄLTNAMN LÅSTA mot /schema 2026-06-15 (Comission + offer/office/cc/lead/coworker dumpat):**
+- Comission: `Commission_title`, `delivery_date`, **`Slutdatum`** (ev-slut, EJ delivery_date_end), `Category`, `commission_status`, `Company`, `Description`, `commission_message` (råmeddelande), **`Leverantör`** (sätts från CC.leverantör), `budget`, `Office`, `Beställare`, **`SubCategoryFE/HK/SP/FM`** (stor C). recurrence/Internservice/specialkost saknades i sample (tomma→utelämnade).
+- **activity_sync.js C_END rättat `delivery_date_end`→`Slutdatum`** (var latent bugg: commission-Activities fick noll-längd). Kör om sweepen (`/sync/activities/comission` mode:write) för att uppdatera befintliga rader.
+- Office (typ `Office`): namn=`Office_title`, adress=`office_address`, company=`Kundföretag`.
+- Erbjudande (typ `Erbjudande`): status=`Status`, start/slut=`startdatum`/`slutdatum` (lowercase), client_company=`client_company` (lowercase, tom på allmänna). Rikedom: Title/Image/Bildspel/Description/Description_long/Capacity/Extern lokal/Logistik/Målgrupp/PrisPerPerson/Produktinnehåll/Produkttillägg/Villkor.
+- ClientCompany.leverantör=`leverantör` (lowercase ö). Lead: `Name`(ej Title)/`client_company`/`Email`/`Source`. Coworker: `Email` + `Bokningar` (tom→utelämnad, litar på spec).
+- Comission saknar dedikerade fält för antal/plats/po/specialkost → vikt in i `Description` (strukturerad), råmeddelande i `commission_message`.
+
 **ÖPPNA PUNKTER (drop 1):**
-1. **Övriga fältnamn ej curl-verifierade** — kör `/schema` → rätta FORFRAGAN-configen. OSÄKERT kvar: underkategori-fältens casing (Subcat vs SubCat), recurrence-fältens exakta namn, Office-typens namn + company-relationsfält, ClientCompany.leverantör-fält, Lead-fältens casing, Coworker email/Bokningar-fält, Erbjudande-typnamn + status/client_company-fält.
+1. **recurrence-fältnamnen ej verifierbara via /schema** (tomma på sample). Mina gissningar: `recurrence_rule`/`recurrence_group_id`/`recurrence_is_master`/`recurrence_until`. Funktionellt OK även om de droppas (master-logiken sitter i Render-koden i===0, inte i fältet) — men bekräfta för Bubble-sidans gruppering. Christian la till dem → kan ge exakta namn.
 2. **commission_new-mallens copy** matchar inte spec-bodyn exakt än — extra_data skickas (title/subcategory/description/delivery_date/bestallare/subject_override) men `tmplCommissionNew` läser `e.commission_title` (lowercase) → hittar ej `Commission_title`-fältet, faller tillbaka på `extra.title` (skickas nu). Aligna mall mot spec-texten = följdjobb.
 
 **Curl-ordning (Christian):** `/schema` först (rätta config) → `/bootstrap` + `/offers` + `/users` (verifiera läs-shapes) → `/create` med `mode:"diff"` (granska plan) → `mode:"write"` på en testförfrågan.

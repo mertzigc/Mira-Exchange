@@ -32,7 +32,7 @@ export const ACTIVITY_CONFIG = {
   // Comission-fält
   C_TITLE:   "commission_title",
   C_DELIVERY:"delivery_date",
-  C_END:     "delivery_date_end",   // ⚠️ VERIFIERA Comissions "ev slutdatum"-fält (saknas → faller tillbaka till delivery_date)
+  C_END:     "Slutdatum",           // bekräftat mot /forfragan/schema 2026-06-15 (EJ "delivery_date_end" — fanns aldrig → commission-Activities fick noll-längd)
   C_CATEGORY:"Category",
   C_STATUS:  "commission_status",
   C_COMPANY: "Company",
