@@ -56,8 +56,8 @@ export const ACTIVITY_CONFIG = {
   R_STATUS:  "Status",
   R_COMPANY: "clientcompany",
 
-  // ClientCompany-fält på Activity (bekräftat i index.js CC_FIELD_OVERRIDES)
-  A_COMPANY: "clientcompany",
+  // ClientCompany-fält på Activity — EXAKT casing krävs vid skrivning (Data types: "Clientcompany").
+  A_COMPANY: "Clientcompany",
 
   // Tengella
   TENGELLA_TIMETABLE_PATH: "/v2/TimeTableEvent",
