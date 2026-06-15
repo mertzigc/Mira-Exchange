@@ -136,6 +136,17 @@ Alla 4 källor materialiserade (todo-fält fixade: Titel/Starttid/Sluttid/Katego
 
 **Öppet:** CRM-lägets kundsök filtrerar client-side (saknar company-namn → ev. egen /admin/planning/companies senare). Status i popup är fritext (status-optionvärden ej enumererade). Per-kund-isolering = samma trade-off som caspeco (token i HTML).
 
+## ITERATIONER 2026-06-15 (kväll 4) — kalendern i drift, finslipning
+
+- **CRM-läge:** laddar EN kund i taget (aldrig alla). Default = admins eget company. Sökrutan = företagsväljare via nya `GET /admin/planning/companies` (id+namn, cachas klientsidan). `&crm=1` skickas i läs-anropet.
+- **Rubrik:** faktura-blockets stil (DM Serif Display, vit + orange #db6923 kundnamn) = "Planering för KUNDNAMN". Bubble injicerar `#mira_company_name` = Name_company. id-guard så rått unique-id aldrig visas; CRM hämtar namn från företagslistan.
+- **Legend** (färg=kategori / ikon=typ) ovanför kalendern.
+- **Status-dropdowns** per typ: Bokning Ny/Hanterad/Utkast/Levererad (commission_status), Ärende Pågående/Avslutat/Utkast (status), Todo Pågående/Avslutat/Försenad/Planerad (Status). Housekeeping: ingen status/redigering.
+- **Todo-fältnamn** (bekräftade): Titel/Starttid/Sluttid/Kategori/Status/Företag/Beskrivning/Tråd. Saknad tid → faller tillbaka till Created Date.
+- **Todo-företagslogik:** kund-läge + Carotte Group (id 1726738549743x453535655154064800 hårdkodat i index.js) → filtrera på `creator_company` (Todo-skaparens User.Company, materialiserat via nytt Activity-textfält `creator_company`). CRM mot kund → `Clientcompany` (=Todo.Företag). Läs-endpointen kör två queries (non-todo via Clientcompany + todo via rätt nyckel) och mergar.
+- **Todo-popup extra:** Beskrivning (materialiserad), Skapad av (Created By→User-label) + Delegerad till (User-fältet) resolvas i `load`-action via `_planningUserLabel`.
+- **Bubble-fält tillagda av Christian:** Activity.`source_id`, `status`, `creator_company` (text).
+
 ## Nästa steg
 1. Testa kalendern (deploy + curl + Bubble-embed).
 2. **Bygg förfrågan-wizarden** (HTML 2) + endpoints: offers/kontor/leverantör/underkategori-läsning, spar-kedja (commission+recurrence-serie+Activity-write-through+notify via emailer+lead per beställare+coworker per beställare), specialkost.

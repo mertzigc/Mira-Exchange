@@ -357,6 +357,7 @@
     m.innerHTML=''
       +'<div class="mk-mhd"><div><span class="mk-mtag" style="background:'+e.color+'33;color:'+e.color+'">'+tm.ic+' '+tm.label+'</span><div class="mk-mt2">'+esc(e.title)+'</div></div><button class="mk-x" onclick="mkCloseModal()">✕</button></div>'
       +'<div class="mk-mbody">'+rows
+      +'<div id="mkMeta"></div>'
       +(e.desc?'<div class="mk-sec">Beskrivning</div><div style="font-size:12px;color:var(--w70);white-space:pre-wrap">'+esc(e.desc)+'</div>':'')
       +(canEdit?(
           '<div class="mk-sec">Tråd</div><div class="mk-thread" id="mkThread"><div style="font-size:11px;color:var(--w40)">Laddar…</div></div>'
@@ -379,6 +380,12 @@
   }
   function loadThread(e){
     action({action:'load',source_id:e.sourceId,activity_type:e.type},function(j){
+      var meta=document.getElementById('mkMeta');
+      if(meta&&j){ var mh='';
+        if(j.created_by) mh+=row('Skapad av',esc(j.created_by));
+        if(e.type==='Kom ihåg'&&j.assigned_to) mh+=row('Delegerad till',esc(j.assigned_to));
+        meta.innerHTML=mh;
+      }
       var el=document.getElementById('mkThread'); if(!el)return;
       var t=(j&&j.thread)||[];
       el.innerHTML=t.length?t.slice().reverse().map(function(c){return '<div class="mk-tc">'+esc(c)+'</div>';}).join(''):'<div style="font-size:11px;color:var(--w40)">Inga kommentarer än.</div>';

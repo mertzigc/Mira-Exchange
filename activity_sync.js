@@ -224,6 +224,7 @@ export function createActivityEngine(deps) {
       Category:     cat,
       color_hex:    colorFor(cat),
       status:       r[C.TODO_STATUS] || null,
+      Beskrivning:  r["Beskrivning"] || null,
       [C.A_COMPANY]: idOf(r[C.TODO_COMPANY]) || null,
     };
   }

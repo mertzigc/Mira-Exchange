@@ -16197,6 +16197,26 @@ const PLANNING_SRC = {
   [ACTIVITY_CONFIG.AT_TODO]:    { type: ACTIVITY_CONFIG.TODO_TYPE,      status: ACTIVITY_CONFIG.TODO_STATUS, thread: ACTIVITY_CONFIG.TODO_THREAD, start: ACTIVITY_CONFIG.TODO_START, end: ACTIVITY_CONFIG.TODO_END },
 };
 
+// User-ref → läsbar etikett (namn helst, annars e-post, annars id). Cachas.
+const _planningUserCache = new Map();
+async function _planningUserLabel(uid) {
+  if (!uid) return null;
+  const id = typeof uid === "string" ? uid : bubbleId(uid);
+  if (!id) return null;
+  if (_planningUserCache.has(id)) return _planningUserCache.get(id);
+  let label = id;
+  try {
+    const u = await bubbleGet("User", id);
+    if (u) {
+      const name = [u["Förnamn"], u["Efternamn"]].filter(Boolean).join(" ").trim();
+      label = name || u.Namn || u.name || u.email || u.Email ||
+              (u.authentication && u.authentication.email && u.authentication.email.email) || id;
+    }
+  } catch (_) { /* behåll id */ }
+  _planningUserCache.set(id, label);
+  return label;
+}
+
 app.options("/admin/planning/activities", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
 app.options("/admin/planning/activity/action", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
 app.options("/admin/planning/companies", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
@@ -16296,7 +16316,9 @@ app.post("/admin/planning/activity/action", async (req, res) => {
     if (action === "load") {
       const obj = await bubbleGet(src.type, source_id);
       const thread = Array.isArray(obj?.[src.thread]) ? obj[src.thread] : [];
-      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread });
+      const created_by = await _planningUserLabel(obj?.["Created By"] || obj?.Creator);
+      const assigned_to = (activity_type === ACTIVITY_CONFIG.AT_TODO) ? await _planningUserLabel(obj?.user) : null;
+      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread, created_by, assigned_to });
     }
 
     if (action === "status") {
