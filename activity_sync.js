@@ -142,19 +142,21 @@ export function createActivityEngine(deps) {
     return map;
   }
 
-  async function upsertViaIndex(index, sourceId, payload, { write, compareFields }) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function upsertViaIndex(index, sourceId, payload, { write, compareFields, throttleMs = 0 }) {
     payload.source_id = sourceId;
     const key = String(sourceId);
     const existing = index.get(key) || null;
     if (existing) {
       const id = bubbleId(existing);
       if (!changed(existing, payload, compareFields)) return { mode: "noop", id };
-      if (write) await bubblePatch(C.ACTIVITY_TYPE, id, payload);
+      if (write) { await bubblePatch(C.ACTIVITY_TYPE, id, payload); if (throttleMs) await sleep(throttleMs); }
       index.set(key, { ...existing, ...payload });
       return { mode: "update", id };
     }
     let id = null;
-    if (write) id = await bubbleCreate(C.ACTIVITY_TYPE, payload);
+    if (write) { id = await bubbleCreate(C.ACTIVITY_TYPE, payload); if (throttleMs) await sleep(throttleMs); }
     index.set(key, { ...payload, _id: id });   // dedup inom samma körning
     return { mode: "create", id };
   }
@@ -271,7 +273,7 @@ export function createActivityEngine(deps) {
     } catch (e) { return { ...report, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const c of rows) {
-      try { tally(report, await upsertViaIndex(index, bubbleId(c), mapComission(c), { write, compareFields: COMPARE })); }
+      try { tally(report, await upsertViaIndex(index, bubbleId(c), mapComission(c), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) })); }
       catch (e) { report.errors++; report.last_error = errInfo(e); log("comission err", bubbleId(c), errInfo(e)); }
     }
     return report;
@@ -295,7 +297,7 @@ export function createActivityEngine(deps) {
           m[C.M_CLOSED] = closedAt;
           report.closed_set++;
         }
-        tally(report, await upsertViaIndex(index, bubbleId(m), mapMatter(m), { write, compareFields: COMPARE }));
+        tally(report, await upsertViaIndex(index, bubbleId(m), mapMatter(m), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) }));
       } catch (e) { report.errors++; report.last_error = errInfo(e); log("matter err", bubbleId(m), errInfo(e)); }
     }
     return report;
@@ -311,7 +313,7 @@ export function createActivityEngine(deps) {
     } catch (e) { return { ...report, skipped: `typ "${C.REMEMBER_TYPE}" ej läsbar — verifiera REMEMBER_TYPE`, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const r of rows) {
-      try { tally(report, await upsertViaIndex(index, bubbleId(r), mapRemember(r), { write, compareFields: COMPARE })); }
+      try { tally(report, await upsertViaIndex(index, bubbleId(r), mapRemember(r), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) })); }
       catch (e) { report.errors++; report.last_error = errInfo(e); log("remember err", bubbleId(r), errInfo(e)); }
     }
     return report;
@@ -354,7 +356,7 @@ export function createActivityEngine(deps) {
           report.events++;
           try {
             const sid = "tengella:" + ev.EventId;
-            tally(report, await upsertViaIndex(index, sid, mapTimeTableEvent(ev, ccId), { write, compareFields: COMPARE_TENGELLA }));
+            tally(report, await upsertViaIndex(index, sid, mapTimeTableEvent(ev, ccId), { write, compareFields: COMPARE_TENGELLA, throttleMs: opts.throttleMs ?? (write ? 120 : 0) }));
           } catch (e) { report.errors++; report.last_error = errInfo(e); log("tengella ev err", ev?.EventId, errInfo(e)); }
         }
         const more = resp?.ExistsMoreData ?? resp?.existsMoreData ?? false;

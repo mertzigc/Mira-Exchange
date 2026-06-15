@@ -106,6 +106,8 @@ Första körning: per-rad "bubbleFind failed" (source_id) + topp-500 (Tengella "
 - Tog bort `plats` ur mapComission (Activity.plats = geographic address → 400 vid textskrivning; hanteras separat senare).
 - node --check OK. Christian pushar activity_sync.js + index.js → Render redeploy → rerun diff.
 
+## DIFF GRÖN 2026-06-15: comission 100, matter 110 (closed_set 103), tengella 119 företag/4937 events. Remember = 404 "Type not found Remember" → REMEMBER_TYPE fel, väntar exakt typnamn + R_*-fältnamn. Lagt till throttleMs (default 120ms write / 0 diff) inför ~5150-raders backfill. Write körs stegvis: comission+matter först (verifiera i Bubble), sen tengella (--max-time 1800).
+
 ## Nästa steg
 1. Validera /sync/activities diff → write (Christian deployar + curlar).
 2. Render: läs-endpoint för kalendern (`/admin/planning/activities?company=`, spegla caspeco-läsproxyn) + popup-skriv (status/Tråd/kopiera, anropar write-through) + skapa-förfrågan-kedjan (commission+recurrence+notify via emailer+lead+coworker).
