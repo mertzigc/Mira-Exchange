@@ -397,6 +397,14 @@ function requireApiKey(req, res, next) {
     "/admin/planning/activities",
     "/admin/planning/activity/action",
     "/admin/planning/companies",
+    // Mira förfrågan-wizard – HTML-blocket läser/skriver via x-admin-token
+    // (PLANNING_ADMIN_TOKEN). Master-Bubble-nyckeln stannar server-side.
+    "/admin/forfragan/schema",
+    "/admin/forfragan/bootstrap",
+    "/admin/forfragan/offers",
+    "/admin/forfragan/users",
+    "/admin/forfragan/create",
+    "/admin/forfragan/update",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
@@ -16712,6 +16720,523 @@ app.post("/sync/v2-pdf/:source", requireSyncSecret, async (req, res) => {
     return res.json({ ok: true, report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// MIRA FÖRFRÅGAN-WIZARD — Render-backend för mira-forfragan-skapa.html
+// ────────────────────────────────────────────────────────────────────────────
+// Kundens flöde: commission → (recurrence-serie) → Activity write-through →
+// notify → Lead per beställare → Coworker.Bokningar per beställare.
+//
+// ALL intelligens i Render (inga Bubble-workflows). Gränsas av PLANNING_ADMIN_TOKEN
+// (x-admin-token, faller tillbaka till CASPECO_ADMIN_TOKEN). Master-nyckeln
+// stannar server-side. Bygger på safeCreate() som SJÄLVLÄKER fältnamn ("Unrecognized
+// field" → droppas) + case-hedge. Därför kan vi skicka osäkra fältnamn utan att
+// create:t avvisas — men option set-VÄRDEN måste vara giltiga.
+//
+// DRY-RUN ÄR DEFAULT på /create (skriver INGENTING). mode:"write" krävs explicit.
+//
+// ⚠️ VERIFIERA via GET /admin/forfragan/schema, rätta sen FORFRAGAN-configen HÄR.
+// ════════════════════════════════════════════════════════════════════════════
+const FORFRAGAN = {
+  // Typnamn — kandidater provas i ordning (schema-endpointen visar vilket som finns)
+  OFFER_TYPES:   ["Erbjudande", "Offer"],
+  OFFICE_TYPES:  ["Office", "Kontor"],
+  COMISSION_TYPE:"Comission",
+  LEAD_TYPE:     "Lead",
+  COWORKER_TYPE: "Coworker",
+  CLIENTCOMPANY_TYPE: "ClientCompany",
+
+  // ClientCompany → leverantör (kandidat-fält, resolvas i JS)
+  CC_SUPPLIER_FIELDS: ["leverantör", "Leverantör", "leverantor", "supplier", "Supplier"],
+  CC_NAME_FIELDS:     ["Name_company", "name", "Namn"],
+
+  // Office (kontor) — adress + namn + relation till company
+  OFFICE_ADDRESS_FIELDS: ["office_address", "Office_address", "address", "Adress"],
+  OFFICE_NAME_FIELDS:    ["Name", "name", "office_name", "Titel", "title"],
+  OFFICE_COMPANY_FIELDS: ["ClientCompany", "client_company", "Company", "company", "Företag"],
+
+  // Erbjudande-fält (bekräftade i spec — pass-through med fallback)
+  OFFER_CLIENT_COMPANY_FIELDS: ["client_company", "Client_company", "ClientCompany", "kund"],
+  OFFER_STATUS_FIELDS:  ["Status", "status"],
+  OFFER_STATUS_PUBLISHED: "Publicerat",   // option set "Status erbjudande": Utkast/Publicerat/Utgånget
+  OFFER_START_FIELDS:   ["Startdatum", "startdatum", "start_date"],
+  OFFER_END_FIELDS:     ["Slutdatum", "slutdatum", "end_date"],
+
+  // Comission-fält — fältet är "Commission_title" (Christian bekräftat 2026-06-15).
+  // safeCreate hedgar första-bokstavs-casing → "commission_title" droppas tyst om fel.
+  C_TITLE_KEYS:   ["Commission_title"],
+  C_DELIVERY:     "delivery_date",
+  C_DELIVERY_END: "delivery_date_end",
+  C_CATEGORY:     "Category",
+  C_STATUS:       "commission_status",
+  C_COMPANY:      "Company",
+  C_DESC:         "Description",
+  C_BUDGET:       "budget",
+  C_OFFICE:       "Office",
+  C_INTERNSERVICE:"Internservice",         // ALLTID false (NO)
+  C_BESTALLARE:   "Beställare",             // list
+  C_SPECIALKOST_KEYS: ["specialkost", "Specialkost", "allergens_json"],
+  // recurrence (Christian la till fälten 2026-06-15 — hedgas tills schema bekräftar)
+  C_REC_RULE:     "recurrence_rule",
+  C_REC_GROUP:    "recurrence_group_id",
+  C_REC_MASTER:   "recurrence_is_master",
+  C_REC_UNTIL:    "recurrence_until",
+
+  // commission_status-värden (StatusUppdrag): skicka=Ny, utkast=Utkast
+  STATUS_SENT:  "Ny",
+  STATUS_DRAFT: "Utkast",
+
+  // Underkategori-fält per kategori — BÅDA casing-varianterna hedgas (Subcategory/SubCategory)
+  SUBCAT_FIELDS: {
+    "Food & Event":            ["SubcategoryFE", "SubCategoryFE"],
+    "Housekeeping":            ["SubcategoryHK", "SubCategoryHK"],
+    "Staff":                   ["SubcategorySP", "SubCategorySP"],
+    "Other facility services": ["SubcategoryFM", "SubCategoryFM"],
+  },
+
+  // Lead-fält (per beställare) — allt hedgas
+  LEAD_SOURCE_VALUE: "Mira",
+
+  // Coworker — sök på e-post, lägg commission i Bokningar
+  COWORKER_EMAIL_FIELDS: ["Email", "email", "E-post", "epost"],
+  COWORKER_BOOKINGS_FIELDS: ["Bokningar", "bokningar", "Bookings"],
+
+  // Notify (Christian 2026-06-15): Users där associated_company CONTAINS commissionens
+  // Company (ClientCompany). OBS listfält + kopplar även Carotte (medvetet, till skillnad
+  // från public/request som körde `company equals`). Ev. extra-inbox via env.
+  NOTIFY_SLUG: "commission_new",
+  NOTIFY_USER_TYPE: "User",
+  NOTIFY_ASSOC_FIELD: "associated_company",
+  NOTIFY_EXTRA_INBOX: pick(process.env.FORFRAGAN_NOTIFY_EMAIL),
+};
+
+// Kategori → underkategorier (Kategorier.xlsx, från handoffen). FYI utelämnas i UI:t men
+// behålls här för fullständighet (frontend kan filtrera bort).
+const FORFRAGAN_KATEGORIER = {
+  "Food & Event": ["Frukost","Lunch","Middag","After work","Kundevent","Internt event","Sommarfest","Julfest","Kickoff","Konferens","Fika","FYI"],
+  "Housekeeping": ["Storstäd","Städ höga höjder","Trapphus","Desinficering","Eventstäd","Extrastäd","Fönster","Golvvård","Mattvätt","Möbeltvätt","Sanering","Övrigt städ","Ångtvätt","FYI"],
+  "Staff": ["Hyra personal","Rekrytera personal","Executive search","FYI"],
+  "Other facility services": ["Fastighetsteknik","Teknisk support","Kontorsmaterial","Handyman","Kaffe & baristalösningar","Vattentorn","Blommor & dekor","Frukt på jobbet","Matkylar","FYI"],
+};
+
+// ── små helpers ──────────────────────────────────────────────────────────────
+const _ffPick = (obj, fields) => { for (const f of fields) { const v = obj?.[f]; if (v !== undefined && v !== null && v !== "") return v; } return null; };
+const _ffIdOf = (x) => (x == null ? null : (typeof x === "string" ? x : bubbleId(x)));
+// första typnamnet i listan som ger ≥1 rad (eller bara existerar)
+async function _ffResolveType(candidates) {
+  for (const tn of candidates) {
+    try { const rows = await bubbleFind(tn, { limit: 1 }); return { type: tn, sample: rows?.[0] || null, ok: true }; }
+    catch (_) { /* nästa */ }
+  }
+  return { type: candidates[0], sample: null, ok: false };
+}
+function _ffOfferPublished(o) {
+  const status = _ffPick(o, FORFRAGAN.OFFER_STATUS_FIELDS);
+  if (status && String(status) !== FORFRAGAN.OFFER_STATUS_PUBLISHED) return false;
+  const now = Date.now();
+  const start = _ffPick(o, FORFRAGAN.OFFER_START_FIELDS);
+  const end   = _ffPick(o, FORFRAGAN.OFFER_END_FIELDS);
+  if (start && new Date(start).getTime() > now) return false;
+  if (end && new Date(end).getTime() < now) return false;
+  return true;
+}
+function _ffOfferOut(o) {
+  return {
+    id:             bubbleId(o),
+    title:          o.Title || o.title || "",
+    image:          o.Image || o.image || "",
+    bildspel:       o.Bildspel || o.bildspel || [],
+    description:      o.Description || o.description || "",
+    description_long: o.Description_long || o.description_long || "",
+    capacity:       o.Capacity ?? o.capacity ?? null,
+    extern_lokal:   o["Extern lokal"] || o.extern_lokal || [],
+    logistik:       o.Logistik || o.logistik || "",
+    malgrupp:       o["Målgrupp"] || o.malgrupp || "",
+    pris_per_person:o.PrisPerPerson ?? o.pris_per_person ?? null,
+    produktinnehall:o["Produktinnehåll"] || o.produktinnehall || "",
+    produkttillagg: o["Produkttillägg"] || o.produkttillagg || [],
+    villkor:        o.Villkor || o.villkor || "",
+    start:          _ffPick(o, FORFRAGAN.OFFER_START_FIELDS),
+    end:            _ffPick(o, FORFRAGAN.OFFER_END_FIELDS),
+    client_company: _ffIdOf(_ffPick(o, FORFRAGAN.OFFER_CLIENT_COMPANY_FIELDS)),
+  };
+}
+// recurrence-stegare: returnerar array av ISO-datum (master först), max 1 år framåt.
+function _ffRecurrenceDates(startIso, rule, untilIso) {
+  const out = [startIso];
+  if (!rule || rule === "Ingen") return out;
+  const hardCap = new Date(new Date(startIso).getTime() + 366 * 864e5);
+  const until = untilIso ? new Date(Math.min(new Date(untilIso).getTime(), hardCap.getTime())) : hardCap;
+  const step = (d) => {
+    const n = new Date(d);
+    switch (rule) {
+      case "Veckovis":       n.setDate(n.getDate() + 7); break;
+      case "Varannan vecka": n.setDate(n.getDate() + 14); break;
+      case "Månadsvis":      n.setMonth(n.getMonth() + 1); break;
+      case "Kvartalsvis":    n.setMonth(n.getMonth() + 3); break;
+      case "Årsvis":         n.setFullYear(n.getFullYear() + 1); break;
+      default:               return null;
+    }
+    return n;
+  };
+  let cur = new Date(startIso), guard = 0;
+  while (guard++ < 400) {
+    const nxt = step(cur); if (!nxt || nxt > until) break;
+    out.push(nxt.toISOString()); cur = nxt;
+  }
+  return out;
+}
+
+// Notify-mottagare: Users där associated_company (listfält) CONTAINS companyId.
+async function _ffNotifyUsers(companyId) {
+  if (!companyId) return [];
+  try {
+    return await bubbleFindAll(FORFRAGAN.NOTIFY_USER_TYPE, {
+      constraints: [{ key: FORFRAGAN.NOTIFY_ASSOC_FIELD, constraint_type: "contains", value: companyId }],
+    });
+  } catch (_) { return []; }
+}
+
+app.options(/^\/admin\/forfragan\/.*/, (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+function _ffGuard(req, res) {
+  _planningCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) { res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" }); return false; }
+  if (_publicRateLimited(_clientIp(req), 240)) { res.status(429).json({ ok: false, error: "rate_limited" }); return false; }
+  if (!_planningAuthed(req)) { res.status(401).json({ ok: false, error: "unauthorized" }); return false; }
+  return true;
+}
+
+// ── GET /admin/forfragan/schema — DIN curl som låser alla fältnamn ────────────
+// Provar kandidat-typnamn + dumpar fältnycklar/sample för varje relevant typ.
+app.get("/admin/forfragan/schema", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const dump = async (label, candidates, companyId) => {
+      const r = await _ffResolveType(candidates);
+      let sample = r.sample;
+      // för Erbjudande/Office: hämta hellre en rad knuten till företaget om möjligt
+      const out = { resolved_type: r.type, type_exists: r.ok, candidates };
+      if (sample) { out.field_keys = Object.keys(sample).sort(); out.sample = sample; }
+      else out.note = "ingen rad funnen (typ saknas eller tom)";
+      return out;
+    };
+    const company = req.query.company ? String(req.query.company).trim() : null;
+    const result = {
+      ok: true,
+      offer:        await dump("offer",        FORFRAGAN.OFFER_TYPES),
+      office:       await dump("office",       FORFRAGAN.OFFICE_TYPES),
+      clientcompany:await dump("clientcompany",[FORFRAGAN.CLIENTCOMPANY_TYPE]),
+      comission:    await dump("comission",    [FORFRAGAN.COMISSION_TYPE]),
+      lead:         await dump("lead",         [FORFRAGAN.LEAD_TYPE]),
+      coworker:     await dump("coworker",     [FORFRAGAN.COWORKER_TYPE]),
+      _hint: "Jämför field_keys mot FORFRAGAN-configen i index.js. Rätta kandidat-arrayerna där fältnamn avviker (case-sensitivt).",
+    };
+    return res.json(result);
+  } catch (e) {
+    console.error("[/admin/forfragan/schema]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── GET /admin/forfragan/bootstrap?company= — allt wizarden behöver i ett svar ─
+app.get("/admin/forfragan/bootstrap", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const company = req.query.company ? String(req.query.company).trim() : null;
+    let cc = null, supplier = null, companyName = null;
+    if (company) {
+      cc = await bubbleGet(FORFRAGAN.CLIENTCOMPANY_TYPE, company).catch(() => null);
+      if (cc) {
+        companyName = _ffPick(cc, FORFRAGAN.CC_NAME_FIELDS);
+        supplier = _ffIdOf(_ffPick(cc, FORFRAGAN.CC_SUPPLIER_FIELDS));
+      }
+    }
+    // Kontor: hämta alla, filtrera på företaget i JS (tolerant mot fältnamn)
+    const officeType = (await _ffResolveType(FORFRAGAN.OFFICE_TYPES)).type;
+    let offices = [];
+    try {
+      const all = await bubbleFindAll(officeType, {});
+      offices = all
+        .filter((o) => !company || _ffIdOf(_ffPick(o, FORFRAGAN.OFFICE_COMPANY_FIELDS)) === company)
+        .map((o) => ({
+          id: bubbleId(o),
+          name: _ffPick(o, FORFRAGAN.OFFICE_NAME_FIELDS) || "(namnlöst kontor)",
+          address: _ffPick(o, FORFRAGAN.OFFICE_ADDRESS_FIELDS) || "",
+        }));
+    } catch (e) { offices = []; }
+
+    return res.json({
+      ok: true,
+      company_id: company,
+      company_name: companyName,
+      supplier_id: supplier,
+      offices,
+      categories: Object.keys(FORFRAGAN_KATEGORIER),
+      subcategories: FORFRAGAN_KATEGORIER,
+      recurrence_rules: ["Veckovis","Varannan vecka","Månadsvis","Kvartalsvis","Årsvis"],
+    });
+  } catch (e) {
+    console.error("[/admin/forfragan/bootstrap]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── GET /admin/forfragan/offers?company=&q= — Publicerat + giltigt, uppdelat ──
+app.get("/admin/forfragan/offers", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const company = req.query.company ? String(req.query.company).trim() : null;
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const offerType = (await _ffResolveType(FORFRAGAN.OFFER_TYPES)).type;
+    const all = await bubbleFindAll(offerType, {});
+    let rows = all.filter(_ffOfferPublished).map(_ffOfferOut);
+    if (q) rows = rows.filter((o) => (o.title + " " + o.description).toLowerCase().includes(q));
+    // allmänna = client_company tom; unika = client_company === company
+    const general = rows.filter((o) => !o.client_company);
+    const unique  = company ? rows.filter((o) => o.client_company === company) : [];
+    return res.json({ ok: true, company_id: company, general, unique, count: rows.length });
+  } catch (e) {
+    console.error("[/admin/forfragan/offers]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── GET /admin/forfragan/users?company=&q= — beställar-/coworker-sök ──────────
+app.get("/admin/forfragan/users", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const company = req.query.company ? String(req.query.company).trim() : null;
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const users = company ? await getCompanyUsers(company) : [];
+    let rows = users.map((u) => ({
+      id: bubbleId(u),
+      email: u.email || u.Email || "",
+      fornamn: u["Förnamn"] || u["First Name"] || u.first_name || "",
+      efternamn: u["Efternamn"] || u.Surname || u.last_name || "",
+    })).filter((u) => u.email);
+    if (q) rows = rows.filter((u) => (u.email + " " + u.fornamn + " " + u.efternamn).toLowerCase().includes(q));
+    rows.sort((a, b) => String(a.efternamn || a.email).localeCompare(String(b.efternamn || b.email), "sv"));
+    return res.json({ ok: true, company_id: company, count: rows.length, results: rows.slice(0, 200) });
+  } catch (e) {
+    console.error("[/admin/forfragan/users]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── POST /admin/forfragan/create — spar-kedjan (DRY-RUN DEFAULT) ──────────────
+// body: { mode:"diff"|"write", company_id, supplier_id?, path:"offer"|"free",
+//   offer_id?, commission_title, description, category, subcategory, delivery_date,
+//   delivery_date_end?, delivery_address?, office_id?, antal?, budget?, capacity?,
+//   extern_lokal?, specialkost?, produkttillagg?, status:"sent"|"draft",
+//   bestallare:[{email,efternamn,fornamn,user_id,coworker_id}],
+//   recurrence:{ rule, until } }
+app.post("/admin/forfragan/create", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const d = req.body || {};
+    const write = d.mode === "write";
+    const companyId = d.company_id ? String(d.company_id).trim() : null;
+    if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+
+    const title = safeText(d.commission_title || d.title || "", 250);
+    const category = d.category || null;
+    const subcategory = d.subcategory || null;
+    const antal = asNumberOrNull(d.antal);
+    const capacity = asNumberOrNull(d.capacity);
+    const statusValue = d.status === "draft" ? FORFRAGAN.STATUS_DRAFT : FORFRAGAN.STATUS_SENT;
+    const bestallare = Array.isArray(d.bestallare) ? d.bestallare.filter((b) => b && (b.email || b.user_id || b.coworker_id)) : [];
+
+    // ── Validering ──
+    if (!title) return res.status(400).json({ ok: false, error: "commission_title krävs" });
+    if (capacity != null && antal != null && antal > capacity) {
+      return res.status(400).json({ ok: false, error: `Antal (${antal}) överstiger Capacity (${capacity})` });
+    }
+
+    // ── Datum + recurrence-serie ──
+    const deliveryIso = toBubbleDate(d.delivery_date) || new Date(Date.now() + 5 * 864e5).toISOString();
+    const endIso = d.delivery_date_end ? toBubbleDate(d.delivery_date_end) : null;
+    const rule = d.recurrence && d.recurrence.rule && d.recurrence.rule !== "Ingen" ? d.recurrence.rule : null;
+    const untilIso = d.recurrence && d.recurrence.until ? toBubbleDate(d.recurrence.until) : null;
+    const occDates = _ffRecurrenceDates(deliveryIso, rule, untilIso);
+    const recurrenceGroup = rule ? `ff_${Date.now()}_${Math.floor(Math.random() * 1e6)}` : null;
+
+    // ── Specialkost-summering (Food & Event lånar invite-lösningen: [{name,count}]) ──
+    const allergens = Array.isArray(d.specialkost) ? d.specialkost : [];
+    const kostSummary = allergens.length
+      ? allergens.map((a) => `${safeText(a.name || a.allergen || "", 60)}${Number(a.count) > 1 ? " ×" + Number(a.count) : ""}`).filter(Boolean).join(", ")
+      : safeText(d.specialkost || "", 500);
+
+    // ── Bygg en Comission-payload för ett givet datum (master/instans) ──
+    const buildComission = (startIso, isMaster) => {
+      const exact = {
+        [FORFRAGAN.C_DELIVERY]:      startIso,
+        [FORFRAGAN.C_DESC]:          safeText(d.description || "", 5000),
+        [FORFRAGAN.C_STATUS]:        statusValue,
+        [FORFRAGAN.C_COMPANY]:       companyId,
+        [FORFRAGAN.C_INTERNSERVICE]: false,                 // ALLTID NO
+      };
+      const uncertain = {};
+      FORFRAGAN.C_TITLE_KEYS.forEach((k) => { uncertain[k] = title; });
+      if (category)  uncertain[FORFRAGAN.C_CATEGORY] = category;
+      if (endIso)    uncertain[FORFRAGAN.C_DELIVERY_END] = endIso;
+      if (d.budget != null) uncertain[FORFRAGAN.C_BUDGET] = asNumberOrNull(d.budget);
+      if (d.office_id) uncertain[FORFRAGAN.C_OFFICE] = String(d.office_id);
+      if (bestallare.length) uncertain[FORFRAGAN.C_BESTALLARE] = bestallare.map((b) => b.user_id || b.coworker_id).filter(Boolean);
+      // underkategori → matchande SubcategoryXX-fält (båda casing-varianter hedgas)
+      if (subcategory && category && FORFRAGAN.SUBCAT_FIELDS[category]) {
+        FORFRAGAN.SUBCAT_FIELDS[category].forEach((f) => { uncertain[f] = subcategory; });
+      }
+      if (kostSummary) FORFRAGAN.C_SPECIALKOST_KEYS.forEach((k) => { uncertain[k] = kostSummary; });
+      if (rule) {
+        uncertain[FORFRAGAN.C_REC_RULE]   = rule;
+        uncertain[FORFRAGAN.C_REC_GROUP]  = recurrenceGroup;
+        uncertain[FORFRAGAN.C_REC_MASTER] = isMaster;
+        if (untilIso) uncertain[FORFRAGAN.C_REC_UNTIL] = untilIso;
+      }
+      // produkttillägg (erbjudandeväg) — list of products
+      if (Array.isArray(d.produkttillagg) && d.produkttillagg.length) uncertain["Produkttillägg"] = d.produkttillagg;
+      return { exact, uncertain };
+    };
+
+    // Subcategory display för notify-subject
+    const subcatDisplay = subcategory || category || "";
+    const bestallareEfternamn = bestallare.map((b) => safeText(b.efternamn || b.email || "", 120)).filter(Boolean);
+
+    // ── DRY-RUN: returnera planen, skriv inget ──
+    if (!write) {
+      const sample = buildComission(occDates[0], true);
+      return res.json({
+        ok: true, mode: "diff", would_write: true,
+        plan: {
+          occurrences: occDates.length,
+          occurrence_dates: occDates,
+          recurrence_group: recurrenceGroup,
+          master_date: occDates[0],
+          commission_payload_master: { ...sample.exact, ...sample.uncertain },
+          notify: { slug: FORFRAGAN.NOTIFY_SLUG, subject_preview: `${title} – ${subcatDisplay}`,
+                    recipients: `Users där ${FORFRAGAN.NOTIFY_ASSOC_FIELD} contains ${companyId}`,
+                    recipient_count: (await _ffNotifyUsers(companyId)).map((u) => normEmail(u.email || u.Email)).filter(Boolean).length,
+                    extra_inbox: FORFRAGAN.NOTIFY_EXTRA_INBOX || null, only_on_master: true },
+          leads_per_bestallare: bestallare.map((b) => ({ email: b.email, title, category, source: FORFRAGAN.LEAD_SOURCE_VALUE })),
+          coworker_patches: bestallare.map((b) => ({ email: b.email, op: "Bokningar += <ny commission>" })),
+          validation: { antal, capacity, ok: true },
+        },
+      });
+    }
+
+    // ── WRITE: skapa serien ──
+    const created = [];
+    let masterId = null;
+    for (let i = 0; i < occDates.length; i++) {
+      const isMaster = i === 0;
+      const { exact, uncertain } = buildComission(occDates[i], isMaster);
+      const id = await safeCreate(FORFRAGAN.COMISSION_TYPE, exact, uncertain);
+      created.push(id);
+      if (isMaster) masterId = id;
+      // Activity write-through per rad
+      try { const fresh = await bubbleGet(FORFRAGAN.COMISSION_TYPE, id); if (fresh) await activityEngine.upsertActivityForComission(fresh); }
+      catch (e) { console.warn("[forfragan] activity write-through fail", id, e?.message); }
+    }
+
+    // ── notify + lead + coworker BARA på master ──
+    const result = { ok: true, mode: "write", commission_ids: created, master_id: masterId, occurrences: occDates.length, queued: 0, leads: [], coworker_patched: 0 };
+
+    // notify (EmailQueue → emailer-poller)
+    try {
+      const tplId = await getTemplateId(FORFRAGAN.NOTIFY_SLUG);
+      const extra = JSON.stringify({
+        title, request_title: title, subcategory: subcatDisplay, description: safeText(d.description || "", 2000),
+        delivery_date: occDates[0], bestallare: bestallareEfternamn, reference: masterId,
+        subject_override: `${title} – ${subcatDisplay}`,
+      });
+      const recips = new Set();
+      const notifyUsers = await _ffNotifyUsers(companyId);
+      notifyUsers.forEach((u) => { const e = normEmail(u.email || u.Email); if (e) recips.add(e); });
+      if (FORFRAGAN.NOTIFY_EXTRA_INBOX) recips.add(normEmail(FORFRAGAN.NOTIFY_EXTRA_INBOX));
+      for (const to of recips) {
+        await safeCreate("emailqueue", {}, {
+          Template_id: tplId || null, Entity_id: masterId, Entity_type: "commission",
+          To_email: to, To_name: to, Email_sent: false, Extra_data: extra,
+        });
+        result.queued++;
+      }
+    } catch (e) { console.warn("[forfragan] notify fail", e?.message); }
+
+    // Lead per beställare
+    for (const b of bestallare) {
+      try {
+        const leadId = await safeCreate(FORFRAGAN.LEAD_TYPE, { Source: FORFRAGAN.LEAD_SOURCE_VALUE }, {
+          Category: category, Delivery_date: occDates[0], Title: title, Description: safeText(d.description || "", 5000),
+          Client_company: companyId, Comission: masterId, Email: normEmail(b.email),
+        });
+        result.leads.push({ email: b.email, lead_id: leadId });
+      } catch (e) { console.warn("[forfragan] lead fail", b.email, e?.message); result.leads.push({ email: b.email, error: e?.message }); }
+    }
+
+    // Coworker.Bokningar += master per beställare (sök på e-post)
+    for (const b of bestallare) {
+      const email = normEmail(b.email); if (!email) continue;
+      try {
+        let cw = null;
+        for (const f of FORFRAGAN.COWORKER_EMAIL_FIELDS) {
+          cw = await bubbleFindOne(FORFRAGAN.COWORKER_TYPE, [{ key: f, constraint_type: "equals", value: email }]).catch(() => null);
+          if (cw) break;
+        }
+        if (!cw) continue;
+        const bookingsField = FORFRAGAN.COWORKER_BOOKINGS_FIELDS.find((f) => Array.isArray(cw[f])) || FORFRAGAN.COWORKER_BOOKINGS_FIELDS[0];
+        const cur = Array.isArray(cw[bookingsField]) ? cw[bookingsField] : [];
+        await bubblePatch(FORFRAGAN.COWORKER_TYPE, bubbleId(cw), { [bookingsField]: cur.concat([masterId]) });
+        result.coworker_patched++;
+      } catch (e) { console.warn("[forfragan] coworker fail", b.email, e?.message); }
+    }
+
+    console.log(`[forfragan] commission ${masterId} (+${created.length - 1} serie) · ${result.queued} mail · ${result.leads.length} leads · ${result.coworker_patched} coworkers`);
+    return res.json(result);
+  } catch (e) {
+    console.error("[/admin/forfragan/create]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── POST /admin/forfragan/update — uppdatera utkast (patchar master-commission) ─
+// body: { mode, commission_id, ...samma fält som create (subset) }
+app.post("/admin/forfragan/update", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const d = req.body || {};
+    const write = d.mode === "write";
+    const id = d.commission_id ? String(d.commission_id).trim() : null;
+    if (!id) return res.status(400).json({ ok: false, error: "commission_id krävs" });
+
+    const patch = {};
+    if (d.commission_title != null) FORFRAGAN.C_TITLE_KEYS.forEach((k) => { patch[k] = safeText(d.commission_title, 250); });
+    if (d.description != null) patch[FORFRAGAN.C_DESC] = safeText(d.description, 5000);
+    if (d.delivery_date) patch[FORFRAGAN.C_DELIVERY] = toBubbleDate(d.delivery_date);
+    if (d.category) patch[FORFRAGAN.C_CATEGORY] = d.category;
+    if (d.budget != null) patch[FORFRAGAN.C_BUDGET] = asNumberOrNull(d.budget);
+    if (d.status) patch[FORFRAGAN.C_STATUS] = d.status === "draft" ? FORFRAGAN.STATUS_DRAFT : FORFRAGAN.STATUS_SENT;
+    if (d.subcategory && d.category && FORFRAGAN.SUBCAT_FIELDS[d.category]) FORFRAGAN.SUBCAT_FIELDS[d.category].forEach((f) => { patch[f] = d.subcategory; });
+
+    if (!write) return res.json({ ok: true, mode: "diff", commission_id: id, patch });
+
+    // patch:a (droppar okända fält tyst via try/per-nyckel-fallback)
+    try { await bubblePatch(FORFRAGAN.COMISSION_TYPE, id, patch); }
+    catch (e) {
+      // self-heal: ta bort ev. fält som Bubble klagar på, en omgång
+      const msg = String(e?.detail?.body?.message || e?.message || "");
+      const m = /Unrecognized field:\s*(.+?)\s*$/i.exec(msg);
+      if (m && patch[m[1]] !== undefined) { delete patch[m[1]]; await bubblePatch(FORFRAGAN.COMISSION_TYPE, id, patch); }
+      else throw e;
+    }
+    // Activity write-through
+    try { const fresh = await bubbleGet(FORFRAGAN.COMISSION_TYPE, id); if (fresh) await activityEngine.upsertActivityForComission(fresh); }
+    catch (e) { console.warn("[forfragan update] activity fail", e?.message); }
+    return res.json({ ok: true, mode: "write", commission_id: id, patched_fields: Object.keys(patch) });
+  } catch (e) {
+    console.error("[/admin/forfragan/update]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 

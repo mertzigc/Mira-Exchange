@@ -147,6 +147,30 @@ Alla 4 källor materialiserade (todo-fält fixade: Titel/Starttid/Sluttid/Katego
 - **Todo-popup extra:** Beskrivning (materialiserad), Skapad av (Created By→User-label) + Delegerad till (User-fältet) resolvas i `load`-action via `_planningUserLabel`.
 - **Bubble-fält tillagda av Christian:** Activity.`source_id`, `status`, `creator_company` (text).
 
+## BYGGT 2026-06-15 (kväll 5) — förfrågan-wizardens Render-backend (drop 1, dry-run-säker)
+
+Inline-block i `index.js` FÖRE `app.listen` (mönster som `LANDING`/`public/request/create`). Config-objekt `FORFRAGAN` + `FORFRAGAN_KATEGORIER` överst i blocket — **rätta fältnamn DÄR**. Gated av `_ffGuard` (PLANNING_ADMIN_TOKEN, x-admin-token, CORS som planning). Paths i requireApiKey openPaths. node --check OK.
+
+**Endpoints:**
+- `GET /admin/forfragan/schema?company=` — **EN curl låser alla fältnamn.** Provar kandidat-typnamn (Erbjudande/Office), dumpar `field_keys`+`sample` för offer/office/clientcompany/comission/lead/coworker. Jämför mot FORFRAGAN-configen, rätta kandidat-arrayerna.
+- `GET /admin/forfragan/bootstrap?company=` — leverantör (resolvas från ClientCompany via kandidat-fält), kontor (id/namn/office_address, filtrerat på company i JS), kategorier+underkategorier (hårdkodat Kategorier.xlsx), recurrence_rules.
+- `GET /admin/forfragan/offers?company=&q=` — alla Erbjudande, filtrerat i JS på Status=Publicerat + giltighetsfönster (Start/Slut), uppdelat `general` (client_company tom) / `unique` (= company). Full rikedom (Image/Bildspel/Description_long/Capacity/Extern lokal/PrisPerPerson/Produktinnehåll/Produkttillägg/Villkor/Logistik/Målgrupp).
+- `GET /admin/forfragan/users?company=&q=` — beställar-sök (getCompanyUsers → id/email/förnamn/efternamn).
+- `POST /admin/forfragan/create` — **DRY-RUN DEFAULT** (mode:"write" krävs). Kedja: Comission (Internservice=NO) → recurrence-serie via `_ffRecurrenceDates` (master=första, max 1 år) → `activityEngine.upsertActivityForComission` per rad → notify (EmailQueue/commission_new, BARA master) → Lead per beställare (Source="Mira") → Coworker.Bokningar += master per beställare. Validerar antal ≤ capacity. Allt på `safeCreate` (självläker fältnamn) + title hedgas (`commission_title` OCH `"Commission title"`) + underkategori hedgas (Subcategory/SubCategory-casing). Diff-svar = full plan utan skrivning.
+- `POST /admin/forfragan/update` — patchar master-commission (utkast) + Activity write-through, self-heal på Unrecognized field.
+
+**LÖST (Christian 2026-06-15):**
+- **Comission title-fältet = `Commission_title`** (stor C, underscore). C_TITLE_KEYS=["Commission_title"], safeCreate hedgar bort fel casing.
+- **Notify-mottagare = Users där `associated_company` CONTAINS commissionens Company** (ClientCompany). Listfält, kopplar även Carotte (medvetet). Implementerat via `_ffNotifyUsers()` (ersätter getCompanyUsers i notify-vägen).
+
+**ÖPPNA PUNKTER (drop 1):**
+1. **Övriga fältnamn ej curl-verifierade** — kör `/schema` → rätta FORFRAGAN-configen. OSÄKERT kvar: underkategori-fältens casing (Subcat vs SubCat), recurrence-fältens exakta namn, Office-typens namn + company-relationsfält, ClientCompany.leverantör-fält, Lead-fältens casing, Coworker email/Bokningar-fält, Erbjudande-typnamn + status/client_company-fält.
+2. **commission_new-mallens copy** matchar inte spec-bodyn exakt än — extra_data skickas (title/subcategory/description/delivery_date/bestallare/subject_override) men `tmplCommissionNew` läser `e.commission_title` (lowercase) → hittar ej `Commission_title`-fältet, faller tillbaka på `extra.title` (skickas nu). Aligna mall mot spec-texten = följdjobb.
+
+**Curl-ordning (Christian):** `/schema` först (rätta config) → `/bootstrap` + `/offers` + `/users` (verifiera läs-shapes) → `/create` med `mode:"diff"` (granska plan) → `mode:"write"` på en testförfrågan.
+
+**KVAR drop 2:** HTML-modulen `mira-forfragan-skapa.html` (bygg om prototypen mot endpoint-kontraktet — recurrence-UI, specialkost lånad från invite.html, conditional underkategori, erbjudande-rikedom, Capacity/Extern lokal-validering, levande kostnadspanel).
+
 ## Nästa steg
 1. Testa kalendern (deploy + curl + Bubble-embed).
 2. **Bygg förfrågan-wizarden** (HTML 2) + endpoints: offers/kontor/leverantör/underkategori-läsning, spar-kedja (commission+recurrence-serie+Activity-write-through+notify via emailer+lead per beställare+coworker per beställare), specialkost.
