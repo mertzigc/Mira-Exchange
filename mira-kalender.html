@@ -242,7 +242,7 @@
     var comp = ADMIN ? st.activeCompany : COMPANY;
     if(ADMIN && !comp){ EVENTS=[]; document.getElementById('mkView').innerHTML='<div class="mk-load">Sök fram en kund i rutan uppe till höger för att visa dess planering.</div>'; document.getElementById('mkCount').textContent=''; return; }
     var w=windowFor();
-    var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(comp?'&company='+encodeURIComponent(comp):'');
+    var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(comp?'&company='+encodeURIComponent(comp):'')+(ADMIN?'&crm=1':'');
     document.getElementById('mkView').innerHTML='<div class="mk-load">Laddar planering…</div>';
     fetch(url,{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
       EVENTS=(j&&j.results?j.results:[]).map(mapRow);
@@ -416,7 +416,8 @@
     setActiveLabel(name);
     load();
   };
-  function setTitle(name){ document.getElementById('mkTitle').innerHTML = name ? ('Planering för <span>'+esc(name)+'</span>') : 'Planering'; }
+  function isIdLike(s){ return /^\d{10,}x\d{5,}$/.test(String(s||'').trim()); }
+  function setTitle(name){ if(isIdLike(name)) name=''; document.getElementById('mkTitle').innerHTML = name ? ('Planering för <span>'+esc(name)+'</span>') : 'Planering'; }
   function setActiveLabel(name){ setTitle(name); document.getElementById('mkSub').textContent = ADMIN ? 'Carotte CRM' : 'Mira · Carotte'; }
   function loadCompanies(){
     fetch(HOST+'/admin/planning/companies',{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
@@ -434,7 +435,7 @@
 
   document.getElementById('mkSearch').classList.toggle('on',ADMIN);
   document.getElementById('mkSub').textContent = ADMIN ? 'Carotte CRM' : 'Mira · Carotte';
-  setTitle(COMPANY_NAME);   // kund-läge: kundens namn direkt; CRM: eget företag tills man söker
+  setTitle(ADMIN ? '' : COMPANY_NAME);   // kund-läge: kundens namn (#mira_company_name); CRM: fylls av loadCompanies
   if(ADMIN) loadCompanies();
   load();
 })();

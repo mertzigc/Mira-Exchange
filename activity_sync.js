@@ -77,7 +77,7 @@ export const FALLBACK_COLOR = "#888888";
 
 export function createActivityEngine(deps) {
   const {
-    bubbleFindOne, bubbleFindAll, bubbleCreate, bubblePatch, bubbleDelete, bubbleId,
+    bubbleFindOne, bubbleFindAll, bubbleCreate, bubblePatch, bubbleDelete, bubbleGet, bubbleId,
     tengella,                 // { login, fetch }  (fetch = tengellaFetch)
     helpers,                  // { toBubbleDate }
     constants = {},           // { TENGELLA_DEFAULT_ORGNO }
@@ -99,7 +99,21 @@ export function createActivityEngine(deps) {
 
   // Fält som jämförs vid sweep för noop-detektering (skriv bara vid faktisk ändring).
   const COMPARE = ["ActivityType", "Title", "Startdatum", "Slutdatum", "Category", "color_hex",
-                   "status", C.A_COMPANY, "Beskrivning"];
+                   "status", C.A_COMPANY, "Beskrivning", "creator_company"];
+
+  // Todo filtreras på skaparens företag (kund-läge + Carotte) ELLER Företag (CRM mot kund).
+  // Därför lagras BÅDA: Clientcompany = Todo.Företag, creator_company = Creator-userns Company.
+  const _userCoCache = new Map();
+  async function resolveCreatorCompany(r) {
+    const uid = r["Created By"] || r.Creator || (r.user ? idOf(r.user) : null) || null;
+    if (!uid) return null;
+    const key = String(uid);
+    if (_userCoCache.has(key)) return _userCoCache.get(key);
+    let co = null;
+    try { const u = await bubbleGet("User", key); co = u ? (idOf(u.Company) || null) : null; } catch (_) { /* lämna null */ }
+    _userCoCache.set(key, co);
+    return co;
+  }
   const COMPARE_TENGELLA = ["ActivityType", "Title", "Startdatum", "Slutdatum", "Category",
                    "color_hex", C.A_COMPANY, "tengella_employee_name", "tengella_region_name",
                    "tengella_project_name", "tengella_supervisor_name"];
@@ -244,8 +258,11 @@ export function createActivityEngine(deps) {
     upsertBySourceId(bubbleId(c), mapComission(c), { write, compareFields: COMPARE });
   const upsertActivityForMatter = (m, { write = true } = {}) =>
     upsertBySourceId(bubbleId(m), mapMatter(m), { write, compareFields: COMPARE });
-  const upsertActivityForTodo = (r, { write = true } = {}) =>
-    upsertBySourceId(bubbleId(r), mapTodo(r), { write, compareFields: COMPARE });
+  const upsertActivityForTodo = async (r, { write = true } = {}) => {
+    const p = mapTodo(r);
+    p.creator_company = await resolveCreatorCompany(r);
+    return upsertBySourceId(bubbleId(r), p, { write, compareFields: COMPARE });
+  };
 
   // ── Constraint-byggare ─────────────────────────────────────────────────────
   // Default: bara innevarande år och framåt (filtrerar på KÄLLANS egna datum, ej
@@ -326,8 +343,11 @@ export function createActivityEngine(deps) {
     } catch (e) { return { ...report, skipped: `typ "${C.TODO_TYPE}" ej läsbar — verifiera TODO_TYPE`, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const r of rows) {
-      try { tally(report, await upsertViaIndex(index, bubbleId(r), mapTodo(r), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) })); }
-      catch (e) { report.errors++; report.last_error = errInfo(e); log("todo err", bubbleId(r), errInfo(e)); }
+      try {
+        const p = mapTodo(r);
+        p.creator_company = await resolveCreatorCompany(r);
+        tally(report, await upsertViaIndex(index, bubbleId(r), p, { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) }));
+      } catch (e) { report.errors++; report.last_error = errInfo(e); log("todo err", bubbleId(r), errInfo(e)); }
     }
     return report;
   }

@@ -16154,7 +16154,7 @@ app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
 // source = comission | matter | remember | tengella | all
 // Body: { mode:"diff"|"write", modifiedDaysBack?, modifiedSince?, fromDate?, toDate? }
 const activityEngine = createActivityEngine({
-  bubbleFindOne, bubbleFindAll, bubbleCreate, bubblePatch, bubbleDelete, bubbleId,
+  bubbleFindOne, bubbleFindAll, bubbleCreate, bubblePatch, bubbleDelete, bubbleGet, bubbleId,
   tengella:  { login: tengellaLogin, fetch: tengellaFetch },
   helpers:   { toBubbleDate },
   constants: { TENGELLA_DEFAULT_ORGNO },
@@ -16221,8 +16221,16 @@ app.get("/admin/planning/companies", async (req, res) => {
   }
 });
 
-// GET /admin/planning/activities?company=<id>&from=&to=
-// company utelämnat = CRM-läge (alla). Default-fönster = innevarande år.
+// Carotte Group — admin som står här ser interna Carotte-todos (skaparens företag),
+// inte todos vars Företag = Carotte. Hårdkodat per Christians instruktion.
+const CAROTTE_GROUP_ID = "1726738549743x453535655154064800";
+const TODO_AT = ACTIVITY_CONFIG.AT_TODO;   // "Kom ihåg"
+
+// GET /admin/planning/activities?company=<id>&crm=1&from=&to=
+// Default-fönster = innevarande år. Todos har egen företagslogik:
+//   - kund-läge (crm≠1) ELLER admin på Carotte Group → todos där creator_company = company
+//   - admin på en kund → todos där Clientcompany (= Todo.Företag) = company
+// Övriga typer filtreras alltid på Clientcompany = company.
 app.get("/admin/planning/activities", async (req, res) => {
   _planningCors(req, res);
   if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
@@ -16233,13 +16241,36 @@ app.get("/admin/planning/activities", async (req, res) => {
     const from = String(req.query.from || `${y}-01-01T00:00:00.000Z`);
     const to   = String(req.query.to   || `${y}-12-31T23:59:59.999Z`);
     const company = req.query.company ? String(req.query.company).trim() : null;
-    const constraints = [
+    const crm = String(req.query.crm || "") === "1";
+    const A = ACTIVITY_CONFIG.ACTIVITY_TYPE;
+    const win = [
       { key: "Startdatum", constraint_type: "greater than", value: from },
       { key: "Startdatum", constraint_type: "less than",    value: to   },
     ];
-    if (company) constraints.push({ key: ACTIVITY_CONFIG.A_COMPANY, constraint_type: "equals", value: company });
-    const results = await bubbleFindAll(ACTIVITY_CONFIG.ACTIVITY_TYPE, { constraints, sort_field: "Startdatum", descending: false });
-    return res.json({ ok: true, count: results.length, from, to, company, results });
+
+    if (!company) {
+      // Ingen kund vald → tomt (kalendern visar alltid en kund i taget).
+      return res.json({ ok: true, count: 0, from, to, company, results: [] });
+    }
+
+    // 1) Alla typer UTOM todo: Clientcompany = company
+    const nonTodo = await bubbleFindAll(A, {
+      constraints: [...win,
+        { key: ACTIVITY_CONFIG.A_COMPANY, constraint_type: "equals", value: company },
+        { key: "ActivityType", constraint_type: "not equal", value: TODO_AT }],
+      sort_field: "Startdatum", descending: false,
+    });
+
+    // 2) Todo: egen företagslogik
+    const useCreatorCo = (!crm) || (company === CAROTTE_GROUP_ID);
+    const todoCons = [...win, { key: "ActivityType", constraint_type: "equals", value: TODO_AT }];
+    todoCons.push(useCreatorCo
+      ? { key: "creator_company", constraint_type: "equals", value: company }
+      : { key: ACTIVITY_CONFIG.A_COMPANY, constraint_type: "equals", value: company });
+    const todos = await bubbleFindAll(A, { constraints: todoCons, sort_field: "Startdatum", descending: false });
+
+    const results = nonTodo.concat(todos);
+    return res.json({ ok: true, count: results.length, from, to, company, crm, todo_by: useCreatorCo ? "creator_company" : "foretag", results });
   } catch (e) {
     console.error("[/admin/planning/activities]", e?.message, e?.detail);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
