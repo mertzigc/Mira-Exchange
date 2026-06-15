@@ -99,6 +99,13 @@ Ny fil `activity_sync.js` (DI-modul som invoice_sync.js). Inkopplad i index.js: 
 **Validera (diff-läge skriver INGET; kräver x-api-key + x-sync-secret):**
 `POST $HOST/sync/activities/comission {"mode":"diff","modifiedDaysBack":3650}` → scanned/create/update/noop. Likadant matter|remember|tengella|all. Remember rapporterar "skipped" om REMEMBER_TYPE fel. Tengella visar companies/events. Efter grön diff → mode:"write", sen in i sync_v2_cron.sh (ej tillagt än).
 
+## FIX 2026-06-15 (efter första diff-körning som 500:ade)
+Första körning: per-rad "bubbleFind failed" (source_id) + topp-500 (Tengella "is not empty"-constraint). Bubble-deploy löste fält-existensen men felet kvarstod → omdesign:
+- **Index-baserad upsert:** loadActivityIndex() läser alla Activity en gång → Map(source_id→rad). upsertViaIndex() ersätter per-rad bubbleFindOne (N+1 + det felande source_id-anropet borta). "all" delar ett index.
+- Tengella-kundfilter i JS (ej "is not empty"-constraint). Alla scans/källor try/catch:ade → svar alltid {ok:true, report} med scan_error/last_error/fatal för Bubbles riktiga felmeddelande.
+- Tog bort `plats` ur mapComission (Activity.plats = geographic address → 400 vid textskrivning; hanteras separat senare).
+- node --check OK. Christian pushar activity_sync.js + index.js → Render redeploy → rerun diff.
+
 ## Nästa steg
 1. Validera /sync/activities diff → write (Christian deployar + curlar).
 2. Render: läs-endpoint för kalendern (`/admin/planning/activities?company=`, spegla caspeco-läsproxyn) + popup-skriv (status/Tråd/kopiera, anropar write-through) + skapa-förfrågan-kedjan (commission+recurrence+notify via emailer+lead+coworker).

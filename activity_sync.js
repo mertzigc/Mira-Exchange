@@ -128,6 +128,37 @@ export function createActivityEngine(deps) {
     return { mode: "create", id };
   }
 
+  // ── Index-baserad upsert (för sweeps) ──────────────────────────────────────
+  // Läs ALLA Activity en gång → Map(source_id → rad). Då slipper vi en
+  // bubbleFindOne per källrad (N+1, långsamt + rate-limit) och frågar aldrig
+  // Bubble på source_id (det anropet failade när fältet saknades i live).
+  async function loadActivityIndex() {
+    const all = await bubbleFindAll(C.ACTIVITY_TYPE, {});
+    const map = new Map();
+    for (const a of all) {
+      const sid = a.source_id;
+      if (sid) map.set(String(sid), a);
+    }
+    return map;
+  }
+
+  async function upsertViaIndex(index, sourceId, payload, { write, compareFields }) {
+    payload.source_id = sourceId;
+    const key = String(sourceId);
+    const existing = index.get(key) || null;
+    if (existing) {
+      const id = bubbleId(existing);
+      if (!changed(existing, payload, compareFields)) return { mode: "noop", id };
+      if (write) await bubblePatch(C.ACTIVITY_TYPE, id, payload);
+      index.set(key, { ...existing, ...payload });
+      return { mode: "update", id };
+    }
+    let id = null;
+    if (write) id = await bubbleCreate(C.ACTIVITY_TYPE, payload);
+    index.set(key, { ...payload, _id: id });   // dedup inom samma körning
+    return { mode: "create", id };
+  }
+
   // ── Mappers ───────────────────────────────────────────────────────────────
   function mapComission(c) {
     const cat = c[C.C_CATEGORY] || null;
@@ -141,7 +172,8 @@ export function createActivityEngine(deps) {
       status:       c[C.C_STATUS] || null,
       [C.A_COMPANY]: idOf(c[C.C_COMPANY]) || null,
       Beskrivning:  c[C.C_DESC] || null,
-      plats:        c[C.C_ADDRESS] || null,
+      // OBS: Activity.plats är "geographic address" i Bubble — skriv inte rå text dit
+      // (400-risk). Hanteras separat när vi mappar geo korrekt.
     };
   }
 
@@ -225,21 +257,35 @@ export function createActivityEngine(deps) {
   }
 
   // ── Sweeps ──────────────────────────────────────────────────────────────────
-  async function syncComissions(opts) {
+  // Felinfo: bubbleFind kastar Error med .detail = { status, body, url } — ta med
+  // den så ETT curl-svar visar Bubbles riktiga felmeddelande (ej bara "bubbleFind failed").
+  const errInfo = (e) => (e?.detail ? `${e?.message} | ${JSON.stringify(e.detail)}` : (e?.message || String(e)));
+
+  async function syncComissions(opts, sharedIndex) {
     const write = !!opts.write;
-    const rows = await bubbleFindAll(C.COMISSION_TYPE, { constraints: modifiedConstraints(opts) });
-    const report = { source: "comission", scanned: rows.length, create: 0, update: 0, noop: 0, errors: 0 };
+    const report = { source: "comission", scanned: 0, create: 0, update: 0, noop: 0, errors: 0 };
+    let rows, index;
+    try {
+      index = sharedIndex || await loadActivityIndex();
+      rows = await bubbleFindAll(C.COMISSION_TYPE, { constraints: modifiedConstraints(opts) });
+    } catch (e) { return { ...report, scan_error: errInfo(e) }; }
+    report.scanned = rows.length;
     for (const c of rows) {
-      try { tally(report, await upsertBySourceId(bubbleId(c), mapComission(c), { write, compareFields: COMPARE })); }
-      catch (e) { report.errors++; log("comission err", bubbleId(c), e?.message || e); }
+      try { tally(report, await upsertViaIndex(index, bubbleId(c), mapComission(c), { write, compareFields: COMPARE })); }
+      catch (e) { report.errors++; report.last_error = errInfo(e); log("comission err", bubbleId(c), errInfo(e)); }
     }
     return report;
   }
 
-  async function syncMatters(opts) {
+  async function syncMatters(opts, sharedIndex) {
     const write = !!opts.write;
-    const rows = await bubbleFindAll(C.MATTER_TYPE, { constraints: modifiedConstraints(opts) });
-    const report = { source: "matter", scanned: rows.length, create: 0, update: 0, noop: 0, errors: 0, closed_set: 0 };
+    const report = { source: "matter", scanned: 0, create: 0, update: 0, noop: 0, errors: 0, closed_set: 0 };
+    let rows, index;
+    try {
+      index = sharedIndex || await loadActivityIndex();
+      rows = await bubbleFindAll(C.MATTER_TYPE, { constraints: modifiedConstraints(opts) });
+    } catch (e) { return { ...report, scan_error: errInfo(e) }; }
+    report.scanned = rows.length;
     for (const m of rows) {
       try {
         // closed_date: sätt när status=Avslutat och fältet är tomt (Render gör Bubbles trigger-jobb)
@@ -249,37 +295,47 @@ export function createActivityEngine(deps) {
           m[C.M_CLOSED] = closedAt;
           report.closed_set++;
         }
-        tally(report, await upsertBySourceId(bubbleId(m), mapMatter(m), { write, compareFields: COMPARE }));
-      } catch (e) { report.errors++; log("matter err", bubbleId(m), e?.message || e); }
+        tally(report, await upsertViaIndex(index, bubbleId(m), mapMatter(m), { write, compareFields: COMPARE }));
+      } catch (e) { report.errors++; report.last_error = errInfo(e); log("matter err", bubbleId(m), errInfo(e)); }
     }
     return report;
   }
 
-  async function syncRemembers(opts) {
+  async function syncRemembers(opts, sharedIndex) {
     const write = !!opts.write;
-    const rows = await bubbleFindAll(C.REMEMBER_TYPE, { constraints: modifiedConstraints(opts) }).catch(() => null);
-    if (rows === null) return { source: "remember", skipped: `typ "${C.REMEMBER_TYPE}" ej läsbar — verifiera REMEMBER_TYPE` };
-    const report = { source: "remember", scanned: rows.length, create: 0, update: 0, noop: 0, errors: 0 };
+    const report = { source: "remember", scanned: 0, create: 0, update: 0, noop: 0, errors: 0 };
+    let rows, index;
+    try {
+      index = sharedIndex || await loadActivityIndex();
+      rows = await bubbleFindAll(C.REMEMBER_TYPE, { constraints: modifiedConstraints(opts) });
+    } catch (e) { return { ...report, skipped: `typ "${C.REMEMBER_TYPE}" ej läsbar — verifiera REMEMBER_TYPE`, scan_error: errInfo(e) }; }
+    report.scanned = rows.length;
     for (const r of rows) {
-      try { tally(report, await upsertBySourceId(bubbleId(r), mapRemember(r), { write, compareFields: COMPARE })); }
-      catch (e) { report.errors++; log("remember err", bubbleId(r), e?.message || e); }
+      try { tally(report, await upsertViaIndex(index, bubbleId(r), mapRemember(r), { write, compareFields: COMPARE })); }
+      catch (e) { report.errors++; report.last_error = errInfo(e); log("remember err", bubbleId(r), errInfo(e)); }
     }
     return report;
   }
 
   // Tengella TimeTableEvent → Activity, per företag som har tengella_customer_id.
-  async function syncTengella(opts) {
+  async function syncTengella(opts, sharedIndex) {
     const write = !!opts.write;
     const report = { source: "tengella", companies: 0, events: 0, create: 0, update: 0, noop: 0, errors: 0 };
 
     const fromDate = opts.fromDate || new Date(Date.now() - 31 * 86400000).toISOString().slice(0, 10);
     const toDate   = opts.toDate   || new Date(Date.now() + 92 * 86400000).toISOString().slice(0, 10);
 
-    const customers = await bubbleFindAll(C.TENGELLA_CUSTOMER_TYPE, {
-      constraints: [{ key: C.TC_CUSTOMER_ID, constraint_type: "is not empty" }],
-    });
+    // Filtrera i JS (Bubbles "is not empty"-constraint är opålitlig för list/text).
+    let allCustomers, index;
+    try {
+      index = sharedIndex || await loadActivityIndex();
+      allCustomers = await bubbleFindAll(C.TENGELLA_CUSTOMER_TYPE, {});
+    } catch (e) { return { ...report, scan_error: errInfo(e) }; }
+    const customers = allCustomers.filter((tc) => tc[C.TC_CUSTOMER_ID] != null && tc[C.TC_CUSTOMER_ID] !== "");
 
-    const token = await tengella.login(orgNo);
+    let token;
+    try { token = await tengella.login(orgNo); }
+    catch (e) { return { ...report, login_error: errInfo(e) }; }
 
     for (const tc of customers) {
       const ccId = idOf(tc[C.TC_COMPANY]);
@@ -298,8 +354,8 @@ export function createActivityEngine(deps) {
           report.events++;
           try {
             const sid = "tengella:" + ev.EventId;
-            tally(report, await upsertBySourceId(sid, mapTimeTableEvent(ev, ccId), { write, compareFields: COMPARE_TENGELLA }));
-          } catch (e) { report.errors++; log("tengella ev err", ev?.EventId, e?.message || e); }
+            tally(report, await upsertViaIndex(index, sid, mapTimeTableEvent(ev, ccId), { write, compareFields: COMPARE_TENGELLA }));
+          } catch (e) { report.errors++; report.last_error = errInfo(e); log("tengella ev err", ev?.EventId, errInfo(e)); }
         }
         const more = resp?.ExistsMoreData ?? resp?.existsMoreData ?? false;
         cursor = more ? (resp?.cursor ?? resp?.Cursor ?? resp?.NextCursor ?? null) : null;
@@ -316,11 +372,16 @@ export function createActivityEngine(deps) {
       case "remember":  return syncRemembers(opts);
       case "tengella":  return syncTengella(opts);
       case "all": {
+        // Ett delat Activity-index för hela körningen (en läsning, inte fyra).
+        let index = null;
+        try { index = await loadActivityIndex(); }
+        catch (e) { return { fatal: "loadActivityIndex: " + errInfo(e) }; }
+        const safe = async (fn, label) => { try { return await fn(opts, index); } catch (e) { return { source: label, fatal: errInfo(e) }; } };
         return {
-          comission: await syncComissions(opts),
-          matter:    await syncMatters(opts),
-          remember:  await syncRemembers(opts),
-          tengella:  await syncTengella(opts),
+          comission: await safe(syncComissions, "comission"),
+          matter:    await safe(syncMatters, "matter"),
+          remember:  await safe(syncRemembers, "remember"),
+          tengella:  await safe(syncTengella, "tengella"),
         };
       }
       default:
