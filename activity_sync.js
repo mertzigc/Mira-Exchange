@@ -90,6 +90,9 @@ export function createActivityEngine(deps) {
   const orgNo = constants.TENGELLA_DEFAULT_ORGNO;
 
   const colorFor = (cat) => CATEGORY_COLORS[cat] || FALLBACK_COLOR;
+  // Skriv bara giltiga Activity.Category-värden (4-familj). Okänt/skräp → null (grå),
+  // annars 400 "could not parse this as a Category" på enstaka rader med dålig källdata.
+  const knownCat = (cat) => (cat && CATEGORY_COLORS[cat] ? cat : null);
   const idOf     = (x) => (typeof x === "string" ? x : bubbleId(x));   // refs kan vara id-sträng eller objekt
   const str      = (v) => (v === null || v === undefined ? null : String(v));
   const num      = (v) => (v === null || v === undefined || v === "" ? null : Number(v));
@@ -164,7 +167,7 @@ export function createActivityEngine(deps) {
 
   // ── Mappers ───────────────────────────────────────────────────────────────
   function mapComission(c) {
-    const cat = c[C.C_CATEGORY] || null;
+    const cat = knownCat(c[C.C_CATEGORY]);
     return {
       ActivityType: C.AT_BOKNING,
       Title:        c[C.C_TITLE] || c.Title || "Bokning",
@@ -181,7 +184,7 @@ export function createActivityEngine(deps) {
   }
 
   function mapMatter(m) {
-    const cat = m[C.M_CATEGORY] || null;
+    const cat = knownCat(m[C.M_CATEGORY]);
     const closed = m[C.M_CLOSED] || null;
     return {
       ActivityType: C.AT_ARENDE,
@@ -197,7 +200,7 @@ export function createActivityEngine(deps) {
   }
 
   function mapTodo(r) {
-    const cat = r[C.TODO_CATEGORY] || null;
+    const cat = knownCat(r[C.TODO_CATEGORY]);
     return {
       ActivityType: C.AT_TODO,
       Title:        r[C.TODO_TITLE] || "Todo",
