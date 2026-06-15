@@ -43,7 +43,7 @@ Bygga två moduler i samma mönster som `mira-kommunikation-admin.html`: **all i
 - Recurrence: `recurrence_rule` (optionset Veckovis/Varannan vecka/Månadsvis/Kvartalsvis/Årsvis), `recurrence_group_id` (text), `recurrence_is_master` (yes/no), `recurrence_until` (date). notify/lead/coworker körs BARA på master → en notis/lead, inte 52.
 - Matter: `closed_date` (date) + Bubble DB-trigger som sätter den när status→Avslutat. Kalender-span = created_date → (closed_date ?? idag).
 
-**Övriga beslut från Christian:** Beställare = LISTA → en lead + en coworker-uppdatering per beställare. Capacity = MAX (validera antal ≤ Capacity). Extern lokal begränsar Plats-valet. Internservice = NO alltid. Statusfält: Comission.commission_status, Matter.status, Remember.Status. Tråd = list of texts per typ (append + statusuppdatering i klick-popup). Kopiera-objekt-till-nytt-datum behålls.
+**Övriga beslut från Christian:** Beställare = LISTA → en lead + en coworker-uppdatering per beställare. Capacity = MAX (validera antal ≤ Capacity). Extern lokal begränsar Plats-valet. Internservice = NO alltid. Statusfält: Comission.commission_status, Matter.status, Todo.Status. Tråd = list of texts per typ (append + statusuppdatering i klick-popup). Kopiera-objekt-till-nytt-datum behålls.
 
 ## Kvarstående småbeslut
 - Tengella TimeTableEvent: exakt API-path/metod + Bubble-datatypnamn (från API Connector).
@@ -60,44 +60,44 @@ Bygga två moduler i samma mönster som `mira-kommunikation-admin.html`: **all i
 **Render-port mappning (upsert key = tengella_event_id):** EventId→tengella_event_id; EmployeeId/Name→tengella_employee_id/_name; ProjectId/Name→tengella_project_id/_name; RegionId/Name→tengella_region_id(**text**)/_name; SupervisorId/Name→tengella_supervisor_id(**text**)/_name; ItemName→tengella_item_name; StartDateTime→Startdatum; EndDateTime→Slutdatum; raw→tengella_raw_json; resolve ClientCompany från tengella_customer_id (TengellaCustomer.company-bryggan)→tengella_company + clientcompany; tengella_last_synced=now. Login+cursor-paginering speglar befintlig Tengella-kod; per företag m. tengella_customer_id, datumfönster, in i sync_v2_cron.sh.
 
 **BESLUT (Christian 2026-06-15):**
-- **Kalenderns datalager = ALLT SOM ACTIVITY.** Kalendern läser BARA Activity. Comission/Matter/Remember materialiseras som Activity-rader (ActivityType diskriminerar, länk tillbaka till källobjekt för Tråd/status i klick-popup). → Konsekvens: varje Comission/Matter/Remember måste skapa en Activity (nya via skapa-flödet vid spar; befintliga via backfill).
+- **Kalenderns datalager = ALLT SOM ACTIVITY.** Kalendern läser BARA Activity. Comission/Matter/Todo materialiseras som Activity-rader (ActivityType diskriminerar, länk tillbaka till källobjekt för Tråd/status i klick-popup). → Konsekvens: varje Comission/Matter/Todo måste skapa en Activity (nya via skapa-flödet vid spar; befintliga via backfill).
 - **Render stämplar ActivityType + Category(=Housekeeping) + color_hex** på Tengella-rader. Frontend renderar bara.
 
 **KVAR att få av Christian innan bygge:**
 1. ActivityType optionset — fullständiga värden (vilket = Tengella/Housekeeping, bokning, ärende, kom-ihåg).
 2. color_hex-konvention: finns Category→färg redan? Annars förslag FE #F47B30 / HK #4C9AFF / Staff #9F77DD / OtherFM #4CAF7D.
-3. Materialisering: skapas Activity redan automatiskt vid Comission/Matter/Remember (Bubble-wf), eller nytt arbete + backfill?
+3. Materialisering: skapas Activity redan automatiskt vid Comission/Matter/Todo (Bubble-wf), eller nytt arbete + backfill?
 
 ## UPPDATERING 2026-06-15 (sen kväll) — INGA Bubble-workflows, allt i Render
 
-Christian: A (option sets ActivityType + Recurrence), B (Activity +status +source_id), C/D/E (Comission recurrence-fält + specialkost, Matter closed_date, Remember verifierad) är KLART i Bubble. **F (Bubble backend-workflows) görs INTE** — all materialisering/logik flyttar till Render.
+Christian: A (option sets ActivityType + Recurrence), B (Activity +status +source_id), C/D/E (Comission recurrence-fält + specialkost, Matter closed_date, Todo verifierad) är KLART i Bubble. **F (Bubble backend-workflows) görs INTE** — all materialisering/logik flyttar till Render.
 
 **Materialisering i Render = write-through + modified-sweep** (Render kan ej trigga på Bubble-ändringar):
 - Write-through: varje skrivning via Render (skapa förfrågan; popup status/Tråd/kopiera) upsertar/uppdaterar Activity i samma anrop (instant).
-- Modified-sweep: nattlig `POST /sync/activities/:source` (source=comission|matter|remember|tengella|all, mode diff|write, diff default) läser källor med Modified Date ≥ senaste körning → upsert Activity. Samma mönster som faktura-synkens modifiedDaysBack. Backfill = sweep med fullt fönster (engång).
+- Modified-sweep: nattlig `POST /sync/activities/:source` (source=comission|matter|todo|tengella|all, mode diff|write, diff default) läser källor med Modified Date ≥ senaste körning → upsert Activity. Samma mönster som faktura-synkens modifiedDaysBack. Backfill = sweep med fullt fönster (engång).
 - Upsert-nyckel = `source_id` (källans unique id). Render sätter ActivityType/Title/Startdatum/Slutdatum/Category/status/color_hex/clientcompany enl. mappningstabell (color_hex: FE #F47B30, HK #4C9AFF, Staff #9F77DD, OtherFM #4CAF7D, fallback #888888).
 - Matter closed_date: sweepen sätter = Matter's Modified Date när status=Avslutat & closed_date tomt → speglas till Activity.Slutdatum.
-- Caveat: kräver Comission/Matter/Remember exponerade i Data API + filtrerbar Modified Date. Om datum-constraint opålitlig (jfr fakturornas numeriska ts) → full nattlig resync (liten volym).
+- Caveat: kräver Comission/Matter/Todo exponerade i Data API + filtrerbar Modified Date. Om datum-constraint opålitlig (jfr fakturornas numeriska ts) → full nattlig resync (liten volym).
 
 **Skapa-förfrågan-kedjan helt i Render** (notify flyttad från Bubble-wf): 1) skapa Comission (Internservice=no) 2) recurrence-serie i Render-loop (master=första) 3) upsert Activity 4) notify = Render mail (emailer.js) + ev Notis, BARA master 5) skapa Lead per beställare (Data API) 6) patcha Coworker.Bokningar per beställare (Data API).
 
 **KVAR att få av Christian innan kodning:**
 1. Exakta option set-värden (case-sensitivt): ActivityType + Recurrence.
 2. Exakta fältnamn: Comissions "ev slutdatum", Remembers start-/slut-tid.
-3. Bekräfta Comission/Matter/Remember exponerade i Bubble Data API.
+3. Bekräfta Comission/Matter/Todo exponerade i Bubble Data API.
 
 ## BYGGT 2026-06-15 — activity_sync.js (materialiseringskärna)
 
 Ny fil `activity_sync.js` (DI-modul som invoice_sync.js). Inkopplad i index.js: import överst + `createActivityEngine(...)` + route `POST /sync/activities/:source` (requireSyncSecret) bredvid /sync/v2. Båda node --check OK.
-- Mappers: Comission→Bokning, Matter→Ärende, Remember→Kom ihåg, Tengella TimeTableEvent→Housekeeping. Sätter ActivityType/Title/Startdatum/Slutdatum/Category/color_hex/status/clientcompany/source_id.
+- Mappers: Comission→Bokning, Matter→Ärende, Todo→Kom ihåg, Tengella TimeTableEvent→Housekeeping. Sätter ActivityType/Title/Startdatum/Slutdatum/Category/color_hex/status/clientcompany/source_id.
 - Upsert-nyckel = Activity.source_id (källans id, eller "tengella:<EventId>"). Diff-läge default (skriver inget), mode:"write" krävs. noop-detektering via COMPARE-fält.
 - Matter closed_date sätts i sweepen (status=Avslutat & tomt → Modified Date).
 - Tengella: login en gång, paginerar /v2/TimeTableEvent per TengellaCustomer m. tengella_customer_id, fönster default −31d…+92d.
-- Write-through-exports: upsertActivityForComission/Matter/Remember (för create-chain + popup senare).
-- **⚠️ Config-konstanter att verifiera överst i activity_sync.js (ACTIVITY_CONFIG):** REMEMBER_TYPE (typnamn för Kom ihåg), C_END (Comissions ev-slutdatum, default "delivery_date_end"), M_TITLE (default "Rubrik"), R_*-fälten (Remember). Bekräftade: Comission (commission_title/delivery_date/Category/commission_status/Company/Description), Matter (status/Kundföretag/Beskrivning), Activity.clientcompany.
+- Write-through-exports: upsertActivityForComission/Matter/Todo (för create-chain + popup senare).
+- **⚠️ Config-konstanter att verifiera överst i activity_sync.js (ACTIVITY_CONFIG):** REMEMBER_TYPE (typnamn för Kom ihåg), C_END (Comissions ev-slutdatum, default "delivery_date_end"), M_TITLE (default "Rubrik"), R_*-fälten (Todo). Bekräftade: Comission (commission_title/delivery_date/Category/commission_status/Company/Description), Matter (status/Kundföretag/Beskrivning), Activity.clientcompany.
 
 **Validera (diff-läge skriver INGET; kräver x-api-key + x-sync-secret):**
-`POST $HOST/sync/activities/comission {"mode":"diff","modifiedDaysBack":3650}` → scanned/create/update/noop. Likadant matter|remember|tengella|all. Remember rapporterar "skipped" om REMEMBER_TYPE fel. Tengella visar companies/events. Efter grön diff → mode:"write", sen in i sync_v2_cron.sh (ej tillagt än).
+`POST $HOST/sync/activities/comission {"mode":"diff","modifiedDaysBack":3650}` → scanned/create/update/noop. Likadant matter|todo|tengella|all. Todo rapporterar "skipped" om REMEMBER_TYPE fel. Tengella visar companies/events. Efter grön diff → mode:"write", sen in i sync_v2_cron.sh (ej tillagt än).
 
 ## FIX 2026-06-15 (efter första diff-körning som 500:ade)
 Första körning: per-rad "bubbleFind failed" (source_id) + topp-500 (Tengella "is not empty"-constraint). Bubble-deploy löste fält-existensen men felet kvarstod → omdesign:
@@ -106,10 +106,22 @@ Första körning: per-rad "bubbleFind failed" (source_id) + topp-500 (Tengella "
 - Tog bort `plats` ur mapComission (Activity.plats = geographic address → 400 vid textskrivning; hanteras separat senare).
 - node --check OK. Christian pushar activity_sync.js + index.js → Render redeploy → rerun diff.
 
-## DIFF GRÖN 2026-06-15: comission 100, matter 110 (closed_set 103), tengella 119 företag/4937 events. Remember = 404 "Type not found Remember" → REMEMBER_TYPE fel, väntar exakt typnamn + R_*-fältnamn. Lagt till throttleMs (default 120ms write / 0 diff) inför ~5150-raders backfill. Write körs stegvis: comission+matter först (verifiera i Bubble), sen tengella (--max-time 1800).
+## DIFF GRÖN 2026-06-15: comission 100, matter 110 (closed_set 103), tengella 119 företag/4937 events. Todo = 404 "Type not found Todo" → REMEMBER_TYPE fel, väntar exakt typnamn + R_*-fältnamn. Lagt till throttleMs (default 120ms write / 0 diff) inför ~5150-raders backfill. Write körs stegvis: comission+matter först (verifiera i Bubble), sen tengella (--max-time 1800).
+
+## STATUS 2026-06-15 (kväll 2) — write live för 3 källor + Todo-rename
+
+**WRITE validerat & kört:**
+- comission: create 100 (efter A_COMPANY-fix `clientcompany`→`Clientcompany`).
+- matter: materialiserad; update 39/noop 26 efter att Christian la till 4-familjs-`Category` på Matter. Okategoriserade ärenden = grå (#888) tills de kategoriseras (väntat).
+- Datumfilter: default `sinceDate` = innevarande år (filtrerar källans egna datum: delivery_date/Created Date/Todo-start), så `modifiedDaysBack` aldrig drar 10 år historik igen. Ny `purge`-källa städar materialiserade rader < sinceDate.
+- Tengella full-year diff (fromDate 2026-01-01 → toDate 2026-12-31): **119 företag, 6759 events (5164 create / 1595 noop)**. Write kvar att köra (--max-time 1800, idempotent re-run).
+
+**RENAME:** datatypen "Kom ihåg - Remember" → **`Todo`** (Christian, för enkelhet). Genomfört genomgående i activity_sync.js (TODO_TYPE="Todo", syncTodos, mapTodo, upsertActivityForTodo, TODO_*-fält, källparam `todo`, case `todo`) + handoff + minne. **OBS:** ActivityType-OPTION SET-värdet är fortfarande `"Kom ihåg"` (AT_TODO) — oförändrat i Bubble. Vill Christian ha det till "Todo" → byt option set-värdet + säg till.
+
+**KVAR:** Todo-källans fältnamn (TODO_TITLE/START/END/CATEGORY/STATUS/COMPANY) är fortfarande GISSADE — kör `/sync/activities/todo {"mode":"diff"}` (nu när typen finns) och verifiera scanned + att fält mappar; justera ACTIVITY_CONFIG vid behov.
 
 ## Nästa steg
-1. Validera /sync/activities diff → write (Christian deployar + curlar).
+1. Kör tengella write (full-year) + todo diff→write.
 2. Render: läs-endpoint för kalendern (`/admin/planning/activities?company=`, spegla caspeco-läsproxyn) + popup-skriv (status/Tråd/kopiera, anropar write-through) + skapa-förfrågan-kedjan (commission+recurrence+notify via emailer+lead+coworker).
 3. Lägg /sync/activities i nattliga cron.
 4. Bygg om prototyperna: kalendern läser Activity-feed (Category=färg, ActivityType=ikon), klick-popup, recurrence-serie i skapa-flödet.

@@ -20,13 +20,13 @@ export const ACTIVITY_CONFIG = {
   // Källtyper
   COMISSION_TYPE: "Comission",
   MATTER_TYPE:    "Matter",
-  REMEMBER_TYPE:  "Remember",        // ⚠️ VERIFIERA exakt typnamn för "Kom ihåg"
+  TODO_TYPE:  "Todo",            // datatypen (f.d. "Kom ihåg - Remember") döptes om till Todo 2026-06-15
   TENGELLA_CUSTOMER_TYPE: "TengellaCustomer",
 
   // ActivityType-värden (option set) — exakt som inlagda i Bubble
   AT_BOKNING:     "Bokning",
   AT_ARENDE:      "Ärende",
-  AT_KOM_IHAG:    "Kom ihåg",
+  AT_TODO:    "Kom ihåg",        // OBS: ActivityType-OPTION SET-värdet (oförändrat i Bubble). Vill du att det också ska heta "Todo": byt option set-värdet + säg till.
   AT_HOUSEKEEPING:"Housekeeping",
 
   // Comission-fält
@@ -48,13 +48,13 @@ export const ACTIVITY_CONFIG = {
   M_CLOSED:  "closed_date",
   M_STATUS_DONE: "Avslutat",        // status-värde som triggar closed_date
 
-  // Remember-fält  ⚠️ VERIFIERA alla
-  R_TITLE:   "Title",
-  R_START:   "Startdatum",
-  R_END:     "Slutdatum",
-  R_CATEGORY:"Category",
-  R_STATUS:  "Status",
-  R_COMPANY: "clientcompany",
+  // Todo-fält (datatyp Todo)  ⚠️ VERIFIERA alla mot Bubble-schemat
+  TODO_TITLE:   "Title",
+  TODO_START:   "Startdatum",
+  TODO_END:     "Slutdatum",
+  TODO_CATEGORY:"Category",
+  TODO_STATUS:  "Status",
+  TODO_COMPANY: "clientcompany",
 
   // ClientCompany-fält på Activity — EXAKT casing krävs vid skrivning (Data types: "Clientcompany").
   A_COMPANY: "Clientcompany",
@@ -195,17 +195,17 @@ export function createActivityEngine(deps) {
     };
   }
 
-  function mapRemember(r) {
-    const cat = r[C.R_CATEGORY] || null;
+  function mapTodo(r) {
+    const cat = r[C.TODO_CATEGORY] || null;
     return {
-      ActivityType: C.AT_KOM_IHAG,
-      Title:        r[C.R_TITLE] || "Kom ihåg",
-      Startdatum:   toBubbleDate(r[C.R_START]),
-      Slutdatum:    toBubbleDate(r[C.R_END] || r[C.R_START]),
+      ActivityType: C.AT_TODO,
+      Title:        r[C.TODO_TITLE] || "Todo",
+      Startdatum:   toBubbleDate(r[C.TODO_START]),
+      Slutdatum:    toBubbleDate(r[C.TODO_END] || r[C.TODO_START]),
       Category:     cat,
       color_hex:    colorFor(cat),
-      status:       r[C.R_STATUS] || null,
-      [C.A_COMPANY]: idOf(r[C.R_COMPANY]) || null,
+      status:       r[C.TODO_STATUS] || null,
+      [C.A_COMPANY]: idOf(r[C.TODO_COMPANY]) || null,
     };
   }
 
@@ -239,8 +239,8 @@ export function createActivityEngine(deps) {
     upsertBySourceId(bubbleId(c), mapComission(c), { write, compareFields: COMPARE });
   const upsertActivityForMatter = (m, { write = true } = {}) =>
     upsertBySourceId(bubbleId(m), mapMatter(m), { write, compareFields: COMPARE });
-  const upsertActivityForRemember = (r, { write = true } = {}) =>
-    upsertBySourceId(bubbleId(r), mapRemember(r), { write, compareFields: COMPARE });
+  const upsertActivityForTodo = (r, { write = true } = {}) =>
+    upsertBySourceId(bubbleId(r), mapTodo(r), { write, compareFields: COMPARE });
 
   // ── Constraint-byggare ─────────────────────────────────────────────────────
   // Default: bara innevarande år och framåt (filtrerar på KÄLLANS egna datum, ej
@@ -311,18 +311,18 @@ export function createActivityEngine(deps) {
     return report;
   }
 
-  async function syncRemembers(opts, sharedIndex) {
+  async function syncTodos(opts, sharedIndex) {
     const write = !!opts.write;
-    const report = { source: "remember", scanned: 0, create: 0, update: 0, noop: 0, errors: 0 };
+    const report = { source: "todo", scanned: 0, create: 0, update: 0, noop: 0, errors: 0 };
     let rows, index;
     try {
       index = sharedIndex || await loadActivityIndex();
-      rows = await bubbleFindAll(C.REMEMBER_TYPE, { constraints: buildConstraints(opts, C.R_START) });
-    } catch (e) { return { ...report, skipped: `typ "${C.REMEMBER_TYPE}" ej läsbar — verifiera REMEMBER_TYPE`, scan_error: errInfo(e) }; }
+      rows = await bubbleFindAll(C.TODO_TYPE, { constraints: buildConstraints(opts, C.TODO_START) });
+    } catch (e) { return { ...report, skipped: `typ "${C.TODO_TYPE}" ej läsbar — verifiera TODO_TYPE`, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const r of rows) {
-      try { tally(report, await upsertViaIndex(index, bubbleId(r), mapRemember(r), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) })); }
-      catch (e) { report.errors++; report.last_error = errInfo(e); log("remember err", bubbleId(r), errInfo(e)); }
+      try { tally(report, await upsertViaIndex(index, bubbleId(r), mapTodo(r), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) })); }
+      catch (e) { report.errors++; report.last_error = errInfo(e); log("todo err", bubbleId(r), errInfo(e)); }
     }
     return report;
   }
@@ -380,7 +380,7 @@ export function createActivityEngine(deps) {
   async function purgeOld(opts) {
     const write = !!opts.write;
     const before = opts.before || defaultSince();
-    const ours = new Set([C.AT_BOKNING, C.AT_ARENDE, C.AT_KOM_IHAG, C.AT_HOUSEKEEPING]);
+    const ours = new Set([C.AT_BOKNING, C.AT_ARENDE, C.AT_TODO, C.AT_HOUSEKEEPING]);
     const report = { source: "purge", before, candidates: 0, deleted: 0, would_delete: 0, errors: 0 };
     let all;
     try { all = await bubbleFindAll(C.ACTIVITY_TYPE, {}); }
@@ -402,7 +402,7 @@ export function createActivityEngine(deps) {
     switch (source) {
       case "comission": return syncComissions(opts);
       case "matter":    return syncMatters(opts);
-      case "remember":  return syncRemembers(opts);
+      case "todo":  return syncTodos(opts);
       case "tengella":  return syncTengella(opts);
       case "purge":     return purgeOld(opts);
       case "all": {
@@ -414,7 +414,7 @@ export function createActivityEngine(deps) {
         return {
           comission: await safe(syncComissions, "comission"),
           matter:    await safe(syncMatters, "matter"),
-          remember:  await safe(syncRemembers, "remember"),
+          todo:  await safe(syncTodos, "todo"),
           tengella:  await safe(syncTengella, "tengella"),
         };
       }
@@ -428,8 +428,8 @@ export function createActivityEngine(deps) {
     // write-through
     upsertActivityForComission,
     upsertActivityForMatter,
-    upsertActivityForRemember,
+    upsertActivityForTodo,
     // exponerade delar (för create-chain/popup-endpoints)
-    mapComission, mapMatter, mapRemember, mapTimeTableEvent, colorFor,
+    mapComission, mapMatter, mapTodo, mapTimeTableEvent, colorFor,
   };
 }
