@@ -3,10 +3,11 @@
   ------------------------------------------------------------------
   Klistras in i ett HTML-element i Bubble på kundens dashboard-sida.
 
-  KOPPLING I BUBBLE (fyll value="" med dynamiska uttryck):
-    #mira_data        =
-    #mira_company_id  =
-    #mira_api_host    = https://mira-exchange.onrender.com   (eller statiskt nedan)
+  KOPPLING I BUBBLE:
+    #mira_data        = Current User's Company's kpi_json
+                        ← läggs som INNEHÅLL i <textarea>, INTE i value="" (JSON har " som bryter attribut)
+    #mira_company_id  = Current User's Company's unique id     (value="")
+    #mira_api_host    = https://mira-exchange.onrender.com     (value="", redan ifyllt)
 
   FLÖDE:
     • Läsning: blocket renderar Current User's Company's kpi_json direkt.
@@ -114,7 +115,10 @@
 </style>
 
 <!-- Bubble fyller dessa (lämna tomma för preview med demo-data) -->
-<input type="hidden" id="mira_data"       value="">
+<!-- VIKTIGT: kpi_json läggs som INNEHÅLL i textarean, INTE i ett value="".
+     JSON innehåller " som bryter ett attribut. Lägg Bubble-uttrycket
+     "Current User's Company's kpi_json" mellan <textarea>-taggarna. -->
+<textarea id="mira_data" style="display:none" aria-hidden="true"></textarea>
 <input type="hidden" id="mira_company_id" value="">
 <input type="hidden" id="mira_api_host"   value="https://mira-exchange.onrender.com">
 
@@ -189,7 +193,7 @@
   ];
 
   function el(id){ return document.getElementById(id); }
-  function val(id){ var e=el(id); return e ? (e.value||'').trim() : ''; }
+  function val(id){ var e=el(id); if(!e) return ''; var v=(e.value!=null?e.value:e.textContent)||''; return v.trim(); }
   function num(v){ return (v===null||v===undefined||isNaN(v))?0:Number(v); }
 
   function fmtKr(v){

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kalender / Planering – prototyp</title>
+<style>
+  :root{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e;
+    --input:#2e3350; --toggle-off:#363b56;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --white-70:rgba(255,255,255,.70); --white-40:rgba(255,255,255,.40); --white-25:rgba(255,255,255,.25); --white-10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --yellow:#F5C842; --red:#E05A5A; --blue:#4C9AFF;
+    --border:rgba(255,255,255,.07);
+    --font:'Arial Black','Arial Bold',Arial,sans-serif; --font-body:Arial,sans-serif;
+    --c-bokning:#F47B30; --c-schema:#4C9AFF; --c-arende:#F5C842; --c-todo:#4CAF7D;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--base);color:var(--white);font-family:var(--font-body);font-size:13px;line-height:1.5;min-height:100vh}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 22px 60px}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:16px}
+  .brand{display:flex;align-items:center;gap:11px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--orange);box-shadow:0 0 10px var(--orange)}
+  .brand h1{font-family:var(--font);font-size:16px;font-weight:900;letter-spacing:-.3px;text-transform:uppercase}
+  .brand p{font-size:10px;color:var(--white-40);letter-spacing:1.8px;text-transform:uppercase;margin-top:1px}
+
+  .modetoggle{display:flex;background:var(--input);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .modetoggle button{background:transparent;border:none;color:var(--white-40);padding:8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:var(--font-body)}
+  .modetoggle button.on{background:var(--orange);color:#1c1206}
+
+  /* toolbar */
+  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .seg{display:flex;background:var(--input);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .seg button{background:transparent;border:none;color:var(--white-40);padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-body)}
+  .seg button:hover{color:var(--white-70)}
+  .seg button.on{background:var(--orange-dim);color:var(--orange)}
+  .navg{display:flex;align-items:center;gap:8px}
+  .nav-btn{background:var(--input);border:1px solid var(--border);color:var(--white-70);width:30px;height:30px;border-radius:7px;cursor:pointer;font-size:15px}
+  .nav-btn:hover{color:var(--orange);border-color:var(--orange)}
+  .today-btn{width:auto;padding:0 12px;font-size:12px;font-weight:700;height:30px;border-radius:7px;background:var(--input);border:1px solid var(--border);color:var(--white-70);cursor:pointer}
+  .period{font-family:var(--font);font-size:15px;font-weight:900;min-width:190px;text-align:center;text-transform:capitalize}
+  .spacer{flex:1}
+  .search{display:none;align-items:center;gap:8px;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:0 10px;height:34px;min-width:230px}
+  .search.show{display:flex}
+  .search input{background:transparent;border:none;color:var(--white);font-size:12px;outline:none;width:100%;font-family:var(--font-body)}
+  .search .kic{color:var(--white-40)}
+
+  /* layer + filter row */
+  .filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+  .chip{display:flex;align-items:center;gap:7px;background:var(--input);border:1px solid var(--border);border-radius:20px;padding:6px 13px 6px 11px;font-size:12px;cursor:pointer;color:var(--white-40);user-select:none}
+  .chip .d{width:9px;height:9px;border-radius:50%}
+  .chip.on{color:var(--white);border-color:var(--white-25)}
+  .chip.off{opacity:.45}
+  .chip .ct{font-size:10px;color:var(--white-40);background:var(--base);border-radius:9px;padding:0 6px;margin-left:1px}
+  .fdiv{width:1px;height:22px;background:var(--border);margin:0 2px}
+  select.flt{background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white-70);padding:7px 10px;font-size:12px;font-family:var(--font-body)}
+  select.flt:focus{outline:none;border-color:var(--orange)}
+
+  /* ===== YEAR ===== */
+  .yeargrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .mcell{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;transition:.15s;min-height:120px}
+  .mcell:hover{border-color:rgba(244,123,48,.45);background:var(--deep)}
+  .mcell.cur{border-color:var(--orange)}
+  .mcell .mh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .mcell .mn{font-family:var(--font);font-size:14px;text-transform:uppercase}
+  .mcell .mt{font-size:11px;color:var(--white-40)}
+  .barrow{display:flex;flex-direction:column;gap:5px}
+  .bar{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--white-70)}
+  .bar .track{flex:1;height:5px;background:var(--white-10);border-radius:3px;overflow:hidden}
+  .bar .fill{height:100%;border-radius:3px}
+  .bar .bn{width:14px;text-align:right;color:var(--white-40);font-size:10px}
+
+  /* ===== QUARTER ===== */
+  .qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .qmonth{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
+  .qmonth .mn{font-family:var(--font);font-size:13px;text-transform:uppercase;margin-bottom:10px;cursor:pointer}
+  .qmonth .mn:hover{color:var(--orange)}
+  .mini{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+  .mini .mdh{font-size:9px;color:var(--white-40);text-align:center;padding-bottom:2px}
+  .mini .md{aspect-ratio:1;border-radius:5px;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:var(--white-70);cursor:pointer;position:relative;gap:2px;padding-top:3px}
+  .mini .md:hover{background:var(--deep)}
+  .mini .md.empty{background:transparent;cursor:default}
+  .mini .md.today{outline:1.5px solid var(--orange)}
+  .mdots{display:flex;gap:2px}
+  .mdots .dd{width:4px;height:4px;border-radius:50%}
+
+  /* ===== MONTH ===== */
+  .monthgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .dh{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--white-40);text-align:center;padding:4px 0;font-weight:700}
+  .day{background:var(--panel);border:1px solid var(--border);border-radius:9px;min-height:104px;padding:7px;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+  .day:hover{border-color:rgba(244,123,48,.4)}
+  .day.out{opacity:.4}
+  .day.today{border-color:var(--orange)}
+  .day .dn{font-size:12px;font-weight:700;color:var(--white-70);align-self:flex-end}
+  .day.today .dn{color:var(--orange)}
+  .ev{font-size:10.5px;padding:3px 6px;border-radius:5px;border-left:3px solid;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--white)}
+  .more{font-size:10px;color:var(--white-40);padding-left:3px}
+
+  /* ===== WEEK / DAY (time grid) ===== */
+  .timewrap{display:flex;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .timeaxis{width:52px;flex-shrink:0;border-right:1px solid var(--border)}
+  .timeaxis .th{height:30px;border-bottom:1px solid transparent}
+  .timeaxis .hr{height:52px;font-size:10px;color:var(--white-40);text-align:right;padding:2px 7px 0 0;border-top:1px solid var(--border)}
+  .tcols{display:flex;flex:1}
+  .tcol{flex:1;border-right:1px solid var(--border);position:relative}
+  .tcol:last-child{border-right:none}
+  .tcol .ch{height:30px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-bottom:1px solid var(--border)}
+  .tcol .ch .wd{font-size:9px;color:var(--white-40);text-transform:uppercase;letter-spacing:.5px}
+  .tcol .ch .dd{font-size:13px;font-weight:700}
+  .tcol .ch.today .dd{color:var(--orange)}
+  .tbody{position:relative}
+  .hrline{height:52px;border-top:1px solid var(--border)}
+  .tev{position:absolute;left:3px;right:3px;border-radius:6px;border-left:3px solid;padding:4px 6px;font-size:10.5px;overflow:hidden;color:var(--white)}
+  .tev .tt{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tev .ts{font-size:9.5px;color:var(--white-70)}
+
+  /* day view side list */
+  .daywrap{display:grid;grid-template-columns:1fr 300px;gap:16px}
+  .agenda{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .agenda h3{font-family:var(--font);font-size:13px;text-transform:uppercase;margin-bottom:12px}
+  .ai{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+  .ai .bar2{width:3px;border-radius:2px;flex-shrink:0}
+  .ai .at{font-size:12px;font-weight:600}
+  .ai .as{font-size:11px;color:var(--white-40)}
+
+  .empty-hint{color:var(--white-40);font-size:12px;padding:30px;text-align:center}
+  .legend-note{font-size:11px;color:var(--white-40);margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <h1 id="brandTitle">Planering</h1>
+        <p>Mira · Carotte · prototyp</p>
+      </div>
+    </div>
+    <div class="modetoggle">
+      <button id="mKund" class="on" onclick="setMode('kund')">Kund-läge</button>
+      <button id="mCrm" onclick="setMode('crm')">CRM-läge</button>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="seg" id="zoomSeg"></div>
+    <div class="navg">
+      <button class="nav-btn" onclick="nav(-1)">‹</button>
+      <div class="period" id="periodLbl"></div>
+      <button class="nav-btn" onclick="nav(1)">›</button>
+      <button class="today-btn" onclick="goToday()">Idag</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="search" id="search">
+      <span class="kic">🔍</span>
+      <input id="kundSearch" placeholder="Sök kund…" oninput="onSearch(this.value)">
+    </div>
+  </div>
+
+  <div class="filters" id="filters"></div>
+
+  <div id="view"></div>
+  <div class="legend-note" id="legendNote"></div>
+</div>
+
+<script>
+var LAYERS = [
+  {key:'bokning', label:'Bokningar', color:'#F47B30'},
+  {key:'schema',  label:'Scheman (Tengella)', color:'#4C9AFF'},
+  {key:'arende',  label:'Ärenden', color:'#F5C842'},
+  {key:'todo',    label:'Todos', color:'#4CAF7D'}
+];
+var MONTHS = ['Januari','Februari','Mars','April','Maj','Juni','Juli','Augusti','September','Oktober','November','December'];
+var MSHORT = ['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'];
+var WD = ['Mån','Tis','Ons','Tor','Fre','Lör','Sön'];
+var KONTOR = ['EA Stockholm','EA Göteborg','Dice HQ','Klarna Sthlm'];
+var KUNDER = ['EA Games','Dice','Klarna','Spotify','King'];
+var STATUS = ['Bekräftad','Preliminär','Utkast','Genomförd'];
+
+var TODAY = new Date(); TODAY.setHours(0,0,0,0);
+var Y = TODAY.getFullYear();
+
+function mk(layer,title,mo,d,sh,eh,kund,kontor,status){
+  return {layer:layer,title:title,date:new Date(Y,mo,d),sh:sh,eh:eh,kund:kund,kontor:kontor,status:status};
+}
+var TM = TODAY.getMonth();
+var EVENTS = [
+  mk('bokning','Julfest EA',11,18,17,22,'EA Games','EA Stockholm','Bekräftad'),
+  mk('bokning','Lunchcatering',TM,4,11,13,'Klarna','Klarna Sthlm','Genomförd'),
+  mk('bokning','After Work Dice',TM,12,16,19,'Dice','Dice HQ','Bekräftad'),
+  mk('bokning','Frukostmöte',TM,12,8,10,'Spotify','EA Stockholm','Preliminär'),
+  mk('bokning','Sensommarfest',7,22,15,23,'King','EA Göteborg','Preliminär'),
+  mk('bokning','Kickoff vår',2,14,9,16,'EA Games','EA Stockholm','Bekräftad'),
+  mk('bokning','Avtackning',TM,19,14,17,'Klarna','Klarna Sthlm','Utkast'),
+  mk('bokning','Mingel release',9,8,17,20,'Dice','Dice HQ','Bekräftad'),
+  mk('schema','Pass: Anna',TM,12,7,15,'','EA Stockholm','Bekräftad'),
+  mk('schema','Pass: Johan',TM,12,15,23,'','EA Stockholm','Bekräftad'),
+  mk('schema','Pass: Mira',TM,4,8,16,'','Klarna Sthlm','Bekräftad'),
+  mk('schema','Pass: Erik',TM,5,8,16,'','Dice HQ','Bekräftad'),
+  mk('schema','Pass: Lina',TM,19,10,18,'','Klarna Sthlm','Bekräftad'),
+  mk('schema','Pass: Omar',6,3,8,16,'','EA Göteborg','Bekräftad'),
+  mk('schema','Pass: Sara',1,9,7,15,'','EA Stockholm','Bekräftad'),
+  mk('arende','Reklamation porslin',TM,12,10,11,'EA Games','EA Stockholm','Preliminär'),
+  mk('arende','Offertfråga',TM,6,13,14,'Spotify','EA Stockholm','Utkast'),
+  mk('arende','Fakturafråga HK',TM,20,9,10,'Klarna','Klarna Sthlm','Bekräftad'),
+  mk('arende','Bytt leveransadress',4,9,14,15,'Dice','Dice HQ','Genomförd'),
+  mk('arende','Allergianpassning',10,2,11,12,'King','EA Göteborg','Preliminär'),
+  mk('todo','Ring beställare',TM,12,9,9,'EA Games','EA Stockholm','Utkast'),
+  mk('todo','Skicka offert',TM,13,10,10,'Dice','Dice HQ','Utkast'),
+  mk('todo','Boka transport',TM,21,14,14,'Klarna','Klarna Sthlm','Utkast'),
+  mk('todo','Bekräfta meny',5,16,11,11,'Spotify','EA Stockholm','Utkast'),
+  mk('todo','Följ upp NPS',8,25,15,15,'King','EA Göteborg','Utkast')
+];
+
+var st = {
+  level:'ar', anchor:new Date(TODAY), mode:'kund',
+  on:{bokning:true,schema:true,arende:true,todo:true},
+  kund:'', kontor:'', status:''
+};
+var ZOOMS=[{k:'ar',l:'År'},{k:'kvartal',l:'Kvartal'},{k:'manad',l:'Månad'},{k:'vecka',l:'Vecka'},{k:'dag',l:'Dag'}];
+
+function color(layer){ var l=LAYERS.find(function(x){return x.key===layer;}); return l?l.color:'#888'; }
+function sameDay(a,b){ return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate(); }
+function visible(e){
+  if(!st.on[e.layer]) return false;
+  if(st.kund && e.kund!==st.kund) return false;
+  if(st.kontor && e.kontor!==st.kontor) return false;
+  if(st.status && e.status!==st.status) return false;
+  return true;
+}
+function evFor(d){ return EVENTS.filter(function(e){return visible(e)&&sameDay(e.date,d);}).sort(function(a,b){return a.sh-b.sh;}); }
+
+/* ---- toolbar ---- */
+function renderZoom(){
+  var s=document.getElementById('zoomSeg'); s.innerHTML='';
+  ZOOMS.forEach(function(z){ s.innerHTML+='<button class="'+(st.level===z.k?'on':'')+'" onclick="setLevel(\''+z.k+'\')">'+z.l+'</button>'; });
+}
+function renderFilters(){
+  var f=document.getElementById('filters'); var h='';
+  LAYERS.forEach(function(l){
+    var cnt=EVENTS.filter(function(e){return e.layer===l.key;}).length;
+    h+='<div class="chip '+(st.on[l.key]?'on':'off')+'" onclick="toggleLayer(\''+l.key+'\')">'+
+       '<span class="d" style="background:'+l.color+'"></span>'+l.label+'<span class="ct">'+cnt+'</span></div>';
+  });
+  h+='<div class="fdiv"></div>';
+  h+=fltSel('status','Status',STATUS);
+  h+=fltSel('kontor','Kontor',KONTOR);
+  if(st.mode==='crm') h+=fltSel('kund','Kund',KUNDER);
+  f.innerHTML=h;
+}
+function fltSel(key,lbl,opts){
+  var o='<option value="">'+lbl+': alla</option>'+opts.map(function(x){return '<option '+(st[key]===x?'selected':'')+'>'+x+'</option>';}).join('');
+  return '<select class="flt" onchange="setFilter(\''+key+'\',this.value)">'+o+'</select>';
+}
+
+/* ---- period label + nav ---- */
+function periodLabel(){
+  var a=st.anchor;
+  if(st.level==='ar') return ''+a.getFullYear();
+  if(st.level==='kvartal'){ var q=Math.floor(a.getMonth()/3)+1; return 'Q'+q+' '+a.getFullYear(); }
+  if(st.level==='manad') return MONTHS[a.getMonth()]+' '+a.getFullYear();
+  if(st.level==='vecka'){ var mon=weekStart(a); var sun=new Date(mon); sun.setDate(mon.getDate()+6);
+    return MSHORT[mon.getMonth()]+' '+mon.getDate()+'–'+sun.getDate()+', v'+isoWeek(mon); }
+  if(st.level==='dag') return WD[(a.getDay()+6)%7]+' '+a.getDate()+' '+MSHORT[a.getMonth()];
+  return '';
+}
+function nav(dir){
+  var a=st.anchor;
+  if(st.level==='ar') a.setFullYear(a.getFullYear()+dir);
+  else if(st.level==='kvartal') a.setMonth(a.getMonth()+dir*3);
+  else if(st.level==='manad') a.setMonth(a.getMonth()+dir);
+  else if(st.level==='vecka') a.setDate(a.getDate()+dir*7);
+  else if(st.level==='dag') a.setDate(a.getDate()+dir);
+  render();
+}
+function goToday(){ st.anchor=new Date(TODAY); render(); }
+function weekStart(d){ var m=new Date(d); var off=(m.getDay()+6)%7; m.setDate(m.getDate()-off); m.setHours(0,0,0,0); return m; }
+function isoWeek(d){ var t=new Date(d); t.setHours(0,0,0,0); t.setDate(t.getDate()+3-((t.getDay()+6)%7)); var w1=new Date(t.getFullYear(),0,4); return 1+Math.round(((t-w1)/86400000-3+((w1.getDay()+6)%7))/7); }
+
+/* ---- YEAR ---- */
+function renderYear(){
+  var h='<div class="yeargrid">';
+  for(var m=0;m<12;m++){
+    var counts={}; var max=0;
+    LAYERS.forEach(function(l){
+      var c=EVENTS.filter(function(e){return visible(e)&&e.date.getMonth()===m&&e.date.getFullYear()===st.anchor.getFullYear();}).filter(function(e){return e.layer===l.key;}).length;
+      counts[l.key]=c; if(c>max)max=c;
+    });
+    var cur=(m===TODAY.getMonth()&&st.anchor.getFullYear()===TODAY.getFullYear())?' cur':'';
+    var total=Object.keys(counts).reduce(function(s,k){return s+counts[k];},0);
+    h+='<div class="mcell'+cur+'" onclick="drillMonth('+m+')"><div class="mh"><span class="mn">'+MSHORT[m]+'</span><span class="mt">'+total+' händelser</span></div><div class="barrow">';
+    LAYERS.forEach(function(l){
+      var c=counts[l.key]; var w=max?Math.round(c/max*100):0;
+      h+='<div class="bar"><div class="track"><div class="fill" style="width:'+w+'%;background:'+l.color+'"></div></div><span class="bn">'+c+'</span></div>';
+    });
+    h+='</div></div>';
+  }
+  h+='</div>';
+  document.getElementById('view').innerHTML=h;
+}
+
+/* ---- QUARTER ---- */
+function renderQuarter(){
+  var q=Math.floor(st.anchor.getMonth()/3); var y=st.anchor.getFullYear();
+  var h='<div class="qgrid">';
+  for(var i=0;i<3;i++){ h+=miniMonth(q*3+i,y); }
+  h+='</div>';
+  document.getElementById('view').innerHTML=h;
+}
+function miniMonth(m,y){
+  var first=new Date(y,m,1); var off=(first.getDay()+6)%7; var dim=new Date(y,m+1,0).getDate();
+  var h='<div class="qmonth"><div class="mn" onclick="drillMonth('+m+')">'+MONTHS[m]+'</div><div class="mini">';
+  WD.forEach(function(w){h+='<div class="mdh">'+w[0]+'</div>';});
+  for(var i=0;i<off;i++) h+='<div class="md empty"></div>';
+  for(var d=1;d<=dim;d++){
+    var date=new Date(y,m,d); var evs=evFor(date);
+    var t=sameDay(date,TODAY)?' today':'';
+    var dots=''; var seen={};
+    evs.forEach(function(e){ if(!seen[e.layer]){seen[e.layer]=1; dots+='<span class="dd" style="background:'+color(e.layer)+'"></span>';} });
+    h+='<div class="md'+t+'" onclick="drillDay('+y+','+m+','+d+')">'+d+'<div class="mdots">'+dots+'</div></div>';
+  }
+  h+='</div></div>';
+  return h;
+}
+
+/* ---- MONTH ---- */
+function renderMonth(){
+  var y=st.anchor.getFullYear(), m=st.anchor.getMonth();
+  var first=new Date(y,m,1); var off=(first.getDay()+6)%7;
+  var start=new Date(y,m,1-off);
+  var h='<div class="monthgrid">';
+  WD.forEach(function(w){h+='<div class="dh">'+w+'</div>';});
+  for(var i=0;i<42;i++){
+    var d=new Date(start); d.setDate(start.getDate()+i);
+    var out=d.getMonth()!==m?' out':''; var t=sameDay(d,TODAY)?' today':'';
+    var evs=evFor(d);
+    h+='<div class="day'+out+t+'" onclick="drillDay('+d.getFullYear()+','+d.getMonth()+','+d.getDate()+')"><span class="dn">'+d.getDate()+'</span>';
+    evs.slice(0,3).forEach(function(e){
+      h+='<div class="ev" style="border-left-color:'+color(e.layer)+';background:'+color(e.layer)+'22">'+(e.sh?pad(e.sh)+' ':'')+e.title+'</div>';
+    });
+    if(evs.length>3) h+='<div class="more">+'+(evs.length-3)+' till</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  document.getElementById('view').innerHTML=h;
+}
+function pad(n){return (n<10?'0':'')+n;}
+
+/* ---- WEEK ---- */
+var H0=7,H1=23;
+function renderWeek(){
+  var mon=weekStart(st.anchor);
+  var days=[]; for(var i=0;i<7;i++){var d=new Date(mon);d.setDate(mon.getDate()+i);days.push(d);}
+  document.getElementById('view').innerHTML=timeGrid(days);
+}
+/* ---- DAY ---- */
+function renderDay(){
+  var d=new Date(st.anchor);
+  var h='<div class="daywrap"><div>'+timeGrid([d])+'</div>';
+  var evs=evFor(d);
+  h+='<div class="agenda"><h3>'+WD[(d.getDay()+6)%7]+' '+d.getDate()+' '+MSHORT[d.getMonth()]+'</h3>';
+  if(!evs.length) h+='<div class="empty-hint">Inga händelser denna dag.</div>';
+  evs.forEach(function(e){
+    h+='<div class="ai"><div class="bar2" style="background:'+color(e.layer)+'"></div><div><div class="at">'+e.title+'</div>'+
+       '<div class="as">'+pad(e.sh)+':00–'+pad(e.eh)+':00'+(e.kund?' · '+e.kund:'')+' · '+e.status+'</div></div></div>';
+  });
+  h+='</div></div>';
+  document.getElementById('view').innerHTML=h;
+}
+function timeGrid(days){
+  var h='<div class="timewrap"><div class="timeaxis"><div class="th"></div>';
+  for(var hr=H0;hr<=H1;hr++) h+='<div class="hr">'+pad(hr)+'</div>';
+  h+='</div><div class="tcols">';
+  days.forEach(function(d){
+    var t=sameDay(d,TODAY)?' today':'';
+    h+='<div class="tcol"><div class="ch'+t+'"><span class="wd">'+WD[(d.getDay()+6)%7]+'</span><span class="dd">'+d.getDate()+'</span></div><div class="tbody">';
+    for(var hr=H0;hr<=H1;hr++) h+='<div class="hrline"></div>';
+    evFor(d).forEach(function(e){
+      var top=(Math.max(e.sh,H0)-H0)*52; var hgt=Math.max((Math.min(e.eh,H1+1)-Math.max(e.sh,H0)),0.5)*52-4;
+      h+='<div class="tev" style="top:'+top+'px;height:'+hgt+'px;border-left-color:'+color(e.layer)+';background:'+color(e.layer)+'26">'+
+         '<div class="tt">'+e.title+'</div><div class="ts">'+pad(e.sh)+':00–'+pad(e.eh)+':00</div></div>';
+    });
+    h+='</div></div>';
+  });
+  h+='</div></div>';
+  return h;
+}
+
+/* ---- drill ---- */
+function drillMonth(m){ st.anchor=new Date(st.anchor.getFullYear(),m,1); st.level='manad'; render(); }
+function drillDay(y,m,d){ st.anchor=new Date(y,m,d); st.level='dag'; render(); }
+
+/* ---- controls ---- */
+function setLevel(k){ st.level=k; render(); }
+function toggleLayer(k){ st.on[k]=!st.on[k]; render(); }
+function setFilter(k,v){ st[k]=v; render(); }
+function setMode(m){
+  st.mode=m;
+  document.getElementById('mKund').classList.toggle('on',m==='kund');
+  document.getElementById('mCrm').classList.toggle('on',m==='crm');
+  document.getElementById('search').classList.toggle('show',m==='crm');
+  document.getElementById('brandTitle').textContent = m==='crm'?'Carotte CRM · Planering':'Planering';
+  if(m==='kund'){ st.kund=''; document.getElementById('kundSearch').value=''; }
+  render();
+}
+function onSearch(v){
+  var match=KUNDER.find(function(k){return k.toLowerCase().indexOf(v.toLowerCase())===0;});
+  st.kund = (v && match)?match:'';
+  render();
+}
+
+function render(){
+  renderZoom(); renderFilters();
+  document.getElementById('periodLbl').textContent=periodLabel();
+  if(st.level==='ar') renderYear();
+  else if(st.level==='kvartal') renderQuarter();
+  else if(st.level==='manad') renderMonth();
+  else if(st.level==='vecka') renderWeek();
+  else if(st.level==='dag') renderDay();
+  var note = st.mode==='crm'
+    ? 'CRM-läge: sök en kund ('+KUNDER.join(', ')+') så filtreras alla lager och vyer till den kunden. Klicka månad → dag för att zooma.'
+    : 'Kund-läge: vyn visar EN kunds planering. Klicka en månad för att zooma in, dag-vyn ner till timnivå. Toggla lager och filter ovan.';
+  document.getElementById('legendNote').textContent=note;
+}
+render();
+</script>
+</body>
+</html>

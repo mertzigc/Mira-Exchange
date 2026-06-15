@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skapa förfrågan – prototyp</title>
+<style>
+  :root{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e;
+    --input:#2e3350; --toggle-off:#363b56;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,0.13); --orange-glow:rgba(244,123,48,0.06);
+    --white:#fff; --white-70:rgba(255,255,255,.70); --white-40:rgba(255,255,255,.40); --white-10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --yellow:#F5C842; --red:#E05A5A;
+    --border:rgba(255,255,255,.07);
+    --font:'Arial Black','Arial Bold',Arial,sans-serif; --font-body:Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--base);color:var(--white);font-family:var(--font-body);font-size:13px;line-height:1.5;min-height:100vh}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px 60px}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:22px}
+  .brand{display:flex;align-items:center;gap:11px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--orange);box-shadow:0 0 10px var(--orange)}
+  .brand h1{font-family:var(--font);font-size:16px;font-weight:900;letter-spacing:-.3px;text-transform:uppercase}
+  .brand p{font-size:10px;color:var(--white-40);letter-spacing:1.8px;text-transform:uppercase;margin-top:1px}
+  .x-btn{background:var(--input);border:1px solid var(--border);color:var(--white-70);border-radius:7px;padding:7px 13px;cursor:pointer;font-size:12px}
+  .x-btn:hover{color:var(--orange);border-color:var(--orange)}
+
+  .layout{display:grid;grid-template-columns:200px 1fr 320px;gap:24px;align-items:start}
+
+  /* stepper */
+  .stepper{display:flex;flex-direction:column;gap:4px;position:sticky;top:18px}
+  .step{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:9px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .step:hover{background:var(--white-10)}
+  .step.active{background:var(--orange-dim);border-color:rgba(244,123,48,.35)}
+  .step.done .num{background:var(--green);border-color:var(--green);color:#0c1322}
+  .step .num{width:26px;height:26px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--white-70);background:var(--input);flex-shrink:0}
+  .step.active .num{background:var(--orange);border-color:var(--orange);color:#1c1206}
+  .step .lbl{font-size:12px;color:var(--white-70)}
+  .step.active .lbl{color:var(--white);font-weight:700}
+  .step .sub{font-size:10px;color:var(--white-40);margin-top:1px}
+
+  /* center panel */
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:26px 28px;min-height:430px}
+  .panel h2{font-family:var(--font);font-size:18px;font-weight:900;letter-spacing:-.2px;margin-bottom:4px}
+  .panel .hint{font-size:12px;color:var(--white-40);margin-bottom:22px}
+
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--white-40);margin-bottom:6px}
+  .field input,.field select,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--font-body)}
+  .field textarea{min-height:84px;resize:vertical}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+
+  /* path choice */
+  .paths{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:8px}
+  .pathcard{background:var(--card);border:1.5px solid var(--border);border-radius:13px;padding:22px 20px;cursor:pointer;transition:.15s}
+  .pathcard:hover{border-color:rgba(244,123,48,.5);background:var(--deep)}
+  .pathcard.sel{border-color:var(--orange);background:var(--orange-glow)}
+  .pathcard .ic{width:42px;height:42px;border-radius:10px;background:var(--input);display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:14px}
+  .pathcard.sel .ic{background:var(--orange);}
+  .pathcard h3{font-size:15px;font-weight:700;margin-bottom:6px}
+  .pathcard p{font-size:12px;color:var(--white-40);line-height:1.5}
+
+  /* offer gallery */
+  .gallery{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:20px}
+  .offer{background:var(--card);border:1.5px solid var(--border);border-radius:12px;overflow:hidden;cursor:pointer;transition:.15s}
+  .offer:hover{border-color:rgba(244,123,48,.5)}
+  .offer.sel{border-color:var(--orange)}
+  .offer .thumb{height:96px;background:linear-gradient(135deg,#3a4060,#2a2f4a);display:flex;align-items:center;justify-content:center;font-size:30px;color:var(--white-40)}
+  .offer .body{padding:13px 15px}
+  .offer .body h4{font-size:13px;font-weight:700;margin-bottom:4px}
+  .offer .body .meta{font-size:11px;color:var(--white-40)}
+  .offer .body .price{font-size:12px;color:var(--orange);font-weight:700;margin-top:7px}
+  .gallery-title{font-size:12px;color:var(--white-70);margin-top:24px;margin-bottom:2px;font-weight:700}
+
+  .tillagg{margin-top:6px}
+  .tline{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer}
+  .tline:hover{border-color:var(--white-40)}
+  .tline input{width:16px;height:16px;accent-color:var(--orange)}
+  .tline .tn{flex:1;font-size:12px}
+  .tline .tp{font-size:12px;color:var(--white-70)}
+
+  /* summary panel */
+  .summary{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;position:sticky;top:18px}
+  .summary .stag{display:inline-block;background:var(--orange-dim);color:var(--orange);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:4px 9px;border-radius:6px;margin-bottom:14px}
+  .summary h3{font-family:var(--font);font-size:14px;font-weight:900;margin-bottom:2px}
+  .summary .sdesc{font-size:11px;color:var(--white-40);margin-bottom:16px;line-height:1.5}
+  .srow{display:flex;justify-content:space-between;font-size:12px;padding:7px 0;border-bottom:1px solid var(--border)}
+  .srow .k{color:var(--white-40)}
+  .srow .v{color:var(--white);font-weight:600;text-align:right;max-width:60%}
+  .stot{margin-top:14px;padding-top:14px;border-top:1px solid var(--white-10)}
+  .stot .lab{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--white-40)}
+  .stot .big{font-family:var(--font);font-size:26px;font-weight:900;color:var(--orange);margin-top:3px}
+  .stot .sub{font-size:11px;color:var(--white-40);margin-top:2px}
+  .villkor{font-size:10.5px;color:var(--white-40);line-height:1.55;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+
+  /* nav */
+  .nav{display:flex;justify-content:space-between;align-items:center;margin-top:20px;gap:12px}
+  .btn{padding:12px 22px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--input);color:var(--white)}
+  .btn:hover{border-color:var(--white-40)}
+  .btn.ghost{background:transparent}
+  .btn.primary{background:var(--orange);border-color:var(--orange);color:#1c1206}
+  .btn.primary:hover{background:#ff8c45}
+  .btn:disabled{opacity:.35;cursor:not-allowed}
+  .btn-group{display:flex;gap:10px}
+
+  .reviewbox{background:var(--card);border:1px solid var(--border);border-radius:11px;padding:18px 20px;margin-bottom:14px}
+  .reviewbox h4{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--white-40);margin-bottom:12px}
+  .rrow{display:flex;justify-content:space-between;font-size:13px;padding:6px 0}
+  .rrow .k{color:var(--white-40)}
+  .rrow .v{font-weight:600;text-align:right}
+
+  /* success overlay */
+  .overlay{position:fixed;inset:0;background:rgba(12,15,28,.78);display:none;align-items:center;justify-content:center;z-index:50}
+  .overlay.show{display:flex}
+  .ov-card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:40px 44px;text-align:center;max-width:420px}
+  .ov-card .ok{width:62px;height:62px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:34px;margin:0 auto 18px;color:#0c1322}
+  .ov-card h2{font-family:var(--font);font-size:20px;margin-bottom:8px}
+  .ov-card p{font-size:13px;color:var(--white-70);margin-bottom:22px;line-height:1.6}
+
+  .badge-mode{font-size:10px;background:var(--input);border:1px solid var(--border);color:var(--white-40);padding:3px 8px;border-radius:5px;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <h1>Skapa förfrågan<span class="badge-mode">prototyp · mock-data</span></h1>
+        <p>Mira · Carotte</p>
+      </div>
+    </div>
+    <button class="x-btn" onclick="alert('Stänger wizard (mock).')">✕ Stäng</button>
+  </div>
+
+  <div class="layout">
+    <!-- STEPPER -->
+    <div class="stepper" id="stepper"></div>
+
+    <!-- CENTER -->
+    <div>
+      <div class="panel" id="panel"></div>
+      <div class="nav">
+        <button class="btn ghost" id="backBtn" onclick="go(-1)">← Tillbaka</button>
+        <div class="btn-group" id="fwdGroup">
+          <button class="btn primary" id="nextBtn" onclick="go(1)">Nästa →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUMMARY -->
+    <div class="summary" id="summary"></div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="ov-card">
+    <div class="ok">✓</div>
+    <h2 id="ovTitle">Förfrågan skickad</h2>
+    <p id="ovText"></p>
+    <button class="btn primary" onclick="resetAll()">Skapa en till</button>
+  </div>
+</div>
+
+<script>
+var OFFERS = [
+  {id:'julfest', name:'Julfest – Smakfull Mat & Magisk Stämning', ic:'🎄', kategori:'Mat & Event', pp:585, min:15,
+   desc:'Klassiska julsmaker i modern tappning. Komplett buffé med varma & kalla rätter.',
+   tillagg:[{id:'serv',n:'Serveringspersonal (4h)',p:5832},{id:'porslin',n:'Porslinspaket – jul',p:5400}]},
+  {id:'sensommar', name:'Sensommarfest – Smakfull Avslutning', ic:'🌅', kategori:'Mat & Event', pp:525, min:20,
+   desc:'Säsongens råvaror, grillat och svalkande. Perfekt för avslutningar utomhus.',
+   tillagg:[{id:'serv',n:'Serveringspersonal (4h)',p:5832},{id:'tomte',n:'Bar & dryckesstation',p:3200}]},
+  {id:'avtack', name:'Avtackning – Med Mousserande', ic:'🥂', kategori:'Mingel', pp:295, min:10,
+   desc:'Lättare tilltugg och bubbel för den fina avtackningen eller releasen.',
+   tillagg:[{id:'serv',n:'Serveringspersonal (3h)',p:4374}]},
+  {id:'vardagslyx', name:'Vardagslyx AW – Smaker & Bubblor', ic:'🍢', kategori:'After Work', pp:145, min:8,
+   desc:'Enkel vardagslyx till kontorets AW. Snacks och något gott i glaset.',
+   tillagg:[{id:'serv',n:'Serveringspersonal (2h)',p:2916}]}
+];
+var KONTOR = ['EA Stockholm','EA Göteborg','Dice HQ','Klarna Sthlm'];
+var KATEGORIER = ['Catering / Mat','Städning','Personal / Bemanning','Hantverk','Transport','Övrigt'];
+var LEVERANTORER = ['Carotte Food & Event','Carotte Housekeeping','Carotte Staff'];
+
+var STEPS = [
+  {t:'Välj väg', s:'Erbjudande eller fritt'},
+  {t:'Eventdata', s:'Datum, plats, antal'},
+  {t:'Detaljer', s:'Titel, beskrivning'},
+  {t:'Granska & skicka', s:'Sammanställning'}
+];
+
+var st = newState();
+function newState(){
+  return {step:0, path:null, offerId:null, tillagg:{},
+    datum:'', tid:'12:00', slutdatum:'', plats:'', kontor:'', antal:30,
+    titel:'', bestallare:'', leverantor:'', kategori:'', beskrivning:'', budget:'', po:''};
+}
+function offer(){ return OFFERS.find(function(o){return o.id===st.offerId;}); }
+function kr(n){ return Math.round(n).toLocaleString('sv-SE'); }
+
+function calc(){
+  var o=offer(); if(st.path!=='erbjudande'||!o) return null;
+  var base=o.pp*(+st.antal||0); var add=0; var lines=[];
+  o.tillagg.forEach(function(t){ if(st.tillagg[t.id]){ add+=t.p; lines.push(t);} });
+  return {pp:o.pp, base:base, lines:lines, add:add, total:base+add};
+}
+
+function renderStepper(){
+  var el=document.getElementById('stepper'); el.innerHTML='';
+  STEPS.forEach(function(s,i){
+    var cls='step'+(i===st.step?' active':'')+(i<st.step?' done':'');
+    var num=i<st.step?'✓':(i+1);
+    el.innerHTML+='<div class="'+cls+'" onclick="jump('+i+')"><div class="num">'+num+'</div>'+
+      '<div><div class="lbl">'+s.t+'</div><div class="sub">'+s.s+'</div></div></div>';
+  });
+}
+
+function renderPanel(){
+  var p=document.getElementById('panel'); var h='';
+  if(st.step===0){
+    h+='<h2>Hur vill du börja?</h2><div class="hint">Samma flöde oavsett väg – ett erbjudande förifyller stegen, fritt ger dig tomma fält.</div>';
+    h+='<div class="paths">'+
+      pathCard('erbjudande','📦','Välj ett erbjudande','Paketerad produkt med pris och innehåll. Du justerar bara eventdata – resten är serverat.')+
+      pathCard('fritt','✏️','Bygg fritt','Beskriv din förfrågan från scratch. Du sätter kategori, leverantör och budget själv.')+
+    '</div>';
+    if(st.path==='erbjudande'){
+      h+='<div class="gallery-title">Välj erbjudande</div><div class="gallery">';
+      OFFERS.forEach(function(o){
+        h+='<div class="offer'+(st.offerId===o.id?' sel':'')+'" onclick="pickOffer(\''+o.id+'\')">'+
+           '<div class="thumb">'+o.ic+'</div><div class="body"><h4>'+o.name+'</h4>'+
+           '<div class="meta">'+o.kategori+' · min '+o.min+' pers</div>'+
+           '<div class="price">från '+kr(o.pp)+' kr/person</div></div></div>';
+      });
+      h+='</div>';
+    }
+  }
+  else if(st.step===1){
+    h+='<h2>Eventdata</h2><div class="hint">När, var och hur många. Sammanställningen till höger uppdateras live.</div>';
+    h+='<div class="row2">'+fInput('datum','Leveransdatum','date')+fInput('tid','Tid','time')+'</div>';
+    h+='<div class="row2">'+fInput('slutdatum','Ev. slutdatum','date')+fInput('antal','Antal deltagare','number')+'</div>';
+    h+=fInput('plats','Plats / adress','text','Börja skriv adressen…');
+    h+=fSelect('kontor','Vilket kontor tillhör förfrågan?',KONTOR);
+    var o=offer();
+    if(st.path==='erbjudande'&&o&&o.tillagg.length){
+      h+='<div class="field"><label>Tillägg</label><div class="tillagg">';
+      o.tillagg.forEach(function(t){
+        h+='<label class="tline"><input type="checkbox" '+(st.tillagg[t.id]?'checked':'')+' onchange="toggleAdd(\''+t.id+'\',this.checked)">'+
+           '<span class="tn">'+t.n+'</span><span class="tp">+'+kr(t.p)+' kr</span></label>';
+      });
+      h+='</div></div>';
+    }
+  }
+  else if(st.step===2){
+    h+='<h2>Detaljer</h2><div class="hint">Det leverantören behöver för att svara på din förfrågan.</div>';
+    h+=fInput('titel','Titel på event','text','T.ex. Avdelningens julfest');
+    h+='<div class="row2">'+fInput('bestallare','Beställare (e-post)','text','sök medarbetare…')+fSelect('leverantor','Leverantör',LEVERANTORER)+'</div>';
+    if(st.path==='fritt'){
+      h+='<div class="row2">'+fSelect('kategori','Kategori',KATEGORIER)+fInput('budget','Budget (kr)','number','Valfritt')+'</div>';
+    }else{
+      h+='<div class="field"><label>Kategori (från erbjudande)</label><input value="'+(offer()?offer().kategori:'')+'" disabled style="opacity:.6"></div>';
+    }
+    h+=fArea('beskrivning','Meddelande / önskemål','Skriv gärna ner dina kommentarer och frågor…');
+    h+=fInput('po','PO-nummer','text','Valfritt');
+    h+='<div class="field"><label>Bilagor</label><div style="border:1px dashed var(--border);border-radius:8px;padding:18px;text-align:center;color:var(--white-40);cursor:pointer">＋ Klicka för att ladda upp fil (mock)</div></div>';
+  }
+  else if(st.step===3){
+    h+='<h2>Granska & skicka</h2><div class="hint">Kontrollera och skicka. Förfrågan blir en Lead som Carotte tar vidare till offert.</div>';
+    h+='<div class="reviewbox"><h4>Förfrågan</h4>'+
+       rRow('Väg', st.path==='erbjudande'?('Erbjudande – '+(offer()?offer().name:'')):'Bygg fritt')+
+       rRow('Titel', st.titel||'—')+ rRow('Kontor', st.kontor||'—')+
+       rRow('Leverantör', st.leverantor||'—')+ rRow('Kategori', st.path==='fritt'?(st.kategori||'—'):(offer()?offer().kategori:'—'))+'</div>';
+    h+='<div class="reviewbox"><h4>Tid & plats</h4>'+
+       rRow('Datum', (st.datum||'—')+' '+st.tid)+ rRow('Ev. slut', st.slutdatum||'—')+
+       rRow('Plats', st.plats||'—')+ rRow('Antal deltagare', st.antal||'—')+'</div>';
+    h+='<div class="reviewbox"><h4>Meddelande</h4><div style="font-size:13px;color:var(--white-70);white-space:pre-wrap">'+(st.beskrivning||'—')+'</div></div>';
+    var villkor='Er förfrågan är inte bindande och priser är preliminära. En projektledare på Carotte återkopplar med en offert. Tveka inte att höra av dig om du har frågor.';
+    h+='<div class="villkor" style="border-top:none;padding-top:0">'+villkor+'</div>';
+  }
+  p.innerHTML=h;
+  bindFields();
+}
+
+function pathCard(id,ic,t,d){
+  return '<div class="pathcard'+(st.path===id?' sel':'')+'" onclick="pickPath(\''+id+'\')">'+
+    '<div class="ic">'+ic+'</div><h3>'+t+'</h3><p>'+d+'</p></div>';
+}
+function fInput(k,l,type,ph){ return '<div class="field"><label>'+l+'</label><input id="f_'+k+'" type="'+type+'" value="'+(st[k]||'')+'" placeholder="'+(ph||'')+'"></div>'; }
+function fArea(k,l,ph){ return '<div class="field"><label>'+l+'</label><textarea id="f_'+k+'" placeholder="'+(ph||'')+'">'+(st[k]||'')+'</textarea></div>'; }
+function fSelect(k,l,opts){
+  var o='<option value="">Välj…</option>'+opts.map(function(x){return '<option '+(st[k]===x?'selected':'')+'>'+x+'</option>';}).join('');
+  return '<div class="field"><label>'+l+'</label><select id="f_'+k+'">'+o+'</select></div>';
+}
+function rRow(k,v){ return '<div class="rrow"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>'; }
+
+function bindFields(){
+  ['datum','tid','slutdatum','plats','antal','titel','bestallare','beskrivning','budget','po','kontor','leverantor','kategori'].forEach(function(k){
+    var el=document.getElementById('f_'+k); if(!el) return;
+    el.addEventListener('input',function(){ st[k]=el.value; renderSummary(); });
+    el.addEventListener('change',function(){ st[k]=el.value; renderSummary(); });
+  });
+}
+
+function renderSummary(){
+  var el=document.getElementById('summary'); var h='';
+  var c=calc();
+  if(st.path==='erbjudande'&&offer()){
+    var o=offer();
+    h+='<span class="stag">Erbjudande</span>';
+    h+='<h3>'+o.name+'</h3><div class="sdesc">'+o.desc+'</div>';
+    h+='<div class="srow"><span class="k">Pris per person</span><span class="v">'+kr(o.pp)+' kr</span></div>';
+    h+='<div class="srow"><span class="k">Antal gäster</span><span class="v">'+(st.antal||0)+'</span></div>';
+    h+='<div class="srow"><span class="k">Delsumma</span><span class="v">'+kr(c.base)+' kr</span></div>';
+    c.lines.forEach(function(t){ h+='<div class="srow"><span class="k">'+t.n+'</span><span class="v">'+kr(t.p)+' kr</span></div>'; });
+    h+='<div class="stot"><div class="lab">Total preliminär kostnad</div><div class="big">'+kr(c.total)+' kr</div><div class="sub">ex. moms · preliminärt</div></div>';
+    if((+st.antal||0)<o.min) h+='<div class="villkor" style="color:var(--yellow)">Obs: minimum '+o.min+' personer för detta erbjudande.</div>';
+  } else if(st.path==='fritt'){
+    h+='<span class="stag">Fri förfrågan</span><h3>Din förfrågan</h3><div class="sdesc">Ingen paketprislista – Carotte återkommer med offert utifrån dina önskemål.</div>';
+    h+='<div class="srow"><span class="k">Kategori</span><span class="v">'+(st.kategori||'—')+'</span></div>';
+    h+='<div class="srow"><span class="k">Antal</span><span class="v">'+(st.antal||'—')+'</span></div>';
+    h+='<div class="srow"><span class="k">Datum</span><span class="v">'+(st.datum||'—')+'</span></div>';
+    h+='<div class="srow"><span class="k">Plats</span><span class="v" style="font-size:11px">'+(st.plats||'—')+'</span></div>';
+    if(st.budget) h+='<div class="stot"><div class="lab">Angiven budget</div><div class="big">'+kr(st.budget)+' kr</div></div>';
+  } else {
+    h+='<span class="stag">Sammanställning</span><h3>Välj en väg</h3><div class="sdesc">Välj erbjudande eller fri förfrågan för att börja. Panelen fylls i medan du går framåt.</div>';
+  }
+  el.innerHTML=h;
+}
+
+function renderNav(){
+  document.getElementById('backBtn').style.visibility = st.step===0?'hidden':'visible';
+  var g=document.getElementById('fwdGroup');
+  if(st.step===STEPS.length-1){
+    g.innerHTML='<button class="btn ghost" onclick="submit(true)">Spara utkast</button>'+
+                '<button class="btn primary" onclick="submit(false)">Skicka förfrågan →</button>';
+  } else {
+    g.innerHTML='<button class="btn primary" id="nextBtn" onclick="go(1)">Nästa →</button>';
+    var nb=document.getElementById('nextBtn');
+    if(st.step===0 && (!st.path || (st.path==='erbjudande'&&!st.offerId))) nb.disabled=true;
+  }
+}
+
+function render(){ renderStepper(); renderPanel(); renderSummary(); renderNav(); }
+
+function pickPath(id){ st.path=id; if(id==='fritt') st.offerId=null; render(); }
+function pickOffer(id){ st.offerId=id; st.tillagg={}; render(); }
+function toggleAdd(id,on){ st.tillagg[id]=on; renderSummary(); }
+function go(dir){
+  if(dir>0 && st.step===0 && (!st.path||(st.path==='erbjudande'&&!st.offerId))) return;
+  st.step=Math.max(0,Math.min(STEPS.length-1,st.step+dir)); render(); window.scrollTo(0,0);
+}
+function jump(i){ if(i<=st.step) { st.step=i; render(); } }
+function submit(draft){
+  document.getElementById('ovTitle').textContent = draft?'Utkast sparat':'Förfrågan skickad';
+  document.getElementById('ovText').textContent = draft
+    ? 'Din förfrågan ligger som utkast i Mira. Den syns inte för leverantören förrän du skickar den.'
+    : 'Förfrågan är nu en Lead hos Carotte. Du får en bekräftelse och därefter en offert. Status blir "Bekräftad" i Mira efter godkännande.';
+  document.getElementById('overlay').classList.add('show');
+}
+function resetAll(){ st=newState(); document.getElementById('overlay').classList.remove('show'); render(); }
+
+render();
+</script>
+</body>
+</html>
