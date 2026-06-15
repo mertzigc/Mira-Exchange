@@ -177,7 +177,15 @@ Inline-block i `index.js` FÖRE `app.listen` (mönster som `LANDING`/`public/req
 
 **Curl-ordning (Christian):** `/schema` först (rätta config) → `/bootstrap` + `/offers` + `/users` (verifiera läs-shapes) → `/create` med `mode:"diff"` (granska plan) → `mode:"write"` på en testförfrågan.
 
-**KVAR drop 2:** HTML-modulen `mira-forfragan-skapa.html` (bygg om prototypen mot endpoint-kontraktet — recurrence-UI, specialkost lånad från invite.html, conditional underkategori, erbjudande-rikedom, Capacity/Extern lokal-validering, levande kostnadspanel).
+**BYGGT drop 2 — `mira-forfragan-skapa.html` (produktionsmodul):** KPI-injektionsmönster (#mira_company_id/#mira_company_name/#mira_api_host/#mira_planning_token). Carotte mörkt tema + DM Serif-rubrik (vit + orange #db6923 kundnamn). 4-stegs wizard (Välj väg→Eventdata→Detaljer→Granska) + levande kostnadspanel höger. Erbjudande-väg: två flikar (För er/Allmänna) från offers-endpointen, full rikedom, Capacity-validering (antal≤capacity blockerar Nästa+submit), Extern lokal → plats blir select av lokalerna. Fritt-väg: kontor-select (fyller office_address i plats), kategori→conditional underkategori (FYI filtreras bort), budget-slider, Upprepa (recurrence + "till"-datum). Specialkost = allergen-chips med antal (lånat från invite.html, ALLERGENS-lista) när effektiv kategori=Food & Event → skickas som [{name,count}]. Beställare = multiselect via /users-sök (chips, en lead+coworker per st). Submit→POST /create mode:write (Skicka=sent/Utkast=draft). DEMO-fallback utan company_id. JS-syntax verifierad (node --check på extraherat script).
+
+**Att testa wizarden:** sätt #mira_planning_token i HTML + embedda i Bubble (kund med company_id). Eller curl:a /create direkt (se nedan). Verifiera mot riktig kund: erbjudanden laddar i rätt flik, kontor fyller adress, specialkost-chips, beställar-sök, recurrence-serie i granska, submit skapar commission+serie+lead+coworker+notify.
+
+**KVAR/följdjobb:**
+- **Produkttillägg**: offers-endpointen returnerar råa product-ids (inga namn/priser) → wizarden renderar dem inte som valbara än. Behöver ev. /admin/forfragan/products-resolve (id→namn/pris) för tillvals-UI + korrekt kostnadspanel. Idag: kostnad = PrisPerPerson × antal.
+- **commission_new-mallens copy** aligna mot spec-body (emailer.js tmplCommissionNew, läser e.commission_title lowercase → faller på extra.title som nu skickas).
+- recurrence-fältnamnen (Bubble-gruppering) bekräfta.
+- Lägg /sync/activities i nattliga cron (separat spår).
 
 ## Nästa steg
 1. Testa kalendern (deploy + curl + Bubble-embed).

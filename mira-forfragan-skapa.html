@@ -1,0 +1,528 @@
+<!--
+  MIRA – SKAPA FÖRFRÅGAN (wizard)
+  ------------------------------------------------------------------
+  Klistras in i ett HTML-element i Bubble (kundens portal). Kundens flöde för att
+  skapa en bokningsförfrågan: commission → (recurrence-serie) → Activity → notify →
+  Lead per beställare → Coworker.Bokningar. ALL intelligens i Render-endpoints
+  (/admin/forfragan/*). Master-Bubble-nyckeln stannar server-side.
+
+  KOPPLING I BUBBLE (value=""):
+    #mira_company_id      = Current User's Company's unique id
+    #mira_company_name    = Current User's Company's Name_company
+    #mira_api_host        = https://mira-exchange.onrender.com   (redan ifyllt)
+    #mira_planning_token  = (sätt = PLANNING_ADMIN_TOKEN, annars CASPECO_ADMIN_TOKEN)
+
+  Tomt company_id → DEMO-läge (preview, skriver inget).
+-->
+<input type="hidden" id="mira_company_id" value="">
+<input type="hidden" id="mira_company_name" value="">
+<input type="hidden" id="mira_api_host" value="https://mira-exchange.onrender.com">
+<input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .ff-wrap, .ff-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .ff-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e;
+    --input:#2e3350; --toggle-off:#363b56;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13); --orange-glow:rgba(244,123,48,.06);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --yellow:#F5C842; --red:#E05A5A;
+    --border:rgba(255,255,255,.07);
+    --font:'Arial Black','Arial Bold',Arial,sans-serif; --fb:Arial,sans-serif;
+    background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;width:100%;border-radius:14px;padding:0 20px 50px;
+  }
+  .ff-top{display:flex;align-items:center;justify-content:space-between;padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:20px}
+  .ff-h1{font-family:'DM Serif Display',Georgia,serif;font-size:27px;line-height:1.05;letter-spacing:-.01em}
+  .ff-h1 span{color:#db6923}
+  .ff-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;margin-top:3px;text-transform:uppercase}
+  .ff-badge{font-size:10px;background:var(--input);border:1px solid var(--border);color:var(--w40);padding:3px 8px;border-radius:5px;margin-left:9px;vertical-align:middle}
+
+  .ff-layout{display:grid;grid-template-columns:200px 1fr 320px;gap:24px;align-items:start}
+  @media (max-width:920px){.ff-layout{grid-template-columns:1fr}}
+
+  .ff-stepper{display:flex;flex-direction:column;gap:4px;position:sticky;top:14px}
+  @media (max-width:920px){.ff-stepper{flex-direction:row;overflow:auto;position:static}}
+  .ff-step{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:9px;cursor:pointer;border:1px solid transparent;transition:.15s}
+  .ff-step:hover{background:var(--w10)}
+  .ff-step.active{background:var(--orange-dim);border-color:rgba(244,123,48,.35)}
+  .ff-step.done .num{background:var(--green);border-color:var(--green);color:#0c1322}
+  .ff-step .num{width:26px;height:26px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--w70);background:var(--input);flex-shrink:0}
+  .ff-step.active .num{background:var(--orange);border-color:var(--orange);color:#1c1206}
+  .ff-step .lbl{font-size:12px;color:var(--w70)} .ff-step.active .lbl{color:var(--white);font-weight:700}
+  .ff-step .sub{font-size:10px;color:var(--w40);margin-top:1px}
+
+  .ff-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px 26px;min-height:420px}
+  .ff-panel h2{font-family:'DM Serif Display',Georgia,serif;font-size:21px;margin-bottom:3px}
+  .ff-panel .hint{font-size:12px;color:var(--w40);margin-bottom:20px}
+
+  .field{margin-bottom:15px}
+  .field label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px}
+  .field input,.field select,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .field textarea{min-height:84px;resize:vertical}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .field .ro{opacity:.6;cursor:not-allowed}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:13px}
+
+  .paths{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:6px}
+  .pathcard{background:var(--card);border:1.5px solid var(--border);border-radius:13px;padding:20px;cursor:pointer;transition:.15s}
+  .pathcard:hover{border-color:rgba(244,123,48,.5);background:var(--deep)}
+  .pathcard.sel{border-color:var(--orange);background:var(--orange-glow)}
+  .pathcard .ic{width:42px;height:42px;border-radius:10px;background:var(--input);display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:13px}
+  .pathcard.sel .ic{background:var(--orange)}
+  .pathcard h3{font-size:15px;font-weight:700;margin-bottom:5px} .pathcard p{font-size:12px;color:var(--w40)}
+
+  .ff-tabs{display:flex;gap:8px;margin:20px 0 4px}
+  .ff-tab{background:var(--input);border:1px solid var(--border);color:var(--w40);padding:7px 13px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer}
+  .ff-tab.on{background:var(--orange-dim);color:var(--orange);border-color:rgba(244,123,48,.35)}
+  .gallery{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:14px}
+  @media (max-width:560px){.gallery{grid-template-columns:1fr}}
+  .offer{background:var(--card);border:1.5px solid var(--border);border-radius:12px;overflow:hidden;cursor:pointer;transition:.15s}
+  .offer:hover{border-color:rgba(244,123,48,.5)} .offer.sel{border-color:var(--orange)}
+  .offer .thumb{height:96px;background:linear-gradient(135deg,#3a4060,#2a2f4a);background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-size:30px;color:var(--w40)}
+  .offer .body{padding:12px 14px} .offer .body h4{font-size:13px;font-weight:700;margin-bottom:4px}
+  .offer .body .meta{font-size:11px;color:var(--w40)} .offer .body .price{font-size:12px;color:var(--orange);font-weight:700;margin-top:6px}
+  .empty{font-size:12px;color:var(--w40);padding:18px;text-align:center;border:1px dashed var(--border);border-radius:10px;margin-top:12px}
+
+  .offerview{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .offerview h3{font-family:'DM Serif Display',Georgia,serif;font-size:18px;margin-bottom:6px}
+  .offerview .od{font-size:12px;color:var(--w70);line-height:1.55;margin-bottom:10px}
+  .offerview .ometa{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+  .chiptag{font-size:11px;background:var(--input);border:1px solid var(--border);color:var(--w70);padding:4px 9px;border-radius:6px}
+
+  /* recurrence + allergener + chips */
+  .tillagg,.allergens{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+  .chip{display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:12px;cursor:pointer;user-select:none}
+  .chip[aria-pressed="true"]{border-color:var(--orange);background:var(--orange-glow);color:var(--orange)}
+  .chip .cnt{display:inline-flex;align-items:center;gap:5px;margin-left:2px}
+  .chip .cnt b{min-width:14px;text-align:center} .chip .stp{width:17px;height:17px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1}
+  .tline{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:7px;cursor:pointer}
+  .tline input{width:16px;height:16px;accent-color:var(--orange)} .tline .tn{flex:1;font-size:12px}
+
+  .bsearch{position:relative}
+  .bdd{display:none;position:absolute;top:42px;left:0;right:0;background:var(--panel);border:1px solid var(--border);border-radius:9px;max-height:230px;overflow:auto;z-index:40;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .bdd.on{display:block}
+  .bddrow{padding:9px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--w70)}
+  .bddrow:hover{background:var(--deep);color:var(--white)} .bddrow:last-child{border-bottom:none}
+  .bchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+  .bchip{display:flex;align-items:center;gap:7px;background:var(--orange-glow);border:1px solid rgba(244,123,48,.35);color:var(--orange);border-radius:18px;padding:5px 10px;font-size:12px}
+  .bchip b{cursor:pointer;font-weight:700}
+
+  input[type=range]{accent-color:var(--orange)}
+  .slidewrap{display:flex;align-items:center;gap:12px} .slideval{font-weight:700;color:var(--orange);min-width:90px;text-align:right}
+
+  /* summary */
+  .summary{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;position:sticky;top:14px}
+  .summary .stag{display:inline-block;background:var(--orange-dim);color:var(--orange);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:4px 9px;border-radius:6px;margin-bottom:13px}
+  .summary h3{font-family:'DM Serif Display',Georgia,serif;font-size:16px;margin-bottom:2px}
+  .summary .sdesc{font-size:11px;color:var(--w40);margin-bottom:14px;line-height:1.5}
+  .srow{display:flex;justify-content:space-between;font-size:12px;padding:7px 0;border-bottom:1px solid var(--border)}
+  .srow .k{color:var(--w40)} .srow .v{color:var(--white);font-weight:600;text-align:right;max-width:60%}
+  .stot{margin-top:13px;padding-top:13px;border-top:1px solid var(--w10)}
+  .stot .lab{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--w40)}
+  .stot .big{font-family:'DM Serif Display',Georgia,serif;font-size:26px;color:var(--orange);margin-top:3px}
+  .stot .sub{font-size:11px;color:var(--w40);margin-top:2px}
+  .warn{font-size:11px;color:var(--yellow);margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  .villkor{font-size:10.5px;color:var(--w40);line-height:1.55;margin-top:13px;padding-top:13px;border-top:1px solid var(--border)}
+
+  .reviewbox{background:var(--card);border:1px solid var(--border);border-radius:11px;padding:16px 18px;margin-bottom:13px}
+  .reviewbox h4{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--w40);margin-bottom:11px}
+  .rrow{display:flex;justify-content:space-between;font-size:13px;padding:6px 0} .rrow .k{color:var(--w40)} .rrow .v{font-weight:600;text-align:right;max-width:62%}
+
+  .ff-nav{display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:12px}
+  .btn{padding:12px 22px;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--input);color:var(--white)}
+  .btn:hover{border-color:var(--w40)} .btn.ghost{background:transparent}
+  .btn.primary{background:var(--orange);border-color:var(--orange);color:#1c1206} .btn.primary:hover{background:#ff8c45}
+  .btn:disabled{opacity:.35;cursor:not-allowed} .btn-group{display:flex;gap:10px}
+
+  .overlay{position:fixed;inset:0;background:rgba(12,15,28,.8);display:none;align-items:center;justify-content:center;z-index:60}
+  .overlay.show{display:flex}
+  .ov-card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:38px 42px;text-align:center;max-width:430px}
+  .ov-card .ok{width:60px;height:60px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 16px;color:#0c1322}
+  .ov-card .ok.err{background:var(--red)}
+  .ov-card h2{font-family:'DM Serif Display',Georgia,serif;font-size:20px;margin-bottom:8px}
+  .ov-card p{font-size:13px;color:var(--w70);margin-bottom:20px;line-height:1.6}
+</style>
+
+<div class="ff-wrap">
+  <div class="ff-top">
+    <div>
+      <div class="ff-h1">Skapa <span id="ffCompany">förfrågan</span></div>
+      <div class="ff-sub">Mira · Carotte<span class="ff-badge" id="ffMode" style="display:none">demo</span></div>
+    </div>
+  </div>
+
+  <div class="ff-layout">
+    <div class="ff-stepper" id="ffStepper"></div>
+    <div>
+      <div class="ff-panel" id="ffPanel"></div>
+      <div class="ff-nav">
+        <button class="btn ghost" id="ffBack" onclick="ffGo(-1)">← Tillbaka</button>
+        <div class="btn-group" id="ffFwd"><button class="btn primary" onclick="ffGo(1)">Nästa →</button></div>
+      </div>
+    </div>
+    <div class="summary" id="ffSummary"></div>
+  </div>
+</div>
+
+<div class="overlay" id="ffOverlay">
+  <div class="ov-card">
+    <div class="ok" id="ffOk">✓</div>
+    <h2 id="ffOvTitle">Förfrågan skickad</h2>
+    <p id="ffOvText"></p>
+    <button class="btn primary" onclick="ffReset()">Skapa en till</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var HOST = (document.getElementById('mira_api_host').value || 'https://mira-exchange.onrender.com').replace(/\/$/,'');
+  var TOKEN = document.getElementById('mira_planning_token').value || '';
+  var COMPANY = (document.getElementById('mira_company_id').value || '').trim();
+  var COMPANY_NAME = (document.getElementById('mira_company_name').value || '').trim();
+  var DEMO = !COMPANY;
+
+  // ── data (fylls av bootstrap/offers; demo-fallback) ──
+  var BOOT = { offices:[], supplier_id:null, categories:[], subcategories:{}, recurrence_rules:[] };
+  var OFFERS = { general:[], unique:[] };
+  var ALLERGENS = ["Gluten","Skaldjur","Ägg","Fisk","Jordnötter","Sojabönor","Mjölk/laktos","Nötter","Selleri","Senap","Sesamfrö","Svaveldioxid/sulfit","Lupin","Blötdjur"];
+
+  var DEMO_BOOT = {
+    offices:[{id:'o1',name:'Huvudkontoret',address:'Sveavägen 1, Stockholm'},{id:'o2',name:'Filial Göteborg',address:'Avenyn 5, Göteborg'}],
+    supplier_id:'demo-supplier',
+    categories:["Food & Event","Housekeeping","Staff","Other facility services"],
+    subcategories:{
+      "Food & Event":["Frukost","Lunch","Middag","After work","Kundevent","Internt event","Sommarfest","Julfest","Kickoff","Konferens","Fika"],
+      "Housekeeping":["Storstäd","Eventstäd","Extrastäd","Fönster","Golvvård","Sanering","Övrigt städ"],
+      "Staff":["Hyra personal","Rekrytera personal","Executive search"],
+      "Other facility services":["Fastighetsteknik","Handyman","Kaffe & baristalösningar","Blommor & dekor","Frukt på jobbet"]
+    },
+    recurrence_rules:["Veckovis","Varannan vecka","Månadsvis","Kvartalsvis","Årsvis"]
+  };
+  var DEMO_OFFERS = { general:[
+      {id:'g1',title:'Julfest – Mat & Magisk Stämning',image:'',description:'Klassiska julsmaker i modern tappning. Komplett buffé.',description_long:'',capacity:120,pris_per_person:585,extern_lokal:[],produktinnehall:'Buffé, dryck, servering',villkor:'Preliminärt pris, ex moms.',malgrupp:'Företag 15–120 pers',logistik:'Leverans + uppdukning ingår',produkttillagg:[]},
+      {id:'g2',title:'Sensommarfest',image:'',description:'Säsongens råvaror, grillat och svalkande.',capacity:80,pris_per_person:525,extern_lokal:[],produktinnehall:'Grillbuffé',villkor:'',malgrupp:'',logistik:'',produkttillagg:[]}
+    ], unique:[
+      {id:'u1',title:'EA – Veckans AW (avtalspris)',image:'',description:'Ert avtalade AW-koncept varje fredag.',capacity:40,pris_per_person:145,extern_lokal:[{id:'l1',label:'Takterrassen'},{id:'l2',label:'Loungen'}],produktinnehall:'Snacks + dryck',villkor:'',malgrupp:'',logistik:'',produkttillagg:[]}
+    ] };
+
+  // ── state ──
+  var STEPS = [{t:'Välj väg',s:'Erbjudande eller fritt'},{t:'Eventdata',s:'Datum, plats, antal'},{t:'Detaljer',s:'Titel, beskrivning'},{t:'Granska & skicka',s:'Sammanställning'}];
+  var st = newState();
+  function newState(){
+    return { step:0, path:null, offerId:null, offerTab:'unique',
+      datum:'', tid:'12:00', slutdatum:'', plats:'', kontor:'', antal:20,
+      titel:'', kategori:'', subcategory:'', beskrivning:'', budget:'', po:'',
+      recRule:'', recUntil:'', bestallare:[], allergens:{}, tillagg:{}, busy:false };
+  }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function kr(n){ return Math.round(+n||0).toLocaleString('sv-SE'); }
+  function curOffer(){ if(st.path!=='erbjudande'||!st.offerId) return null; return OFFERS.general.concat(OFFERS.unique).find(function(o){return o.id===st.offerId;}); }
+  function effCategory(){ var o=curOffer(); return st.path==='erbjudande'&&o&&o.category ? o.category : st.kategori; }
+  function isFood(){ return effCategory()==='Food & Event'; }
+
+  // ── load ──
+  function api(path){ return fetch(HOST+path,{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}); }
+  function boot(){
+    document.getElementById('ffCompany').textContent = COMPANY_NAME ? ('förfrågan · '+COMPANY_NAME) : 'förfrågan';
+    if(DEMO){ BOOT=DEMO_BOOT; OFFERS=DEMO_OFFERS; document.getElementById('ffMode').style.display='inline-block'; render(); return; }
+    Promise.all([
+      api('/admin/forfragan/bootstrap?company='+encodeURIComponent(COMPANY)),
+      api('/admin/forfragan/offers?company='+encodeURIComponent(COMPANY))
+    ]).then(function(res){
+      var b=res[0]||{}, o=res[1]||{};
+      if(b.ok){ BOOT={offices:b.offices||[],supplier_id:b.supplier_id||null,categories:b.categories||[],subcategories:b.subcategories||{},recurrence_rules:b.recurrence_rules||[]}; if(b.company_name) { COMPANY_NAME=b.company_name; document.getElementById('ffCompany').textContent='förfrågan · '+COMPANY_NAME; } }
+      if(o.ok){ OFFERS={general:o.general||[],unique:o.unique||[]}; }
+      render();
+    }).catch(function(e){ BOOT=DEMO_BOOT; OFFERS=DEMO_OFFERS; render(); });
+  }
+
+  // ── stepper / nav ──
+  function renderStepper(){
+    var el=document.getElementById('ffStepper'); el.innerHTML='';
+    STEPS.forEach(function(s,i){
+      var cls='ff-step'+(i===st.step?' active':'')+(i<st.step?' done':'');
+      el.innerHTML+='<div class="'+cls+'" onclick="ffJump('+i+')"><div class="num">'+(i<st.step?'✓':(i+1))+'</div><div><div class="lbl">'+s.t+'</div><div class="sub">'+s.s+'</div></div></div>';
+    });
+  }
+  function renderNav(){
+    document.getElementById('ffBack').style.visibility = st.step===0?'hidden':'visible';
+    var g=document.getElementById('ffFwd');
+    if(st.step===STEPS.length-1){
+      g.innerHTML='<button class="btn ghost" id="ffDraft">Spara utkast</button><button class="btn primary" id="ffSend">Skicka förfrågan →</button>';
+      document.getElementById('ffDraft').onclick=function(){ submit(true); };
+      document.getElementById('ffSend').onclick=function(){ submit(false); };
+    } else {
+      g.innerHTML='<button class="btn primary" id="ffNext" onclick="ffGo(1)">Nästa →</button>';
+      if(!stepValid(st.step)) document.getElementById('ffNext').disabled=true;
+    }
+  }
+  function stepValid(s){
+    if(s===0) return !!st.path && (st.path!=='erbjudande' || !!st.offerId);
+    if(s===1){ var o=curOffer(); if(o&&o.capacity!=null&&(+st.antal)>(+o.capacity)) return false; return !!st.datum; }
+    if(s===2) return !!st.titel && (st.path==='erbjudande' || !!st.kategori);
+    return true;
+  }
+
+  // ── panel ──
+  function renderPanel(){
+    var p=document.getElementById('ffPanel'), h='';
+    if(st.step===0) h=panelStart();
+    else if(st.step===1) h=panelEvent();
+    else if(st.step===2) h=panelDetails();
+    else h=panelReview();
+    p.innerHTML=h; bind();
+  }
+
+  function panelStart(){
+    var h='<h2>Hur vill du börja?</h2><div class="hint">Samma flöde oavsett väg – ett erbjudande förifyller stegen, fritt ger dig tomma fält.</div>';
+    h+='<div class="paths">'+
+      pathCard('erbjudande','📦','Välj ett erbjudande','Paketerad produkt med pris och innehåll. Du justerar eventdata – resten är serverat.')+
+      pathCard('fritt','✏️','Bygg fritt','Beskriv din förfrågan från scratch. Du sätter kategori, leverantör och budget själv.')+'</div>';
+    if(st.path==='erbjudande'){
+      h+='<div class="ff-tabs">'+
+        '<div class="ff-tab'+(st.offerTab==='unique'?' on':'')+'" onclick="ffTab(\'unique\')">För er ('+OFFERS.unique.length+')</div>'+
+        '<div class="ff-tab'+(st.offerTab==='general'?' on':'')+'" onclick="ffTab(\'general\')">Allmänna ('+OFFERS.general.length+')</div></div>';
+      var list = st.offerTab==='unique'?OFFERS.unique:OFFERS.general;
+      if(!list.length){ h+='<div class="empty">Inga publicerade erbjudanden i denna kategori just nu.</div>'; }
+      else{ h+='<div class="gallery">'; list.forEach(function(o){
+        var thumb = o.image ? 'style="background-image:url('+esc(o.image)+')"' : '';
+        h+='<div class="offer'+(st.offerId===o.id?' sel':'')+'" onclick="ffPickOffer(\''+o.id+'\')">'+
+           '<div class="thumb" '+thumb+'>'+(o.image?'':'📦')+'</div><div class="body"><h4>'+esc(o.title)+'</h4>'+
+           '<div class="meta">'+(o.capacity!=null?('max '+o.capacity+' pers'):'')+'</div>'+
+           (o.pris_per_person!=null?'<div class="price">från '+kr(o.pris_per_person)+' kr/person</div>':'')+'</div></div>';
+      }); h+='</div>'; }
+    }
+    return h;
+  }
+
+  function panelEvent(){
+    var o=curOffer(), h='<h2>Eventdata</h2><div class="hint">När, var och hur många. Sammanställningen till höger uppdateras live.</div>';
+    if(o){
+      h+='<div class="offerview"><h3>'+esc(o.title)+'</h3>'+
+         (o.description?'<div class="od">'+esc(o.description)+'</div>':'')+
+         '<div class="ometa">'+
+           (o.capacity!=null?'<span class="chiptag">Kapacitet: '+o.capacity+' pers</span>':'')+
+           (o.pris_per_person!=null?'<span class="chiptag">'+kr(o.pris_per_person)+' kr/pers</span>':'')+
+           (o.malgrupp?'<span class="chiptag">'+esc(o.malgrupp)+'</span>':'')+
+         '</div>'+
+         (o.produktinnehall?'<div class="od"><b>Innehåll:</b> '+esc(o.produktinnehall)+'</div>':'')+
+         (o.logistik?'<div class="od"><b>Logistik:</b> '+esc(o.logistik)+'</div>':'')+'</div>';
+    }
+    h+='<div class="row2">'+fInput('datum','Leveransdatum','date')+fInput('tid','Tid','time')+'</div>';
+    h+='<div class="row2">'+fInput('slutdatum','Ev. slutdatum','date')+fInput('antal','Antal deltagare','number')+'</div>';
+    // Plats: extern lokal begränsar valet om erbjudandet har lokaler
+    if(o && o.extern_lokal && o.extern_lokal.length){
+      var opts='<option value="">Välj lokal…</option>'+o.extern_lokal.map(function(l){ var lab=l.label||l.name||l.id||l; return '<option '+(st.plats===lab?'selected':'')+'>'+esc(lab)+'</option>'; }).join('');
+      h+='<div class="field"><label>Plats (begränsad av erbjudandet)</label><select id="f_plats">'+opts+'</select></div>';
+    } else {
+      h+='<div class="field"><label>Vilket kontor?</label>'+kontorSelect()+'</div>';
+      h+=fInput('plats','Plats / adress','text','Fylls av kontoret – eller skriv själv');
+    }
+    // Upprepa
+    h+='<div class="row2"><div class="field"><label>Upprepa</label>'+recurrenceSelect()+'</div>'+
+       (st.recRule?fInput('recUntil','Upprepa till','date'):'<div></div>')+'</div>';
+    // Budget (fritt)
+    if(st.path==='fritt'){
+      var bv=+st.budget||0;
+      h+='<div class="field"><label>Budget (valfritt)</label><div class="slidewrap"><input type="range" id="f_budget" min="0" max="200000" step="1000" value="'+bv+'"><span class="slideval">'+(bv?kr(bv)+' kr':'–')+'</span></div></div>';
+    }
+    return h;
+  }
+
+  function panelDetails(){
+    var o=curOffer(), h='<h2>Detaljer</h2><div class="hint">Det leverantören behöver för att svara på din förfrågan.</div>';
+    h+=fInput('titel','Titel på förfrågan','text','T.ex. Avdelningens julfest');
+    // Beställare (lista)
+    h+='<div class="field"><label>Beställare (en lead skapas per beställare)</label>'+
+       '<div class="bsearch"><input id="f_best" type="text" placeholder="sök medarbetare på namn/e-post…" autocomplete="off"><div class="bdd" id="ffBestDd"></div></div>'+
+       '<div class="bchips" id="ffBestChips"></div></div>';
+    // Leverantör (auto)
+    h+='<div class="field"><label>Leverantör</label><input class="ro" value="'+(BOOT.supplier_id?'Tilldelas automatiskt (företagets leverantör)':'Ingen leverantör kopplad')+'" disabled></div>';
+    // Kategori + underkategori
+    if(st.path==='fritt'){
+      h+='<div class="row2"><div class="field"><label>Kategori</label>'+catSelect()+'</div>'+
+         '<div class="field"><label>Underkategori</label>'+subcatSelect()+'</div></div>';
+    } else {
+      h+='<div class="field"><label>Kategori (från erbjudande)</label><input class="ro" value="'+esc(o?o.category||'—':'—')+'" disabled></div>';
+    }
+    // Specialkost (Food & Event)
+    if(isFood()){
+      h+='<div class="field"><label>Specialkost / allergier</label><div class="allergens" id="ffAllergens"></div></div>';
+    }
+    h+=fArea('beskrivning','Meddelande / önskemål','Skriv gärna ner dina kommentarer och frågor…');
+    h+=fInput('po','PO-nummer','text','Valfritt');
+    return h;
+  }
+
+  function panelReview(){
+    var o=curOffer(), c=calc();
+    var h='<h2>Granska & skicka</h2><div class="hint">Kontrollera och skicka. Förfrågan blir en Lead som Carotte tar vidare till offert.</div>';
+    h+='<div class="reviewbox"><h4>Förfrågan</h4>'+
+       rRow('Väg', st.path==='erbjudande'?('Erbjudande – '+(o?o.title:'')):'Bygg fritt')+
+       rRow('Titel', st.titel||'—')+ rRow('Kategori', effCategory()||'—')+ (st.subcategory?rRow('Underkategori',st.subcategory):'')+
+       rRow('Beställare', st.bestallare.length?st.bestallare.map(function(b){return b.efternamn||b.email;}).join(', '):'—')+'</div>';
+    h+='<div class="reviewbox"><h4>Tid & plats</h4>'+
+       rRow('Datum',(st.datum||'—')+' '+st.tid)+ (st.slutdatum?rRow('Ev. slut',st.slutdatum):'')+
+       rRow('Plats', st.plats||'—')+ rRow('Antal deltagare', st.antal||'—')+
+       (st.recRule?rRow('Upprepas', st.recRule+(st.recUntil?(' t.o.m. '+st.recUntil):'')):'')+'</div>';
+    h+='<div class="reviewbox"><h4>Meddelande</h4><div style="font-size:13px;color:var(--w70);white-space:pre-wrap">'+(esc(st.beskrivning)||'—')+'</div>'+
+       (Object.keys(st.allergens).length?'<div style="margin-top:9px;font-size:12px;color:var(--w40)">Specialkost: '+esc(Object.keys(st.allergens).map(function(n){var c=st.allergens[n];return n+(c>1?' ×'+c:'');}).join(', '))+'</div>':'')+'</div>';
+    h+='<div class="villkor" style="border-top:none;padding-top:0">Er förfrågan är inte bindande och priser är preliminära. En projektledare på Carotte återkopplar med en offert.</div>';
+    return h;
+  }
+
+  // ── byggblock ──
+  function pathCard(id,ic,t,d){ return '<div class="pathcard'+(st.path===id?' sel':'')+'" onclick="ffPickPath(\''+id+'\')"><div class="ic">'+ic+'</div><h3>'+t+'</h3><p>'+d+'</p></div>'; }
+  function fInput(k,l,type,ph){ return '<div class="field"><label>'+l+'</label><input id="f_'+k+'" type="'+type+'" value="'+esc(st[k]||'')+'" placeholder="'+(ph||'')+'"></div>'; }
+  function fArea(k,l,ph){ return '<div class="field"><label>'+l+'</label><textarea id="f_'+k+'" placeholder="'+(ph||'')+'">'+esc(st[k]||'')+'</textarea></div>'; }
+  function kontorSelect(){ var o='<option value="">Välj kontor…</option>'+BOOT.offices.map(function(k){return '<option value="'+esc(k.id)+'" '+(st.kontor===k.id?'selected':'')+'>'+esc(k.name)+'</option>';}).join(''); return '<select id="f_kontor">'+o+'</select>'; }
+  function catSelect(){ var o='<option value="">Välj…</option>'+BOOT.categories.map(function(c){return '<option '+(st.kategori===c?'selected':'')+'>'+esc(c)+'</option>';}).join(''); return '<select id="f_kategori">'+o+'</select>'; }
+  function subcatSelect(){ var subs=(BOOT.subcategories[st.kategori]||[]).filter(function(s){return s!=='FYI';}); var o='<option value="">'+(st.kategori?'Välj…':'Välj kategori först')+'</option>'+subs.map(function(s){return '<option '+(st.subcategory===s?'selected':'')+'>'+esc(s)+'</option>';}).join(''); return '<select id="f_subcategory"'+(st.kategori?'':' disabled')+'>'+o+'</select>'; }
+  function recurrenceSelect(){ var o='<option value="">Ingen (engångs)</option>'+BOOT.recurrence_rules.map(function(r){return '<option '+(st.recRule===r?'selected':'')+'>'+esc(r)+'</option>';}).join(''); return '<select id="f_recRule">'+o+'</select>'; }
+  function rRow(k,v){ return '<div class="rrow"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
+
+  // ── calc / summary ──
+  function calc(){ var o=curOffer(); if(!o||o.pris_per_person==null) return null; var base=(+o.pris_per_person)*(+st.antal||0); return {pp:+o.pris_per_person, base:base, total:base}; }
+  function renderSummary(){
+    var el=document.getElementById('ffSummary'), o=curOffer(), c=calc(), h='';
+    if(st.path==='erbjudande'&&o){
+      h+='<span class="stag">Erbjudande</span><h3>'+esc(o.title)+'</h3>'+(o.description?'<div class="sdesc">'+esc(o.description)+'</div>':'');
+      if(o.pris_per_person!=null){
+        h+='<div class="srow"><span class="k">Pris per person</span><span class="v">'+kr(o.pris_per_person)+' kr</span></div>';
+        h+='<div class="srow"><span class="k">Antal gäster</span><span class="v">'+(st.antal||0)+'</span></div>';
+        h+='<div class="stot"><div class="lab">Preliminär kostnad</div><div class="big">'+kr(c?c.total:0)+' kr</div><div class="sub">ex. moms · preliminärt</div></div>';
+      } else { h+='<div class="sdesc">Carotte återkommer med offert.</div>'; }
+      if(o.capacity!=null&&(+st.antal)>(+o.capacity)) h+='<div class="warn">⚠ Antalet ('+st.antal+') överstiger erbjudandets kapacitet ('+o.capacity+'). Justera antalet för att gå vidare.</div>';
+      if(o.villkor) h+='<div class="villkor">'+esc(o.villkor)+'</div>';
+    } else if(st.path==='fritt'){
+      h+='<span class="stag">Fri förfrågan</span><h3>Din förfrågan</h3><div class="sdesc">Ingen paketprislista – Carotte återkommer med offert.</div>';
+      h+='<div class="srow"><span class="k">Kategori</span><span class="v">'+esc(st.kategori||'—')+'</span></div>';
+      h+='<div class="srow"><span class="k">Antal</span><span class="v">'+(st.antal||'—')+'</span></div>';
+      h+='<div class="srow"><span class="k">Datum</span><span class="v">'+esc(st.datum||'—')+'</span></div>';
+      if(st.recRule) h+='<div class="srow"><span class="k">Upprepas</span><span class="v">'+esc(st.recRule)+'</span></div>';
+      if(st.budget) h+='<div class="stot"><div class="lab">Angiven budget</div><div class="big">'+kr(st.budget)+' kr</div></div>';
+    } else {
+      h+='<span class="stag">Sammanställning</span><h3>Välj en väg</h3><div class="sdesc">Välj erbjudande eller fri förfrågan för att börja.</div>';
+    }
+    el.innerHTML=h;
+  }
+
+  // ── bind ──
+  function bind(){
+    ['datum','tid','slutdatum','plats','antal','titel','beskrivning','po','recUntil','budget','kontor','kategori','subcategory','recRule'].forEach(function(k){
+      var el=document.getElementById('f_'+k); if(!el) return;
+      var ev=(el.tagName==='SELECT'||el.type==='date'||el.type==='time'||el.type==='range')?'change':'input';
+      el.addEventListener(ev,function(){
+        st[k]=el.value;
+        if(k==='kontor'){ var off=BOOT.offices.find(function(o){return o.id===el.value;}); if(off){ st.plats=off.address||st.plats; var pe=document.getElementById('f_plats'); if(pe) pe.value=st.plats; } }
+        if(k==='kategori'){ st.subcategory=''; renderPanel(); }
+        if(k==='recRule'){ renderPanel(); }
+        if(k==='budget'){ renderPanel(); }
+        renderSummary(); renderNav();
+      });
+    });
+    if(document.getElementById('ffAllergens')) renderAllergens();
+    if(document.getElementById('f_best')) bindBest();
+  }
+
+  function renderAllergens(){
+    var box=document.getElementById('ffAllergens'); box.innerHTML='';
+    ALLERGENS.forEach(function(name){
+      var on=st.allergens[name]!=null, cnt=st.allergens[name]||1;
+      var chip=document.createElement('div'); chip.className='chip'; chip.setAttribute('aria-pressed',on?'true':'false');
+      chip.innerHTML=esc(name)+'<span class="cnt" style="'+(on?'':'display:none')+'"><span class="stp" data-d="-1">–</span><b>'+cnt+'</b><span class="stp" data-d="1">+</span></span>';
+      chip.addEventListener('click',function(e){
+        if(e.target.classList.contains('stp')){
+          var d=+e.target.getAttribute('data-d'); var c=(st.allergens[name]||1)+d;
+          if(c<1){ delete st.allergens[name]; } else { st.allergens[name]=Math.min(99,c); }
+          renderAllergens(); renderSummary(); return;
+        }
+        if(st.allergens[name]!=null) delete st.allergens[name]; else st.allergens[name]=1;
+        renderAllergens(); renderSummary();
+      });
+      box.appendChild(chip);
+    });
+  }
+
+  var bestTimer=null;
+  function bindBest(){
+    var inp=document.getElementById('f_best'), dd=document.getElementById('ffBestDd');
+    renderBestChips();
+    inp.addEventListener('input',function(){
+      var q=inp.value.trim(); clearTimeout(bestTimer);
+      if(q.length<2){ dd.classList.remove('on'); return; }
+      bestTimer=setTimeout(function(){
+        if(DEMO){ showBest([{id:'d1',email:'anna@exempel.se',fornamn:'Anna',efternamn:'Andersson'},{id:'d2',email:'erik@exempel.se',fornamn:'Erik',efternamn:'Berg'}].filter(function(u){return (u.email+u.fornamn+u.efternamn).toLowerCase().indexOf(q.toLowerCase())>=0;}),dd); return; }
+        api('/admin/forfragan/users?company='+encodeURIComponent(COMPANY)+'&q='+encodeURIComponent(q)).then(function(j){ showBest((j&&j.results)||[],dd); });
+      },220);
+    });
+    document.addEventListener('click',function(e){ if(!dd.contains(e.target)&&e.target!==inp) dd.classList.remove('on'); });
+  }
+  function showBest(rows,dd){
+    if(!rows.length){ dd.innerHTML='<div class="bddrow">Inga träffar</div>'; dd.classList.add('on'); return; }
+    dd.innerHTML=rows.map(function(u){ return '<div class="bddrow" data-id="'+esc(u.id)+'" data-email="'+esc(u.email)+'" data-f="'+esc(u.fornamn)+'" data-e="'+esc(u.efternamn)+'">'+esc(((u.fornamn||'')+' '+(u.efternamn||'')).trim()||u.email)+' · <span style="color:var(--w40)">'+esc(u.email)+'</span></div>'; }).join('');
+    dd.classList.add('on');
+    Array.prototype.forEach.call(dd.querySelectorAll('.bddrow'),function(row){
+      if(!row.getAttribute('data-email')) return;
+      row.addEventListener('click',function(){
+        var em=row.getAttribute('data-email');
+        if(!st.bestallare.some(function(b){return b.email===em;})) st.bestallare.push({user_id:row.getAttribute('data-id'),email:em,fornamn:row.getAttribute('data-f'),efternamn:row.getAttribute('data-e')});
+        dd.classList.remove('on'); document.getElementById('f_best').value=''; renderBestChips(); renderSummary();
+      });
+    });
+  }
+  function renderBestChips(){
+    var box=document.getElementById('ffBestChips'); if(!box) return; box.innerHTML='';
+    st.bestallare.forEach(function(b,i){
+      var c=document.createElement('div'); c.className='bchip'; c.innerHTML=esc(((b.fornamn||'')+' '+(b.efternamn||'')).trim()||b.email)+' <b data-i="'+i+'">×</b>';
+      c.querySelector('b').addEventListener('click',function(){ st.bestallare.splice(i,1); renderBestChips(); renderSummary(); });
+      box.appendChild(c);
+    });
+  }
+
+  // ── render / actions ──
+  function render(){ renderStepper(); renderPanel(); renderSummary(); renderNav(); }
+  window.ffPickPath=function(id){ st.path=id; if(id==='fritt') st.offerId=null; render(); };
+  window.ffPickOffer=function(id){ st.offerId=id; st.tillagg={}; var o=curOffer(); if(o&&o.capacity!=null&&(+st.antal)>(+o.capacity)) st.antal=o.capacity; render(); };
+  window.ffTab=function(t){ st.offerTab=t; renderPanel(); };
+  window.ffGo=function(dir){ if(dir>0&&!stepValid(st.step)) return; st.step=Math.max(0,Math.min(STEPS.length-1,st.step+dir)); render(); window.scrollTo(0,0); };
+  window.ffJump=function(i){ if(i<st.step){ st.step=i; render(); } };
+
+  function submit(draft){
+    if(st.busy) return;
+    if(DEMO){ showOverlay(true,draft,{occurrences:st.recRule?'flera':1}); return; }
+    st.busy=true;
+    var allergens=Object.keys(st.allergens).map(function(n){return {name:n,count:st.allergens[n]};});
+    var payload={
+      mode:'write', company_id:COMPANY, supplier_id:BOOT.supplier_id||null, path:st.path, offer_id:st.offerId||null,
+      commission_title:st.titel, description:st.beskrivning, category:effCategory()||null, subcategory:st.subcategory||null,
+      delivery_date:st.datum?(st.datum+'T'+(st.tid||'12:00')):null, delivery_date_end:st.slutdatum||null,
+      plats:st.plats||null, office_id:st.kontor||null, antal:+st.antal||null, budget:st.budget?+st.budget:null,
+      capacity:(curOffer()&&curOffer().capacity!=null)?+curOffer().capacity:null,
+      specialkost:allergens.length?allergens:null,
+      status:draft?'draft':'sent',
+      bestallare:st.bestallare.map(function(b){return {email:b.email,fornamn:b.fornamn,efternamn:b.efternamn,user_id:b.user_id};}),
+      recurrence:st.recRule?{rule:st.recRule,until:st.recUntil||null}:null
+    };
+    fetch(HOST+'/admin/forfragan/create',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify(payload)})
+      .then(function(r){return r.json();}).then(function(j){ st.busy=false; if(j&&j.ok) showOverlay(true,draft,j); else showOverlay(false,draft,j); })
+      .catch(function(e){ st.busy=false; showOverlay(false,draft,{error:String(e)}); });
+  }
+  function showOverlay(ok,draft,j){
+    var okEl=document.getElementById('ffOk'); okEl.className='ok'+(ok?'':' err'); okEl.textContent=ok?'✓':'!';
+    document.getElementById('ffOvTitle').textContent = ok?(draft?'Utkast sparat':'Förfrågan skickad'):'Något gick fel';
+    var n=(j&&j.occurrences)||1;
+    document.getElementById('ffOvText').textContent = ok
+      ? (draft ? 'Din förfrågan ligger som utkast i Mira – den syns inte för leverantören förrän du skickar den.'
+               : ('Förfrågan är skickad'+(n&&n!==1?(' ('+n+' tillfällen i serien)'):'')+'. Carotte återkopplar med en offert.'))
+      : ('Kunde inte spara: '+((j&&j.error)||'okänt fel')+'. Försök igen eller kontakta support.');
+    document.getElementById('ffOverlay').classList.add('show');
+  }
+  window.ffReset=function(){ st=newState(); document.getElementById('ffOverlay').classList.remove('show'); render(); };
+
+  boot();
+})();
+</script>
