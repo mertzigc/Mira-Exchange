@@ -118,7 +118,9 @@ Första körning: per-rad "bubbleFind failed" (source_id) + topp-500 (Tengella "
 
 **RENAME:** datatypen "Kom ihåg - Remember" → **`Todo`** (Christian, för enkelhet). Genomfört genomgående i activity_sync.js (TODO_TYPE="Todo", syncTodos, mapTodo, upsertActivityForTodo, TODO_*-fält, källparam `todo`, case `todo`) + handoff + minne. **OBS:** ActivityType-OPTION SET-värdet är fortfarande `"Kom ihåg"` (AT_TODO) — oförändrat i Bubble. Vill Christian ha det till "Todo" → byt option set-värdet + säg till.
 
-**KVAR:** Todo-källans fältnamn (TODO_TITLE/START/END/CATEGORY/STATUS/COMPANY) är fortfarande GISSADE — kör `/sync/activities/todo {"mode":"diff"}` (nu när typen finns) och verifiera scanned + att fält mappar; justera ACTIVITY_CONFIG vid behov.
+**TENGELLA KLAR 2026-06-15:** chunkad write (Q1-Q4, en del i månadschunkar pga curl-timeout vid ~1800s — write är idempotent). Full-year konsistensdiff: create:0, noop:6759. Alla Housekeeping-pass materialiserade, inga dubbletter (index-baserad upsert höll). comission + matter + tengella = KLARA.
+
+**TODO BLOCKERAD på fältnamn:** typen `Todo` hittas nu, men diff gav `Field not found Startdatum for type Todo` → mina gissade TODO_*-fält stämmer inte. Väntar exakta Bubble-fältnamn för Todo: titel, start, slut, Category, Status, ClientCompany-fält. Sen rätta ACTIVITY_CONFIG + todo diff→write.
 
 ## Nästa steg
 1. Kör tengella write (full-year) + todo diff→write.

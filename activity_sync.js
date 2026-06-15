@@ -48,13 +48,14 @@ export const ACTIVITY_CONFIG = {
   M_CLOSED:  "closed_date",
   M_STATUS_DONE: "Avslutat",        // status-värde som triggar closed_date
 
-  // Todo-fält (datatyp Todo)  ⚠️ VERIFIERA alla mot Bubble-schemat
-  TODO_TITLE:   "Title",
-  TODO_START:   "Startdatum",
-  TODO_END:     "Slutdatum",
-  TODO_CATEGORY:"Category",
-  TODO_STATUS:  "Status",
-  TODO_COMPANY: "clientcompany",
+  // Todo-fält (datatyp Todo) — bekräftade mot Bubble-schemat 2026-06-15
+  TODO_TITLE:   "Titel",
+  TODO_START:   "Starttid",
+  TODO_END:     "Sluttid",
+  TODO_CATEGORY:"Kategori",       // typ = Category option set (4-familj) → colorFor funkar
+  TODO_STATUS:  "Status",         // typ = status_reminder option set
+  TODO_COMPANY: "Företag",        // typ = ClientCompany
+  TODO_THREAD:  "Tråd",           // list of texts (för popup-kommentarer senare)
 
   // ClientCompany-fält på Activity — EXAKT casing krävs vid skrivning (Data types: "Clientcompany").
   A_COMPANY: "Clientcompany",
