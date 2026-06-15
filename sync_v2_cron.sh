@@ -67,21 +67,28 @@ order_offer_weekly() {
   done
 }
 
-# ── ClientCompany-grund: kund-synk (orgnr → FortnoxCustomer/TengellaCustomer + ensure
-#    ClientCompany) + reconcile av linked_company-länken på dokumenten. Gör systemet
-#    SJÄLVLÄKANDE: ny/städad grunddata i Fortnox/Tengella → bryggor + dokument-länk
-#    uppdateras automatiskt. Ersätter de gamla (suspenderade) fortnox_cron_v1/
-#    tengella_cron-kundstegen UTAN att dra med deras gamla order/offer-synk (krockar v2).
-reconcile_clientcompany() {
-  echo "[sync_v2] CLIENTCOMPANY reconcile @ $(date -u +%FT%TZ)"
-  # 1) Inkrementell Fortnox-kundsynk (bara nya/ändrade via lastmodified) → FortnoxCustomer + CC + linked_company
+# ── KUND-SYNK (BILLIG, nattlig) — inkrementell: drar bara nya/ändrade kunder via
+#    lastmodified → FortnoxCustomer/TengellaCustomer + ensure ClientCompany + sätter
+#    linked_company/company PÅ KUNDPOSTEN vid upsert. Körs nattligt FÖRE dokumentsynken
+#    så bryggan är färsk → nya dokument får sin linked_company redan vid create.
+#    Bunden (days_back + max_pages) → liten WU. Ersätter gamla fortnox_cron_v1/
+#    tengella_cron-kundsteget UTAN deras order/offer-synk (krockar med v2).
+sync_customers() {
+  echo "[sync_v2] CUSTOMERS (inkrementell) @ $(date -u +%FT%TZ)"
   post /fortnox/upsert/customers/all "{\"connection_id\":\"$FE\",\"days_back\":$CUST_DAYS,\"max_pages\":$CUST_PAGES,\"limit\":100,\"pause_ms\":150}"
   post /fortnox/upsert/customers/all "{\"connection_id\":\"$STAFF\",\"days_back\":$CUST_DAYS,\"max_pages\":$CUST_PAGES,\"limit\":100,\"pause_ms\":150}"
-  # 2) Tengella-kunder (119 totalt → full synk billig; matchar/sätter company-länk)
   post /tengella/customers/sync "{\"orgNo\":\"$TENGELLA_ORGNO\"}"
-  # 3) Fyll customer→ClientCompany-bryggan för kunder med orgnr men tom länk (båda källor)
+}
+
+# ── LÄNK-RECONCILE (TUNG, VECKOVIS) — fyller customer→CC-bryggan för ALLA kunder med
+#    orgnr men tom länk, och propagerar linked_company ut på ALLA dokument. Båda är
+#    HELSKANNINGAR (linkcustomer läser ~7,7k kunder, linkcompany läser ~20k dokument
+#    inkl ft_raw_json) → DYR i WU. Behövs INTE nattligt: nya dokument länkas vid create
+#    (sync_customers håller bryggan färsk), ändrade på update. Reconcilen fångar bara
+#    historiska noop-docs + docs vars kund städats i efterhand → veckovis räcker gott.
+reconcile_links() {
+  echo "[sync_v2] LÄNK-reconcile (helskanning) @ $(date -u +%FT%TZ)"
   post /sync/v2-linkcustomer "{\"mode\":\"write\",\"target\":\"both\"}"
-  # 4) Propagera linked_company ut på dokumenten (fångar noop-hoppade historiska docs)
   post /sync/v2-linkcompany/all "{\"mode\":\"write\"}"
 }
 
@@ -109,6 +116,10 @@ if [ "$MODE" = "pdf" ]; then
   exit 0
 fi
 
+# Kund-synk FÖRST (nattligt + full) — billig, håller bryggan färsk så att dokument
+# som synkas nedan länkas redan vid create. (PDF-läget exitar ovan, rörs ej.)
+sync_customers
+
 if [ "$MODE" = "full" ]; then
   YEAR="${SYNC_YEAR:-$(date -u +%Y)}"
   echo "[sync_v2] FULL resync $YEAR @ $(date -u +%FT%TZ)"
@@ -127,6 +138,8 @@ if [ "$MODE" = "full" ]; then
     # Workorder: global discovery (listar allt, billigt), window:ad write till året.
     post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\",\"untilYM\":\"$YEAR-12\",\"throttleMs\":300}"
   fi
+  # TUNG länk-reconcile bara i full (veckovis) — helskanning av kunder + dokument.
+  reconcile_links
 else
   DB="${MODIFIED_DAYS_BACK:-3}"
   # Tengella saknar modified-filter → synka senaste ~2 mån (Linux date; macOS-fallback).
@@ -144,10 +157,5 @@ else
     post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\",\"throttleMs\":250}"
   fi
 fi
-
-# Självläkande kund/ClientCompany-reconcile — körs för både nightly och full (ej pdf,
-# som exitar ovan). Idempotent: vid steady state noop. Sist så dagens nya dokument
-# (synkade ovan) hinner få sin länk om kunden just synkats in.
-reconcile_clientcompany
 
 echo "[sync_v2] klart @ $(date -u +%FT%TZ)"
