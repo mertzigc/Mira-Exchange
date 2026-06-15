@@ -1,6 +1,7 @@
 // Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
 import { startEmailPoller } from "./emailer.js";
 import { createSyncEngine } from "./invoice_sync.js";
+import { createActivityEngine } from "./activity_sync.js";
 import { createClientGroupEngine } from "./clientgroup.js";
 import express from "express";
 import cors from "cors";
@@ -16138,6 +16139,28 @@ app.post("/sync/v2/:source", requireSyncSecret, async (req, res) => {
   try {
     const report = await syncEngine.syncForSource(req.params.source, req.body || {});
     return res.json({ ok: true, report });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── Activity-materialisering (Comission/Matter/Remember/Tengella → Activity) ──
+// Render-only (inga Bubble-workflows). Diff-läge default — mode:"write" krävs.
+// source = comission | matter | remember | tengella | all
+// Body: { mode:"diff"|"write", modifiedDaysBack?, modifiedSince?, fromDate?, toDate? }
+const activityEngine = createActivityEngine({
+  bubbleFindOne, bubbleFindAll, bubbleCreate, bubblePatch, bubbleDelete, bubbleId,
+  tengella:  { login: tengellaLogin, fetch: tengellaFetch },
+  helpers:   { toBubbleDate },
+  constants: { TENGELLA_DEFAULT_ORGNO },
+});
+
+app.post("/sync/activities/:source", requireSyncSecret, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const opts = { ...body, write: body.mode === "write" };
+    const report = await activityEngine.syncForSource(req.params.source, opts);
+    return res.json({ ok: true, mode: opts.write ? "write" : "diff", report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
   }
