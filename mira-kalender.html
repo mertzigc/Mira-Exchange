@@ -14,11 +14,13 @@
   Tomt company_id + ej admin → DEMO_DATA (preview).
 -->
 <input type="hidden" id="mira_company_id" value="">
+<input type="hidden" id="mira_company_name" value="">
 <input type="hidden" id="mira_admin_crm" value="">
 <input type="hidden" id="mira_api_host" value="https://mira-exchange.onrender.com">
 <input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
 
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
   .mk-wrap, .mk-wrap *{box-sizing:border-box;margin:0;padding:0}
   .mk-wrap{
     --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e;
@@ -31,10 +33,12 @@
     border-radius:14px; padding:0 18px 26px; display:block; width:100%;
   }
   .mk-top{display:flex;align-items:center;justify-content:space-between;padding:15px 0 12px;border-bottom:1px solid var(--border);margin-bottom:14px}
-  .mk-brand{display:flex;align-items:center;gap:10px}
-  .mk-dot{width:10px;height:10px;border-radius:50%;background:var(--orange);box-shadow:0 0 10px var(--orange)}
-  .mk-brand h1{font-family:var(--font);font-size:15px;font-weight:900;letter-spacing:-.3px;text-transform:uppercase}
-  .mk-brand p{font-size:10px;color:var(--w40);letter-spacing:1.7px;text-transform:uppercase;margin-top:1px}
+  .mk-h1{font-family:'DM Serif Display',Georgia,serif;font-size:28px;line-height:1.05;letter-spacing:-.01em;color:var(--white)}
+  .mk-h1 span{color:#db6923}
+  .mk-sub{font-size:12px;color:var(--w40);margin-top:4px;letter-spacing:.3px}
+  .mk-legend{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--w40);margin-bottom:14px;padding:9px 13px;background:var(--panel);border:1px solid var(--border);border-radius:9px}
+  .mk-legend b{color:var(--w70);font-weight:700;font-size:10px;letter-spacing:.6px;text-transform:uppercase}
+  .mk-leg{display:flex;align-items:center;gap:6px} .mk-leg .sw{width:11px;height:11px;border-radius:3px;flex-shrink:0} .mk-leg .ty{font-size:13px;width:14px;text-align:center}
   .mk-search{display:none;align-items:center;gap:7px;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:0 10px;height:32px;min-width:220px}
   .mk-search.on{display:flex}
   .mk-search input{background:transparent;border:none;color:var(--white);font-size:12px;outline:none;width:100%;font-family:var(--fb)}
@@ -129,7 +133,7 @@
 
 <div class="mk-wrap">
   <div class="mk-top">
-    <div class="mk-brand"><div class="mk-dot"></div><div><h1 id="mkTitle">Planering</h1><p>Mira · Carotte</p></div></div>
+    <div><div class="mk-h1" id="mkTitle">Planering</div><div class="mk-sub" id="mkSub">Mira · Carotte</div></div>
     <div style="position:relative">
       <div class="mk-search" id="mkSearch"><span style="color:var(--w40)">🔍</span><input id="mkSearchInput" placeholder="Sök kund…" oninput="mkOnSearch(this.value)" onfocus="mkOnSearch(this.value)" autocomplete="off"></div>
       <div class="mk-dd" id="mkCompanyDD"></div>
@@ -141,6 +145,20 @@
     <div class="mk-sp"></div><div class="mk-count" id="mkCount"></div>
   </div>
   <div class="mk-filters" id="mkFilters"></div>
+  <div class="mk-legend">
+    <b>Färg = kategori</b>
+    <span class="mk-leg"><span class="sw" style="background:#F47B30"></span>Food &amp; Event</span>
+    <span class="mk-leg"><span class="sw" style="background:#4C9AFF"></span>Housekeeping</span>
+    <span class="mk-leg"><span class="sw" style="background:#9F77DD"></span>Staff</span>
+    <span class="mk-leg"><span class="sw" style="background:#4CAF7D"></span>Övriga tjänster</span>
+    <span class="mk-leg"><span class="sw" style="background:#888888"></span>Okategoriserad</span>
+    <span style="width:1px;height:18px;background:var(--border)"></span>
+    <b>Ikon = typ</b>
+    <span class="mk-leg"><span class="ty">●</span>Bokning</span>
+    <span class="mk-leg"><span class="ty">⬢</span>Housekeeping</span>
+    <span class="mk-leg"><span class="ty">▲</span>Ärende</span>
+    <span class="mk-leg"><span class="ty">✓</span>Todo</span>
+  </div>
   <div id="mkView"><div class="mk-load">Laddar planering…</div></div>
   <div class="mk-hint" id="mkHint"></div>
 </div>
@@ -154,6 +172,7 @@
   var HOST  = (document.getElementById('mira_api_host').value || 'https://mira-exchange.onrender.com').replace(/\/$/,'');
   var TOKEN = document.getElementById('mira_planning_token').value || '';
   var COMPANY = (document.getElementById('mira_company_id').value || '').trim();
+  var COMPANY_NAME = (document.getElementById('mira_company_name').value || '').trim();
   var _av = (document.getElementById('mira_admin_crm').value || '').trim().toLowerCase();
   var ADMIN = (_av === 'yes' || _av === 'true' || _av === '1' || _av === 'ja');
 
@@ -164,6 +183,12 @@
     {key:'Ärende',    label:'Ärenden',     ic:'▲'},
     {key:'Kom ihåg',  label:'Todos',       ic:'✓'}
   ];
+  // Status-alternativ per typ (option set i Bubble). Housekeeping = ingen status (synkat från Tengella).
+  var STATUS_OPTS = {
+    'Bokning':  ['Ny','Hanterad','Utkast','Levererad'],   // Comission.commission_status (StatusUppdrag)
+    'Ärende':   ['Pågående','Avslutat','Utkast'],         // Matter.status (Status Ärende)
+    'Kom ihåg': ['Pågående','Avslutat','Försenad','Planerad'] // Todo.Status (status_reminder)
+  };
   var WD=['Mån','Tis','Ons','Tor','Fre','Lör','Sön'], MSHORT=['jan','feb','mar','apr','maj','jun','jul','aug','sep','okt','nov','dec'], MONTHS=['Januari','Februari','Mars','April','Maj','Juni','Juli','Augusti','September','Oktober','November','December'];
   var TODAY=new Date(); TODAY.setHours(0,0,0,0);
   var ZOOMS=[{k:'ar',l:'År'},{k:'kvartal',l:'Kvartal'},{k:'manad',l:'Månad'},{k:'vecka',l:'Vecka'},{k:'dag',l:'Dag'}];
@@ -309,14 +334,26 @@
   window.mkOpen=function(id){
     var e=EVENTS.filter(function(x){return x.id===id;})[0]; if(!e)return;
     var m=document.getElementById('mkModal'); var tm=typeMeta(e.type);
+    var isHk = e.type==='Housekeeping';
     var rows=''
-      +row('Typ',tm.label)+row('Status',e.status?'<span class="mk-badge" style="background:'+e.color+'33;color:'+e.color+'">'+esc(e.status)+'</span>':'–')
+      +row('Typ',tm.label)
+      +(isHk?'':row('Status',e.status?'<span class="mk-badge" style="background:'+e.color+'33;color:'+e.color+'">'+esc(e.status)+'</span>':'–'))
       +row('Kategori',e.category||'–')+row('Start',fmtDateTime(e.start))+row('Slut',e.end?fmtDateTime(e.end):(e.type==='Ärende'?'pågående':'–'));
     if(e.emp)rows+=row('Utförare',esc(e.emp));
     if(e.region)rows+=row('Plats/region',esc(e.region));
     if(e.project)rows+=row('Projekt',esc(e.project));
     if(e.supervisor)rows+=row('Ansvarig',esc(e.supervisor));
-    var canEdit = !!e.sourceId;
+    var canEdit = !!e.sourceId && !isHk;
+    var opts = STATUS_OPTS[e.type] || [];
+    var statusBlock = (canEdit && opts.length) ? (
+        '<div class="mk-sec">Uppdatera status</div><select class="mk-fld" id="mkStatus">'
+      + opts.map(function(o){return '<option'+(o===e.status?' selected':'')+'>'+esc(o)+'</option>';}).join('')
+      + '</select>') : '';
+    var actionBtns = (canEdit && (opts.length || canCopy(e))) ? (
+        '<div class="mk-actions">'
+      + (opts.length?'<button class="mk-btn pri" onclick="mkSaveStatus()">Spara status</button>':'')
+      + (canCopy(e)?'<button class="mk-btn" onclick="mkCopy()">Kopiera till nytt datum</button>':'')
+      + '</div>') : '';
     m.innerHTML=''
       +'<div class="mk-mhd"><div><span class="mk-mtag" style="background:'+e.color+'33;color:'+e.color+'">'+tm.ic+' '+tm.label+'</span><div class="mk-mt2">'+esc(e.title)+'</div></div><button class="mk-x" onclick="mkCloseModal()">✕</button></div>'
       +'<div class="mk-mbody">'+rows
@@ -325,11 +362,8 @@
           '<div class="mk-sec">Tråd</div><div class="mk-thread" id="mkThread"><div style="font-size:11px;color:var(--w40)">Laddar…</div></div>'
         + '<textarea class="mk-fld" id="mkComment" placeholder="Skriv en kommentar…"></textarea>'
         + '<div class="mk-actions"><button class="mk-btn" onclick="mkAddComment()">Kommentera</button></div>'
-        + '<div class="mk-sec">Uppdatera status</div><input class="mk-fld" id="mkStatus" value="'+esc(e.status)+'">'
-        + '<div class="mk-actions"><button class="mk-btn pri" onclick="mkSaveStatus()">Spara status</button>'
-        + (canCopy(e)?'<button class="mk-btn" onclick="mkCopy()">Kopiera till nytt datum</button>':'')
-        + '</div>'
-        ):'<div class="mk-hint" style="margin-top:14px">Synkad post (Tengella/extern) – redigeras i källsystemet.</div>')
+        + statusBlock + actionBtns
+        ):'<div class="mk-hint" style="margin-top:14px">Synkad post (Tengella/Housekeeping) – redigeras i källsystemet.</div>')
       +'</div>';
     document.getElementById('mkOverlay').classList.add('on');
     window._mkCur=e;
@@ -382,7 +416,8 @@
     setActiveLabel(name);
     load();
   };
-  function setActiveLabel(name){ var p=document.querySelector('.mk-brand p'); if(p) p.textContent = name ? ('CRM · '+name) : 'Mira · Carotte'; }
+  function setTitle(name){ document.getElementById('mkTitle').innerHTML = name ? ('Planering för <span>'+esc(name)+'</span>') : 'Planering'; }
+  function setActiveLabel(name){ setTitle(name); document.getElementById('mkSub').textContent = ADMIN ? 'Carotte CRM' : 'Mira · Carotte'; }
   function loadCompanies(){
     fetch(HOST+'/admin/planning/companies',{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
       COMPANIES=(j&&j.results)?j.results:[];
@@ -398,7 +433,8 @@
   window.mkDrillD=function(y,m,d){st.anchor=new Date(y,m,d);st.level='dag';render();};
 
   document.getElementById('mkSearch').classList.toggle('on',ADMIN);
-  document.getElementById('mkTitle').textContent=ADMIN?'Carotte CRM · Planering':'Planering';
+  document.getElementById('mkSub').textContent = ADMIN ? 'Carotte CRM' : 'Mira · Carotte';
+  setTitle(COMPANY_NAME);   // kund-läge: kundens namn direkt; CRM: eget företag tills man söker
   if(ADMIN) loadCompanies();
   load();
 })();

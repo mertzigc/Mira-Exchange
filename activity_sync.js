@@ -204,8 +204,9 @@ export function createActivityEngine(deps) {
     return {
       ActivityType: C.AT_TODO,
       Title:        r[C.TODO_TITLE] || "Todo",
-      Startdatum:   toBubbleDate(r[C.TODO_START]),
-      Slutdatum:    toBubbleDate(r[C.TODO_END] || r[C.TODO_START]),
+      // Saknas både Starttid och Sluttid → fall tillbaka till Created Date (annars osynlig i kalendern)
+      Startdatum:   toBubbleDate(r[C.TODO_START] || r[C.TODO_END] || r["Created Date"]),
+      Slutdatum:    toBubbleDate(r[C.TODO_END] || r[C.TODO_START] || r["Created Date"]),
       Category:     cat,
       color_hex:    colorFor(cat),
       status:       r[C.TODO_STATUS] || null,
