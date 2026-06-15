@@ -396,6 +396,7 @@ function requireApiKey(req, res, next) {
     // x-admin-token (PLANNING_ADMIN_TOKEN). Master-Bubble-nyckeln stannar server-side.
     "/admin/planning/activities",
     "/admin/planning/activity/action",
+    "/admin/planning/companies",
   ]);
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
   const openPrefixes = [];
@@ -16198,6 +16199,27 @@ const PLANNING_SRC = {
 
 app.options("/admin/planning/activities", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
 app.options("/admin/planning/activity/action", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+app.options("/admin/planning/companies", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+
+// GET /admin/planning/companies?q= — lätt id+namn-lista för CRM-lägets företagsväljare.
+// Hämtas en gång och cachas i klienten; sökning sker client-side.
+app.get("/admin/planning/companies", async (req, res) => {
+  _planningCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
+  if (_publicRateLimited(_clientIp(req), 120)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
+  try {
+    const all = await bubbleFindAll("ClientCompany", {});
+    const q = String(req.query.q || "").trim().toLowerCase();
+    let rows = all.map((c) => ({ id: bubbleId(c), name: c.Name_company || c.name || "(namnlöst företag)" }));
+    if (q) rows = rows.filter((r) => r.name.toLowerCase().includes(q));
+    rows.sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
+    return res.json({ ok: true, count: rows.length, results: rows });
+  } catch (e) {
+    console.error("[/admin/planning/companies]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 
 // GET /admin/planning/activities?company=<id>&from=&to=
 // company utelämnat = CRM-läge (alla). Default-fönster = innevarande år.

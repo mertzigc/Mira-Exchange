@@ -38,6 +38,9 @@
   .mk-search{display:none;align-items:center;gap:7px;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:0 10px;height:32px;min-width:220px}
   .mk-search.on{display:flex}
   .mk-search input{background:transparent;border:none;color:var(--white);font-size:12px;outline:none;width:100%;font-family:var(--fb)}
+  .mk-dd{display:none;position:absolute;top:36px;left:0;right:0;background:var(--panel);border:1px solid var(--border);border-radius:9px;max-height:260px;overflow:auto;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .mk-ddrow{padding:9px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--w70)}
+  .mk-ddrow:last-child{border-bottom:none} .mk-ddrow:hover{background:var(--deep);color:var(--white)} .mk-ddrow.act{color:var(--orange)}
 
   .mk-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
   .mk-seg{display:flex;background:var(--input);border:1px solid var(--border);border-radius:8px;overflow:hidden}
@@ -127,7 +130,10 @@
 <div class="mk-wrap">
   <div class="mk-top">
     <div class="mk-brand"><div class="mk-dot"></div><div><h1 id="mkTitle">Planering</h1><p>Mira · Carotte</p></div></div>
-    <div class="mk-search" id="mkSearch"><span style="color:var(--w40)">🔍</span><input id="mkSearchInput" placeholder="Sök i kalendern…" oninput="mkOnSearch(this.value)"></div>
+    <div style="position:relative">
+      <div class="mk-search" id="mkSearch"><span style="color:var(--w40)">🔍</span><input id="mkSearchInput" placeholder="Sök kund…" oninput="mkOnSearch(this.value)" onfocus="mkOnSearch(this.value)" autocomplete="off"></div>
+      <div class="mk-dd" id="mkCompanyDD"></div>
+    </div>
   </div>
   <div class="mk-tools">
     <div class="mk-seg" id="mkZoom"></div>
@@ -171,7 +177,7 @@
   ];
   function iso(m,d,h){var x=new Date(TODAY.getFullYear(),m,d,h||0,0,0);return x.toISOString();}
 
-  var EVENTS=[], st={level:'ar',anchor:new Date(TODAY),on:{Bokning:true,Housekeeping:true,'Ärende':true,'Kom ihåg':true},status:'',q:''};
+  var EVENTS=[], COMPANIES=[], st={level:'ar',anchor:new Date(TODAY),on:{Bokning:true,Housekeeping:true,'Ärende':true,'Kom ihåg':true},status:'',q:'',activeCompany:COMPANY};
 
   function typeMeta(t){return TYPES.find(function(x){return x.key===t})||{label:t,ic:'•'};}
   function pad(n){return (n<10?'0':'')+n;}
@@ -207,8 +213,10 @@
   }
   function load(){
     if(!COMPANY && !ADMIN){ EVENTS=DEMO.map(function(d){return {id:d.id,sourceId:d.sourceId,type:d.type,title:d.title,start:dParse(d.start),end:dParse(d.end),color:d.color,status:d.status,category:d.category,company:d.company||'',desc:'',emp:'',region:'',project:'',supervisor:''};}); render(); setHint(true); return; }
+    // Alltid exakt ETT företag i taget (aldrig alla på en gång — för mastigt).
+    var comp = ADMIN ? st.activeCompany : COMPANY;
+    if(ADMIN && !comp){ EVENTS=[]; document.getElementById('mkView').innerHTML='<div class="mk-load">Sök fram en kund i rutan uppe till höger för att visa dess planering.</div>'; document.getElementById('mkCount').textContent=''; return; }
     var w=windowFor();
-    var comp = ADMIN ? null : COMPANY;   // CRM-läge: visa alla företag; kund-läge: lås till kunden
     var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(comp?'&company='+encodeURIComponent(comp):'');
     document.getElementById('mkView').innerHTML='<div class="mk-load">Laddar planering…</div>';
     fetch(url,{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
@@ -219,7 +227,7 @@
   function setHint(demo){
     document.getElementById('mkHint').textContent = demo
       ? 'Förhandsvisning (demo-data) – inget company_id. I drift visas kundens riktiga planering.'
-      : (ADMIN? 'CRM-läge: sök filtrerar alla lager. Klicka månad → dag för att zooma, klicka ett objekt för detaljer.'
+      : (ADMIN? 'CRM-läge: visar en kund i taget. Sök fram en annan kund i rutan uppe till höger för att växla. Klicka månad → dag för att zooma.'
               : 'Kund-läge: denna kunds planering. Färg = kategori, ikon = typ. Klicka ett objekt för detaljer och åtgärder.');
   }
 
@@ -356,7 +364,33 @@
   window.mkLevel=function(k){st.level=k;render();};
   window.mkToggle=function(k){st.on[k]=!st.on[k];render();};
   window.mkStatus=function(v){st.status=v;render();};
-  window.mkOnSearch=function(v){st.q=v;render();};
+
+  // CRM-lägets sökruta = företagsväljare (client-side filter på cachad lista).
+  window.mkOnSearch=function(v){
+    var box=document.getElementById('mkCompanyDD');
+    var ql=(v||'').trim().toLowerCase();
+    var list = ql ? COMPANIES.filter(function(c){return c.name.toLowerCase().indexOf(ql)>=0;}) : COMPANIES;
+    list = list.slice(0,15);
+    if(!list.length){ box.innerHTML='<div class="mk-ddrow" style="color:var(--w40)">'+(COMPANIES.length?'Inga träffar':'Laddar kunder…')+'</div>'; box.style.display='block'; return; }
+    box.innerHTML=list.map(function(c){var act=c.id===st.activeCompany?' act':'';return '<div class="mk-ddrow'+act+'" onmousedown="mkPickCompany(\''+c.id+'\',\''+esc(c.name).replace(/'/g,"&#39;")+'\')">'+esc(c.name)+'</div>';}).join('');
+    box.style.display='block';
+  };
+  window.mkPickCompany=function(id,name){
+    st.activeCompany=id;
+    document.getElementById('mkSearchInput').value=name;
+    document.getElementById('mkCompanyDD').style.display='none';
+    setActiveLabel(name);
+    load();
+  };
+  function setActiveLabel(name){ var p=document.querySelector('.mk-brand p'); if(p) p.textContent = name ? ('CRM · '+name) : 'Mira · Carotte'; }
+  function loadCompanies(){
+    fetch(HOST+'/admin/planning/companies',{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
+      COMPANIES=(j&&j.results)?j.results:[];
+      var me=COMPANIES.filter(function(c){return c.id===COMPANY;})[0];
+      if(me){document.getElementById('mkSearchInput').value=me.name;setActiveLabel(me.name);}
+    }).catch(function(){});
+  }
+  document.addEventListener('click',function(e){ var s=document.getElementById('mkSearch'); var dd=document.getElementById('mkCompanyDD'); if(dd&&s&&!s.contains(e.target)&&!dd.contains(e.target)) dd.style.display='none'; });
   window.mkNav=function(dir){var a=st.anchor;if(st.level==='ar')a.setFullYear(a.getFullYear()+dir);else if(st.level==='kvartal')a.setMonth(a.getMonth()+dir*3);else if(st.level==='manad')a.setMonth(a.getMonth()+dir);else if(st.level==='vecka')a.setDate(a.getDate()+dir*7);else a.setDate(a.getDate()+dir);
     var ny=a.getFullYear(); if(st.level==='ar'){ load(); } else { render(); } };
   window.mkToday=function(){st.anchor=new Date(TODAY);render();};
@@ -365,6 +399,7 @@
 
   document.getElementById('mkSearch').classList.toggle('on',ADMIN);
   document.getElementById('mkTitle').textContent=ADMIN?'Carotte CRM · Planering':'Planering';
+  if(ADMIN) loadCompanies();
   load();
 })();
 </script>
