@@ -148,7 +148,8 @@
   var HOST  = (document.getElementById('mira_api_host').value || 'https://mira-exchange.onrender.com').replace(/\/$/,'');
   var TOKEN = document.getElementById('mira_planning_token').value || '';
   var COMPANY = (document.getElementById('mira_company_id').value || '').trim();
-  var ADMIN = (document.getElementById('mira_admin_crm').value || '').trim().toLowerCase() === 'yes';
+  var _av = (document.getElementById('mira_admin_crm').value || '').trim().toLowerCase();
+  var ADMIN = (_av === 'yes' || _av === 'true' || _av === '1' || _av === 'ja');
 
   // ActivityType → lager (etikett + ikon). Färg på objekten = Activity.color_hex (kategori).
   var TYPES = [
@@ -207,7 +208,8 @@
   function load(){
     if(!COMPANY && !ADMIN){ EVENTS=DEMO.map(function(d){return {id:d.id,sourceId:d.sourceId,type:d.type,title:d.title,start:dParse(d.start),end:dParse(d.end),color:d.color,status:d.status,category:d.category,company:d.company||'',desc:'',emp:'',region:'',project:'',supervisor:''};}); render(); setHint(true); return; }
     var w=windowFor();
-    var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(COMPANY?'&company='+encodeURIComponent(COMPANY):'');
+    var comp = ADMIN ? null : COMPANY;   // CRM-läge: visa alla företag; kund-läge: lås till kunden
+    var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(comp?'&company='+encodeURIComponent(comp):'');
     document.getElementById('mkView').innerHTML='<div class="mk-load">Laddar planering…</div>';
     fetch(url,{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
       EVENTS=(j&&j.results?j.results:[]).map(mapRow);
