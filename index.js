@@ -16752,8 +16752,18 @@ const FORFRAGAN = {
   USER_TYPE:     "User",
 
   // ClientCompany
-  CC_SUPPLIER: "leverantör",        // list of Leverantör
   CC_NAME:     "Name_company",
+
+  // Leverantör per kategori (fasta Carotte-bolag, Christian 2026-06-16). Comission.Leverantör
+  // = [matchande id]. Namn visas via SUPPLIER_NAME-fältet (kräver SUPPLIER_TYPE-typnamnet).
+  SUPPLIER_BY_CATEGORY: {
+    "Food & Event":            "1731411052569x831010598495453200",
+    "Staff":                   "1732782758356x272951352004444160",
+    "Housekeeping":            "1732782847141x739655205427609600",
+    "Other facility services": "1746511649924x692607212964806700",
+  },
+  SUPPLIER_TYPE: "Leverantör - Supplier",   // Bubble-datatyp (bekräftat)
+  SUPPLIER_NAME: "Företagsnamn",            // namn-fält på leverantörstypen
 
   // Office
   OFFICE_ADDRESS: "office_address", // geografisk adress (objekt → .address)
@@ -16943,13 +16953,17 @@ app.get("/admin/forfragan/bootstrap", async (req, res) => {
   if (!_ffGuard(req, res)) return;
   try {
     const company = req.query.company ? String(req.query.company).trim() : null;
-    let cc = null, supplierIds = [], companyName = null;
+    let companyName = null;
     if (company) {
-      cc = await bubbleGet(FORFRAGAN.CLIENTCOMPANY_TYPE, company).catch(() => null);
-      if (cc) {
-        companyName = cc[FORFRAGAN.CC_NAME] || null;
-        supplierIds = _ffIdsOf(cc[FORFRAGAN.CC_SUPPLIER]);
-      }
+      const cc = await bubbleGet(FORFRAGAN.CLIENTCOMPANY_TYPE, company).catch(() => null);
+      if (cc) companyName = cc[FORFRAGAN.CC_NAME] || null;
+    }
+    // Leverantör per kategori (id fast, namn via Företagsnamn). Fel typnamn → namn=null (booking funkar ändå).
+    const suppliersByCategory = {};
+    for (const [cat, sid] of Object.entries(FORFRAGAN.SUPPLIER_BY_CATEGORY)) {
+      let name = null;
+      try { const s = await bubbleGet(FORFRAGAN.SUPPLIER_TYPE, sid); if (s) name = s[FORFRAGAN.SUPPLIER_NAME] || null; } catch (_) {}
+      suppliersByCategory[cat] = { id: sid, name };
     }
     // Kontor: hämta alla, filtrera på företaget i JS
     let offices = [];
@@ -16969,9 +16983,7 @@ app.get("/admin/forfragan/bootstrap", async (req, res) => {
       ok: true,
       company_id: company,
       company_name: companyName,
-      supplier_id: supplierIds[0] || null,
-      supplier_ids: supplierIds,
-      supplier_count: supplierIds.length,
+      suppliers_by_category: suppliersByCategory,
       offices,
       categories: Object.keys(FORFRAGAN_KATEGORIER),
       subcategories: FORFRAGAN_KATEGORIER,
@@ -17070,12 +17082,8 @@ app.post("/admin/forfragan/create", async (req, res) => {
       return res.status(400).json({ ok: false, error: `Antal (${antal}) överstiger Capacity (${capacity})` });
     }
 
-    // ── Leverantör = current users company's leverantör (LISTA; resolva om ej skickad) ──
-    let supplierIds = Array.isArray(d.supplier_ids) ? d.supplier_ids.filter(Boolean) : [];
-    if (!supplierIds.length) {
-      const cc = await bubbleGet(FORFRAGAN.CLIENTCOMPANY_TYPE, companyId).catch(() => null);
-      if (cc) supplierIds = _ffIdsOf(cc[FORFRAGAN.CC_SUPPLIER]);
-    }
+    // ── Leverantör = bestäms av kategori (fast Carotte-bolag) ──
+    const supplierId = FORFRAGAN.SUPPLIER_BY_CATEGORY[category] || null;
 
     // ── Datum + recurrence-serie ──
     const deliveryIso = toBubbleDate(d.delivery_date) || new Date(Date.now() + 5 * 864e5).toISOString();
@@ -17115,7 +17123,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
         [FORFRAGAN.C_GUEST]:         antal,
         [FORFRAGAN.C_PO]:            d.po ? safeText(d.po, 120) : null,
         [FORFRAGAN.C_ALLERGENS]:     allergensJson,
-        [FORFRAGAN.C_SUPPLIER]:      supplierIds.length ? supplierIds : null,
+        [FORFRAGAN.C_SUPPLIER]:      supplierId ? [supplierId] : null,
         [FORFRAGAN.C_BESTALLARE]:    coworkerIds.length ? coworkerIds : null,
         [FORFRAGAN.C_PRODUKTTILLAGG]: (Array.isArray(d.produkttillagg) && d.produkttillagg.length) ? d.produkttillagg : null,
       };
@@ -17184,8 +17192,14 @@ app.post("/admin/forfragan/create", async (req, res) => {
         subject_override: `${title} – ${subcatDisplay}`,
       });
       const recips = new Set();
-      for (const u of await _ffNotifyUsers(companyId)) { const e = normEmail(u[FORFRAGAN.NOTIFY_USER_EMAIL]); if (e) recips.add(e); }
+      const notifyUsers = await _ffNotifyUsers(companyId);
+      for (const u of notifyUsers) {
+        // built-in email kan ligga top-level (u.email) eller nästlat under authentication
+        const raw = u[FORFRAGAN.NOTIFY_USER_EMAIL] || u.Email || (u.authentication && u.authentication.email && u.authentication.email.email);
+        const e = normEmail(raw); if (e) recips.add(e);
+      }
       if (FORFRAGAN.NOTIFY_EXTRA_INBOX) recips.add(normEmail(FORFRAGAN.NOTIFY_EXTRA_INBOX));
+      result.notify_users_found = notifyUsers.length;
       result.notify_recipients = Array.from(recips);
       result.notify_template_id = tplId || null;
       for (const to of recips) {
@@ -17197,11 +17211,13 @@ app.post("/admin/forfragan/create", async (req, res) => {
       }
     } catch (e) { console.warn("[forfragan] notify fail", e?.message); result.notify_error = e?.message; }
 
-    // Lead per beställare (Lead-typen: Source/Name/client_company/Comission/Email)
+    // Lead per beställare. Fält bekräftade av Christian: Source, Name, titel (lowercase),
+    // Description (capital), Category (samma optionset som Comission), client_company, Comission, Email.
     for (const b of bestallare) {
       try {
         const leadId = await bubbleCreate(FORFRAGAN.LEAD_TYPE, {
-          Source: FORFRAGAN.LEAD_SOURCE_VALUE, Name: title,
+          Source: FORFRAGAN.LEAD_SOURCE_VALUE, Name: title, titel: title,
+          Description: rawMsg || null, Category: category || null,
           client_company: companyId, Comission: masterId, Email: normEmail(b.email),
         });
         result.leads.push({ email: b.email, lead_id: leadId });
@@ -17220,7 +17236,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
       } catch (e) { console.warn("[forfragan] coworker fail", b.email, e?.message); }
     }
 
-    console.log(`[forfragan] commission ${masterId} (+${created.length - 1} serie) · ${result.queued} mail · ${result.leads.length} leads · ${result.coworker_patched} coworkers`);
+    console.log(`[forfragan] commission ${masterId} (+${created.length - 1} serie) · ${result.queued} mail (users=${result.notify_users_found ?? "?"} recips=${(result.notify_recipients || []).length} tpl=${result.notify_template_id ? "ja" : "NEJ"}${result.notify_error ? " ERR:" + result.notify_error : ""}) · ${result.leads.length} leads · ${result.coworker_patched} coworkers`);
     return res.json(result);
   } catch (e) {
     console.error("[/admin/forfragan/create]", e?.message, e?.detail);

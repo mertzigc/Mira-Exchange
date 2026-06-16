@@ -204,13 +204,13 @@
   var DEMO = !COMPANY;
 
   // ── data (fylls av bootstrap/offers; demo-fallback) ──
-  var BOOT = { offices:[], supplier_id:null, supplier_ids:[], categories:[], subcategories:{}, recurrence_rules:[] };
+  var BOOT = { offices:[], suppliers_by_category:{}, categories:[], subcategories:{}, recurrence_rules:[] };
   var OFFERS = { general:[], unique:[] };
   var ALLERGENS = ["Gluten","Skaldjur","Ägg","Fisk","Jordnötter","Sojabönor","Mjölk/laktos","Nötter","Selleri","Senap","Sesamfrö","Svaveldioxid/sulfit","Lupin","Blötdjur"];
 
   var DEMO_BOOT = {
     offices:[{id:'o1',name:'Huvudkontoret',address:'Sveavägen 1, Stockholm'},{id:'o2',name:'Filial Göteborg',address:'Avenyn 5, Göteborg'}],
-    supplier_id:'demo-supplier',
+    suppliers_by_category:{"Food & Event":{id:'s1',name:'Carotte Food & Event AB'},"Housekeeping":{id:'s3',name:'Carotte Housekeeping AB'},"Staff":{id:'s2',name:'Carotte Staff AB'},"Other facility services":{id:'s4',name:'Carotte Facility AB'}},
     categories:["Food & Event","Housekeeping","Staff","Other facility services"],
     subcategories:{
       "Food & Event":["Frukost","Lunch","Middag","After work","Kundevent","Internt event","Sommarfest","Julfest","Kickoff","Konferens","Fika"],
@@ -286,7 +286,7 @@
       api('/admin/forfragan/offers?company='+encodeURIComponent(COMPANY))
     ]).then(function(res){
       var b=res[0]||{}, o=res[1]||{};
-      if(b.ok){ BOOT={offices:b.offices||[],supplier_id:b.supplier_id||null,supplier_ids:b.supplier_ids||[],categories:b.categories||[],subcategories:b.subcategories||{},recurrence_rules:b.recurrence_rules||[]}; if(b.company_name) { COMPANY_NAME=b.company_name; document.getElementById('ffCompany').textContent='förfrågan · '+COMPANY_NAME; } }
+      if(b.ok){ BOOT={offices:b.offices||[],suppliers_by_category:b.suppliers_by_category||{},categories:b.categories||[],subcategories:b.subcategories||{},recurrence_rules:b.recurrence_rules||[]}; if(b.company_name) { COMPANY_NAME=b.company_name; document.getElementById('ffCompany').textContent='förfrågan · '+COMPANY_NAME; } }
       if(o.ok){ OFFERS={general:o.general||[],unique:o.unique||[]}; }
       render();
     }).catch(function(e){ BOOT=DEMO_BOOT; OFFERS=DEMO_OFFERS; render(); });
@@ -382,8 +382,9 @@
     h+='<div class="field"><label>Beställare (en lead skapas per beställare)</label>'+
        '<div class="bsearch"><input id="f_best" type="text" placeholder="sök medarbetare på namn/e-post…" autocomplete="off"><div class="bdd" id="ffBestDd"></div></div>'+
        '<div class="bchips" id="ffBestChips"></div></div>';
-    // Leverantör (auto)
-    h+='<div class="field"><label>Leverantör</label><input class="ro" value="'+(BOOT.supplier_id?'Tilldelas automatiskt (företagets leverantör)':'Ingen leverantör kopplad')+'" disabled></div>';
+    // Leverantör (bestäms av kategori)
+    var supN=(BOOT.suppliers_by_category[effCategory()]||{}).name;
+    h+='<div class="field"><label>Leverantör</label><input class="ro" value="'+esc(supN||'Tilldelas av kategorin')+'" disabled></div>';
     // Kategori + underkategori
     if(st.path==='fritt'){
       h+='<div class="row2"><div class="field"><label>Kategori</label>'+catSelect()+'</div>'+
@@ -544,7 +545,7 @@
     setBusy(true);
     var allergens=Object.keys(st.allergens).map(function(n){return {name:n,count:st.allergens[n]};});
     var payload={
-      mode:'write', company_id:COMPANY, supplier_ids:BOOT.supplier_ids||[], path:st.path, offer_id:st.offerId||null,
+      mode:'write', company_id:COMPANY, path:st.path, offer_id:st.offerId||null,
       commission_title:st.titel, description:st.beskrivning, category:effCategory()||null, subcategory:st.subcategory||null,
       delivery_date:localIso(st.datum,st.tid), delivery_date_end:st.slutdatum?localIso(st.slutdatum,'12:00'):null,
       plats:(st.plats&&typeof st.plats==='object'?(st.plats.address||''):st.plats)||null, office_id:st.kontor||null, antal:+st.antal||null, budget:st.budget?+st.budget:null,

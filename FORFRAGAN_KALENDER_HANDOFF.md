@@ -203,7 +203,8 @@ All hedging/kandidat-arrayer borttagna ur koden (FORFRAGAN-config = en sträng p
 **Office:** typ `Office` · namn `Office_title` · adress `office_address` (geografisk objekt) · företag `Kundföretag`
 **Erbjudande:** typ `Erbjudande` · `Status` (optionset Status erbjudande: Utkast/Publicerat/Utgånget) · `startdatum`/`slutdatum` · företag `Kundföretag` (**list** — tom=allmän, innehåller company=unik)
 **ClientCompany:** `leverantör` (list) · `Name_company` · Coworker→`Kundföretag`
-**Lead:** `Source` (="Mira") · `Name` · `client_company` · `Comission` · `Email` (typen saknar Category/Delivery_date/Description/Title)
+**Lead:** `Source` (="Mira") · `Name` · `titel` (lowercase) · `Description` · `Category` · `client_company` · `Comission` · `Email`
+**Leverantör:** typ `Leverantör - Supplier` · namn `Företagsnamn`. Comission.Leverantör = [id per kategori]: Food & Event `1731411052569x831010598495453200` · Staff `1732782758356x272951352004444160` · Housekeeping `1732782847141x739655205427609600` · Other facility services `1746511649924x692607212964806700`
 **Coworker:** typ `Coworker` · `Email` · `Förnamn`/`Efternamn` · `Bokningar` (list of Comissions) · `Kundföretag`
 **User (notify):** typ `User` · `Associated_company` (list) · `email` (inbyggt)
 **EmailQueue:** typ `emailqueue` · `template_id`/`entity_id`/`entity_type`/`to_email`/`to_name`/`email_sent`/`extra_data` (alla lowercase)
