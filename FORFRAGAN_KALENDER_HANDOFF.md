@@ -181,6 +181,30 @@ Inline-block i `index.js` FÖRE `app.listen` (mönster som `LANDING`/`public/req
 
 **Att testa wizarden:** sätt #mira_planning_token i HTML + embedda i Bubble (kund med company_id). Eller curl:a /create direkt (se nedan). Verifiera mot riktig kund: erbjudanden laddar i rätt flik, kontor fyller adress, specialkost-chips, beställar-sök, recurrence-serie i granska, submit skapar commission+serie+lead+coworker+notify.
 
+## ITERATION 2026-06-16 — efter Christians första livetest (CMIAB)
+
+Screenshots av Comission-editorn avslöjade riktiga fältnamn + buggar. Fixat:
+- **Mappat till egna fält** (låg i Description): `Location` (adress), `Guest` (antal), `Po_number`, `Allergens_json` (specialkost-JSON). Description = nu bara kundens råtext.
+- **Underkategori inkonsekvent stavning** (screenshot): FE=`SubkategoriFE` (svenska!), HK=`SubCategoryHK`, SP=`SubCategorySP`, FM=`SubcategoryFM`. Mina engelska namn var fel → droppades. Nu rätta (hedgas för första-char).
+- **Beställare = lista av Coworker** (ej User). `/users` söker nu Coworker (Kundföretag=company), returnerar coworker-id. Wizarden lagrar coworker_id → Beställare + coworker-kedjan får rätt id. Det fixar "sök beställare funkar ej" + 0 leads (kom av tomt beställare-fält).
+- **Bekräftade fält → `exact`** (inget safeCreate-hedge-brus i loggen). recurrence lowercase = bekräftat (Recurrence_* avvisas, recurrence_* landar — felen i loggen var självläkning, ej fel). Bara underkategori + produkttillägg hedgas kvar.
+- **Tidszon +2h**: wizarden skickar nu ISO beräknad i webbläsaren (`localIso()`, svensk tid/sommartid) ist. för naiv sträng → UTC-server.
+- **Dubbel-submit**: `setBusy()` låser Skicka/Utkast-knapparna under anropet.
+
+**DATA-SIDAN att verifiera (Christian, inte kod):**
+- Lead: typen saknar ev. Category/Delivery_date/Comission (tomma i /schema-sample) → kolla efter omtest att leaden länkas rätt (annars Comission.LeadID_lime?).
+- Internservice visades tomt i editorn — skickas nu som `false` i exact; verifiera att den landar som "nej".
+
+## ITERATION 2 2026-06-16 — efter andra livetest-screenshots
+- **Leverantör är en LISTA** (CMIAB har Carotte Food&Event/Staff/Housekeeping). `_ffIdOf` på array gav null → landade aldrig. Ny `_ffIdsOf()` → bootstrap returnerar `supplier_ids[]`, Comission.Leverantör sätts som lista. (Ev. framtida förfining: filtrera leverantör på kategori, idag sätts hela listan.)
+- **Notify**: EmailTemplate `commission_new` finns + funkar (bekräftat). 0 mail kom alltså av att `associated_company contains`-queryn hittade 0 users. `_ffNotifyUsers` testar nu både `User`/`user`-casing + create-svaret returnerar `notify_recipients`/`notify_debug`/`notify_template_id` så nästa test visar exakt vilka som matchar. (Verifiera: har test-usern `associated_company` som innehåller CMIAB?)
+- Office_address saknades på testkontoret (data, ej kod) → omtest.
+- Google Places: avvaktar (Christians beslut).
+
+**EJ GJORT (kräver beslut/nyckel):**
+- **Google Places autocomplete** på adressfältet — kräver Maps JS API-nyckel + script. Adressen förifylls från kontoret idag. Säg till om du vill ha det + ge nyckel.
+- Kontor-autofyll: koden sätter plats=office.address vid val; verifiera att CMIAB-kontorets `office_address` är ifyllt (annars inget att fylla).
+
 **KVAR/följdjobb:**
 - **Produkttillägg**: offers-endpointen returnerar råa product-ids (inga namn/priser) → wizarden renderar dem inte som valbara än. Behöver ev. /admin/forfragan/products-resolve (id→namn/pris) för tillvals-UI + korrekt kostnadspanel. Idag: kostnad = PrisPerPerson × antal.
 - **commission_new-mallens copy** aligna mot spec-body (emailer.js tmplCommissionNew, läser e.commission_title lowercase → faller på extra.title som nu skickas).

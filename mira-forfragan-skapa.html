@@ -185,7 +185,7 @@
   var DEMO = !COMPANY;
 
   // ── data (fylls av bootstrap/offers; demo-fallback) ──
-  var BOOT = { offices:[], supplier_id:null, categories:[], subcategories:{}, recurrence_rules:[] };
+  var BOOT = { offices:[], supplier_id:null, supplier_ids:[], categories:[], subcategories:{}, recurrence_rules:[] };
   var OFFERS = { general:[], unique:[] };
   var ALLERGENS = ["Gluten","Skaldjur","Ägg","Fisk","Jordnötter","Sojabönor","Mjölk/laktos","Nötter","Selleri","Senap","Sesamfrö","Svaveldioxid/sulfit","Lupin","Blötdjur"];
 
@@ -233,7 +233,7 @@
       api('/admin/forfragan/offers?company='+encodeURIComponent(COMPANY))
     ]).then(function(res){
       var b=res[0]||{}, o=res[1]||{};
-      if(b.ok){ BOOT={offices:b.offices||[],supplier_id:b.supplier_id||null,categories:b.categories||[],subcategories:b.subcategories||{},recurrence_rules:b.recurrence_rules||[]}; if(b.company_name) { COMPANY_NAME=b.company_name; document.getElementById('ffCompany').textContent='förfrågan · '+COMPANY_NAME; } }
+      if(b.ok){ BOOT={offices:b.offices||[],supplier_id:b.supplier_id||null,supplier_ids:b.supplier_ids||[],categories:b.categories||[],subcategories:b.subcategories||{},recurrence_rules:b.recurrence_rules||[]}; if(b.company_name) { COMPANY_NAME=b.company_name; document.getElementById('ffCompany').textContent='förfrågan · '+COMPANY_NAME; } }
       if(o.ok){ OFFERS={general:o.general||[],unique:o.unique||[]}; }
       render();
     }).catch(function(e){ BOOT=DEMO_BOOT; OFFERS=DEMO_OFFERS; render(); });
@@ -469,7 +469,7 @@
       if(!row.getAttribute('data-email')) return;
       row.addEventListener('click',function(){
         var em=row.getAttribute('data-email');
-        if(!st.bestallare.some(function(b){return b.email===em;})) st.bestallare.push({user_id:row.getAttribute('data-id'),email:em,fornamn:row.getAttribute('data-f'),efternamn:row.getAttribute('data-e')});
+        if(!st.bestallare.some(function(b){return b.email===em;})) st.bestallare.push({coworker_id:row.getAttribute('data-id'),email:em,fornamn:row.getAttribute('data-f'),efternamn:row.getAttribute('data-e')});
         dd.classList.remove('on'); document.getElementById('f_best').value=''; renderBestChips(); renderSummary();
       });
     });
@@ -491,25 +491,29 @@
   window.ffGo=function(dir){ if(dir>0&&!stepValid(st.step)) return; st.step=Math.max(0,Math.min(STEPS.length-1,st.step+dir)); render(); window.scrollTo(0,0); };
   window.ffJump=function(i){ if(i<st.step){ st.step=i; render(); } };
 
+  // Lokal datum+tid → ISO i webbläsaren (respekterar svensk tidszon/sommartid).
+  function localIso(dateStr,timeStr){ if(!dateStr) return null; var d=new Date(dateStr+'T'+(timeStr||'12:00')); return isNaN(d)?null:d.toISOString(); }
+  function setBusy(on){ st.busy=on; var d=document.getElementById('ffDraft'), s=document.getElementById('ffSend'); if(d) d.disabled=on; if(s){ s.disabled=on; s.textContent=on?'Skickar…':'Skicka förfrågan →'; } }
+
   function submit(draft){
     if(st.busy) return;
     if(DEMO){ showOverlay(true,draft,{occurrences:st.recRule?'flera':1}); return; }
-    st.busy=true;
+    setBusy(true);
     var allergens=Object.keys(st.allergens).map(function(n){return {name:n,count:st.allergens[n]};});
     var payload={
-      mode:'write', company_id:COMPANY, supplier_id:BOOT.supplier_id||null, path:st.path, offer_id:st.offerId||null,
+      mode:'write', company_id:COMPANY, supplier_ids:BOOT.supplier_ids||[], path:st.path, offer_id:st.offerId||null,
       commission_title:st.titel, description:st.beskrivning, category:effCategory()||null, subcategory:st.subcategory||null,
-      delivery_date:st.datum?(st.datum+'T'+(st.tid||'12:00')):null, delivery_date_end:st.slutdatum||null,
+      delivery_date:localIso(st.datum,st.tid), delivery_date_end:st.slutdatum?localIso(st.slutdatum,'12:00'):null,
       plats:st.plats||null, office_id:st.kontor||null, antal:+st.antal||null, budget:st.budget?+st.budget:null,
       capacity:(curOffer()&&curOffer().capacity!=null)?+curOffer().capacity:null,
-      specialkost:allergens.length?allergens:null,
+      specialkost:allergens.length?allergens:null, po:st.po||null,
       status:draft?'draft':'sent',
-      bestallare:st.bestallare.map(function(b){return {email:b.email,fornamn:b.fornamn,efternamn:b.efternamn,user_id:b.user_id};}),
-      recurrence:st.recRule?{rule:st.recRule,until:st.recUntil||null}:null
+      bestallare:st.bestallare.map(function(b){return {email:b.email,fornamn:b.fornamn,efternamn:b.efternamn,coworker_id:b.coworker_id};}),
+      recurrence:st.recRule?{rule:st.recRule,until:st.recUntil?localIso(st.recUntil,'12:00'):null}:null
     };
     fetch(HOST+'/admin/forfragan/create',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify(payload)})
-      .then(function(r){return r.json();}).then(function(j){ st.busy=false; if(j&&j.ok) showOverlay(true,draft,j); else showOverlay(false,draft,j); })
-      .catch(function(e){ st.busy=false; showOverlay(false,draft,{error:String(e)}); });
+      .then(function(r){return r.json();}).then(function(j){ setBusy(false); if(j&&j.ok) showOverlay(true,draft,j); else showOverlay(false,draft,j); })
+      .catch(function(e){ setBusy(false); showOverlay(false,draft,{error:String(e)}); });
   }
   function showOverlay(ok,draft,j){
     var okEl=document.getElementById('ffOk'); okEl.className='ok'+(ok?'':' err'); okEl.textContent=ok?'✓':'!';
