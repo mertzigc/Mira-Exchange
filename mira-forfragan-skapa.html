@@ -86,11 +86,30 @@
   .offer .body .meta{font-size:11px;color:var(--w40)} .offer .body .price{font-size:12px;color:var(--orange);font-weight:700;margin-top:6px}
   .empty{font-size:12px;color:var(--w40);padding:18px;text-align:center;border:1px dashed var(--border);border-radius:10px;margin-top:12px}
 
-  .offerview{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
-  .offerview h3{font-family:'DM Serif Display',Georgia,serif;font-size:18px;margin-bottom:6px}
-  .offerview .od{font-size:12px;color:var(--w70);line-height:1.55;margin-bottom:10px}
-  .offerview .ometa{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
-  .chiptag{font-size:11px;background:var(--input);border:1px solid var(--border);color:var(--w70);padding:4px 9px;border-radius:6px}
+  .chiptag{font-size:11px;background:var(--input);border:1px solid var(--border);color:var(--w70);padding:5px 10px;border-radius:7px}
+  /* säljande erbjudande-hero */
+  .ohero{border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:18px;background:var(--card)}
+  .ohero-img{position:relative;height:215px;background-size:cover;background-position:center}
+  .ohero-grad{position:absolute;inset:0;background:linear-gradient(to top,rgba(20,23,38,.94) 2%,rgba(20,23,38,.45) 42%,rgba(20,23,38,.05) 100%)}
+  .ohero-cap{position:absolute;top:14px;right:14px}
+  .ohero-price{display:inline-block;background:var(--orange);color:#1c1206;font-weight:800;font-size:18px;padding:8px 14px;border-radius:10px;box-shadow:0 5px 16px rgba(244,123,48,.42)}
+  .ohero-price small{font-weight:600;font-size:11px;opacity:.8}
+  .ohero-tt{position:absolute;left:22px;right:22px;bottom:16px}
+  .ohero-tt h3{font-family:'DM Serif Display',Georgia,serif;font-size:26px;line-height:1.08;color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.55)}
+  .ohero-sub{font-size:12px;color:rgba(255,255,255,.82);margin-top:5px}
+  .obody{padding:18px 22px 20px}
+  .ointro{font-size:13px;color:var(--w70);line-height:1.65;margin-bottom:14px}
+  .obody .ometa{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .oincl-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--orange);font-weight:700;margin-bottom:11px}
+  .oincl ul{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px 20px;margin:0;padding:0}
+  @media(max-width:560px){.oincl ul{grid-template-columns:1fr}}
+  .oincl li{font-size:12px;color:var(--w70);line-height:1.45;padding-left:15px;position:relative}
+  .oincl li:before{content:'';position:absolute;left:0;top:6px;width:5px;height:5px;border-radius:50%;background:var(--orange)}
+  .oincl li.olead{grid-column:1/-1;font-size:12.5px;color:var(--white);font-weight:600;padding-left:0;margin-bottom:3px}
+  .oincl li.olead:before{display:none}
+  .ogallery{display:flex;gap:8px;margin-top:16px;overflow-x:auto;padding-bottom:3px}
+  .othumb{width:94px;height:66px;border-radius:8px;background-size:cover;background-position:center;flex-shrink:0;border:1px solid var(--border)}
+  .ovillkor{font-size:10.5px;color:var(--w40);line-height:1.55;margin-top:15px;padding-top:13px;border-top:1px solid var(--border)}
 
   /* recurrence + allergener + chips */
   .tillagg,.allergens{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
@@ -202,7 +221,7 @@
     recurrence_rules:["Veckovis","Varannan vecka","Månadsvis","Kvartalsvis","Årsvis"]
   };
   var DEMO_OFFERS = { general:[
-      {id:'g1',title:'Julfest – Mat & Magisk Stämning',image:'',description:'Klassiska julsmaker i modern tappning. Komplett buffé.',description_long:'',capacity:120,pris_per_person:585,extern_lokal:[],produktinnehall:'Buffé, dryck, servering',villkor:'Preliminärt pris, ex moms.',malgrupp:'Företag 15–120 pers',logistik:'Leverans + uppdukning ingår',produkttillagg:[]},
+      {id:'g1',title:'Julfest – Smakfull Mat & Magisk Stämning',image:'https://images.unsplash.com/photo-1482275548304-a58859dc31b7?w=900',description:'',description_long:'Skapa en julfest att minnas med en exklusiv meny framtagen för att sprida värme, glädje och smakupplevelser i vintermörkret.',capacity:120,pris_per_person:585,extern_lokal:[],produktinnehall:'Meny – Julens smaker • Inlagd sill med sötma och syra • Gravad lax med granatäpple & grönkål • Grillad julskinka med smaksatt senap • Carottes julköttbullar • Jansons frestelse • Urval av lagrade ostar • Dryckespaket: glögg, vin/öl, kaffe',villkor:'Samtliga priser är exklusive moms (12% mat, 25% alkohol). Leveranskostnad tillkommer.',malgrupp:'Företag 15–120 personer',logistik:'Leverans + uppdukning ingår',produkttillagg:[]},
       {id:'g2',title:'Sensommarfest',image:'',description:'Säsongens råvaror, grillat och svalkande.',capacity:80,pris_per_person:525,extern_lokal:[],produktinnehall:'Grillbuffé',villkor:'',malgrupp:'',logistik:'',produkttillagg:[]}
     ], unique:[
       {id:'u1',title:'EA – Veckans AW (avtalspris)',image:'',description:'Ert avtalade AW-koncept varje fredag.',capacity:40,pris_per_person:145,extern_lokal:[{id:'l1',label:'Takterrassen'},{id:'l2',label:'Loungen'}],produktinnehall:'Snacks + dryck',villkor:'',malgrupp:'',logistik:'',produkttillagg:[]}
@@ -219,7 +238,41 @@
   }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function kr(n){ return Math.round(+n||0).toLocaleString('sv-SE'); }
+  function imgUrl(u){ u=String(u||'').trim(); if(!u) return ''; if(u.indexOf('//')===0) u='https:'+u; return u; }
+  function innehallList(txt){ return String(txt||'').split('•').map(function(s){return s.trim();}).filter(Boolean); }
   function curOffer(){ if(st.path!=='erbjudande'||!st.offerId) return null; return OFFERS.general.concat(OFFERS.unique).find(function(o){return o.id===st.offerId;}); }
+
+  // Säljande erbjudande-hero: bild + pris + parsad innehållslista + bildspel.
+  function offerHero(o){
+    var img=imgUrl(o.image);
+    var bg = img ? "background-image:url('"+esc(img)+"')" : "background:linear-gradient(135deg,#3a4060,#2a2f4a)";
+    var h='<div class="ohero"><div class="ohero-img" style="'+bg+'"><div class="ohero-grad"></div>';
+    if(o.pris_per_person!=null) h+='<div class="ohero-cap"><span class="ohero-price">'+kr(o.pris_per_person)+' kr<small> /person</small></span></div>';
+    h+='<div class="ohero-tt"><h3>'+esc(o.title)+'</h3>'+(o.malgrupp?'<div class="ohero-sub">'+esc(o.malgrupp)+'</div>':'')+'</div></div>';
+    h+='<div class="obody">';
+    var intro=o.description_long||o.description||'';
+    if(intro) h+='<p class="ointro">'+esc(intro)+'</p>';
+    h+='<div class="ometa">';
+    if(o.capacity!=null) h+='<span class="chiptag">👥 max '+o.capacity+' pers</span>';
+    if(o.logistik) h+='<span class="chiptag">🚚 '+esc(o.logistik)+'</span>';
+    h+='</div>';
+    var items=innehallList(o.produktinnehall);
+    if(items.length){
+      var lead=items[0].replace(/^Innehåll:\s*/i,''); var rest=items.slice(1);
+      h+='<div class="oincl"><div class="oincl-h">Det här ingår</div><ul>';
+      if(lead) h+='<li class="olead">'+esc(lead)+'</li>';
+      rest.forEach(function(it){ h+='<li>'+esc(it)+'</li>'; });
+      h+='</ul></div>';
+    }
+    if(o.bildspel&&o.bildspel.length){
+      h+='<div class="ogallery">';
+      o.bildspel.forEach(function(b){ var u=imgUrl(b); if(u) h+='<div class="othumb" style="background-image:url(\''+esc(u)+'\')"></div>'; });
+      h+='</div>';
+    }
+    if(o.villkor) h+='<div class="ovillkor">'+esc(o.villkor)+'</div>';
+    h+='</div></div>';
+    return h;
+  }
   function effCategory(){ var o=curOffer(); return st.path==='erbjudande'&&o&&o.category ? o.category : st.kategori; }
   function isFood(){ return effCategory()==='Food & Event'; }
 
@@ -300,17 +353,7 @@
 
   function panelEvent(){
     var o=curOffer(), h='<h2>Eventdata</h2><div class="hint">När, var och hur många. Sammanställningen till höger uppdateras live.</div>';
-    if(o){
-      h+='<div class="offerview"><h3>'+esc(o.title)+'</h3>'+
-         (o.description?'<div class="od">'+esc(o.description)+'</div>':'')+
-         '<div class="ometa">'+
-           (o.capacity!=null?'<span class="chiptag">Kapacitet: '+o.capacity+' pers</span>':'')+
-           (o.pris_per_person!=null?'<span class="chiptag">'+kr(o.pris_per_person)+' kr/pers</span>':'')+
-           (o.malgrupp?'<span class="chiptag">'+esc(o.malgrupp)+'</span>':'')+
-         '</div>'+
-         (o.produktinnehall?'<div class="od"><b>Innehåll:</b> '+esc(o.produktinnehall)+'</div>':'')+
-         (o.logistik?'<div class="od"><b>Logistik:</b> '+esc(o.logistik)+'</div>':'')+'</div>';
-    }
+    if(o) h+=offerHero(o);
     h+='<div class="row2">'+fInput('datum','Leveransdatum','date')+fInput('tid','Tid','time')+'</div>';
     h+='<div class="row2">'+fInput('slutdatum','Ev. slutdatum','date')+fInput('antal','Antal deltagare','number')+'</div>';
     // Plats: extern lokal begränsar valet om erbjudandet har lokaler

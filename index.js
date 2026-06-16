@@ -16838,16 +16838,18 @@ const _ffIdOf = (x) => (x == null ? null : (typeof x === "string" ? x : bubbleId
 // Ref eller lista (t.ex. ClientCompany.leverantör, Erbjudande.Kundföretag) → array av id:n.
 const _ffIdsOf = (x) => { if (x == null) return []; const arr = Array.isArray(x) ? x : [x]; return arr.map((v) => (typeof v === "string" ? v : bubbleId(v))).filter(Boolean); };
 
-function _ffOfferPublished(o) {
+// Returnerar null om publicerad+giltig, annars skäl-sträng (för debug).
+function _ffOfferReason(o) {
   const status = o[FORFRAGAN.OFFER_STATUS];
-  if (status && String(status) !== FORFRAGAN.OFFER_STATUS_PUBLISHED) return false;
+  if (status && String(status) !== FORFRAGAN.OFFER_STATUS_PUBLISHED) return `status=${status}`;
   const now = Date.now();
   const start = o[FORFRAGAN.OFFER_START];
   const end   = o[FORFRAGAN.OFFER_END];
-  if (start && new Date(start).getTime() > now) return false;
-  if (end && new Date(end).getTime() < now) return false;
-  return true;
+  if (start && new Date(start).getTime() > now) return `ej startat (startdatum=${start})`;
+  if (end && new Date(end).getTime() < now) return `utgånget (slutdatum=${end})`;
+  return null;
 }
+function _ffOfferPublished(o) { return _ffOfferReason(o) === null; }
 function _ffOfferOut(o) {
   return {
     id:             bubbleId(o),
@@ -16988,6 +16990,17 @@ app.get("/admin/forfragan/offers", async (req, res) => {
     const company = req.query.company ? String(req.query.company).trim() : null;
     const q = String(req.query.q || "").trim().toLowerCase();
     const all = await bubbleFindAll(FORFRAGAN.OFFER_TYPE, {});
+
+    // debug=1 → visa VARJE erbjudande + varför det ev. exkluderas (ingen filtrering)
+    if (String(req.query.debug || "") === "1") {
+      return res.json({ ok: true, total: all.length, offers: all.map((o) => ({
+        title: o.Title, status: o[FORFRAGAN.OFFER_STATUS] ?? null,
+        startdatum: o[FORFRAGAN.OFFER_START] ?? null, slutdatum: o[FORFRAGAN.OFFER_END] ?? null,
+        kundforetag: _ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]),
+        excluded_reason: _ffOfferReason(o), shown_as: _ffOfferReason(o) ? "DOLT" : (_ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]).length ? "unik" : "allmän"),
+      })) });
+    }
+
     let rows = all.filter(_ffOfferPublished).map(_ffOfferOut);
     if (q) rows = rows.filter((o) => (o.title + " " + o.description).toLowerCase().includes(q));
     // allmänna = Kundföretag tom; unika = Kundföretag innehåller company
