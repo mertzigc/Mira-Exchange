@@ -195,6 +195,32 @@ Screenshots av Comission-editorn avslöjade riktiga fältnamn + buggar. Fixat:
 - Lead: typen saknar ev. Category/Delivery_date/Comission (tomma i /schema-sample) → kolla efter omtest att leaden länkas rätt (annars Comission.LeadID_lime?).
 - Internservice visades tomt i editorn — skickas nu som `false` i exact; verifiera att den landar som "nej".
 
+## ✅ ALLA FÄLTNAMN LÅSTA av Christian 2026-06-16 — KANONISK TABELL (gissa aldrig om)
+All hedging/kandidat-arrayer borttagna ur koden (FORFRAGAN-config = en sträng per fält). Bubble-editorn versaliserar första bokstaven visuellt → casing nedan är API-sanningen (Data API/reject-logg).
+
+**Comission:** `Commission_title` · `delivery_date` · `Slutdatum` (ev-slut) · `Category` · `commission_status` (Ny/Utkast) · `source` (optionset **lead_source**, värde "Mira") · `Company` · `Description` · `commission_message` · `Leverantör` (list) · `budget` · `Office` · `location` · `guest` · `po_number` · `allergens_json` · `internservice` (yes/no→false) · `Beställare` (list of Coworker) · `Produkttillägg` (list of Products) · `recurrence_rule`/`recurrence_group_id`/`recurrence_is_master`/`recurrence_until`
+**Underkategori (Comission):** FE=`SubkategoriFE` · HK=`SubCategoryHK` · SP=`SubCategorySP` · FM=`SubcategoryFM`. Värden = exakt Bubbles dropdown-optionset (FM har stavfelet `Teknisk supprt`).
+**Office:** typ `Office` · namn `Office_title` · adress `office_address` (geografisk objekt) · företag `Kundföretag`
+**Erbjudande:** typ `Erbjudande` · `Status` (optionset Status erbjudande: Utkast/Publicerat/Utgånget) · `startdatum`/`slutdatum` · företag `Kundföretag` (**list** — tom=allmän, innehåller company=unik)
+**ClientCompany:** `leverantör` (list) · `Name_company` · Coworker→`Kundföretag`
+**Lead:** `Source` (="Mira") · `Name` · `client_company` · `Comission` · `Email` (typen saknar Category/Delivery_date/Description/Title)
+**Coworker:** typ `Coworker` · `Email` · `Förnamn`/`Efternamn` · `Bokningar` (list of Comissions) · `Kundföretag`
+**User (notify):** typ `User` · `Associated_company` (list) · `email` (inbyggt)
+**EmailQueue:** typ `emailqueue` · `template_id`/`entity_id`/`entity_type`/`to_email`/`to_name`/`email_sent`/`extra_data` (alla lowercase)
+
+**Christians regel (minne: [[feedback-communication-style]]): gissa ALDRIG fältnamn — fråga, hedga inte i koden.**
+
+## ITERATION 3 2026-06-16 — Comission-fältens EXAKTA casing (från reject-loggen)
+Bubble-editorn versaliserar första bokstaven visuellt → API-sanningen syns bara i reject-loggen. Bekräftat:
+- **Capital (landade):** `Commission_title`, `Category`, `Company`, `Office`, `Description`, `Leverantör` (list), `Beställare` (list), `SubkategoriFE`.
+- **lowercase (Capital avvisades):** `internservice`, `location`, `guest`, `po_number`, `allergens_json`, `source`, `budget`, `delivery_date`, `commission_status`, `commission_message`, `recurrence_*`.
+- **Comission.source** sätts nu = `"Mira"` (optionset Lead_source) — default var "Internservice".
+- **location** = text (lowercase) — INTE geografisk. MEN **Office.office_address ÄR geografisk** (objekt) → bootstrap extraherar `.address`-strängen (gav "[object Object]" innan).
+- **Lead-typen** har bara `Source`/`Name`/`client_company`(lowercase)/`Comission`/`Email` → Lead görs minimal (saknar Category/Delivery_date/Description/Title; nås via Comission-länken). Lead + coworker-patch BEKRÄFTAT funkar (1 lead, 1 coworker i testet).
+- Subcat: FE=`SubkategoriFE` bekräftat (Capital S). HK/SP/FM gissad Capital S — rättas när de testas.
+- Tidszon-fix BEKRÄFTAD: 12:00 lokal → 10:00Z (sommartid +2) korrekt.
+- Kvar: notify 0 mail → kolla `notify_debug`/`notify_recipients` i create-svaret (JSON, ej Render-logg). Verifiera att test-User har `associated_company` som innehåller företaget.
+
 ## ITERATION 2 2026-06-16 — efter andra livetest-screenshots
 - **Leverantör är en LISTA** (CMIAB har Carotte Food&Event/Staff/Housekeeping). `_ffIdOf` på array gav null → landade aldrig. Ny `_ffIdsOf()` → bootstrap returnerar `supplier_ids[]`, Comission.Leverantör sätts som lista. (Ev. framtida förfining: filtrera leverantör på kategori, idag sätts hela listan.)
 - **Notify**: EmailTemplate `commission_new` finns + funkar (bekräftat). 0 mail kom alltså av att `associated_company contains`-queryn hittade 0 users. `_ffNotifyUsers` testar nu både `User`/`user`-casing + create-svaret returnerar `notify_recipients`/`notify_debug`/`notify_template_id` så nästa test visar exakt vilka som matchar. (Verifiera: har test-usern `associated_company` som innehåller CMIAB?)

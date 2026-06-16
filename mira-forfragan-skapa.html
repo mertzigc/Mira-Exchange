@@ -504,7 +504,7 @@
       mode:'write', company_id:COMPANY, supplier_ids:BOOT.supplier_ids||[], path:st.path, offer_id:st.offerId||null,
       commission_title:st.titel, description:st.beskrivning, category:effCategory()||null, subcategory:st.subcategory||null,
       delivery_date:localIso(st.datum,st.tid), delivery_date_end:st.slutdatum?localIso(st.slutdatum,'12:00'):null,
-      plats:st.plats||null, office_id:st.kontor||null, antal:+st.antal||null, budget:st.budget?+st.budget:null,
+      plats:(st.plats&&typeof st.plats==='object'?(st.plats.address||''):st.plats)||null, office_id:st.kontor||null, antal:+st.antal||null, budget:st.budget?+st.budget:null,
       capacity:(curOffer()&&curOffer().capacity!=null)?+curOffer().capacity:null,
       specialkost:allergens.length?allergens:null, po:st.po||null,
       status:draft?'draft':'sent',
@@ -516,6 +516,8 @@
       .catch(function(e){ setBusy(false); showOverlay(false,draft,{error:String(e)}); });
   }
   function showOverlay(ok,draft,j){
+    // Signalera kalendern (samma sida) att läsa om — Activity är redan materialiserad i Render.
+    if(ok){ try{ window.dispatchEvent(new CustomEvent('mira:activity-changed',{detail:{source:'forfragan',id:(j&&j.master_id)||null}})); }catch(e){} }
     var okEl=document.getElementById('ffOk'); okEl.className='ok'+(ok?'':' err'); okEl.textContent=ok?'✓':'!';
     document.getElementById('ffOvTitle').textContent = ok?(draft?'Utkast sparat':'Förfrågan skickad'):'Något gick fel';
     var n=(j&&j.occurrences)||1;

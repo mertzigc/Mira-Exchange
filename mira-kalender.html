@@ -445,5 +445,7 @@
   setTitle(ADMIN ? '' : COMPANY_NAME);   // kund-läge: kundens namn (#mira_company_name); CRM: fylls av loadCompanies
   if(ADMIN) loadCompanies();
   load();
+  // Förfrågan-wizarden (eller annat block) signalerar ny/ändrad Activity → läs om kalendern direkt.
+  window.addEventListener('mira:activity-changed', function(){ load(); });
 })();
 </script>
