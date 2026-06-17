@@ -15,6 +15,7 @@
 -->
 <input type="hidden" id="mira_company_id" value="">
 <input type="hidden" id="mira_company_name" value="">
+<input type="hidden" id="mira_user_name" value="">
 <input type="hidden" id="mira_admin_crm" value="">
 <input type="hidden" id="mira_api_host" value="https://mira-exchange.onrender.com">
 <input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
@@ -173,6 +174,7 @@
   var TOKEN = document.getElementById('mira_planning_token').value || '';
   var COMPANY = (document.getElementById('mira_company_id').value || '').trim();
   var COMPANY_NAME = (document.getElementById('mira_company_name').value || '').trim();
+  var USER_NAME = (document.getElementById('mira_user_name').value || '').trim();
   var _av = (document.getElementById('mira_admin_crm').value || '').trim().toLowerCase();
   var ADMIN = (_av === 'yes' || _av === 'true' || _av === '1' || _av === 'ja');
 
@@ -392,7 +394,7 @@
     });
   }
   window.mkAddComment=function(){var e=window._mkCur,txt=document.getElementById('mkComment').value.trim();if(!e||!txt)return;
-    action({action:'comment',source_id:e.sourceId,activity_type:e.type,value:txt},function(j){if(j&&j.ok){document.getElementById('mkComment').value='';loadThread(e);}else alert('Kunde inte spara kommentar');});};
+    action({action:'comment',source_id:e.sourceId,activity_type:e.type,value:txt,commenter:USER_NAME},function(j){if(j&&j.ok){document.getElementById('mkComment').value='';loadThread(e);}else alert('Kunde inte spara kommentar');});};
   window.mkSaveStatus=function(){var e=window._mkCur,v=document.getElementById('mkStatus').value.trim();if(!e)return;
     action({action:'status',activity_id:e.id,source_id:e.sourceId,activity_type:e.type,value:v},function(j){if(j&&j.ok){e.status=v;mkCloseModal();load();}else alert('Kunde inte spara status');});};
   window.mkCopy=function(){var e=window._mkCur;if(!e)return;var def=e.start?e.start.toISOString().slice(0,10):'';

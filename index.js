@@ -16338,9 +16338,23 @@ app.post("/admin/planning/activity/action", async (req, res) => {
     if (action === "comment") {
       const obj = await bubbleGet(src.type, source_id);
       const cur = Array.isArray(obj?.[src.thread]) ? obj[src.thread] : [];
-      const next = cur.concat([String(value || "")]);
+      // Varje trådkommentar stämplas med kommentatorns namn + datum (Europe/Stockholm).
+      const who = String(req.body.commenter || "").trim() || "Okänd";
+      const when = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" });
+      const entry = `${who} · ${when}: ${String(value || "")}`;
+      const next = cur.concat([entry]);
       await bubblePatch(src.type, source_id, { [src.thread]: next });
-      return res.json({ ok: true, action, source_id, thread_len: next.length });
+      // Bokningskommentar → mejl med slug commission_updated (Users där Associated_company contains Company)
+      let mailed = 0;
+      if (activity_type === ACTIVITY_CONFIG.AT_BOKNING) {
+        const title = obj?.[FORFRAGAN.C_TITLE] || "Bokning";
+        mailed = await _ffMailCommission("commission_updated", obj, source_id, {
+          title, request_title: title, comment: String(value || ""), commenter: who,
+          delivery_date: obj?.[FORFRAGAN.C_DELIVERY] || null, reference: source_id,
+          subject_override: `Uppdaterad bokning – ${title}`,
+        }).catch((e) => { console.warn("[planning comment] mail fail", e?.message); return 0; });
+      }
+      return res.json({ ok: true, action, source_id, thread_len: next.length, mailed });
     }
 
     if (action === "copy") {
@@ -16864,6 +16878,7 @@ function _ffOfferOut(o) {
   return {
     id:             bubbleId(o),
     title:          o.Title || "",
+    category:       o.Category || null,   // → följer med till Comission + Lead på erbjudandeväg
     image:          o.Image || "",
     bildspel:       o.Bildspel || [],
     description:      o.Description || "",
@@ -16905,6 +16920,30 @@ function _ffRecurrenceDates(startIso, rule, untilIso) {
     out.push(nxt.toISOString()); cur = nxt;
   }
   return out;
+}
+
+// User → e-post (built-in kan ligga top-level eller nästlat) + First Name (hälsning).
+const _ffUserEmail = (u) => normEmail(u[FORFRAGAN.NOTIFY_USER_EMAIL] || u.Email || (u.authentication && u.authentication.email && u.authentication.email.email));
+const _ffUserName  = (u) => String(u["First Name"] || u.Förnamn || "").trim();
+
+// Köa ett commission-mejl (slug) till alla notify-users för commissionens Company.
+// To_name = First Name (hälsning). Returnerar antal köade.
+async function _ffMailCommission(slug, commissionObj, commissionId, extraObj) {
+  const companyId = _ffIdOf(commissionObj?.[FORFRAGAN.C_COMPANY]);
+  if (!companyId) return 0;
+  const tplId = await getTemplateId(slug);
+  const extra = JSON.stringify(extraObj || {});
+  const recips = new Map();
+  for (const u of await _ffNotifyUsers(companyId)) { const e = _ffUserEmail(u); if (e) recips.set(e, _ffUserName(u)); }
+  let n = 0;
+  for (const [to, name] of recips) {
+    await bubbleCreate("emailqueue", {
+      [FORFRAGAN.EQ_TEMPLATE]: tplId || null, [FORFRAGAN.EQ_ENTITY_ID]: commissionId, [FORFRAGAN.EQ_ENTITY_TYPE]: "commission",
+      [FORFRAGAN.EQ_TO_EMAIL]: to, [FORFRAGAN.EQ_TO_NAME]: name || to, [FORFRAGAN.EQ_SENT]: false, [FORFRAGAN.EQ_EXTRA]: extra,
+    });
+    n++;
+  }
+  return n;
 }
 
 // Notify-mottagare: Users där Associated_company (listfält) CONTAINS companyId.
@@ -17191,21 +17230,18 @@ app.post("/admin/forfragan/create", async (req, res) => {
         delivery_date: occDates[0], bestallare: bestallareEfternamn, reference: masterId,
         subject_override: `${title} – ${subcatDisplay}`,
       });
-      const recips = new Set();
+      // Mottagare: e-post → First Name (för "Hej Förnamn"-hälsning i mejlet)
+      const recips = new Map();
       const notifyUsers = await _ffNotifyUsers(companyId);
-      for (const u of notifyUsers) {
-        // built-in email kan ligga top-level (u.email) eller nästlat under authentication
-        const raw = u[FORFRAGAN.NOTIFY_USER_EMAIL] || u.Email || (u.authentication && u.authentication.email && u.authentication.email.email);
-        const e = normEmail(raw); if (e) recips.add(e);
-      }
-      if (FORFRAGAN.NOTIFY_EXTRA_INBOX) recips.add(normEmail(FORFRAGAN.NOTIFY_EXTRA_INBOX));
+      for (const u of notifyUsers) { const e = _ffUserEmail(u); if (e) recips.set(e, _ffUserName(u)); }
+      if (FORFRAGAN.NOTIFY_EXTRA_INBOX) { const e = normEmail(FORFRAGAN.NOTIFY_EXTRA_INBOX); if (e && !recips.has(e)) recips.set(e, ""); }
       result.notify_users_found = notifyUsers.length;
-      result.notify_recipients = Array.from(recips);
+      result.notify_recipients = Array.from(recips.keys());
       result.notify_template_id = tplId || null;
-      for (const to of recips) {
+      for (const [to, name] of recips) {
         await bubbleCreate("emailqueue", {
           [FORFRAGAN.EQ_TEMPLATE]: tplId || null, [FORFRAGAN.EQ_ENTITY_ID]: masterId, [FORFRAGAN.EQ_ENTITY_TYPE]: "commission",
-          [FORFRAGAN.EQ_TO_EMAIL]: to, [FORFRAGAN.EQ_TO_NAME]: to, [FORFRAGAN.EQ_SENT]: false, [FORFRAGAN.EQ_EXTRA]: extra,
+          [FORFRAGAN.EQ_TO_EMAIL]: to, [FORFRAGAN.EQ_TO_NAME]: name || to, [FORFRAGAN.EQ_SENT]: false, [FORFRAGAN.EQ_EXTRA]: extra,
         });
         result.queued++;
       }
@@ -17218,6 +17254,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
         const leadId = await bubbleCreate(FORFRAGAN.LEAD_TYPE, {
           Source: FORFRAGAN.LEAD_SOURCE_VALUE, Name: title, titel: title,
           Description: rawMsg || null, Category: category || null,
+          Delivery_date: occDates[0],
           client_company: companyId, Comission: masterId, Email: normEmail(b.email),
         });
         result.leads.push({ email: b.email, lead_id: leadId });
