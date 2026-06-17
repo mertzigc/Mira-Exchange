@@ -191,7 +191,10 @@
     <div class="ok" id="ffOk">✓</div>
     <h2 id="ffOvTitle">Förfrågan skickad</h2>
     <p id="ffOvText"></p>
-    <button class="btn primary" onclick="ffReset()">Skapa en till</button>
+    <div class="btn-group" style="justify-content:center">
+      <button class="btn ghost" onclick="ffClose()">Stäng</button>
+      <button class="btn primary" onclick="ffReset()">Skapa en till</button>
+    </div>
   </div>
 </div>
 
@@ -572,6 +575,8 @@
     document.getElementById('ffOverlay').classList.add('show');
   }
   window.ffReset=function(){ st=newState(); document.getElementById('ffOverlay').classList.remove('show'); render(); };
+  // Stäng: dölj popupen + signalera Bubble (lyssna på 'mira:forfragan-close' för att stänga elementet/navigera).
+  window.ffClose=function(){ st=newState(); document.getElementById('ffOverlay').classList.remove('show'); render(); try{ window.dispatchEvent(new CustomEvent('mira:forfragan-close')); }catch(e){} };
 
   boot();
 })();

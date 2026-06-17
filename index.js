@@ -16326,7 +16326,11 @@ app.post("/admin/planning/activity/action", async (req, res) => {
       const thread = Array.isArray(obj?.[src.thread]) ? obj[src.thread] : [];
       const created_by = await _planningUserLabel(obj?.["Created By"] || obj?.Creator);
       const assigned_to = (activity_type === ACTIVITY_CONFIG.AT_TODO) ? await _planningUserLabel(obj?.user) : null;
-      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread, created_by, assigned_to });
+      // Kategori (Comission/Matter = Category, Todo = Kategori) + Subkategori (Comission, per kategori)
+      const category = obj?.Category || obj?.[ACTIVITY_CONFIG.TODO_CATEGORY] || null;
+      const subField = (category && FORFRAGAN.SUBCAT_FIELDS[category]) ? FORFRAGAN.SUBCAT_FIELDS[category] : null;
+      const subcategory = subField ? (obj?.[subField] || null) : null;
+      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread, created_by, assigned_to, category, subcategory });
     }
 
     if (action === "status") {
@@ -16349,10 +16353,14 @@ app.post("/admin/planning/activity/action", async (req, res) => {
       if (activity_type === ACTIVITY_CONFIG.AT_BOKNING) {
         const title = obj?.[FORFRAGAN.C_TITLE] || "Bokning";
         mailed = await _ffMailCommission("commission_updated", obj, source_id, {
-          title, request_title: title, comment: String(value || ""), commenter: who,
-          delivery_date: obj?.[FORFRAGAN.C_DELIVERY] || null, reference: source_id,
+          title, request_title: title,
+          kommentar: next,                 // mallen renderar tråden (senaste = den nya kommentaren)
+          commenter: who, reference: source_id,
           subject_override: `Uppdaterad bokning – ${title}`,
         }).catch((e) => { console.warn("[planning comment] mail fail", e?.message); return 0; });
+        // Push + Notis via Bubble-wf
+        try { await _ffTriggerPush(FORFRAGAN.PUSH_WF_KOMMENTAR, { bokning: source_id }); }
+        catch (e) { console.warn("[planning comment] push fail", e?.message); }
       }
       return res.json({ ok: true, action, source_id, thread_len: next.length, mailed });
     }
@@ -16362,7 +16370,7 @@ app.post("/admin/planning/activity/action", async (req, res) => {
       const obj = await bubbleGet(src.type, source_id);
       if (!obj) return res.status(404).json({ ok: false, error: "källa ej funnen" });
       const clone = { ...obj };
-      ["_id", "Created Date", "Modified Date", "Creator", "Slug"].forEach((k) => delete clone[k]);
+      ["_id", "Created Date", "Modified Date", "Created By", "Creator", "Slug", "unique id"].forEach((k) => delete clone[k]);
       const v = value || {};
       if (src.start && v.newStart) clone[src.start] = v.newStart;
       if (src.end && v.newEnd) clone[src.end] = v.newEnd;
@@ -16831,10 +16839,16 @@ const FORFRAGAN = {
 
   // Lead
   LEAD_SOURCE_VALUE: "Mira",
+  LEAD_DELIVERY: "delivery_date",   // ⚠️ "Delivery_date" avvisades — testar lowercase; svaret visar om rätt
 
   // Coworker
   COWORKER_EMAIL:    "Email",
   COWORKER_BOOKINGS: "Bokningar",   // list of Comissions
+
+  // Push (B): bantade Bubble-API-workflows som BARA skickar iOS-push + Notis. Render anropar
+  // dem (Bubble äger push); Render behåller email/lead/coworker. Param: bokning = Comission-id.
+  PUSH_WF_BOKNING:   "push_bokning",
+  PUSH_WF_KOMMENTAR: "push_bokning_kommentar",
 
   // Notify: Users där Associated_company (list) CONTAINS commissionens Company.
   NOTIFY_SLUG: "commission_new",
@@ -16925,6 +16939,22 @@ function _ffRecurrenceDates(startIso, rule, untilIso) {
 // User → e-post (built-in kan ligga top-level eller nästlat) + First Name (hälsning).
 const _ffUserEmail = (u) => normEmail(u[FORFRAGAN.NOTIFY_USER_EMAIL] || u.Email || (u.authentication && u.authentication.email && u.authentication.email.email));
 const _ffUserName  = (u) => String(u["First Name"] || u.Förnamn || "").trim();
+
+// Trigga en Bubble backend-API-workflow (push + Notis). Master-nyckeln server-side.
+async function _ffTriggerPush(wfName, params) {
+  if (!wfName) return false;
+  for (const base of BUBBLE_BASES) {
+    try {
+      const r = await fetch(`${base}/api/1.1/wf/${wfName}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + BUBBLE_API_KEY },
+        body: JSON.stringify(params || {}),
+      });
+      if (r.ok) return true;
+    } catch (_) { /* nästa base */ }
+  }
+  return false;
+}
 
 // Köa ett commission-mejl (slug) till alla notify-users för commissionens Company.
 // To_name = First Name (hälsning). Returnerar antal köade.
@@ -17247,17 +17277,31 @@ app.post("/admin/forfragan/create", async (req, res) => {
       }
     } catch (e) { console.warn("[forfragan] notify fail", e?.message); result.notify_error = e?.message; }
 
+    // Push + Notis via Bubble-wf (B) — iOS-push som Render inte kan göra själv.
+    try { result.pushed = await _ffTriggerPush(FORFRAGAN.PUSH_WF_BOKNING, { bokning: masterId }); }
+    catch (e) { console.warn("[forfragan] push fail", e?.message); }
+
     // Lead per beställare. Fält bekräftade av Christian: Source, Name, titel (lowercase),
     // Description (capital), Category (samma optionset som Comission), client_company, Comission, Email.
     for (const b of bestallare) {
       try {
-        const leadId = await bubbleCreate(FORFRAGAN.LEAD_TYPE, {
+        const leadPayload = {
           Source: FORFRAGAN.LEAD_SOURCE_VALUE, Name: title, titel: title,
           Description: rawMsg || null, Category: category || null,
-          Delivery_date: occDates[0],
+          [FORFRAGAN.LEAD_DELIVERY]: occDates[0],
           client_company: companyId, Comission: masterId, Email: normEmail(b.email),
-        });
-        result.leads.push({ email: b.email, lead_id: leadId });
+        };
+        let leadId, dropped = null;
+        try { leadId = await bubbleCreate(FORFRAGAN.LEAD_TYPE, leadPayload); }
+        catch (e1) {
+          // robusthet: släpp ETT okänt fält (loggat) så leaden ändå skapas
+          const msg = String(e1?.detail?.body?.body?.message || e1?.detail?.body?.message || "");
+          const m = /Unrecognized field:\s*(.+?)\s*$/i.exec(msg);
+          if (m && leadPayload[m[1]] !== undefined) { dropped = m[1]; delete leadPayload[m[1]]; leadId = await bubbleCreate(FORFRAGAN.LEAD_TYPE, leadPayload); }
+          else throw e1;
+        }
+        if (dropped) console.warn(`[forfragan] lead skapad men fält "${dropped}" okänt — ge exakt namn`);
+        result.leads.push({ email: b.email, lead_id: leadId, dropped_field: dropped });
       } catch (e) { console.warn("[forfragan] lead fail", b.email, e?.message); result.leads.push({ email: b.email, error: e?.message }); }
     }
 

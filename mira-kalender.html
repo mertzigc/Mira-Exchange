@@ -384,6 +384,8 @@
     action({action:'load',source_id:e.sourceId,activity_type:e.type},function(j){
       var meta=document.getElementById('mkMeta');
       if(meta&&j){ var mh='';
+        if(j.category) mh+=row('Kategori',esc(j.category));
+        if(j.subcategory) mh+=row('Underkategori',esc(j.subcategory));
         if(j.created_by) mh+=row('Skapad av',esc(j.created_by));
         if(e.type==='Kom ihåg'&&j.assigned_to) mh+=row('Delegerad till',esc(j.assigned_to));
         meta.innerHTML=mh;
