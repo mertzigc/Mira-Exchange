@@ -92,18 +92,35 @@ reconcile_links() {
   post /sync/v2-linkcompany/all "{\"mode\":\"write\"}"
 }
 
+# Drar invoice-PDF för EN connection tills tomt (found<40) ELLER max rundor. Bryter
+# på dränat → i steady state BARA 1 is_empty-sökning/connection (inte blint 6). Detta
+# stoppar WU-bleeden: tidigare 18 is_empty-helskanningar/körning oavsett backlog.
+# WU-VARNING: ft_pdf is_empty skannar hela FortnoxInvoice → håll sync_v2_pdf-cronens
+# FREKVENS låg i Render (1/h eller mer sällan), inte */30.
+PDF_MAX_ROUNDS="${PDF_MAX_ROUNDS:-10}"
+enrich_invoice_pdfs() {  # $1=connection_id
+  local cid="$1" r=0 found
+  while [ "$r" -lt "$PDF_MAX_ROUNDS" ]; do
+    found="$(curl -sS --max-time 1800 -X POST "$HOST/fortnox/enrich/invoice-pdfs" \
+      -H "x-api-key: $MIRA_RENDER_API_KEY" -H "x-sync-secret: $SYNC_SECRET" \
+      -H "Content-Type: application/json" \
+      -d "{\"connection_id\":\"$cid\",\"limit\":40,\"pause_ms\":250,\"pdf_path\":\"preview\"}" \
+      | grep -o '"found":[0-9]*' | head -1 | grep -o '[0-9]*' || true)"
+    found="${found:-0}"
+    r=$((r + 1))
+    echo "[sync_v2] invoice-pdf cid=$cid runda=$r found=$found"
+    [ "$found" -lt 40 ] && break   # dränat → sluta skanna (sparar WU)
+  done
+}
+
 if [ "$MODE" = "pdf" ]; then
   echo "[sync_v2] PDF-drän @ $(date -u +%FT%TZ)"
   # ── Invoice-PDF (KÄRNDATA för kundportalen) ──────────────────────────────────
-  # sync_v2-fakturasynken hämtar INTE PDF (bara data) → fyll saknade ft_pdf via den
-  # idempotenta enrich-routen (söker ft_pdf is_empty + ej makulerad). Körs ALLTID,
-  # oberoende av SYNC_V2_ORDERS. Loopar för att beta av backlog; steady-state räcker
-  # första varvet. all_connections = F&E + Staff (+ ev. fler native Fortnox-conn).
-  # Per connection (EJ all_connections → undviker att TENGELLA-conn skickas till Fortnox → 404).
-  for i in 1 2 3 4 5 6; do
-    for CID in $FORTNOX_NATIVE; do
-      post /fortnox/enrich/invoice-pdfs "{\"connection_id\":\"$CID\",\"limit\":40,\"pause_ms\":250,\"pdf_path\":\"preview\"}"
-    done
+  # sync_v2-fakturasynken hämtar INTE PDF (bara data) → fyll saknade ft_pdf. Per
+  # connection, självterminerande (bryter när inget kvar). EJ all_connections →
+  # undviker att TENGELLA-conn skickas till Fortnox (→ 404).
+  for CID in $FORTNOX_NATIVE; do
+    enrich_invoice_pdfs "$CID"
   done
   # Tengella/HK invoice-PDF (egen route — Tengella-API, ej Fortnox).
   post /tengella/enrich/invoice-pdfs "{\"pause_ms\":150,\"max_enrich\":300}"
