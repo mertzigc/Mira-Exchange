@@ -16358,8 +16358,10 @@ app.post("/admin/planning/activity/action", async (req, res) => {
           commenter: who, reference: source_id,
           subject_override: `Uppdaterad bokning – ${title}`,
         }).catch((e) => { console.warn("[planning comment] mail fail", e?.message); return 0; });
-        // Push + Notis via Bubble-wf
-        try { await _ffTriggerPush(FORFRAGAN.PUSH_WF_KOMMENTAR, { bokning: source_id }); }
+        // Push + Notis via Bubble-wf (kräver subject + body)
+        try { await _ffTriggerPush(FORFRAGAN.PUSH_WF_KOMMENTAR, {
+          bokning: source_id, subject: `Ny kommentar – ${title}`, body: `${who}: ${String(value || "")}`,
+        }); }
         catch (e) { console.warn("[planning comment] push fail", e?.message); }
       }
       return res.json({ ok: true, action, source_id, thread_len: next.length, mailed });
@@ -17284,8 +17286,14 @@ app.post("/admin/forfragan/create", async (req, res) => {
     } catch (e) { console.warn("[forfragan] notify fail", e?.message); result.notify_error = e?.message; }
 
     // Push + Notis via Bubble-wf (B) — iOS-push som Render inte kan göra själv.
-    try { result.pushed = await _ffTriggerPush(FORFRAGAN.PUSH_WF_BOKNING, { bokning: masterId }); }
-    catch (e) { console.warn("[forfragan] push fail", e?.message); }
+    // Wf:en kräver subject + body (push-titel/text).
+    try {
+      result.pushed = await _ffTriggerPush(FORFRAGAN.PUSH_WF_BOKNING, {
+        bokning: masterId,
+        subject: `Ny bokning – ${title}`,
+        body: rawMsg || `Ny bokningsförfrågan${subcatDisplay ? " · " + subcatDisplay : ""}`,
+      });
+    } catch (e) { console.warn("[forfragan] push fail", e?.message); }
 
     // Lead per beställare. Fält bekräftade av Christian: Source, Name, titel (lowercase),
     // Description (capital), Category (samma optionset som Comission), client_company, Comission, Email.
