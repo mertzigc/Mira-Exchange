@@ -16941,19 +16941,25 @@ const _ffUserEmail = (u) => normEmail(u[FORFRAGAN.NOTIFY_USER_EMAIL] || u.Email 
 const _ffUserName  = (u) => String(u["First Name"] || u.Förnamn || "").trim();
 
 // Trigga en Bubble backend-API-workflow (push + Notis). Master-nyckeln server-side.
+// Returnerar status-sträng för diagnostik (loggas + i /create-svaret).
 async function _ffTriggerPush(wfName, params) {
-  if (!wfName) return false;
+  if (!wfName) return "no_wf_name";
+  let last = "ingen base";
   for (const base of BUBBLE_BASES) {
     try {
-      const r = await fetch(`${base}/api/1.1/wf/${wfName}`, {
+      const url = `${base}/api/1.1/wf/${wfName}`;
+      const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + BUBBLE_API_KEY },
         body: JSON.stringify(params || {}),
       });
-      if (r.ok) return true;
-    } catch (_) { /* nästa base */ }
+      const body = await r.text().catch(() => "");
+      last = `${r.status} ${url} ${r.ok ? "OK" : body.slice(0, 200)}`;
+      console.log("[forfragan push]", wfName, last);
+      if (r.ok) return "ok";
+    } catch (e) { last = "fetch_err: " + (e?.message || String(e)); console.warn("[forfragan push]", wfName, last); }
   }
-  return false;
+  return last;
 }
 
 // Köa ett commission-mejl (slug) till alla notify-users för commissionens Company.
@@ -17317,7 +17323,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
       } catch (e) { console.warn("[forfragan] coworker fail", b.email, e?.message); }
     }
 
-    console.log(`[forfragan] commission ${masterId} (+${created.length - 1} serie) · ${result.queued} mail (users=${result.notify_users_found ?? "?"} recips=${(result.notify_recipients || []).length} tpl=${result.notify_template_id ? "ja" : "NEJ"}${result.notify_error ? " ERR:" + result.notify_error : ""}) · ${result.leads.length} leads · ${result.coworker_patched} coworkers`);
+    console.log(`[forfragan] commission ${masterId} (+${created.length - 1} serie) · ${result.queued} mail (users=${result.notify_users_found ?? "?"} recips=${(result.notify_recipients || []).length} tpl=${result.notify_template_id ? "ja" : "NEJ"}${result.notify_error ? " ERR:" + result.notify_error : ""}) · push=${result.pushed} · ${result.leads.length} leads · ${result.coworker_patched} coworkers`);
     return res.json(result);
   } catch (e) {
     console.error("[/admin/forfragan/create]", e?.message, e?.detail);
