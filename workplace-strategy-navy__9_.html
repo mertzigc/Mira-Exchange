@@ -5,12 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Workplace Strategy Calculator — Carotte Group</title>
 <!--
-  E-POSTINSTÄLLNING:
-  För att aktivera automatisk e-post till shahbaz@carotte.se:
-  1. Gå till https://formspree.io och skapa ett gratis konto
-  2. Skapa ett nytt formulär och ange shahbaz@carotte.se som mottagare
-  3. Kopiera ditt Form ID (ser ut som: "xpzgkrbn")
-  4. Ersätt "DIN_FORMSPREE_ID" nedan med ditt ID
+  LEADS: Skickas till Mira → Bubble via Render-endpointen MIRA_LEAD_URL nedan
+  (/leads/create-from-calculator). Welcome skapar en lead-stub, booking berikar
+  samma lead via external_reference (ingen Formspree, ingen tredjepart).
 -->
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -764,10 +761,8 @@ input[type=range]::-webkit-slider-thumb {
 </div>
 
 <script>
-/* ── FORMSPREE – byt ut mot ditt eget ID ── */
-const FORMSPREE_ID = 'xyknnvjd';
-/* Mottagaradress för e-post (via Formspree) */
-const LEAD_EMAIL   = 'info@carotte.se';
+/* ── MIRA – leads landar i Bubble via Render (ersätter Formspree) ── */
+const MIRA_LEAD_URL = 'https://mira-exchange.onrender.com/leads/create-from-calculator';
 
 /* ── STATE ── */
 const S = {
@@ -778,7 +773,8 @@ const S = {
   util:    60,
   hyra:    0,
   custom:  [],
-  user:    {}
+  user:    {},
+  refId:   null     /* sätts på welcome, samma lead berikas på booking */
 };
 
 const KAFFE_PRICES  = [4090, 4890, 4300, 2100];
@@ -807,23 +803,23 @@ async function submitWelcome(){
   if(!ok) return;
 
   S.user = { bolag, namn, titel, mail, tel };
+  S.refId = `WSC-${Date.now()}`;     /* en referens per session → booking berikar samma lead */
   const btn = document.getElementById('welcome-btn');
   btn.disabled = true;
   btn.textContent = 'Skickar…';
 
-  /* Send partial lead to Formspree on welcome */
-  if(FORMSPREE_ID !== 'DIN_FORMSPREE_ID'){
-    try {
-      await fetch(`https://formspree.io/f/${FORMSPREE_ID}`, {
-        method: 'POST',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          _subject: `WORKPLACE CALCULATOR START | ${bolag}`,
-          Bolag: bolag, Namn: namn, Titel: titel, Epost: mail, Telefon: tel
-        })
-      });
-    } catch(e){ /* fail silently */ }
-  }
+  /* Skapa lead-stub i Mira (kontaktuppgifter). Booking berikar samma lead via external_reference. */
+  try {
+    await fetch(MIRA_LEAD_URL, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: namn, titel, company: bolag, email: mail, phone: tel,
+        calculator_version: 'v1', external_reference: S.refId,
+        decision_stage: 'Startade kalkylatorn'
+      })
+    });
+  } catch(e){ /* fail silently – kunden ska in i kalkylatorn ändå */ }
 
   /* Show dashboard */
   document.getElementById('welcome-screen').classList.add('fade-out');
@@ -901,8 +897,21 @@ function buildEmailPayload(timeline, decisionStage, prospectMsg){
   if(score>=70) matLevel='Destination';
   else if(score>=40) matLevel='Välmående arbetsplats';
 
-  const refId = `WSC-${Date.now()}`;
+  const refId = S.refId || `WSC-${Date.now()}`;
   const msgLine = (prospectMsg||'').replace(/[\r\n]+/g,' ');
+
+  /* Strukturerad payload till Mira (/leads/create-from-calculator) */
+  const data = {
+    name: u.namn, titel: u.titel||'', company: u.bolag, email: u.mail, phone: u.tel,
+    calculator_version: 'v1', external_reference: refId,
+    employees: e, office_sqm: sqm, occupancy_pct: S.util, rent_per_sqm_year: hyraKvmAr,
+    service_reception: receptionLabel, service_housekeeping: hkLabel, service_coffee: kaffeLabel,
+    service_plants: vaxterLabel, service_water: vattenLabel,
+    service_cost_monthly: serviceCostMonthly, cost_per_employee_monthly: costPerEmployee,
+    cost_per_sqm_monthly: costPerSqm, total_office_cost_monthly: totalOfficeCostMonthly,
+    workplace_maturity_score: score, workplace_maturity_level: matLevel,
+    timeline, decision_stage: decisionStage, prospect_message: msgLine
+  };
 
   const subject = `WORKPLACE CALCULATOR LEAD | ${u.bolag} | ${e} employees | ${serviceCostMonthly} SEK/month`;
 
@@ -983,7 +992,7 @@ decision_stage=${decisionStage}
 prospect_message=${msgLine}
 ---MIRA_DATA_END---`;
 
-  return { subject, body, refId };
+  return { subject, body, refId, data };
 }
 
 async function submitBooking(){
@@ -997,23 +1006,16 @@ async function submitBooking(){
   btn.textContent  = 'Skickar…';
   errEl.style.display = 'none';
 
-  const { subject, body } = buildEmailPayload(timeline, stage, msg);
+  const { data } = buildEmailPayload(timeline, stage, msg);
 
-  let sent = false;
-
-  /* 1. Try Formspree */
-  if(FORMSPREE_ID !== 'DIN_FORMSPREE_ID'){
-    try {
-      const res = await fetch(`https://formspree.io/f/${FORMSPREE_ID}`, {
-        method : 'POST',
-        headers: { 'Accept':'application/json','Content-Type':'application/json' },
-        body   : JSON.stringify({ _subject: subject, _replyto: S.user.mail, message: body })
-      });
-      if(res.ok) sent = true;
-    } catch(e){ /* continue to fallback */ }
-  }
-
-  /* Formspree skickar till info@carotte.se – ingen mailto behövs */
+  /* Berika leaden i Mira med full profil + tjänster + estimat (samma external_reference). */
+  try {
+    await fetch(MIRA_LEAD_URL, {
+      method : 'POST',
+      headers: { 'Accept':'application/json','Content-Type':'application/json' },
+      body   : JSON.stringify(data)
+    });
+  } catch(e){ /* svälj – visa ändå bekräftelse, leaden finns från welcome */ }
 
   /* UX feedback */
   setTimeout(()=>{

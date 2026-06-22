@@ -5592,7 +5592,7 @@ function tightenShort(str, maxLen = 220) {
     .trim()
     .slice(0, maxLen);
 }
-async function createLeadAlways(fields) {
+async function createLeadAlways(fields, existingId = null) {
   const email = normEmail(fields?.Email);
   if (!email) return { ok: false, error: "Lead Email missing" };
 
@@ -5684,6 +5684,11 @@ async function createLeadAlways(fields) {
     Object.entries(base).filter(([, v]) => v !== undefined)
   );
 
+  // existingId satt → berika (patcha) befintlig lead istället för att skapa dubblett.
+  if (existingId) {
+    await bubblePatch("Lead", existingId, payload);
+    return { ok: true, lead_id: existingId, updated: true };
+  }
   const id = await bubbleCreate("Lead", payload);
   return { ok: true, lead_id: id, created: true };
 }
@@ -12062,8 +12067,17 @@ app.post("/leads/create-from-calculator", async (req, res) => {
     fields.Description       = desc.description;
     fields.Description_short = desc.description_short;
 
-    // ── Skapa Lead ──────────────────────────────────────────
-    const result = await createLeadAlways(fields);
+    // ── Skapa ELLER berika Lead (upsert på external_reference) ──
+    // Welcome skapar en stub; booking skickar samma external_reference → patchar samma lead
+    // istället för dubblett. (Tom external_reference → alltid ny.)
+    let existingId = null;
+    if (fields.external_reference) {
+      const ex = await bubbleFindOne("Lead", [
+        { key: "external_reference", constraint_type: "equals", value: fields.external_reference }
+      ]).catch(() => null);
+      existingId = ex?._id || null;
+    }
+    const result = await createLeadAlways(fields, existingId);
 
     // ── Länka ClientCompany till Lead om vi har båda ────────
     if (result.ok && result.lead_id && clientCompanyId) {
