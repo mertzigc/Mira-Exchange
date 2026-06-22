@@ -592,11 +592,18 @@
     return Array.from({length:7}, function(_,i) { var d = new Date(mon); d.setDate(mon.getDate()+i); return d; });
   }
 
-  function yyyymmdd(d) { return d.toISOString().slice(0,10); }
+  // Pinna allt till Europe/Stockholm. start_time lagras som UTC-instant i Bubble
+  // (backend konverterar Caspecos naiva tid) → här tolkar vi tillbaka till svensk
+  // väggklocka, deterministiskt oavsett var i världen vyn öppnas.
+  function yyyymmdd(d) {
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Stockholm', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(d);
+  }
   function hhmm(iso) {
     if (!iso) return '';
     var d = new Date(iso);
-    return d.toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit'});
+    return d.toLocaleTimeString('sv-SE', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Stockholm'});
   }
 
   function statusClass(s) {

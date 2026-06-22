@@ -7130,6 +7130,47 @@ function caspecoSectionName(detail) {
   return caspecoSection(detail).section_name;
 }
 
+// ────────────────────────────────────────────────────────────
+// Caspeco-tid → UTC. Caspeco skickar start/end/changeDate/validUntil som NAIV
+// lokaltid (Europe/Stockholm, ingen Z). Sparas de rått tolkar Bubble dem som UTC
+// → bokningar visades +2 h (sommar-offseten) med en dygnsrullning ovanpå (+26 h
+// totalt, verifierat 2026-06-22). Vi konverterar därför naiv Stockholm-tid till en
+// explicit UTC-instant (ISO med Z) så Bubble inte har något att misstolka.
+// Fält som redan är zon-märkta (t.ex. cancelAllowedBeforeUtc med Z) passerar rakt.
+// ────────────────────────────────────────────────────────────
+function stockholmOffsetMinutes(date) {
+  // Minuter att ADDERA till UTC för att få Stockholm-väggklocka (+120 sommar, +60 vinter).
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Stockholm", hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+  const p = dtf.formatToParts(date).reduce((a, x) => (a[x.type] = x.value, a), {});
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return Math.round((asUtc - date.getTime()) / 60000);
+}
+
+function caspecoTimeToUtc(naive) {
+  if (!naive) return null;
+  const s = String(naive).trim();
+  if (!s) return null;
+  // Redan UTC/zon-märkt (Z eller ±hh:mm) → Date hanterar den rakt av.
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) {
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const [, Y, Mo, D, H, Mi, S] = m;
+  // Tolka komponenterna som Stockholm-väggklocka: UTC = vägg − offset.
+  const wallAsUtc = Date.UTC(+Y, +Mo - 1, +D, +H, +Mi, +(S || 0));
+  const off = stockholmOffsetMinutes(new Date(wallAsUtc)); // stabil utom exakt DST-bytet 03:00
+  return new Date(wallAsUtc - off * 60000).toISOString();
+}
+
 function toBubbleDate(v) {
   if (!v) return null;
   const d = new Date(String(v));
@@ -9574,12 +9615,12 @@ app.post("/caspeco/bookings/sync", requireApiKey, async (req, res) => {
           global_booking_number: String(bd?.globalBookingNumber ?? "").trim(),
           long_booking_number:   String(bd?.longBookingNumber   ?? "").trim(),
 
-          // ── Tid ────────────────────────────────────────────────
-          start_time:            bd?.start       ?? null,
-          end_time:              bd?.end         ?? null,
-          change_date:           bd?.changeDate  ?? null,
-          cancel_allowed_before: bd?.cancelAllowedBeforeUtc ?? null,
-          valid_until:           bd?.validUntil  ?? null,
+          // ── Tid (naiv Stockholm-tid → explicit UTC, se caspecoTimeToUtc) ──
+          start_time:            caspecoTimeToUtc(bd?.start),
+          end_time:              caspecoTimeToUtc(bd?.end),
+          change_date:           caspecoTimeToUtc(bd?.changeDate),
+          cancel_allowed_before: caspecoTimeToUtc(bd?.cancelAllowedBeforeUtc),
+          valid_until:           caspecoTimeToUtc(bd?.validUntil),
 
           // ── Status ─────────────────────────────────────────────
           status:                String(bd?.statusName ?? bd?.status ?? "").trim(),
@@ -9715,11 +9756,11 @@ app.post("/caspeco/bookings/sync-all", requireApiKey, async (req, res) => {
               unit_id:               String(uid),
               global_booking_number: String(bd?.globalBookingNumber ?? "").trim(),
               long_booking_number:   String(bd?.longBookingNumber   ?? "").trim(),
-              start_time:            bd?.start       ?? null,
-              end_time:              bd?.end         ?? null,
-              change_date:           bd?.changeDate  ?? null,
-              cancel_allowed_before: bd?.cancelAllowedBeforeUtc ?? null,
-              valid_until:           bd?.validUntil  ?? null,
+              start_time:            caspecoTimeToUtc(bd?.start),
+              end_time:              caspecoTimeToUtc(bd?.end),
+              change_date:           caspecoTimeToUtc(bd?.changeDate),
+              cancel_allowed_before: caspecoTimeToUtc(bd?.cancelAllowedBeforeUtc),
+              valid_until:           caspecoTimeToUtc(bd?.validUntil),
               status:                String(bd?.statusName ?? bd?.status ?? "").trim(),
               status_code:           String(bd?.status ?? ""),
               sub_status:            String(bd?.subStatus ?? ""),
