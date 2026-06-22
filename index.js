@@ -16344,13 +16344,26 @@ app.post("/admin/planning/activity/action", async (req, res) => {
       const category = obj?.Category || obj?.[ACTIVITY_CONFIG.TODO_CATEGORY] || null;
       const subField = (category && FORFRAGAN.SUBCAT_FIELDS[category]) ? FORFRAGAN.SUBCAT_FIELDS[category] : null;
       const subcategory = subField ? (obj?.[subField] || null) : null;
-      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread, created_by, assigned_to, category, subcategory });
+      // Erbjudandets titel (om bokningen kom från ett erbjudande)
+      let offer_title = null;
+      const offerId = obj?.[FORFRAGAN.C_OFFER];
+      if (offerId) { try { const off = await bubbleGet(FORFRAGAN.OFFER_TYPE, _ffIdOf(offerId)); offer_title = off?.Title || null; } catch (_) {} }
+      return res.json({ ok: true, action, status: obj?.[src.status] ?? null, thread, created_by, assigned_to, category, subcategory, offer_title });
     }
 
     if (action === "status") {
       await bubblePatch(src.type, source_id, { [src.status]: value });
       if (activity_id) await bubblePatch(ACTIVITY_CONFIG.ACTIVITY_TYPE, activity_id, { status: value }).catch(() => {});
-      return res.json({ ok: true, action, source_id, status: value });
+      // Bokning-statusändring → push + Notis (samma wf som kommentar).
+      let pushed = null;
+      if (activity_type === ACTIVITY_CONFIG.AT_BOKNING) {
+        try {
+          const obj = await bubbleGet(src.type, source_id).catch(() => null);
+          const title = obj?.[FORFRAGAN.C_TITLE] || "Bokning";
+          pushed = await _ffTriggerPush(FORFRAGAN.PUSH_WF_KOMMENTAR, { bokning: source_id, subject: `Statusändring – ${title}`, body: `Ny status: ${value}` });
+        } catch (e) { console.warn("[planning status] push fail", e?.message); }
+      }
+      return res.json({ ok: true, action, source_id, status: value, pushed });
     }
 
     if (action === "comment") {
@@ -16836,6 +16849,7 @@ const FORFRAGAN = {
   SOURCE_VALUE:"Mira",
   C_BESTALLARE:"Beställare",         // list of Coworker
   C_PRODUKTTILLAGG:"Produkttillägg",// list of Products
+  C_OFFER:    "Erbjudande",          // relation → Erbjudande (sätts på erbjudandeväg)
   C_REC_RULE: "recurrence_rule",
   C_REC_GROUP:"recurrence_group_id",
   C_REC_MASTER:"recurrence_is_master",
@@ -17217,6 +17231,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
         [FORFRAGAN.C_SUPPLIER]:      supplierId ? [supplierId] : null,
         [FORFRAGAN.C_BESTALLARE]:    coworkerIds.length ? coworkerIds : null,
         [FORFRAGAN.C_PRODUKTTILLAGG]: (Array.isArray(d.produkttillagg) && d.produkttillagg.length) ? d.produkttillagg : null,
+        [FORFRAGAN.C_OFFER]:         d.offer_id ? String(d.offer_id) : null,
       };
       if (subcategory && category && FORFRAGAN.SUBCAT_FIELDS[category]) {
         exact[FORFRAGAN.SUBCAT_FIELDS[category]] = subcategory;
@@ -17279,6 +17294,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
       const tplId = await getTemplateId(FORFRAGAN.NOTIFY_SLUG);
       const extra = JSON.stringify({
         title, request_title: title, subcategory: subcatDisplay, description: safeText(d.description || "", 2000),
+        erbjudande: d.offer_title ? safeText(d.offer_title, 250) : null,
         delivery_date: occDates[0], bestallare: bestallareEfternamn, reference: masterId,
         subject_override: `${title} – ${subcatDisplay}`,
       });

@@ -373,7 +373,10 @@
     // Budget (fritt)
     if(st.path==='fritt'){
       var bv=+st.budget||0;
-      h+='<div class="field"><label>Budget (valfritt)</label><div class="slidewrap"><input type="range" id="f_budget" min="0" max="200000" step="1000" value="'+bv+'"><span class="slideval">'+(bv?kr(bv)+' kr':'–')+'</span></div></div>';
+      h+='<div class="field"><label>Budget (valfritt)</label><div class="slidewrap">'+
+         '<input type="range" id="f_budget" min="0" max="200000" step="1000" value="'+bv+'">'+
+         '<input type="number" id="f_budget_num" min="0" step="1000" placeholder="kr/mån" value="'+(bv||'')+'" style="max-width:130px;text-align:right">'+
+         '</div></div>';
     }
     return h;
   }
@@ -382,12 +385,9 @@
     var o=curOffer(), h='<h2>Detaljer</h2><div class="hint">Det leverantören behöver för att svara på din förfrågan.</div>';
     h+=fInput('titel','Titel på förfrågan','text','T.ex. Avdelningens julfest');
     // Beställare (lista)
-    h+='<div class="field"><label>Beställare (en lead skapas per beställare)</label>'+
+    h+='<div class="field"><label>Beställare</label>'+
        '<div class="bsearch"><input id="f_best" type="text" placeholder="sök medarbetare på namn/e-post…" autocomplete="off"><div class="bdd" id="ffBestDd"></div></div>'+
        '<div class="bchips" id="ffBestChips"></div></div>';
-    // Leverantör (bestäms av kategori)
-    var supN=(BOOT.suppliers_by_category[effCategory()]||{}).name;
-    h+='<div class="field"><label>Leverantör</label><input class="ro" value="'+esc(supN||'Tilldelas av kategorin')+'" disabled></div>';
     // Kategori + underkategori
     if(st.path==='fritt'){
       h+='<div class="row2"><div class="field"><label>Kategori</label>'+catSelect()+'</div>'+
@@ -395,6 +395,9 @@
     } else {
       h+='<div class="field"><label>Kategori (från erbjudande)</label><input class="ro" value="'+esc(o?o.category||'—':'—')+'" disabled></div>';
     }
+    // Leverantör (bestäms av kategori) — under Kategori, genereras automatiskt
+    var supN=(BOOT.suppliers_by_category[effCategory()]||{}).name;
+    h+='<div class="field"><label>Leverantör</label><input class="ro" value="'+esc(supN||'Tilldelas av kategorin')+'" disabled></div>';
     // Specialkost (Food & Event)
     if(isFood()){
       h+='<div class="field"><label>Specialkost / allergier</label><div class="allergens" id="ffAllergens"></div></div>';
@@ -459,7 +462,7 @@
 
   // ── bind ──
   function bind(){
-    ['datum','tid','slutdatum','plats','antal','titel','beskrivning','po','recUntil','budget','kontor','kategori','subcategory','recRule'].forEach(function(k){
+    ['datum','tid','slutdatum','plats','antal','titel','beskrivning','po','recUntil','kontor','kategori','subcategory','recRule'].forEach(function(k){
       var el=document.getElementById('f_'+k); if(!el) return;
       var ev=(el.tagName==='SELECT'||el.type==='date'||el.type==='time'||el.type==='range')?'change':'input';
       el.addEventListener(ev,function(){
@@ -467,12 +470,20 @@
         if(k==='kontor'){ var off=BOOT.offices.find(function(o){return o.id===el.value;}); if(off){ st.plats=off.address||st.plats; var pe=document.getElementById('f_plats'); if(pe) pe.value=st.plats; } }
         if(k==='kategori'){ st.subcategory=''; renderPanel(); }
         if(k==='recRule'){ renderPanel(); }
-        if(k==='budget'){ renderPanel(); }
         renderSummary(); renderNav();
       });
     });
+    bindBudget();
     if(document.getElementById('ffAllergens')) renderAllergens();
     if(document.getElementById('f_best')) bindBest();
+  }
+  // Budget: slider + sifferfält synkade (utan renderPanel → ingen focus-loss).
+  function bindBudget(){
+    var sl=document.getElementById('f_budget'), nu=document.getElementById('f_budget_num');
+    if(!sl||!nu) return;
+    function setB(v){ v=Math.max(0,Math.min(200000,+v||0)); st.budget=v?String(v):''; sl.value=v; nu.value=v||''; renderSummary(); renderNav(); }
+    sl.addEventListener('input',function(){ setB(sl.value); });
+    nu.addEventListener('input',function(){ st.budget=nu.value?String(Math.max(0,+nu.value||0)):''; sl.value=Math.min(200000,+nu.value||0); renderSummary(); renderNav(); });
   }
 
   function renderAllergens(){
@@ -549,6 +560,7 @@
     var allergens=Object.keys(st.allergens).map(function(n){return {name:n,count:st.allergens[n]};});
     var payload={
       mode:'write', company_id:COMPANY, path:st.path, offer_id:st.offerId||null,
+      offer_title:(curOffer()?curOffer().title:null),
       commission_title:st.titel, description:st.beskrivning, category:effCategory()||null, subcategory:st.subcategory||null,
       delivery_date:localIso(st.datum,st.tid), delivery_date_end:st.slutdatum?localIso(st.slutdatum,'12:00'):null,
       plats:(st.plats&&typeof st.plats==='object'?(st.plats.address||''):st.plats)||null, office_id:st.kontor||null, antal:+st.antal||null, budget:st.budget?+st.budget:null,

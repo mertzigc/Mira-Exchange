@@ -396,6 +396,7 @@ async function tmplCommissionNew(e, extra, toName, ctaLabel, item) {
   // eller en kommaseparerad lista via extra_data.orderers
   const ordererName = extra.orderer_name || "";
   const orderers    = ordererName ? [ordererName] : asArray(extra.orderers);
+  const erbjudande  = extra.erbjudande || "";
   const subject     = item.subject_override || `Ny bokning: ${title}`;
 
   const html = wrapLayout({ toName, logoUrl, senderName, imageUrl: "", accent: "#db6923",
@@ -409,6 +410,7 @@ async function tmplCommissionNew(e, extra, toName, ctaLabel, item) {
       delivAddr           && ["Leveransadress",delivAddr],
       category            && ["Kategori",      category],
       subcat              && ["Underkategori",  subcat],
+      erbjudande          && ["Erbjudande",    erbjudande],
       budget              && ["Budget",         budget],
       guests != null      && ["Antal gäster",   String(guests)],
       poNumber            && ["PO-nummer",      poNumber]

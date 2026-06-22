@@ -38,6 +38,15 @@ export const ACTIVITY_CONFIG = {
   C_COMPANY: "Company",
   C_DESC:    "Description",
   C_ADDRESS: "delivery_address",
+  C_OFFER:   "Erbjudande",          // relation → Erbjudande (för offer_title på Activity)
+  OFFER_TYPE:"Erbjudande",
+  // Underkategori-fält per kategori (samma som FORFRAGAN) → materialiseras på Activity.subcategory
+  SUBCAT_FIELDS: {
+    "Food & Event":            "SubkategoriFE",
+    "Housekeeping":            "SubCategoryHK",
+    "Staff":                   "SubCategorySP",
+    "Other facility services": "SubcategoryFM",
+  },
 
   // Matter-fält
   M_TITLE:   "Rubrik",              // bekräftat (emailer.js)
@@ -99,7 +108,20 @@ export function createActivityEngine(deps) {
 
   // Fält som jämförs vid sweep för noop-detektering (skriv bara vid faktisk ändring).
   const COMPARE = ["ActivityType", "Title", "Startdatum", "Slutdatum", "Category", "color_hex",
-                   "status", C.A_COMPANY, "Beskrivning", "creator_company"];
+                   "status", C.A_COMPANY, "Beskrivning", "creator_company", "subcategory", "offer_title"];
+
+  // Erbjudandets titel (cachas) — för Activity.offer_title.
+  const _offerTitleCache = new Map();
+  async function resolveOfferTitle(c) {
+    const oid = c[C.C_OFFER] ? idOf(c[C.C_OFFER]) : null;
+    if (!oid) return null;
+    const key = String(oid);
+    if (_offerTitleCache.has(key)) return _offerTitleCache.get(key);
+    let title = null;
+    try { const off = await bubbleGet(C.OFFER_TYPE, key); title = off ? (off.Title || null) : null; } catch (_) { /* lämna null */ }
+    _offerTitleCache.set(key, title);
+    return title;
+  }
 
   // Todo filtreras på skaparens företag (kund-läge + Carotte) ELLER Företag (CRM mot kund).
   // Därför lagras BÅDA: Clientcompany = Todo.Företag, creator_company = Creator-userns Company.
@@ -182,12 +204,14 @@ export function createActivityEngine(deps) {
   // ── Mappers ───────────────────────────────────────────────────────────────
   function mapComission(c) {
     const cat = knownCat(c[C.C_CATEGORY]);
+    const subField = cat && C.SUBCAT_FIELDS[cat] ? C.SUBCAT_FIELDS[cat] : null;
     return {
       ActivityType: C.AT_BOKNING,
       Title:        c[C.C_TITLE] || c.Title || "Bokning",
       Startdatum:   toBubbleDate(c[C.C_DELIVERY]),
       Slutdatum:    toBubbleDate(c[C.C_END] || c[C.C_DELIVERY]),
       Category:     cat,
+      subcategory:  subField ? (c[subField] || null) : null,
       color_hex:    colorFor(cat),
       status:       c[C.C_STATUS] || null,
       [C.A_COMPANY]: idOf(c[C.C_COMPANY]) || null,
@@ -255,8 +279,11 @@ export function createActivityEngine(deps) {
   }
 
   // ── Write-through (anropas av skapa-förfrågan / popup) ─────────────────────
-  const upsertActivityForComission = (c, { write = true } = {}) =>
-    upsertBySourceId(bubbleId(c), mapComission(c), { write, compareFields: COMPARE });
+  const upsertActivityForComission = async (c, { write = true } = {}) => {
+    const p = mapComission(c);
+    p.offer_title = await resolveOfferTitle(c);
+    return upsertBySourceId(bubbleId(c), p, { write, compareFields: COMPARE });
+  };
   const upsertActivityForMatter = (m, { write = true } = {}) =>
     upsertBySourceId(bubbleId(m), mapMatter(m), { write, compareFields: COMPARE });
   const upsertActivityForTodo = async (r, { write = true } = {}) => {
@@ -304,8 +331,11 @@ export function createActivityEngine(deps) {
     } catch (e) { return { ...report, scan_error: errInfo(e) }; }
     report.scanned = rows.length;
     for (const c of rows) {
-      try { tally(report, await upsertViaIndex(index, bubbleId(c), mapComission(c), { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) })); }
-      catch (e) { report.errors++; report.last_error = errInfo(e); log("comission err", bubbleId(c), errInfo(e)); }
+      try {
+        const p = mapComission(c);
+        p.offer_title = await resolveOfferTitle(c);
+        tally(report, await upsertViaIndex(index, bubbleId(c), p, { write, compareFields: COMPARE, throttleMs: opts.throttleMs ?? (write ? 120 : 0) }));
+      } catch (e) { report.errors++; report.last_error = errInfo(e); log("comission err", bubbleId(c), errInfo(e)); }
     }
     return report;
   }

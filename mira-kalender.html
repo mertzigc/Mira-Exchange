@@ -218,6 +218,7 @@
       id:a._id, sourceId:a.source_id||null, type:a.ActivityType||'',
       title:a.Title||'(utan titel)', start:dParse(a.Startdatum), end:dParse(a.Slutdatum),
       color:a.color_hex||'#888888', status:a.status||'', category:a.Category||'',
+      subcategory:a.subcategory||'', offer:a.offer_title||'',
       company:a.Clientcompany||'', desc:a.Beskrivning||'',
       emp:a.tengella_employee_name||'', region:a.tengella_region_name||'',
       project:a.tengella_project_name||'', supervisor:a.tengella_supervisor_name||''
@@ -227,7 +228,7 @@
   function visible(ev){
     if(!st.on[ev.type]) return false;
     if(st.status && ev.status!==st.status) return false;
-    if(st.q){var q=st.q.toLowerCase(); var hay=(ev.title+' '+ev.emp+' '+ev.region+' '+ev.status+' '+ev.company).toLowerCase(); if(hay.indexOf(q)<0) return false;}
+    if(st.q){var q=st.q.toLowerCase(); var hay=(ev.title+' '+ev.category+' '+ev.subcategory+' '+ev.offer+' '+ev.emp+' '+ev.region+' '+ev.status+' '+ev.company).toLowerCase(); if(hay.indexOf(q)<0) return false;}
     return true;
   }
   function evOn(d){return EVENTS.filter(function(e){return e.start&&visible(e)&&e.start<=endDay(d)&&endOf(e)>=startDay(d);}).sort(function(a,b){return a.start-b.start;});}
@@ -309,13 +310,15 @@
       if(evs.length>3)h+='<div class="mk-more" onclick="mkDrillD('+d.getFullYear()+','+d.getMonth()+','+d.getDate()+')">+'+(evs.length-3)+' till</div>';
       h+='</div>';}
     document.getElementById('mkView').innerHTML=h+'</div>';}
-  function evChip(e){return '<div class="mk-ev" style="border-left-color:'+e.color+';background:'+e.color+'22" onclick="mkOpen(\''+e.id+'\')"><span class="eic">'+typeMeta(e.type).ic+'</span>'+(e.start?pad(e.start.getHours())+' ':'')+esc(e.title)+'</div>';}
+  // Beskrivande meta: kategori · underkategori · erbjudande (det som finns).
+  function evMeta(e){return [e.category,e.subcategory,e.offer].filter(Boolean).join(' · ');}
+  function evChip(e){var m=evMeta(e);return '<div class="mk-ev" style="border-left-color:'+e.color+';background:'+e.color+'22" onclick="mkOpen(\''+e.id+'\')"><span class="eic">'+typeMeta(e.type).ic+'</span>'+(e.start?pad(e.start.getHours())+' ':'')+esc(e.title)+(m?' <span style="opacity:.6">· '+esc(m)+'</span>':'')+'</div>';}
 
   function renderWeek(){var m=weekStart(st.anchor),days=[];for(var i=0;i<7;i++){var d=new Date(m);d.setDate(m.getDate()+i);days.push(d);}document.getElementById('mkView').innerHTML=timeGrid(days);}
   function renderDay(){var d=new Date(st.anchor),h='<div class="mk-daywrap"><div>'+timeGrid([d])+'</div>';var evs=evOn(d);
     h+='<div class="mk-ag"><h3>'+WD[(d.getDay()+6)%7]+' '+d.getDate()+' '+MSHORT[d.getMonth()]+'</h3>';
     if(!evs.length)h+='<div class="mk-hint" style="margin:0">Inga händelser.</div>';
-    evs.forEach(function(e){h+='<div class="mk-ai" onclick="mkOpen(\''+e.id+'\')"><div class="b2" style="background:'+e.color+'"></div><div><div class="at">'+typeMeta(e.type).ic+' '+esc(e.title)+'</div><div class="as">'+timeRange(e)+(e.status?' · '+esc(e.status):'')+'</div></div></div>';});
+    evs.forEach(function(e){var m=evMeta(e);h+='<div class="mk-ai" onclick="mkOpen(\''+e.id+'\')"><div class="b2" style="background:'+e.color+'"></div><div><div class="at">'+typeMeta(e.type).ic+' '+esc(e.title)+'</div><div class="as">'+timeRange(e)+(m?' · '+esc(m):'')+(e.status?' · '+esc(e.status):'')+'</div></div></div>';});
     document.getElementById('mkView').innerHTML=h+'</div></div>';}
   function timeRange(e){if(!e.start)return '';var s=pad(e.start.getHours())+':'+pad(e.start.getMinutes());if(!e.end)return s;return s+'–'+pad(e.end.getHours())+':'+pad(e.end.getMinutes());}
   function timeGrid(days){var h='<div class="mk-tw"><div class="mk-ax"><div class="ah"></div>';for(var hr=H0;hr<=H1;hr++)h+='<div class="hr">'+pad(hr)+'</div>';h+='</div><div class="mk-cols">';
@@ -323,7 +326,7 @@
       for(var hr=H0;hr<=H1;hr++)h+='<div class="mk-hl"></div>';
       evOn(d).forEach(function(e){var sh=e.start?e.start.getHours()+e.start.getMinutes()/60:H0,eh=e.end?e.end.getHours()+e.end.getMinutes()/60:sh+1;
         var top=(Math.max(sh,H0)-H0)*50,hgt=Math.max(Math.min(eh,H1+1)-Math.max(sh,H0),0.4)*50-3;
-        h+='<div class="mk-tev" style="top:'+top+'px;height:'+hgt+'px;border-left-color:'+e.color+';background:'+e.color+'26" onclick="mkOpen(\''+e.id+'\')"><div class="tt">'+typeMeta(e.type).ic+' '+esc(e.title)+'</div><div class="ts">'+timeRange(e)+'</div></div>';});
+        var m=evMeta(e);h+='<div class="mk-tev" style="top:'+top+'px;height:'+hgt+'px;border-left-color:'+e.color+';background:'+e.color+'26" onclick="mkOpen(\''+e.id+'\')"><div class="tt">'+typeMeta(e.type).ic+' '+esc(e.title)+'</div><div class="ts">'+timeRange(e)+(m?' · '+esc(m):'')+'</div></div>';});
       h+='</div></div>';});
     return h+'</div></div>';}
 
@@ -386,6 +389,7 @@
       if(meta&&j){ var mh='';
         if(j.category) mh+=row('Kategori',esc(j.category));
         if(j.subcategory) mh+=row('Underkategori',esc(j.subcategory));
+        if(j.offer_title) mh+=row('Erbjudande',esc(j.offer_title));
         if(j.created_by) mh+=row('Skapad av',esc(j.created_by));
         if(e.type==='Kom ihåg'&&j.assigned_to) mh+=row('Delegerad till',esc(j.assigned_to));
         meta.innerHTML=mh;
