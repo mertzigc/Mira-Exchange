@@ -9,6 +9,7 @@
   KOPPLING I BUBBLE (value=""):
     #mira_company_id      = Current User's Company's unique id
     #mira_company_name    = Current User's Company's Name_company
+    #mira_admin_crm       = Current User's admin_crm  ("yes" → CRM: kundsök, skapa åt kund)
     #mira_api_host        = https://mira-exchange.onrender.com   (redan ifyllt)
     #mira_planning_token  = (sätt = PLANNING_ADMIN_TOKEN, annars CASPECO_ADMIN_TOKEN)
 
@@ -16,6 +17,7 @@
 -->
 <input type="hidden" id="mira_company_id" value="">
 <input type="hidden" id="mira_company_name" value="">
+<input type="hidden" id="mira_admin_crm" value="">
 <input type="hidden" id="mira_api_host" value="https://mira-exchange.onrender.com">
 <input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
 
@@ -38,6 +40,14 @@
   .ff-h1 span{color:#db6923}
   .ff-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;margin-top:3px;text-transform:uppercase}
   .ff-badge{font-size:10px;background:var(--input);border:1px solid var(--border);color:var(--w40);padding:3px 8px;border-radius:5px;margin-left:9px;vertical-align:middle}
+  /* CRM-företagssök (admin_crm=yes) */
+  .ff-csearch{position:relative;display:none;align-items:center;gap:7px;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:0 11px;height:36px;min-width:250px}
+  .ff-csearch.on{display:flex}
+  .ff-csearch input{background:transparent;border:none;color:var(--white);font-size:12px;outline:none;width:100%;font-family:var(--fb)}
+  .ff-cdd{display:none;position:absolute;top:40px;left:0;right:0;background:var(--panel);border:1px solid var(--border);border-radius:9px;max-height:280px;overflow:auto;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .ff-cdd.on{display:block}
+  .ff-cddrow{padding:9px 12px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--w70)}
+  .ff-cddrow:hover{background:var(--deep);color:var(--white)} .ff-cddrow:last-child{border-bottom:none} .ff-cddrow.act{color:var(--orange)}
 
   .ff-layout{display:grid;grid-template-columns:200px 1fr 320px;gap:24px;align-items:start}
   @media (max-width:920px){.ff-layout{grid-template-columns:1fr}}
@@ -171,6 +181,11 @@
       <div class="ff-h1">Skapa <span id="ffCompany">förfrågan</span></div>
       <div class="ff-sub">Mira · Carotte<span class="ff-badge" id="ffMode" style="display:none">demo</span></div>
     </div>
+    <div class="ff-csearch" id="ffCSearch">
+      <span style="color:var(--w40)">🔍</span>
+      <input id="ffCSearchInput" placeholder="Skapa åt kund – sök företag…" oninput="ffOnSearch(this.value)" onfocus="ffOnSearch(this.value)" autocomplete="off">
+      <div class="ff-cdd" id="ffCDD"></div>
+    </div>
   </div>
 
   <div class="ff-layout">
@@ -204,7 +219,10 @@
   var TOKEN = document.getElementById('mira_planning_token').value || '';
   var COMPANY = (document.getElementById('mira_company_id').value || '').trim();
   var COMPANY_NAME = (document.getElementById('mira_company_name').value || '').trim();
-  var DEMO = !COMPANY;
+  var _av = (document.getElementById('mira_admin_crm').value || '').trim().toLowerCase();
+  var ADMIN = (_av === 'yes' || _av === 'true' || _av === '1' || _av === 'ja');
+  var COMPANIES = [];
+  var DEMO = !COMPANY && !ADMIN;
 
   // ── data (fylls av bootstrap/offers; demo-fallback) ──
   var BOOT = { offices:[], suppliers_by_category:{}, categories:[], subcategories:{}, recurrence_rules:[] };
@@ -590,6 +608,35 @@
   // Stäng: dölj popupen + signalera Bubble (lyssna på 'mira:forfragan-close' för att stänga elementet/navigera).
   window.ffClose=function(){ st=newState(); document.getElementById('ffOverlay').classList.remove('show'); render(); try{ window.dispatchEvent(new CustomEvent('mira:forfragan-close')); }catch(e){} };
 
+  // ── CRM-läge: företagsväljare (skapa förfrågan åt en kund). Eget bolag = standard. ──
+  function setHeader(){ document.getElementById('ffCompany').textContent = COMPANY_NAME ? ('förfrågan · '+COMPANY_NAME) : 'förfrågan'; }
+  function loadCompanies(){
+    fetch(HOST+'/admin/planning/companies',{headers:{'x-admin-token':TOKEN}}).then(function(r){return r.json();}).then(function(j){
+      COMPANIES=(j&&j.results)?j.results:[];
+      var me=COMPANIES.filter(function(c){return c.id===COMPANY;})[0];
+      if(me){ document.getElementById('ffCSearchInput').value=me.name; COMPANY_NAME=me.name; setHeader(); }
+    }).catch(function(){});
+  }
+  window.ffOnSearch=function(v){
+    var box=document.getElementById('ffCDD'); var ql=(v||'').trim().toLowerCase();
+    var list=ql?COMPANIES.filter(function(c){return c.name.toLowerCase().indexOf(ql)>=0;}):COMPANIES;
+    list=list.slice(0,15);
+    if(!list.length){ box.innerHTML='<div class="ff-cddrow" style="color:var(--w40)">'+(COMPANIES.length?'Inga träffar':'Laddar kunder…')+'</div>'; box.classList.add('on'); return; }
+    box.innerHTML=list.map(function(c){var act=c.id===COMPANY?' act':'';return '<div class="ff-cddrow'+act+'" onmousedown="ffPickCompany(\''+c.id+'\',\''+esc(c.name).replace(/'/g,"&#39;")+'\')">'+esc(c.name)+'</div>';}).join('');
+    box.classList.add('on');
+  };
+  window.ffPickCompany=function(id,name){
+    if(id===COMPANY){ document.getElementById('ffCDD').classList.remove('on'); return; }
+    COMPANY=id; COMPANY_NAME=name; DEMO=false;
+    document.getElementById('ffCSearchInput').value=name;
+    document.getElementById('ffCDD').classList.remove('on');
+    setHeader();
+    st=newState();           // rensa pågående förfrågan vid kundbyte
+    boot();                  // ladda om kontor/leverantör/erbjudanden/beställare för nya kunden
+  };
+  document.addEventListener('click',function(e){ var s=document.getElementById('ffCSearch'); var dd=document.getElementById('ffCDD'); if(dd&&s&&!s.contains(e.target)) dd.classList.remove('on'); });
+
+  if(ADMIN){ document.getElementById('ffCSearch').classList.add('on'); loadCompanies(); }
   boot();
 })();
 </script>
