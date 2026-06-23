@@ -16252,13 +16252,17 @@ app.post("/sync/activities/:source", requireSyncSecret, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 const PLANNING_ADMIN_TOKEN = pick(process.env.PLANNING_ADMIN_TOKEN, CASPECO_ADMIN_TOKEN);
 function _planningAuthed(req) {
-  if (!PLANNING_ADMIN_TOKEN) return false;
+  // Accept antingen PLANNING-token (för curl + planning-modulerna) ELLER
+  // RENDER_API_KEY (för kommunikation-admin-fliken som redan har den i scope).
   const t = String(req.headers["x-admin-token"] || req.query.t || "").trim();
-  return t && t === PLANNING_ADMIN_TOKEN;
+  if (t && PLANNING_ADMIN_TOKEN && t === PLANNING_ADMIN_TOKEN) return true;
+  const k = String(req.headers["x-api-key"] || "").trim();
+  if (k && RENDER_API_KEY && k === RENDER_API_KEY) return true;
+  return false;
 }
 function _planningCors(req, res) {
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token, x-api-key");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 }
 // Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)

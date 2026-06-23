@@ -141,6 +141,23 @@
 
   input[type=range]{accent-color:var(--orange)}
   .slidewrap{display:flex;align-items:center;gap:12px} .slideval{font-weight:700;color:var(--orange);min-width:90px;text-align:right}
+  /* Erbjudande-specifika dynamiska frågor (custom_form_json) */
+  .oqsection{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+  .oqsection h3{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--w40);margin:0 0 12px}
+  .oqs{display:flex;flex-direction:column;gap:0}
+  .oq-section h3{font-size:13px;color:var(--orange);margin:14px 0 8px;text-transform:none;letter-spacing:0}
+  .oq-label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px}
+  .oq-label .req{color:var(--orange)}
+  .oq-help{font-size:11px;color:var(--w40);margin:-3px 0 6px}
+  .oq-in{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .oq-in:focus{outline:none;border-color:var(--orange)}
+  .oq-num{display:flex;align-items:center;gap:8px} .oq-num .oq-in{flex:1} .oq-unit{font-size:12px;color:var(--w40);min-width:38px}
+  .oq-multi{display:flex;flex-wrap:wrap;gap:6px}
+  .oq-check{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;cursor:pointer;font-size:12px;color:var(--w70)}
+  .oq-check input{display:none} .oq-check.on{border-color:var(--orange);background:rgba(244,123,48,.12);color:var(--white)}
+  .oq-yn{display:inline-flex;gap:6px}
+  .oq-ynb{padding:8px 18px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;color:var(--w70)}
+  .oq-ynb.on{border-color:var(--orange);background:rgba(244,123,48,.15);color:var(--white)}
 
   /* summary */
   .summary{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;position:sticky;top:14px}
@@ -255,7 +272,114 @@
     return { step:0, path:null, offerId:null, offerTab:'unique',
       datum:'', tid:'12:00', slutdatum:'', plats:'', kontor:'', antal:20,
       titel:'', kategori:'', subcategory:'', beskrivning:'', budget:'', po:'',
-      recRule:'', recUntil:'', bestallare:[], allergens:{}, tillagg:{}, busy:false };
+      recRule:'', recUntil:'', bestallare:[], allergens:{}, tillagg:{}, busy:false,
+      answers:{}  // svar på erbjudandets custom_form_json-frågor
+    };
+  }
+
+  // ── Pris-engine: laddas async från Render (samma kod som backend förseglar med) ──
+  (function loadPricing(){
+    if (window.MiraPricing) return;
+    var s = document.createElement('script');
+    s.src = HOST + '/pricing_engine.js';
+    s.onload  = function(){ try { renderSummary(); } catch(e){} };
+    s.onerror = function(){ console.warn('pricing_engine.js kunde inte laddas — wizarden faller tillbaka på pp×antal.'); };
+    document.head.appendChild(s);
+  })();
+
+  // Plocka erbjudandets parsa custom_form_json + pricing_formula_json (en gång per render).
+  function offerForm(o){ if (!o) return []; try { var v = o.custom_form_json; if (!v) return []; if (typeof v === 'string') v = JSON.parse(v); return Array.isArray(v) ? v : []; } catch(e){ return []; } }
+  function offerFormula(o){ if (!o) return null; try { var v = o.pricing_formula_json; if (!v) return null; if (typeof v === 'string') v = JSON.parse(v); return (v && typeof v === 'object' && Array.isArray(v.rules)) ? v : null; } catch(e){ return null; } }
+
+  // Bygg fullt answers-objekt = custom-svar + automatiska "antal" magic key.
+  function fullAnswers(){ var a = {}; Object.keys(st.answers||{}).forEach(function(k){ a[k] = st.answers[k]; }); if (a.antal == null) a.antal = +st.antal || 0; return a; }
+
+  // Mini renderQuestion-mönster — speglar mira-undersokning.html men anpassat för
+  // wizardens tema. Hanterar text/textarea/email/number/date/select/multiselect/
+  // slider/kvm/hours/yesno + section.
+  function renderOfferQuestions(formArr){
+    if (!formArr.length) return '';
+    var h = '<div class="oqs">';
+    formArr.forEach(function(q, i){
+      var qid = q.id || ('q' + i);
+      var t = String(q.type || 'text').toLowerCase();
+      if (t === 'section') { h += '<div class="oq-section"><h3>' + esc(q.label || '') + '</h3></div>'; return; }
+      var val = st.answers[qid];
+      var lbl = '<label class="oq-label">' + esc(q.label || ('Fråga ' + (i + 1))) + (q.required ? ' <span class="req">*</span>' : '') + '</label>';
+      var help = q.help ? '<div class="oq-help">' + esc(q.help) + '</div>' : '';
+      var ctrl = '';
+      switch (t) {
+        case 'text':
+        case 'email':
+          ctrl = '<input class="oq-in" type="' + (t==='email'?'email':'text') + '" data-oq="' + esc(qid) + '" value="' + esc(val == null ? '' : val) + '" placeholder="' + esc(q.placeholder || '') + '">'; break;
+        case 'textarea':
+          ctrl = '<textarea class="oq-in" data-oq="' + esc(qid) + '" placeholder="' + esc(q.placeholder || '') + '">' + esc(val == null ? '' : val) + '</textarea>'; break;
+        case 'number': case 'kvm': case 'hours':
+          var unit = q.unit || (t==='kvm'?'kvm':t==='hours'?'tim':'');
+          ctrl = '<div class="oq-num"><input class="oq-in" type="number" data-oq="' + esc(qid) + '" value="' + esc(val == null ? '' : val) + '" min="' + (q.min != null ? q.min : 0) + '"' + (q.max != null ? ' max="' + q.max + '"' : '') + '>' + (unit ? '<span class="oq-unit">' + esc(unit) + '</span>' : '') + '</div>'; break;
+        case 'slider':
+          var mn = q.min != null ? q.min : 0, mx = q.max != null ? q.max : 100, cv = val != null ? val : mn;
+          ctrl = '<div class="slidewrap"><input type="range" data-oq="' + esc(qid) + '" min="' + mn + '" max="' + mx + '" value="' + cv + '"><input type="number" data-oq-mirror="' + esc(qid) + '" value="' + cv + '" style="max-width:90px;text-align:right"></div>'; break;
+        case 'date':
+          ctrl = '<input class="oq-in" type="date" data-oq="' + esc(qid) + '" value="' + esc(val == null ? '' : val) + '">'; break;
+        case 'select':
+          var sopts = '<option value="">– Välj –</option>' + (q.options || []).map(function(opt){ return '<option' + (val === opt ? ' selected' : '') + '>' + esc(opt) + '</option>'; }).join('');
+          ctrl = '<select class="oq-in" data-oq="' + esc(qid) + '">' + sopts + '</select>'; break;
+        case 'multiselect':
+          var mv = Array.isArray(val) ? val : [];
+          ctrl = '<div class="oq-multi" data-oq-multi="' + esc(qid) + '">' + (q.options || []).map(function(opt){ var on = mv.indexOf(opt) >= 0; return '<label class="oq-check' + (on?' on':'') + '"><input type="checkbox" value="' + esc(opt) + '"' + (on?' checked':'') + '><span>' + esc(opt) + '</span></label>'; }).join('') + '</div>'; break;
+        case 'yesno':
+          ctrl = '<div class="oq-yn" data-oq-yn="' + esc(qid) + '"><div class="oq-ynb' + (val==='yes'?' on':'') + '" data-v="yes">Ja</div><div class="oq-ynb' + (val==='no'?' on':'') + '" data-v="no">Nej</div></div>'; break;
+        default:
+          ctrl = '<input class="oq-in" type="text" data-oq="' + esc(qid) + '" value="' + esc(val == null ? '' : val) + '">';
+      }
+      h += '<div class="field oq">' + lbl + help + ctrl + '</div>';
+    });
+    h += '</div>';
+    return h;
+  }
+  function bindOfferQuestions(){
+    document.querySelectorAll('[data-oq]').forEach(function(el){
+      var ev = (el.tagName === 'SELECT' || el.type === 'date' || el.type === 'range') ? 'change' : 'input';
+      el.addEventListener(ev, function(){
+        var qid = el.getAttribute('data-oq');
+        var v;
+        if (el.type === 'number' || el.type === 'range') { v = el.value === '' ? null : +el.value; }
+        else { v = el.value; }
+        st.answers[qid] = v;
+        if (el.type === 'range') { var m = document.querySelector('[data-oq-mirror="' + qid + '"]'); if (m) m.value = el.value; }
+        renderSummary(); renderNav();
+      });
+    });
+    document.querySelectorAll('[data-oq-mirror]').forEach(function(el){
+      el.addEventListener('input', function(){
+        var qid = el.getAttribute('data-oq-mirror');
+        var v = el.value === '' ? null : +el.value;
+        st.answers[qid] = v;
+        var r = document.querySelector('input[type="range"][data-oq="' + qid + '"]'); if (r) r.value = el.value;
+        renderSummary(); renderNav();
+      });
+    });
+    document.querySelectorAll('[data-oq-multi]').forEach(function(box){
+      var qid = box.getAttribute('data-oq-multi');
+      box.querySelectorAll('input[type="checkbox"]').forEach(function(cb){
+        cb.addEventListener('change', function(){
+          cb.parentElement.classList.toggle('on', cb.checked);
+          var arr = []; box.querySelectorAll('input[type="checkbox"]:checked').forEach(function(c){ arr.push(c.value); });
+          st.answers[qid] = arr; renderSummary();
+        });
+      });
+    });
+    document.querySelectorAll('[data-oq-yn]').forEach(function(box){
+      var qid = box.getAttribute('data-oq-yn');
+      box.querySelectorAll('.oq-ynb').forEach(function(b){
+        b.addEventListener('click', function(){
+          var v = b.getAttribute('data-v'); st.answers[qid] = v;
+          box.querySelectorAll('.oq-ynb').forEach(function(b2){ b2.classList.toggle('on', b2.getAttribute('data-v') === v); });
+          renderSummary();
+        });
+      });
+    });
   }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function kr(n){ return Math.round(+n||0).toLocaleString('sv-SE'); }
@@ -388,6 +512,8 @@
     // Upprepa
     h+='<div class="row2"><div class="field"><label>Upprepa</label>'+recurrenceSelect()+'</div>'+
        (st.recRule?fInput('recUntil','Upprepa till','date'):'<div></div>')+'</div>';
+    // Erbjudandets dynamiska frågor (custom_form_json) — rendras under standardfälten.
+    if(o){ var fArr = offerForm(o); if(fArr.length){ h+='<div class="oqsection"><h3>Information för det här erbjudandet</h3>'+renderOfferQuestions(fArr)+'</div>'; } }
     // Budget (fritt)
     if(st.path==='fritt'){
       var bv=+st.budget||0;
@@ -453,12 +579,35 @@
   function rRow(k,v){ return '<div class="rrow"><span class="k">'+k+'</span><span class="v">'+esc(v)+'</span></div>'; }
 
   // ── calc / summary ──
-  function calc(){ var o=curOffer(); if(!o||o.pris_per_person==null) return null; var base=(+o.pris_per_person)*(+st.antal||0); return {pp:+o.pris_per_person, base:base, total:base}; }
+  // Returnerar EITHER {engine:"formula", result:{subtotal,discount,total,breakdown,currency}}
+  //          ELLER  {engine:"flat",    pp,         total}
+  //          ELLER  null (inget kalkylerbart).
+  function calc(){
+    var o = curOffer(); if (!o) return null;
+    var formula = offerFormula(o);
+    if (formula && window.MiraPricing) {
+      var r = window.MiraPricing.evalPricing(formula, fullAnswers());
+      if (r && r.ok) return { engine:"formula", result: r, total: r.total };
+    }
+    if (o.pris_per_person != null) {
+      var base = (+o.pris_per_person) * (+st.antal || 0);
+      return { engine:"flat", pp: +o.pris_per_person, base: base, total: base };
+    }
+    return null;
+  }
   function renderSummary(){
     var el=document.getElementById('ffSummary'), o=curOffer(), c=calc(), h='';
     if(st.path==='erbjudande'&&o){
       h+='<span class="stag">Erbjudande</span><h3>'+esc(o.title)+'</h3>'+(o.description?'<div class="sdesc">'+esc(o.description)+'</div>':'');
-      if(o.pris_per_person!=null){
+      if (c && c.engine === 'formula') {
+        var rr = c.result, cur = rr.currency || 'SEK';
+        (rr.breakdown||[]).forEach(function(b){
+          var qtyTxt = b.qty != null ? (b.qty + (b.unit ? ' ' + b.unit : '')) : (b.rate != null ? Math.round(b.rate*100)+'%' : '');
+          h+='<div class="srow"><span class="k">'+esc(b.label||b.type)+(qtyTxt?(' <small style="color:var(--w40)">('+esc(qtyTxt)+')</small>'):'')+'</span><span class="v">'+kr(b.amount)+' '+esc(cur)+'</span></div>';
+        });
+        if (rr.discount) h+='<div class="srow"><span class="k">Rabatt</span><span class="v">−'+kr(rr.discount)+' '+esc(cur)+'</span></div>';
+        h+='<div class="stot"><div class="lab">Preliminär kostnad</div><div class="big">'+kr(rr.total)+' '+esc(cur)+'</div><div class="sub">ex. moms · preliminärt</div></div>';
+      } else if (o.pris_per_person!=null) {
         h+='<div class="srow"><span class="k">Pris per person</span><span class="v">'+kr(o.pris_per_person)+' kr</span></div>';
         h+='<div class="srow"><span class="k">Antal gäster</span><span class="v">'+(st.antal||0)+'</span></div>';
         h+='<div class="stot"><div class="lab">Preliminär kostnad</div><div class="big">'+kr(c?c.total:0)+' kr</div><div class="sub">ex. moms · preliminärt</div></div>';
@@ -494,6 +643,7 @@
     bindBudget();
     if(document.getElementById('ffAllergens')) renderAllergens();
     if(document.getElementById('f_best')) bindBest();
+    bindOfferQuestions();
   }
   // Budget: slider + sifferfält synkade (utan renderPanel → ingen focus-loss).
   function bindBudget(){
@@ -586,7 +736,8 @@
       specialkost:allergens.length?allergens:null, po:st.po||null,
       status:draft?'draft':'sent',
       bestallare:st.bestallare.map(function(b){return {email:b.email,fornamn:b.fornamn,efternamn:b.efternamn,coworker_id:b.coworker_id};}),
-      recurrence:st.recRule?{rule:st.recRule,until:st.recUntil?localIso(st.recUntil,'12:00'):null}:null
+      recurrence:st.recRule?{rule:st.recRule,until:st.recUntil?localIso(st.recUntil,'12:00'):null}:null,
+      offer_answers: fullAnswers()   // backend kör evalPricing + förseglar breakdown i Comission.price_breakdown_json
     };
     fetch(HOST+'/admin/forfragan/create',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify(payload)})
       .then(function(r){return r.json();}).then(function(j){ setBusy(false); if(j&&j.ok) showOverlay(true,draft,j); else showOverlay(false,draft,j); })

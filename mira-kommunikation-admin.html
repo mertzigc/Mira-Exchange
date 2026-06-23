@@ -320,6 +320,7 @@
     <button class="ck-tab" data-t="audience" onclick="ckShow('audience',this)">Målgrupp</button>
     <button class="ck-tab" data-t="news" onclick="ckShow('news',this)">Nyheter</button>
     <button class="ck-tab" data-t="survey" onclick="ckShow('survey',this)">Undersökningar</button>
+    <button class="ck-tab" data-t="offers" onclick="ckShow('offers',this)">Erbjudanden</button>
     <button class="ck-tab" data-t="email" onclick="ckShow('email',this)">E-post</button>
   </div>
 
@@ -839,6 +840,124 @@
         </label>
         <div class="media-grid-h">Tidigare uppladdade</div>
         <div id="media-grid" class="media-grid"><div class="ck-mut" style="grid-column:1/-1;padding:14px 0">Laddar…</div></div>
+      </div>
+    </div>
+
+    <!-- ═══════════ ERBJUDANDEN (admin för Erbjudande-typen + prismotor) ═══════════ -->
+    <div id="ck-offers" class="ck-panel">
+      <div class="ck-grid">
+        <div>
+          <div class="ck-card">
+            <div class="ck-sl-row" data-collapsible><p class="ck-sl" id="of-formhead">Nytt erbjudande</p><span class="ck-chev">▾</span></div>
+            <div class="ck-stack">
+              <input type="hidden" id="of-id">
+              <div class="ea-fg"><label class="ea-fl">Rubrik <span class="rq">*</span></label><input class="ea-fi" id="of-title" placeholder="T.ex. Lunchcatering – Italiensk vecka"></div>
+              <div class="ea-2col">
+                <div class="ea-fg"><label class="ea-fl">Kategori <span class="rq">*</span></label>
+                  <select class="ea-fsel" id="of-category">
+                    <option value="">– Välj –</option>
+                    <option>Food &amp; Event</option>
+                    <option>Housekeeping</option>
+                    <option>Staff</option>
+                    <option>Other facility services</option>
+                  </select>
+                  <span class="ea-fh">Leverantör mappas automatiskt från kategori.</span>
+                </div>
+                <div class="ea-fg"><label class="ea-fl">Status</label>
+                  <select class="ea-fsel" id="of-status">
+                    <option value="Utkast">Utkast</option>
+                    <option value="Publicerat">Publicerat</option>
+                    <option value="Utgånget">Utgånget</option>
+                  </select>
+                </div>
+              </div>
+              <div class="ea-fg" style="position:relative">
+                <label class="ea-fl">Kundföretag (tom = allmän mall, en eller flera = kundunik)</label>
+                <input class="ea-fi" id="of-cc-search" placeholder="Sök kundföretag…" autocomplete="off">
+                <div id="of-cc-list" class="ck-combo"></div>
+                <div id="of-cc-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
+              </div>
+              <div class="ea-2col">
+                <div class="ea-fg"><label class="ea-fl">Startdatum</label><input class="ea-fi ck-date" id="of-start" type="date" onclick="try{this.showPicker()}catch(e){}"></div>
+                <div class="ea-fg"><label class="ea-fl">Slutdatum</label><input class="ea-fi ck-date" id="of-end" type="date" onclick="try{this.showPicker()}catch(e){}"></div>
+              </div>
+              <div class="ea-fg"><label class="ea-fl">Kort beskrivning</label><textarea class="ea-fta" id="of-desc" placeholder="1–2 meningar — visas i listan" style="min-height:60px"></textarea></div>
+              <div class="ea-fg"><label class="ea-fl">Lång beskrivning</label><textarea class="ea-fta" id="of-desc-long" placeholder="Detaljerad text — visas i wizardens hero" style="min-height:120px"></textarea></div>
+              <div class="ea-2col">
+                <div class="ea-fg"><label class="ea-fl">Huvudbild</label><div class="ck-media-row"><input class="ea-fi" id="of-image" placeholder="https://…"><button type="button" class="ck-btn-gh ck-media-btn" data-media-target="of-image">📤 Arkiv</button></div></div>
+                <div class="ea-fg"><label class="ea-fl">Pris per person (för enkel kalkyl)</label><input class="ea-fi" id="of-pris-per-person" type="number" min="0" placeholder="Lämna tomt om prismodellen sätts via formler"></div>
+              </div>
+              <div class="ea-2col">
+                <div class="ea-fg"><label class="ea-fl">Capacity (max antal)</label><input class="ea-fi" id="of-capacity" type="number" min="0"></div>
+                <div class="ea-fg"><label class="ea-fl">Målgrupp</label><input class="ea-fi" id="of-malgrupp" placeholder="T.ex. Hela kontoret, ledningsgrupp"></div>
+              </div>
+              <div class="ea-fg"><label class="ea-fl">Produktinnehåll</label><textarea class="ea-fta" id="of-produktinnehall" placeholder="Listar vad som ingår" style="min-height:80px"></textarea></div>
+              <div class="ea-fg"><label class="ea-fl">Logistik</label><textarea class="ea-fta" id="of-logistik" placeholder="Leveranstid, uppställning, krav på lokal…" style="min-height:60px"></textarea></div>
+              <div class="ea-fg"><label class="ea-fl">Villkor</label><textarea class="ea-fta" id="of-villkor" placeholder="Avbokning, moms, minimumantal…" style="min-height:60px"></textarea></div>
+            </div>
+          </div>
+
+          <div class="ck-card">
+            <div class="ck-sl-row" data-collapsible><p class="ck-sl">Frågor till kunden <span class="ck-mut" id="of-q-count" style="font-weight:400">(0)</span></p><span class="ck-chev">▾</span></div>
+            <p class="ck-mut" style="margin-top:0;font-size:11.5px">Dessa frågor visas i förfrågan-wizardens Eventdata-steg när kunden valt detta erbjudande. Markera fält som <b>pris-driver</b> om de ska kunna användas i prisformeln.</p>
+            <div id="of-questions" style="display:flex;flex-direction:column;gap:10px"></div>
+            <button class="ck-btn-gh" id="of-add-q" style="margin-top:10px">+ Lägg till fråga</button>
+          </div>
+
+          <div class="ck-card">
+            <div class="ck-sl-row" data-collapsible><p class="ck-sl">Prismodell <span class="ck-mut" id="of-r-count" style="font-weight:400">(0)</span></p><span class="ck-chev">▾</span></div>
+            <p class="ck-mut" style="margin-top:0;font-size:11.5px">Lägg en eller flera regler. Antal-fältet (<code>qty_from</code>) refererar till frågans <code>id</code> ovan.</p>
+            <div id="of-rules" style="display:flex;flex-direction:column;gap:10px"></div>
+            <button class="ck-btn-gh" id="of-add-rule" style="margin-top:10px">+ Lägg till regel</button>
+
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--bd,#e5e5e5)">
+              <p class="ck-sl" style="margin-bottom:6px">Testa pris</p>
+              <p class="ck-mut" style="font-size:11.5px;margin:0 0 8px">Skriv testsvar (<code>qid: värde</code>, ett per rad). Klicka för att räkna.</p>
+              <textarea class="ea-fta" id="of-test-answers" placeholder="guests: 25&#10;kvm: 80" style="min-height:60px;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+                <button class="ck-btn-gh" id="of-test-btn">Räkna pris</button>
+                <span class="ck-mut" id="of-test-status" style="font-size:11.5px"></span>
+              </div>
+              <div id="of-test-result" style="margin-top:10px"></div>
+            </div>
+          </div>
+
+          <div class="ck-row-actions" style="margin-top:14px">
+            <button class="ck-btn-lg" id="of-save">Spara erbjudande</button>
+            <button class="ck-btn-gh" id="of-clone" style="display:none">Klona som kundunikt</button>
+            <button class="ck-btn-gh" id="of-reset" style="display:none">+ Nytt istället</button>
+            <span class="ck-mut" id="of-status"></span>
+          </div>
+          <div class="ck-banner ok" id="of-ok"></div>
+          <div class="ck-banner err" id="of-err"></div>
+        </div>
+
+        <div>
+          <div class="ck-card">
+            <p class="ck-sl">Befintliga erbjudanden</p>
+            <div class="iv-g-filter" style="margin-bottom:8px">
+              <input class="ea-fi" id="of-list-search" placeholder="Sök rubrik…">
+              <select class="ea-fsel" id="of-list-status">
+                <option value="">Alla status</option>
+                <option value="Utkast">Utkast</option>
+                <option value="Publicerat">Publicerat</option>
+                <option value="Utgånget">Utgånget</option>
+              </select>
+              <select class="ea-fsel" id="of-list-scope">
+                <option value="">Allmänna + kundunika</option>
+                <option value="general">Bara allmänna mallar</option>
+                <option value="unique">Bara kundunika</option>
+              </select>
+            </div>
+            <div id="of-list"><div class="ea-lr"><div class="ea-spin"></div> Laddar…</div></div>
+          </div>
+          <div class="ck-card">
+            <p class="ck-sl">Hur det funkar</p>
+            <p class="ck-info-p"><b>Allmänna mallar</b> (Kundföretag tomt) syns för alla kunder i wizarden. <b>Kundunika</b> erbjudanden syns bara för listade kundföretag.</p>
+            <p class="ck-info-p"><b>Frågorna</b> renderas dynamiskt i förfrågan-wizarden när kunden valt detta erbjudande. Svaren skickas till backend som <code>offer_answers</code>.</p>
+            <p class="ck-info-p" style="margin:0"><b>Prismodellen</b> körs både live i wizarden (kostnadspanelen) och förseglas på servern vid spar — kunden kan inte ljuga om totalen.</p>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -3140,6 +3259,479 @@
   attachAudienceTools({ prefix:'iv', getInvId:function(){ return IVG_INVITE_ID; }, reload:function(){ if(IVG_INVITE_ID) loadGuests(IVG_INVITE_ID); } });
   attachAudienceTools({ prefix:'nv', getInvId:function(){ return NVR_INVITE_ID; }, reload:function(){ if(NVR_INVITE_ID) loadNvRecipients(NVR_INVITE_ID); } });
   attachAudienceTools({ prefix:'sv', getInvId:function(){ return SVR_INVITE_ID; }, reload:function(){ if(SVR_INVITE_ID) loadSvRecipients(SVR_INVITE_ID); } });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // ERBJUDANDEN (ck-tab data-t="offers") — admin för Erbjudande + prismotor
+  // ════════════════════════════════════════════════════════════════════════
+  var OF_QUESTIONS = [];     // custom_form_json-frågor (live state)
+  var OF_RULES = [];         // pricing_formula_json.rules (live state)
+  var OF_CURRENCY = "SEK";
+  var OF_CCS = [];           // ClientCompany-sök-cache
+  var OF_SEL_CCS = [];       // valda Kundföretag-id:n (chips)
+  var OF_LIST = [];          // cachelistan
+  var OF_LIST_CACHE_AT = 0;
+
+  var OF_QTYPES = [
+    {v:'text',        l:'Kort text'},
+    {v:'textarea',    l:'Lång text'},
+    {v:'email',       l:'E-post'},
+    {v:'number',      l:'Siffra'},
+    {v:'slider',      l:'Slider (siffra med min/max)'},
+    {v:'kvm',         l:'Kvm (pris-driver)'},
+    {v:'hours',       l:'Timmar (pris-driver)'},
+    {v:'date',        l:'Datum'},
+    {v:'select',      l:'Dropdown (1 val)'},
+    {v:'multiselect', l:'Flerval (checkboxes)'},
+    {v:'rating',      l:'Stjärnbetyg'},
+    {v:'nps',         l:'NPS-skala (0–10)'},
+    {v:'scale',       l:'Skala (anpassad)'},
+    {v:'yesno',       l:'Ja / Nej'},
+    {v:'section',     l:'— Rubrik / sektion —'}
+  ];
+  var OF_RTYPES = [
+    {v:'per_person',      l:'Per person (antal × pris)'},
+    {v:'per_kvm',         l:'Per kvm (kvm × pris)'},
+    {v:'per_hour',        l:'Per timme (timmar × pris)'},
+    {v:'fixed',           l:'Fast pris'},
+    {v:'piecewise',       l:'Trappat pris (olika pris per intervall)'},
+    {v:'addon_per_unit',  l:'Tillägg per enhet'},
+    {v:'tiered_discount', l:'Stegvis rabatt (≥X → Y%)'},
+    {v:'volume_discount', l:'Volymrabatt (linjär)'},
+    {v:'min_charge',      l:'Minimibelopp (golv)'},
+  ];
+
+  function ofTypeLabel(v){ var t=OF_QTYPES.find(function(x){return x.v===v;}); return t?t.l:v; }
+  function ofRTypeLabel(v){ var t=OF_RTYPES.find(function(x){return x.v===v;}); return t?t.l:v; }
+  function ofNewQid(){ return 'q'+Math.random().toString(36).slice(2,8); }
+  function ofNewRid(){ return 'r'+Math.random().toString(36).slice(2,8); }
+
+  function ofToast(msg, isErr){
+    var ok = g('of-ok'), err = g('of-err');
+    if (isErr) { err.textContent = msg; err.classList.add('on'); ok.classList.remove('on'); }
+    else       { ok.textContent = msg;  ok.classList.add('on');  err.classList.remove('on'); }
+    setTimeout(function(){ ok.classList.remove('on'); err.classList.remove('on'); }, 4500);
+  }
+
+  // ── Fråge-builder (klon av sv-fliken, utökad med slider/kvm/hours + price_driver-flagga) ──
+  function renderOfQuestions(){
+    var box = g('of-questions');
+    if (!OF_QUESTIONS.length) {
+      box.innerHTML = '<div class="ck-mut" style="padding:14px;text-align:center;border:1px dashed var(--bd,#ccc);border-radius:8px">Inga frågor än. Klicka på "+ Lägg till fråga" för att börja.</div>';
+      g('of-q-count').textContent = '(0)';
+      return;
+    }
+    g('of-q-count').textContent = '('+OF_QUESTIONS.length+')';
+    var html = '';
+    OF_QUESTIONS.forEach(function(q, i){
+      var isSection = (q.type==='section');
+      var needsOpts = (q.type==='select' || q.type==='multiselect');
+      var needsMax  = (q.type==='rating' || q.type==='nps' || q.type==='scale' || q.type==='slider');
+      var isDriver  = (q.type==='number' || q.type==='slider' || q.type==='kvm' || q.type==='hours');
+      var typeOpts = OF_QTYPES.map(function(t){ return '<option value="'+t.v+'"'+(t.v===q.type?' selected':'')+'>'+esc(t.l)+'</option>'; }).join('');
+      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:'+(isSection?'rgba(223,111,57,.06)':'rgba(0,0,0,.02)')+'" data-of-q-idx="'+i+'">';
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">';
+      html += '<span style="font-weight:600;font-size:12px;color:var(--mu)">'+(isSection?'Rubrik':'Fråga')+' '+(i+1)+'</span>';
+      html += '<code style="font-size:11px;color:var(--mu);background:rgba(0,0,0,.04);padding:2px 6px;border-radius:4px">'+esc(q.id||'(saknar id)')+'</code>';
+      html += '<div style="flex:1"></div>';
+      html += '<button class="ck-btn-gh" data-ofq-up="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===0?' disabled':'')+'>↑</button>';
+      html += '<button class="ck-btn-gh" data-ofq-dn="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===OF_QUESTIONS.length-1?' disabled':'')+'>↓</button>';
+      html += '<button class="ck-btn-gh" data-ofq-del="'+i+'" style="padding:4px 8px;font-size:11px;color:#c33">✕</button>';
+      html += '</div>';
+      if (isSection) {
+        html += '<div class="ea-fg" style="margin:0 0 6px"><label class="ea-fl">Frågetyp</label><select class="ea-fsel" data-ofq-field="type" data-ofq-i="'+i+'">'+typeOpts+'</select></div>';
+        html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Rubriktext</label><input class="ea-fi" data-ofq-field="label" data-ofq-i="'+i+'" value="'+esc(q.label||'')+'"></div>';
+        html += '</div>'; return;
+      }
+      html += '<div class="ea-2col" style="margin-bottom:6px">';
+      html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Frågetyp</label><select class="ea-fsel" data-ofq-field="type" data-ofq-i="'+i+'">'+typeOpts+'</select></div>';
+      html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">ID (refereras från prisformler)</label><input class="ea-fi" data-ofq-field="id" data-ofq-i="'+i+'" value="'+esc(q.id||'')+'" placeholder="t.ex. guests"></div>';
+      html += '</div>';
+      html += '<div class="ea-fg" style="margin:0 0 6px"><label class="ea-fl">Fråga / label</label><input class="ea-fi" data-ofq-field="label" data-ofq-i="'+i+'" value="'+esc(q.label||'')+'" placeholder="T.ex. Hur många gäster?"></div>';
+      html += '<div class="ea-2col" style="margin:0 0 6px">';
+      html += '<div class="ea-fg" style="margin:0;display:flex;align-items:flex-end;gap:14px"><label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer"><input type="checkbox" data-ofq-field="required" data-ofq-i="'+i+'"'+(q.required?' checked':'')+'> Obligatorisk</label></div>';
+      html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Hjälptext (valfri)</label><input class="ea-fi" data-ofq-field="help" data-ofq-i="'+i+'" value="'+esc(q.help||'')+'"></div>';
+      html += '</div>';
+      if (needsOpts) {
+        html += '<div class="ea-fg" style="margin:0 0 6px"><label class="ea-fl">Alternativ (ett per rad)</label><textarea class="ea-fta" data-ofq-field="options" data-ofq-i="'+i+'" style="min-height:60px">'+esc((q.options||[]).join('\n'))+'</textarea></div>';
+      }
+      if (needsMax) {
+        html += '<div class="ea-2col" style="margin:0">';
+        if (q.type==='nps') {
+          html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Skala</label><input class="ea-fi" value="0–10" disabled></div>';
+        } else if (q.type==='rating') {
+          html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Max stjärnor</label><input class="ea-fi" type="number" data-ofq-field="max" data-ofq-i="'+i+'" value="'+(q.max||5)+'" min="2" max="10"></div>';
+        } else {
+          html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Min</label><input class="ea-fi" type="number" data-ofq-field="min" data-ofq-i="'+i+'" value="'+(q.min!=null?q.min:1)+'"></div>';
+          html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Max</label><input class="ea-fi" type="number" data-ofq-field="max" data-ofq-i="'+i+'" value="'+(q.max!=null?q.max:100)+'"></div>';
+        }
+        html += '</div>';
+      }
+      if (isDriver) {
+        html += '<div class="ea-fg" style="margin:6px 0 0"><label class="ea-fl">Enhet (visas i wizarden)</label><input class="ea-fi" data-ofq-field="unit" data-ofq-i="'+i+'" value="'+esc(q.unit||'')+'" placeholder="t.ex. pers, kvm, h"></div>';
+      }
+      html += '</div>';
+    });
+    box.innerHTML = html;
+    box.querySelectorAll('[data-ofq-field]').forEach(function(el){
+      el.addEventListener(el.type==='checkbox'?'change':'input', function(){
+        var i = parseInt(el.getAttribute('data-ofq-i'),10);
+        var f = el.getAttribute('data-ofq-field');
+        var q = OF_QUESTIONS[i]; if (!q) return;
+        if (f==='required') { q.required = el.checked; }
+        else if (f==='options') { q.options = String(el.value||'').split('\n').map(function(s){return s.trim();}).filter(function(s){return s;}); }
+        else if (f==='max' || f==='min') { q[f] = parseInt(el.value,10) || 0; }
+        else if (f==='type') {
+          q.type = el.value;
+          if (q.type==='rating' && !q.max) q.max=5;
+          if ((q.type==='slider'||q.type==='scale') && q.min==null) q.min=1;
+          if ((q.type==='slider'||q.type==='scale') && q.max==null) q.max=100;
+          if ((q.type==='select'||q.type==='multiselect') && !q.options) q.options=[];
+          renderOfQuestions();
+        }
+        else { q[f] = el.value; }
+      });
+    });
+    box.querySelectorAll('[data-ofq-del]').forEach(function(b){
+      b.addEventListener('click', function(){ var i=parseInt(b.getAttribute('data-ofq-del'),10); if(!confirm('Ta bort fråga '+(i+1)+'?'))return; OF_QUESTIONS.splice(i,1); renderOfQuestions(); });
+    });
+    box.querySelectorAll('[data-ofq-up]').forEach(function(b){
+      b.addEventListener('click', function(){ var i=parseInt(b.getAttribute('data-ofq-up'),10); if(i<=0)return; var t=OF_QUESTIONS[i-1]; OF_QUESTIONS[i-1]=OF_QUESTIONS[i]; OF_QUESTIONS[i]=t; renderOfQuestions(); });
+    });
+    box.querySelectorAll('[data-ofq-dn]').forEach(function(b){
+      b.addEventListener('click', function(){ var i=parseInt(b.getAttribute('data-ofq-dn'),10); if(i>=OF_QUESTIONS.length-1)return; var t=OF_QUESTIONS[i+1]; OF_QUESTIONS[i+1]=OF_QUESTIONS[i]; OF_QUESTIONS[i]=t; renderOfQuestions(); });
+    });
+  }
+  g('of-add-q').addEventListener('click', function(){
+    OF_QUESTIONS.push({id:ofNewQid(), type:'text', label:'', required:false}); renderOfQuestions();
+  });
+
+  // ── Formel-builder ──
+  function renderOfRules(){
+    var box = g('of-rules');
+    if (!OF_RULES.length) {
+      box.innerHTML = '<div class="ck-mut" style="padding:14px;text-align:center;border:1px dashed var(--bd,#ccc);border-radius:8px">Inga regler än. Antal × pris/person kan ändå läggas via fältet ovan, men för rabatter/staffat pris/min-belopp behövs regler.</div>';
+      g('of-r-count').textContent = '(0)';
+      return;
+    }
+    g('of-r-count').textContent = '('+OF_RULES.length+')';
+    var qIds = OF_QUESTIONS.filter(function(q){return q.id && q.type!=='section';}).map(function(q){return q.id;});
+    var qIdOpts = '<option value="">– Välj fråga-id –</option>' + qIds.map(function(id){return '<option value="'+esc(id)+'">'+esc(id)+'</option>';}).join('');
+    var ruleIds = OF_RULES.filter(function(r){return r.id;}).map(function(r){return r.id;});
+    var ruleIdOpts = '<option value="">subtotal (alla rader)</option>' + ruleIds.map(function(id){return '<option value="'+esc(id)+'">'+esc(id)+'</option>';}).join('');
+    var typeOpts = OF_RTYPES.map(function(t){ return '<option value="'+t.v+'">'+esc(t.l)+'</option>'; }).join('');
+
+    var html = '';
+    OF_RULES.forEach(function(r, i){
+      var t = r.type || 'per_person';
+      var hasQty   = ['per_person','per_kvm','per_hour','addon_per_unit','piecewise','tiered_discount','volume_discount'].indexOf(t) >= 0;
+      var hasPrice = ['per_person','per_kvm','per_hour','addon_per_unit','fixed'].indexOf(t) >= 0;
+      var hasAmt   = (t === 'min_charge');
+      var hasTiers = ['piecewise','tiered_discount','volume_discount'].indexOf(t) >= 0;
+      var hasApply = ['tiered_discount','volume_discount'].indexOf(t) >= 0;
+      var tOpts = OF_RTYPES.map(function(o){ return '<option value="'+o.v+'"'+(o.v===t?' selected':'')+'>'+esc(o.l)+'</option>'; }).join('');
+
+      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:rgba(0,0,0,.02)" data-of-r-idx="'+i+'">';
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">';
+      html += '<span style="font-weight:600;font-size:12px;color:var(--mu)">Regel '+(i+1)+'</span>';
+      html += '<code style="font-size:11px;color:var(--mu);background:rgba(0,0,0,.04);padding:2px 6px;border-radius:4px">'+esc(r.id||'')+'</code>';
+      html += '<div style="flex:1"></div>';
+      html += '<button class="ck-btn-gh" data-ofr-up="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===0?' disabled':'')+'>↑</button>';
+      html += '<button class="ck-btn-gh" data-ofr-dn="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===OF_RULES.length-1?' disabled':'')+'>↓</button>';
+      html += '<button class="ck-btn-gh" data-ofr-del="'+i+'" style="padding:4px 8px;font-size:11px;color:#c33">✕</button>';
+      html += '</div>';
+      html += '<div class="ea-2col" style="margin-bottom:6px">';
+      html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Regeltyp</label><select class="ea-fsel" data-ofr-field="type" data-ofr-i="'+i+'">'+tOpts+'</select></div>';
+      html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">ID (för applies_to)</label><input class="ea-fi" data-ofr-field="id" data-ofr-i="'+i+'" value="'+esc(r.id||'')+'" placeholder="t.ex. lunch"></div>';
+      html += '</div>';
+      html += '<div class="ea-fg" style="margin:0 0 6px"><label class="ea-fl">Beskrivning (visas i breakdown)</label><input class="ea-fi" data-ofr-field="label" data-ofr-i="'+i+'" value="'+esc(r.label||'')+'" placeholder="T.ex. Lunch per gäst"></div>';
+      html += '<div class="ea-2col" style="margin:0 0 6px">';
+      if (hasQty) {
+        html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Antalet hämtas från (qty_from)</label><select class="ea-fsel" data-ofr-field="qty_from" data-ofr-i="'+i+'">'+
+                qIdOpts.replace('value="'+esc(r.qty_from||'')+'"', 'value="'+esc(r.qty_from||'')+'" selected') +'</select></div>';
+      } else { html += '<div></div>'; }
+      if (hasPrice) {
+        html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Pris ('+OF_CURRENCY+')</label><input class="ea-fi" type="number" step="0.01" data-ofr-field="price" data-ofr-i="'+i+'" value="'+(r.price!=null?r.price:'')+'"></div>';
+      } else if (hasAmt) {
+        html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Belopp ('+OF_CURRENCY+')</label><input class="ea-fi" type="number" step="0.01" data-ofr-field="amount" data-ofr-i="'+i+'" value="'+(r.amount!=null?r.amount:'')+'"></div>';
+      } else { html += '<div></div>'; }
+      html += '</div>';
+      if (hasApply) {
+        html += '<div class="ea-fg" style="margin:0 0 6px"><label class="ea-fl">Appliceras på</label><select class="ea-fsel" data-ofr-field="applies_to" data-ofr-i="'+i+'">'+
+                ruleIdOpts.replace('value="'+esc(r.applies_to||'')+'"', 'value="'+esc(r.applies_to||'')+'" selected') +'</select></div>';
+      }
+      if (hasTiers) {
+        var tiersText = (r.tiers||[]).map(function(tier){
+          if (t === 'piecewise')        return (tier.max==null?'∞':tier.max) + ':' + (tier.price!=null?tier.price:'');
+          if (t === 'volume_discount')  return (tier.qty!=null?tier.qty:'') + ':' + (tier.rate!=null?tier.rate:'');
+          return (tier.min!=null?tier.min:'') + ':' + (tier.rate!=null?tier.rate:'');
+        }).join('\n');
+        var hint = t==='piecewise' ? 'Format: max:pris (∞ = uppåt). Ex 10:800 / 25:700 / ∞:600'
+                 : t==='volume_discount' ? 'Format: antal:rabattsats (0–1). Ex 0:0 / 100:0.20'
+                 : 'Format: min:rabattsats (0–1). Ex 20:0.10 / 50:0.20';
+        html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Steg (tiers)</label><textarea class="ea-fta" data-ofr-field="tiers" data-ofr-i="'+i+'" style="min-height:70px;font-family:ui-monospace,monospace;font-size:12px" placeholder="'+esc(hint)+'">'+esc(tiersText)+'</textarea><span class="ea-fh">'+esc(hint)+'</span></div>';
+      }
+      html += '</div>';
+    });
+    box.innerHTML = html;
+
+    box.querySelectorAll('[data-ofr-field]').forEach(function(el){
+      el.addEventListener(el.tagName==='SELECT'?'change':'input', function(){
+        var i = parseInt(el.getAttribute('data-ofr-i'),10);
+        var f = el.getAttribute('data-ofr-field');
+        var r = OF_RULES[i]; if (!r) return;
+        if (f==='type') {
+          r.type = el.value;
+          if ((r.type==='tiered_discount'||r.type==='volume_discount'||r.type==='piecewise') && !r.tiers) r.tiers = [];
+          renderOfRules();
+        } else if (f==='price' || f==='amount') {
+          r[f] = el.value === '' ? null : parseFloat(el.value);
+        } else if (f==='tiers') {
+          var t = r.type;
+          r.tiers = String(el.value||'').split('\n').map(function(line){
+            line = line.trim(); if (!line) return null;
+            var parts = line.split(':'); if (parts.length<2) return null;
+            var a = parts[0].trim(), b = parseFloat(parts[1].trim());
+            if (t === 'piecewise') {
+              var maxV = (a === '∞' || a === '' || a.toLowerCase() === 'inf') ? null : parseFloat(a);
+              return { max: maxV, price: b };
+            }
+            if (t === 'volume_discount') return { qty: parseFloat(a), rate: b };
+            return { min: parseFloat(a), rate: b };
+          }).filter(Boolean);
+        } else {
+          r[f] = el.value;
+        }
+      });
+    });
+    box.querySelectorAll('[data-ofr-del]').forEach(function(b){
+      b.addEventListener('click', function(){ var i=parseInt(b.getAttribute('data-ofr-del'),10); if(!confirm('Ta bort regel '+(i+1)+'?'))return; OF_RULES.splice(i,1); renderOfRules(); });
+    });
+    box.querySelectorAll('[data-ofr-up]').forEach(function(b){
+      b.addEventListener('click', function(){ var i=parseInt(b.getAttribute('data-ofr-up'),10); if(i<=0)return; var t=OF_RULES[i-1]; OF_RULES[i-1]=OF_RULES[i]; OF_RULES[i]=t; renderOfRules(); });
+    });
+    box.querySelectorAll('[data-ofr-dn]').forEach(function(b){
+      b.addEventListener('click', function(){ var i=parseInt(b.getAttribute('data-ofr-dn'),10); if(i>=OF_RULES.length-1)return; var t=OF_RULES[i+1]; OF_RULES[i+1]=OF_RULES[i]; OF_RULES[i]=t; renderOfRules(); });
+    });
+  }
+  g('of-add-rule').addEventListener('click', function(){
+    OF_RULES.push({ id:ofNewRid(), type:'per_person', label:'' }); renderOfRules();
+  });
+
+  // ── Testa pris (mot backend /admin/offers/preview-price) ──
+  g('of-test-btn').addEventListener('click', function(){
+    var answers = {};
+    String(g('of-test-answers').value||'').split('\n').forEach(function(line){
+      var m = line.match(/^\s*([\w-]+)\s*[:=]\s*(.+?)\s*$/);
+      if (!m) return;
+      var v = m[2]; var n = parseFloat(v);
+      answers[m[1]] = (!isNaN(n) && String(n) === v.trim()) ? n : v;
+    });
+    var status = g('of-test-status'); var res = g('of-test-result');
+    status.textContent = 'Räknar…';
+    fetch(HOST+'/admin/offers/preview-price', { method:'POST', headers:H(),
+      body: JSON.stringify({ pricing_formula_json: { currency: OF_CURRENCY, rules: OF_RULES }, answers: answers }) })
+      .then(function(r){return r.json();}).then(function(j){
+        status.textContent = '';
+        if (!j.ok || !j.result || !j.result.ok) {
+          res.innerHTML = '<div class="ck-banner err on">'+esc((j.result&&j.result.error)||j.error||'Fel')+'</div>'; return;
+        }
+        var rr = j.result;
+        var rows = (rr.breakdown||[]).map(function(b){
+          return '<tr><td>'+esc(b.label||b.type)+'</td><td style="text-align:right">'+(b.qty!=null?b.qty:'')+'</td><td style="text-align:right">'+(b.unit_price!=null?b.unit_price:(b.rate!=null?(b.rate*100).toFixed(0)+'%':''))+'</td><td style="text-align:right">'+b.amount.toLocaleString('sv-SE')+' '+rr.currency+'</td></tr>';
+        }).join('');
+        res.innerHTML =
+          '<table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr style="color:var(--mu)"><th style="text-align:left">Rad</th><th style="text-align:right">Antal</th><th style="text-align:right">À-pris</th><th style="text-align:right">Summa</th></tr></thead><tbody>'+rows+'</tbody></table>' +
+          '<div style="margin-top:8px;padding:10px;background:rgba(0,0,0,.03);border-radius:6px;display:flex;justify-content:space-between"><b>Total</b><b>'+rr.total.toLocaleString('sv-SE')+' '+rr.currency+'</b></div>' +
+          ((rr.warnings||[]).length ? '<div class="ck-mut" style="margin-top:6px;font-size:11.5px">⚠ '+rr.warnings.map(esc).join(' · ')+'</div>' : '');
+      })
+      .catch(function(e){ status.textContent=''; res.innerHTML = '<div class="ck-banner err on">'+esc(e.message||e)+'</div>'; });
+  });
+
+  // ── Kundföretag-sök (chips) ──
+  (function(){
+    var inp = g('of-cc-search'), box = g('of-cc-list');
+    function close(){ box.style.display='none'; }
+    function loadCCs(){
+      return fetch(api('/admin/cc/list'), { headers: H() }).then(function(r){return r.json();}).then(function(j){
+        OF_CCS = (j && j.items) || (j && j.ccs) || j || [];
+        return OF_CCS;
+      }).catch(function(){ return []; });
+    }
+    function render(items){
+      if (!items.length) { box.innerHTML = '<div class="ck-mut" style="padding:8px 12px">Inga träffar</div>'; box.style.display='block'; return; }
+      box.innerHTML = items.slice(0,15).map(function(c){
+        return '<div class="ck-co-item" data-id="'+esc(c.id||c._id)+'" data-name="'+esc(c.name||c.Name_company||'')+'">'+esc(c.name||c.Name_company||'')+'</div>';
+      }).join('');
+      box.style.display='block';
+      box.querySelectorAll('.ck-co-item').forEach(function(el){
+        el.addEventListener('click', function(){
+          var id = el.getAttribute('data-id'); var name = el.getAttribute('data-name');
+          if (OF_SEL_CCS.indexOf(id) < 0) OF_SEL_CCS.push(id);
+          inp.value = ''; close(); renderOfCcChips();
+        });
+      });
+    }
+    function search(q){
+      q = q.toLowerCase();
+      var hit = OF_CCS.filter(function(c){ return String(c.name||c.Name_company||'').toLowerCase().indexOf(q) >= 0; });
+      render(hit);
+    }
+    inp.addEventListener('input', function(){ var v=inp.value.trim(); if (!v) { close(); return; } if (!OF_CCS.length) loadCCs().then(function(){ search(v); }); else search(v); });
+    document.addEventListener('click', function(e){ if (e.target !== inp && !box.contains(e.target)) close(); });
+    window._ofLoadCCs = loadCCs;
+  })();
+  function renderOfCcChips(){
+    var box = g('of-cc-chips');
+    if (!OF_SEL_CCS.length) { box.innerHTML = '<span class="ck-mut" style="font-size:11.5px">Inga valda — sparas som allmän mall.</span>'; return; }
+    box.innerHTML = OF_SEL_CCS.map(function(id){
+      var c = OF_CCS.find(function(x){return (x.id||x._id) === id;});
+      var name = c ? (c.name||c.Name_company||id) : id;
+      return '<span class="ck-tag" style="display:inline-flex;gap:6px;align-items:center">'+esc(name)+'<span style="cursor:pointer;color:#c33" data-of-cc-rm="'+esc(id)+'">✕</span></span>';
+    }).join('');
+    box.querySelectorAll('[data-of-cc-rm]').forEach(function(el){
+      el.addEventListener('click', function(){ var id=el.getAttribute('data-of-cc-rm'); OF_SEL_CCS = OF_SEL_CCS.filter(function(x){return x!==id;}); renderOfCcChips(); });
+    });
+  }
+
+  // ── Lista ──
+  function loadOfList(force){
+    if (!force && OF_LIST.length && Date.now() - OF_LIST_CACHE_AT < 30000) { renderOfList(); return; }
+    var box = g('of-list');
+    box.innerHTML = '<div class="ea-lr"><div class="ea-spin"></div> Laddar…</div>';
+    fetch(HOST+'/admin/offers/list', { headers: H() }).then(function(r){return r.json();}).then(function(j){
+      OF_LIST = (j && j.offers) || []; OF_LIST_CACHE_AT = Date.now(); renderOfList();
+    }).catch(function(e){ box.innerHTML = '<div class="ck-banner err on">'+esc(e.message||e)+'</div>'; });
+  }
+  function renderOfList(){
+    var box = g('of-list');
+    var q = String(g('of-list-search').value||'').toLowerCase();
+    var st = g('of-list-status').value;
+    var sc = g('of-list-scope').value;
+    var items = OF_LIST.filter(function(o){
+      if (st && o.status !== st) return false;
+      if (sc === 'general' && !o.is_general) return false;
+      if (sc === 'unique' && o.is_general) return false;
+      if (q && (o.title||'').toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+    if (!items.length) { box.innerHTML = '<div class="ck-mut" style="padding:14px;text-align:center">Inga erbjudanden matchar.</div>'; return; }
+    box.innerHTML = items.map(function(o){
+      var scope = o.is_general ? '<span class="ck-tag">Allmän</span>' : '<span class="ck-tag" style="background:rgba(223,111,57,.15);color:#df6f39">Kundunik</span>';
+      var stTag = o.status ? '<span class="ck-tag">'+esc(o.status)+'</span>' : '';
+      return '<div class="ck-card" style="padding:10px 12px;margin-bottom:6px;cursor:pointer" data-of-load="'+esc(o.id)+'"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="flex:1"><b>'+esc(o.title||'(utan rubrik)')+'</b><div class="ck-mut" style="font-size:11.5px;margin-top:2px">'+esc(o.category||'')+'</div></div><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">'+scope+stTag+'</div></div></div>';
+    }).join('');
+    box.querySelectorAll('[data-of-load]').forEach(function(el){
+      el.addEventListener('click', function(){ loadOfDetail(el.getAttribute('data-of-load')); });
+    });
+  }
+  g('of-list-search').addEventListener('input', renderOfList);
+  g('of-list-status').addEventListener('change', renderOfList);
+  g('of-list-scope').addEventListener('change', renderOfList);
+
+  function loadOfDetail(id){
+    fetch(HOST+'/admin/offers/'+encodeURIComponent(id), { headers: H() }).then(function(r){return r.json();}).then(function(j){
+      if (!j.ok || !j.offer) { ofToast(j.error||'Hittades inte', true); return; }
+      var o = j.offer;
+      g('of-id').value = o.id || '';
+      g('of-title').value = o.title || '';
+      g('of-category').value = o.category || '';
+      g('of-status').value = o.status || 'Utkast';
+      g('of-start').value = o.start ? String(o.start).slice(0,10) : '';
+      g('of-end').value = o.end ? String(o.end).slice(0,10) : '';
+      g('of-desc').value = o.description || '';
+      g('of-desc-long').value = o.description_long || '';
+      g('of-image').value = o.image || '';
+      g('of-pris-per-person').value = o.pris_per_person != null ? o.pris_per_person : '';
+      g('of-capacity').value = o.capacity != null ? o.capacity : '';
+      g('of-malgrupp').value = o.malgrupp || '';
+      g('of-produktinnehall').value = o.produktinnehall || '';
+      g('of-logistik').value = o.logistik || '';
+      g('of-villkor').value = o.villkor || '';
+      OF_SEL_CCS = (o.company_ids||[]).slice();
+      if (!OF_CCS.length && OF_SEL_CCS.length && window._ofLoadCCs) window._ofLoadCCs().then(renderOfCcChips); else renderOfCcChips();
+      // Parse JSON-strings (kan vara "{\"v\":1}" från stub-värdet)
+      try { var f = o.custom_form_json ? JSON.parse(o.custom_form_json) : []; OF_QUESTIONS = Array.isArray(f) ? f : []; } catch(e){ OF_QUESTIONS = []; }
+      try { var p = o.pricing_formula_json ? JSON.parse(o.pricing_formula_json) : {}; OF_RULES = (p && Array.isArray(p.rules)) ? p.rules : []; OF_CURRENCY = (p && p.currency) || "SEK"; } catch(e){ OF_RULES = []; OF_CURRENCY = "SEK"; }
+      renderOfQuestions(); renderOfRules();
+      g('of-formhead').textContent = 'Redigera erbjudande: ' + (o.title || '');
+      sh('of-clone'); sh('of-reset');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }).catch(function(e){ ofToast(e.message||e, true); });
+  }
+
+  function resetOfForm(){
+    g('of-id').value = '';
+    ['of-title','of-desc','of-desc-long','of-image','of-pris-per-person','of-capacity','of-malgrupp','of-produktinnehall','of-logistik','of-villkor','of-start','of-end','of-test-answers'].forEach(function(id){ g(id).value=''; });
+    g('of-category').value = ''; g('of-status').value = 'Utkast';
+    OF_QUESTIONS = []; OF_RULES = []; OF_SEL_CCS = []; OF_CURRENCY = "SEK";
+    renderOfQuestions(); renderOfRules(); renderOfCcChips();
+    g('of-formhead').textContent = 'Nytt erbjudande';
+    g('of-test-result').innerHTML = '';
+    hd('of-clone'); hd('of-reset');
+  }
+  g('of-reset').addEventListener('click', resetOfForm);
+
+  // ── Klona allmän → kundunik ──
+  g('of-clone').addEventListener('click', function(){
+    var id = g('of-id').value; if (!id) return;
+    var targetCc = OF_SEL_CCS[0] || prompt('Klistra in ClientCompany-id för kund som ska få kopian:');
+    if (!targetCc) return;
+    fetch(HOST+'/admin/offers/clone', { method:'POST', headers:H(), body: JSON.stringify({ id:id, target_company_id: targetCc }) })
+      .then(function(r){return r.json();}).then(function(j){
+        if (!j.ok) { ofToast(j.error||'Klon misslyckades', true); return; }
+        ofToast('Kopia skapad — öppnar…');
+        loadOfList(true);
+        if (j.id) setTimeout(function(){ loadOfDetail(j.id); }, 300);
+      });
+  });
+
+  // ── Spara (upsert) ──
+  g('of-save').addEventListener('click', function(){
+    var btn = g('of-save'); btn.disabled = true;
+    var payload = {
+      id: g('of-id').value || undefined,
+      title: g('of-title').value.trim(),
+      category: g('of-category').value || null,
+      status: g('of-status').value || 'Utkast',
+      start: g('of-start').value || null,
+      end: g('of-end').value || null,
+      description: g('of-desc').value,
+      description_long: g('of-desc-long').value,
+      image: g('of-image').value,
+      pris_per_person: g('of-pris-per-person').value ? Number(g('of-pris-per-person').value) : null,
+      capacity: g('of-capacity').value ? Number(g('of-capacity').value) : null,
+      malgrupp: g('of-malgrupp').value,
+      produktinnehall: g('of-produktinnehall').value,
+      logistik: g('of-logistik').value,
+      villkor: g('of-villkor').value,
+      company_ids: OF_SEL_CCS.slice(),
+      custom_form_json: JSON.stringify(OF_QUESTIONS),
+      pricing_formula_json: JSON.stringify({ currency: OF_CURRENCY, rules: OF_RULES }),
+    };
+    if (!payload.title) { ofToast('Rubrik krävs', true); btn.disabled=false; return; }
+    if (!payload.category) { ofToast('Kategori krävs', true); btn.disabled=false; return; }
+    fetch(HOST+'/admin/offers/upsert', { method:'POST', headers:H(), body: JSON.stringify(payload) })
+      .then(function(r){return r.json();}).then(function(j){
+        btn.disabled = false;
+        if (!j.ok) { ofToast(j.error || (j.details && j.details.join(' · ')) || 'Fel', true); return; }
+        ofToast('Sparat ✓');
+        loadOfList(true);
+        if (j.id) { g('of-id').value = j.id; sh('of-clone'); sh('of-reset'); }
+      }).catch(function(e){ btn.disabled=false; ofToast(e.message||e, true); });
+  });
+
+  // ── Lazy-init när fliken öppnas ──
+  var _ofInited = false;
+  var _origCkShow = window.ckShow;
+  window.ckShow = function(name, btn){
+    if (typeof _origCkShow === 'function') _origCkShow(name, btn);
+    if (name === 'offers' && !_ofInited) {
+      _ofInited = true;
+      renderOfQuestions(); renderOfRules(); renderOfCcChips();
+      loadOfList(true);
+      if (window._ofLoadCCs) window._ofLoadCCs();
+    }
+  };
 
   // ════════ INIT ════════
   renderCustom(); renderSchema();
