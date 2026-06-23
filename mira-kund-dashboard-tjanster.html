@@ -1,0 +1,536 @@
+<!--
+  MIRA – KUND-DASHBOARD TJÄNSTE-GRID  (första hugget — datadrivet, popup-flöde, alt a)
+  ------------------------------------------------------------------
+  Klistras in i ett HTML-element i Bubble på kundens dashboard-sida,
+  OVANFÖR KPI-blocket. Visar Mira-abonnemang + 7 facility-tjänster
+  som tiles. Aktiva tiles visar månadskostnad; inaktiva visar
+  "Läs mer →" (öppnar popup) + "Aktivera" (snabbväg → popup).
+
+  KOPPLING I BUBBLE:
+    #mira_services_catalog  = ServiceCatalog (alla katalogposter) som JSON-array
+                              ← läggs som INNEHÅLL i <textarea>, INTE i value=""
+    #mira_services_active   = Current User's Company's services_active_json
+                              ← lookup-resultat: { slug: {option_id, qty, monthly_cost, info} }
+                              ← läggs som INNEHÅLL i <textarea>
+    #mira_company_id        = Current User's Company's unique id  (value="")
+    #mira_company_name      = Current User's Company's name        (value="")
+    #mira_api_host          = https://mira-exchange.onrender.com   (value="", redan ifyllt)
+
+  FLÖDE (alt a — mjuk landning):
+    • Klick på tile / "Läs mer" → popup öppnas med erbjudande-hero + radioval + qty.
+    • "Aktivera Reception →" POST:ar till /services/request-activation
+      som skapar en Förfrågan med kategori + nivå förvald i Bubble.
+      Carotte bekräftar manuellt — kund får bekräftelse-modal.
+
+  CATALOG-SHAPE (per post):
+    {
+      slug, name, subtitle, category ("platform"|"facility"),
+      image (url, fallback gradient om tom),
+      icon ("list"|"sparkle"|"cup"|"droplet"|"user"|"leaf"|"printer"|"fruit"),
+      color_from, color_to,
+      description_long,
+      includes: ["…","…"],
+      options: [{id,name,desc,price,unit}],   // unit defaultar till "/mån"
+      has_qty: bool, qty_label, qty_min, qty_max,
+      terms
+    }
+  ACTIVE-SHAPE (per slug-key):
+    { option_id, qty, monthly_cost, info }   // info = kort textsträng för tile-subtitle
+-->
+
+<style>
+  .mt-wrap * { box-sizing: border-box; }
+  .mt-wrap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    width: 100%;
+    --bg:#262b42; --bg-deep:#1e2235; --line:rgba(255,255,255,0.07); --acc:#db6923;
+    --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35);
+    --t4:rgba(255,255,255,0.20); --up:#10b981;
+  }
+  .mt-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .mt-title { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.10em; color:var(--t3); }
+  .mt-title .mt-cnt { color:var(--t4); font-weight:400; text-transform:none; letter-spacing:0; margin-left:6px; }
+  .mt-sum { font-size:11px; color:var(--t3); }
+  .mt-sum b { color:var(--acc); font-weight:600; }
+
+  .mt-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  @media (max-width:980px){ .mt-grid { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:720px){ .mt-grid { grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:460px){ .mt-grid { grid-template-columns:1fr; } }
+
+  .mt-tile { background:var(--bg); border:0.5px solid var(--line); border-radius:11px; overflow:hidden;
+    display:flex; flex-direction:column; cursor:pointer; transition:transform 0.15s, border-color 0.15s; }
+  .mt-tile:hover { transform:translateY(-1px); border-color:rgba(255,255,255,0.18); }
+  .mt-tile.premium { border-color:rgba(219,105,35,0.30); }
+  .mt-tile.off { background:rgba(38,43,66,0.55); border-color:rgba(255,255,255,0.10); }
+
+  .mt-hero { position:relative; height:64px; background-size:cover; background-position:center;
+    display:flex; align-items:center; justify-content:center; }
+  .mt-tile.off .mt-hero { opacity:0.85; }
+  .mt-hero-ic { width:28px; height:28px; }
+  .mt-pill { position:absolute; top:7px; right:7px; font-size:9px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.06em; border-radius:20px; padding:2px 7px; }
+  .mt-pill.active { color:#10b981; background:rgba(255,255,255,0.95); }
+  .mt-pill.premium { color:#1c1206; background:#fff; }
+  .mt-pill.off { color:rgba(255,255,255,0.55); background:rgba(0,0,0,0.30); border:0.5px solid rgba(255,255,255,0.15); }
+
+  .mt-body { padding:10px 13px 12px; display:flex; flex-direction:column; flex:1; }
+  .mt-name { font-size:13px; font-weight:600; color:var(--t1); letter-spacing:-0.01em; }
+  .mt-tile.off .mt-name { color:rgba(255,255,255,0.65); }
+  .mt-sub { font-size:11px; color:var(--t3); margin-top:2px; }
+  .mt-tile.off .mt-sub { color:rgba(255,255,255,0.30); }
+
+  .mt-foot-active { margin-top:auto; padding-top:8px; font-size:13px; font-weight:700; color:#fff; }
+  .mt-foot-active small { font-size:11px; font-weight:400; color:var(--t3); }
+  .mt-foot-incl { margin-top:auto; padding-top:8px; font-size:11px; color:var(--t2); }
+  .mt-foot-off { margin-top:auto; padding-top:8px; display:flex; align-items:center; justify-content:space-between; }
+  .mt-foot-off .mt-link { font-size:11px; color:var(--acc); font-weight:600; }
+  .mt-foot-off .mt-act { font-size:11px; color:var(--t3); }
+  .mt-foot-off .mt-act:hover { color:var(--acc); }
+
+  /* Popup-modal */
+  .mt-mask { position:fixed; inset:0; background:rgba(12,15,28,0.78); z-index:9000;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+    opacity:0; pointer-events:none; transition:opacity 0.18s ease; }
+  .mt-mask.on { opacity:1; pointer-events:auto; }
+  .mt-modal { background:var(--bg); border:1px solid rgba(255,255,255,0.10); border-radius:14px;
+    width:100%; max-width:560px; max-height:92vh; overflow-y:auto; overflow-x:hidden;
+    transform:translateY(8px); transition:transform 0.18s ease; }
+  .mt-mask.on .mt-modal { transform:translateY(0); }
+
+  .mt-mhero { position:relative; height:180px; background-size:cover; background-position:center; overflow:hidden; }
+  .mt-mhero::after { content:''; position:absolute; inset:0;
+    background:linear-gradient(to top,rgba(20,23,38,0.94) 2%,rgba(20,23,38,0.45) 42%,rgba(20,23,38,0.05) 100%); }
+  .mt-mclose { position:absolute; top:12px; left:12px; width:30px; height:30px; border-radius:50%;
+    background:rgba(0,0,0,0.45); border:0.5px solid rgba(255,255,255,0.18); color:#fff;
+    cursor:pointer; z-index:2; font-size:16px; line-height:28px; text-align:center; }
+  .mt-mclose:hover { background:rgba(0,0,0,0.65); }
+  .mt-mprice { position:absolute; top:12px; right:12px; z-index:2; background:var(--acc);
+    color:#1c1206; font-weight:800; font-size:16px; padding:7px 13px; border-radius:9px; }
+  .mt-mprice small { font-weight:600; font-size:10px; opacity:0.8; }
+  .mt-mtt { position:absolute; left:20px; right:20px; bottom:14px; z-index:2; }
+  .mt-mtt h3 { font-family:Georgia,serif; font-size:22px; font-weight:700; color:#fff;
+    letter-spacing:-0.01em; margin:0; }
+  .mt-mtt p { font-size:12px; color:rgba(255,255,255,0.78); margin:4px 0 0; line-height:1.5; }
+
+  .mt-mbody { padding:18px 22px 20px; }
+  .mt-section-h { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--t3);
+    font-weight:700; margin-bottom:10px; }
+  .mt-section-h.acc { color:var(--acc); }
+  .mt-incl { list-style:none; padding:0; margin:0 0 16px; display:grid; grid-template-columns:1fr 1fr; gap:6px 18px; }
+  @media (max-width:480px){ .mt-incl { grid-template-columns:1fr; } }
+  .mt-incl li { font-size:12px; color:var(--t2); line-height:1.45; padding-left:13px; position:relative; }
+  .mt-incl li::before { content:''; position:absolute; left:0; top:6px; width:5px; height:5px;
+    border-radius:50%; background:var(--acc); }
+
+  .mt-opts { display:flex; flex-direction:column; gap:7px; margin-bottom:14px; }
+  .mt-opt { display:flex; align-items:center; gap:11px; padding:11px 13px;
+    background:rgba(255,255,255,0.02); border:1px solid var(--line); border-radius:9px; cursor:pointer; }
+  .mt-opt.on { background:rgba(219,105,35,0.10); border-color:var(--acc); }
+  .mt-disc { width:15px; height:15px; border-radius:50%; border:2px solid var(--t4); flex-shrink:0; }
+  .mt-opt.on .mt-disc { border-color:var(--acc); background:var(--acc); box-shadow:inset 0 0 0 3px var(--bg); }
+  .mt-opt-tx { flex:1; min-width:0; }
+  .mt-opt-n { font-size:13px; font-weight:600; color:var(--t1); }
+  .mt-opt.on .mt-opt-n { color:#fff; }
+  .mt-opt-d { font-size:11px; color:var(--t3); }
+  .mt-opt-p { font-size:13px; font-weight:700; color:var(--t2); flex-shrink:0; }
+  .mt-opt.on .mt-opt-p { color:var(--acc); }
+
+  .mt-qty { display:flex; align-items:center; justify-content:space-between; padding:11px 13px;
+    background:rgba(255,255,255,0.02); border:1px solid var(--line); border-radius:9px; margin-bottom:18px; }
+  .mt-qty-l { font-size:12px; color:var(--t2); }
+  .mt-qty-c { display:flex; align-items:center; gap:11px; }
+  .mt-qty-b { width:24px; height:24px; border-radius:6px; border:0.5px solid rgba(255,255,255,0.15);
+    background:rgba(255,255,255,0.04); color:#fff; font-size:14px; cursor:pointer; font-family:inherit; }
+  .mt-qty-b:hover { background:rgba(255,255,255,0.10); }
+  .mt-qty-n { font-size:13px; font-weight:700; color:#fff; min-width:14px; text-align:center; }
+
+  .mt-tot { display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding-top:14px; border-top:0.5px solid rgba(255,255,255,0.08); margin-bottom:14px; }
+  .mt-tot-l { font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--t3); }
+  .mt-tot-v { font-size:22px; font-weight:800; color:var(--acc); letter-spacing:-0.02em; margin-top:2px; }
+  .mt-tot-v small { font-size:12px; font-weight:500; color:var(--t3); }
+  .mt-terms { font-size:11px; color:var(--t3); text-align:right; max-width:200px; line-height:1.45; }
+
+  .mt-btns { display:flex; gap:9px; }
+  .mt-btn { padding:12px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer;
+    font-family:inherit; transition:all 0.15s; }
+  .mt-btn.ghost { flex:1; background:transparent; border:0.5px solid rgba(255,255,255,0.15); color:var(--t2); }
+  .mt-btn.ghost:hover { border-color:rgba(255,255,255,0.30); color:var(--t1); }
+  .mt-btn.primary { flex:2; background:var(--acc); border:none; color:#1c1206; font-weight:700; }
+  .mt-btn.primary:hover { background:#ff8c45; }
+  .mt-btn:disabled { opacity:0.5; cursor:not-allowed; }
+
+  .mt-toast { position:absolute; left:22px; right:22px; bottom:14px;
+    background:rgba(16,185,129,0.15); border:0.5px solid rgba(16,185,129,0.45); color:var(--up);
+    border-radius:9px; padding:10px 13px; font-size:12px; display:none; }
+  .mt-toast.show { display:block; }
+  .mt-toast.err { background:rgba(248,113,113,0.12); border-color:rgba(248,113,113,0.45); color:#f87171; }
+</style>
+
+<!-- Bubble fyller dessa. Lämna tomma → demo-läge. -->
+<textarea id="mira_services_catalog" style="display:none" aria-hidden="true"></textarea>
+<textarea id="mira_services_active" style="display:none" aria-hidden="true"></textarea>
+<input type="hidden" id="mira_company_id"   value="">
+<input type="hidden" id="mira_company_name" value="">
+<input type="hidden" id="mira_api_host"     value="https://mira-exchange.onrender.com">
+
+<div class="mt-wrap">
+  <div class="mt-head">
+    <div class="mt-title">Era tjänster <span class="mt-cnt" id="mt-cnt">···</span></div>
+    <div class="mt-sum" id="mt-sum">···</div>
+  </div>
+  <div class="mt-grid" id="mt-grid"></div>
+</div>
+
+<div class="mt-mask" id="mt-mask" aria-hidden="true">
+  <div class="mt-modal" id="mt-modal" role="dialog" aria-modal="true"></div>
+</div>
+
+<script>
+(function () {
+  var ICONS = {
+    list:    '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><path d="M3 8L13 8M3 5L13 5M3 11L9 11" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    sparkle: '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><path d="M8 2v2.5M8 11.5V14M2 8h2.5M11.5 8H14" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="2" fill="#fff" opacity="0.5"/></svg>',
+    cup:     '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><path d="M3 6h8l-1 6H4L3 6z" fill="#fff" opacity="0.6" stroke="#fff" stroke-width="1.2"/><path d="M11 7.5h1a1.5 1.5 0 010 3h-1" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/></svg>',
+    droplet: '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><path d="M8 2L4 8.5a4 4 0 008 0L8 2z" fill="#fff" opacity="0.55" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+    user:    '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5" r="2.5" fill="#fff" opacity="0.85"/><path d="M2.5 14C2.5 11 5 9.5 8 9.5s5.5 1.5 5.5 4.5" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.85"/></svg>',
+    leaf:    '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><path d="M8 14V7" stroke="#fff" stroke-width="1.4" stroke-linecap="round" opacity="0.85"/><path d="M8 9C8 9 5 8 4 5c2.5 0 4 1.5 4 4z" fill="#fff" opacity="0.6"/><path d="M8 7C8 7 11 6 12 3c-2.5 0-4 1.5-4 4z" fill="#fff" opacity="0.85"/></svg>',
+    printer: '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><rect x="3" y="6" width="10" height="6" rx="1" stroke="#fff" stroke-width="1.3" opacity="0.85"/><path d="M5 6V4h6v2" stroke="#fff" stroke-width="1.3" stroke-linejoin="round" opacity="0.85"/><rect x="5" y="9" width="6" height="3" rx="0.5" fill="#fff" opacity="0.45"/></svg>',
+    fruit:   '<svg class="mt-hero-ic" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="9" r="4" fill="#fff" opacity="0.55"/><path d="M9 5c1-1 2-1.5 2.5-1" stroke="#fff" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/></svg>'
+  };
+
+  var DEMO_CATALOG = [
+    { slug:'mira', name:'Mira-abonnemang', subtitle:'Pro · 4 användare', category:'platform',
+      icon:'list', color_from:'#db6923', color_to:'#8b3d12', image:'',
+      description_long:'Mira ger er översikt över bokningar, ärenden och fakturor, och möjlighet att koppla på fler Carotte-tjänster på sekunder.',
+      includes:['Realtidsöversikt','Ärendehantering','Fakturahistorik','Obegränsat antal användare'],
+      options:[{id:'free',name:'Free',desc:'Upp till 2 användare',price:0,unit:''},
+               {id:'pro',name:'Pro',desc:'Obegränsat',price:0,unit:''}],
+      has_qty:false, terms:'Ingår i avtal med Carotte.' },
+
+    { slug:'housekeeping', name:'Housekeeping', subtitle:'Daglig kontorsstäd', category:'facility',
+      icon:'sparkle', color_from:'#0f6e56', color_to:'#04342c', image:'',
+      description_long:'Professionell kontorsstäd anpassad efter er yta. Carottes Housekeeping-team levererar konsekvent kvalitet med kvalitetsuppföljning i Mira.',
+      includes:['Erfaren personal','Miljöcertifierad kemi','Kvalitetsuppföljning','Akut-städ vid behov'],
+      options:[{id:'3dgr',name:'3 dagar / vecka',desc:'22 kr / kvm',price:7480,unit:'/mån'},
+               {id:'5dgr',name:'5 dagar / vecka',desc:'34 kr / kvm',price:11560,unit:'/mån'}],
+      has_qty:false, terms:'Pris baserat på 340 kvm. Exkl. moms. 12 mån avtalstid.' },
+
+    { slug:'kaffe', name:'Kaffemaskin', subtitle:'Helautomat + service', category:'facility',
+      icon:'cup', color_from:'#534ab7', color_to:'#26215c', image:'',
+      description_long:'Premium-helautomater med full service: bönor, mjölk, rengöring och tekniskt stöd. Välj nivå utifrån antal koppar/dag.',
+      includes:['Bönor, mjölk & rengöring','Tekniskt stöd inom 24 h','Mjölkkyl ingår','Förbrukning faktureras separat'],
+      options:[{id:'a600',name:'Franke A600',desc:'Inkl. mjölkkyl',price:4090,unit:'/mån'},
+               {id:'eversys',name:'Eversys Legacy L2M',desc:'Inkl. mjölkkyl',price:4890,unit:'/mån'},
+               {id:'jura',name:'Jura X10',desc:'Inkl. mjölkkyl',price:2100,unit:'/mån'}],
+      has_qty:true, qty_label:'Antal maskiner', qty_min:1, qty_max:10,
+      terms:'Exkl. moms. 24 mån avtalstid. Förbrukning faktureras månadsvis.' },
+
+    { slug:'vatten', name:'Vattentorn', subtitle:'Vatten + kolsyra', category:'facility',
+      icon:'droplet', color_from:'#185fa5', color_to:'#042c53', image:'',
+      description_long:'Filtrerat kallt och kolsyrat vatten direkt ur kranen — utan plastflaskor och utan inköp.',
+      includes:['Anslutning + installation','Filterbyten ingår','Service vid behov','Inkl kolsyra'],
+      options:[{id:'std',name:'Standard',desc:'Kallt + kolsyrat',price:1295,unit:'/mån'}],
+      has_qty:true, qty_label:'Antal vattentorn', qty_min:1, qty_max:8,
+      terms:'Exkl. moms. 24 mån avtalstid.' },
+
+    { slug:'reception', name:'Reception', subtitle:'Receptionist / Concierge', category:'facility',
+      icon:'user', color_from:'#3c3489', color_to:'#1c1638', image:'',
+      description_long:'Bemannad reception som höjer upplevelsen för medarbetare och besökare. Vi tar hand om besökshantering, post och allt däremellan.',
+      includes:['Service-erfaren personal','Besökshantering & passerkort','Posthantering & bud','Backup vid frånvaro'],
+      options:[{id:'receptionist',name:'Receptionist',desc:'Minst 3+ års serviceerfarenhet',price:69990,unit:'/mån'},
+               {id:'concierge',name:'Concierge',desc:'Minst 5+ års serviceerfarenhet',price:79990,unit:'/mån'}],
+      has_qty:true, qty_label:'Antal kontor', qty_min:1, qty_max:10,
+      terms:'Exkl. moms. 12 mån avtalstid, 3 mån uppsägning.' },
+
+    { slug:'vaxter', name:'Växter', subtitle:'Leasing · skötsel ingår', category:'facility',
+      icon:'leaf', color_from:'#3b6d11', color_to:'#173404', image:'',
+      description_long:'Skötselfri växtleasing med utbyte och löpande omplantering. Vi anpassar urval efter ljus, yta och stil.',
+      includes:['Skötsel ingår','Utbyte vid behov','Säsongsbyten','Krukor & jord'],
+      options:[{id:'sml',name:'Liten paket',desc:'5–10 växter',price:2400,unit:'/mån'},
+               {id:'med',name:'Mellanpaket',desc:'10–25 växter',price:4800,unit:'/mån'},
+               {id:'lrg',name:'Stort paket',desc:'25+ växter',price:8500,unit:'/mån'}],
+      has_qty:false, terms:'Exkl. moms. 36 mån avtalstid.' },
+
+    { slug:'skrivare', name:'Skrivare', subtitle:'Print + service', category:'facility',
+      icon:'printer', color_from:'#993556', color_to:'#4b1528', image:'',
+      description_long:'Färgskrivare med klick-modell. Toner, service och support ingår — ni betalar per utskrift utöver basabonnemanget.',
+      includes:['Service & support','Toner ingår','Driftövervakning','Säker print'],
+      options:[{id:'sm',name:'Small 3000',desc:'Baspaket',price:1800,unit:'/mån'},
+               {id:'md',name:'Medium 5000',desc:'Standardpaket',price:2100,unit:'/mån'},
+               {id:'lg',name:'Large 8000',desc:'Premiumpaket',price:2300,unit:'/mån'}],
+      has_qty:true, qty_label:'Antal skrivare', qty_min:1, qty_max:10,
+      terms:'Exkl. moms. 36 mån avtalstid. Klick-pris tillkommer.' },
+
+    { slug:'frukt', name:'Frukt på jobbet', subtitle:'Veckoleverans', category:'facility',
+      icon:'fruit', color_from:'#854f0b', color_to:'#412402', image:'',
+      description_long:'Färsk frukt levererad varje vecka, anpassad mängd och säsong.',
+      includes:['Levererat tisdag/torsdag','Säsongens utbud','Smutsiga lådor hämtas','Pausas på röda dagar'],
+      options:[{id:'std',name:'Standard',desc:'Blandad frukt',price:45,unit:'/kg'},
+               {id:'eko',name:'Ekologiskt',desc:'KRAV-märkt',price:62,unit:'/kg'},
+               {id:'prem',name:'Premium',desc:'Inkl. bär',price:70,unit:'/kg'}],
+      has_qty:true, qty_label:'Kg per vecka', qty_min:5, qty_max:200,
+      terms:'Exkl. moms. Faktureras månadsvis efter förbrukning.' }
+  ];
+
+  var DEMO_ACTIVE = {
+    mira:         { option_id:'pro',  qty:1, monthly_cost:0,     info:'Pro · 4 användare' },
+    housekeeping: { option_id:'5dgr', qty:1, monthly_cost:11560, info:'5 dgr/v · 340 kvm' },
+    kaffe:        { option_id:'a600', qty:1, monthly_cost:4090,  info:'Franke A600 · 1 st' },
+    vatten:       { option_id:'std',  qty:2, monthly_cost:2590,  info:'Inkl kolsyra · 2 st' }
+  };
+
+  function el(id){ return document.getElementById(id); }
+  function txt(id){ var e=el(id); if(!e) return ''; var v=(e.value!=null?e.value:e.textContent)||''; return v.trim(); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function num(v){ return (v===null||v===undefined||isNaN(v))?0:Number(v); }
+  function fmtKr(v){
+    var n=Math.round(num(v));
+    if(n>=1000000) return (n/1000000).toFixed(1).replace('.',',')+' Mkr';
+    return n.toLocaleString('sv-SE')+' kr';
+  }
+
+  var CATALOG = [], ACTIVE = {}, modal = { slug:null, optionId:null, qty:1, busy:false };
+
+  function tileHero(item, isActive, isPremium){
+    var bg = item.image
+      ? "background-image:url('"+esc(item.image)+"')"
+      : "background:linear-gradient(135deg,"+esc(item.color_from||'#3c3489')+" 0%,"+esc(item.color_to||'#1c1638')+" 100%)";
+    var pill = isPremium ? '<span class="mt-pill premium">Premium</span>'
+             : isActive  ? '<span class="mt-pill active">Aktiv</span>'
+             : '<span class="mt-pill off">'+(item.category==='facility'?'Förslag':'Inte aktiv')+'</span>';
+    return '<div class="mt-hero" style="'+bg+'">'+(ICONS[item.icon]||ICONS.sparkle)+pill+'</div>';
+  }
+
+  function renderTile(item){
+    var act = ACTIVE[item.slug];
+    var isActive = !!act, isPremium = item.category==='platform' && isActive;
+    var cls = 'mt-tile' + (isActive?'':' off') + (isPremium?' premium':'');
+
+    var subtitle = isActive ? (act.info || item.subtitle || '') : (item.subtitle || '');
+    var foot;
+    if (isActive && item.category==='platform') {
+      foot = '<div class="mt-foot-incl">Ingår i avtalet</div>';
+    } else if (isActive) {
+      foot = '<div class="mt-foot-active">'+fmtKr(act.monthly_cost)+'<small>/mån</small></div>';
+    } else {
+      foot = '<div class="mt-foot-off">'+
+        '<span class="mt-link" data-act="open" data-slug="'+esc(item.slug)+'">Läs mer →</span>'+
+        '<span class="mt-act" data-act="open" data-slug="'+esc(item.slug)+'">Aktivera</span>'+
+      '</div>';
+    }
+
+    return '<div class="'+cls+'" data-act="open" data-slug="'+esc(item.slug)+'">'+
+      tileHero(item, isActive, isPremium)+
+      '<div class="mt-body">'+
+        '<div class="mt-name">'+esc(item.name)+'</div>'+
+        '<div class="mt-sub">'+esc(subtitle)+'</div>'+
+        foot+
+      '</div>'+
+    '</div>';
+  }
+
+  function renderGrid(){
+    var total = 0, activeCnt = 0, suggestCnt = 0;
+    CATALOG.forEach(function(it){
+      var a = ACTIVE[it.slug];
+      if (a) { activeCnt++; total += num(a.monthly_cost); }
+      else { suggestCnt++; }
+    });
+    el('mt-cnt').textContent = '· '+activeCnt+' av '+CATALOG.length+' aktiva';
+    el('mt-sum').innerHTML = fmtKr(total)+'/mån' + (suggestCnt>0 ? ' · <b>+'+suggestCnt+' möjliga att aktivera</b>' : '');
+    el('mt-grid').innerHTML = CATALOG.map(renderTile).join('');
+  }
+
+  function curOpt(){
+    var item = CATALOG.find(function(x){return x.slug===modal.slug;});
+    if (!item) return null;
+    return (item.options||[]).find(function(o){return o.id===modal.optionId;}) || (item.options||[])[0] || null;
+  }
+
+  function renderModal(){
+    var item = CATALOG.find(function(x){return x.slug===modal.slug;});
+    if (!item) return;
+    var opt = curOpt();
+    var bg = item.image
+      ? "background-image:url('"+esc(item.image)+"')"
+      : "background:linear-gradient(135deg,"+esc(item.color_from||'#3c3489')+" 0%,"+esc(item.color_to||'#1c1638')+" 60%,#0a0820 100%)";
+
+    var optsHtml = (item.options||[]).map(function(o){
+      var on = o.id===modal.optionId;
+      var p = num(o.price)>0 ? fmtKr(o.price) : 'Ingår';
+      var unit = o.unit||'';
+      return '<div class="mt-opt'+(on?' on':'')+'" data-act="opt" data-id="'+esc(o.id)+'">'+
+        '<div class="mt-disc"></div>'+
+        '<div class="mt-opt-tx"><div class="mt-opt-n">'+esc(o.name)+'</div><div class="mt-opt-d">'+esc(o.desc||'')+'</div></div>'+
+        '<div class="mt-opt-p">'+p+(unit?'<span style="font-size:10px;font-weight:400;color:rgba(255,255,255,0.40);margin-left:2px">'+esc(unit)+'</span>':'')+'</div>'+
+      '</div>';
+    }).join('');
+
+    var qtyHtml = item.has_qty ? (
+      '<div class="mt-qty">'+
+        '<div class="mt-qty-l">'+esc(item.qty_label||'Antal')+'</div>'+
+        '<div class="mt-qty-c">'+
+          '<button class="mt-qty-b" data-act="qty" data-d="-1">−</button>'+
+          '<div class="mt-qty-n">'+modal.qty+'</div>'+
+          '<button class="mt-qty-b" data-act="qty" data-d="1">+</button>'+
+        '</div>'+
+      '</div>'
+    ) : '';
+
+    var unitPrice = opt ? num(opt.price) : 0;
+    var unit = opt && opt.unit ? opt.unit : '/mån';
+    var totalIsMonthly = unit==='/mån' || unit==='';
+    var total = unitPrice * (item.has_qty ? modal.qty : 1);
+    var totalLine = unitPrice>0
+      ? fmtKr(total)+'<small> '+(unit==='/mån'?'/ mån':esc(unit))+'</small>'
+      : 'Ingår';
+
+    var hero = '<div class="mt-mhero" style="'+bg+'">'+
+      '<button class="mt-mclose" data-act="close" aria-label="Stäng">✕</button>'+
+      (unitPrice>0 ? '<div class="mt-mprice">'+fmtKr(unitPrice)+'<small> '+(unit==='/mån'?'/ mån':esc(unit))+'</small></div>' : '')+
+      '<div class="mt-mtt"><h3>'+esc(item.name)+'</h3><p>'+esc(item.description_long||'')+'</p></div>'+
+      '<div class="mt-toast" id="mt-toast"></div>'+
+    '</div>';
+
+    var inclHtml = (item.includes||[]).length
+      ? '<div class="mt-section-h acc">Ingår</div><ul class="mt-incl">'+
+          item.includes.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+
+        '</ul>'
+      : '';
+
+    var ctaLabel = item.category==='platform' ? 'Uppgradera '+item.name+' →' : 'Aktivera '+item.name+' →';
+
+    el('mt-modal').innerHTML =
+      hero +
+      '<div class="mt-mbody">'+
+        inclHtml +
+        '<div class="mt-section-h">Välj nivå</div>'+
+        '<div class="mt-opts">'+optsHtml+'</div>'+
+        qtyHtml +
+        '<div class="mt-tot">'+
+          '<div><div class="mt-tot-l">Totalt</div><div class="mt-tot-v">'+totalLine+'</div></div>'+
+          '<div class="mt-terms">'+esc(item.terms||'')+'</div>'+
+        '</div>'+
+        '<div class="mt-btns">'+
+          '<button class="mt-btn ghost" data-act="close">Avbryt</button>'+
+          '<button class="mt-btn primary" data-act="submit"'+(modal.busy?' disabled':'')+'>'+esc(ctaLabel)+'</button>'+
+        '</div>'+
+      '</div>';
+  }
+
+  function openModal(slug){
+    var item = CATALOG.find(function(x){return x.slug===slug;});
+    if (!item) return;
+    modal.slug = slug;
+    modal.optionId = (item.options&&item.options[0])?item.options[0].id:null;
+    modal.qty = item.qty_min || 1;
+    modal.busy = false;
+    renderModal();
+    el('mt-mask').classList.add('on');
+    el('mt-mask').setAttribute('aria-hidden','false');
+  }
+  function closeModal(){
+    el('mt-mask').classList.remove('on');
+    el('mt-mask').setAttribute('aria-hidden','true');
+    modal.slug = null;
+  }
+
+  function setToast(mode, text){
+    var t = el('mt-toast'); if (!t) return;
+    t.className = 'mt-toast show'+(mode==='err'?' err':'');
+    t.textContent = text;
+  }
+
+  function submit(){
+    var item = CATALOG.find(function(x){return x.slug===modal.slug;});
+    if (!item) return;
+    var host = txt('mira_api_host') || 'https://mira-exchange.onrender.com';
+    var companyId = txt('mira_company_id');
+    if (!companyId) {
+      setToast('err','Saknar company_id — försök i live-läget.');
+      return;
+    }
+    modal.busy = true; renderModal();
+    fetch(host+'/services/request-activation', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        company_id: companyId,
+        company_name: txt('mira_company_name'),
+        service_slug: modal.slug,
+        service_name: item.name,
+        option_id: modal.optionId,
+        qty: modal.qty,
+        category_hint: item.category
+      })
+    })
+    .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
+    .then(function(j){
+      if (!j || !j.ok) {
+        modal.busy = false; renderModal();
+        setToast('err','Kunde inte skicka. Försök igen eller kontakta oss.');
+        return;
+      }
+      el('mt-modal').innerHTML =
+        '<div style="padding:48px 36px;text-align:center">'+
+          '<div style="width:62px;height:62px;border-radius:50%;background:rgba(16,185,129,0.18);color:#10b981;display:inline-flex;align-items:center;justify-content:center;font-size:32px;margin-bottom:18px">✓</div>'+
+          '<div style="font-family:Georgia,serif;font-size:22px;font-weight:700;color:#fff;margin-bottom:10px">Förfrågan skickad</div>'+
+          '<div style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.6;max-width:380px;margin:0 auto 22px">Vi har skapat en förfrågan för '+esc(item.name)+'. Carotte återkommer inom kort med bekräftelse och eventuella detaljer.</div>'+
+          '<button class="mt-btn primary" style="padding:11px 28px;flex:none" data-act="close">Tillbaka</button>'+
+        '</div>';
+    })
+    .catch(function(){
+      modal.busy = false; renderModal();
+      setToast('err','Nätverksfel. Försök igen.');
+    });
+  }
+
+  document.addEventListener('click', function(ev){
+    var t = ev.target.closest('[data-act]');
+    if (!t) return;
+    var act = t.getAttribute('data-act');
+    if (act==='open') {
+      var slug = t.getAttribute('data-slug') || (t.closest('[data-slug]')||{}).getAttribute && t.closest('[data-slug]').getAttribute('data-slug');
+      if (slug) openModal(slug);
+      ev.stopPropagation();
+    } else if (act==='close') {
+      closeModal();
+    } else if (act==='opt') {
+      modal.optionId = t.getAttribute('data-id');
+      renderModal();
+    } else if (act==='qty') {
+      var item = CATALOG.find(function(x){return x.slug===modal.slug;});
+      var d = parseInt(t.getAttribute('data-d'),10) || 0;
+      var min = item.qty_min||1, max = item.qty_max||99;
+      modal.qty = Math.max(min, Math.min(max, modal.qty + d));
+      renderModal();
+    } else if (act==='submit') {
+      submit();
+    }
+  });
+
+  el('mt-mask').addEventListener('click', function(ev){
+    if (ev.target === el('mt-mask')) closeModal();
+  });
+  document.addEventListener('keydown', function(ev){
+    if (ev.key==='Escape' && el('mt-mask').classList.contains('on')) closeModal();
+  });
+
+  function loadJSON(id, fallback){
+    var raw = txt(id);
+    if (!raw) return fallback;
+    try { return JSON.parse(raw); } catch(e){ console.warn(id+' ogiltig JSON',e); return fallback; }
+  }
+
+  function init(){
+    var catRaw = txt('mira_services_catalog');
+    var actRaw = txt('mira_services_active');
+    CATALOG = (catRaw ? loadJSON('mira_services_catalog', DEMO_CATALOG) : DEMO_CATALOG) || [];
+    ACTIVE  = (actRaw ? loadJSON('mira_services_active',  DEMO_ACTIVE)  : (txt('mira_company_id') ? {} : DEMO_ACTIVE)) || {};
+    if (!Array.isArray(CATALOG)) CATALOG = [];
+    renderGrid();
+  }
+  init();
+})();
+</script>
