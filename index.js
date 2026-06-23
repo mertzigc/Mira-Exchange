@@ -12699,7 +12699,14 @@ async function _addOptout(email) {
   if (!e) return false;
   const set = await _loadOptoutSet();
   if (set.has(e)) return true;                       // redan avregistrerad → idempotent
-  await safeCreate(ADM_OPTOUT, { email: e }, {}).catch(() => null);
+  // Sväljer INTE fel: failar skapandet (t.ex. datatyp saknas) ska sidan inte
+  // ljuga "avregistrerad". Logga Bubbles exakta fel och rapportera misslyckande.
+  try {
+    await safeCreate(ADM_OPTOUT, { email: e }, {});
+  } catch (err) {
+    console.error("[unsubscribe] kunde inte spara EmailOptout", { email: e, bubble: err?.detail || err?.message });
+    return false;
+  }
   set.add(e);                                        // håll cachen färsk
   return true;
 }
@@ -13085,15 +13092,21 @@ app.get("/admin/audience/segments", async (req, res) => {
   try {
     let rows = [];
     try { rows = await bubbleFindAll("AudienceSegment", {}); } catch (_) { rows = []; }
-    const list = (rows || []).map(s => ({
-      id: s._id,
-      name: s.name || "(utan namn)",
-      regions: _segParse(s.regions),
-      fastigheter: _segParse(s.fastigheter),
-      company: s.company || null,
-      notes: s.notes || "",
-      created_at: s["Created Date"] || null
-    })).sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
+    const list = (rows || []).map(s => {
+      const members = _segParse(s.members);
+      return {
+        id: s._id,
+        name: s.name || "(utan namn)",
+        regions: _segParse(s.regions),
+        fastigheter: _segParse(s.fastigheter),
+        company: s.company || null,
+        notes: s.notes || "",
+        // Statisk lista (sparad mottagarlista) vs dynamiskt filter
+        member_count: Array.isArray(members) ? members.length : 0,
+        kind: (Array.isArray(members) && members.length) ? "list" : "filter",
+        created_at: s["Created Date"] || null
+      };
+    }).sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
     res.json({ ok: true, segments: list });
   } catch (e) { console.error("[admin/audience/segments/list]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
@@ -13104,15 +13117,46 @@ app.post("/admin/audience/segments", async (req, res) => {
     const b = req.body || {};
     const name = safeText(b.name || "", 120);
     if (!name) return res.status(400).json({ ok: false, error: "name_required" });
+    // Statisk lista (sparad mottagarlista): normalisera + deduppa medlemmar på e-post
+    const seen = new Set();
+    const members = (Array.isArray(b.members) ? b.members : [])
+      .map(m => ({
+        name:    String(m && m.name || "").slice(0, 120),
+        email:   String(m && m.email || "").trim().toLowerCase(),
+        company: String(m && m.company || "").slice(0, 160),
+        region:  String(m && m.region || "").slice(0, 80)
+      }))
+      .filter(m => m.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email))
+      .filter(m => (seen.has(m.email) ? false : (seen.add(m.email), true)));
     const id = await safeCreate("AudienceSegment", {
       name,
       regions:     JSON.stringify(Array.isArray(b.regions) ? b.regions : []),
       fastigheter: JSON.stringify(Array.isArray(b.fastigheter) ? b.fastigheter : []),
       company:     b.company || null,
-      notes:       safeText(b.notes || "", 500)
+      notes:       safeText(b.notes || "", 500),
+      members:     JSON.stringify(members)
     }, {});
-    res.json({ ok: true, id });
+    // Verifiera att members faktiskt persisterades — safeCreate droppar tyst okända
+    // fält, så om `members`-fältet saknas i Bubble skulle vi annars rapportera falsk
+    // framgång ("sparad med N") medan listan i själva verket är tom.
+    if (members.length) {
+      const check = await bubbleGet("AudienceSegment", id).catch(() => null);
+      if (!check || !_segParse(check.members).length) {
+        console.error("[segments/create] members persisterades inte — saknas fältet 'members' (text) på AudienceSegment i Bubble?");
+        return res.status(502).json({ ok: false, error: "members_field_missing", detail: "Lägg till fältet 'members' (text) på datatypen AudienceSegment i Bubble." });
+      }
+    }
+    res.json({ ok: true, id, member_count: members.length });
   } catch (e) { console.error("[admin/audience/segments/create]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
+// ── GET /admin/audience/segments/:id — hämta ett segments medlemmar (statisk lista) ──
+app.get("/admin/audience/segments/:id", async (req, res) => {
+  try {
+    const s = await bubbleGet("AudienceSegment", req.params.id).catch(() => null);
+    if (!s) return res.status(404).json({ ok: false, error: "not_found" });
+    res.json({ ok: true, segment: { id: s._id, name: s.name || "", members: _segParse(s.members) } });
+  } catch (e) { console.error("[admin/audience/segment/get]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 
 // ── DELETE /admin/audience/segments/:id — ta bort sparat urval ──
@@ -13885,7 +13929,9 @@ app.get("/unsubscribe", async (req, res) => {
          <a class="btn" href="/unsubscribe?g=${encodeURIComponent(g)}&confirm=1">Bekräfta avregistrering</a>` }));
     }
 
-    await _addOptout(email);
+    const saved = await _addOptout(email);
+    if (!saved) return res.status(502).send(_unsubPage({ title: "Något gick fel", accent,
+      body: `<h1>Något gick fel</h1><p>Vi kunde inte registrera avregistreringen just nu. Försök igen om en stund, eller kontakta avsändaren så tar vi bort dig manuellt.</p>` }));
     return res.send(_unsubPage({ title: "Avregistrerad", accent, body:
       `<h1>Du är avregistrerad</h1>
        <p><strong>${esc(email)}</strong> kommer inte längre få utskick från oss. Du kan stänga den här sidan.</p>` }));

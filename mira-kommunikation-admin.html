@@ -3144,7 +3144,8 @@
           '<select class="ea-fsel" id="'+P+'-seg-sel" style="flex:1"><option value="">— Välj sparat urval —</option></select>' +
           '<button class="ck-btn-gh" id="'+P+'-seg-btn" disabled>Lägg till</button>' +
         '</div>' +
-        '<div class="ck-mut" id="'+P+'-seg-info" style="font-size:11px;margin-top:6px">Urval skapas och sparas under fliken <b>Målgrupp</b>.</div>' +
+        '<div class="ck-mut" id="'+P+'-seg-info" style="font-size:11px;margin-top:6px">Urval skapas under fliken <b>Målgrupp</b>, eller spara den nuvarande listan nedan.</div>' +
+        '<div class="ck-row-actions" style="margin-top:8px"><button class="ck-btn-gh" id="'+P+'-seg-save">💾 Spara nuvarande lista som målgrupp</button></div>' +
         '<p class="ck-sl" style="font-size:12px;margin:14px 0 6px">Eller importera från Excel/CSV</p>' +
         '<div class="ck-hint" style="margin-bottom:8px;font-size:11px">Kolumner: <code>namn</code>, <code>epost</code> (valfritt <code>foretag</code>, <code>region</code>). Dubbletter hoppas över.</div>' +
         '<input type="file" id="'+P+'-imp-file" accept=".xlsx,.xls,.csv">' +
@@ -3159,7 +3160,7 @@
       var sel = g(P+'-seg-sel'); if(!sel) return;
       var cur = sel.value;
       sel.innerHTML = '<option value="">— Välj sparat urval —</option>' +
-        (SEGMENTS||[]).map(function(s){ return '<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>'; }).join('');
+        (SEGMENTS||[]).map(function(s){ var c=s.kind==='list'?(' ('+(s.member_count||0)+')'):''; return '<option value="'+esc(s.id)+'">'+esc(s.name)+c+'</option>'; }).join('');
       if(cur) sel.value = cur;
       g(P+'-seg-btn').disabled = !sel.value;
     }
@@ -3184,6 +3185,39 @@
       var prog=g(P+'-aud-prog'), bar=g(P+'-aud-bar'), txt=g(P+'-aud-text');
       prog.style.display='block'; bar.style.width='0%'; txt.textContent='Startar…';
       g(P+'-seg-btn').disabled=true; g(P+'-seg-sel').disabled=true;
+      function done(msg){ txt.textContent=msg; g(P+'-seg-btn').disabled=false; g(P+'-seg-sel').disabled=false; cfg.reload(); }
+      function fail(e){ txt.textContent='Fel: '+((e&&e.message)||''); g(P+'-seg-btn').disabled=false; g(P+'-seg-sel').disabled=false; }
+
+      if(seg.kind==='list'){
+        // Statisk lista → hämta medlemmar och kör genom samma import-väg (dedup inom utskicket)
+        fetch(api('/admin/audience/segments/'+encodeURIComponent(segId)),{headers:H()})
+          .then(function(r){return r.json();})
+          .then(function(j){
+            if(!j.ok || !j.segment) throw new Error(j.error||'kunde inte hämta listan');
+            var rows=(j.segment.members||[]).map(function(m){ return {name:m.name,email:m.email,company:m.company,region:m.region}; });
+            if(!rows.length){ return done('Listan är tom.'); }
+            var total=rows.length, created=0, skipped=0;
+            function step(offset){
+              var batch=rows.slice(offset,offset+100);
+              fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/import'),
+                {method:'POST',headers:H(),body:JSON.stringify({rows:batch,first:offset===0})})
+                .then(function(r){return r.json();})
+                .then(function(jj){
+                  if(!jj.ok) throw new Error(jj.error||'fel');
+                  created+=jj.created||0; skipped+=jj.skipped||0;
+                  var proc=Math.min(offset+100,total);
+                  bar.style.width=Math.round(proc/total*100)+'%';
+                  txt.textContent='Bearbetar '+proc+'/'+total+' · '+created+' tillagda'+(skipped?' · '+skipped+' fanns redan':'');
+                  if(proc<total) step(offset+100);
+                  else done('Klart — '+created+' tillagda'+(skipped?', '+skipped+' fanns redan':'')+'.');
+                }).catch(fail);
+            }
+            step(0);
+          }).catch(fail);
+        return;
+      }
+
+      // Dynamiskt filter → /guests/build (paginerad)
       var created=0, skipped=0;
       function step(offset){
         fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/build'),
@@ -3196,11 +3230,41 @@
             bar.style.width=pct+'%';
             txt.textContent='Bearbetar '+j.processed+'/'+j.total+' · '+created+' tillagda'+(skipped?' · '+skipped+' fanns redan':'');
             if(!j.done && j.next_offset!=null){ step(j.next_offset); }
-            else { txt.textContent='Klart — '+created+' tillagda'+(skipped?', '+skipped+' fanns redan':'')+'.'; g(P+'-seg-btn').disabled=false; g(P+'-seg-sel').disabled=false; cfg.reload(); }
+            else done('Klart — '+created+' tillagda'+(skipped?', '+skipped+' fanns redan':'')+'.');
           })
-          .catch(function(e){ txt.textContent='Fel: '+(e.message||''); g(P+'-seg-btn').disabled=false; g(P+'-seg-sel').disabled=false; });
+          .catch(fail);
       }
       step(0);
+    });
+
+    // ── Spara nuvarande mottagarlista som målgrupp (statisk lista) ──
+    g(P+'-seg-save').addEventListener('click', function(){
+      var invId = cfg.getInvId();
+      if(!invId){ alert('Spara utskicket och bygg en mottagarlista först.'); return; }
+      var btn=g(P+'-seg-save'); btn.disabled=true; var old=btn.textContent; btn.textContent='Hämtar lista…';
+      fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests'),{headers:H()})
+        .then(function(r){return r.json();})
+        .then(function(j){
+          if(!j.ok) throw new Error(j.error||'fel');
+          var members=(j.guests||[]).filter(function(x){return x.email;}).map(function(x){ return {name:x.name,email:x.email,company:x.company_name,region:x.region}; });
+          if(!members.length){ throw new Error('Listan är tom — lägg till mottagare först.'); }
+          var name=prompt('Spara '+members.length+' mottagare som målgrupp. Namnge målgruppen:');
+          if(name===null){ btn.disabled=false; btn.textContent=old; return; }
+          name=(name||'').trim(); if(!name){ btn.disabled=false; btn.textContent=old; return; }
+          btn.textContent='Sparar…';
+          return fetch(api('/admin/audience/segments'),{method:'POST',headers:H(),body:JSON.stringify({name:name,members:members})})
+            .then(function(r){return r.json();})
+            .then(function(jj){
+              if(!jj.ok) throw new Error(jj.detail||jj.error||'fel');
+              // uppdatera dropdownen överallt
+              return fetch(api('/admin/audience/segments'),{headers:H()}).then(function(r){return r.json();}).then(function(sj){
+                if(sj.ok){ SEGMENTS=sj.segments||[]; _audToolRefreshers.forEach(function(fn){ try{fn();}catch(_){} }); }
+                alert('Målgruppen "'+name+'" sparades med '+(jj.member_count||members.length)+' mottagare.');
+              });
+            });
+        })
+        .catch(function(e){ alert('Kunde inte spara: '+((e&&e.message)||'')); })
+        .finally(function(){ btn.disabled=false; btn.textContent=old; });
     });
 
     // ── Excel/CSV-import → /guests/import (paginerad) ──
