@@ -2,6 +2,7 @@
 import { startEmailPoller } from "./emailer.js";
 import { createSyncEngine } from "./invoice_sync.js";
 import { createActivityEngine, ACTIVITY_CONFIG } from "./activity_sync.js";
+import { evalPricing as _evalPricing, validateFormula as _validateFormula, validateForm as _validateForm } from "./pricing_engine.js";
 import { createClientGroupEngine } from "./clientgroup.js";
 import express from "express";
 import cors from "cors";
@@ -405,9 +406,16 @@ function requireApiKey(req, res, next) {
     "/admin/forfragan/users",
     "/admin/forfragan/create",
     "/admin/forfragan/update",
+    // Mira erbjudande-admin – ny ck-tab i kommunikation-admin.html, samma auth.
+    "/admin/offers/list",
+    "/admin/offers/upsert",
+    "/admin/offers/preview-price",
+    "/admin/offers/clone",
+    "/pricing_engine.js",
   ]);
+  // Offer detail (GET /admin/offers/:id) — varierande path → prefix.
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
-  const openPrefixes = [];
+  const openPrefixes = ["/admin/offers/"];
   if (openPaths.has(req.path) || openPrefixes.some(p => req.path.startsWith(p))) {
     return next();
   }
@@ -16868,6 +16876,8 @@ const FORFRAGAN = {
   OFFER_STATUS_PUBLISHED: "Publicerat",
   OFFER_START:    "startdatum",
   OFFER_END:      "slutdatum",
+  OFFER_FORM_JSON:    "custom_form_json",     // dynamiska frågor (text → JSON-array)
+  OFFER_PRICING_JSON: "pricing_formula_json", // prisformel (text → JSON-objekt)
 
   // Comission-fält
   C_TITLE:    "Commission_title",
@@ -16885,6 +16895,7 @@ const FORFRAGAN = {
   C_GUEST:    "guest",
   C_PO:       "po_number",
   C_ALLERGENS:"allergens_json",
+  C_PRICE_BREAKDOWN:"price_breakdown_json",  // försegld breakdown från erbjudande-formel
   C_INTERNSERVICE:"internservice",  // yes/no → false (NO)
   C_SOURCE:   "source",             // optionset lead_source → "Mira"
   SOURCE_VALUE:"Mira",
@@ -16979,6 +16990,8 @@ function _ffOfferOut(o) {
     start:          o[FORFRAGAN.OFFER_START] || null,
     end:            o[FORFRAGAN.OFFER_END] || null,
     company_ids:    _ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]),   // Kundföretag (list)
+    custom_form_json:    o[FORFRAGAN.OFFER_FORM_JSON] || "",
+    pricing_formula_json:o[FORFRAGAN.OFFER_PRICING_JSON] || "",
   };
 }
 // recurrence-stegare: returnerar array av ISO-datum (master först), max 1 år framåt.
@@ -17249,6 +17262,30 @@ app.post("/admin/forfragan/create", async (req, res) => {
     const allergensJson = allergens.length ? JSON.stringify(allergens) : null;
     const coworkerIds = bestallare.map((b) => b.coworker_id || b.user_id).filter(Boolean);
 
+    // ── Erbjudande-pris: hämta formel + kör evalPricing server-side. Klienten
+    // skickar offer_answers från custom_form_json-frågorna. Försegld breakdown
+    // sparas i Comission.price_breakdown_json (oförändlig på server). ──
+    let priceBreakdown = null;
+    let priceBreakdownJson = null;
+    if (d.offer_id) {
+      try {
+        const off = await bubbleGet(FORFRAGAN.OFFER_TYPE, String(d.offer_id));
+        const formulaRaw = off?.[FORFRAGAN.OFFER_PRICING_JSON];
+        if (formulaRaw && String(formulaRaw).trim()) {
+          const answers = (d.offer_answers && typeof d.offer_answers === "object") ? d.offer_answers : {};
+          priceBreakdown = _evalPricing(formulaRaw, answers);
+          if (priceBreakdown.ok) {
+            priceBreakdownJson = JSON.stringify({
+              evaluated_at: new Date().toISOString(),
+              offer_id: String(d.offer_id),
+              answers,
+              ...priceBreakdown,
+            });
+          }
+        }
+      } catch (e) { console.warn("[forfragan create] pricing eval fail", e?.message); }
+    }
+
     // ── Bygg en Comission-payload för ett givet datum (master/instans). Alla fältnamn
     // bekräftade → inga varianter, bara verkliga fält. (null droppas av safeCreate.) ──
     const buildComission = (startIso, isMaster) => {
@@ -17273,6 +17310,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
         [FORFRAGAN.C_BESTALLARE]:    coworkerIds.length ? coworkerIds : null,
         [FORFRAGAN.C_PRODUKTTILLAGG]: (Array.isArray(d.produkttillagg) && d.produkttillagg.length) ? d.produkttillagg : null,
         [FORFRAGAN.C_OFFER]:         d.offer_id ? String(d.offer_id) : null,
+        [FORFRAGAN.C_PRICE_BREAKDOWN]: priceBreakdownJson,
       };
       if (subcategory && category && FORFRAGAN.SUBCAT_FIELDS[category]) {
         exact[FORFRAGAN.SUBCAT_FIELDS[category]] = subcategory;
@@ -17308,6 +17346,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
           leads_per_bestallare: bestallare.map((b) => ({ email: b.email, title, category, source: FORFRAGAN.LEAD_SOURCE_VALUE })),
           coworker_patches: bestallare.map((b) => ({ email: b.email, op: "Bokningar += <ny commission>" })),
           validation: { antal, capacity, ok: true },
+          price_breakdown: priceBreakdown,
         },
       });
     }
@@ -17438,6 +17477,222 @@ app.post("/admin/forfragan/update", async (req, res) => {
     return res.json({ ok: true, mode: "write", commission_id: id, patched_fields: Object.keys(patch) });
   } catch (e) {
     console.error("[/admin/forfragan/update]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// ERBJUDANDE-ADMIN — admin-CRUD för Erbjudande + prismotor (2026-06-23)
+// ════════════════════════════════════════════════════════════════════════════
+// Ersätter dagens Bubble-formulär. Två nya textfält på Erbjudande
+// (custom_form_json + pricing_formula_json) + ett på Comission
+// (price_breakdown_json). Auth = samma _ffGuard som /admin/forfragan/*.
+
+// Cache:a pricing_engine.js-källan + transformera till IIFE för browser.
+let _pricingEngineBrowserJs = null;
+function _pricingEngineBrowser() {
+  if (_pricingEngineBrowserJs) return _pricingEngineBrowserJs;
+  try {
+    const src = fs.readFileSync(path.join(process.cwd(), "pricing_engine.js"), "utf8");
+    // ESM → IIFE: strippa "export " och exponera ett window.MiraPricing-objekt.
+    const stripped = src.replace(/^export\s+function\s+/gm, "function ");
+    _pricingEngineBrowserJs =
+      "(function(){\n" + stripped +
+      "\nwindow.MiraPricing = { evalPricing, validateFormula, validateForm };\n})();\n";
+  } catch (e) {
+    _pricingEngineBrowserJs = "/* pricing_engine load failed: " + e.message + " */";
+  }
+  return _pricingEngineBrowserJs;
+}
+app.get("/pricing_engine.js", (req, res) => {
+  res.type("application/javascript");
+  res.set("Cache-Control", "public, max-age=60");
+  res.send(_pricingEngineBrowser());
+});
+
+// Mapper: Erbjudande-rad → full admin-detalj (alla fält frontend behöver).
+function _offerAdminOut(o) {
+  return {
+    id: bubbleId(o),
+    title: o.Title || "",
+    image: o.Image || "",
+    bildspel: o.Bildspel || [],
+    category: o.Category || null,
+    description: o.Description || "",
+    description_long: o.Description_long || "",
+    capacity: o.Capacity ?? null,
+    extern_lokal: o["Extern lokal"] || [],
+    logistik: o.Logistik || "",
+    malgrupp: o["Målgrupp"] || "",
+    pris_per_person: o.PrisPerPerson ?? null,
+    produktinnehall: o["Produktinnehåll"] || "",
+    produkttillagg: o[FORFRAGAN.C_PRODUKTTILLAGG] || [],
+    villkor: o.Villkor || "",
+    status: o[FORFRAGAN.OFFER_STATUS] || null,
+    start: o[FORFRAGAN.OFFER_START] || null,
+    end: o[FORFRAGAN.OFFER_END] || null,
+    company_ids: _ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]),
+    custom_form_json: o[FORFRAGAN.OFFER_FORM_JSON] || "",
+    pricing_formula_json: o[FORFRAGAN.OFFER_PRICING_JSON] || "",
+    is_general: !_ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]).length,
+    created_date: o["Created Date"] || null,
+    modified_date: o["Modified Date"] || null,
+  };
+}
+
+// ── GET /admin/offers/list?company=&status=&q= ──────────────────────────────
+// Lista alla erbjudanden (admin-vy). Filter: status (Utkast/Publicerat/Utgånget),
+// company-id (filter på Kundföretag-list innehåller eller är tom = allmän), q=söktext.
+app.get("/admin/offers/list", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const company = req.query.company ? String(req.query.company).trim() : null;
+    const status = req.query.status ? String(req.query.status).trim() : null;
+    const q = req.query.q ? String(req.query.q).trim().toLowerCase() : null;
+    const onlyGeneral = String(req.query.scope || "") === "general";
+    const onlyUnique = String(req.query.scope || "") === "unique";
+
+    const rows = await bubbleFindAll(FORFRAGAN.OFFER_TYPE, {});
+    let out = rows.map(_offerAdminOut);
+    if (status) out = out.filter(o => o.status === status);
+    if (company) {
+      // company → visa allmänna + unika där company finns i company_ids
+      out = out.filter(o => o.is_general || o.company_ids.indexOf(company) >= 0);
+    }
+    if (onlyGeneral) out = out.filter(o => o.is_general);
+    if (onlyUnique) out = out.filter(o => !o.is_general);
+    if (q) out = out.filter(o => (o.title || "").toLowerCase().indexOf(q) >= 0
+                              || (o.description || "").toLowerCase().indexOf(q) >= 0);
+    out.sort((a, b) => String(b.modified_date || "").localeCompare(String(a.modified_date || "")));
+    return res.json({ ok: true, count: out.length, offers: out });
+  } catch (e) {
+    console.error("[/admin/offers/list]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── GET /admin/offers/:id — full detalj ──────────────────────────────────────
+app.get("/admin/offers/:id", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, String(req.params.id));
+    if (!o) return res.status(404).json({ ok: false, error: "not_found" });
+    return res.json({ ok: true, offer: _offerAdminOut(o) });
+  } catch (e) {
+    console.error("[/admin/offers/:id]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── POST /admin/offers/upsert ───────────────────────────────────────────────
+// Body: { id?, title, category, description, description_long, capacity,
+//         extern_lokal, logistik, malgrupp, pris_per_person, produktinnehall,
+//         villkor, status, start, end, company_ids[],
+//         custom_form_json, pricing_formula_json, image, bildspel }
+// custom_form_json + pricing_formula_json valideras innan spar.
+app.post("/admin/offers/upsert", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const b = req.body || {};
+    // Validera JSON-strukturerna (tom OK, måste annars parsea + matcha schema)
+    const formCheck = _validateForm(b.custom_form_json || "");
+    if (!formCheck.ok) return res.status(400).json({ ok: false, error: "custom_form_json invalid", details: formCheck.errors });
+    const formulaCheck = _validateFormula(b.pricing_formula_json || "");
+    if (!formulaCheck.ok) return res.status(400).json({ ok: false, error: "pricing_formula_json invalid", details: formulaCheck.errors });
+
+    const patch = {};
+    if (b.title != null) patch.Title = b.title;
+    if (b.image != null) patch.Image = b.image;
+    if (b.bildspel != null) patch.Bildspel = b.bildspel;
+    if (b.category != null) patch.Category = b.category;
+    if (b.description != null) patch.Description = b.description;
+    if (b.description_long != null) patch.Description_long = b.description_long;
+    if (b.capacity != null) patch.Capacity = asNumberOrNull(b.capacity);
+    if (b.extern_lokal != null) patch["Extern lokal"] = b.extern_lokal;
+    if (b.logistik != null) patch.Logistik = b.logistik;
+    if (b.malgrupp != null) patch["Målgrupp"] = b.malgrupp;
+    if (b.pris_per_person != null) patch.PrisPerPerson = asNumberOrNull(b.pris_per_person);
+    if (b.produktinnehall != null) patch["Produktinnehåll"] = b.produktinnehall;
+    if (b.produkttillagg != null) patch[FORFRAGAN.C_PRODUKTTILLAGG] = b.produkttillagg;
+    if (b.villkor != null) patch.Villkor = b.villkor;
+    if (b.status != null) patch[FORFRAGAN.OFFER_STATUS] = b.status;
+    if (b.start != null) patch[FORFRAGAN.OFFER_START] = b.start;
+    if (b.end != null) patch[FORFRAGAN.OFFER_END] = b.end;
+    if (b.company_ids != null) patch[FORFRAGAN.OFFER_COMPANY] = Array.isArray(b.company_ids) ? b.company_ids : [];
+    // Auto-leverantör per kategori (din regel: när kategori sätts → mappa supplier)
+    if (b.category && FORFRAGAN.SUPPLIER_BY_CATEGORY[b.category]) {
+      patch.Leverantör = [FORFRAGAN.SUPPLIER_BY_CATEGORY[b.category]];
+    }
+    if (b.custom_form_json !== undefined) patch[FORFRAGAN.OFFER_FORM_JSON] = String(b.custom_form_json || "");
+    if (b.pricing_formula_json !== undefined) patch[FORFRAGAN.OFFER_PRICING_JSON] = String(b.pricing_formula_json || "");
+
+    let id = b.id ? String(b.id).trim() : null;
+    if (id) {
+      await bubblePatch(FORFRAGAN.OFFER_TYPE, id, patch);
+    } else {
+      const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch);
+      id = created?.id || created?._id || null;
+    }
+    const fresh = id ? await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null) : null;
+    return res.json({ ok: true, id, offer: fresh ? _offerAdminOut(fresh) : null });
+  } catch (e) {
+    console.error("[/admin/offers/upsert]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── POST /admin/offers/preview-price ────────────────────────────────────────
+// Body: { pricing_formula_json, answers } → kör evalPricing server-side.
+// För admin-UI:ts "Testa pris"-knapp + sanity-check innan publicera.
+app.post("/admin/offers/preview-price", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const b = req.body || {};
+    const result = _evalPricing(b.pricing_formula_json || b.formula || "", b.answers || {});
+    return res.json({ ok: true, result });
+  } catch (e) {
+    console.error("[/admin/offers/preview-price]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── POST /admin/offers/clone ─────────────────────────────────────────────────
+// Body: { id, target_company_id }. Klonar en allmän mall → kundunik kopia.
+app.post("/admin/offers/clone", async (req, res) => {
+  if (!_ffGuard(req, res)) return;
+  try {
+    const b = req.body || {};
+    const sourceId = String(b.id || "").trim();
+    const targetCompanyId = String(b.target_company_id || "").trim();
+    if (!sourceId) return res.status(400).json({ ok: false, error: "id required" });
+    const src = await bubbleGet(FORFRAGAN.OFFER_TYPE, sourceId);
+    if (!src) return res.status(404).json({ ok: false, error: "source not found" });
+    const copy = {
+      Title: (src.Title || "") + " (kopia)",
+      Image: src.Image || "",
+      Bildspel: src.Bildspel || [],
+      Category: src.Category || null,
+      Description: src.Description || "",
+      Description_long: src.Description_long || "",
+      Capacity: src.Capacity ?? null,
+      "Extern lokal": src["Extern lokal"] || [],
+      Logistik: src.Logistik || "",
+      "Målgrupp": src["Målgrupp"] || "",
+      PrisPerPerson: src.PrisPerPerson ?? null,
+      "Produktinnehåll": src["Produktinnehåll"] || "",
+      Villkor: src.Villkor || "",
+      Leverantör: src.Leverantör || [],
+      [FORFRAGAN.OFFER_STATUS]: "Utkast",  // kopior börjar som utkast
+      [FORFRAGAN.OFFER_FORM_JSON]: src[FORFRAGAN.OFFER_FORM_JSON] || "",
+      [FORFRAGAN.OFFER_PRICING_JSON]: src[FORFRAGAN.OFFER_PRICING_JSON] || "",
+    };
+    if (targetCompanyId) copy[FORFRAGAN.OFFER_COMPANY] = [targetCompanyId];
+    const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, copy);
+    const id = created?.id || created?._id || null;
+    const fresh = id ? await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null) : null;
+    return res.json({ ok: true, id, offer: fresh ? _offerAdminOut(fresh) : null });
+  } catch (e) {
+    console.error("[/admin/offers/clone]", e?.message, e?.detail);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
 });
