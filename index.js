@@ -412,6 +412,11 @@ function requireApiKey(req, res, next) {
     "/admin/offers/preview-price",
     "/admin/offers/clone",
     "/pricing_engine.js",
+    // Kund-dashboard tjänste-grid – HTML-blocket fetchar live, ingen API-nyckel.
+    // CORS-allowlist + rate-limit på public. Aktivering skapar Comission via
+    // samma kedja som /admin/forfragan/create (intern återanvändning).
+    "/services/dashboard",
+    "/services/request-activation",
   ]);
   // Offer detail (GET /admin/offers/:id) — varierande path → prefix.
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
@@ -17745,6 +17750,316 @@ app.post("/admin/offers/clone", async (req, res) => {
     console.error("[/admin/offers/clone]", e?.message, e?.detail);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
+});
+
+// ────────────────────────────────────────────────────────────
+// Kund-dashboard tjänste-grid (mira-kund-dashboard-tjanster.html)
+//
+// • GET /services/dashboard?company_id=…  → { catalog, active }
+//     - catalog: ServiceCatalog × Erbjudande (live, ingen Bubble-cache)
+//     - active:  Contract på Company där erbjudande matchar någon katalogpost
+// • POST /services/request-activation     → skapar Comission via
+//     samma fältmappning som /admin/forfragan/create (notify + push återanvänds).
+//
+// Public path (CORS-allowlist från KUND_KPI). Bubble privacy rules på
+// Contract/Erbjudande säkrar att kunden bara ser sina egna i svaret.
+// ────────────────────────────────────────────────────────────
+const SERVICES = {
+  CATALOG_TYPE:  "ServiceCatalog",
+  CONTRACT_TYPE: "Contract",
+
+  // ServiceCatalog-fält (bekräftade 2026-06-23)
+  SC_SLUG:        "slug",
+  SC_NAME:        "name",
+  SC_SUBTITLE:    "subtitle",
+  SC_CATEGORY:    "category",
+  SC_DISPLAY:     "display_order",
+  SC_ICON:        "icon",
+  SC_ICON_COLOR:  "icon_color",
+  SC_IMAGE:       "image",
+  SC_OFFERS:      "offers",
+  SC_HAS_QTY:     "has_qty",
+  SC_QTY_LABEL:   "qty_label",
+  SC_QTY_MIN:     "qty_min",
+  SC_QTY_MAX:     "qty_max",
+  SC_FROM_PRICE:  "from_price",
+  SC_FROM_UNIT:   "from_unit",
+
+  // Contract-fält
+  CT_COMPANY:     "Kundföretag",
+  CT_OFFER:       "erbjudande",
+  CT_QTY:         "Produktantal",
+  CT_MONTHLY:     "Månadskostnad",
+  CT_END:         "Slutdatum",
+
+  // Erbjudande Unit option set → display-string. Bubble Data API returnerar
+  // bara display-värdet, så vi mappar till prisenhet-suffix.
+  UNIT_SUFFIX: { "mån": "/mån", "person": "/person", "kg": "/kg", "timme": "/h", "dygn": "/dygn" },
+};
+
+function _servicesUnitOf(offer, fallback) {
+  const raw = offer && (offer.Unit || offer.unit);
+  if (!raw) return fallback || "/mån";
+  return SERVICES.UNIT_SUFFIX[String(raw)] || ("/" + String(raw));
+}
+
+function _servicesPriceOf(offer, defaultQty, fallback) {
+  if (!offer) return fallback || 0;
+  const formulaRaw = offer[FORFRAGAN.OFFER_PRICING_JSON];
+  if (formulaRaw && String(formulaRaw).trim()) {
+    try {
+      const r = _evalPricing(formulaRaw, { antal: defaultQty || 1 });
+      if (r && r.ok && r.total != null) return Math.round(Number(r.total) || 0);
+    } catch (e) { /* fall through */ }
+  }
+  if (offer.PrisPerPerson != null) return Math.round(Number(offer.PrisPerPerson) || 0);
+  return Math.round(Number(fallback) || 0);
+}
+
+function _servicesIncludes(productText) {
+  if (!productText) return [];
+  return String(productText)
+    .split(/[•\n]+/)
+    .map((s) => s.replace(/^[-–•\s]+|\s+$/g, ""))
+    .filter((s) => s.length > 1)
+    .slice(0, 20);
+}
+
+async function _buildServicesDashboard(companyId) {
+  // 1) Katalog
+  const catalogsRaw = await bubbleFindAll(SERVICES.CATALOG_TYPE, {
+    sort_field: SERVICES.SC_DISPLAY, descending: false,
+  }).catch(() => []);
+
+  // 2) Samla alla erbjudande-id:n som någon katalogpost pekar på + fetch dem
+  const offerToSlug = new Map();
+  const allOfferIds = new Set();
+  for (const c of catalogsRaw) {
+    const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+    if (!slug) continue;
+    for (const oid of _ffIdsOf(c[SERVICES.SC_OFFERS])) {
+      offerToSlug.set(oid, slug);
+      allOfferIds.add(oid);
+    }
+  }
+  const offerById = new Map();
+  for (const oid of allOfferIds) {
+    const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, oid).catch(() => null);
+    if (o) offerById.set(oid, o);
+  }
+
+  // 3) Bygg catalog-respons
+  const catalog = catalogsRaw.map((c) => {
+    const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+    const fromPrice = Number(c[SERVICES.SC_FROM_PRICE] || 0);
+    const fromUnit = c[SERVICES.SC_FROM_UNIT] || "/mån";
+    const qtyMin = Number(c[SERVICES.SC_QTY_MIN] || 1);
+    const options = _ffIdsOf(c[SERVICES.SC_OFFERS])
+      .map((oid) => offerById.get(oid))
+      .filter(Boolean)
+      .map((o) => ({
+        id: bubbleId(o),
+        name: o.Title || "",
+        desc: o.Description || "",
+        description_long: o.Description_long || "",
+        image: o.Image || "",
+        includes: _servicesIncludes(o["Produktinnehåll"]),
+        terms: o.Villkor || "",
+        price: _servicesPriceOf(o, qtyMin, fromPrice),
+        unit: _servicesUnitOf(o, fromUnit),
+      }));
+
+    return {
+      slug,
+      name: c[SERVICES.SC_NAME] || "",
+      subtitle: c[SERVICES.SC_SUBTITLE] || "",
+      category: c[SERVICES.SC_CATEGORY] || "facility",
+      image: c[SERVICES.SC_IMAGE] || "",
+      icon: c[SERVICES.SC_ICON] || "sparkle",
+      icon_color: c[SERVICES.SC_ICON_COLOR] || "#3c3489",
+      has_qty: !!c[SERVICES.SC_HAS_QTY],
+      qty_label: c[SERVICES.SC_QTY_LABEL] || "Antal",
+      qty_min: qtyMin,
+      qty_max: Number(c[SERVICES.SC_QTY_MAX] || 99),
+      from_price: fromPrice,
+      from_unit: fromUnit,
+      options,
+    };
+  }).filter((c) => c.slug);
+
+  // 4) Aktiva Contracts för kunden — filtrera utgångna client-side
+  const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+    constraints: [{ key: SERVICES.CT_COMPANY, constraint_type: "equals", value: companyId }],
+  }).catch(() => []);
+
+  const active = {};
+  const now = Date.now();
+  for (const ct of contracts) {
+    const end = ct[SERVICES.CT_END] ? new Date(ct[SERVICES.CT_END]).getTime() : null;
+    if (end != null && !Number.isNaN(end) && end < now) continue;
+
+    const offerId = _ffIdOf(ct[SERVICES.CT_OFFER]);
+    if (!offerId) continue;
+    const slug = offerToSlug.get(offerId);
+    if (!slug) continue;
+
+    const offer = offerById.get(offerId);
+    const qty = Number(ct[SERVICES.CT_QTY] || 1);
+    const offerTitle = offer?.Title || "";
+    active[slug] = {
+      option_id: offerId,
+      qty,
+      monthly_cost: Math.round(Number(ct[SERVICES.CT_MONTHLY] || 0)),
+      info: offerTitle + (qty > 1 ? " · " + qty + " st" : ""),
+    };
+  }
+
+  return { catalog, active };
+}
+
+app.get("/services/dashboard", async (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (_publicRateLimited(_clientIp(req))) return res.status(429).json({ ok: false, error: "rate_limited" });
+
+  const companyId = String(req.query.company_id || "").trim();
+  if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+
+  try {
+    const out = await _buildServicesDashboard(companyId);
+    return res.json({ ok: true, ...out });
+  } catch (e) {
+    console.error("[/services/dashboard]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.options("/services/dashboard", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.sendStatus(204);
+});
+
+app.post("/services/request-activation", async (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (_publicRateLimited(_clientIp(req))) return res.status(429).json({ ok: false, error: "rate_limited" });
+
+  const b = req.body || {};
+  const companyId = String(b.company_id || "").trim();
+  const serviceSlug = String(b.service_slug || "").trim();
+  const optionId = String(b.option_id || "").trim();
+  const qty = Math.max(1, Number(b.qty || 1));
+  if (!companyId)   return res.status(400).json({ ok: false, error: "company_id krävs" });
+  if (!serviceSlug) return res.status(400).json({ ok: false, error: "service_slug krävs" });
+  if (!optionId)    return res.status(400).json({ ok: false, error: "option_id krävs" });
+
+  try {
+    // Hämta valt Erbjudande + ServiceCatalog för korrekt kategori + leverantör
+    const offer = await bubbleGet(FORFRAGAN.OFFER_TYPE, optionId).catch(() => null);
+    if (!offer) return res.status(404).json({ ok: false, error: "Erbjudande saknas" });
+
+    const cat = await bubbleFindOne(SERVICES.CATALOG_TYPE, [
+      { key: SERVICES.SC_SLUG, constraint_type: "equals", value: serviceSlug },
+    ]).catch(() => null);
+
+    const serviceName = (cat && cat[SERVICES.SC_NAME]) || b.service_name || serviceSlug;
+    const category = offer.Category || (cat && cat[SERVICES.SC_CATEGORY]) || null;
+    const supplierId = category ? FORFRAGAN.SUPPLIER_BY_CATEGORY[category] || null : null;
+    const title = `Aktivera ${serviceName}` + (qty > 1 ? ` (${qty} st)` : "");
+    const msg =
+      `Aktivering begärd via kund-dashboarden.\n` +
+      `Tjänst: ${serviceName}\n` +
+      `Variant: ${offer.Title || optionId}\n` +
+      `Antal: ${qty}`;
+
+    // Pris-breakdown (försegld), samma mönster som forfragan/create
+    let priceBreakdownJson = null;
+    try {
+      const formulaRaw = offer[FORFRAGAN.OFFER_PRICING_JSON];
+      if (formulaRaw && String(formulaRaw).trim()) {
+        const answers = { antal: qty };
+        const breakdown = _evalPricing(formulaRaw, answers);
+        if (breakdown && breakdown.ok) {
+          priceBreakdownJson = JSON.stringify({
+            evaluated_at: new Date().toISOString(),
+            offer_id: optionId, answers, ...breakdown,
+          });
+        }
+      }
+    } catch (e) { console.warn("[/services/request-activation] pricing eval fail", e?.message); }
+
+    // Skapa Comission med samma fältnamn som /admin/forfragan/create
+    const deliveryIso = new Date(Date.now() + 7 * 864e5).toISOString();
+    const payload = {
+      [FORFRAGAN.C_TITLE]:       safeText(title, 250),
+      [FORFRAGAN.C_DELIVERY]:    deliveryIso,
+      [FORFRAGAN.C_DESC]:        msg,
+      [FORFRAGAN.C_MESSAGE]:     msg,
+      [FORFRAGAN.C_STATUS]:      FORFRAGAN.STATUS_SENT,
+      [FORFRAGAN.C_SOURCE]:      FORFRAGAN.SOURCE_VALUE,   // "Mira"
+      [FORFRAGAN.C_COMPANY]:     companyId,
+      [FORFRAGAN.C_INTERNSERVICE]: false,
+      [FORFRAGAN.C_CATEGORY]:    category,
+      [FORFRAGAN.C_GUEST]:       qty,
+      [FORFRAGAN.C_SUPPLIER]:    supplierId ? [supplierId] : null,
+      [FORFRAGAN.C_OFFER]:       optionId,
+      [FORFRAGAN.C_PRICE_BREAKDOWN]: priceBreakdownJson,
+    };
+    const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
+    const commissionId = await bubbleCreate(FORFRAGAN.COMISSION_TYPE, finalPayload);
+
+    // Activity write-through (samma som forfragan/create)
+    try {
+      const fresh = await bubbleGet(FORFRAGAN.COMISSION_TYPE, commissionId);
+      if (fresh) await activityEngine.upsertActivityForComission(fresh);
+    } catch (e) { console.warn("[/services/request-activation] activity write-through fail", e?.message); }
+
+    // Notify-mail (återanvänder _ffMailCommission)
+    let queued = 0;
+    try {
+      const fresh = await bubbleGet(FORFRAGAN.COMISSION_TYPE, commissionId);
+      queued = await _ffMailCommission(FORFRAGAN.NOTIFY_SLUG, fresh, commissionId, {
+        title, request_title: title,
+        subcategory: category || "",
+        description: msg,
+        erbjudande: offer.Title || "",
+        delivery_date: deliveryIso, bestallare: [], reference: commissionId,
+        subject_override: `Aktivering – ${serviceName}`,
+        source: "kund-dashboard",
+      });
+    } catch (e) { console.warn("[/services/request-activation] notify fail", e?.message); }
+
+    // Push (iOS) — samma WF som forfragan/create
+    let pushed = null;
+    try {
+      pushed = await _ffTriggerPush(FORFRAGAN.PUSH_WF_BOKNING, {
+        bokning: commissionId,
+        subject: `Aktivering – ${serviceName}`,
+        body: `Kund vill aktivera ${serviceName} (${offer.Title || ""})`,
+      });
+    } catch (e) { console.warn("[/services/request-activation] push fail", e?.message); }
+
+    console.log(`[services/activate] commission ${commissionId} (${serviceSlug}/${optionId} ×${qty}) · ${queued} mail · push=${pushed}`);
+    return res.json({ ok: true, commission_id: commissionId });
+  } catch (e) {
+    console.error("[/services/request-activation]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+app.options("/services/request-activation", (req, res) => {
+  const orig = req.headers.origin || "";
+  if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.sendStatus(204);
 });
 
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));

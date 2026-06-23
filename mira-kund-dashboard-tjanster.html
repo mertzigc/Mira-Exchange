@@ -1,41 +1,29 @@
 <!--
-  MIRA – KUND-DASHBOARD TJÄNSTE-GRID  (första hugget — datadrivet, popup-flöde, alt a)
+  MIRA – KUND-DASHBOARD TJÄNSTE-GRID  (live fetch mot Render, alt a)
   ------------------------------------------------------------------
   Klistras in i ett HTML-element i Bubble på kundens dashboard-sida,
-  OVANFÖR KPI-blocket. Visar Mira-abonnemang + 7 facility-tjänster
-  som tiles. Aktiva tiles visar månadskostnad; inaktiva visar
-  "Läs mer →" (öppnar popup) + "Aktivera" (snabbväg → popup).
+  OVANFÖR KPI-blocket. Visar Mira-abonnemang + facility-tjänster som
+  tiles. Aktiva tiles visar månadskostnad; inaktiva visar
+  "Läs mer →" + "Aktivera" — båda öppnar popup.
 
-  KOPPLING I BUBBLE:
-    #mira_services_catalog  = ServiceCatalog (alla katalogposter) som JSON-array
-                              ← läggs som INNEHÅLL i <textarea>, INTE i value=""
-    #mira_services_active   = Current User's Company's services_active_json
-                              ← lookup-resultat: { slug: {option_id, qty, monthly_cost, info} }
-                              ← läggs som INNEHÅLL i <textarea>
-    #mira_company_id        = Current User's Company's unique id  (value="")
-    #mira_company_name      = Current User's Company's name        (value="")
-    #mira_api_host          = https://mira-exchange.onrender.com   (value="", redan ifyllt)
+  KOPPLING I BUBBLE (bara två fält):
+    #mira_company_id    = Current User's Company's unique id  (value="")
+    #mira_company_name  = Current User's Company's name        (value="")
+    #mira_api_host      = https://mira-exchange.onrender.com   (value="", redan ifyllt)
 
-  FLÖDE (alt a — mjuk landning):
-    • Klick på tile / "Läs mer" → popup öppnas med erbjudande-hero + radioval + qty.
-    • "Aktivera Reception →" POST:ar till /services/request-activation
-      som skapar en Förfrågan med kategori + nivå förvald i Bubble.
-      Carotte bekräftar manuellt — kund får bekräftelse-modal.
+  FLÖDE:
+    1. Blocket fetchar GET {host}/services/dashboard?company_id={id}
+       → { catalog: [...], active: {slug: {...}} }
+       Bubble privacy rules på Contract/Erbjudande säkrar isolering.
+    2. Klick på inaktiv tile / "Läs mer" → popup öppnas med
+       hero + radioval + qty + total. Innehållet uppdateras
+       LIVE när användaren byter Erbjudande (description_long,
+       includes, image, terms hämtas från valt Erbjudande).
+    3. "Aktivera X →" POST:ar till /services/request-activation
+       som återanvänder forfragan/create-kedjan (Comission +
+       notify-mail + iOS-push). Kund får bekräftelse-modal.
 
-  CATALOG-SHAPE (per post):
-    {
-      slug, name, subtitle, category ("platform"|"facility"),
-      image (url, fallback gradient om tom),
-      icon ("list"|"sparkle"|"cup"|"droplet"|"user"|"leaf"|"printer"|"fruit"),
-      color_from, color_to,
-      description_long,
-      includes: ["…","…"],
-      options: [{id,name,desc,price,unit}],   // unit defaultar till "/mån"
-      has_qty: bool, qty_label, qty_min, qty_max,
-      terms
-    }
-  ACTIVE-SHAPE (per slug-key):
-    { option_id, qty, monthly_cost, info }   // info = kort textsträng för tile-subtitle
+    Saknar company_id → demo-läge (statisk fallback för preview).
 -->
 
 <style>
@@ -168,9 +156,7 @@
   .mt-toast.err { background:rgba(248,113,113,0.12); border-color:rgba(248,113,113,0.45); color:#f87171; }
 </style>
 
-<!-- Bubble fyller dessa. Lämna tomma → demo-läge. -->
-<textarea id="mira_services_catalog" style="display:none" aria-hidden="true"></textarea>
-<textarea id="mira_services_active" style="display:none" aria-hidden="true"></textarea>
+<!-- Bubble fyller company_id/name. Saknas → demo-läge för preview. -->
 <input type="hidden" id="mira_company_id"   value="">
 <input type="hidden" id="mira_company_name" value="">
 <input type="hidden" id="mira_api_host"     value="https://mira-exchange.onrender.com">
@@ -387,18 +373,24 @@
       ? fmtKr(total)+'<small> '+(unit==='/mån'?'/ mån':esc(unit))+'</small>'
       : 'Ingår';
 
-    var hero = '<div class="mt-mhero" style="'+bg+'">'+
+    var heroBg = (opt && opt.image)
+      ? "background-image:url('"+esc(opt.image)+"')"
+      : bg;
+    var descLong = (opt && opt.description_long) || item.description_long || (opt && opt.desc) || '';
+    var hero = '<div class="mt-mhero" style="'+heroBg+'">'+
       '<button class="mt-mclose" data-act="close" aria-label="Stäng">✕</button>'+
       (unitPrice>0 ? '<div class="mt-mprice">'+fmtKr(unitPrice)+'<small> '+(unit==='/mån'?'/ mån':esc(unit))+'</small></div>' : '')+
-      '<div class="mt-mtt"><h3>'+esc(item.name)+'</h3><p>'+esc(item.description_long||'')+'</p></div>'+
+      '<div class="mt-mtt"><h3>'+esc(item.name)+'</h3><p>'+esc(descLong)+'</p></div>'+
       '<div class="mt-toast" id="mt-toast"></div>'+
     '</div>';
 
-    var inclHtml = (item.includes||[]).length
+    var includes = (opt && opt.includes && opt.includes.length) ? opt.includes : (item.includes||[]);
+    var inclHtml = includes.length
       ? '<div class="mt-section-h acc">Ingår</div><ul class="mt-incl">'+
-          item.includes.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+
+          includes.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+
         '</ul>'
       : '';
+    var terms = (opt && opt.terms) || item.terms || '';
 
     var ctaLabel = item.category==='platform' ? 'Uppgradera '+item.name+' →' : 'Aktivera '+item.name+' →';
 
@@ -411,7 +403,7 @@
         qtyHtml +
         '<div class="mt-tot">'+
           '<div><div class="mt-tot-l">Totalt</div><div class="mt-tot-v">'+totalLine+'</div></div>'+
-          '<div class="mt-terms">'+esc(item.terms||'')+'</div>'+
+          '<div class="mt-terms">'+esc(terms)+'</div>'+
         '</div>'+
         '<div class="mt-btns">'+
           '<button class="mt-btn ghost" data-act="close">Avbryt</button>'+
@@ -517,20 +509,41 @@
     if (ev.key==='Escape' && el('mt-mask').classList.contains('on')) closeModal();
   });
 
-  function loadJSON(id, fallback){
-    var raw = txt(id);
-    if (!raw) return fallback;
-    try { return JSON.parse(raw); } catch(e){ console.warn(id+' ogiltig JSON',e); return fallback; }
+  function setLoading(text){
+    var grid = el('mt-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:24px 12px;text-align:center;font-size:12px;color:var(--t3)">'+esc(text||'Hämtar tjänster…')+'</div>';
+  }
+  function setError(text){
+    var grid = el('mt-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:24px 12px;text-align:center;font-size:12px;color:#f87171">'+esc(text||'Kunde inte hämta tjänster')+'</div>';
   }
 
-  function init(){
-    var catRaw = txt('mira_services_catalog');
-    var actRaw = txt('mira_services_active');
-    CATALOG = (catRaw ? loadJSON('mira_services_catalog', DEMO_CATALOG) : DEMO_CATALOG) || [];
-    ACTIVE  = (actRaw ? loadJSON('mira_services_active',  DEMO_ACTIVE)  : (txt('mira_company_id') ? {} : DEMO_ACTIVE)) || {};
-    if (!Array.isArray(CATALOG)) CATALOG = [];
-    renderGrid();
+  function loadFromHost(){
+    var host = txt('mira_api_host') || 'https://mira-exchange.onrender.com';
+    var companyId = txt('mira_company_id');
+    if (!companyId) {
+      CATALOG = DEMO_CATALOG.slice();
+      ACTIVE  = JSON.parse(JSON.stringify(DEMO_ACTIVE));
+      renderGrid();
+      return;
+    }
+    setLoading('Hämtar tjänster…');
+    fetch(host+'/services/dashboard?company_id='+encodeURIComponent(companyId), {
+      method:'GET', headers:{'Accept':'application/json'}
+    })
+    .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
+    .then(function(j){
+      if (!j || !j.ok) { setError('Kunde inte hämta tjänster'); return; }
+      CATALOG = Array.isArray(j.catalog) ? j.catalog : [];
+      ACTIVE  = (j.active && typeof j.active === 'object') ? j.active : {};
+      if (!CATALOG.length) { setError('Inga tjänster konfigurerade ännu'); return; }
+      renderGrid();
+    })
+    .catch(function(){ setError('Nätverksfel — försök ladda om sidan'); });
   }
-  init();
+
+  loadFromHost();
 })();
 </script>
