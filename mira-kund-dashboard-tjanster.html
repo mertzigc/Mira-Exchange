@@ -77,14 +77,10 @@
   .mt-foot-off .mt-act:hover { color:var(--acc); }
 
   /* Popup-modal */
-  .mt-mask { position:fixed; inset:0; background:rgba(12,15,28,0.78); z-index:9000;
-    display:flex; align-items:center; justify-content:center; padding:20px;
-    opacity:0; pointer-events:none; transition:opacity 0.18s ease; }
-  .mt-mask.on { opacity:1; pointer-events:auto; }
+  .mt-mask { display:none; padding:6px 0 0; }
+  .mt-mask.on { display:flex; justify-content:center; }
   .mt-modal { background:var(--bg); border:1px solid rgba(255,255,255,0.10); border-radius:14px;
-    width:100%; max-width:560px; max-height:92vh; overflow-y:auto; overflow-x:hidden;
-    transform:translateY(8px); transition:transform 0.18s ease; }
-  .mt-mask.on .mt-modal { transform:translateY(0); }
+    width:100%; max-width:560px; overflow:hidden; }
 
   .mt-mhero { position:relative; height:180px; background-size:cover; background-position:center; overflow:hidden; }
   .mt-mhero::after { content:''; position:absolute; inset:0;
@@ -162,15 +158,17 @@
 <input type="hidden" id="mira_api_host"     value="https://mira-exchange.onrender.com">
 
 <div class="mt-wrap">
-  <div class="mt-head">
-    <div class="mt-title">Era tjänster <span class="mt-cnt" id="mt-cnt">···</span></div>
-    <div class="mt-sum" id="mt-sum">···</div>
+  <div id="mt-gridview">
+    <div class="mt-head">
+      <div class="mt-title">Era tjänster <span class="mt-cnt" id="mt-cnt">···</span></div>
+      <div class="mt-sum" id="mt-sum">···</div>
+    </div>
+    <div class="mt-grid" id="mt-grid"></div>
   </div>
-  <div class="mt-grid" id="mt-grid"></div>
-</div>
 
-<div class="mt-mask" id="mt-mask" aria-hidden="true">
-  <div class="mt-modal" id="mt-modal" role="dialog" aria-modal="true"></div>
+  <div class="mt-mask" id="mt-mask">
+    <div class="mt-modal" id="mt-modal" role="dialog" aria-modal="true"></div>
+  </div>
 </div>
 
 <script>
@@ -420,13 +418,15 @@
     modal.qty = item.qty_min || 1;
     modal.busy = false;
     renderModal();
+    el('mt-gridview').style.display = 'none';
     el('mt-mask').classList.add('on');
-    el('mt-mask').setAttribute('aria-hidden','false');
+    try { el('mt-mask').scrollIntoView({behavior:'smooth', block:'start'}); } catch(e){}
   }
   function closeModal(){
     el('mt-mask').classList.remove('on');
-    el('mt-mask').setAttribute('aria-hidden','true');
+    el('mt-gridview').style.display = '';
     modal.slug = null;
+    try { el('mt-gridview').scrollIntoView({behavior:'smooth', block:'start'}); } catch(e){}
   }
 
   function setToast(mode, text){
