@@ -1,6 +1,119 @@
 # Handoff – Förfrågan + Kalender (Mira)
 
-**Startad 2026-06-11.** Separat spår från sync-omtaget (se `HANDOFF.md` / `ARKITEKTUR_OCH_OMTAG.md`). Detta rör kund-facing UI: hur kunder skapar en bokningsförfrågan (commission → Lead → offert) och en ny kalender/planeringsmodul.
+**Startad 2026-06-11.** Separat spår från sync-omtaget (se `HANDOFF.md` / `ARKITEKTUR_OCH_OMTAG.md`). Detta rör kund-facing UI: hur kunder skapar en bokningsförfrågan (commission → Lead → offert), kalender/planeringsmodulen, och kalkylator-leads.
+
+---
+
+## STATUS 2026-06-22 — ALLA SPÅR I DRIFT, NÄSTA = ERBJUDANDE-ADMIN
+
+### ✅ I produktion (Render + Bubble live)
+- **Förfrågan-wizard** (`mira-forfragan-skapa.html`) — 4 steg, säljande erbjudande-hero, recurrence-serie, specialkost (chips), conditional underkategori, Capacity/Extern lokal-validering, beställar-multiselect, budget (slider+input), DEMO-fallback, CRM-företagsväljare (admin_crm=yes).
+- **Kalender** (`mira-kalender.html`) — Activity-feed, zoom År→Dag, kategori+underkategori+erbjudande visas i grid+popup, statusdropdowns per typ, kommentarstråd (namn+datum), CRM-läge.
+- **Render spar-kedja** (`/admin/forfragan/create`): Comission (samtliga fält bekräftade, se tabell nedan) + recurrence-serie + Activity write-through + notify (commission_new) + lead per beställare + coworker.Bokningar-patch.
+- **Push + Notis via Bubble-wf:er** `push_bokning` + `push_bokning_kommentar` (Render anropar; Bubble äger push). Triggas vid: ny bokning, kommentar, statusändring.
+- **Email**: `commission_new` + `commission_updated` (Hej First Name, kommentar-tråd renderad, Erbjudande-rad).
+- **Kalkylator-leads** (`workplace-strategy-navy__9_.html`) — leads landar i Bubble via Render (`/leads/create-from-calculator`), Formspree borttagen. Welcome skapar stub, booking berikar samma lead via external_reference.
+- **Activity-materialisering** (`activity_sync.js`) — Comission/Matter/Todo/Tengella → Activity, inkl. `subcategory` + `offer_title` (sweep + write-through).
+
+### KANONISK FÄLTNAMNSTABELL (gissa aldrig om — alla bekräftade av Christian)
+**Comission:** `Commission_title` · `delivery_date` · `Slutdatum` (ev-slut) · `Category` · `commission_status` (Ny/Hanterad/Utkast/Levererad — optionset **StatusUppdrag**) · `source` (optionset **lead_source**, värde `"Mira"`) · `Company` · `Description` · `commission_message` · `Leverantör` (list) · `Erbjudande` (relation) · `budget` · `Office` · `location` · `guest` · `po_number` · `allergens_json` · `internservice` (yes/no→false) · `Beställare` (list of Coworker) · `Produkttillägg` (list of Products) · `recurrence_rule`/`recurrence_group_id`/`recurrence_is_master`/`recurrence_until`
+**Underkategori (Comission, inkonsekvent stavning):** FE=`SubkategoriFE` · HK=`SubCategoryHK` · SP=`SubCategorySP` · FM=`SubcategoryFM`. FM-värdet `Teknisk supprt` (Bubble har faktiska stavfelet).
+**Status-optionsets (case-sensitiva):**
+- StatusUppdrag (Bokning): Utkast · Ny · Hanterad · Levererad
+- Status Ärende (Matter): Utkast · Pågående · **Avslutat** (med t)
+- status_reminder (Todo): Planerad · Pågående · **Avslutad** (med d) · Försenad
+**Office:** typ `Office` · namn `Office_title` · adress `office_address` (geografiskt objekt, plocka `.address`) · företag `Kundföretag`
+**Erbjudande:** typ `Erbjudande` · `Status` (Status erbjudande: Utkast/Publicerat/Utgånget) · `startdatum`/`slutdatum` (lowercase) · `Kundföretag` (**list of ClientCompanies** — tom=allmän, innehåller company=unik) · Title/Image/Bildspel/Description/Description_long/Capacity/`Extern lokal`/Logistik/Målgrupp/PrisPerPerson/Produktinnehåll/Produkttillägg/Villkor
+**ClientCompany:** `leverantör` (list, ej använt — vi använder kategori→ID-mappning nedan) · `Name_company` · Coworker→`Kundföretag`
+**Lead:** `Source` (="Mira") · `Name` · `titel` (lowercase) · `Description` · `Category` · `client_company` · `Comission` · `Email`. (Lead saknar `Delivery_date` — robust drop hanterar det; bekräfta exakt fältnamn vid behov.)
+**Leverantör per kategori (typ `Leverantör - Supplier`, namn `Företagsnamn`):** FE `1731411052569x831010598495453200` · Staff `1732782758356x272951352004444160` · Housekeeping `1732782847141x739655205427609600` · OtherFM `1746511649924x692607212964806700`
+**Coworker:** typ `Coworker` · `Email` · `Förnamn`/`Efternamn` · `Bokningar` (list of Comissions) · `Kundföretag`
+**User (notify):** typ `User` · `Associated_company` (list) · `email` (inbyggt, kan ligga nästlat under `authentication.email.email`)
+**EmailQueue:** typ `emailqueue` · `template_id`/`entity_id`/`entity_type`/`to_email`/`to_name`/`email_sent`/`extra_data` (alla lowercase)
+
+**Christians regel ([[feedback-communication-style]]):** Gissa ALDRIG fältnamn/casing/optionset-värden — fråga först, hedga inte i koden. Bubble-editorn versaliserar visuellt → Data API-svar/reject-loggar är sanningen.
+
+### Push/notify-arkitektur
+- **Render** äger: Comission, recurrence, Activity, lead, coworker, email (commission_new/commission_updated).
+- **Bubble-wf:er** äger: iOS-push + Notis. Render anropar `https://mira-fm.com/api/1.1/wf/push_bokning` resp `push_bokning_kommentar` med `{ bokning, subject, body }`.
+- **Notify-mottagare**: Users där `Associated_company contains` commissionens Company.
+
+### Render-endpoints (auth: x-admin-token = PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN)
+- `GET /admin/forfragan/{schema,bootstrap,offers,users}` — läs
+- `POST /admin/forfragan/{create,update}` — spar-kedja
+- `GET /admin/planning/{activities,companies}` + `POST /admin/planning/activity/action` — kalender
+- `POST /leads/create-from-calculator` — kalkylator-leads (upsert på external_reference)
+
+### Bubble-wiring (hidden inputs i HTML-elementen)
+Alla tre block: `#mira_company_id`, `#mira_company_name`, `#mira_api_host`, `#mira_planning_token` (kalkylatorn behöver bara host).
+Wizard + kalender: `#mira_admin_crm` ("yes" → CRM-läge, kundsök).
+Kalender + wizard kommentarer: `#mira_user_name` (för tråd-stämpel "Förnamn · datum: text").
+
+### Återstående följdjobb (mindre)
+- Lead-datumfält: robust drop kvar; ge exakt fältnamn för att stänga (testar `delivery_date`).
+- Produkttillägg-resolve (id→namn/pris) för tillvals-UI i wizarden.
+- `/sync/activities` i nattlig cron.
+- Google Places autocomplete (kräver Maps-nyckel).
+- Gamla bokningar saknar `Comission.Erbjudande`-länk; offer_title backfillas bara för bokningar skapade efter 2026-06-22.
+
+---
+
+## NÄSTA STÅR SPÅR 2026-06-22 — ERBJUDANDE-ADMIN (ny flik i kommunikations-admin)
+
+**Mål:** Bygg "Erbjudanden" som **ny flik i `mira-kommunikation-admin.html`** (vid sidan av Inbjudningar/Målgrupp/Nyheter/Undersökningar/E-post). Ersätter dagens Bubble-gjorda erbjudande-formulär. Smartare än idag — stöd både allmänna mallar och kundunika erbjudanden, samt **konfigurerbara prisformler** per erbjudande utöver dagens "antal × pris/person".
+
+**Varför där:** Kommunikations-admin har redan ck-tabs-strukturen (`ck-tab data-t="…" onclick="ckShow('…',this)"`, `<div id="ck-…" class="ck-panel">`), token-systemet, formulär-byggstenarna och undersökningsmodulens fråge-builder direkt bredvid. Återanvänd det istället för ett fristående element. Lägg fliken som `data-t="offers"` (mellan Nyheter och Undersökningar känns naturligt — eller efter Undersökningar om vi vill ha kommunikation först, leverabler sist).
+
+**Inspiration (i samma fil):** Survey-fliken har redan ett q.type-baserat dynamiskt formulärsystem (renderQuestion med text/textarea/select/yesno/allergens/plus_ones) — det mönstret står modell för både erbjudandets `custom_form_json` (frågor kunden möter i wizarden) och fråge-buildern i admin-UI:t. Du kan i princip klona survey-flikens builder och rikta den mot Erbjudande-typen istället för Survey-typen.
+
+**Två sammanflätade saker att lösa:**
+
+**(A) Admin-vyn — skapa/redigera erbjudanden:**
+- Lista alla erbjudanden, filter på Status (Utkast/Publicerat/Utgånget) + Kundföretag (tom=allmän / kund=unik).
+- Skapa/redigera med samtliga befintliga fält (Title/Image/Bildspel/Description/Description_long/Capacity/Extern lokal/Logistik/Målgrupp/Produktinnehåll/Produkttillägg/Villkor/startdatum/slutdatum/Status/Kundföretag).
+- **Dynamisk fältuppsättning per erbjudande** = nya fält på Erbjudande:
+  - `custom_form_json` (text) — JSON-array av frågor som visas för kunden i förfrågan-wizardens "Eventdata"-steg när erbjudandet är valt. Schema: `[{id, label, type:"number"|"text"|"select"|"slider", required, options?, min/max/step?, unit?, price_driver?}]`.
+  - `pricing_formula_json` (text) — JSON med prisregler (se B).
+- Admin-vyn bygger formulär-JSON i ett **drag-och-släpp / fråge-builder-UI** (lånar renderQuestion från survey-modulen, vänd andra hållet).
+
+**(B) Prisformler — utöver `antal × PrisPerPerson`:**
+- Engine-typer som ska stödjas (alla i `pricing_formula_json`):
+  - **per_person**: `total = antal × pris`
+  - **per_kvm**: `total = kvm × pris/kvm`
+  - **per_hour**: `total = timmar × pris/timme`
+  - **fixed**: fast pris (oavsett input)
+  - **tiered_discount**: rabatt per intervall (`>=20 → 10%`, `>=50 → 20%`)
+  - **volume_discount**: glidande rabatt (per_person × (1 - rabattsats(antal)))
+  - **piecewise**: olika pris per intervall (1–10 = 800kr/pp, 11–25 = 700kr/pp …)
+  - **min_charge**: lägsta totalpris (golv)
+  - **addon_per_unit**: tillägg som driver eget pris (t.ex. "extra timme à X kr")
+- Frontend = en ren JS-evaluator (`evalPricing(formula, answers)`) som tar formulär-svaren och returnerar `{ subtotal, discount, total, breakdown[] }` — visas i wizardens kostnadspanel live.
+- Backend = identisk evaluator i Render som **validerar och förseglar** totalen vid `/admin/forfragan/create` (klient kan inte ljuga om pris).
+
+**(C) Förfrågan-wizardens integration:**
+- När erbjudande väljs → `custom_form_json` renderas dynamiskt i Eventdata-steget (samma motor som survey-modulen).
+- Svar (formulär + standardfält som datum/plats/beställare) skickas som `offer_answers` i `/create`.
+- Render kör `evalPricing(offer.pricing_formula_json, offer_answers)` och sparar `breakdown` i Comission.Description eller nytt fält.
+
+**Frågor att lösa med Christian innan kod:**
+1. Bubble-fältnamn för `custom_form_json` + `pricing_formula_json` (skapas av honom — ge exakta namn).
+2. Vill vi **versionera** formler (history/preview) eller bara overwrite?
+3. Hur sparas **breakdown** på Comission — nytt textfält (`price_breakdown_json`)? Eller bara i Description?
+4. Auth för admin-modulen — samma `x-admin-token` eller separat `OFFER_ADMIN_TOKEN`?
+5. Vilka kategori-/leverantörskopplingar är default för en ny mall — eller alltid manuellt?
+
+**Föreslagna nya Render-endpoints:**
+- `GET /admin/offers/list?company=&status=` — admin-lista
+- `GET /admin/offers/:id` — full detalj inkl. JSON
+- `POST /admin/offers/upsert` — create/update
+- `POST /admin/offers/preview-price` — testa en formel mot fejk-svar (för admin-UI)
+- `POST /admin/offers/clone` — klona allmän mall till kundunik
+- `DELETE /admin/offers/:id` (eller patcha Status=Utgånget)
+
+**Återanvänd från survey-modulen:**
+- `QUESTION_TYPES` + `renderQuestion`-mönstret
+- CSS-byggstenar (.mp-allergens, .mp-chip, .yesno)
+- esc/safeText-helpers
 
 ## Mål
 Bygga två moduler i samma mönster som `mira-kommunikation-admin.html`: **all intelligens i HTML-fil i repot + CRUD-proxy i `index.js`, Bubble som databas/lagring.** Design enligt `mira-bokningsoversikt.html` (mörkt #1e2235, orange #F47B30, Arial Black-rubriker).
