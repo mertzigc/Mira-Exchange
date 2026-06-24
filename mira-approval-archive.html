@@ -265,7 +265,7 @@
         <h3>Koppla till företag (valfritt)</h3>
         <div class="cc-picker">
           <div data-aa="cc-search-wrap">
-            <input type="text" data-aa="cc-search" placeholder="Sök ClientCompany…" autocomplete="off">
+            <input type="text" data-aa="cc-search" placeholder="Sök kund / företag…" autocomplete="off">
             <div class="cc-dd" data-aa="cc-dd"></div>
           </div>
           <div data-aa="cc-selected" class="cc-selected hidden">
@@ -726,10 +726,13 @@
     if (ccCache || ccLoading) return;
     ccLoading = true;
     try {
-      const r = await fetch(HOST + "/admin/clientcompany/all?limit=2000",
+      // Återanvänder samma route som mira-forfragan-skapa.html använder.
+      // Den känner till Bubbles faktiska Name_company-fält och returnerar
+      // hela listan sorterad client-ready.
+      const r = await fetch(HOST + "/admin/planning/companies",
         { headers: { "x-admin-token": TOKEN } });
       const j = await r.json().catch(() => ({}));
-      if (r.ok && j.ok) ccCache = j.items || [];
+      if (r.ok && j.ok) ccCache = j.results || [];
       else ccCache = [];
     } catch { ccCache = []; }
     ccLoading = false;

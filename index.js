@@ -17235,7 +17235,8 @@ app.get("/admin/approval/list", async (req, res) => {
       await Promise.all(ccIds.map(async (id) => {
         const cc = await bubbleGet("ClientCompany", id).catch(() => null);
         if (cc) {
-          const name = cc.name || cc.Name || cc.company_name || cc.Company_name
+          const name = cc.Name_company
+                    || cc.name || cc.Name || cc.company_name || cc.Company_name
                     || cc.namn || cc.Namn || "";
           ccMap.set(id, name || null);
         }
@@ -17274,7 +17275,8 @@ app.get("/admin/clientcompany/all", async (req, res) => {
     const items = [];
     for (const cc of (all || [])) {
       if (!cc?._id) continue;
-      const name = cc.name || cc.Name || cc.company_name || cc.Company_name
+      const name = cc.Name_company   // Bubble-konvention i Carottes ClientCompany
+                || cc.name || cc.Name || cc.company_name || cc.Company_name
                 || cc.namn || cc.Namn || cc.företagsnamn || cc.Företagsnamn || "";
       if (!name) continue;
       items.push({ id: cc._id, name });
