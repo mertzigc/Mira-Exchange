@@ -51,14 +51,16 @@
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
   @media (max-width:560px){.row2{grid-template-columns:1fr}}
 
-  /* Drop zone */
-  .drop{border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:24px;text-align:center;
+  /* Drop zone — display:block kritiskt eftersom <label> är inline by default
+     vilket annars bryter padding och dashed-bordern runt inner-divs */
+  .drop{display:block;width:100%;
+    border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:24px;text-align:center;
     cursor:pointer;transition:.15s;background:var(--card)}
   .drop:hover, .drop.drag{border-color:var(--orange);background:var(--orange-dim)}
   .drop .ic{font-size:34px;line-height:1;margin-bottom:8px;color:var(--w40)}
-  .drop .pri{font-size:14px;font-weight:700;margin-bottom:3px}
+  .drop .pri{font-size:14px;font-weight:700;margin-bottom:3px;color:var(--white)}
   .drop .sec{font-size:11px;color:var(--w40)}
-  .drop input[type=file]{display:none}
+  .drop input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
   ul.files{list-style:none;margin:12px 0 0;padding:0}
   li.file{display:flex;align-items:center;justify-content:space-between;background:var(--card);

@@ -1304,7 +1304,7 @@ async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
 async function tmplApprovalInvite(e, extra, toName, ctaLabel, item) {
   const x = extra || {};
   const senderName = x.sender_name || x.company_name || "Carotte";
-  const accent     = x.accent_color || "#1d4ed8";
+  const accent     = x.accent_color || "#df6f39";
   const rubrik     = x.rubrik || "Avtal att signera";
   const viewUrl    = x.view_url || "";
   const message    = x.message || "";
@@ -1336,7 +1336,7 @@ async function tmplApprovalInvite(e, extra, toName, ctaLabel, item) {
 
 async function tmplApprovalOtp(e, extra, toName, ctaLabel, item) {
   const x = extra || {};
-  const accent  = x.accent_color || "#1d4ed8";
+  const accent  = x.accent_color || "#df6f39";
   const rubrik  = x.rubrik || "Avtal";
   const code    = String(x.code || "").trim();
   const mins    = Number(x.expires_minutes || 10);
