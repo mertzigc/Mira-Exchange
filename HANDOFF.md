@@ -5,9 +5,144 @@
 
 ---
 
-## 0e. OfferApproval full Render-cutover — PÅGÅR 2026-06-24
+## 0e. OfferApproval full Render-cutover — KODAT & VERIFIERAT 2026-06-24
 
-**Beslut (2026-06-24):** allt signeringsflöde flyttas till Render. Bubble blir bara databasen. Cutover sker i tre commits — den här är **commit 1 av 3**.
+**Beslut + leverans (2026-06-24):** allt signeringsflöde flyttat till Render. Bubble är bara databas + Carotte-init-UI. End-to-end smoke-testat: invite-mail → landningssida → OTP → signering → mergad PDF + signeringsbevis → bekräftelsemail. Alla tre commits levererade.
+
+### Status
+
+| Komponent | Status |
+|---|---|
+| Datamodell (OfferApprovalRequest + `request`-länk på OfferApproval) | ✅ Skapad i Bubble |
+| EmailTemplate-rader (approval_invite/otp/signed) | ✅ Skapade i Bubble |
+| Render env vars (APPROVAL_*_TEMPLATE_ID) | ✅ Satta |
+| Backend routes (/approval/create, /view, /request-otp, /confirm, /docs/offer-approval, /admin/approval/list) | ✅ Live |
+| Email-templates i emailer.js (tre nya tmpl-funktioner) | ✅ Live |
+| Landningssida (/approval/view/:id?t=...) | ✅ Live |
+| Carotte-init-block (mira-approval-create.html) | ✅ Skapad — väntar inbäddning i Bubble |
+| Cutover Bubble → Render | ⏳ Init-block ska bäddas in i dashboard_crm; gammal /offerapproval/[id]-sida + dess workflows kan rivas |
+
+### Filer
+
+| Fil | Roll |
+|---|---|
+| `offer_approval_doc.js` | DI-engine: bygg HTML-bevis → puppeteer-core PDF → pdf-lib merge med originalen → bubbleUploadFile → PATCH signed_document. Läser parent (Request) först, fallback till child. |
+| `approval-cert.template.html` | A4-mall för signeringsbeviset (Carotte-brandad, ljus). |
+| `mira-approval-create.html` | Carotte-init-block: drag-drop filer, recipient-rader, rubrik/meddelande/sender/expires, POSTar `multipart/form-data` till `/approval/create`. Embeds i Bubble dashboard_crm med hidden inputs för HOST + PLANNING_TOKEN + sender-email/name. |
+| `emailer.js` | 3 nya template-funktioner (`tmplApprovalInvite/Otp/Signed`) + switch-cases. |
+| `index.js` | Routes + helpers (token-hash, OTP-gen, CORS, fail-fast på env). |
+| `package.json` | `puppeteer-core ^23` + `@sparticuz/chromium ^131` + `pdf-lib ^1.17` + `multer ^1.4.5-lts.1`. |
+
+### Datamodell
+
+**`OfferApprovalRequest`** (moder)
+| Fält | Typ |
+|---|---|
+| `rubrik` | text |
+| `meddelande` | text |
+| `dokument` | List of Dokument |
+| `clientcompany` | ClientCompany (optional) |
+| `deal` | Deal (optional) |
+| `sender_email`, `sender_name` | text |
+| `status` | option set `offer_approval_status` (Draft/Sent/Viewed/OTP_Sent/Approved/Expired/Revoked) |
+| `recipients_count`, `signed_count` | number |
+| `expires_at` | date (optional) |
+
+**`OfferApproval`** (barn) — befintliga fält + nytt:
+| Fält | Typ |
+|---|---|
+| `request` | OfferApprovalRequest (NYTT — länk till moder) |
+| `signed_document` | file (skapat i 0c-fasen) |
+| `signed_document_generated_at` | text (skapat i 0c-fasen) |
+
+Gamla speglade fält (`rubrik`/`meddelande`/`dokument` etc) lever vidare på barn-typen för bakåtkomp; nya flödet skriver parent-första.
+
+### Endpoints
+
+| Method + Path | Auth | Beskrivning |
+|---|---|---|
+| `POST /approval/create` | x-admin-token (PLANNING) | multipart: filer + payload-JSON. Skapar Dokument + Request + N OfferApproval + N invite-mail. Fail-fast om template-IDs saknas. |
+| `GET /approval/view/:id?t=...` | token i query | Server-renderad landningssida (auto-OTP-trigger, embedded JS). |
+| `POST /approval/request-otp/:id` | token i body | Genererar 6-siffrig OTP, SHA-256 + 10 min exp, köar OTP-mail. Status → OTP_Sent. |
+| `POST /approval/confirm/:id` | token + otp i body | 5-stegs: rädda approved_at/ip/ua → doc-gen → status=Approved + bränn OTP → parent-rollup → bekräftelsemail. Idempotent på `signed_document`. |
+| `POST /docs/offer-approval/:id` | x-sync-secret | Bara doc-gen (för manuell omgenerering). |
+| `GET /admin/approval/list` | x-admin-token | Lista Requests för Carotte-UI (filter på status, limit). |
+
+### Env vars (Render)
+
+| Namn | Värde |
+|---|---|
+| `APPROVAL_INVITE_TEMPLATE_ID` | Bubble unique_id för EmailTemplate slug=approval_invite |
+| `APPROVAL_OTP_TEMPLATE_ID` | Bubble unique_id för EmailTemplate slug=approval_otp |
+| `APPROVAL_SIGNED_TEMPLATE_ID` | Bubble unique_id för EmailTemplate slug=approval_signed |
+| `PLANNING_ADMIN_TOKEN` | Återanvänder befintlig (samma som /admin/forfragan/*) |
+
+### Cutover-checklista — Bubble-städning
+
+När `mira-approval-create.html` är inbäddad och Carotte använt det live i några dagar:
+
+1. **Riv Bubble-sidan `/offerapproval/[id]`** — landningssidan lever nu på Render. URL:erna i nya invite-mailen pekar redan dit.
+2. **Riv Bubble-workflows kring OfferApproval-skapande:**
+   - "Button Skapa länk is clicked" (skapade approval_link manuellt)
+   - "Button Skicka är clicked" → emailqueue-create (Render gör det nu)
+   - Alla Make changes to OfferApproval på godkännande-sidan
+3. **Behåll i Bubble:**
+   - Datatyperna (OfferApproval, OfferApprovalRequest, Dokument) — Render läser/skriver direkt
+   - EmailTemplate-rader och emailqueue-pollern (oförändrad)
+   - dashboard_crm-sidan (Carotte-UI:t bor där)
+4. **Övergångsperiod:** gamla OfferApproval-poster (token-format som inte är SHA-256-hex) signeras vidare på Bubble-sidan tills den rivs. Hård cutoff på datum X — du sätter X när du känner dig trygg.
+5. **OPTIONAL: switch URL från onrender.com till api.mira-fm.com** — när du har en custom domän mappad mot Render, uppdatera `mira_api_host` i HTML-blocket. Befintliga view_url:er fortsätter funka eftersom Render serverar både onrender.com och api.mira-fm.com.
+
+### Bubble-inbäddning av `mira-approval-create.html`
+
+Klistra in hela filen i ett HTML-element på `dashboard_crm`-sidan (en ny tab eller popup). Sätt dessa hidden-input values via Bubble-data:
+
+```
+#mira_api_host        = "https://mira-exchange.onrender.com"
+#mira_planning_token  = PLANNING_ADMIN_TOKEN (samma som /admin/forfragan/*)
+#mira_sender_email    = Current User's email
+#mira_sender_name     = Current User's name (eller "Carotte")
+#mira_clientcompany   = (optional) parent Deal's ClientCompany unique_id
+#mira_deal            = (optional) parent Deal unique_id
+```
+
+Init-blocket använder själv ingen Bubble Data API — allt skickas via x-admin-token mot Render.
+
+### Säkerhet
+
+- **Tokens:** raw 32-byte hex i URL, SHA-256-hash i DB. Constant-time `timingSafeEqual`.
+- **OTP:** 6-siffrig, SHA-256-hash i DB, 10 min exp, brännbar.
+- **Rate-limit:** 20 OTP-anrop / 30 confirm-anrop per IP per timme.
+- **CORS:** explicit allowlist (carotteconcierge.bubbleapps.io, mira-fm.com, www.mira-fm.com).
+- **Master-Bubble-nyckeln** stannar serverside hela tiden.
+- **PDF-integritet:** varje original SHA-256-hashas, hashen visas i signeringsbeviset.
+
+### Smoke-test
+
+```bash
+# 1. Skapa
+curl -X POST "https://mira-exchange.onrender.com/approval/create" \
+  -H "x-admin-token: $PLANNING_ADMIN_TOKEN" \
+  -F 'payload={"rubrik":"Test","meddelande":"...","sender_email":"christian@carotte.se","sender_name":"Carotte","recipients":[{"email":"x@y.se","name":"X"}]}' \
+  -F 'files=@/tmp/test.pdf'
+
+# 2. Öppna view_url i browser → OTP-mail anländer → signera
+
+# 3. Lista pending (Carotte-UI testar mot denna)
+curl "https://mira-exchange.onrender.com/admin/approval/list?status=Sent&limit=10" \
+  -H "x-admin-token: $PLANNING_ADMIN_TOKEN"
+```
+
+### Lärda lektioner (för framtida ny-Render-flöden)
+
+- **Render + Puppeteer = pivot till `@sparticuz/chromium` direkt.** Spar 2-3 deploys av Chrome-cache-felsökning.
+- **emailqueue-fältet är `template_id`** (Bubble-relation till EmailTemplate-rad), inte `template_slug`. emailer.js stödjer slug-fallback men Bubble's schema avvisar okända fält vid write.
+- **PATCH-status FÖRST efter doc-gen** (eller annan riskoperation), annars triggar "redan klar"-idempotens på halvfärdigt state vid retry. Bra mönster: skriv "ofarliga" fält först, riskoperation, sen finalisera.
+- **OfferApproval-fält i Bubble är lowercase-slug** (`approval_link`, inte `Approval_link`). Visningen i datatyper-vyn använder display-namnet, API:t använder slug.
+
+---
+
+## 0e-archive. Mellan-steg dokumenterade under bygget — KAN IGNORERAS
 
 ### Datamodell — KRAV INNAN COMMIT 1 KAN ANVÄNDAS
 

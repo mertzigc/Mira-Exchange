@@ -1,0 +1,624 @@
+<!--
+  MIRA — SKAPA SIGNERING (Carotte-init-block för OfferApproval-flödet)
+  ------------------------------------------------------------------
+  Klistras in i ett HTML-element i Bubble dashboard_crm (Carotte-personal).
+  Laddar upp filer, samlar mottagare, postar till Render → som skapar
+  Dokument + OfferApprovalRequest + N OfferApproval + N invite-mail.
+
+  KOPPLING I BUBBLE (sätt value="" via Bubble-data):
+    #mira_api_host        = https://mira-exchange.onrender.com
+    #mira_planning_token  = PLANNING_ADMIN_TOKEN (samma som /admin/forfragan/*)
+    #mira_sender_email    = Current User's email
+    #mira_sender_name     = Current User's full name (eller "Carotte")
+    #mira_clientcompany   = (optional) Pre-vald ClientCompany unique_id
+    #mira_deal            = (optional) Pre-vald Deal unique_id
+
+  All intelligens i Render. Master-Bubble-nyckeln stannar server-side.
+-->
+<input type="hidden" id="mira_api_host"       value="https://mira-exchange.onrender.com">
+<input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+<input type="hidden" id="mira_sender_email"   value="">
+<input type="hidden" id="mira_sender_name"    value="">
+<input type="hidden" id="mira_clientcompany"  value="">
+<input type="hidden" id="mira_deal"           value="">
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .ac-wrap, .ac-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .ac-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --input:#2e3350;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --red:#E05A5A; --blue:#5B8DEF;
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
+    background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;width:100%;border-radius:14px;padding:0 20px 30px;
+  }
+  .ac-top{display:flex;align-items:center;justify-content:space-between;padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:20px}
+  .ac-h1{font-family:'DM Serif Display',Georgia,serif;font-size:24px;line-height:1.1;letter-spacing:-.01em}
+  .ac-h1 span{color:var(--orange)}
+  .ac-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;margin-top:3px;text-transform:uppercase}
+
+  .ac-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px 26px;margin-bottom:14px}
+  .ac-panel h2{font-family:'DM Serif Display',Georgia,serif;font-size:18px;margin-bottom:14px}
+
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px}
+  .field input,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .field textarea{min-height:90px;resize:vertical}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  @media (max-width:560px){.row2{grid-template-columns:1fr}}
+
+  /* Drop zone */
+  .drop{border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:24px;text-align:center;
+    cursor:pointer;transition:.15s;background:var(--card)}
+  .drop:hover, .drop.drag{border-color:var(--orange);background:var(--orange-dim)}
+  .drop .ic{font-size:34px;line-height:1;margin-bottom:8px;color:var(--w40)}
+  .drop .pri{font-size:14px;font-weight:700;margin-bottom:3px}
+  .drop .sec{font-size:11px;color:var(--w40)}
+  .drop input[type=file]{display:none}
+
+  ul.files{list-style:none;margin:12px 0 0;padding:0}
+  li.file{display:flex;align-items:center;justify-content:space-between;background:var(--card);
+    border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:6px;font-size:12px}
+  li.file .meta{color:var(--w40);margin-right:auto;margin-left:10px;font-size:11px}
+  li.file .rm{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 6px}
+
+  /* Recipients */
+  .rcp-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center}
+  .rcp-row input{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;
+    color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb)}
+  .rcp-row input:focus{outline:none;border-color:var(--orange)}
+  .rcp-rm{background:none;border:1px solid var(--border);color:var(--w40);width:32px;height:34px;
+    border-radius:8px;cursor:pointer;font-size:14px}
+  .rcp-rm:hover{color:var(--red);border-color:var(--red)}
+  .rcp-add{background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    padding:9px 13px;border-radius:8px;font-size:12px;cursor:pointer;margin-top:4px}
+  .rcp-add:hover{border-color:var(--orange);color:var(--orange)}
+
+  /* Historik-lista (Deal-aware mode) */
+  .hist-list{list-style:none;padding:0;margin:0}
+  .hist-row{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    margin-bottom:8px;overflow:hidden}
+  .hist-head{display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;
+    transition:background .15s}
+  .hist-head:hover{background:var(--deep)}
+  .hist-head .rubrik{font-weight:700;font-size:13px;flex:1;min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .hist-head .meta{font-size:11px;color:var(--w40);flex-shrink:0}
+  .hist-head .arrow{color:var(--w40);font-size:13px;flex-shrink:0;transition:transform .15s}
+  .hist-row.open .arrow{transform:rotate(180deg)}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;
+    letter-spacing:.4px;text-transform:uppercase;padding:3px 9px;border-radius:999px;
+    border:1px solid;flex-shrink:0}
+  .pill .dot{width:5px;height:5px;border-radius:50%}
+  .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green);border-color:rgba(76,175,125,.35)}
+  .pill.s-Approved .dot{background:var(--green)}
+  .pill.s-Sent,.pill.s-OTP_Sent,.pill.s-Viewed{background:var(--orange-dim);color:var(--orange);border-color:rgba(244,123,48,.35)}
+  .pill.s-Sent .dot,.pill.s-OTP_Sent .dot,.pill.s-Viewed .dot{background:var(--orange)}
+  .pill.s-Draft{background:var(--w10);color:var(--w70);border-color:var(--border)}
+  .pill.s-Draft .dot{background:var(--w40)}
+  .pill.s-Expired,.pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red);border-color:rgba(224,90,90,.35)}
+  .pill.s-Expired .dot,.pill.s-Revoked .dot{background:var(--red)}
+  .hist-detail{display:none;border-top:1px solid var(--border);padding:14px 16px;
+    background:var(--panel);font-size:12px}
+  .hist-row.open .hist-detail{display:block}
+  .hist-detail .meta-grid{display:grid;grid-template-columns:120px 1fr;gap:6px 14px;
+    margin-bottom:14px;color:var(--w70)}
+  .hist-detail .meta-grid .k{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .hist-detail h4{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--w40);
+    margin:14px 0 8px;font-weight:700}
+  .rcp-table{width:100%;border-collapse:collapse;font-size:12px}
+  .rcp-table th,.rcp-table td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+  .rcp-table th{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);font-weight:700}
+  .rcp-table td{color:var(--w70)}
+  .rcp-table td.email{color:var(--white);font-weight:700}
+  .rcp-table td a{color:var(--orange);text-decoration:none;font-size:11px;font-weight:700}
+  .rcp-table td a:hover{text-decoration:underline}
+  .doc-row{display:flex;align-items:center;justify-content:space-between;background:var(--card);
+    border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px}
+  .doc-row a{color:var(--w70);text-decoration:none;font-size:11px;font-weight:700;
+    background:var(--input);border:1px solid var(--border);padding:5px 10px;border-radius:6px;
+    text-transform:uppercase;letter-spacing:.3px}
+  .doc-row a:hover{color:var(--orange);border-color:var(--orange)}
+  .hist-empty{text-align:center;color:var(--w40);font-size:12px;padding:28px 16px;
+    border:1px dashed var(--border);border-radius:10px}
+  .hist-loading{text-align:center;color:var(--w40);font-size:12px;padding:18px}
+
+  .toggle-create{display:flex;align-items:center;justify-content:center;width:100%;
+    background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    padding:14px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;
+    margin:14px 0 0;letter-spacing:.3px}
+  .toggle-create:hover{border-color:var(--orange);color:var(--orange)}
+
+  /* Footer / submit */
+  .ac-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 20px}
+  .ac-foot .count{font-size:12px;color:var(--w40)}
+  .ac-foot .count b{color:var(--white)}
+  .btn-primary{background:var(--orange);color:#1c1206;border:none;border-radius:10px;
+    padding:12px 22px;font-size:13px;font-weight:700;cursor:pointer}
+  .btn-primary:disabled{opacity:.4;cursor:not-allowed}
+  .btn-secondary{background:var(--input);border:1px solid var(--border);color:var(--white);
+    border-radius:10px;padding:10px 18px;font-size:12px;cursor:pointer}
+
+  .err{color:var(--red);font-size:12px;margin-top:10px;min-height:16px}
+  .ok-block{background:var(--panel);border:1px solid var(--green);border-radius:14px;padding:22px 26px}
+  .ok-block h2{font-family:'DM Serif Display',Georgia,serif;color:var(--green);font-size:20px;margin-bottom:8px}
+  .ok-list{list-style:none;padding:0;margin:14px 0 0}
+  .ok-list li{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;
+    margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    word-break:break-all}
+  .ok-list li a{color:var(--blue);text-decoration:none;font-family:Menlo,Consolas,monospace;font-size:11px}
+  .ok-list li a:hover{text-decoration:underline}
+  .hidden{display:none !important}
+</style>
+
+<div class="ac-wrap" id="ac-root">
+
+  <div class="ac-top">
+    <div>
+      <div class="ac-h1" id="ac-title">Skicka för <span>signering</span></div>
+      <div class="ac-sub" id="ac-subtitle">OfferApproval-flöde · Mira-Exchange</div>
+    </div>
+  </div>
+
+  <!-- HISTORIK (visas bara i Deal-aware mode) -->
+  <div id="ac-history-view" class="hidden">
+    <div class="ac-panel">
+      <h2>Signeringsprocesser</h2>
+      <div id="ac-history-body">
+        <div class="hist-loading">Hämtar historik…</div>
+      </div>
+    </div>
+    <button class="toggle-create" id="ac-toggle-create">+ Skicka ny signering</button>
+  </div>
+
+  <!-- INIT-formuläret -->
+  <div id="ac-form-view">
+    <div class="ac-panel">
+      <h2>1. Dokument</h2>
+      <label class="drop" id="ac-drop">
+        <div class="ic">⬆</div>
+        <div class="pri">Dra hit PDF-filer eller klicka för att välja</div>
+        <div class="sec">Flera filer OK · max 25 MB per fil · max 20 filer totalt</div>
+        <input type="file" id="ac-files" accept="application/pdf" multiple>
+      </label>
+      <ul class="files" id="ac-file-list"></ul>
+    </div>
+
+    <div class="ac-panel">
+      <h2>2. Mottagare</h2>
+      <div id="ac-recipients"></div>
+      <button type="button" class="rcp-add" id="ac-rcp-add">+ Lägg till mottagare</button>
+    </div>
+
+    <div class="ac-panel">
+      <h2>3. Meddelande</h2>
+      <div class="field">
+        <label>Rubrik (visas i mail + på signeringssidan)</label>
+        <input type="text" id="ac-rubrik" placeholder="t.ex. Tilläggsavtal Lokalvård" maxlength="120">
+      </div>
+      <div class="field">
+        <label>Personligt meddelande (valfritt)</label>
+        <textarea id="ac-meddelande" placeholder="Hej, här kommer avtalet…"></textarea>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Avsändarnamn (visas som From)</label>
+          <input type="text" id="ac-sender-name" placeholder="Carotte">
+        </div>
+        <div class="field">
+          <label>Sista signeringsdag (valfritt)</label>
+          <input type="date" id="ac-expires">
+        </div>
+      </div>
+      <div class="err" id="ac-err"></div>
+    </div>
+
+    <div class="ac-foot">
+      <div class="count">
+        <b id="ac-cnt-files">0</b> filer · <b id="ac-cnt-rcp">0</b> mottagare
+      </div>
+      <button class="btn-primary" id="ac-submit" disabled>Skicka signeringsbegäran</button>
+    </div>
+  </div>
+
+  <!-- BEKRÄFTELSEVY (efter lyckad skapa) -->
+  <div id="ac-done-view" class="hidden">
+    <div class="ok-block">
+      <h2>✓ Skickat</h2>
+      <p style="color:var(--w70);font-size:13px;">
+        <b id="ac-done-cnt">0</b> mottagare har fått ett invite-mail. Du kan stänga den här vyn
+        eller skicka fler.
+      </p>
+      <ul class="ok-list" id="ac-done-list"></ul>
+      <div style="margin-top:18px;display:flex;gap:10px;">
+        <button class="btn-secondary" id="ac-new">Skicka ny signering</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const HOST    = (document.getElementById("mira_api_host")?.value || "").replace(/\/+$/, "");
+  const TOKEN   = document.getElementById("mira_planning_token")?.value || "";
+  const SENDER_EMAIL = document.getElementById("mira_sender_email")?.value || "";
+  const SENDER_NAME  = document.getElementById("mira_sender_name")?.value || "Carotte";
+  const CLIENTCOMPANY = document.getElementById("mira_clientcompany")?.value || "";
+  const DEAL          = document.getElementById("mira_deal")?.value || "";
+  const DEAL_MODE     = !!DEAL;
+
+  const $ = (id) => document.getElementById(id);
+  const root = $("ac-root");
+
+  // ── State ──────────────────────────────────────────────────────
+  const state = {
+    files: [],       // [{file, id}]
+    recipients: [],  // [{email, name, id}]
+  };
+  let nextId = 1;
+
+  // ── Filhantering ────────────────────────────────────────────────
+  const drop     = $("ac-drop");
+  const fileEl   = $("ac-files");
+  const fileList = $("ac-file-list");
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (!f) continue;
+      if (f.size > 25 * 1024 * 1024) { setErr(`"${f.name}" är större än 25 MB`); continue; }
+      if (state.files.length >= 20) { setErr("Max 20 filer"); break; }
+      state.files.push({ file: f, id: nextId++ });
+    }
+    renderFiles();
+    updateCounts();
+    setErr("");
+  }
+
+  function renderFiles() {
+    fileList.innerHTML = "";
+    for (const item of state.files) {
+      const li = document.createElement("li");
+      li.className = "file";
+      li.innerHTML =
+        `<span>${escapeHtml(item.file.name)}</span>` +
+        `<span class="meta">${(item.file.size/1024).toFixed(1)} kB</span>` +
+        `<button class="rm" data-id="${item.id}">Ta bort</button>`;
+      fileList.appendChild(li);
+    }
+    fileList.querySelectorAll(".rm").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = Number(b.dataset.id);
+        state.files = state.files.filter((x) => x.id !== id);
+        renderFiles();
+        updateCounts();
+      });
+    });
+  }
+
+  fileEl.addEventListener("change", () => {
+    addFiles(fileEl.files);
+    fileEl.value = "";
+  });
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("drag");
+    addFiles(e.dataTransfer.files);
+  });
+
+  // ── Mottagare ──────────────────────────────────────────────────
+  const rcpWrap = $("ac-recipients");
+
+  function addRecipient(email, name) {
+    state.recipients.push({ email: email || "", name: name || "", id: nextId++ });
+    renderRecipients();
+    updateCounts();
+  }
+
+  function renderRecipients() {
+    rcpWrap.innerHTML = "";
+    for (const r of state.recipients) {
+      const row = document.createElement("div");
+      row.className = "rcp-row";
+      row.innerHTML =
+        `<input type="email" placeholder="e-post" value="${escapeAttr(r.email)}" data-id="${r.id}" data-k="email">` +
+        `<input type="text"  placeholder="namn (valfritt)" value="${escapeAttr(r.name)}" data-id="${r.id}" data-k="name">` +
+        `<button class="rcp-rm" data-id="${r.id}" title="Ta bort">×</button>`;
+      rcpWrap.appendChild(row);
+    }
+    rcpWrap.querySelectorAll("input").forEach((inp) => {
+      inp.addEventListener("input", () => {
+        const id = Number(inp.dataset.id);
+        const k  = inp.dataset.k;
+        const r  = state.recipients.find((x) => x.id === id);
+        if (r) { r[k] = inp.value; updateCounts(); }
+      });
+    });
+    rcpWrap.querySelectorAll(".rcp-rm").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = Number(b.dataset.id);
+        state.recipients = state.recipients.filter((x) => x.id !== id);
+        renderRecipients();
+        updateCounts();
+      });
+    });
+  }
+
+  $("ac-rcp-add").addEventListener("click", () => addRecipient("", ""));
+
+  // ── Counts + submit-state ──────────────────────────────────────
+  function updateCounts() {
+    $("ac-cnt-files").textContent = state.files.length;
+    const validRcps = state.recipients.filter((r) => /\S+@\S+\.\S+/.test(r.email));
+    $("ac-cnt-rcp").textContent = validRcps.length;
+    const rubrik = $("ac-rubrik").value.trim();
+    $("ac-submit").disabled = !(state.files.length && validRcps.length && rubrik);
+  }
+  $("ac-rubrik").addEventListener("input", updateCounts);
+
+  // ── Submit ─────────────────────────────────────────────────────
+  $("ac-submit").addEventListener("click", async () => {
+    setErr("");
+    const rubrik     = $("ac-rubrik").value.trim();
+    const meddelande = $("ac-meddelande").value.trim();
+    const senderName = $("ac-sender-name").value.trim() || SENDER_NAME;
+    const expIso     = $("ac-expires").value
+      ? new Date($("ac-expires").value + "T23:59:59").toISOString()
+      : null;
+    const recipients = state.recipients
+      .filter((r) => /\S+@\S+\.\S+/.test(r.email))
+      .map((r) => ({ email: r.email.trim(), name: (r.name || "").trim() }));
+
+    if (!state.files.length) return setErr("Lägg till minst en PDF.");
+    if (!recipients.length)  return setErr("Lägg till minst en mottagare med giltig e-post.");
+    if (!rubrik)             return setErr("Skriv en rubrik.");
+
+    const payload = {
+      rubrik, meddelande,
+      sender_email: SENDER_EMAIL,
+      sender_name:  senderName,
+      recipients,
+      clientcompany: CLIENTCOMPANY || null,
+      deal:          DEAL || null,
+      expires_at:    expIso,
+    };
+
+    const fd = new FormData();
+    fd.append("payload", JSON.stringify(payload));
+    for (const f of state.files) fd.append("files", f.file, f.file.name);
+
+    const submitBtn = $("ac-submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Skickar…";
+
+    try {
+      const r = await fetch(HOST + "/approval/create", {
+        method: "POST",
+        headers: { "x-admin-token": TOKEN },
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        setErr("Skapande misslyckades: " + (j.error || r.status));
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Skicka signeringsbegäran";
+        return;
+      }
+      showDone(j);
+    } catch (e) {
+      setErr("Nätverksfel: " + (e.message || e));
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Skicka signeringsbegäran";
+    }
+  });
+
+  function showDone(j) {
+    $("ac-form-view").classList.add("hidden");
+    $("ac-done-view").classList.remove("hidden");
+    $("ac-done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
+    const list = $("ac-done-list");
+    list.innerHTML = "";
+    for (const a of (j.approvals || [])) {
+      const li = document.createElement("li");
+      li.innerHTML =
+        `<span>${escapeHtml(a.recipient_email)}</span>` +
+        `<a href="${escapeAttr(a.view_url)}" target="_blank" rel="noopener">öppna länk ↗</a>`;
+      list.appendChild(li);
+    }
+    // Deal-mode: fräscha historik i bakgrunden så nya signeringen syns
+    // när user klickar "Skicka ny signering" → vi går tillbaka till listan.
+    if (DEAL_MODE && typeof fetchHistory === "function") fetchHistory();
+  }
+
+  $("ac-new").addEventListener("click", () => {
+    state.files = [];
+    state.recipients = [];
+    renderFiles();
+    renderRecipients();
+    $("ac-rubrik").value = "";
+    $("ac-meddelande").value = "";
+    $("ac-expires").value = "";
+    $("ac-sender-name").value = SENDER_NAME;
+    updateCounts();
+    $("ac-done-view").classList.add("hidden");
+    $("ac-form-view").classList.remove("hidden");
+    setErr("");
+    $("ac-submit").textContent = "Skicka signeringsbegäran";
+  });
+
+  // ── Helpers ─────────────────────────────────────────────────────
+  function setErr(m) { $("ac-err").textContent = m || ""; }
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+    })[c]);
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  // ── Historik (Deal-aware mode) ──────────────────────────────────
+  // Aktiveras när #mira_deal är satt. Hämtar OfferApprovalRequests för denna
+  // Deal från /admin/approval/list?deal=<id>, renderar lista med status-pills,
+  // klick på rad → fetch /admin/approval/request/:id → expand med per-recipient.
+
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleDateString("sv-SE", { year: "numeric", month: "short", day: "numeric" });
+  }
+  function fmtDateTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" });
+  }
+  function statusPill(status) {
+    const s = String(status || "").trim() || "Draft";
+    return `<span class="pill s-${escapeAttr(s)}"><span class="dot"></span>${escapeHtml(s)}</span>`;
+  }
+
+  async function fetchHistory() {
+    const body = $("ac-history-body");
+    try {
+      const r = await fetch(HOST + "/admin/approval/list?deal=" + encodeURIComponent(DEAL) + "&limit=50",
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        body.innerHTML = `<div class="hist-empty">Kunde inte hämta historik: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      if (!j.items || !j.items.length) {
+        body.innerHTML = `<div class="hist-empty">Inga signeringsprocesser för denna Deal än.<br>Klicka "Skicka ny signering" nedan.</div>`;
+        return;
+      }
+      const ul = document.createElement("ul");
+      ul.className = "hist-list";
+      for (const it of j.items) {
+        const li = document.createElement("li");
+        li.className = "hist-row";
+        li.dataset.id = it.id;
+        const created = fmtDate(it.created_date);
+        const counts  = `${it.signed_count}/${it.recipients_count} signerat`;
+        li.innerHTML =
+          `<div class="hist-head">
+             <div class="rubrik">${escapeHtml(it.rubrik || "(utan rubrik)")}</div>
+             ${statusPill(it.status)}
+             <div class="meta">${escapeHtml(counts)} · ${escapeHtml(created)}</div>
+             <div class="arrow">▾</div>
+           </div>
+           <div class="hist-detail" data-loaded="0"></div>`;
+        ul.appendChild(li);
+      }
+      body.innerHTML = "";
+      body.appendChild(ul);
+
+      ul.querySelectorAll(".hist-head").forEach((head) => {
+        head.addEventListener("click", () => {
+          const row = head.closest(".hist-row");
+          const detail = row.querySelector(".hist-detail");
+          const open = row.classList.toggle("open");
+          if (open && detail.dataset.loaded === "0") {
+            loadDetail(row.dataset.id, detail);
+          }
+        });
+      });
+    } catch (e) {
+      body.innerHTML = `<div class="hist-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }
+
+  async function loadDetail(reqId, container) {
+    container.innerHTML = `<div class="hist-loading">Hämtar detaljer…</div>`;
+    try {
+      const r = await fetch(HOST + "/admin/approval/request/" + encodeURIComponent(reqId),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        container.innerHTML = `<div class="hist-empty">Kunde inte hämta: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      const req = j.request || {};
+      const apps = j.approvals || [];
+      const docs = j.documents || [];
+
+      const metaRows = [
+        ["Avsändare",       (req.sender_name || "") + (req.sender_email ? " · " + req.sender_email : "")],
+        ["Skickat",         fmtDateTime(req.created_date)],
+        ["Status",          req.status || "—"],
+        req.expires_at ? ["Sista signeringsdag", fmtDate(req.expires_at)] : null,
+        req.meddelande ? ["Meddelande", req.meddelande] : null,
+      ].filter(Boolean);
+
+      const rcpRowsHtml = apps.map((a) => `
+        <tr>
+          <td class="email">${escapeHtml(a.recipient_email)}</td>
+          <td>${statusPill(a.status)}</td>
+          <td>${a.approved_at ? escapeHtml(fmtDateTime(a.approved_at)) : "—"}</td>
+          <td>${a.approved_ip ? escapeHtml(a.approved_ip) : "—"}</td>
+          <td>${a.signed_document
+                  ? `<a href="${escapeAttr(a.signed_document)}" target="_blank" rel="noopener">PDF ↗</a>`
+                  : (a.approval_link
+                      ? `<a href="${escapeAttr(a.approval_link)}" target="_blank" rel="noopener">länk ↗</a>`
+                      : "—")}</td>
+        </tr>
+      `).join("");
+
+      container.innerHTML = `
+        <div class="meta-grid">
+          ${metaRows.map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div>${escapeHtml(String(v))}</div>`).join("")}
+        </div>
+
+        <h4>Dokument (${docs.length})</h4>
+        ${docs.length
+          ? docs.map((d) => `<div class="doc-row"><span>${escapeHtml(d.titel)}</span>${d.file ? `<a href="${escapeAttr(d.file)}" target="_blank" rel="noopener">Öppna</a>` : ""}</div>`).join("")
+          : `<div class="hist-empty" style="padding:10px;">Inga dokument</div>`}
+
+        <h4>Mottagare (${apps.length})</h4>
+        <table class="rcp-table">
+          <thead><tr><th>E-post</th><th>Status</th><th>Signerat</th><th>IP</th><th>Dokument</th></tr></thead>
+          <tbody>${rcpRowsHtml || `<tr><td colspan="5" style="text-align:center;color:var(--w40);">Inga mottagare</td></tr>`}</tbody>
+        </table>
+      `;
+      container.dataset.loaded = "1";
+    } catch (e) {
+      container.innerHTML = `<div class="hist-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }
+
+  // Toggle create-form i Deal-mode
+  $("ac-toggle-create").addEventListener("click", () => {
+    const form = $("ac-form-view");
+    const btn  = $("ac-toggle-create");
+    const open = !form.classList.contains("hidden") && !form.classList.contains("ac-collapsed");
+    if (open) {
+      form.classList.add("hidden");
+      btn.textContent = "+ Skicka ny signering";
+    } else {
+      form.classList.remove("hidden");
+      btn.textContent = "× Avbryt";
+      form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  });
+
+  // ── Init ────────────────────────────────────────────────────────
+  $("ac-sender-name").value = SENDER_NAME;
+  addRecipient("", "");
+  updateCounts();
+
+  if (DEAL_MODE) {
+    // Deal-aware: visa historik överst, göm formuläret tills user klickar
+    // "Skicka ny signering".
+    $("ac-history-view").classList.remove("hidden");
+    $("ac-form-view").classList.add("hidden");
+    $("ac-title").innerHTML = 'Signering för <span>denna affär</span>';
+    $("ac-subtitle").textContent = "Historik + ny utskick";
+    fetchHistory();
+  }
+})();
+</script>

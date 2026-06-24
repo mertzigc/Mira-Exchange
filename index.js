@@ -16795,12 +16795,28 @@ app.post("/approval/confirm/:id", async (req, res) => {
 // JS som auto-skickar OTP och driver hela signeringen client-side.
 // Bumpar status "Sent" → "Viewed" första gången.
 function _renderApprovalErrorPage(title, body) {
-  return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>${title}</title>
-<style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-background:#f8fafc;color:#0f172a;}main{max-width:480px;margin:80px auto;padding:32px;
-background:#fff;border:1px solid #e2e8f0;border-radius:12px;text-align:center;}
-h1{font-size:20px;margin:0 0 12px;}p{color:#475569;line-height:1.5;}</style></head>
-<body><main><h1>${title}</h1><p>${body}</p></main></body></html>`;
+  return `<!doctype html><html lang="sv"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;padding:0;background:#1e2235;color:#fff;
+    font-family:Arial,sans-serif;font-size:14px;line-height:1.55;min-height:100vh;}
+  main{max-width:480px;margin:80px auto;padding:32px 28px;
+    background:#23283f;border:1px solid rgba(255,255,255,.07);border-radius:14px;text-align:center;}
+  .brand{font-size:11px;letter-spacing:.4px;color:rgba(255,255,255,.4);
+    text-transform:uppercase;margin-bottom:18px;}
+  .brand b{color:#fff;letter-spacing:0;}
+  h1{font-family:'DM Serif Display',Georgia,serif;font-size:22px;margin:0 0 12px;
+    color:#F47B30;font-weight:400;letter-spacing:-.01em;}
+  p{color:rgba(255,255,255,.7);}
+</style></head>
+<body><main>
+  <div class="brand"><b>Carotte</b> · Mira</div>
+  <h1>${title}</h1>
+  <p>${body}</p>
+</main></body></html>`;
 }
 
 app.get("/approval/view/:id", async (req, res) => {
@@ -16906,76 +16922,112 @@ app.get("/approval/view/:id", async (req, res) => {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${e(rubrik)} — Signering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
   :root {
-    --ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--bg:#f8fafc;
-    --card:#ffffff;--accent:#1d4ed8;--ok:#047857;--danger:#b91c1c;
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e;
+    --input:#2e3350;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13); --orange-glow:rgba(244,123,48,.06);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --red:#E05A5A;
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
   }
-  * { box-sizing:border-box; }
-  html,body { margin:0;padding:0;background:var(--bg);color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    font-size:15px;line-height:1.5; }
-  main { max-width:680px; margin:32px auto; padding:0 16px; }
-  .brand { font-weight:600;font-size:14px;letter-spacing:.5px;color:var(--soft);
-    text-align:center;margin-bottom:24px; }
-  .brand b { color:var(--ink); }
-  .card { background:var(--card);border:1px solid var(--line);border-radius:12px;
-    padding:28px;margin-bottom:16px; }
-  h1 { margin:0 0 6px;font-size:22px;letter-spacing:-.2px; }
-  .sender { color:var(--soft);font-size:14px;margin-bottom:18px; }
-  .message { background:var(--bg);border-left:3px solid var(--accent);
-    padding:12px 14px;white-space:pre-wrap;font-size:14px;border-radius:0 6px 6px 0;
-    margin:0 0 4px; }
-  h2 { font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--soft);
-    margin:24px 0 10px;font-weight:600; }
-  ul.docs { list-style:none;padding:0;margin:0; }
-  .doc { display:flex;align-items:center;justify-content:space-between;
-    border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:8px; }
-  .doc-name { font-weight:500; }
-  .doc-name.muted { color:var(--soft);font-weight:400; }
-  .doc-actions { display:flex;gap:6px; }
-  .btn-ghost { display:inline-block;padding:6px 12px;border:1px solid var(--line);
-    border-radius:6px;color:var(--ink);text-decoration:none;font-size:13px; }
-  .btn-ghost:hover { background:var(--bg); }
-  .otp-wrap { background:var(--bg);border-radius:8px;padding:18px;margin-top:8px; }
-  .otp-info { font-size:13px;color:var(--muted);margin:0 0 12px; }
-  .otp-row { display:flex;gap:8px;align-items:center; }
-  input.otp { flex:1;font-size:22px;letter-spacing:.3em;text-align:center;
-    font-family:"SF Mono",Menlo,Consolas,monospace;
-    padding:14px;border:1px solid var(--line);border-radius:8px;
-    background:#fff;color:var(--ink); }
-  .btn-primary { background:var(--accent);color:#fff;border:none;border-radius:8px;
-    padding:14px 22px;font-size:15px;font-weight:600;cursor:pointer; }
-  .btn-primary:disabled { opacity:.5;cursor:not-allowed; }
-  .resend { background:none;border:none;color:var(--accent);font-size:13px;
-    cursor:pointer;padding:8px 0;margin-top:8px; }
-  .resend:disabled { color:var(--soft);cursor:not-allowed; }
-  .err { color:var(--danger);font-size:13px;margin-top:8px;min-height:18px; }
-  .footer { text-align:center;color:var(--soft);font-size:12px;margin:28px 0 40px; }
-  .done { text-align:center;padding:14px 0 4px; }
-  .done .check { font-size:42px;line-height:1;color:var(--ok);margin-bottom:8px; }
-  .done h1 { color:var(--ok); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { background:var(--base);color:var(--white);
+    font-family:var(--fb);font-size:13px;line-height:1.55;min-height:100vh; }
+  main { max-width:680px; margin:32px auto; padding:0 16px 40px; }
+
+  .brand { text-align:center;margin-bottom:24px;font-size:11px;letter-spacing:.4px;
+    color:var(--w40);text-transform:uppercase; }
+  .brand b { color:var(--white);letter-spacing:0; }
+
+  .panel { background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:26px 28px;margin-bottom:14px; }
+
+  h1.title { font-family:'DM Serif Display',Georgia,serif;font-size:27px;line-height:1.1;
+    letter-spacing:-.01em;font-weight:400;margin-bottom:4px; }
+  h1.title span { color:var(--orange); }
+  .sender { color:var(--w40);font-size:11px;letter-spacing:.4px;text-transform:uppercase;
+    margin-bottom:18px; }
+
+  .message { background:var(--card);border-left:3px solid var(--orange);
+    padding:13px 16px;white-space:pre-wrap;font-size:13px;color:var(--w70);
+    border-radius:0 8px 8px 0;margin-top:6px; }
+
+  h2.section { font-size:10px;text-transform:uppercase;letter-spacing:1.3px;color:var(--w40);
+    margin:24px 0 10px;font-weight:700; }
+
+  ul.docs { list-style:none; }
+  .doc { display:flex;align-items:center;justify-content:space-between;gap:12px;
+    background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:13px 16px;margin-bottom:8px; }
+  .doc-name { font-weight:700;font-size:13px;color:var(--white); }
+  .doc-name.muted { color:var(--w40);font-weight:400; }
+  .doc-actions { display:flex;gap:6px;flex-shrink:0; }
+  .btn-ghost { display:inline-block;padding:7px 13px;background:var(--input);
+    border:1px solid var(--border);border-radius:7px;color:var(--w70);
+    text-decoration:none;font-size:11px;font-weight:700;letter-spacing:.3px;
+    text-transform:uppercase;transition:.15s; }
+  .btn-ghost:hover { background:var(--deep);color:var(--white);border-color:var(--orange); }
+
+  .otp-wrap { background:var(--card);border:1px solid var(--border);border-radius:12px;
+    padding:20px;margin-top:8px; }
+  .otp-info { font-size:12px;color:var(--w70);margin-bottom:14px;line-height:1.55; }
+  .otp-info strong { color:var(--white); }
+  .otp-row { display:flex;gap:10px;align-items:stretch; }
+  input.otp { flex:1;font-size:22px;letter-spacing:.35em;text-align:center;
+    font-family:'SF Mono',Menlo,Consolas,monospace;font-weight:700;
+    padding:14px 12px;background:var(--input);border:1px solid var(--border);
+    border-radius:9px;color:var(--white);outline:none;transition:.15s; }
+  input.otp::placeholder { color:rgba(255,255,255,.18);letter-spacing:.35em; }
+  input.otp:focus { border-color:var(--orange);background:var(--deep); }
+
+  .btn-primary { background:var(--orange);color:#1c1206;border:none;border-radius:9px;
+    padding:14px 24px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.3px;
+    transition:.15s; }
+  .btn-primary:hover:not(:disabled) { filter:brightness(1.08); }
+  .btn-primary:disabled { opacity:.35;cursor:not-allowed; }
+
+  .resend { background:none;border:none;color:var(--orange);font-size:12px;
+    cursor:pointer;padding:10px 0 0;margin-top:6px;font-weight:700;letter-spacing:.2px; }
+  .resend:disabled { color:var(--w40);cursor:not-allowed; }
+
+  .err { color:var(--red);font-size:12px;margin-top:10px;min-height:16px; }
+
+  .footer { text-align:center;color:var(--w40);font-size:11px;margin:24px 0 0;
+    line-height:1.7;letter-spacing:.2px; }
+
+  .done { text-align:center;padding:8px 0 4px; }
+  .done .check { font-size:46px;line-height:1;color:var(--green);margin-bottom:10px;
+    display:inline-flex;width:72px;height:72px;border-radius:50%;
+    background:rgba(76,175,125,.13);align-items:center;justify-content:center; }
+  .done h1 { font-family:'DM Serif Display',Georgia,serif;font-size:24px;color:var(--green);
+    font-weight:400;margin-bottom:8px; }
+  .done p { color:var(--w70);font-size:13px; }
+
   .hidden { display:none !important; }
 </style>
 </head><body>
 <main>
   <div class="brand"><b>Carotte</b> · Mira</div>
 
-  <div class="card">
-    <h1>${e(rubrik)}</h1>
-    <div class="sender">Skickat av ${e(senderName)} till ${e(approval.recipient_email || "")}</div>
-    ${meddelande ? `<p class="message">${e(meddelande)}</p>` : ""}
+  <div class="panel">
+    <h1 class="title">${e(rubrik)}</h1>
+    <div class="sender">Från ${e(senderName)} · till ${e(approval.recipient_email || "")}</div>
+    ${meddelande ? `<div class="message">${e(meddelande)}</div>` : ""}
 
-    <h2>Dokument att signera</h2>
+    <h2 class="section">Dokument att signera</h2>
     <ul class="docs">${docsHtml}</ul>
 
     <div id="sign-block" class="${initialView === "done" ? "hidden" : ""}">
-      <h2>Signera</h2>
+      <h2 class="section">Signera</h2>
       <div class="otp-wrap">
         <p class="otp-info" id="otp-info">Vi skickar en engångskod till <strong>${e(approval.recipient_email || "")}</strong>…</p>
         <div class="otp-row">
           <input class="otp" id="otp" type="text" inputmode="numeric" pattern="[0-9]*"
-            maxlength="6" placeholder="123456" autocomplete="one-time-code" />
+            maxlength="6" placeholder="••••••" autocomplete="one-time-code" />
           <button class="btn-primary" id="sign-btn" disabled>Signera</button>
         </div>
         <div class="err" id="err"></div>
@@ -16987,7 +17039,7 @@ app.get("/approval/view/:id", async (req, res) => {
       <div class="check">✓</div>
       <h1>Signerat</h1>
       <p>Tack — signeringen är registrerad och du har fått en bekräftelse via mail.</p>
-      <p id="dl-wrap" style="margin-top:18px;${signedDocUrl ? "" : "display:none;"}">
+      <p id="dl-wrap" style="margin-top:22px;${signedDocUrl ? "" : "display:none;"}">
         <a class="btn-primary" id="dl-link" style="text-decoration:none;display:inline-block;"
            href="${e(signedDocUrl)}" target="_blank" rel="noopener">Ladda ner signerat dokument</a>
       </p>
@@ -17130,12 +17182,20 @@ app.get("/admin/approval/list", async (req, res) => {
   }
 
   try {
-    const status = String(req.query.status || "all").trim();
-    const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const status  = String(req.query.status || "all").trim();
+    const dealId  = String(req.query.deal || "").trim();
+    const ccId    = String(req.query.clientcompany || "").trim();
+    const limit   = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
 
     const constraints = [];
     if (status && status !== "all") {
       constraints.push({ key: "status", constraint_type: "equals", value: status });
+    }
+    if (dealId) {
+      constraints.push({ key: "deal", constraint_type: "equals", value: dealId });
+    }
+    if (ccId) {
+      constraints.push({ key: "clientcompany", constraint_type: "equals", value: ccId });
     }
 
     const requests = await bubbleFindAll("OfferApprovalRequest", {
@@ -17161,6 +17221,82 @@ app.get("/admin/approval/list", async (req, res) => {
     return res.json({ ok: true, count: trimmed.length, total: requests.length, items: trimmed });
   } catch (e) {
     console.error("[/admin/approval/list] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── GET /admin/approval/request/:id — moder + alla barn-approvals + dokument ─
+// För Carotte-UI:s expand-vy. Returnerar full picture per signeringsprocess.
+app.options("/admin/approval/request/:id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.get("/admin/approval/request/:id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const reqId = String(req.params.id || "").trim();
+    if (!reqId) return res.status(400).json({ ok: false, error: "missing_id" });
+
+    const request = await bubbleGet("OfferApprovalRequest", reqId).catch(() => null);
+    if (!request) return res.status(404).json({ ok: false, error: "not_found" });
+
+    // Hämta alla barn-approvals + dokument parallellt
+    const [children, documents] = await Promise.all([
+      bubbleFindAll("OfferApproval", {
+        constraints: [{ key: "request", constraint_type: "equals", value: reqId }],
+        sort_field: "Created Date",
+        descending: false,
+      }).catch(() => []),
+      Promise.all(
+        (Array.isArray(request.dokument) ? request.dokument : []).map((id) =>
+          bubbleGet("Dokument", id).catch(() => null)
+        )
+      ),
+    ]);
+
+    const normUrl = (u) => (u ? String(u).replace(/^\/\//, "https://") : null);
+
+    return res.json({
+      ok: true,
+      request: {
+        id:               request._id,
+        rubrik:           request.rubrik || "",
+        meddelande:       request.meddelande || "",
+        sender_email:     request.sender_email || "",
+        sender_name:      request.sender_name || "",
+        status:           request.status || "",
+        recipients_count: Number(request.recipients_count || 0),
+        signed_count:     Number(request.signed_count || 0),
+        created_date:     request["Created Date"] || null,
+        expires_at:       request.expires_at || null,
+        clientcompany:    request.clientcompany || null,
+        deal:             request.deal || null,
+      },
+      approvals: children.map((c) => ({
+        id:                  c._id,
+        recipient_email:     c.recipient_email || "",
+        status:              c.status || "",
+        approved_at:         c.approved_at || null,
+        approved_ip:         c.approved_ip || "",
+        approved_user_agent: c.approved_user_agent || "",
+        signed_document:     normUrl(c.signed_document),
+        approval_link:       c.approval_link || null,
+        created_date:        c["Created Date"] || null,
+      })),
+      documents: documents.filter(Boolean).map((d) => ({
+        id:    d._id,
+        titel: d.titel || "Dokument",
+        file:  normUrl(d.file),
+      })),
+    });
+  } catch (e) {
+    console.error("[/admin/approval/request] failed", e);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
