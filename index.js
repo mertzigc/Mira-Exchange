@@ -432,6 +432,7 @@ function requireApiKey(req, res, next) {
   // PLANNING_ADMIN_TOKEN istället för x-api-key.
   const openPrefixes = [
     "/admin/offers/",
+    "/admin/approval/",          // Carotte-CRM HTML-block, x-admin-token-grindad
     "/approval/create",
     "/approval/view/",
     "/approval/request-otp/",
@@ -16733,6 +16734,378 @@ app.post("/approval/confirm/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[/approval/confirm] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── GET /approval/view/:id?t=<rawToken> — server-renderad landningssida ────
+// Validerar token serverside, lyfter in approval-data i HTML:n, embeddar
+// JS som auto-skickar OTP och driver hela signeringen client-side.
+// Bumpar status "Sent" → "Viewed" första gången.
+function _renderApprovalErrorPage(title, body) {
+  return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><title>${title}</title>
+<style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+background:#f8fafc;color:#0f172a;}main{max-width:480px;margin:80px auto;padding:32px;
+background:#fff;border:1px solid #e2e8f0;border-radius:12px;text-align:center;}
+h1{font-size:20px;margin:0 0 12px;}p{color:#475569;line-height:1.5;}</style></head>
+<body><main><h1>${title}</h1><p>${body}</p></main></body></html>`;
+}
+
+app.get("/approval/view/:id", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+
+  const approvalId = String(req.params.id || "").trim();
+  const rawToken   = String(req.query.t || "").trim();
+
+  if (!approvalId || !rawToken) {
+    return res.status(400).send(_renderApprovalErrorPage(
+      "Ogiltig länk",
+      "Länken saknar nödvändig information. Kontrollera att du klickade på hela länken i mailet."
+    ));
+  }
+
+  try {
+    const r = await _fetchApprovalByToken(approvalId, rawToken);
+    if (r.error) {
+      return res.status(r.status).send(_renderApprovalErrorPage(
+        "Länken är ogiltig",
+        "Länken kunde inte verifieras. Be avsändaren skicka en ny."
+      ));
+    }
+    const approval = r.approval;
+
+    // Hämta parent + dokument
+    const parent = approval.request
+      ? await bubbleGet("OfferApprovalRequest", approval.request).catch(() => null)
+      : null;
+
+    const rubrik     = (parent && parent.rubrik)     || approval.rubrik     || "Avtal";
+    const meddelande = (parent && parent.meddelande) || approval.meddelande || "";
+    const senderName = (parent && parent.sender_name) || "Carotte";
+
+    const dokumentIds = Array.isArray(parent?.dokument) && parent.dokument.length
+      ? parent.dokument
+      : (Array.isArray(approval.dokument) ? approval.dokument : []);
+    const dokuments = await Promise.all(
+      dokumentIds.map((id) => bubbleGet("Dokument", id).catch(() => null))
+    );
+
+    // Expiry-koll
+    const expIso = parent?.expires_at || approval.expires_at || null;
+    if (expIso) {
+      const expMs = Date.parse(expIso);
+      if (Number.isFinite(expMs) && expMs < Date.now()) {
+        return res.status(410).send(_renderApprovalErrorPage(
+          "Länken har gått ut",
+          "Den här signeringslänken har förfallit. Kontakta avsändaren för en ny."
+        ));
+      }
+    }
+
+    // Status-bump: Sent → Viewed (idempotent)
+    if (String(approval.status || "") === "Sent") {
+      bubblePatch("OfferApproval", approvalId, { status: "Viewed" })
+        .catch((e) => console.warn("[/approval/view] viewed-bump failed", e?.message));
+    }
+
+    const alreadyApproved =
+      String(approval.status || "").toLowerCase() === "approved" &&
+      !!approval.approved_at;
+
+    // Säker HTML-escape (åtskild från frontends own JSON)
+    const e = (s) => String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+    const fileUrlNorm = (u) => {
+      if (!u) return "";
+      const s = String(u).trim();
+      return s.startsWith("//") ? "https:" + s : s;
+    };
+
+    const docsHtml = dokuments.filter(Boolean).map((d) => {
+      const url = fileUrlNorm(d.file);
+      const titel = d.titel || "Dokument";
+      return `<li class="doc">
+        <div class="doc-name">${e(titel)}</div>
+        <div class="doc-actions">
+          <a class="btn-ghost" href="${e(url)}" target="_blank" rel="noopener">Visa</a>
+          <a class="btn-ghost" href="${e(url)}" download>Ladda ner</a>
+        </div>
+      </li>`;
+    }).join("") || `<li class="doc"><div class="doc-name muted">Inga dokument bifogade</div></li>`;
+
+    // Signed view (redan godkänd) eller signeringsformulär
+    const signedDocUrl = approval.signed_document ? fileUrlNorm(approval.signed_document) : "";
+    const initialView = alreadyApproved ? "done" : "sign";
+
+    // Embed payload till frontend som JSON
+    const fePayload = {
+      approval_id: approvalId,
+      token:       rawToken,
+      recipient:   approval.recipient_email || "",
+      signed_doc:  signedDocUrl,
+      initial:     initialView,
+    };
+
+    const html = `<!doctype html>
+<html lang="sv"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${e(rubrik)} — Signering</title>
+<style>
+  :root {
+    --ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--bg:#f8fafc;
+    --card:#ffffff;--accent:#1d4ed8;--ok:#047857;--danger:#b91c1c;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-size:15px;line-height:1.5; }
+  main { max-width:680px; margin:32px auto; padding:0 16px; }
+  .brand { font-weight:600;font-size:14px;letter-spacing:.5px;color:var(--soft);
+    text-align:center;margin-bottom:24px; }
+  .brand b { color:var(--ink); }
+  .card { background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:28px;margin-bottom:16px; }
+  h1 { margin:0 0 6px;font-size:22px;letter-spacing:-.2px; }
+  .sender { color:var(--soft);font-size:14px;margin-bottom:18px; }
+  .message { background:var(--bg);border-left:3px solid var(--accent);
+    padding:12px 14px;white-space:pre-wrap;font-size:14px;border-radius:0 6px 6px 0;
+    margin:0 0 4px; }
+  h2 { font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--soft);
+    margin:24px 0 10px;font-weight:600; }
+  ul.docs { list-style:none;padding:0;margin:0; }
+  .doc { display:flex;align-items:center;justify-content:space-between;
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:8px; }
+  .doc-name { font-weight:500; }
+  .doc-name.muted { color:var(--soft);font-weight:400; }
+  .doc-actions { display:flex;gap:6px; }
+  .btn-ghost { display:inline-block;padding:6px 12px;border:1px solid var(--line);
+    border-radius:6px;color:var(--ink);text-decoration:none;font-size:13px; }
+  .btn-ghost:hover { background:var(--bg); }
+  .otp-wrap { background:var(--bg);border-radius:8px;padding:18px;margin-top:8px; }
+  .otp-info { font-size:13px;color:var(--muted);margin:0 0 12px; }
+  .otp-row { display:flex;gap:8px;align-items:center; }
+  input.otp { flex:1;font-size:22px;letter-spacing:.3em;text-align:center;
+    font-family:"SF Mono",Menlo,Consolas,monospace;
+    padding:14px;border:1px solid var(--line);border-radius:8px;
+    background:#fff;color:var(--ink); }
+  .btn-primary { background:var(--accent);color:#fff;border:none;border-radius:8px;
+    padding:14px 22px;font-size:15px;font-weight:600;cursor:pointer; }
+  .btn-primary:disabled { opacity:.5;cursor:not-allowed; }
+  .resend { background:none;border:none;color:var(--accent);font-size:13px;
+    cursor:pointer;padding:8px 0;margin-top:8px; }
+  .resend:disabled { color:var(--soft);cursor:not-allowed; }
+  .err { color:var(--danger);font-size:13px;margin-top:8px;min-height:18px; }
+  .footer { text-align:center;color:var(--soft);font-size:12px;margin:28px 0 40px; }
+  .done { text-align:center;padding:14px 0 4px; }
+  .done .check { font-size:42px;line-height:1;color:var(--ok);margin-bottom:8px; }
+  .done h1 { color:var(--ok); }
+  .hidden { display:none !important; }
+</style>
+</head><body>
+<main>
+  <div class="brand"><b>Carotte</b> · Mira</div>
+
+  <div class="card">
+    <h1>${e(rubrik)}</h1>
+    <div class="sender">Skickat av ${e(senderName)} till ${e(approval.recipient_email || "")}</div>
+    ${meddelande ? `<p class="message">${e(meddelande)}</p>` : ""}
+
+    <h2>Dokument att signera</h2>
+    <ul class="docs">${docsHtml}</ul>
+
+    <div id="sign-block" class="${initialView === "done" ? "hidden" : ""}">
+      <h2>Signera</h2>
+      <div class="otp-wrap">
+        <p class="otp-info" id="otp-info">Vi skickar en engångskod till <strong>${e(approval.recipient_email || "")}</strong>…</p>
+        <div class="otp-row">
+          <input class="otp" id="otp" type="text" inputmode="numeric" pattern="[0-9]*"
+            maxlength="6" placeholder="123456" autocomplete="one-time-code" />
+          <button class="btn-primary" id="sign-btn" disabled>Signera</button>
+        </div>
+        <div class="err" id="err"></div>
+        <button class="resend" id="resend-btn" disabled>Skicka koden igen</button>
+      </div>
+    </div>
+
+    <div id="done-block" class="done ${initialView === "done" ? "" : "hidden"}">
+      <div class="check">✓</div>
+      <h1>Signerat</h1>
+      <p>Tack — signeringen är registrerad och du har fått en bekräftelse via mail.</p>
+      ${signedDocUrl ? `<p style="margin-top:18px;"><a class="btn-primary" style="text-decoration:none;display:inline-block;" href="${e(signedDocUrl)}" target="_blank" rel="noopener">Ladda ner signerat dokument</a></p>` : ""}
+    </div>
+  </div>
+
+  <div class="footer">
+    Signeringen loggar din e-postverifiering, IP-adress och tidpunkt.<br/>
+    Den slutgiltiga PDF:en innehåller originaldokumenten plus ett signeringsbevis.
+  </div>
+</main>
+
+<script>
+(function(){
+  const D = ${JSON.stringify(fePayload)};
+  if (D.initial === "done") return;
+
+  const otp     = document.getElementById("otp");
+  const signBtn = document.getElementById("sign-btn");
+  const resend  = document.getElementById("resend-btn");
+  const info    = document.getElementById("otp-info");
+  const errEl   = document.getElementById("err");
+
+  function setErr(m){ errEl.textContent = m || ""; }
+  function setInfo(m){ info.textContent = m; }
+
+  let cooldownTimer = null;
+  function startCooldown(sec){
+    resend.disabled = true;
+    let left = sec;
+    const tick = () => {
+      if (left <= 0) { resend.disabled = false; resend.textContent = "Skicka koden igen"; return; }
+      resend.textContent = "Skicka koden igen (" + left + "s)";
+      left--; cooldownTimer = setTimeout(tick, 1000);
+    };
+    tick();
+  }
+
+  async function requestOtp(){
+    setErr("");
+    setInfo("Skickar engångskod till " + D.recipient + "…");
+    resend.disabled = true;
+    try {
+      const r = await fetch("/approval/request-otp/" + encodeURIComponent(D.approval_id), {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ token: D.token })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        setErr("Kunde inte skicka koden: " + (j.error || r.status));
+        resend.disabled = false;
+        return;
+      }
+      if (j.already_approved) {
+        location.reload();
+        return;
+      }
+      setInfo("Kod skickad till " + D.recipient + ". Skriv in den 6-siffriga koden nedan.");
+      startCooldown(60);
+    } catch (e) {
+      setErr("Nätverksfel: " + (e.message || e));
+      resend.disabled = false;
+    }
+  }
+
+  otp.addEventListener("input", () => {
+    otp.value = otp.value.replace(/[^0-9]/g, "").slice(0,6);
+    signBtn.disabled = otp.value.length !== 6;
+  });
+
+  signBtn.addEventListener("click", async () => {
+    setErr("");
+    signBtn.disabled = true;
+    signBtn.textContent = "Signerar…";
+    try {
+      const r = await fetch("/approval/confirm/" + encodeURIComponent(D.approval_id), {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ token: D.token, otp: otp.value })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        const msg = ({
+          invalid_otp:   "Fel kod. Försök igen.",
+          otp_expired:   "Koden har gått ut. Klicka 'Skicka koden igen'.",
+          no_otp_requested: "Begär en ny kod först."
+        })[j.error] || ("Kunde inte signera: " + (j.error || r.status));
+        setErr(msg);
+        signBtn.textContent = "Signera";
+        signBtn.disabled = otp.value.length !== 6;
+        return;
+      }
+      // Klart — visa bekräftelse
+      document.getElementById("sign-block").classList.add("hidden");
+      const done = document.getElementById("done-block");
+      done.classList.remove("hidden");
+      if (j.signed_document_url) {
+        const link = done.querySelector("a");
+        if (link) link.href = j.signed_document_url;
+      }
+    } catch (e) {
+      setErr("Nätverksfel: " + (e.message || e));
+      signBtn.textContent = "Signera";
+      signBtn.disabled = otp.value.length !== 6;
+    }
+  });
+
+  resend.addEventListener("click", requestOtp);
+
+  // Auto-skicka OTP vid pageload (per UX-beslutet 2026-06-24)
+  requestOtp();
+})();
+</script>
+</body></html>`;
+
+    return res.status(200).send(html);
+  } catch (err) {
+    console.error("[/approval/view] failed", err);
+    return res.status(500).send(_renderApprovalErrorPage(
+      "Något gick fel",
+      "Vi kunde inte ladda sidan. Försök igen om en stund eller kontakta avsändaren."
+    ));
+  }
+});
+
+// ── GET /admin/approval/list — Carotte-UI listar requests + status ──────────
+// Auth: x-admin-token (PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN).
+// Query: ?status=Sent|Approved|all (default all), ?limit=50 (default 50)
+app.options("/admin/approval/list", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.get("/admin/approval/list", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const status = String(req.query.status || "all").trim();
+    const limit  = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+
+    const constraints = [];
+    if (status && status !== "all") {
+      constraints.push({ key: "status", constraint_type: "equals", value: status });
+    }
+
+    const requests = await bubbleFindAll("OfferApprovalRequest", {
+      constraints,
+      sort_field: "Created Date",
+      descending: true,
+    });
+
+    const trimmed = requests.slice(0, limit).map((r) => ({
+      id:               r._id,
+      rubrik:           r.rubrik || "",
+      sender_email:     r.sender_email || "",
+      sender_name:      r.sender_name || "",
+      status:           r.status || "",
+      recipients_count: Number(r.recipients_count || 0),
+      signed_count:     Number(r.signed_count || 0),
+      created_date:     r["Created Date"] || null,
+      expires_at:       r.expires_at || null,
+      clientcompany:    r.clientcompany || null,
+      deal:             r.deal || null,
+    }));
+
+    return res.json({ ok: true, count: trimmed.length, total: requests.length, items: trimmed });
+  } catch (e) {
+    console.error("[/admin/approval/list] failed", e);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
