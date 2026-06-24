@@ -433,7 +433,7 @@ function requireApiKey(req, res, next) {
   const openPrefixes = [
     "/admin/offers/",
     "/admin/approval/",            // Carotte-CRM HTML-block, x-admin-token-grindad
-    "/admin/clientcompany/search", // ClientCompany-autocomplete för Carotte-UI
+    "/admin/clientcompany/",       // ClientCompany-autocomplete + /all för Carotte-UI
     "/approval/create",
     "/approval/view/",
     "/approval/request-otp/",
@@ -17249,6 +17249,41 @@ app.get("/admin/approval/list", async (req, res) => {
     return res.json({ ok: true, count: trimmed.length, total: requests.length, items: trimmed });
   } catch (e) {
     console.error("[/admin/approval/list] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── GET /admin/clientcompany/all?limit=2000 — full lista för client-side search ─
+// Returnerar id + bästa namn för varje ClientCompany. Used av Carotte-UI för
+// autocomplete utan att behöva gissa Bubbles exakta namn-fält.
+app.options("/admin/clientcompany/all", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.get("/admin/clientcompany/all", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 2000, 1), 5000);
+    const all = await bubbleFindAll("ClientCompany", {});
+    const items = [];
+    for (const cc of (all || [])) {
+      if (!cc?._id) continue;
+      const name = cc.name || cc.Name || cc.company_name || cc.Company_name
+                || cc.namn || cc.Namn || cc.företagsnamn || cc.Företagsnamn || "";
+      if (!name) continue;
+      items.push({ id: cc._id, name });
+      if (items.length >= limit) break;
+    }
+    items.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    return res.json({ ok: true, count: items.length, items });
+  } catch (e) {
+    console.error("[/admin/clientcompany/all] failed", e);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });

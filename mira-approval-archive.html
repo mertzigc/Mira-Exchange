@@ -120,20 +120,17 @@
   .aa-count{font-size:11px;color:var(--w40);padding:10px 18px;background:var(--card);
     border-top:1px solid var(--border)}
 
-  /* Modal: create-form */
-  .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:none;
-    align-items:flex-start;justify-content:center;padding:32px 16px;overflow-y:auto;backdrop-filter:blur(4px)}
-  .modal-back.on{display:flex}
-  .modal{background:var(--base);border:1px solid var(--border);border-radius:14px;width:100%;
-    max-width:640px;padding:24px 26px;position:relative;animation:slideIn .2s ease-out}
-  @keyframes slideIn{from{transform:translateY(-10px);opacity:0}to{transform:translateY(0);opacity:1}}
-  .modal-close{position:absolute;top:14px;right:16px;background:none;border:none;color:var(--w40);
-    font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}
-  .modal-close:hover{color:var(--white)}
-  .modal h2{font-family:'DM Serif Display',Georgia,serif;font-size:22px;margin-bottom:6px}
-  .modal h2 span{color:var(--orange)}
-  .modal .modal-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;text-transform:uppercase;
+  /* Inline create-panel (ingen position:fixed → ingen Bubble-konflikt) */
+  .create-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:24px 26px;margin:14px 0;animation:slideIn .2s ease-out}
+  @keyframes slideIn{from{transform:translateY(-6px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .create-panel h2{font-family:'DM Serif Display',Georgia,serif;font-size:22px;margin-bottom:6px}
+  .create-panel h2 span{color:var(--orange)}
+  .create-panel .panel-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;text-transform:uppercase;
     margin-bottom:18px}
+  .create-panel-close{float:right;background:none;border:none;color:var(--w40);
+    font-size:22px;cursor:pointer;line-height:1;padding:0 4px;margin:-4px -4px 0 0}
+  .create-panel-close:hover{color:var(--white)}
 
   /* Form i modal */
   .field{margin-bottom:14px}
@@ -255,38 +252,20 @@
     </div>
   </div>
 
-  <!-- Tabell -->
-  <div class="aa-table-wrap">
-    <div class="aa-thead">
-      <div>Avtal / Företag</div>
-      <div class="col-sender">Avsändare</div>
-      <div style="text-align:center;">Status</div>
-      <div style="text-align:center;">Signerat</div>
-      <div class="col-date" style="text-align:right;">Skickat</div>
-      <div></div>
-    </div>
-    <div data-aa="rows">
-      <div class="aa-loading">Hämtar signeringar…</div>
-    </div>
-    <div class="aa-count" data-aa="count"></div>
-  </div>
-</div>
-
-<!-- MODAL: skapa signering -->
-<div class="modal-back" data-aa="modal">
-  <div class="modal">
-    <button class="modal-close" data-aa="modal-close">×</button>
+  <!-- INLINE CREATE-PANEL (växer fram när "+ Skapa signering" klickas) -->
+  <div class="create-panel hidden" data-aa="create-panel">
+    <button class="create-panel-close" data-aa="panel-close" title="Stäng">×</button>
 
     <!-- FORMULÄR -->
-    <div data-aa="modal-form">
+    <div data-aa="form">
       <h2>Ny <span>signering</span></h2>
-      <div class="modal-sub">Fyll i och skicka</div>
+      <div class="panel-sub">Fyll i och skicka</div>
 
       <div class="modal-section">
         <h3>Koppla till företag (valfritt)</h3>
         <div class="cc-picker">
           <div data-aa="cc-search-wrap">
-            <input type="text" data-aa="cc-search" placeholder="Sök ClientCompany (minst 2 tecken)…" autocomplete="off">
+            <input type="text" data-aa="cc-search" placeholder="Sök ClientCompany…" autocomplete="off">
             <div class="cc-dd" data-aa="cc-dd"></div>
           </div>
           <div data-aa="cc-selected" class="cc-selected hidden">
@@ -345,7 +324,7 @@
     </div>
 
     <!-- BEKRÄFTELSE -->
-    <div data-aa="modal-done" class="hidden">
+    <div data-aa="done" class="hidden">
       <div class="modal-done">
         <div class="check">✓</div>
         <h2>Signering skickad</h2>
@@ -359,6 +338,22 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Tabell -->
+  <div class="aa-table-wrap">
+    <div class="aa-thead">
+      <div>Avtal / Företag</div>
+      <div class="col-sender">Avsändare</div>
+      <div style="text-align:center;">Status</div>
+      <div style="text-align:center;">Signerat</div>
+      <div class="col-date" style="text-align:right;">Skickat</div>
+      <div></div>
+    </div>
+    <div data-aa="rows">
+      <div class="aa-loading">Hämtar signeringar…</div>
+    </div>
+    <div class="aa-count" data-aa="count"></div>
   </div>
 </div>
 
@@ -374,15 +369,9 @@
   })();
   if (!root) return;
 
-  // Modal lever utanför .aa-wrap (position:fixed) — vi måste claima den separat.
-  // Vi tar nästa följande .modal-back syskon från root.
-  let modal = root.nextElementSibling;
-  while (modal && !modal.classList.contains("modal-back")) modal = modal.nextElementSibling;
-  if (!modal) return;
-  modal.dataset.aaInit = "1";
-
-  const $   = (key) => root.querySelector(`[data-aa="${key}"]`)
-                    || modal.querySelector(`[data-aa="${key}"]`);
+  // Create-panel ligger nu inne i .aa-wrap (inline-expand istället för modal)
+  // → ingen separat claim behövs, allt scopas direkt mot root.
+  const $   = (key) => root.querySelector(`[data-aa="${key}"]`);
   const cfg = (key) => root.querySelector(`[data-mira="${key}"]`)?.value || "";
 
   const HOST         = cfg("api_host").replace(/\/+$/, "");
@@ -599,16 +588,20 @@
   $("to").addEventListener("change", fetchList);
 
   // ════════════════════════════════════════════════════════════════
-  // MODAL: create-signering
+  // INLINE CREATE-PANEL (växer fram inuti .aa-wrap, ingen modal)
   // ════════════════════════════════════════════════════════════════
-  function openModal() {
+  function openPanel() {
     resetForm();
-    modal.classList.add("on");
-    $("modal-form").classList.remove("hidden");
-    $("modal-done").classList.add("hidden");
+    $("create-panel").classList.remove("hidden");
+    $("form").classList.remove("hidden");
+    $("done").classList.add("hidden");
+    ensureCcCache();              // ladda ClientCompany-listan vid första öppning
+    $("create-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("new-btn").textContent = "× Avbryt";
   }
-  function closeModal() {
-    modal.classList.remove("on");
+  function closePanel() {
+    $("create-panel").classList.add("hidden");
+    $("new-btn").textContent = "+ Skapa signering";
   }
   function resetForm() {
     formState.files = [];
@@ -632,12 +625,11 @@
     updateCounts();
   }
 
-  $("new-btn").addEventListener("click", openModal);
-  $("modal-close").addEventListener("click", closeModal);
-  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && modal.classList.contains("on")) closeModal();
+  $("new-btn").addEventListener("click", () => {
+    if ($("create-panel").classList.contains("hidden")) openPanel();
+    else closePanel();
   });
+  $("panel-close").addEventListener("click", closePanel);
 
   // ── Filhantering ────────────────────────────────────────────────
   const drop     = $("drop");
@@ -721,50 +713,76 @@
   }
   $("rcp-add").addEventListener("click", () => addRecipient("", ""));
 
-  // ── ClientCompany autocomplete ──────────────────────────────────
+  // ── ClientCompany autocomplete (client-side cached) ─────────────
+  // Fetchar HELA listan en gång (/admin/clientcompany/all) och filtrerar
+  // sedan client-side. Undviker beroende av Bubbles `text contains` mot
+  // gissade fältnamn — vi får alltid träff om bolaget finns.
   const ccSearch = $("cc-search");
   const ccDd     = $("cc-dd");
+  let ccCache    = null;       // [{id, name}]
+  let ccLoading  = false;
 
-  const ccLookup = debounce(async () => {
-    const q = ccSearch.value.trim();
-    if (q.length < 2) { ccDd.classList.remove("on"); ccDd.innerHTML = ""; return; }
-    ccDd.innerHTML = `<div class="cc-dd-empty">Söker…</div>`;
-    ccDd.classList.add("on");
+  async function ensureCcCache() {
+    if (ccCache || ccLoading) return;
+    ccLoading = true;
     try {
-      const r = await fetch(HOST + "/admin/clientcompany/search?q=" + encodeURIComponent(q) + "&limit=20",
+      const r = await fetch(HOST + "/admin/clientcompany/all?limit=2000",
         { headers: { "x-admin-token": TOKEN } });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) {
-        ccDd.innerHTML = `<div class="cc-dd-empty">Fel: ${escapeHtml(j.error || r.status)}</div>`;
-        return;
-      }
-      if (!j.items || !j.items.length) {
-        ccDd.innerHTML = `<div class="cc-dd-empty">Inga träffar</div>`;
-        return;
-      }
-      ccDd.innerHTML = "";
-      for (const it of j.items) {
-        const row = document.createElement("div");
-        row.className = "cc-dd-row";
-        row.textContent = it.name;
-        row.addEventListener("click", () => {
-          formState.selectedCc = { id: it.id, name: it.name };
-          $("cc-selected-name").textContent = it.name;
-          $("cc-selected").classList.remove("hidden");
-          $("cc-search-wrap").classList.add("hidden");
-          ccDd.classList.remove("on");
-          ccDd.innerHTML = "";
-          ccSearch.value = "";
-        });
-        ccDd.appendChild(row);
-      }
-    } catch (e) {
-      ccDd.innerHTML = `<div class="cc-dd-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
-    }
-  }, 250);
+      if (r.ok && j.ok) ccCache = j.items || [];
+      else ccCache = [];
+    } catch { ccCache = []; }
+    ccLoading = false;
+  }
 
-  ccSearch.addEventListener("input", ccLookup);
-  ccSearch.addEventListener("focus", () => { if (ccSearch.value.trim().length >= 2) ccDd.classList.add("on"); });
+  function renderCcResults(q) {
+    if (!ccCache) {
+      ccDd.innerHTML = `<div class="cc-dd-empty">Laddar bolagslistan…</div>`;
+      ccDd.classList.add("on");
+      return;
+    }
+    const term = String(q || "").trim().toLowerCase();
+    let matches;
+    if (!term) {
+      matches = ccCache.slice(0, 20);
+    } else {
+      matches = ccCache
+        .filter((c) => c.name.toLowerCase().includes(term))
+        .slice(0, 20);
+    }
+    if (!matches.length) {
+      ccDd.innerHTML = `<div class="cc-dd-empty">Inga träffar för "${escapeHtml(term)}"</div>`;
+      ccDd.classList.add("on");
+      return;
+    }
+    ccDd.innerHTML = "";
+    for (const it of matches) {
+      const row = document.createElement("div");
+      row.className = "cc-dd-row";
+      row.textContent = it.name;
+      row.addEventListener("click", () => {
+        formState.selectedCc = { id: it.id, name: it.name };
+        $("cc-selected-name").textContent = it.name;
+        $("cc-selected").classList.remove("hidden");
+        $("cc-search-wrap").classList.add("hidden");
+        ccDd.classList.remove("on");
+        ccDd.innerHTML = "";
+        ccSearch.value = "";
+      });
+      ccDd.appendChild(row);
+    }
+    ccDd.classList.add("on");
+  }
+
+  const ccLookup = debounce(() => renderCcResults(ccSearch.value), 120);
+  ccSearch.addEventListener("input", async () => {
+    if (!ccCache) await ensureCcCache();
+    ccLookup();
+  });
+  ccSearch.addEventListener("focus", async () => {
+    if (!ccCache) await ensureCcCache();
+    renderCcResults(ccSearch.value);   // visa top-20 vid focus även med tomt sökfält
+  });
   document.addEventListener("click", (e) => {
     if (!e.target.closest('[data-aa="cc-search-wrap"]')) ccDd.classList.remove("on");
   });
@@ -843,8 +861,8 @@
   });
 
   function showDone(j) {
-    $("modal-form").classList.add("hidden");
-    $("modal-done").classList.remove("hidden");
+    $("form").classList.add("hidden");
+    $("done").classList.remove("hidden");
     $("done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
     const list = $("done-list");
     list.innerHTML = "";
@@ -856,8 +874,12 @@
       list.appendChild(li);
     }
   }
-  $("done-new").addEventListener("click", () => { resetForm(); $("modal-form").classList.remove("hidden"); $("modal-done").classList.add("hidden"); });
-  $("done-close").addEventListener("click", closeModal);
+  $("done-new").addEventListener("click", () => {
+    resetForm();
+    $("form").classList.remove("hidden");
+    $("done").classList.add("hidden");
+  });
+  $("done-close").addEventListener("click", closePanel);
 
   // ── Init ────────────────────────────────────────────────────────
   fetchList();
