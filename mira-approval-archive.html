@@ -1,0 +1,865 @@
+<!--
+  MIRA — SIGNERINGSARKIV (Carotte admin-vy för OfferApproval-flödet)
+  ------------------------------------------------------------------
+  Global tabell över alla OfferApprovalRequests. Sök på företagsnamn/rubrik
+  (client-side), filtrera på datum (server-side), expand-rad visar fulla
+  detaljer per signering. Knapp för att skapa generell signering med
+  ClientCompany-picker (autocomplete) om man vill koppla till bolag.
+
+  Multi-instance-säkert (samma claim-mekanism som mira-approval-create.html).
+
+  KOPPLING I BUBBLE:
+    data-mira="api_host"        = https://mira-exchange.onrender.com
+    data-mira="planning_token"  = PLANNING_ADMIN_TOKEN
+    data-mira="sender_email"    = Current User's email
+    data-mira="sender_name"     = Current User's full name (eller "Carotte")
+-->
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .aa-wrap, .aa-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .aa-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e; --input:#2e3350;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --red:#E05A5A; --blue:#5B8DEF;
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
+    background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;width:100%;border-radius:14px;padding:0 20px 30px;
+  }
+  .aa-wrap input[type=hidden]{display:none}
+
+  .aa-top{display:flex;align-items:center;justify-content:space-between;gap:18px;
+    padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+  .aa-h1{font-family:'DM Serif Display',Georgia,serif;font-size:24px;line-height:1.1;letter-spacing:-.01em}
+  .aa-h1 span{color:var(--orange)}
+  .aa-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;margin-top:3px;text-transform:uppercase}
+  .btn-primary{background:var(--orange);color:#1c1206;border:none;border-radius:10px;
+    padding:11px 18px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.2px}
+  .btn-primary:hover{filter:brightness(1.08)}
+  .btn-primary:disabled{opacity:.4;cursor:not-allowed}
+  .btn-secondary{background:var(--input);border:1px solid var(--border);color:var(--white);
+    border-radius:10px;padding:10px 16px;font-size:12px;cursor:pointer}
+  .btn-secondary:hover{border-color:var(--orange)}
+
+  /* Filter-bar */
+  .aa-filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:14px 16px;margin-bottom:14px}
+  @media (max-width:760px){.aa-filters{grid-template-columns:1fr 1fr}}
+  .aa-filters label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;
+    color:var(--w40);margin-bottom:5px;font-weight:700}
+  .aa-filters input, .aa-filters select{width:100%;background:var(--input);border:1px solid var(--border);
+    border-radius:8px;color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb)}
+  .aa-filters input:focus, .aa-filters select:focus{outline:none;border-color:var(--orange)}
+
+  /* Tabell */
+  .aa-table-wrap{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    overflow:hidden}
+  .aa-thead{display:grid;grid-template-columns:2fr 1.5fr 110px 90px 110px 30px;gap:12px;
+    padding:12px 18px;background:var(--card);border-bottom:1px solid var(--border);
+    font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700}
+  @media (max-width:760px){.aa-thead{grid-template-columns:1.5fr 90px 80px 24px;gap:8px;padding:10px 12px}
+    .aa-thead .col-sender, .aa-thead .col-date{display:none}}
+
+  .aa-row{border-bottom:1px solid var(--border)}
+  .aa-row:last-child{border-bottom:none}
+  .aa-row-head{display:grid;grid-template-columns:2fr 1.5fr 110px 90px 110px 30px;gap:12px;
+    padding:13px 18px;cursor:pointer;transition:background .15s;align-items:center}
+  @media (max-width:760px){.aa-row-head{grid-template-columns:1.5fr 90px 80px 24px;gap:8px;padding:11px 12px}
+    .aa-row-head .col-sender, .aa-row-head .col-date{display:none}}
+  .aa-row-head:hover{background:var(--deep)}
+  .aa-row.open .aa-row-head{background:var(--deep)}
+  .col-title{min-width:0;overflow:hidden}
+  .col-title .rubrik{font-weight:700;font-size:13px;color:var(--white);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .col-title .company{font-size:11px;color:var(--w40);margin-top:2px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .col-sender{font-size:12px;color:var(--w70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .col-count{font-size:12px;color:var(--w70);text-align:center}
+  .col-date{font-size:11px;color:var(--w40);text-align:right;white-space:nowrap}
+  .col-arrow{color:var(--w40);font-size:13px;text-align:center;transition:transform .15s}
+  .aa-row.open .col-arrow{transform:rotate(180deg)}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;
+    letter-spacing:.4px;text-transform:uppercase;padding:3px 9px;border-radius:999px;border:1px solid}
+  .pill .dot{width:5px;height:5px;border-radius:50%}
+  .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green);border-color:rgba(76,175,125,.35)}
+  .pill.s-Approved .dot{background:var(--green)}
+  .pill.s-Sent,.pill.s-OTP_Sent,.pill.s-Viewed{background:var(--orange-dim);color:var(--orange);border-color:rgba(244,123,48,.35)}
+  .pill.s-Sent .dot,.pill.s-OTP_Sent .dot,.pill.s-Viewed .dot{background:var(--orange)}
+  .pill.s-Draft{background:var(--w10);color:var(--w70);border-color:var(--border)}
+  .pill.s-Draft .dot{background:var(--w40)}
+  .pill.s-Expired,.pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red);border-color:rgba(224,90,90,.35)}
+  .pill.s-Expired .dot,.pill.s-Revoked .dot{background:var(--red)}
+
+  .aa-detail{display:none;padding:18px 22px;background:var(--card);border-top:1px solid var(--border);
+    font-size:12px}
+  .aa-row.open .aa-detail{display:block}
+  .meta-grid{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;margin-bottom:16px;color:var(--w70)}
+  .meta-grid .k{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .aa-detail h4{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--w40);
+    margin:14px 0 8px;font-weight:700}
+  .rcp-table{width:100%;border-collapse:collapse;font-size:12px}
+  .rcp-table th,.rcp-table td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+  .rcp-table th{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);font-weight:700}
+  .rcp-table td{color:var(--w70)}
+  .rcp-table td.email{color:var(--white);font-weight:700}
+  .rcp-table td a{color:var(--orange);text-decoration:none;font-size:11px;font-weight:700}
+  .rcp-table td a:hover{text-decoration:underline}
+  .doc-row{display:flex;align-items:center;justify-content:space-between;background:var(--panel);
+    border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px}
+  .doc-row a{color:var(--w70);text-decoration:none;font-size:11px;font-weight:700;
+    background:var(--input);border:1px solid var(--border);padding:5px 10px;border-radius:6px;
+    text-transform:uppercase;letter-spacing:.3px}
+  .doc-row a:hover{color:var(--orange);border-color:var(--orange)}
+
+  .aa-empty{text-align:center;color:var(--w40);font-size:13px;padding:48px 16px}
+  .aa-loading{text-align:center;color:var(--w40);font-size:12px;padding:32px}
+  .aa-count{font-size:11px;color:var(--w40);padding:10px 18px;background:var(--card);
+    border-top:1px solid var(--border)}
+
+  /* Modal: create-form */
+  .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:none;
+    align-items:flex-start;justify-content:center;padding:32px 16px;overflow-y:auto;backdrop-filter:blur(4px)}
+  .modal-back.on{display:flex}
+  .modal{background:var(--base);border:1px solid var(--border);border-radius:14px;width:100%;
+    max-width:640px;padding:24px 26px;position:relative;animation:slideIn .2s ease-out}
+  @keyframes slideIn{from{transform:translateY(-10px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal-close{position:absolute;top:14px;right:16px;background:none;border:none;color:var(--w40);
+    font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}
+  .modal-close:hover{color:var(--white)}
+  .modal h2{font-family:'DM Serif Display',Georgia,serif;font-size:22px;margin-bottom:6px}
+  .modal h2 span{color:var(--orange)}
+  .modal .modal-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;text-transform:uppercase;
+    margin-bottom:18px}
+
+  /* Form i modal */
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;
+    color:var(--w40);margin-bottom:6px;font-weight:700}
+  .field input,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);
+    border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .field textarea{min-height:80px;resize:vertical}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  @media (max-width:560px){.row2{grid-template-columns:1fr}}
+
+  /* ClientCompany autocomplete */
+  .cc-picker{position:relative}
+  .cc-selected{display:flex;align-items:center;gap:8px;background:var(--input);border:1px solid var(--orange);
+    border-radius:8px;padding:8px 12px;font-size:12px;color:var(--white)}
+  .cc-selected .clr{background:none;border:none;color:var(--w40);font-size:14px;cursor:pointer;margin-left:auto;padding:2px 6px}
+  .cc-selected .clr:hover{color:var(--red)}
+  .cc-dd{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--panel);
+    border:1px solid var(--border);border-radius:9px;max-height:240px;overflow:auto;z-index:50;
+    box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .cc-dd.on{display:block}
+  .cc-dd-row{padding:10px 13px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border);color:var(--w70)}
+  .cc-dd-row:hover{background:var(--deep);color:var(--white)}
+  .cc-dd-row:last-child{border-bottom:none}
+  .cc-dd-empty{padding:14px;font-size:11px;color:var(--w40);text-align:center}
+
+  /* Drop zone */
+  .drop{display:block;width:100%;border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;
+    padding:20px;text-align:center;cursor:pointer;transition:.15s;background:var(--card)}
+  .drop:hover, .drop.drag{border-color:var(--orange);background:var(--orange-dim)}
+  .drop .ic{font-size:28px;line-height:1;margin-bottom:6px;color:var(--w40)}
+  .drop .pri{font-size:13px;font-weight:700;color:var(--white);margin-bottom:2px}
+  .drop .sec{font-size:11px;color:var(--w40)}
+  .drop input[type=file]{display:none}
+  ul.files{list-style:none;margin:10px 0 0;padding:0}
+  li.file{display:flex;align-items:center;justify-content:space-between;background:var(--card);
+    border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px}
+  li.file .meta{color:var(--w40);margin-right:auto;margin-left:10px;font-size:11px}
+  li.file .rm{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 6px}
+
+  /* Recipients */
+  .rcp-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center}
+  .rcp-row input{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;
+    color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb)}
+  .rcp-row input:focus{outline:none;border-color:var(--orange)}
+  .rcp-rm{background:none;border:1px solid var(--border);color:var(--w40);width:32px;height:34px;
+    border-radius:8px;cursor:pointer;font-size:14px}
+  .rcp-rm:hover{color:var(--red);border-color:var(--red)}
+  .rcp-add{background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    padding:9px 13px;border-radius:8px;font-size:12px;cursor:pointer;margin-top:4px}
+  .rcp-add:hover{border-color:var(--orange);color:var(--orange)}
+
+  .modal-section{margin-bottom:18px}
+  .modal-section h3{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--w40);
+    margin-bottom:10px;font-weight:700}
+  .modal-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    padding-top:14px;border-top:1px solid var(--border);margin-top:18px}
+  .modal-foot .count{font-size:11px;color:var(--w40)}
+  .modal-foot .count b{color:var(--white)}
+  .err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px}
+
+  /* Done-state i modal */
+  .modal-done{text-align:center;padding:12px 0 4px}
+  .modal-done .check{display:inline-flex;width:56px;height:56px;border-radius:50%;
+    background:rgba(76,175,125,.13);align-items:center;justify-content:center;color:var(--green);
+    font-size:32px;margin-bottom:10px}
+  .modal-done h2{color:var(--green);margin-bottom:10px}
+  .modal-done .ok-list{list-style:none;padding:0;margin:14px 0 0}
+  .modal-done .ok-list li{background:var(--card);border:1px solid var(--border);border-radius:8px;
+    padding:10px 14px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;
+    align-items:center;gap:10px;word-break:break-all;text-align:left}
+  .modal-done .ok-list li a{color:var(--blue);text-decoration:none;font-family:Menlo,Consolas,monospace;font-size:11px}
+
+  .hidden{display:none !important}
+</style>
+
+<div class="aa-wrap">
+
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="sender_email"   value="">
+  <input type="hidden" data-mira="sender_name"    value="">
+
+  <div class="aa-top">
+    <div>
+      <div class="aa-h1">Signerings<span>arkiv</span></div>
+      <div class="aa-sub">Alla OfferApproval-processer · sök, filtrera, expandera</div>
+    </div>
+    <button class="btn-primary" data-aa="new-btn">+ Skapa signering</button>
+  </div>
+
+  <!-- Filter -->
+  <div class="aa-filters">
+    <div>
+      <label>Sök (rubrik / företag / mottagare / avsändare)</label>
+      <input type="search" data-aa="search" placeholder="t.ex. Tistel, Lokalvård, anna@…" autocomplete="off">
+    </div>
+    <div>
+      <label>Status</label>
+      <select data-aa="status">
+        <option value="all">Alla</option>
+        <option value="Draft">Draft</option>
+        <option value="Sent">Sent</option>
+        <option value="Viewed">Viewed</option>
+        <option value="OTP_Sent">OTP_Sent</option>
+        <option value="Approved">Approved</option>
+        <option value="Expired">Expired</option>
+        <option value="Revoked">Revoked</option>
+      </select>
+    </div>
+    <div>
+      <label>Från datum</label>
+      <input type="date" data-aa="from">
+    </div>
+    <div>
+      <label>Till datum</label>
+      <input type="date" data-aa="to">
+    </div>
+  </div>
+
+  <!-- Tabell -->
+  <div class="aa-table-wrap">
+    <div class="aa-thead">
+      <div>Avtal / Företag</div>
+      <div class="col-sender">Avsändare</div>
+      <div style="text-align:center;">Status</div>
+      <div style="text-align:center;">Signerat</div>
+      <div class="col-date" style="text-align:right;">Skickat</div>
+      <div></div>
+    </div>
+    <div data-aa="rows">
+      <div class="aa-loading">Hämtar signeringar…</div>
+    </div>
+    <div class="aa-count" data-aa="count"></div>
+  </div>
+</div>
+
+<!-- MODAL: skapa signering -->
+<div class="modal-back" data-aa="modal">
+  <div class="modal">
+    <button class="modal-close" data-aa="modal-close">×</button>
+
+    <!-- FORMULÄR -->
+    <div data-aa="modal-form">
+      <h2>Ny <span>signering</span></h2>
+      <div class="modal-sub">Fyll i och skicka</div>
+
+      <div class="modal-section">
+        <h3>Koppla till företag (valfritt)</h3>
+        <div class="cc-picker">
+          <div data-aa="cc-search-wrap">
+            <input type="text" data-aa="cc-search" placeholder="Sök ClientCompany (minst 2 tecken)…" autocomplete="off">
+            <div class="cc-dd" data-aa="cc-dd"></div>
+          </div>
+          <div data-aa="cc-selected" class="cc-selected hidden">
+            <span data-aa="cc-selected-name"></span>
+            <button class="clr" data-aa="cc-clear" title="Ta bort koppling">×</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <h3>1. Dokument</h3>
+        <label class="drop" data-aa="drop">
+          <div class="ic">⬆</div>
+          <div class="pri">Dra hit PDF-filer eller klicka</div>
+          <div class="sec">Max 25 MB per fil · max 20 filer</div>
+          <input type="file" data-aa="files" accept="application/pdf" multiple>
+        </label>
+        <ul class="files" data-aa="file-list"></ul>
+      </div>
+
+      <div class="modal-section">
+        <h3>2. Mottagare</h3>
+        <div data-aa="recipients"></div>
+        <button type="button" class="rcp-add" data-aa="rcp-add">+ Lägg till mottagare</button>
+      </div>
+
+      <div class="modal-section">
+        <h3>3. Meddelande</h3>
+        <div class="field">
+          <label>Rubrik</label>
+          <input type="text" data-aa="rubrik" placeholder="t.ex. Tilläggsavtal Lokalvård" maxlength="120">
+        </div>
+        <div class="field">
+          <label>Personligt meddelande (valfritt)</label>
+          <textarea data-aa="meddelande" placeholder="Hej, här kommer avtalet…"></textarea>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Avsändarnamn</label>
+            <input type="text" data-aa="sender-name" placeholder="Carotte">
+          </div>
+          <div class="field">
+            <label>Sista signeringsdag</label>
+            <input type="date" data-aa="expires">
+          </div>
+        </div>
+        <div class="err" data-aa="err"></div>
+      </div>
+
+      <div class="modal-foot">
+        <div class="count">
+          <b data-aa="cnt-files">0</b> filer · <b data-aa="cnt-rcp">0</b> mottagare
+        </div>
+        <button class="btn-primary" data-aa="submit" disabled>Skicka</button>
+      </div>
+    </div>
+
+    <!-- BEKRÄFTELSE -->
+    <div data-aa="modal-done" class="hidden">
+      <div class="modal-done">
+        <div class="check">✓</div>
+        <h2>Signering skickad</h2>
+        <p style="color:var(--w70);font-size:13px;">
+          <b data-aa="done-cnt">0</b> mottagare har fått ett invite-mail.
+        </p>
+        <ul class="ok-list" data-aa="done-list"></ul>
+        <div style="margin-top:18px;display:flex;gap:10px;justify-content:center;">
+          <button class="btn-secondary" data-aa="done-new">Skicka en till</button>
+          <button class="btn-primary" data-aa="done-close">Stäng</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ── Multi-instance support ──────────────────────────────────────
+  const root = (function () {
+    const all = document.querySelectorAll(".aa-wrap");
+    for (const r of all) {
+      if (!r.dataset.aaInit) { r.dataset.aaInit = "1"; return r; }
+    }
+    return null;
+  })();
+  if (!root) return;
+
+  // Modal lever utanför .aa-wrap (position:fixed) — vi måste claima den separat.
+  // Vi tar nästa följande .modal-back syskon från root.
+  let modal = root.nextElementSibling;
+  while (modal && !modal.classList.contains("modal-back")) modal = modal.nextElementSibling;
+  if (!modal) return;
+  modal.dataset.aaInit = "1";
+
+  const $   = (key) => root.querySelector(`[data-aa="${key}"]`)
+                    || modal.querySelector(`[data-aa="${key}"]`);
+  const cfg = (key) => root.querySelector(`[data-mira="${key}"]`)?.value || "";
+
+  const HOST         = cfg("api_host").replace(/\/+$/, "");
+  const TOKEN        = cfg("planning_token");
+  const SENDER_EMAIL = cfg("sender_email");
+  const SENDER_NAME  = cfg("sender_name") || "Carotte";
+
+  // ── State ───────────────────────────────────────────────────────
+  let allItems   = [];       // alla rader från API (efter date+status-filter)
+  let searchTerm = "";       // client-side search
+  const detailCache = new Map();  // reqId → loaded detail HTML
+  const expanded    = new Set();
+  let nextId = 1;
+  const formState = {
+    files: [],
+    recipients: [],
+    selectedCc: null,        // {id, name}
+  };
+
+  // ── Helpers ─────────────────────────────────────────────────────
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+    })[c]);
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleDateString("sv-SE", { year: "numeric", month: "short", day: "numeric" });
+  }
+  function fmtDateTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" });
+  }
+  function statusPill(status) {
+    const s = String(status || "").trim() || "Draft";
+    return `<span class="pill s-${escapeAttr(s)}"><span class="dot"></span>${escapeHtml(s)}</span>`;
+  }
+  function debounce(fn, ms) {
+    let t = null;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  // ── Tabell-fetch & render ───────────────────────────────────────
+  async function fetchList() {
+    const status = $("status").value || "all";
+    const from   = $("from").value;     // YYYY-MM-DD
+    const to     = $("to").value;
+    const params = new URLSearchParams({ limit: "500", enrich: "1" });
+    if (status !== "all") params.set("status", status);
+    if (from) params.set("from", new Date(from + "T00:00:00").toISOString());
+    if (to)   params.set("to",   new Date(to   + "T23:59:59").toISOString());
+
+    const rowsEl = $("rows");
+    rowsEl.innerHTML = `<div class="aa-loading">Hämtar signeringar…</div>`;
+
+    try {
+      const r = await fetch(HOST + "/admin/approval/list?" + params.toString(),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        rowsEl.innerHTML = `<div class="aa-empty">Kunde inte hämta: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      allItems = j.items || [];
+      detailCache.clear();
+      expanded.clear();
+      renderRows();
+    } catch (e) {
+      rowsEl.innerHTML = `<div class="aa-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }
+
+  function filterItems() {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return allItems;
+    return allItems.filter((it) => {
+      const hay = [it.rubrik, it.clientcompany_name, it.sender_name, it.sender_email]
+        .filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  function renderRows() {
+    const rowsEl = $("rows");
+    const items = filterItems();
+    $("count").textContent =
+      items.length === allItems.length
+        ? `${items.length} signeringar`
+        : `${items.length} av ${allItems.length} signeringar (filtrerat)`;
+
+    if (!items.length) {
+      rowsEl.innerHTML = `<div class="aa-empty">Inga signeringar matchar.</div>`;
+      return;
+    }
+
+    rowsEl.innerHTML = "";
+    for (const it of items) {
+      const row = document.createElement("div");
+      row.className = "aa-row" + (expanded.has(it.id) ? " open" : "");
+      row.dataset.id = it.id;
+
+      const company  = it.clientcompany_name || (it.clientcompany ? "(okänt företag)" : "");
+      const sender   = it.sender_name || it.sender_email || "—";
+      const counts   = `${it.signed_count}/${it.recipients_count}`;
+      const created  = fmtDate(it.created_date);
+
+      row.innerHTML = `
+        <div class="aa-row-head">
+          <div class="col-title">
+            <div class="rubrik">${escapeHtml(it.rubrik || "(utan rubrik)")}</div>
+            ${company ? `<div class="company">${escapeHtml(company)}</div>` : ""}
+          </div>
+          <div class="col-sender">${escapeHtml(sender)}</div>
+          <div style="text-align:center;">${statusPill(it.status)}</div>
+          <div class="col-count">${escapeHtml(counts)}</div>
+          <div class="col-date">${escapeHtml(created)}</div>
+          <div class="col-arrow">▾</div>
+        </div>
+        <div class="aa-detail" data-detail-for="${escapeAttr(it.id)}"></div>
+      `;
+      rowsEl.appendChild(row);
+    }
+
+    rowsEl.querySelectorAll(".aa-row-head").forEach((head) => {
+      head.addEventListener("click", () => {
+        const row = head.closest(".aa-row");
+        const id  = row.dataset.id;
+        const det = row.querySelector(".aa-detail");
+        if (expanded.has(id)) {
+          expanded.delete(id);
+          row.classList.remove("open");
+        } else {
+          expanded.add(id);
+          row.classList.add("open");
+          if (!detailCache.has(id)) {
+            det.innerHTML = `<div class="aa-loading">Hämtar detaljer…</div>`;
+            loadDetail(id, det);
+          } else {
+            det.innerHTML = detailCache.get(id);
+          }
+        }
+      });
+    });
+  }
+
+  async function loadDetail(reqId, container) {
+    try {
+      const r = await fetch(HOST + "/admin/approval/request/" + encodeURIComponent(reqId),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        container.innerHTML = `<div class="aa-empty">Kunde inte hämta: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      const req = j.request || {};
+      const apps = j.approvals || [];
+      const docs = j.documents || [];
+
+      const metaRows = [
+        ["Avsändare",       (req.sender_name || "") + (req.sender_email ? " · " + req.sender_email : "")],
+        ["Skickat",         fmtDateTime(req.created_date)],
+        ["Status",          req.status || "—"],
+        req.expires_at ? ["Sista signeringsdag", fmtDate(req.expires_at)] : null,
+        req.meddelande ? ["Meddelande", req.meddelande] : null,
+      ].filter(Boolean);
+
+      const rcpRowsHtml = apps.map((a) => `
+        <tr>
+          <td class="email">${escapeHtml(a.recipient_email)}</td>
+          <td>${statusPill(a.status)}</td>
+          <td>${a.approved_at ? escapeHtml(fmtDateTime(a.approved_at)) : "—"}</td>
+          <td>${a.approved_ip ? escapeHtml(a.approved_ip) : "—"}</td>
+          <td>${a.signed_document
+                  ? `<a href="${escapeAttr(a.signed_document)}" target="_blank" rel="noopener">PDF ↗</a>`
+                  : (a.approval_link
+                      ? `<a href="${escapeAttr(a.approval_link)}" target="_blank" rel="noopener">länk ↗</a>`
+                      : "—")}</td>
+        </tr>
+      `).join("");
+
+      const html = `
+        <div class="meta-grid">
+          ${metaRows.map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div>${escapeHtml(String(v))}</div>`).join("")}
+        </div>
+        <h4>Dokument (${docs.length})</h4>
+        ${docs.length
+          ? docs.map((d) => `<div class="doc-row"><span>${escapeHtml(d.titel)}</span>${d.file ? `<a href="${escapeAttr(d.file)}" target="_blank" rel="noopener">Öppna</a>` : ""}</div>`).join("")
+          : `<div class="aa-empty" style="padding:14px;">Inga dokument</div>`}
+        <h4>Mottagare (${apps.length})</h4>
+        <table class="rcp-table">
+          <thead><tr><th>E-post</th><th>Status</th><th>Signerat</th><th>IP</th><th>Dokument</th></tr></thead>
+          <tbody>${rcpRowsHtml || `<tr><td colspan="5" style="text-align:center;color:var(--w40);">Inga mottagare</td></tr>`}</tbody>
+        </table>
+      `;
+      detailCache.set(reqId, html);
+      container.innerHTML = html;
+    } catch (e) {
+      container.innerHTML = `<div class="aa-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }
+
+  // ── Filter events ───────────────────────────────────────────────
+  $("search").addEventListener("input", debounce(() => {
+    searchTerm = $("search").value;
+    renderRows();
+  }, 200));
+  $("status").addEventListener("change", fetchList);
+  $("from").addEventListener("change", fetchList);
+  $("to").addEventListener("change", fetchList);
+
+  // ════════════════════════════════════════════════════════════════
+  // MODAL: create-signering
+  // ════════════════════════════════════════════════════════════════
+  function openModal() {
+    resetForm();
+    modal.classList.add("on");
+    $("modal-form").classList.remove("hidden");
+    $("modal-done").classList.add("hidden");
+  }
+  function closeModal() {
+    modal.classList.remove("on");
+  }
+  function resetForm() {
+    formState.files = [];
+    formState.recipients = [];
+    formState.selectedCc = null;
+    renderFiles();
+    renderRecipients();
+    $("rubrik").value = "";
+    $("meddelande").value = "";
+    $("expires").value = "";
+    $("sender-name").value = SENDER_NAME;
+    $("cc-search").value = "";
+    $("cc-dd").classList.remove("on");
+    $("cc-dd").innerHTML = "";
+    $("cc-selected").classList.add("hidden");
+    $("cc-search-wrap").classList.remove("hidden");
+    addRecipient("", "");
+    $("err").textContent = "";
+    $("submit").disabled = true;
+    $("submit").textContent = "Skicka";
+    updateCounts();
+  }
+
+  $("new-btn").addEventListener("click", openModal);
+  $("modal-close").addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && modal.classList.contains("on")) closeModal();
+  });
+
+  // ── Filhantering ────────────────────────────────────────────────
+  const drop     = $("drop");
+  const fileEl   = $("files");
+  const fileList = $("file-list");
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (!f) continue;
+      if (f.size > 25 * 1024 * 1024) { setErr(`"${f.name}" är större än 25 MB`); continue; }
+      if (formState.files.length >= 20) { setErr("Max 20 filer"); break; }
+      formState.files.push({ file: f, id: nextId++ });
+    }
+    renderFiles();
+    updateCounts();
+    setErr("");
+  }
+  function renderFiles() {
+    fileList.innerHTML = "";
+    for (const item of formState.files) {
+      const li = document.createElement("li");
+      li.className = "file";
+      li.innerHTML =
+        `<span>${escapeHtml(item.file.name)}</span>` +
+        `<span class="meta">${(item.file.size/1024).toFixed(1)} kB</span>` +
+        `<button class="rm" data-id="${item.id}">Ta bort</button>`;
+      fileList.appendChild(li);
+    }
+    fileList.querySelectorAll(".rm").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = Number(b.dataset.id);
+        formState.files = formState.files.filter((x) => x.id !== id);
+        renderFiles();
+        updateCounts();
+      });
+    });
+  }
+  fileEl.addEventListener("change", () => { addFiles(fileEl.files); fileEl.value = ""; });
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("drag");
+    addFiles(e.dataTransfer.files);
+  });
+
+  // ── Mottagare ───────────────────────────────────────────────────
+  const rcpWrap = $("recipients");
+  function addRecipient(email, name) {
+    formState.recipients.push({ email: email || "", name: name || "", id: nextId++ });
+    renderRecipients();
+    updateCounts();
+  }
+  function renderRecipients() {
+    rcpWrap.innerHTML = "";
+    for (const r of formState.recipients) {
+      const row = document.createElement("div");
+      row.className = "rcp-row";
+      row.innerHTML =
+        `<input type="email" placeholder="e-post" value="${escapeAttr(r.email)}" data-id="${r.id}" data-k="email">` +
+        `<input type="text"  placeholder="namn (valfritt)" value="${escapeAttr(r.name)}" data-id="${r.id}" data-k="name">` +
+        `<button class="rcp-rm" data-id="${r.id}" title="Ta bort">×</button>`;
+      rcpWrap.appendChild(row);
+    }
+    rcpWrap.querySelectorAll("input").forEach((inp) => {
+      inp.addEventListener("input", () => {
+        const id = Number(inp.dataset.id);
+        const k  = inp.dataset.k;
+        const r  = formState.recipients.find((x) => x.id === id);
+        if (r) { r[k] = inp.value; updateCounts(); }
+      });
+    });
+    rcpWrap.querySelectorAll(".rcp-rm").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = Number(b.dataset.id);
+        formState.recipients = formState.recipients.filter((x) => x.id !== id);
+        renderRecipients();
+        updateCounts();
+      });
+    });
+  }
+  $("rcp-add").addEventListener("click", () => addRecipient("", ""));
+
+  // ── ClientCompany autocomplete ──────────────────────────────────
+  const ccSearch = $("cc-search");
+  const ccDd     = $("cc-dd");
+
+  const ccLookup = debounce(async () => {
+    const q = ccSearch.value.trim();
+    if (q.length < 2) { ccDd.classList.remove("on"); ccDd.innerHTML = ""; return; }
+    ccDd.innerHTML = `<div class="cc-dd-empty">Söker…</div>`;
+    ccDd.classList.add("on");
+    try {
+      const r = await fetch(HOST + "/admin/clientcompany/search?q=" + encodeURIComponent(q) + "&limit=20",
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        ccDd.innerHTML = `<div class="cc-dd-empty">Fel: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      if (!j.items || !j.items.length) {
+        ccDd.innerHTML = `<div class="cc-dd-empty">Inga träffar</div>`;
+        return;
+      }
+      ccDd.innerHTML = "";
+      for (const it of j.items) {
+        const row = document.createElement("div");
+        row.className = "cc-dd-row";
+        row.textContent = it.name;
+        row.addEventListener("click", () => {
+          formState.selectedCc = { id: it.id, name: it.name };
+          $("cc-selected-name").textContent = it.name;
+          $("cc-selected").classList.remove("hidden");
+          $("cc-search-wrap").classList.add("hidden");
+          ccDd.classList.remove("on");
+          ccDd.innerHTML = "";
+          ccSearch.value = "";
+        });
+        ccDd.appendChild(row);
+      }
+    } catch (e) {
+      ccDd.innerHTML = `<div class="cc-dd-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }, 250);
+
+  ccSearch.addEventListener("input", ccLookup);
+  ccSearch.addEventListener("focus", () => { if (ccSearch.value.trim().length >= 2) ccDd.classList.add("on"); });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest('[data-aa="cc-search-wrap"]')) ccDd.classList.remove("on");
+  });
+  $("cc-clear").addEventListener("click", () => {
+    formState.selectedCc = null;
+    $("cc-selected").classList.add("hidden");
+    $("cc-search-wrap").classList.remove("hidden");
+  });
+
+  // ── Counts + submit-state ───────────────────────────────────────
+  function updateCounts() {
+    $("cnt-files").textContent = formState.files.length;
+    const validRcps = formState.recipients.filter((r) => /\S+@\S+\.\S+/.test(r.email));
+    $("cnt-rcp").textContent = validRcps.length;
+    const rubrik = $("rubrik").value.trim();
+    $("submit").disabled = !(formState.files.length && validRcps.length && rubrik);
+  }
+  $("rubrik").addEventListener("input", updateCounts);
+  function setErr(m) { $("err").textContent = m || ""; }
+
+  // ── Submit ──────────────────────────────────────────────────────
+  $("submit").addEventListener("click", async () => {
+    setErr("");
+    const rubrik     = $("rubrik").value.trim();
+    const meddelande = $("meddelande").value.trim();
+    const senderName = $("sender-name").value.trim() || SENDER_NAME;
+    const expIso     = $("expires").value
+      ? new Date($("expires").value + "T23:59:59").toISOString()
+      : null;
+    const recipients = formState.recipients
+      .filter((r) => /\S+@\S+\.\S+/.test(r.email))
+      .map((r) => ({ email: r.email.trim(), name: (r.name || "").trim() }));
+
+    if (!formState.files.length) return setErr("Lägg till minst en PDF.");
+    if (!recipients.length)      return setErr("Lägg till minst en mottagare med giltig e-post.");
+    if (!rubrik)                 return setErr("Skriv en rubrik.");
+
+    const payload = {
+      rubrik, meddelande,
+      sender_email: SENDER_EMAIL,
+      sender_name:  senderName,
+      recipients,
+      clientcompany: formState.selectedCc?.id || null,
+      deal:          null,
+      expires_at:    expIso,
+    };
+
+    const fd = new FormData();
+    fd.append("payload", JSON.stringify(payload));
+    for (const f of formState.files) fd.append("files", f.file, f.file.name);
+
+    const submitBtn = $("submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Skickar…";
+
+    try {
+      const r = await fetch(HOST + "/approval/create", {
+        method: "POST",
+        headers: { "x-admin-token": TOKEN },
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        setErr("Skapande misslyckades: " + (j.error || r.status));
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Skicka";
+        return;
+      }
+      showDone(j);
+      fetchList();   // refresha tabellen i bakgrunden
+    } catch (e) {
+      setErr("Nätverksfel: " + (e.message || e));
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Skicka";
+    }
+  });
+
+  function showDone(j) {
+    $("modal-form").classList.add("hidden");
+    $("modal-done").classList.remove("hidden");
+    $("done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
+    const list = $("done-list");
+    list.innerHTML = "";
+    for (const a of (j.approvals || [])) {
+      const li = document.createElement("li");
+      li.innerHTML =
+        `<span>${escapeHtml(a.recipient_email)}</span>` +
+        `<a href="${escapeAttr(a.view_url)}" target="_blank" rel="noopener">öppna länk ↗</a>`;
+      list.appendChild(li);
+    }
+  }
+  $("done-new").addEventListener("click", () => { resetForm(); $("modal-form").classList.remove("hidden"); $("modal-done").classList.add("hidden"); });
+  $("done-close").addEventListener("click", closeModal);
+
+  // ── Init ────────────────────────────────────────────────────────
+  fetchList();
+})();
+</script>

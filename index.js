@@ -432,7 +432,8 @@ function requireApiKey(req, res, next) {
   // PLANNING_ADMIN_TOKEN istället för x-api-key.
   const openPrefixes = [
     "/admin/offers/",
-    "/admin/approval/",          // Carotte-CRM HTML-block, x-admin-token-grindad
+    "/admin/approval/",            // Carotte-CRM HTML-block, x-admin-token-grindad
+    "/admin/clientcompany/search", // ClientCompany-autocomplete för Carotte-UI
     "/approval/create",
     "/approval/view/",
     "/approval/request-otp/",
@@ -17185,7 +17186,10 @@ app.get("/admin/approval/list", async (req, res) => {
     const status  = String(req.query.status || "all").trim();
     const dealId  = String(req.query.deal || "").trim();
     const ccId    = String(req.query.clientcompany || "").trim();
-    const limit   = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const fromIso = String(req.query.from || "").trim();
+    const toIso   = String(req.query.to || "").trim();
+    const enrich  = String(req.query.enrich || "").trim() === "1";
+    const limit   = Math.min(Math.max(Number(req.query.limit) || 50, 1), 500);
 
     const constraints = [];
     if (status && status !== "all") {
@@ -17197,6 +17201,12 @@ app.get("/admin/approval/list", async (req, res) => {
     if (ccId) {
       constraints.push({ key: "clientcompany", constraint_type: "equals", value: ccId });
     }
+    if (fromIso) {
+      constraints.push({ key: "Created Date", constraint_type: "greater than", value: fromIso });
+    }
+    if (toIso) {
+      constraints.push({ key: "Created Date", constraint_type: "less than", value: toIso });
+    }
 
     const requests = await bubbleFindAll("OfferApprovalRequest", {
       constraints,
@@ -17204,7 +17214,7 @@ app.get("/admin/approval/list", async (req, res) => {
       descending: true,
     });
 
-    const trimmed = requests.slice(0, limit).map((r) => ({
+    let trimmed = requests.slice(0, limit).map((r) => ({
       id:               r._id,
       rubrik:           r.rubrik || "",
       sender_email:     r.sender_email || "",
@@ -17218,9 +17228,84 @@ app.get("/admin/approval/list", async (req, res) => {
       deal:             r.deal || null,
     }));
 
+    if (enrich) {
+      // Resolve ClientCompany-namn för displayändamål. Cache:as per query.
+      const ccIds = [...new Set(trimmed.map(t => t.clientcompany).filter(Boolean))];
+      const ccMap = new Map();
+      await Promise.all(ccIds.map(async (id) => {
+        const cc = await bubbleGet("ClientCompany", id).catch(() => null);
+        if (cc) {
+          const name = cc.name || cc.Name || cc.company_name || cc.Company_name
+                    || cc.namn || cc.Namn || "";
+          ccMap.set(id, name || null);
+        }
+      }));
+      trimmed = trimmed.map((t) => ({
+        ...t,
+        clientcompany_name: t.clientcompany ? (ccMap.get(t.clientcompany) || null) : null,
+      }));
+    }
+
     return res.json({ ok: true, count: trimmed.length, total: requests.length, items: trimmed });
   } catch (e) {
     console.error("[/admin/approval/list] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── GET /admin/clientcompany/search?q=text&limit=20 — autocomplete för UI:t ──
+// Söker på namn-relaterade fält (name/Name/company_name/namn) via Bubbles
+// `text contains`-constraint. Returnerar id + bästa namn.
+app.options("/admin/clientcompany/search", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.get("/admin/clientcompany/search", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const q     = String(req.query.q || "").trim();
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50);
+
+    if (!q || q.length < 2) return res.json({ ok: true, items: [] });
+
+    // Bubble Data API har inget OR. Vi gör två parallella queries (name + Name)
+    // och unionar resultaten. company_name/namn kan läggas till om de används.
+    const tryConstraint = async (field) => {
+      try {
+        return await bubbleFindAll("ClientCompany", {
+          constraints: [{ key: field, constraint_type: "text contains", value: q }],
+        });
+      } catch { return []; }
+    };
+
+    const [a, b, c, d] = await Promise.all([
+      tryConstraint("name"),
+      tryConstraint("Name"),
+      tryConstraint("company_name"),
+      tryConstraint("namn"),
+    ]);
+
+    const seen = new Map();
+    for (const arr of [a, b, c, d]) {
+      for (const cc of (arr || [])) {
+        if (!cc?._id || seen.has(cc._id)) continue;
+        const name = cc.name || cc.Name || cc.company_name || cc.Company_name
+                  || cc.namn || cc.Namn || "";
+        if (!name) continue;
+        seen.set(cc._id, { id: cc._id, name });
+      }
+    }
+
+    const items = [...seen.values()].slice(0, limit);
+    return res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[/admin/clientcompany/search] failed", e);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
