@@ -253,6 +253,8 @@
   const CLIENTCOMPANY = document.getElementById("mira_clientcompany")?.value || "";
   const DEAL          = document.getElementById("mira_deal")?.value || "";
   const DEAL_MODE     = !!DEAL;
+  const CC_MODE       = !DEAL_MODE && !!CLIENTCOMPANY;     // bara aktiv om DEAL inte är satt
+  const LIST_MODE     = DEAL_MODE || CC_MODE;              // visa historik-vy om något av dem
 
   const $ = (id) => document.getElementById(id);
   const root = $("ac-root");
@@ -435,7 +437,7 @@
     }
     // Deal-mode: fräscha historik i bakgrunden så nya signeringen syns
     // när user klickar "Skicka ny signering" → vi går tillbaka till listan.
-    if (DEAL_MODE && typeof fetchHistory === "function") fetchHistory();
+    if (LIST_MODE && typeof fetchHistory === "function") fetchHistory();
   }
 
   $("ac-new").addEventListener("click", () => {
@@ -487,8 +489,12 @@
 
   async function fetchHistory() {
     const body = $("ac-history-body");
+    // Deal är mer specifikt → använd det när det finns, annars clientcompany
+    const filterParam = DEAL_MODE
+      ? "deal=" + encodeURIComponent(DEAL)
+      : "clientcompany=" + encodeURIComponent(CLIENTCOMPANY);
     try {
-      const r = await fetch(HOST + "/admin/approval/list?deal=" + encodeURIComponent(DEAL) + "&limit=50",
+      const r = await fetch(HOST + "/admin/approval/list?" + filterParam + "&limit=50",
         { headers: { "x-admin-token": TOKEN } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
@@ -613,13 +619,18 @@
   addRecipient("", "");
   updateCounts();
 
-  if (DEAL_MODE) {
-    // Deal-aware: visa historik överst, göm formuläret tills user klickar
-    // "Skicka ny signering".
+  if (LIST_MODE) {
+    // List-mode: visa historik överst, göm formuläret tills user klickar
+    // "Skicka ny signering". Deal har prio över ClientCompany för titeln.
     $("ac-history-view").classList.remove("hidden");
     $("ac-form-view").classList.add("hidden");
-    $("ac-title").innerHTML = 'Signering för <span>denna affär</span>';
-    $("ac-subtitle").textContent = "Historik + ny utskick";
+    if (DEAL_MODE) {
+      $("ac-title").innerHTML = 'Signering för <span>denna affär</span>';
+      $("ac-subtitle").textContent = "Historik + ny utskick · scopad till Deal";
+    } else {
+      $("ac-title").innerHTML = 'Signering för <span>detta bolag</span>';
+      $("ac-subtitle").textContent = "Historik + ny utskick · scopad till ClientCompany";
+    }
     fetchHistory();
   }
 })();
