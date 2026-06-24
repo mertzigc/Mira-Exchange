@@ -16677,62 +16677,83 @@ app.post("/approval/confirm/:id", async (req, res) => {
     if (r.error) return res.status(r.status).json({ ok: false, error: r.error });
     const approval = r.approval;
 
-    const alreadyApproved =
+    // Idempotens: en KOMPLETT signering kräver att signed_document är satt
+    // (status=Approved räcker inte — vi sätter status FÖRST efter doc-gen).
+    // Om båda är på plats är det här bara en länk-revisit → returnera samma URL.
+    const fullyDone =
       String(approval.status || "").toLowerCase() === "approved" &&
-      !!approval.approved_at;
+      !!approval.approved_at &&
+      !!approval.signed_document;
 
-    // OTP-check (skippas om redan godkänd — då räcker token-grindning för
-    // re-generera dokumentet utan att kräva ny OTP).
-    if (!alreadyApproved) {
-      const storedOtpHash = String(approval.otp_hash || "").trim();
-      if (!storedOtpHash) return res.status(403).json({ ok: false, error: "no_otp_requested" });
-      if (approval.otp_expires_at) {
-        const exp = Date.parse(approval.otp_expires_at);
-        if (Number.isFinite(exp) && exp < Date.now()) {
-          return res.status(410).json({ ok: false, error: "otp_expired" });
-        }
-      }
-      if (!_safeEqHex(_sha256Hex(otp), storedOtpHash)) {
-        return res.status(401).json({ ok: false, error: "invalid_otp" });
-      }
-    }
-
-    const userAgent = String(req.headers["user-agent"] || "").slice(0, 500);
-
-    if (!alreadyApproved) {
-      await bubblePatch("OfferApproval", approvalId, {
-        status:              "Approved",
-        approved_at:         new Date().toISOString(),
-        approved_ip:         ip || "",
-        approved_user_agent: userAgent,
-        approved_by_email:   approval.recipient_email || "",
-        token_email_verify:  "yes",
-        otp_hash:            "",            // bränn OTP-koden
-        otp_expires_at:      null,
+    if (fullyDone) {
+      return res.json({
+        ok:                  true,
+        already_approved:    true,
+        signed_document_url: String(approval.signed_document).replace(/^\/\//, "https://"),
       });
     }
 
-    // Generera + lagra signed_document (skriver tillbaka URL)
+    // OTP-check krävs alltid om vi inte är fullyDone — även vid retries där
+    // status hann sättas till Approved av en tidigare delvis-lyckad körning
+    // (typ Chrome-felet förra gången), behöver vi en giltig OTP för säker
+    // verifiering. Vi godtar samma OTP om den fortfarande är inom expiry.
+    const storedOtpHash = String(approval.otp_hash || "").trim();
+    if (!storedOtpHash) return res.status(403).json({ ok: false, error: "no_otp_requested" });
+    if (approval.otp_expires_at) {
+      const exp = Date.parse(approval.otp_expires_at);
+      if (Number.isFinite(exp) && exp < Date.now()) {
+        return res.status(410).json({ ok: false, error: "otp_expired" });
+      }
+    }
+    if (!_safeEqHex(_sha256Hex(otp), storedOtpHash)) {
+      return res.status(401).json({ ok: false, error: "invalid_otp" });
+    }
+
+    const userAgent = String(req.headers["user-agent"] || "").slice(0, 500);
+    const nowIso    = new Date().toISOString();
+
+    // Steg 1: rädda OTP-verifieringen (det är BEVISET att personen läst sin
+    // mail) men sätt INTE status="Approved" än — det görs efter doc-gen så
+    // ett ev. doc-gen-fel inte triggar idempotens-trappet vid retry.
+    await bubblePatch("OfferApproval", approvalId, {
+      approved_at:         approval.approved_at || nowIso,  // bevara tidigast tidpunkt
+      approved_ip:         approval.approved_ip || ip || "",
+      approved_user_agent: approval.approved_user_agent || userAgent,
+      approved_by_email:   approval.recipient_email || "",
+      token_email_verify:  "yes",
+    });
+
+    // Steg 2: generera + lagra signed_document (skriver tillbaka URL).
+    // KASTAR vid fel → status förblir OTP_Sent → retry kan köras med ny OTP.
     const docResult = await approvalDocEngine.generateAndStore(approvalId, { writeBack: true });
 
-    // Bekräftelsemail till mottagaren
-    if (!alreadyApproved) {
-      // Rollup på parent (signed_count++ + ev status=completed)
-      try {
-        if (approval.request) {
-          const parent = await bubbleGet("OfferApprovalRequest", approval.request);
-          if (parent) {
-            const newSigned = Number(parent.signed_count || 0) + 1;
-            const total     = Number(parent.recipients_count || 0);
-            const patch = { signed_count: newSigned };
-            if (total > 0 && newSigned >= total) patch.status = "Approved";
-            await bubblePatch("OfferApprovalRequest", approval.request, patch);
-          }
-        }
-      } catch (rollupErr) {
-        console.warn("[/approval/confirm] parent rollup failed (non-fatal)", rollupErr?.message);
-      }
+    // Steg 3: nu när dokumentet finns — finalisera status och bränn OTP.
+    await bubblePatch("OfferApproval", approvalId, {
+      status:         "Approved",
+      otp_hash:       "",
+      otp_expires_at: null,
+    });
 
+    // Steg 4: parent-rollup. Skydda mot dubbel-räkning om confirm körs på
+    // nytt: räkna bara om status INTE redan var Approved.
+    try {
+      if (approval.request && String(approval.status || "").toLowerCase() !== "approved") {
+        const parent = await bubbleGet("OfferApprovalRequest", approval.request);
+        if (parent) {
+          const newSigned = Number(parent.signed_count || 0) + 1;
+          const total     = Number(parent.recipients_count || 0);
+          const patch = { signed_count: newSigned };
+          if (total > 0 && newSigned >= total) patch.status = "Approved";
+          await bubblePatch("OfferApprovalRequest", approval.request, patch);
+        }
+      }
+    } catch (rollupErr) {
+      console.warn("[/approval/confirm] parent rollup failed (non-fatal)", rollupErr?.message);
+    }
+
+    // Steg 5: bekräftelsemail. Skickas bara om vi INTE redan hade
+    // signed_document på posten (skydd mot dubbla mail vid manuella retries).
+    if (!approval.signed_document) {
       let rubrik = approval.rubrik || "Avtal";
       let senderName = "Carotte";
       if (approval.request) {
@@ -16749,7 +16770,7 @@ app.post("/approval/confirm/:id", async (req, res) => {
           rubrik,
           sender_name:  senderName,
           document_url: docResult.signed_document_url,
-          signed_at:    new Date().toISOString(),
+          signed_at:    nowIso,
         }),
         email_sent:  false,
       });
@@ -16757,7 +16778,7 @@ app.post("/approval/confirm/:id", async (req, res) => {
 
     return res.json({
       ok:                  true,
-      already_approved:    alreadyApproved,
+      already_approved:    false,
       signed_document_url: docResult.signed_document_url,
       bytes:               docResult.bytes,
     });
@@ -16966,7 +16987,10 @@ app.get("/approval/view/:id", async (req, res) => {
       <div class="check">✓</div>
       <h1>Signerat</h1>
       <p>Tack — signeringen är registrerad och du har fått en bekräftelse via mail.</p>
-      ${signedDocUrl ? `<p style="margin-top:18px;"><a class="btn-primary" style="text-decoration:none;display:inline-block;" href="${e(signedDocUrl)}" target="_blank" rel="noopener">Ladda ner signerat dokument</a></p>` : ""}
+      <p id="dl-wrap" style="margin-top:18px;${signedDocUrl ? "" : "display:none;"}">
+        <a class="btn-primary" id="dl-link" style="text-decoration:none;display:inline-block;"
+           href="${e(signedDocUrl)}" target="_blank" rel="noopener">Ladda ner signerat dokument</a>
+      </p>
     </div>
   </div>
 
@@ -17060,8 +17084,10 @@ app.get("/approval/view/:id", async (req, res) => {
       const done = document.getElementById("done-block");
       done.classList.remove("hidden");
       if (j.signed_document_url) {
-        const link = done.querySelector("a");
+        const wrap = document.getElementById("dl-wrap");
+        const link = document.getElementById("dl-link");
         if (link) link.href = j.signed_document_url;
+        if (wrap) wrap.style.display = "";
       }
     } catch (e) {
       setErr("Nätverksfel: " + (e.message || e));

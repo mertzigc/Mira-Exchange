@@ -13,7 +13,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { PDFDocument } from "pdf-lib";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -29,6 +30,9 @@ export function createApprovalDocEngine(deps) {
   }
 
   // ── Puppeteer browser singleton (återanvänds över anrop, lazy) ──────────
+  // Använder @sparticuz/chromium (slim, ~50 MB) + puppeteer-core. Render's
+  // build environment cachas av detta paket inuti node_modules → ingen
+  // PUPPETEER_CACHE_DIR-pyssel, ingen post-install-trubbel.
   let _browserPromise = null;
   async function getBrowser() {
     if (_browserPromise) {
@@ -36,14 +40,17 @@ export function createApprovalDocEngine(deps) {
       if (b && b.connected !== false) return b;
       _browserPromise = null;
     }
+    const executablePath = await chromium.executablePath();
     _browserPromise = puppeteer.launch({
-      headless: "new",
       args: [
+        ...chromium.args,
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--font-render-hinting=none"
-      ]
+        "--font-render-hinting=none",
+      ],
+      defaultViewport: chromium.defaultViewport,
+      executablePath,
+      headless: chromium.headless,
     });
     return _browserPromise;
   }
