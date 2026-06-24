@@ -16359,6 +16359,25 @@ app.post("/docs/offer-approval/:id", requireSyncSecret, async (req, res) => {
 // OTP-modell: 6-siffrig kod, SHA-256-hashas till otp_hash, expires_at = +10 min.
 // ════════════════════════════════════════════════════════════════════════════
 
+// EmailTemplate-IDs i Bubble. Christian skapar 3 EmailTemplate-rader med
+// slug="approval_invite"/"approval_otp"/"approval_signed" och sätter deras
+// unique_id som env vars i Render. Subject/cta_label får vara tomma — vår
+// emailer-template fyller defaults via tmpl.subject || item.subject_override.
+const APPROVAL_TEMPLATE_IDS = {
+  invite: process.env.APPROVAL_INVITE_TEMPLATE_ID || "",
+  otp:    process.env.APPROVAL_OTP_TEMPLATE_ID    || "",
+  signed: process.env.APPROVAL_SIGNED_TEMPLATE_ID || "",
+};
+function _approvalTemplateId(kind) {
+  const id = APPROVAL_TEMPLATE_IDS[kind];
+  if (!id) {
+    const e = new Error(`Missing env APPROVAL_${kind.toUpperCase()}_TEMPLATE_ID`);
+    e.status = 503;
+    throw e;
+  }
+  return id;
+}
+
 const _approvalCors = (req, res) => {
   const origin = req.headers.origin || "";
   const allowed = [
@@ -16430,6 +16449,16 @@ app.post(
       const token = req.headers["x-admin-token"];
       if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+      // Fail-fast: alla tre template-IDs MÅSTE finnas innan vi skapar Dokument/
+      // Request/Approval — annars riskerar vi orphan-data när invite-mail
+      // failar på sista steget. Bättre att returnera 503 utan att skriva alls.
+      try {
+        _approvalTemplateId("invite");
+        _approvalTemplateId("otp");
+        _approvalTemplateId("signed");
+      } catch (envErr) {
+        return res.status(503).json({ ok: false, error: envErr.message });
       }
 
       let payload = {};
@@ -16515,17 +16544,17 @@ app.post(
 
         // Köa invite-mail (pollern skickar inom 2 min)
         await bubbleCreate("emailqueue", {
-          template_slug: "approval_invite",
-          to_email:      email,
-          to_name:       name || email,
-          extra_data:    JSON.stringify({
+          template_id: _approvalTemplateId("invite"),
+          to_email:    email,
+          to_name:     name || email,
+          extra_data:  JSON.stringify({
             rubrik,
             sender_name: senderName,
             message:     meddelande,
             view_url:    viewUrl,
             expires_at:  expiresAt || null,
           }),
-          email_sent:    false,
+          email_sent:  false,
         });
 
         created.push({ approval_id: approvalId, recipient_email: email, view_url: viewUrl });
@@ -16603,15 +16632,15 @@ app.post("/approval/request-otp/:id", async (req, res) => {
     }
 
     await bubbleCreate("emailqueue", {
-      template_slug: "approval_otp",
-      to_email:      approval.recipient_email || "",
-      to_name:       approval.recipient_email || "",
-      extra_data:    JSON.stringify({
+      template_id: _approvalTemplateId("otp"),
+      to_email:    approval.recipient_email || "",
+      to_name:     approval.recipient_email || "",
+      extra_data:  JSON.stringify({
         rubrik,
         code,
         expires_minutes: minutes,
       }),
-      email_sent:    false,
+      email_sent:  false,
     });
 
     return res.json({ ok: true, expires_at: new Date(expMs).toISOString() });
@@ -16713,16 +16742,16 @@ app.post("/approval/confirm/:id", async (req, res) => {
       }
 
       await bubbleCreate("emailqueue", {
-        template_slug: "approval_signed",
-        to_email:      approval.recipient_email || "",
-        to_name:       approval.recipient_email || "",
-        extra_data:    JSON.stringify({
+        template_id: _approvalTemplateId("signed"),
+        to_email:    approval.recipient_email || "",
+        to_name:     approval.recipient_email || "",
+        extra_data:  JSON.stringify({
           rubrik,
           sender_name:  senderName,
           document_url: docResult.signed_document_url,
           signed_at:    new Date().toISOString(),
         }),
-        email_sent:    false,
+        email_sent:  false,
       });
     }
 
