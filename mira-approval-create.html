@@ -1,32 +1,36 @@
 <!--
   MIRA — SKAPA SIGNERING (Carotte-init-block för OfferApproval-flödet)
   ------------------------------------------------------------------
-  Klistras in i ett HTML-element i Bubble dashboard_crm (Carotte-personal).
-  Laddar upp filer, samlar mottagare, postar till Render → som skapar
-  Dokument + OfferApprovalRequest + N OfferApproval + N invite-mail.
+  Klistras in i ett HTML-element i Bubble (Deal-popup, Company-popup, eller
+  fristående admin-vy). Laddar upp filer, samlar mottagare, postar till
+  Render → som skapar Dokument + OfferApprovalRequest + N OfferApproval
+  + N invite-mail.
 
-  KOPPLING I BUBBLE (sätt value="" via Bubble-data):
-    #mira_api_host        = https://mira-exchange.onrender.com
-    #mira_planning_token  = PLANNING_ADMIN_TOKEN (samma som /admin/forfragan/*)
-    #mira_sender_email    = Current User's email
-    #mira_sender_name     = Current User's full name (eller "Carotte")
-    #mira_clientcompany   = (optional) Pre-vald ClientCompany unique_id
-    #mira_deal            = (optional) Pre-vald Deal unique_id
+  MULTI-INSTANCE-SÄKERT: kan bäddas in flera gånger på samma sida (t.ex.
+  Deal-popup + Company-popup i samma Bubble-DOM). Varje instans claimar sin
+  egen .ac-wrap och scopas via data-attributes — inga ID-kollisioner.
+
+  KOPPLING I BUBBLE (sätt value="" via Bubble-data — använd raw HTML-tokens):
+    data-mira="api_host"        = https://mira-exchange.onrender.com
+    data-mira="planning_token"  = PLANNING_ADMIN_TOKEN
+    data-mira="sender_email"    = Current User's email
+    data-mira="sender_name"     = Current User's full name (eller "Carotte")
+    data-mira="clientcompany"   = (optional) ClientCompany unique_id
+    data-mira="deal"            = (optional) Deal unique_id
+
+  LÄGEN (auto-detekteras av config):
+    deal satt          → Deal-aware: listar bara signeringar för den Deal:en
+    bara clientcompany → CC-aware:   listar alla signeringar för bolaget
+    inget av dem       → Standalone: bara create-formuläret
 
   All intelligens i Render. Master-Bubble-nyckeln stannar server-side.
 -->
-<input type="hidden" id="mira_api_host"       value="https://mira-exchange.onrender.com">
-<input type="hidden" id="mira_planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
-<input type="hidden" id="mira_sender_email"   value="">
-<input type="hidden" id="mira_sender_name"    value="">
-<input type="hidden" id="mira_clientcompany"  value="">
-<input type="hidden" id="mira_deal"           value="">
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
   .ac-wrap, .ac-wrap *{box-sizing:border-box;margin:0;padding:0}
   .ac-wrap{
-    --base:#1e2235; --panel:#23283f; --card:#262b42; --input:#2e3350;
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e; --input:#2e3350;
     --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
     --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
     --green:#4CAF7D; --red:#E05A5A; --blue:#5B8DEF;
@@ -35,6 +39,7 @@
     background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
     display:block;width:100%;border-radius:14px;padding:0 20px 30px;
   }
+  .ac-wrap input[type=hidden]{display:none}
   .ac-top{display:flex;align-items:center;justify-content:space-between;padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:20px}
   .ac-h1{font-family:'DM Serif Display',Georgia,serif;font-size:24px;line-height:1.1;letter-spacing:-.01em}
   .ac-h1 span{color:var(--orange)}
@@ -51,8 +56,7 @@
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
   @media (max-width:560px){.row2{grid-template-columns:1fr}}
 
-  /* Drop zone — display:block kritiskt eftersom <label> är inline by default
-     vilket annars bryter padding och dashed-bordern runt inner-divs */
+  /* Drop zone — display:block kritiskt eftersom <label> är inline by default */
   .drop{display:block;width:100%;
     border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:24px;text-align:center;
     cursor:pointer;transition:.15s;background:var(--card)}
@@ -80,7 +84,7 @@
     padding:9px 13px;border-radius:8px;font-size:12px;cursor:pointer;margin-top:4px}
   .rcp-add:hover{border-color:var(--orange);color:var(--orange)}
 
-  /* Historik-lista (Deal-aware mode) */
+  /* Historik-lista (Deal-aware / CC-aware mode) */
   .hist-list{list-style:none;padding:0;margin:0}
   .hist-row{background:var(--card);border:1px solid var(--border);border-radius:10px;
     margin-bottom:8px;overflow:hidden}
@@ -158,87 +162,96 @@
   .hidden{display:none !important}
 </style>
 
-<div class="ac-wrap" id="ac-root">
+<div class="ac-wrap">
+
+  <!-- Bubble-config: sätt value="" via dynamic data. Hidden inputs lever
+       inuti .ac-wrap så de scopas tillsammans med resten. -->
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="sender_email"   value="">
+  <input type="hidden" data-mira="sender_name"    value="">
+  <input type="hidden" data-mira="clientcompany"  value="">
+  <input type="hidden" data-mira="deal"           value="">
 
   <div class="ac-top">
     <div>
-      <div class="ac-h1" id="ac-title">Skicka för <span>signering</span></div>
-      <div class="ac-sub" id="ac-subtitle">OfferApproval-flöde · Mira-Exchange</div>
+      <div class="ac-h1" data-ac="title">Skicka för <span>signering</span></div>
+      <div class="ac-sub" data-ac="subtitle">OfferApproval-flöde · Mira-Exchange</div>
     </div>
   </div>
 
-  <!-- HISTORIK (visas bara i Deal-aware mode) -->
-  <div id="ac-history-view" class="hidden">
+  <!-- HISTORIK (visas bara i Deal-aware / CC-aware mode) -->
+  <div data-ac="history-view" class="hidden">
     <div class="ac-panel">
       <h2>Signeringsprocesser</h2>
-      <div id="ac-history-body">
+      <div data-ac="history-body">
         <div class="hist-loading">Hämtar historik…</div>
       </div>
     </div>
-    <button class="toggle-create" id="ac-toggle-create">+ Skicka ny signering</button>
+    <button class="toggle-create" data-ac="toggle-create">+ Skicka ny signering</button>
   </div>
 
   <!-- INIT-formuläret -->
-  <div id="ac-form-view">
+  <div data-ac="form-view">
     <div class="ac-panel">
       <h2>1. Dokument</h2>
-      <label class="drop" id="ac-drop">
+      <label class="drop" data-ac="drop">
         <div class="ic">⬆</div>
         <div class="pri">Dra hit PDF-filer eller klicka för att välja</div>
         <div class="sec">Flera filer OK · max 25 MB per fil · max 20 filer totalt</div>
-        <input type="file" id="ac-files" accept="application/pdf" multiple>
+        <input type="file" data-ac="files" accept="application/pdf" multiple>
       </label>
-      <ul class="files" id="ac-file-list"></ul>
+      <ul class="files" data-ac="file-list"></ul>
     </div>
 
     <div class="ac-panel">
       <h2>2. Mottagare</h2>
-      <div id="ac-recipients"></div>
-      <button type="button" class="rcp-add" id="ac-rcp-add">+ Lägg till mottagare</button>
+      <div data-ac="recipients"></div>
+      <button type="button" class="rcp-add" data-ac="rcp-add">+ Lägg till mottagare</button>
     </div>
 
     <div class="ac-panel">
       <h2>3. Meddelande</h2>
       <div class="field">
         <label>Rubrik (visas i mail + på signeringssidan)</label>
-        <input type="text" id="ac-rubrik" placeholder="t.ex. Tilläggsavtal Lokalvård" maxlength="120">
+        <input type="text" data-ac="rubrik" placeholder="t.ex. Tilläggsavtal Lokalvård" maxlength="120">
       </div>
       <div class="field">
         <label>Personligt meddelande (valfritt)</label>
-        <textarea id="ac-meddelande" placeholder="Hej, här kommer avtalet…"></textarea>
+        <textarea data-ac="meddelande" placeholder="Hej, här kommer avtalet…"></textarea>
       </div>
       <div class="row2">
         <div class="field">
           <label>Avsändarnamn (visas som From)</label>
-          <input type="text" id="ac-sender-name" placeholder="Carotte">
+          <input type="text" data-ac="sender-name" placeholder="Carotte">
         </div>
         <div class="field">
           <label>Sista signeringsdag (valfritt)</label>
-          <input type="date" id="ac-expires">
+          <input type="date" data-ac="expires">
         </div>
       </div>
-      <div class="err" id="ac-err"></div>
+      <div class="err" data-ac="err"></div>
     </div>
 
     <div class="ac-foot">
       <div class="count">
-        <b id="ac-cnt-files">0</b> filer · <b id="ac-cnt-rcp">0</b> mottagare
+        <b data-ac="cnt-files">0</b> filer · <b data-ac="cnt-rcp">0</b> mottagare
       </div>
-      <button class="btn-primary" id="ac-submit" disabled>Skicka signeringsbegäran</button>
+      <button class="btn-primary" data-ac="submit" disabled>Skicka signeringsbegäran</button>
     </div>
   </div>
 
   <!-- BEKRÄFTELSEVY (efter lyckad skapa) -->
-  <div id="ac-done-view" class="hidden">
+  <div data-ac="done-view" class="hidden">
     <div class="ok-block">
       <h2>✓ Skickat</h2>
       <p style="color:var(--w70);font-size:13px;">
-        <b id="ac-done-cnt">0</b> mottagare har fått ett invite-mail. Du kan stänga den här vyn
+        <b data-ac="done-cnt">0</b> mottagare har fått ett invite-mail. Du kan stänga den här vyn
         eller skicka fler.
       </p>
-      <ul class="ok-list" id="ac-done-list"></ul>
+      <ul class="ok-list" data-ac="done-list"></ul>
       <div style="margin-top:18px;display:flex;gap:10px;">
-        <button class="btn-secondary" id="ac-new">Skicka ny signering</button>
+        <button class="btn-secondary" data-ac="new">Skicka ny signering</button>
       </div>
     </div>
   </div>
@@ -246,18 +259,34 @@
 
 <script>
 (function(){
-  const HOST    = (document.getElementById("mira_api_host")?.value || "").replace(/\/+$/, "");
-  const TOKEN   = document.getElementById("mira_planning_token")?.value || "";
-  const SENDER_EMAIL = document.getElementById("mira_sender_email")?.value || "";
-  const SENDER_NAME  = document.getElementById("mira_sender_name")?.value || "Carotte";
-  const CLIENTCOMPANY = document.getElementById("mira_clientcompany")?.value || "";
-  const DEAL          = document.getElementById("mira_deal")?.value || "";
-  const DEAL_MODE     = !!DEAL;
-  const CC_MODE       = !DEAL_MODE && !!CLIENTCOMPANY;     // bara aktiv om DEAL inte är satt
-  const LIST_MODE     = DEAL_MODE || CC_MODE;              // visa historik-vy om något av dem
+  // ── Multi-instance support ──────────────────────────────────────
+  // Claim första oclaim:ade .ac-wrap. Varje IIFE-instans (en per HTML-block)
+  // tar sin egen root. Detta gör att flera block kan samsas i samma DOM
+  // (t.ex. Deal-popup + Company-popup) utan att deras event listeners eller
+  // config blandas ihop.
+  const root = (function () {
+    const all = document.querySelectorAll(".ac-wrap");
+    for (const r of all) {
+      if (!r.dataset.acInit) { r.dataset.acInit = "1"; return r; }
+    }
+    return null;
+  })();
+  if (!root) return;
 
-  const $ = (id) => document.getElementById(id);
-  const root = $("ac-root");
+  // Scoped query-helpers: alla lookups går mot just denna instans root.
+  const $   = (key) => root.querySelector(`[data-ac="${key}"]`);
+  const $$  = (key) => root.querySelectorAll(`[data-ac="${key}"]`);
+  const cfg = (key) => root.querySelector(`[data-mira="${key}"]`)?.value || "";
+
+  const HOST          = cfg("api_host").replace(/\/+$/, "");
+  const TOKEN         = cfg("planning_token");
+  const SENDER_EMAIL  = cfg("sender_email");
+  const SENDER_NAME   = cfg("sender_name") || "Carotte";
+  const CLIENTCOMPANY = cfg("clientcompany");
+  const DEAL          = cfg("deal");
+  const DEAL_MODE     = !!DEAL;
+  const CC_MODE       = !DEAL_MODE && !!CLIENTCOMPANY;
+  const LIST_MODE     = DEAL_MODE || CC_MODE;
 
   // ── State ──────────────────────────────────────────────────────
   const state = {
@@ -267,9 +296,9 @@
   let nextId = 1;
 
   // ── Filhantering ────────────────────────────────────────────────
-  const drop     = $("ac-drop");
-  const fileEl   = $("ac-files");
-  const fileList = $("ac-file-list");
+  const drop     = $("drop");
+  const fileEl   = $("files");
+  const fileList = $("file-list");
 
   function addFiles(list) {
     for (const f of list) {
@@ -317,7 +346,7 @@
   });
 
   // ── Mottagare ──────────────────────────────────────────────────
-  const rcpWrap = $("ac-recipients");
+  const rcpWrap = $("recipients");
 
   function addRecipient(email, name) {
     state.recipients.push({ email: email || "", name: name || "", id: nextId++ });
@@ -354,26 +383,26 @@
     });
   }
 
-  $("ac-rcp-add").addEventListener("click", () => addRecipient("", ""));
+  $("rcp-add").addEventListener("click", () => addRecipient("", ""));
 
   // ── Counts + submit-state ──────────────────────────────────────
   function updateCounts() {
-    $("ac-cnt-files").textContent = state.files.length;
+    $("cnt-files").textContent = state.files.length;
     const validRcps = state.recipients.filter((r) => /\S+@\S+\.\S+/.test(r.email));
-    $("ac-cnt-rcp").textContent = validRcps.length;
-    const rubrik = $("ac-rubrik").value.trim();
-    $("ac-submit").disabled = !(state.files.length && validRcps.length && rubrik);
+    $("cnt-rcp").textContent = validRcps.length;
+    const rubrik = $("rubrik").value.trim();
+    $("submit").disabled = !(state.files.length && validRcps.length && rubrik);
   }
-  $("ac-rubrik").addEventListener("input", updateCounts);
+  $("rubrik").addEventListener("input", updateCounts);
 
   // ── Submit ─────────────────────────────────────────────────────
-  $("ac-submit").addEventListener("click", async () => {
+  $("submit").addEventListener("click", async () => {
     setErr("");
-    const rubrik     = $("ac-rubrik").value.trim();
-    const meddelande = $("ac-meddelande").value.trim();
-    const senderName = $("ac-sender-name").value.trim() || SENDER_NAME;
-    const expIso     = $("ac-expires").value
-      ? new Date($("ac-expires").value + "T23:59:59").toISOString()
+    const rubrik     = $("rubrik").value.trim();
+    const meddelande = $("meddelande").value.trim();
+    const senderName = $("sender-name").value.trim() || SENDER_NAME;
+    const expIso     = $("expires").value
+      ? new Date($("expires").value + "T23:59:59").toISOString()
       : null;
     const recipients = state.recipients
       .filter((r) => /\S+@\S+\.\S+/.test(r.email))
@@ -397,7 +426,7 @@
     fd.append("payload", JSON.stringify(payload));
     for (const f of state.files) fd.append("files", f.file, f.file.name);
 
-    const submitBtn = $("ac-submit");
+    const submitBtn = $("submit");
     submitBtn.disabled = true;
     submitBtn.textContent = "Skickar…";
 
@@ -423,10 +452,10 @@
   });
 
   function showDone(j) {
-    $("ac-form-view").classList.add("hidden");
-    $("ac-done-view").classList.remove("hidden");
-    $("ac-done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
-    const list = $("ac-done-list");
+    $("form-view").classList.add("hidden");
+    $("done-view").classList.remove("hidden");
+    $("done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
+    const list = $("done-list");
     list.innerHTML = "";
     for (const a of (j.approvals || [])) {
       const li = document.createElement("li");
@@ -435,29 +464,27 @@
         `<a href="${escapeAttr(a.view_url)}" target="_blank" rel="noopener">öppna länk ↗</a>`;
       list.appendChild(li);
     }
-    // Deal-mode: fräscha historik i bakgrunden så nya signeringen syns
-    // när user klickar "Skicka ny signering" → vi går tillbaka till listan.
     if (LIST_MODE && typeof fetchHistory === "function") fetchHistory();
   }
 
-  $("ac-new").addEventListener("click", () => {
+  $("new").addEventListener("click", () => {
     state.files = [];
     state.recipients = [];
     renderFiles();
     renderRecipients();
-    $("ac-rubrik").value = "";
-    $("ac-meddelande").value = "";
-    $("ac-expires").value = "";
-    $("ac-sender-name").value = SENDER_NAME;
+    $("rubrik").value = "";
+    $("meddelande").value = "";
+    $("expires").value = "";
+    $("sender-name").value = SENDER_NAME;
     updateCounts();
-    $("ac-done-view").classList.add("hidden");
-    $("ac-form-view").classList.remove("hidden");
+    $("done-view").classList.add("hidden");
+    $("form-view").classList.remove("hidden");
     setErr("");
-    $("ac-submit").textContent = "Skicka signeringsbegäran";
+    $("submit").textContent = "Skicka signeringsbegäran";
   });
 
   // ── Helpers ─────────────────────────────────────────────────────
-  function setErr(m) { $("ac-err").textContent = m || ""; }
+  function setErr(m) { $("err").textContent = m || ""; }
   function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"']/g, (c) => ({
       "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
@@ -465,11 +492,7 @@
   }
   function escapeAttr(s) { return escapeHtml(s); }
 
-  // ── Historik (Deal-aware mode) ──────────────────────────────────
-  // Aktiveras när #mira_deal är satt. Hämtar OfferApprovalRequests för denna
-  // Deal från /admin/approval/list?deal=<id>, renderar lista med status-pills,
-  // klick på rad → fetch /admin/approval/request/:id → expand med per-recipient.
-
+  // ── Historik (Deal-aware / CC-aware mode) ───────────────────────
   function fmtDate(iso) {
     if (!iso) return "—";
     const d = new Date(iso);
@@ -488,8 +511,7 @@
   }
 
   async function fetchHistory() {
-    const body = $("ac-history-body");
-    // Deal är mer specifikt → använd det när det finns, annars clientcompany
+    const body = $("history-body");
     const filterParam = DEAL_MODE
       ? "deal=" + encodeURIComponent(DEAL)
       : "clientcompany=" + encodeURIComponent(CLIENTCOMPANY);
@@ -502,7 +524,8 @@
         return;
       }
       if (!j.items || !j.items.length) {
-        body.innerHTML = `<div class="hist-empty">Inga signeringsprocesser för denna Deal än.<br>Klicka "Skicka ny signering" nedan.</div>`;
+        const scope = DEAL_MODE ? "denna affär" : "detta bolag";
+        body.innerHTML = `<div class="hist-empty">Inga signeringsprocesser för ${escapeHtml(scope)} än.<br>Klicka "Skicka ny signering" nedan.</div>`;
         return;
       }
       const ul = document.createElement("ul");
@@ -599,11 +622,11 @@
     }
   }
 
-  // Toggle create-form i Deal-mode
-  $("ac-toggle-create").addEventListener("click", () => {
-    const form = $("ac-form-view");
-    const btn  = $("ac-toggle-create");
-    const open = !form.classList.contains("hidden") && !form.classList.contains("ac-collapsed");
+  // Toggle create-form i LIST_MODE
+  $("toggle-create").addEventListener("click", () => {
+    const form = $("form-view");
+    const btn  = $("toggle-create");
+    const open = !form.classList.contains("hidden");
     if (open) {
       form.classList.add("hidden");
       btn.textContent = "+ Skicka ny signering";
@@ -615,21 +638,19 @@
   });
 
   // ── Init ────────────────────────────────────────────────────────
-  $("ac-sender-name").value = SENDER_NAME;
+  $("sender-name").value = SENDER_NAME;
   addRecipient("", "");
   updateCounts();
 
   if (LIST_MODE) {
-    // List-mode: visa historik överst, göm formuläret tills user klickar
-    // "Skicka ny signering". Deal har prio över ClientCompany för titeln.
-    $("ac-history-view").classList.remove("hidden");
-    $("ac-form-view").classList.add("hidden");
+    $("history-view").classList.remove("hidden");
+    $("form-view").classList.add("hidden");
     if (DEAL_MODE) {
-      $("ac-title").innerHTML = 'Signering för <span>denna affär</span>';
-      $("ac-subtitle").textContent = "Historik + ny utskick · scopad till Deal";
+      $("title").innerHTML = 'Signering för <span>denna affär</span>';
+      $("subtitle").textContent = "Historik + ny utskick · scopad till Deal";
     } else {
-      $("ac-title").innerHTML = 'Signering för <span>detta bolag</span>';
-      $("ac-subtitle").textContent = "Historik + ny utskick · scopad till ClientCompany";
+      $("title").innerHTML = 'Signering för <span>detta bolag</span>';
+      $("subtitle").textContent = "Historik + ny utskick · scopad till ClientCompany";
     }
     fetchHistory();
   }
