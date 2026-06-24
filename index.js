@@ -16468,6 +16468,9 @@ app.post(
       }
 
       // 2) Skapa OfferApprovalRequest (moder)
+      // Status = "Sent" direkt vid skapande (mailen köas i samma anrop). Om
+      // du vill ha "Draft"-fas tillagd senare: gör en separat /approval/draft
+      // route och låt /create köra på drafts.
       const requestId = await bubbleCreate("OfferApprovalRequest", {
         rubrik,
         meddelande,
@@ -16476,7 +16479,7 @@ app.post(
         deal:             dealId || null,
         sender_email:     senderEmail,
         sender_name:      senderName,
-        status:           "pending",
+        status:           "Sent",
         recipients_count: recipients.length,
         signed_count:     0,
         expires_at:       expiresAt || null,
@@ -16498,7 +16501,7 @@ app.post(
           request:         requestId,
           rubrik,                       // bakåtkomp: child speglar för äldre rapport-vyer
           recipient_email: email,
-          status:          "Pending",
+          status:          "Sent",
           token_hash:      tokenHash,
           dokument:        dokumentIds, // speglas så befintliga vyer fortsatt visar dem
           clientcompany:   ccId || null,
@@ -16585,8 +16588,9 @@ app.post("/approval/request-otp/:id", async (req, res) => {
     const expMs   = Date.now() + minutes * 60 * 1000;
 
     await bubblePatch("OfferApproval", approvalId, {
-      otp_hash:        hash,
-      otp_expires_at:  new Date(expMs).toISOString(),
+      status:             "OTP_Sent",
+      otp_hash:           hash,
+      otp_expires_at:     new Date(expMs).toISOString(),
       token_email_verify: "no",
     });
 
@@ -16691,7 +16695,7 @@ app.post("/approval/confirm/:id", async (req, res) => {
             const newSigned = Number(parent.signed_count || 0) + 1;
             const total     = Number(parent.recipients_count || 0);
             const patch = { signed_count: newSigned };
-            if (total > 0 && newSigned >= total) patch.status = "completed";
+            if (total > 0 && newSigned >= total) patch.status = "Approved";
             await bubblePatch("OfferApprovalRequest", approval.request, patch);
           }
         }
