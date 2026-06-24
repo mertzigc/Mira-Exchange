@@ -1,7 +1,129 @@
 # HANDOFF — Mira-Exchange sync-omtag
 
-> Senast uppdaterad 2026-06-08. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
+> Senast uppdaterad 2026-06-24. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
+
+---
+
+## 0e. OfferApproval full Render-cutover — PÅGÅR 2026-06-24
+
+**Beslut (2026-06-24):** allt signeringsflöde flyttas till Render. Bubble blir bara databasen. Cutover sker i tre commits — den här är **commit 1 av 3**.
+
+### Datamodell — KRAV INNAN COMMIT 1 KAN ANVÄNDAS
+
+**Ny Bubble-typ: `OfferApprovalRequest`** (moder; håller dokument + meddelande, en per signeringsutskick)
+| Fält | Typ | Notering |
+|---|---|---|
+| `rubrik` | text | Visas i mail + landningssida |
+| `meddelande` | text | Personligt meddelande från Carotte |
+| `dokument` | List of Dokument | Filerna som ska signeras |
+| `clientcompany` | ClientCompany | Optional |
+| `deal` | Deal | Optional |
+| `sender_email` | text | Carotte-personalen som initierade |
+| `sender_name` | text | Visningsnamn i mail |
+| `status` | text *(eller Option Set)* | "pending" / "completed" / "expired". Sätts av Render. Sätt som text om du vill slippa Option Set |
+| `recipients_count` | number | N st OfferApproval skapade |
+| `signed_count` | number | Antal som hittills signerat (rollup) |
+| `expires_at` | date | Optional deadline |
+
+**Modifiera befintlig `OfferApproval`** — lägg till:
+| Fält | Typ | Notering |
+|---|---|---|
+| `request` | OfferApprovalRequest | Länk till moder. Sätts vid skapande, ändras aldrig |
+
+`OfferApproval`-fält som blir **avvecklade** (de fyllda nu överlever men nya fyller dem inte): `rubrik`, `meddelande`, `dokument`, `clientcompany`, `deal`, `fortnoxoffer`, `approval_link`, `expires_at`. Dessa läses från `request` istället. Vi rör inte fälten i Bubble (datamigrering = utanför scope), läser bara från parent när tillgängligt och faller tillbaka på child-fältet för bakåtkompabilitet.
+
+**EmailQueue** — befintlig typ används. Inga nya fält. Vi sätter `template_slug` till en av tre nya slugs:
+- `approval_invite` — mottagaren får länk + token
+- `approval_otp` — engångskod
+- `approval_signed` — bekräftelse med länk till signed_document
+
+### Bestäm innan commit 2: var ska landningssidan ligga?
+
+`/approval/view/:id` serverar HTML direkt från Render (likt `mira-kalender.html`-mönstret). URL i invite-mailet pekar dit. Bubble behöver INGEN `/offerapproval/[id]`-sida längre.
+
+---
+
+## 0c. OfferApproval-dokument (signeringsbevis) — KODAT 2026-06-24, ej deployad
+
+**Vad:** Ny modul + route som genererar ett brandat signeringsbevis från `OfferApproval`, mergar in det SIST i originaldokumentens PDF:er (SHA-256-hashade per dokument för integritetsbevis), laddar upp den sammanslagna filen till Bubble och skriver tillbaka URL:en på `OfferApproval.signed_document`.
+
+**Filer:**
+- `offer_approval_doc.js` — `createApprovalDocEngine({ bubbleGet, bubblePatch, bubbleUploadFile })`. Puppeteer-singleton (lazy), pdf-lib för merge, två-fas mall-rendering (rå-slots `DOCS_HTML`/`MESSAGE_BLOCK`, övrigt HTML-escapas).
+- `approval-cert.template.html` — A4, Carotte-brandad, sektioner: agreement-summary, godkännande, verifiering, meddelande, dokumentlista m. SHA-256.
+- `package.json` — la till `puppeteer ^23` + `pdf-lib ^1.17`.
+- `index.js` — import överst, `approvalDocEngine`-instans + `POST /docs/offer-approval/:id` (requireSyncSecret) precis efter `/sync/activities/:source`. Body `{ writeBack: true|false }` (default true).
+
+**KRAV INNAN DEPLOY:**
+1. **Skapa Bubble-fält på OfferApproval:**
+   - `signed_document` (file)
+   - `signed_document_generated_at` (text — ISO-tidsstämpel)
+   - Utan dessa fält droppas patch-fälten tyst (Bubble-konvention).
+2. **`npm install` på Render** för att dra ner `puppeteer` (~300 MB med Chromium) + `pdf-lib`. Render's Node-bygge installerar systembiblioteken Chromium behöver automatiskt — om Chromium ändå faller, byt till `puppeteer-core` + `@sparticuz/chromium`.
+3. **Triggning (steg 1):** Bubble-workflowet `Button Skapa länk is clicked` byts från native "Make changes to OfferApproval" → ett enda API Connector-anrop `POST {RENDER_HOST}/docs/offer-approval/{approval_id}` med headers `x-api-key: $MIRA_RENDER_API_KEY` + `x-sync-secret: $SYNC_SECRET`. Routen returnerar `{ ok, signed_document_url, bytes, original_docs:[...], cert_bytes }`.
+
+**Test-flöde (utan att röra Bubble):**
+```
+curl -X POST "$HOST/docs/offer-approval/1781784640216x3346460440369561" \
+  -H "x-api-key: $MIRA_RENDER_API_KEY" \
+  -H "x-sync-secret: $SYNC_SECRET" \
+  -H "content-type: application/json" \
+  -d '{"writeBack": false}'
+```
+Returnerar `signed_document_url` (Bubble file-URL) utan att patcha approval.
+
+**Steg 2 (när offertmotorn flyttar till Render):** anropa `approvalDocEngine.generateAndStore(approvalId)` direkt i offer-engine-koden. Modulen är redan paketerad för det — ingen HTTP-hop behövs.
+
+**Fält-mappning (bekräftad 2026-06-24):** alla OfferApproval-fält är lowercase i Bubble Data Types-vyn (`approval_link`, `approved_at`, `clientcompany`, `deal`, `dokument`, `meddelande`, `recipient_email`, `rubrik`, `status`, `token_email_verify`, `token_hash` etc.). `status` är Option Set `offer_approval_status` (returneras som sträng via Data API). Listfält `dokument` är array av Dokument-IDs; bubbleGet-typnamn är `Dokument` (capital D — befintlig konvention i index.js, fungerar). ClientCompany/Deal-schemat ej verifierat → behåller pick()-fallback för namn-fältet.
+
+---
+
+## 0d. OfferApproval-godkännande direkt mot Render — KODAT 2026-06-24, ej deployad
+
+**Vad:** Browser-callable route `POST /approval/confirm/:id` som tar över själva godkännande-akten från Bubble. Lägger på server-side IP + user-agent (kundens, eftersom anropet kommer direkt från browsern) + status="Approved" + approved_at, och triggar `approvalDocEngine.generateAndStore` internt i samma anrop.
+
+**Filer:**
+- `index.js`:
+  - `/approval/confirm/` tillagd i `requireApiKey`-openPrefixes (browsers anropar utan x-api-key — grindas av token-jämförelse mot `token_hash` istället).
+  - Route + CORS-helper + OPTIONS-preflight, direkt efter `/docs/offer-approval/:id`.
+
+**Auth-modell:**
+1. Mottagaren får tokenet via mail-länk → landar på Bubbles approval-sida.
+2. Bubble validerar OTP (det jobbet stannar i Bubble tills vidare).
+3. Bubbles sida POSTar `{ token }` till `/approval/confirm/:id` från KLIENT (HTML/JS block, ej API Connector — anledning: API Connector kör server-side och skulle ge Bubbles IP istället för kundens).
+4. Render gör constant-time `crypto.timingSafeEqual` mot `OfferApproval.token_hash`. Inga API-nycklar exponeras client-side.
+
+**Bubble-flöde-cutover:**
+- GAMLA "Make changes to OfferApproval" (sätter status, approved_at) → **bort**.
+- I stället: HTML-block på approval-sidan som vid Approve-klick gör:
+  ```js
+  fetch("https://api.mira-fm.com/approval/confirm/" + APPROVAL_ID, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: APPROVAL_TOKEN })
+  }).then(r => r.json()).then(({ signed_document_url }) => { /* visa knapp/länk */ })
+  ```
+- Bubbles workflow på sidan ska sedan bara `Reload data` på OfferApproval för att hämta nya `signed_document` + statusen.
+
+**CORS-allowlist:** `carotteconcierge.bubbleapps.io`, `mira-fm.com`, `www.mira-fm.com`. Lägg till fler domäner i `_approvalConfirmCors` om du har white-label-domän.
+
+**Rate-limit:** 20 godkännandeanrop per IP per timme (`_publicRateLimited`).
+
+**Edge cases:**
+- Redan godkänd (status=Approved + approved_at satt) → hoppar över PATCH, kör bara generateAndStore på nytt (idempotent). Originaldata (IP/UA) bevaras.
+- `otp_expires_at` passerat → 410.
+- Tomt `token_hash` på approval → 403 (fail closed).
+- Token-mismatch → 401.
+
+**KRAV INNAN DEPLOY:**
+1. ✅ Bubble-fält `signed_document` + `signed_document_generated_at` skapade (verifierat 2026-06-24).
+2. Verifiera att `token_hash` på OfferApproval faktiskt innehåller det Bubble-sidan kan skicka in (klartext eller hash — beroende på hur Bubble lagrar). Om mismatch: justera klient-side att skicka rätt form, ELLER ändra serverside-jämförelsen till att SHA-256-hasha input innan compare.
+3. Bygg om HTML-blocket på Bubbles approval-sida att POSTa till `/approval/confirm/:id` (se exemplet ovan).
+4. Behåll Bubbles OTP-validering oförändrad — vi flyttar bara approval-akten + dokumentgenerering.
+
+**Steg 3 (framtida):** flytta även OTP-utskick + verifiering till Render när offertmotorn migreras. Då stannar i Bubble bara visningssidan (eller den ersätts av en Render-renderad HTML).
+
+---
 
 ---
 

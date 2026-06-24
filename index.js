@@ -4,6 +4,8 @@ import { createSyncEngine } from "./invoice_sync.js";
 import { createActivityEngine, ACTIVITY_CONFIG } from "./activity_sync.js";
 import { evalPricing as _evalPricing, validateFormula as _validateFormula, validateForm as _validateForm } from "./pricing_engine.js";
 import { createClientGroupEngine } from "./clientgroup.js";
+import { createApprovalDocEngine } from "./offer_approval_doc.js";
+import multer from "multer";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
@@ -420,7 +422,21 @@ function requireApiKey(req, res, next) {
   ]);
   // Offer detail (GET /admin/offers/:id) — varierande path → prefix.
   // Tillåt även om du råkar lägga under-routes senare (bra säkerhetsmarginal)
-  const openPrefixes = ["/admin/offers/"];
+  // /approval/* = browser-anropbara routes från mottagarens egna enhet:
+  //   /approval/view/:id          (GET, serverar landningssidan)
+  //   /approval/request-otp/:id   (POST, skickar e-post-OTP)
+  //   /approval/confirm/:id       (POST, slutgodkänner + genererar PDF)
+  // Grindas av token-hash-jämförelse (SHA-256 av URL-tokenet) mot
+  // OfferApproval.token_hash. Master-nyckeln stannar serverside.
+  // /approval/create körs från Carotte-CRM HTML-block → grindas av
+  // PLANNING_ADMIN_TOKEN istället för x-api-key.
+  const openPrefixes = [
+    "/admin/offers/",
+    "/approval/create",
+    "/approval/view/",
+    "/approval/request-otp/",
+    "/approval/confirm/",
+  ];
   if (openPaths.has(req.path) || openPrefixes.some(p => req.path.startsWith(p))) {
     return next();
   }
@@ -16290,6 +16306,432 @@ app.post("/sync/activities/:source", requireSyncSecret, async (req, res) => {
     return res.json({ ok: true, mode: opts.write ? "write" : "diff", report });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── OfferApproval-dokument: signeringsbevis + merge med originalen ─────────
+// Genererar ett brandat signeringsbevis från OfferApproval, slår ihop det
+// SIST i originaldokumentens PDF:er (SHA-256-hashade), laddar upp den
+// sammanslagna filen till Bubble och skriver tillbaka URL:en på
+// OfferApproval.signed_document.
+//
+// Steg 1: triggas från Bubble-workflowet via API Connector.
+// Steg 2: när offertmotorn flyttar till Render anropas approvalDocEngine
+// .generateAndStore direkt utan HTTP-hop.
+//
+// Body (valfri): { writeBack: true|false } — default true.
+//   writeBack:false används av prevu/test för att bara få PDF-URL tillbaka
+//   utan att röra OfferApproval-fälten.
+const approvalDocEngine = createApprovalDocEngine({
+  bubbleGet,
+  bubblePatch,
+  bubbleUploadFile,
+});
+
+app.post("/docs/offer-approval/:id", requireSyncSecret, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const writeBack = body.writeBack === false ? false : true;
+    const result = await approvalDocEngine.generateAndStore(req.params.id, { writeBack });
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    return res.status(e?.status || 500).json({
+      ok: false,
+      error: e?.message || String(e),
+      detail: e?.detail || null,
+    });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// OfferApproval signeringsflöde — full Render-cutover (HANDOFF §0e)
+// Endpoints:
+//   POST /approval/create              (x-admin-token, Carotte initierar)
+//   GET  /approval/view/:id?t=token    (browser, landningssida — commit 2)
+//   POST /approval/request-otp/:id     (browser, skickar OTP)
+//   POST /approval/confirm/:id         (browser, slutsignerar + genererar PDF)
+//
+// Token-modell: raw token (32 bytes hex) ligger ALDRIG i Bubble — bara dess
+// SHA-256-hash i OfferApproval.token_hash. URL till mottagaren bär raw-värdet.
+// Servern hashar input innan compare → läcker raw-tokenet aldrig från databasen.
+//
+// OTP-modell: 6-siffrig kod, SHA-256-hashas till otp_hash, expires_at = +10 min.
+// ════════════════════════════════════════════════════════════════════════════
+
+const _approvalCors = (req, res) => {
+  const origin = req.headers.origin || "";
+  const allowed = [
+    "https://carotteconcierge.bubbleapps.io",
+    "https://mira-fm.com",
+    "https://www.mira-fm.com",
+  ];
+  if (allowed.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+};
+
+function _sha256Hex(s) {
+  return crypto.createHash("sha256").update(String(s)).digest("hex");
+}
+
+function _safeEqHex(a, b) {
+  const A = Buffer.from(String(a || ""), "hex");
+  const B = Buffer.from(String(b || ""), "hex");
+  if (A.length === 0 || A.length !== B.length) return false;
+  return crypto.timingSafeEqual(A, B);
+}
+
+function _genToken() {
+  return crypto.randomBytes(32).toString("hex"); // 64 hex chars
+}
+
+function _genOtp() {
+  // 6 siffror, alltid 6 tecken (padding med inledande nollor)
+  const n = crypto.randomInt(0, 1_000_000);
+  return String(n).padStart(6, "0");
+}
+
+function _buildApprovalViewUrl(req, approvalId, rawToken) {
+  const base = publicBaseFromReq(req) || "https://api.mira-fm.com";
+  return `${base}/approval/view/${encodeURIComponent(approvalId)}?t=${encodeURIComponent(rawToken)}`;
+}
+
+// ── POST /approval/create — Carotte initierar signeringsutskick ─────────────
+// multipart/form-data:
+//   files[]            (1+ PDF:er som ska signeras)
+//   payload            (JSON-sträng) — innehåller:
+//     {
+//       rubrik, meddelande, sender_email, sender_name,
+//       recipients:[{email, name}, ...],
+//       clientcompany?, deal?, expires_at?
+//     }
+//
+// Auth: x-admin-token = PLANNING_ADMIN_TOKEN (samma som /admin/forfragan/*).
+const _approvalUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 20 }, // 25 MB/fil, max 20 filer
+});
+
+app.options("/approval/create", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.post(
+  "/approval/create",
+  (req, res, next) => { _approvalCors(req, res); next(); },
+  _approvalUpload.array("files", 20),
+  async (req, res) => {
+    try {
+      if (!PLANNING_ADMIN_TOKEN) {
+        return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+      }
+      const token = req.headers["x-admin-token"];
+      if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      let payload = {};
+      try { payload = JSON.parse(req.body.payload || "{}"); }
+      catch { return res.status(400).json({ ok: false, error: "invalid_payload_json" }); }
+
+      const rubrik       = String(payload.rubrik || "").trim();
+      const meddelande   = String(payload.meddelande || "").trim();
+      const senderEmail  = String(payload.sender_email || "").trim();
+      const senderName   = String(payload.sender_name || "Carotte").trim() || "Carotte";
+      const ccId         = payload.clientcompany || null;
+      const dealId       = payload.deal || null;
+      const expiresAt    = payload.expires_at || null;
+      const recipients   = Array.isArray(payload.recipients) ? payload.recipients : [];
+
+      if (!rubrik) return res.status(400).json({ ok: false, error: "rubrik_required" });
+      if (!recipients.length) return res.status(400).json({ ok: false, error: "recipients_required" });
+
+      const files = Array.isArray(req.files) ? req.files : [];
+      if (!files.length) return res.status(400).json({ ok: false, error: "files_required" });
+
+      // 1) Ladda upp filer + skapa Dokument-poster
+      const dokumentIds = [];
+      for (const f of files) {
+        const fileUrl = await bubbleUploadFile({
+          filename:    f.originalname || "dokument.pdf",
+          contentType: f.mimetype || "application/pdf",
+          buffer:      f.buffer,
+        });
+        const id = await bubbleCreate("Dokument", {
+          titel:         f.originalname || "Dokument",
+          beskrivning:   "Signeringsunderlag (Mira)",
+          file:          fileUrl,
+          latest_update: new Date().toISOString(),
+        });
+        dokumentIds.push(id);
+      }
+
+      // 2) Skapa OfferApprovalRequest (moder)
+      const requestId = await bubbleCreate("OfferApprovalRequest", {
+        rubrik,
+        meddelande,
+        dokument:         dokumentIds,
+        clientcompany:    ccId || null,
+        deal:             dealId || null,
+        sender_email:     senderEmail,
+        sender_name:      senderName,
+        status:           "pending",
+        recipients_count: recipients.length,
+        signed_count:     0,
+        expires_at:       expiresAt || null,
+      });
+
+      // 3) Skapa OfferApproval per mottagare + invite-mail
+      const created = [];
+      for (const r of recipients) {
+        const email = String(r?.email || "").trim();
+        if (!email) continue;
+        const name = String(r?.name || "").trim();
+
+        const rawToken  = _genToken();
+        const tokenHash = _sha256Hex(rawToken);
+
+        // Skapar approval först (utan länk), sen patchar in länken som
+        // innehåller dess egna unique_id.
+        const approvalId = await bubbleCreate("OfferApproval", {
+          request:         requestId,
+          rubrik,                       // bakåtkomp: child speglar för äldre rapport-vyer
+          recipient_email: email,
+          status:          "Pending",
+          token_hash:      tokenHash,
+          dokument:        dokumentIds, // speglas så befintliga vyer fortsatt visar dem
+          clientcompany:   ccId || null,
+          deal:            dealId || null,
+          meddelande,
+        });
+
+        const viewUrl = _buildApprovalViewUrl(req, approvalId, rawToken);
+        await bubblePatch("OfferApproval", approvalId, { approval_link: viewUrl });
+
+        // Köa invite-mail (pollern skickar inom 2 min)
+        await bubbleCreate("emailqueue", {
+          template_slug: "approval_invite",
+          to_email:      email,
+          to_name:       name || email,
+          extra_data:    JSON.stringify({
+            rubrik,
+            sender_name: senderName,
+            message:     meddelande,
+            view_url:    viewUrl,
+            expires_at:  expiresAt || null,
+          }),
+          email_sent:    false,
+        });
+
+        created.push({ approval_id: approvalId, recipient_email: email, view_url: viewUrl });
+      }
+
+      return res.json({
+        ok:              true,
+        request_id:      requestId,
+        dokument_ids:    dokumentIds,
+        approvals:       created,
+        recipients_count: created.length,
+      });
+    } catch (e) {
+      console.error("[/approval/create] failed", e);
+      return res.status(e?.status || 500).json({
+        ok: false, error: e?.message || String(e), detail: e?.detail || null,
+      });
+    }
+  }
+);
+
+// ── Helpers för /request-otp + /confirm: token-grindad approval-fetch ──────
+async function _fetchApprovalByToken(approvalId, rawToken) {
+  if (!approvalId || !rawToken) return { error: "missing_args", status: 400 };
+  const approval = await bubbleGet("OfferApproval", approvalId);
+  if (!approval) return { error: "approval_not_found", status: 404 };
+  const stored = String(approval.token_hash || "").trim();
+  if (!stored) return { error: "no_token_on_approval", status: 403 };
+  if (!_safeEqHex(_sha256Hex(rawToken), stored)) {
+    return { error: "invalid_token", status: 401 };
+  }
+  return { approval };
+}
+
+// ── POST /approval/request-otp/:id — skickar OTP via mail ──────────────────
+// Body: { token: "<raw token från view-länken>" }
+app.options("/approval/request-otp/:id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.post("/approval/request-otp/:id", async (req, res) => {
+  _approvalCors(req, res);
+  const ip = _clientIp(req);
+  if (_publicRateLimited(ip, 30)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+
+  try {
+    const approvalId = String(req.params.id || "").trim();
+    const rawToken   = String((req.body || {}).token || "").trim();
+    const r = await _fetchApprovalByToken(approvalId, rawToken);
+    if (r.error) return res.status(r.status).json({ ok: false, error: r.error });
+    const approval = r.approval;
+
+    // Om redan godkänd: ingen ny OTP behövs.
+    if (String(approval.status || "").toLowerCase() === "approved" && approval.approved_at) {
+      return res.json({ ok: true, already_approved: true });
+    }
+
+    const code  = _genOtp();
+    const hash  = _sha256Hex(code);
+    const minutes = 10;
+    const expMs   = Date.now() + minutes * 60 * 1000;
+
+    await bubblePatch("OfferApproval", approvalId, {
+      otp_hash:        hash,
+      otp_expires_at:  new Date(expMs).toISOString(),
+      token_email_verify: "no",
+    });
+
+    // Hämta rubrik från parent om kopplad, annars från child
+    let rubrik = approval.rubrik || "Avtal";
+    if (approval.request) {
+      const parent = await bubbleGet("OfferApprovalRequest", approval.request).catch(() => null);
+      if (parent?.rubrik) rubrik = parent.rubrik;
+    }
+
+    await bubbleCreate("emailqueue", {
+      template_slug: "approval_otp",
+      to_email:      approval.recipient_email || "",
+      to_name:       approval.recipient_email || "",
+      extra_data:    JSON.stringify({
+        rubrik,
+        code,
+        expires_minutes: minutes,
+      }),
+      email_sent:    false,
+    });
+
+    return res.json({ ok: true, expires_at: new Date(expMs).toISOString() });
+  } catch (e) {
+    console.error("[/approval/request-otp] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── POST /approval/confirm/:id — slutsignerar + genererar mergad PDF ───────
+// Body: { token, otp }
+//   - token = raw från URL (hashas, jämförs mot token_hash)
+//   - otp   = 6-siffrig kod (hashas, jämförs mot otp_hash, kollar expires_at)
+// Sätter status=Approved, approved_at/ip/ua, token_email_verify="yes",
+// kör approvalDocEngine.generateAndStore, köar bekräftelsemail.
+app.options("/approval/confirm/:id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.post("/approval/confirm/:id", async (req, res) => {
+  _approvalCors(req, res);
+  const ip = _clientIp(req);
+  if (_publicRateLimited(ip, 20)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+
+  try {
+    const approvalId = String(req.params.id || "").trim();
+    const rawToken   = String((req.body || {}).token || "").trim();
+    const otp        = String((req.body || {}).otp || "").trim();
+    if (!otp) return res.status(400).json({ ok: false, error: "missing_otp" });
+
+    const r = await _fetchApprovalByToken(approvalId, rawToken);
+    if (r.error) return res.status(r.status).json({ ok: false, error: r.error });
+    const approval = r.approval;
+
+    const alreadyApproved =
+      String(approval.status || "").toLowerCase() === "approved" &&
+      !!approval.approved_at;
+
+    // OTP-check (skippas om redan godkänd — då räcker token-grindning för
+    // re-generera dokumentet utan att kräva ny OTP).
+    if (!alreadyApproved) {
+      const storedOtpHash = String(approval.otp_hash || "").trim();
+      if (!storedOtpHash) return res.status(403).json({ ok: false, error: "no_otp_requested" });
+      if (approval.otp_expires_at) {
+        const exp = Date.parse(approval.otp_expires_at);
+        if (Number.isFinite(exp) && exp < Date.now()) {
+          return res.status(410).json({ ok: false, error: "otp_expired" });
+        }
+      }
+      if (!_safeEqHex(_sha256Hex(otp), storedOtpHash)) {
+        return res.status(401).json({ ok: false, error: "invalid_otp" });
+      }
+    }
+
+    const userAgent = String(req.headers["user-agent"] || "").slice(0, 500);
+
+    if (!alreadyApproved) {
+      await bubblePatch("OfferApproval", approvalId, {
+        status:              "Approved",
+        approved_at:         new Date().toISOString(),
+        approved_ip:         ip || "",
+        approved_user_agent: userAgent,
+        approved_by_email:   approval.recipient_email || "",
+        token_email_verify:  "yes",
+        otp_hash:            "",            // bränn OTP-koden
+        otp_expires_at:      null,
+      });
+    }
+
+    // Generera + lagra signed_document (skriver tillbaka URL)
+    const docResult = await approvalDocEngine.generateAndStore(approvalId, { writeBack: true });
+
+    // Bekräftelsemail till mottagaren
+    if (!alreadyApproved) {
+      // Rollup på parent (signed_count++ + ev status=completed)
+      try {
+        if (approval.request) {
+          const parent = await bubbleGet("OfferApprovalRequest", approval.request);
+          if (parent) {
+            const newSigned = Number(parent.signed_count || 0) + 1;
+            const total     = Number(parent.recipients_count || 0);
+            const patch = { signed_count: newSigned };
+            if (total > 0 && newSigned >= total) patch.status = "completed";
+            await bubblePatch("OfferApprovalRequest", approval.request, patch);
+          }
+        }
+      } catch (rollupErr) {
+        console.warn("[/approval/confirm] parent rollup failed (non-fatal)", rollupErr?.message);
+      }
+
+      let rubrik = approval.rubrik || "Avtal";
+      let senderName = "Carotte";
+      if (approval.request) {
+        const parent = await bubbleGet("OfferApprovalRequest", approval.request).catch(() => null);
+        if (parent?.rubrik) rubrik = parent.rubrik;
+        if (parent?.sender_name) senderName = parent.sender_name;
+      }
+
+      await bubbleCreate("emailqueue", {
+        template_slug: "approval_signed",
+        to_email:      approval.recipient_email || "",
+        to_name:       approval.recipient_email || "",
+        extra_data:    JSON.stringify({
+          rubrik,
+          sender_name:  senderName,
+          document_url: docResult.signed_document_url,
+          signed_at:    new Date().toISOString(),
+        }),
+        email_sent:    false,
+      });
+    }
+
+    return res.json({
+      ok:                  true,
+      already_approved:    alreadyApproved,
+      signed_document_url: docResult.signed_document_url,
+      bytes:               docResult.bytes,
+    });
+  } catch (e) {
+    console.error("[/approval/confirm] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
   }
 });
 

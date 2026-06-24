@@ -168,6 +168,9 @@ async function buildEmail(item) {
     case "invite_invitation": return tmplInviteInvitation(entity, extra, toName, ctaLabel, ctx);
     case "news_announcement": return tmplNewsAnnouncement(entity, extra, toName, ctaLabel, ctx);
     case "survey_invitation": return tmplSurveyInvitation(entity, extra, toName, ctaLabel, ctx);
+    case "approval_invite":   return tmplApprovalInvite(entity, extra, toName, ctaLabel, ctx);
+    case "approval_otp":      return tmplApprovalOtp(entity, extra, toName, ctaLabel, ctx);
+    case "approval_signed":   return tmplApprovalSigned(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1291,6 +1294,115 @@ async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
   });
   return { subject, html };
 }
+// ────────────────────────────────────────────────────────────
+// OfferApproval-mallar (signeringsflöde — se HANDOFF §0e)
+// extra-fält som förväntas:
+//   approval_invite:  { rubrik, sender_name, message, view_url, expires_at? }
+//   approval_otp:     { rubrik, code, expires_minutes }
+//   approval_signed:  { rubrik, document_url, signed_at }
+// ────────────────────────────────────────────────────────────
+async function tmplApprovalInvite(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.sender_name || x.company_name || "Carotte";
+  const accent     = x.accent_color || "#1d4ed8";
+  const rubrik     = x.rubrik || "Avtal att signera";
+  const viewUrl    = x.view_url || "";
+  const message    = x.message || "";
+
+  const subject = item.subject_override || `${rubrik} — väntar på din signering`;
+  const html = wrapLayout({
+    toName,
+    logoUrl: x.logo_url || "",
+    senderName,
+    imageUrl: "",
+    accent,
+    tag: "Signering",
+    headline: rubrik,
+    body:
+      `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+      + `${esc(senderName)} har skickat ett dokument till dig för digital signering. `
+      + `Klicka på knappen nedan för att granska och signera.</p>`
+      + (message ? `<p style="font-size:13px;color:#8892aa;line-height:1.65;margin-top:14px;white-space:pre-wrap;">${esc(message)}</p>` : ""),
+    details: detailRows([
+      ["Avsändare", esc(senderName)],
+      x.expires_at && ["Giltigt till", fmtDateTime(x.expires_at)],
+    ]),
+    ctaLabel: "Granska och signera",
+    ctaUrl: viewUrl,
+    miraNote: "Du behöver verifiera din e-post med en engångskod innan du signerar.",
+  });
+  return { subject, html };
+}
+
+async function tmplApprovalOtp(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const accent  = x.accent_color || "#1d4ed8";
+  const rubrik  = x.rubrik || "Avtal";
+  const code    = String(x.code || "").trim();
+  const mins    = Number(x.expires_minutes || 10);
+
+  const codeBlock =
+    `<div style="margin:22px 0 6px;padding:18px 24px;background:#0d1117;border:1px solid #262b42;`
+    + `border-radius:10px;text-align:center;">`
+    + `<div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:30px;letter-spacing:.4em;`
+    + `font-weight:600;color:#e8eaf0;">${esc(code)}</div>`
+    + `<div style="margin-top:8px;font-size:11px;color:#606880;letter-spacing:.08em;text-transform:uppercase;">`
+    + `Giltig i ${mins} minuter</div></div>`;
+
+  const subject = item.subject_override || `Din kod för att signera: ${code}`;
+  const html = wrapLayout({
+    toName,
+    logoUrl: x.logo_url || "",
+    senderName: x.sender_name || "Carotte",
+    imageUrl: "",
+    accent,
+    tag: "Engångskod",
+    headline: "Verifiera din e-post",
+    body:
+      `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+      + `Skriv in koden nedan på signeringssidan för att slutföra signeringen av <strong style="color:#e8eaf0;">${esc(rubrik)}</strong>.</p>`
+      + codeBlock,
+    details: null,
+    ctaLabel: null,
+    ctaUrl: null,
+    miraNote: "Har du inte begärt denna kod kan du bortse från mailet.",
+  });
+  return { subject, html };
+}
+
+async function tmplApprovalSigned(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.sender_name || "Carotte";
+  const accent     = x.accent_color || "#047857";
+  const rubrik     = x.rubrik || "Avtal";
+  const docUrl     = x.document_url || "";
+  const signedAt   = x.signed_at ? fmtDateTime(x.signed_at) : "";
+
+  const subject = item.subject_override || `Bekräftelse: ${rubrik} signerat`;
+  const html = wrapLayout({
+    toName,
+    logoUrl: x.logo_url || "",
+    senderName,
+    imageUrl: "",
+    accent,
+    tag: "Signerat",
+    headline: `${rubrik} är signerat`,
+    body:
+      `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+      + `Tack — din signering är registrerad. Den slutgiltiga PDF:en innehåller `
+      + `originaldokumenten plus ett signeringsbevis med din verifiering.</p>`,
+    details: detailRows([
+      ["Avtal", esc(rubrik)],
+      signedAt && ["Signerat", signedAt],
+      ["Signerat av", esc(toName || "")],
+    ]),
+    ctaLabel: docUrl ? "Ladda ner signerat dokument" : null,
+    ctaUrl:   docUrl || null,
+    miraNote: docUrl ? null : "Du får en länk till dokumentet inom kort.",
+  });
+  return { subject, html };
+}
+
 // ────────────────────────────────────────────────────────────
 // SendGrid REST (ingen SDK – matcher befintligt mönster i index.js)
 // ────────────────────────────────────────────────────────────
