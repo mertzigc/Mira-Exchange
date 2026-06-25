@@ -18923,9 +18923,9 @@ const SERVICES = {
   SC_TM_ROLE:       "testimonial_role",
   SC_ONBOARDING:    "onboarding_json",
 
-  // Contract-fält
+  // Contract-fält (Bubble case-sensitive — verifierat i App data 2026-06-25)
   CT_COMPANY:     "Kundföretag",
-  CT_OFFER:       "erbjudande",
+  CT_OFFER:       "Erbjudande",
   CT_QTY:         "Produktantal",
   CT_MONTHLY:     "Månadskostnad",
   CT_END:         "Slutdatum",
