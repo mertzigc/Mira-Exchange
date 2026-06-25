@@ -18923,9 +18923,11 @@ const SERVICES = {
   SC_TM_ROLE:       "testimonial_role",
   SC_ONBOARDING:    "onboarding_json",
 
-  // Contract-fält (Bubble case-sensitive — verifierat i App data 2026-06-25)
+  // Contract-fält (Bubble case-sensitive — verifierat via /services/dashboard?debug=1).
+  // Inkonsekvent case: Kundföretag/Månadskostnad/Slutdatum är capitalized,
+  // erbjudande är lowercase. Stämmer med Bubble Data API:s all_field_names.
   CT_COMPANY:     "Kundföretag",
-  CT_OFFER:       "Erbjudande",
+  CT_OFFER:       "erbjudande",
   CT_QTY:         "Produktantal",
   CT_MONTHLY:     "Månadskostnad",
   CT_END:         "Slutdatum",
