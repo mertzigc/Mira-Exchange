@@ -19083,14 +19083,49 @@ app.get("/services/dashboard", async (req, res) => {
   const orig = req.headers.origin || "";
   if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "no-store");
 
   if (_publicRateLimited(_clientIp(req), 300)) return res.status(429).json({ ok: false, error: "rate_limited" });
 
   const companyId = String(req.query.company_id || "").trim();
   if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+  const debug = req.query.debug === "1";
 
   try {
     const out = await _buildServicesDashboard(companyId);
+
+    if (debug) {
+      const contractsRaw = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+        constraints: [{ key: SERVICES.CT_COMPANY, constraint_type: "equals", value: companyId }],
+      }).catch((e) => ({ _err: e?.message || String(e) }));
+      const catalogsRaw = await bubbleFindAll(SERVICES.CATALOG_TYPE, {}).catch(() => []);
+      const offerMap = {};
+      for (const c of catalogsRaw) {
+        const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+        offerMap[slug] = _ffIdsOf(c[SERVICES.SC_OFFERS]);
+      }
+      const contractsSummary = Array.isArray(contractsRaw) ? contractsRaw.map((ct) => ({
+        _id: ct._id,
+        kundforetag_raw: ct[SERVICES.CT_COMPANY],
+        kundforetag_id: _ffIdOf(ct[SERVICES.CT_COMPANY]),
+        erbjudande_raw: ct[SERVICES.CT_OFFER],
+        erbjudande_id: _ffIdOf(ct[SERVICES.CT_OFFER]),
+        produktantal: ct[SERVICES.CT_QTY],
+        manadskostnad: ct[SERVICES.CT_MONTHLY],
+        slutdatum: ct[SERVICES.CT_END],
+        all_field_names: Object.keys(ct).filter(k => !k.startsWith("_") && !["Created Date","Modified Date","Created By","Slug"].includes(k)),
+      })) : { _err: contractsRaw._err };
+      return res.json({
+        ok: true,
+        company_id: companyId,
+        contracts_found: Array.isArray(contractsRaw) ? contractsRaw.length : -1,
+        contracts: contractsSummary,
+        catalog_offer_map: offerMap,
+        active: out.active,
+        catalog_slugs: out.catalog.map((c) => c.slug),
+      });
+    }
+
     return res.json({ ok: true, ...out });
   } catch (e) {
     console.error("[/services/dashboard]", e?.message, e?.detail);
