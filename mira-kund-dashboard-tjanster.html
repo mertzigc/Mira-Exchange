@@ -717,8 +717,12 @@
     fetch(host+'/services/dashboard?company_id='+encodeURIComponent(companyId), {
       method:'GET', headers:{'Accept':'application/json'}
     })
-    .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
+    .then(function(r){
+      if (r.status === 429) { setError('För många anrop just nu — vänta en stund och ladda om.'); return null; }
+      return r.json().catch(function(){return {ok:false};});
+    })
     .then(function(j){
+      if (j === null) return;
       if (!j || !j.ok) { setError('Kunde inte hämta tjänster'); return; }
       CATALOG = Array.isArray(j.catalog) ? j.catalog : [];
       ACTIVE  = (j.active && typeof j.active === 'object') ? j.active : {};

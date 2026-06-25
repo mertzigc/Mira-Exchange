@@ -19084,7 +19084,7 @@ app.get("/services/dashboard", async (req, res) => {
   if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (_publicRateLimited(_clientIp(req))) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(_clientIp(req), 300)) return res.status(429).json({ ok: false, error: "rate_limited" });
 
   const companyId = String(req.query.company_id || "").trim();
   if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
