@@ -19101,6 +19101,9 @@ app.get("/services/dashboard", async (req, res) => {
         constraints: [{ key: SERVICES.CT_COMPANY, constraint_type: "equals", value: companyId }],
       }).catch((e) => ({ _err: e?.message || String(e) }));
       const catalogsRaw = await bubbleFindAll(SERVICES.CATALOG_TYPE, {}).catch(() => []);
+      const officesRaw = await bubbleFindAll("Office", {
+        constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }],
+      }).catch((e) => ({ _err: e?.message || String(e) }));
       const offerMap = {};
       for (const c of catalogsRaw) {
         const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
@@ -19108,20 +19111,29 @@ app.get("/services/dashboard", async (req, res) => {
       }
       const contractsSummary = Array.isArray(contractsRaw) ? contractsRaw.map((ct) => ({
         _id: ct._id,
-        kundforetag_raw: ct[SERVICES.CT_COMPANY],
         kundforetag_id: _ffIdOf(ct[SERVICES.CT_COMPANY]),
-        erbjudande_raw: ct[SERVICES.CT_OFFER],
         erbjudande_id: _ffIdOf(ct[SERVICES.CT_OFFER]),
+        kontor_raw: ct.Kontor || ct.kontor || ct.Office || ct.office || null,
+        kontor_id: _ffIdOf(ct.Kontor || ct.kontor || ct.Office || ct.office),
         produktantal: ct[SERVICES.CT_QTY],
         manadskostnad: ct[SERVICES.CT_MONTHLY],
         slutdatum: ct[SERVICES.CT_END],
         all_field_names: Object.keys(ct).filter(k => !k.startsWith("_") && !["Created Date","Modified Date","Created By","Slug"].includes(k)),
       })) : { _err: contractsRaw._err };
+      const officesSummary = Array.isArray(officesRaw) ? officesRaw.map((o) => ({
+        _id: o._id,
+        all_field_names: Object.keys(o).filter(k => !k.startsWith("_") && !["Created Date","Modified Date","Created By","Slug"].includes(k)),
+        sample_values: Object.fromEntries(
+          Object.entries(o).filter(([k]) => !k.startsWith("_") && !["Created Date","Modified Date","Created By"].includes(k))
+        ),
+      })) : { _err: officesRaw._err };
       return res.json({
         ok: true,
         company_id: companyId,
         contracts_found: Array.isArray(contractsRaw) ? contractsRaw.length : -1,
         contracts: contractsSummary,
+        offices_found: Array.isArray(officesRaw) ? officesRaw.length : -1,
+        offices: officesSummary,
         catalog_offer_map: offerMap,
         active: out.active,
         catalog_slugs: out.catalog.map((c) => c.slug),
