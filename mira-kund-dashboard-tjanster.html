@@ -35,11 +35,23 @@
     --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35);
     --t4:rgba(255,255,255,0.20); --up:#10b981;
   }
-  .mt-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
-  .mt-title { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.10em; color:var(--t3); }
-  .mt-title .mt-cnt { color:var(--t4); font-weight:400; text-transform:none; letter-spacing:0; margin-left:6px; }
+  .mt-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:14px; flex-wrap:wrap; }
+  .mt-title { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.10em; color:var(--t3);
+    display:flex; align-items:center; gap:10px; }
+  .mt-title .mt-cnt { color:var(--t4); font-weight:400; text-transform:none; letter-spacing:0; }
   .mt-sum { font-size:11px; color:var(--t3); }
   .mt-sum b { color:var(--acc); font-weight:600; }
+
+  .mt-office { display:inline-flex; align-items:center; gap:7px; padding:5px 11px;
+    background:rgba(255,255,255,0.04); border:0.5px solid rgba(255,255,255,0.10); border-radius:7px;
+    font-size:12px; color:var(--t1); text-transform:none; letter-spacing:0; font-weight:500; }
+  .mt-office-label { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; }
+  select.mt-office-sel { background:transparent; border:none; color:var(--t1); font:inherit; font-size:12px;
+    font-weight:500; cursor:pointer; outline:none; padding:0; max-width:200px;
+    appearance:none; -webkit-appearance:none; padding-right:14px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 6'><path fill='%23999' d='M0 0l4 6 4-6z'/></svg>");
+    background-repeat:no-repeat; background-position:right center; background-size:7px; }
+  select.mt-office-sel option { background:#1e2235; color:#fff; }
 
   .mt-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
   @media (max-width:980px){ .mt-grid { grid-template-columns:repeat(3,1fr); } }
@@ -227,6 +239,7 @@
   <div id="mt-gridview">
     <div class="mt-head">
       <div class="mt-title">Era tjänster <span class="mt-cnt" id="mt-cnt">···</span></div>
+      <span id="mt-office-slot"></span>
       <div class="mt-sum" id="mt-sum">···</div>
     </div>
     <div class="mt-grid" id="mt-grid"></div>
@@ -324,11 +337,22 @@
       terms:'Exkl. moms. Faktureras månadsvis efter förbrukning.' }
   ];
 
-  var DEMO_ACTIVE = {
-    mira:         { option_id:'pro',  qty:1, monthly_cost:0,     info:'Pro · 4 användare' },
-    housekeeping: { option_id:'5dgr', qty:1, monthly_cost:11560, info:'5 dgr/v · 340 kvm' },
-    kaffe:        { option_id:'a600', qty:1, monthly_cost:4090,  info:'Franke A600 · 1 st' },
-    vatten:       { option_id:'std',  qty:2, monthly_cost:2590,  info:'Inkl kolsyra · 2 st' }
+  var DEMO_OFFICES = [
+    { id:'o1', name:'Huvudkontoret',  kontors_id:'01', address:'Sveavägen 1, Stockholm', kvm:400, arbetsplatser:25 },
+    { id:'o2', name:'Filial Göteborg', kontors_id:'02', address:'Avenyn 5, Göteborg',    kvm:200, arbetsplatser:12 }
+  ];
+  var DEMO_ACTIVE_ACCOUNT = {
+    mira: { option_id:'pro', qty:1, monthly_cost:0, info:'Pro · 4 användare' }
+  };
+  var DEMO_ACTIVE_BY_OFFICE = {
+    o1: {
+      housekeeping: { option_id:'5dgr', qty:1, monthly_cost:11560, info:'5 dgr/v · 340 kvm' },
+      kaffe:        { option_id:'a600', qty:1, monthly_cost:4090,  info:'Franke A600 · 1 st' },
+      vatten:       { option_id:'std',  qty:2, monthly_cost:2590,  info:'Inkl kolsyra · 2 st' }
+    },
+    o2: {
+      housekeeping: { option_id:'3dgr', qty:1, monthly_cost:4400, info:'3 dgr/v · 200 kvm' }
+    }
   };
 
   function el(id){ return document.getElementById(id); }
@@ -341,7 +365,27 @@
     return n.toLocaleString('sv-SE')+' kr';
   }
 
-  var CATALOG = [], ACTIVE = {}, modal = { slug:null, optionId:null, qty:1, busy:false, imageIdx:0 };
+  var CATALOG = [];
+  var OFFICES = [];
+  var ACTIVE_ACCOUNT = {};      // { slug: entry } — Mira-tilen, alltid synlig
+  var ACTIVE_BY_OFFICE = {};    // { office_id: { slug: entry } } — facility per kontor
+  var SELECTED_OFFICE_ID = null;
+  var ACTIVE = {};              // computed view för valt kontor (account + office-facility merged)
+  var modal = { slug:null, optionId:null, qty:1, busy:false, imageIdx:0 };
+
+  function rebuildActive(){
+    ACTIVE = {};
+    Object.keys(ACTIVE_ACCOUNT).forEach(function(k){ ACTIVE[k] = ACTIVE_ACCOUNT[k]; });
+    var officeMap = (SELECTED_OFFICE_ID && ACTIVE_BY_OFFICE[SELECTED_OFFICE_ID]) || {};
+    Object.keys(officeMap).forEach(function(k){ ACTIVE[k] = officeMap[k]; });
+  }
+
+  function setSelectedOffice(officeId){
+    if (officeId === SELECTED_OFFICE_ID) return;
+    SELECTED_OFFICE_ID = officeId;
+    rebuildActive();
+    renderGrid();
+  }
 
   function renderStars(rating){
     var full = Math.round(num(rating));
@@ -437,6 +481,20 @@
     '</div>';
   }
 
+  function renderOfficeControl(){
+    var slot = el('mt-office-slot'); if (!slot) return;
+    if (!OFFICES || OFFICES.length === 0) { slot.innerHTML = ''; return; }
+    if (OFFICES.length === 1) {
+      slot.innerHTML = '<span class="mt-office"><span class="mt-office-label">Kontor</span>'+esc(OFFICES[0].name)+'</span>';
+      return;
+    }
+    var opts = OFFICES.map(function(o){
+      return '<option value="'+esc(o.id)+'"'+(o.id===SELECTED_OFFICE_ID?' selected':'')+'>'+esc(o.name)+'</option>';
+    }).join('');
+    slot.innerHTML = '<span class="mt-office"><span class="mt-office-label">Kontor</span>'+
+      '<select class="mt-office-sel" data-act="office">'+opts+'</select></span>';
+  }
+
   function renderGrid(){
     var total = 0, activeCnt = 0, suggestCnt = 0;
     CATALOG.forEach(function(it){
@@ -446,6 +504,7 @@
     });
     el('mt-cnt').textContent = '· '+activeCnt+' av '+CATALOG.length+' aktiva';
     el('mt-sum').innerHTML = fmtKr(total)+'/mån' + (suggestCnt>0 ? ' · <b>+'+suggestCnt+' möjliga att aktivera</b>' : '');
+    renderOfficeControl();
     el('mt-grid').innerHTML = CATALOG.map(renderTile).join('');
   }
 
@@ -686,6 +745,13 @@
     }
   });
 
+  document.addEventListener('change', function(ev){
+    var t = ev.target;
+    if (t && t.getAttribute && t.getAttribute('data-act') === 'office') {
+      setSelectedOffice(t.value);
+    }
+  });
+
   el('mt-mask').addEventListener('click', function(ev){
     if (ev.target === el('mt-mask')) closeModal();
   });
@@ -709,7 +775,11 @@
     var companyId = txt('mira_company_id');
     if (!companyId) {
       CATALOG = DEMO_CATALOG.slice();
-      ACTIVE  = JSON.parse(JSON.stringify(DEMO_ACTIVE));
+      OFFICES = DEMO_OFFICES.slice();
+      ACTIVE_ACCOUNT = JSON.parse(JSON.stringify(DEMO_ACTIVE_ACCOUNT));
+      ACTIVE_BY_OFFICE = JSON.parse(JSON.stringify(DEMO_ACTIVE_BY_OFFICE));
+      SELECTED_OFFICE_ID = OFFICES[0] ? OFFICES[0].id : null;
+      rebuildActive();
       renderGrid();
       return;
     }
@@ -725,8 +795,12 @@
       if (j === null) return;
       if (!j || !j.ok) { setError('Kunde inte hämta tjänster'); return; }
       CATALOG = Array.isArray(j.catalog) ? j.catalog : [];
-      ACTIVE  = (j.active && typeof j.active === 'object') ? j.active : {};
+      OFFICES = Array.isArray(j.offices) ? j.offices : [];
+      ACTIVE_ACCOUNT   = (j.active_account   && typeof j.active_account   === 'object') ? j.active_account   : {};
+      ACTIVE_BY_OFFICE = (j.active_by_office && typeof j.active_by_office === 'object') ? j.active_by_office : {};
+      SELECTED_OFFICE_ID = OFFICES[0] ? OFFICES[0].id : null;
       if (!CATALOG.length) { setError('Inga tjänster konfigurerade ännu'); return; }
+      rebuildActive();
       renderGrid();
     })
     .catch(function(){ setError('Nätverksfel — försök ladda om sidan'); });

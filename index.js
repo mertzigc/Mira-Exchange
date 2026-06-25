@@ -18931,6 +18931,16 @@ const SERVICES = {
   CT_QTY:         "Produktantal",
   CT_MONTHLY:     "Månadskostnad",
   CT_END:         "Slutdatum",
+  CT_OFFICE:      "Kontor",
+
+  // Office-fält (verifierat 2026-06-25 via debug)
+  OFFICE_TYPE:    "Office",
+  OF_NAME:        "Office_title",
+  OF_COMPANY:     "Kundföretag",
+  OF_ADDRESS:     "office_address",
+  OF_KONTORSID:   "KontorsID",
+  OF_YTA:         "Yta",              // text! parsas till number
+  OF_ARBETSPL:    "Arbetsplatser",    // saknas än — number när det läggs till
 
   // Erbjudande Unit option set → display-string. Bubble Data API returnerar
   // bara display-värdet, så vi mappar till prisenhet-suffix.
@@ -19011,6 +19021,7 @@ async function _buildServicesDashboard(companyId) {
         terms: o.Villkor || "",
         price: _servicesPriceOf(o, qtyMin, fromPrice),
         unit: _servicesUnitOf(o, fromUnit),
+        pricing_formula_json: o[FORFRAGAN.OFFER_PRICING_JSON] || "",
       }));
 
     const rating = Number(c[SERVICES.SC_RATING] || 0);
@@ -19051,12 +19062,37 @@ async function _buildServicesDashboard(companyId) {
     };
   }).filter((c) => c.slug);
 
-  // 4) Aktiva Contracts för kunden — filtrera utgångna client-side
+  // 4) Offices för kunden — sortera på KontorsID (01, 02…) sen Office_title
+  const officesRaw = await bubbleFindAll(SERVICES.OFFICE_TYPE, {
+    constraints: [{ key: SERVICES.OF_COMPANY, constraint_type: "equals", value: companyId }],
+  }).catch(() => []);
+  const offices = officesRaw.map((o) => ({
+    id: bubbleId(o),
+    name: o[SERVICES.OF_NAME] || "Kontor",
+    kontors_id: o[SERVICES.OF_KONTORSID] || null,
+    address: (o[SERVICES.OF_ADDRESS] && o[SERVICES.OF_ADDRESS].address) || "",
+    kvm: Number(String(o[SERVICES.OF_YTA] || "").replace(/[^\d.]/g, "")) || 0,
+    arbetsplatser: Number(o[SERVICES.OF_ARBETSPL] || 0) || 0,
+  })).sort((a, b) => {
+    const aid = a.kontors_id || "zzz", bid = b.kontors_id || "zzz";
+    if (aid !== bid) return aid.localeCompare(bid);
+    return (a.name || "").localeCompare(b.name || "");
+  });
+  const officeIds = new Set(offices.map((o) => o.id));
+
+  // 5) Aktiva Contracts för kunden — filtrera utgångna client-side
   const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
     constraints: [{ key: SERVICES.CT_COMPANY, constraint_type: "equals", value: companyId }],
   }).catch(() => []);
 
-  const active = {};
+  // Map slug → category för att veta om en tile är account- eller office-scope
+  const slugCategory = new Map();
+  for (const c of catalog) slugCategory.set(c.slug, c.category);
+
+  const activeAccount = {};        // platform-tiles (Mira)
+  const activeByOffice = {};       // facility-tiles, key = office_id
+  offices.forEach((o) => { activeByOffice[o.id] = {}; });
+
   const now = Date.now();
   for (const ct of contracts) {
     const end = ct[SERVICES.CT_END] ? new Date(ct[SERVICES.CT_END]).getTime() : null;
@@ -19070,15 +19106,32 @@ async function _buildServicesDashboard(companyId) {
     const offer = offerById.get(offerId);
     const qty = Number(ct[SERVICES.CT_QTY] || 1);
     const offerTitle = offer?.Title || "";
-    active[slug] = {
+    const officeId = _ffIdOf(ct[SERVICES.CT_OFFICE]);
+    const entry = {
       option_id: offerId,
       qty,
       monthly_cost: Math.round(Number(ct[SERVICES.CT_MONTHLY] || 0)),
       info: offerTitle + (qty > 1 ? " · " + qty + " st" : ""),
+      office_id: officeId || null,
     };
+
+    const category = slugCategory.get(slug);
+    if (category === "platform") {
+      // Account-scope — alltid synlig oavsett valt kontor
+      activeAccount[slug] = entry;
+    } else if (officeId && activeByOffice[officeId]) {
+      // Office-scope — bind till specifikt kontor
+      activeByOffice[officeId][slug] = entry;
+    } else if (!officeId) {
+      // Facility-tile utan Kontor — distribuera till alla kontor (legacy data).
+      // Markera så frontend kan visa varningstecken om vi vill.
+      for (const oid of officeIds) {
+        if (!activeByOffice[oid][slug]) activeByOffice[oid][slug] = { ...entry, missing_office: true };
+      }
+    }
   }
 
-  return { catalog, active };
+  return { catalog, offices, active_account: activeAccount, active_by_office: activeByOffice };
 }
 
 app.get("/services/dashboard", async (req, res) => {
@@ -19135,7 +19188,9 @@ app.get("/services/dashboard", async (req, res) => {
         offices_found: Array.isArray(officesRaw) ? officesRaw.length : -1,
         offices: officesSummary,
         catalog_offer_map: offerMap,
-        active: out.active,
+        active_account: out.active_account,
+        active_by_office: out.active_by_office,
+        offices_parsed: out.offices,
         catalog_slugs: out.catalog.map((c) => c.slug),
       });
     }
