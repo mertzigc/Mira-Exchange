@@ -13682,8 +13682,16 @@ app.post("/admin/invite/:id/send", async (req, res) => {
     const brand = _inviteBrand(inv, cc);
     const tplId = await getTemplateId(slug).catch(() => null);
 
-    // "Inte svarat" = saknar svar (survey: tomt response_json; annars rsvp_status pending)
+    // "Inte svarat" = saknar svar.
+    // VIKTIGT: anonym undersökning lagrar ALDRIG svaret på gästen (response_json = "")
+    // — då är "har svarat"-signalen istället bocken arrived="yes"/rsvp_status="yes"
+    // (sätts i /invite/rsvp anon-vägen). Annars skulle en påminnelse gå till ALLA,
+    // även de som redan svarat (buggen 2026-06-25).
+    const isAnonSurvey = isSurvey && inv.anonymous === true;
     const notAnswered = g => {
+      if (isAnonSurvey) {
+        return !(g.arrived === true || g.arrived === "yes" || String(g.rsvp_status || "").toLowerCase() === "yes");
+      }
       if (isSurvey) { const rj = String(g.response_json || "").trim(); return !rj || rj === "{}" || rj === "[]"; }
       return String(g.rsvp_status || "pending").toLowerCase() === "pending";
     };

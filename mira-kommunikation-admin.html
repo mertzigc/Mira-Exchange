@@ -2917,7 +2917,14 @@
   // ── Skicka påminnelse (till de som fått men ej svarat) ──
   g('sv-remind').addEventListener('click', function(){
     if(!SVR_INVITE_ID || SV_SEND_BUSY) return;
-    var awaiting = SVR.filter(function(x){ var hr=x.response_json && x.response_json!=='{}' && x.response_json!=='[]'; return x.invite_sent && x.email && !hr; }).length;
+    // Anon-medveten "har svarat" (samma logik som renderSvStats) — annars
+    // räknades alla som obesvarade i anonyma undersökningar.
+    var awaiting = SVR.filter(function(x){
+      var hr = SV_ANON
+        ? (x.arrived === true || String(x.rsvp_status||'').toLowerCase()==='yes')
+        : (x.response_json && x.response_json!=='{}' && x.response_json!=='[]');
+      return x.invite_sent && x.email && !hr;
+    }).length;
     if(!awaiting) return;
     if(!confirm('Skicka påminnelse till '+awaiting+' mottagare som ännu inte svarat?')) return;
     SV_SEND_BUSY=true; g('sv-remind').disabled=true; g('sv-send').disabled=true;
