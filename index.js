@@ -18916,6 +18916,12 @@ const SERVICES = {
   SC_QTY_MAX:     "qty_max",
   SC_FROM_PRICE:  "from_price",
   SC_FROM_UNIT:   "from_unit",
+  SC_RATING:        "rating",
+  SC_RATING_COUNT:  "rating_count",
+  SC_TM_QUOTE:      "testimonial_quote",
+  SC_TM_AUTHOR:     "testimonial_author",
+  SC_TM_ROLE:       "testimonial_role",
+  SC_ONBOARDING:    "onboarding_json",
 
   // Contract-fält
   CT_COMPANY:     "Kundföretag",
@@ -18995,11 +19001,27 @@ async function _buildServicesDashboard(companyId) {
         desc: o.Description || "",
         description_long: o.Description_long || "",
         image: o.Image || "",
+        gallery: Array.isArray(o.Bildspel) ? o.Bildspel.filter(Boolean) : [],
+        target_group: o["Målgrupp"] || "",
+        logistics: o.Logistik || "",
+        capacity: o.Capacity != null ? Number(o.Capacity) : null,
         includes: _servicesIncludes(o["Produktinnehåll"]),
         terms: o.Villkor || "",
         price: _servicesPriceOf(o, qtyMin, fromPrice),
         unit: _servicesUnitOf(o, fromUnit),
       }));
+
+    const rating = Number(c[SERVICES.SC_RATING] || 0);
+    const ratingCount = Number(c[SERVICES.SC_RATING_COUNT] || 0);
+    const tmQuote = c[SERVICES.SC_TM_QUOTE] || "";
+    let onboarding = [];
+    try {
+      const raw = c[SERVICES.SC_ONBOARDING];
+      if (raw && String(raw).trim()) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) onboarding = parsed.filter((s) => s && (s.title || s.desc));
+      }
+    } catch (e) { /* ogiltig JSON → tom array */ }
 
     return {
       slug,
@@ -19015,6 +19037,14 @@ async function _buildServicesDashboard(companyId) {
       qty_max: Number(c[SERVICES.SC_QTY_MAX] || 99),
       from_price: fromPrice,
       from_unit: fromUnit,
+      rating: rating > 0 ? rating : null,
+      rating_count: ratingCount > 0 ? ratingCount : null,
+      testimonial: tmQuote ? {
+        quote:  tmQuote,
+        author: c[SERVICES.SC_TM_AUTHOR] || "",
+        role:   c[SERVICES.SC_TM_ROLE] || "",
+      } : null,
+      onboarding,
       options,
     };
   }).filter((c) => c.slug);
