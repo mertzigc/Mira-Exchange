@@ -46,58 +46,75 @@
   @media (max-width:720px){ .mt-grid { grid-template-columns:repeat(2,1fr); } }
   @media (max-width:460px){ .mt-grid { grid-template-columns:1fr; } }
 
-  .mt-tile { background:var(--bg); border:0.5px solid var(--line); border-radius:11px; overflow:hidden;
+  .mt-tile { background:var(--bg); border:1px solid var(--line); border-radius:11px; overflow:hidden;
     display:flex; flex-direction:column; cursor:pointer; transition:transform 0.15s, border-color 0.15s; }
   .mt-tile:hover { transform:translateY(-1px); border-color:rgba(255,255,255,0.18); }
+  .mt-tile.active { border-color:rgba(16,185,129,0.55); }
+  .mt-tile.active:hover { border-color:rgba(16,185,129,0.85); }
   .mt-tile.premium { border-color:rgba(219,105,35,0.30); }
   .mt-tile.off { background:rgba(38,43,66,0.55); border-color:rgba(255,255,255,0.10); }
 
-  .mt-hero { position:relative; height:64px; background-size:cover; background-position:center;
+  .mt-hero { position:relative; height:118px; background-size:cover; background-position:center;
     display:flex; align-items:center; justify-content:center; }
+  .mt-hero.mt-hero-img::after { content:''; position:absolute; inset:0;
+    background:linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,0.30) 100%); pointer-events:none; }
   .mt-tile.off .mt-hero { opacity:0.85; }
-  .mt-hero-ic { width:28px; height:28px; }
-  .mt-pill { position:absolute; top:7px; right:7px; font-size:9px; font-weight:700; text-transform:uppercase;
-    letter-spacing:0.06em; border-radius:20px; padding:2px 7px; }
-  .mt-pill.active { color:#10b981; background:rgba(255,255,255,0.95); }
+  .mt-hero-ic { width:32px; height:32px; opacity:0.85; }
+  .mt-pill { position:absolute; top:9px; right:9px; font-size:9px; font-weight:700; text-transform:uppercase;
+    letter-spacing:0.06em; border-radius:20px; padding:3px 8px; z-index:1; }
+  .mt-pill.active { color:#fff; background:#10b981; }
   .mt-pill.premium { color:#1c1206; background:#fff; }
-  .mt-pill.off { color:rgba(255,255,255,0.55); background:rgba(0,0,0,0.30); border:0.5px solid rgba(255,255,255,0.15); }
+  .mt-pill.off { color:rgba(255,255,255,0.65); background:rgba(0,0,0,0.40); border:0.5px solid rgba(255,255,255,0.15); }
 
-  .mt-body { padding:10px 13px 12px; display:flex; flex-direction:column; flex:1; }
+  .mt-body { padding:11px 14px 13px; display:flex; flex-direction:column; flex:1; }
   .mt-name { font-size:13px; font-weight:600; color:var(--t1); letter-spacing:-0.01em; }
-  .mt-tile.off .mt-name { color:rgba(255,255,255,0.65); }
+  .mt-tile.off .mt-name { color:rgba(255,255,255,0.70); }
   .mt-sub { font-size:11px; color:var(--t3); margin-top:2px; }
-  .mt-tile.off .mt-sub { color:rgba(255,255,255,0.30); }
+  .mt-tile.off .mt-sub { color:rgba(255,255,255,0.35); }
 
-  .mt-foot-active { margin-top:auto; padding-top:8px; font-size:13px; font-weight:700; color:#fff; }
-  .mt-foot-active small { font-size:11px; font-weight:400; color:var(--t3); }
-  .mt-foot-incl { margin-top:auto; padding-top:8px; font-size:11px; color:var(--t2); }
-  .mt-foot-off { margin-top:auto; padding-top:8px; display:flex; align-items:center; justify-content:space-between; }
-  .mt-foot-off .mt-link { font-size:11px; color:var(--acc); font-weight:600; }
-  .mt-foot-off .mt-act { font-size:11px; color:var(--t3); }
-  .mt-foot-off .mt-act:hover { color:var(--acc); }
+  .mt-foot-incl { margin-top:auto; padding-top:10px; font-size:11px; color:var(--t2); }
+  .mt-foot-link { margin-top:auto; padding-top:10px; font-size:13px; font-weight:600; color:var(--acc); }
+  .mt-foot-link:hover { color:#ff8c45; }
 
-  /* Popup-modal */
+  /* Popup-modal — två kolumner: bild+text vänster, actions höger */
   .mt-mask { display:none; padding:6px 0 0; }
   .mt-mask.on { display:flex; justify-content:center; }
   .mt-modal { background:var(--bg); border:1px solid rgba(255,255,255,0.10); border-radius:14px;
-    width:100%; max-width:560px; overflow:hidden; }
+    width:100%; max-width:780px; overflow:hidden; display:flex; flex-direction:row; }
+  @media (max-width:680px){ .mt-modal { flex-direction:column; } }
 
-  .mt-mhero { position:relative; height:180px; background-size:cover; background-position:center; overflow:hidden; }
-  .mt-mhero::after { content:''; position:absolute; inset:0;
-    background:linear-gradient(to top,rgba(20,23,38,0.94) 2%,rgba(20,23,38,0.45) 42%,rgba(20,23,38,0.05) 100%); }
-  .mt-mclose { position:absolute; top:12px; left:12px; width:30px; height:30px; border-radius:50%;
-    background:rgba(0,0,0,0.45); border:0.5px solid rgba(255,255,255,0.18); color:#fff;
-    cursor:pointer; z-index:2; font-size:16px; line-height:28px; text-align:center; }
-  .mt-mclose:hover { background:rgba(0,0,0,0.65); }
-  .mt-mprice { position:absolute; top:12px; right:12px; z-index:2; background:var(--acc);
-    color:#1c1206; font-weight:800; font-size:16px; padding:7px 13px; border-radius:9px; }
-  .mt-mprice small { font-weight:600; font-size:10px; opacity:0.8; }
-  .mt-mtt { position:absolute; left:20px; right:20px; bottom:14px; z-index:2; }
-  .mt-mtt h3 { font-family:Georgia,serif; font-size:22px; font-weight:700; color:#fff;
-    letter-spacing:-0.01em; margin:0; }
-  .mt-mtt p { font-size:12px; color:rgba(255,255,255,0.78); margin:4px 0 0; line-height:1.5; }
+  .mt-mleft { position:relative; width:290px; flex-shrink:0;
+    background-size:cover; background-position:center; display:flex; flex-direction:column;
+    min-height:380px; }
+  .mt-mleft::before { content:''; position:absolute; inset:0;
+    background:linear-gradient(180deg,rgba(20,23,38,0.30) 0%,rgba(20,23,38,0.55) 45%,rgba(20,23,38,0.94) 100%); }
+  .mt-mleft-inner { position:relative; z-index:1; padding:20px 22px; display:flex; flex-direction:column; flex:1; gap:12px; }
+  .mt-mleft h3 { font-family:Georgia,serif; font-size:22px; font-weight:700; color:#fff;
+    letter-spacing:-0.01em; margin:0; line-height:1.15; }
+  .mt-mleft .mt-desc { font-size:12px; color:rgba(255,255,255,0.85); line-height:1.55; }
+  .mt-mleft .mt-terms-left { margin-top:auto; padding-top:14px; border-top:0.5px solid rgba(255,255,255,0.10);
+    font-size:11px; color:rgba(255,255,255,0.50); line-height:1.45; }
+  @media (max-width:680px){
+    .mt-mleft { width:100%; min-height:200px; }
+    .mt-mleft .mt-terms-left { display:none; }
+  }
 
-  .mt-mbody { padding:18px 22px 20px; }
+  .mt-mright { flex:1; min-width:0; padding:18px 22px 20px; position:relative; display:flex; flex-direction:column; gap:14px; }
+  .mt-mclose { position:absolute; top:12px; right:12px; width:30px; height:30px; border-radius:50%;
+    background:rgba(255,255,255,0.06); border:0.5px solid rgba(255,255,255,0.12); color:var(--t1);
+    cursor:pointer; z-index:2; font-size:16px; line-height:28px; text-align:center; font-family:inherit; }
+  .mt-mclose:hover { background:rgba(255,255,255,0.12); }
+  .mt-mprice-r { font-size:11px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; }
+  .mt-mprice-r b { display:block; font-size:24px; font-weight:800; color:var(--acc); letter-spacing:-0.02em;
+    text-transform:none; margin-top:3px; }
+  .mt-mprice-r b small { font-size:12px; font-weight:500; color:var(--t3); margin-left:3px; }
+
+  .mt-active-info { background:rgba(16,185,129,0.10); border:0.5px solid rgba(16,185,129,0.35);
+    border-radius:9px; padding:13px 15px; color:rgba(255,255,255,0.85); font-size:12px; line-height:1.55; }
+  .mt-active-info b { color:#10b981; display:block; font-size:11px; text-transform:uppercase;
+    letter-spacing:0.10em; margin-bottom:4px; }
+
+  .mt-disabled { opacity:0.55; pointer-events:none; }
   .mt-section-h { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--t3);
     font-weight:700; margin-bottom:10px; }
   .mt-section-h.acc { color:var(--acc); }
@@ -277,36 +294,45 @@
 
   var CATALOG = [], ACTIVE = {}, modal = { slug:null, optionId:null, qty:1, busy:false };
 
-  function tileHero(item, isActive, isPremium){
-    var bg = item.image
-      ? "background-image:url('"+esc(item.image)+"')"
-      : "background:linear-gradient(135deg,"+esc(item.color_from||'#3c3489')+" 0%,"+esc(item.color_to||'#1c1638')+" 100%)";
+  function tileImageOf(item, act){
+    if (act && act.option_id) {
+      var ao = (item.options||[]).find(function(o){return o.id===act.option_id;});
+      if (ao && ao.image) return ao.image;
+    }
+    var firstWithImage = (item.options||[]).find(function(o){return !!o.image;});
+    if (firstWithImage) return firstWithImage.image;
+    return item.image || '';
+  }
+
+  function tileHero(item, isActive, isPremium, act){
+    var img = tileImageOf(item, act);
+    var bg = img
+      ? "background-image:url('"+esc(img)+"')"
+      : "background:linear-gradient(135deg,"+esc(item.color_from||item.icon_color||'#3c3489')+" 0%,"+esc(item.color_to||'#1c1638')+" 100%)";
     var pill = isPremium ? '<span class="mt-pill premium">Premium</span>'
              : isActive  ? '<span class="mt-pill active">Aktiv</span>'
              : '<span class="mt-pill off">'+(item.category==='facility'?'Förslag':'Inte aktiv')+'</span>';
-    return '<div class="mt-hero" style="'+bg+'">'+(ICONS[item.icon]||ICONS.sparkle)+pill+'</div>';
+    var icon = img ? '' : (ICONS[item.icon]||ICONS.sparkle);
+    return '<div class="mt-hero'+(img?' mt-hero-img':'')+'" style="'+bg+'">'+icon+pill+'</div>';
   }
 
   function renderTile(item){
     var act = ACTIVE[item.slug];
     var isActive = !!act, isPremium = item.category==='platform' && isActive;
-    var cls = 'mt-tile' + (isActive?'':' off') + (isPremium?' premium':'');
+    var cls = 'mt-tile' + (isActive?' active':' off') + (isPremium?' premium':'');
 
     var subtitle = isActive ? (act.info || item.subtitle || '') : (item.subtitle || '');
     var foot;
-    if (isActive && item.category==='platform') {
+    if (isPremium) {
       foot = '<div class="mt-foot-incl">Ingår i avtalet</div>';
     } else if (isActive) {
-      foot = '<div class="mt-foot-active">'+fmtKr(act.monthly_cost)+'<small>/mån</small></div>';
+      foot = '';
     } else {
-      foot = '<div class="mt-foot-off">'+
-        '<span class="mt-link" data-act="open" data-slug="'+esc(item.slug)+'">Läs mer →</span>'+
-        '<span class="mt-act" data-act="open" data-slug="'+esc(item.slug)+'">Aktivera</span>'+
-      '</div>';
+      foot = '<div class="mt-foot-link" data-act="open" data-slug="'+esc(item.slug)+'">Läs mer →</div>';
     }
 
     return '<div class="'+cls+'" data-act="open" data-slug="'+esc(item.slug)+'">'+
-      tileHero(item, isActive, isPremium)+
+      tileHero(item, isActive, isPremium, act)+
       '<div class="mt-body">'+
         '<div class="mt-name">'+esc(item.name)+'</div>'+
         '<div class="mt-sub">'+esc(subtitle)+'</div>'+
@@ -337,9 +363,25 @@
     var item = CATALOG.find(function(x){return x.slug===modal.slug;});
     if (!item) return;
     var opt = curOpt();
-    var bg = item.image
-      ? "background-image:url('"+esc(item.image)+"')"
-      : "background:linear-gradient(135deg,"+esc(item.color_from||'#3c3489')+" 0%,"+esc(item.color_to||'#1c1638')+" 60%,#0a0820 100%)";
+    var isActive = !!ACTIVE[item.slug];
+    var isPremium = item.category==='platform' && isActive;
+
+    var leftBg = (opt && opt.image)
+      ? "background-image:url('"+esc(opt.image)+"')"
+      : (item.image
+          ? "background-image:url('"+esc(item.image)+"')"
+          : "background:linear-gradient(160deg,"+esc(item.color_from||item.icon_color||'#3c3489')+" 0%,"+esc(item.color_to||'#1c1638')+" 55%,#0a0820 100%)");
+    var descLong = (opt && opt.description_long) || item.description_long || (opt && opt.desc) || '';
+    var terms = (opt && opt.terms) || item.terms || '';
+
+    var leftCol =
+      '<div class="mt-mleft" style="'+leftBg+'">'+
+        '<div class="mt-mleft-inner">'+
+          '<h3>'+esc(item.name)+'</h3>'+
+          (descLong ? '<div class="mt-desc">'+esc(descLong)+'</div>' : '')+
+          (terms ? '<div class="mt-terms-left">'+esc(terms)+'</div>' : '')+
+        '</div>'+
+      '</div>';
 
     var optsHtml = (item.options||[]).map(function(o){
       var on = o.id===modal.optionId;
@@ -365,57 +407,68 @@
 
     var unitPrice = opt ? num(opt.price) : 0;
     var unit = opt && opt.unit ? opt.unit : '/mån';
-    var totalIsMonthly = unit==='/mån' || unit==='';
     var total = unitPrice * (item.has_qty ? modal.qty : 1);
     var totalLine = unitPrice>0
       ? fmtKr(total)+'<small> '+(unit==='/mån'?'/ mån':esc(unit))+'</small>'
       : 'Ingår';
 
-    var heroBg = (opt && opt.image)
-      ? "background-image:url('"+esc(opt.image)+"')"
-      : bg;
-    var descLong = (opt && opt.description_long) || item.description_long || (opt && opt.desc) || '';
-    var hero = '<div class="mt-mhero" style="'+heroBg+'">'+
-      '<button class="mt-mclose" data-act="close" aria-label="Stäng">✕</button>'+
-      (unitPrice>0 ? '<div class="mt-mprice">'+fmtKr(unitPrice)+'<small> '+(unit==='/mån'?'/ mån':esc(unit))+'</small></div>' : '')+
-      '<div class="mt-mtt"><h3>'+esc(item.name)+'</h3><p>'+esc(descLong)+'</p></div>'+
-      '<div class="mt-toast" id="mt-toast"></div>'+
-    '</div>';
+    var ctaLabel = isPremium ? 'Uppgradera '+item.name+' →' : 'Aktivera '+item.name+' →';
 
-    var includes = (opt && opt.includes && opt.includes.length) ? opt.includes : (item.includes||[]);
-    var inclHtml = includes.length
-      ? '<div class="mt-section-h acc">Ingår</div><ul class="mt-incl">'+
-          includes.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+
-        '</ul>'
-      : '';
-    var terms = (opt && opt.terms) || item.terms || '';
-
-    var ctaLabel = item.category==='platform' ? 'Uppgradera '+item.name+' →' : 'Aktivera '+item.name+' →';
-
-    el('mt-modal').innerHTML =
-      hero +
-      '<div class="mt-mbody">'+
+    var actionsCol;
+    if (isActive) {
+      actionsCol =
+        '<div class="mt-active-info"><b>Aktiv tjänst</b>Den här tjänsten ingår redan i ert avtal. Hör av er till oss om ni vill ändra nivå, antal eller säga upp.</div>'+
+        '<div class="mt-section-h">Nuvarande nivå</div>'+
+        '<div class="mt-opts mt-disabled">'+optsHtml+'</div>'+
+        (qtyHtml ? '<div class="mt-disabled">'+qtyHtml+'</div>' : '')+
+        '<div style="margin-top:auto"><button class="mt-btn ghost" data-act="close" style="width:100%">Stäng</button></div>';
+    } else {
+      var priceHtml = unitPrice>0
+        ? '<div class="mt-mprice-r">Pris<b>'+fmtKr(unitPrice)+'<small>'+(unit==='/mån'?' / mån':' '+esc(unit))+'</small></b></div>'
+        : '';
+      var includes = (opt && opt.includes && opt.includes.length) ? opt.includes : (item.includes||[]);
+      var inclHtml = includes.length
+        ? '<div class="mt-section-h acc">Ingår</div><ul class="mt-incl">'+
+            includes.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+
+          '</ul>'
+        : '';
+      actionsCol =
+        priceHtml +
         inclHtml +
         '<div class="mt-section-h">Välj nivå</div>'+
         '<div class="mt-opts">'+optsHtml+'</div>'+
         qtyHtml +
         '<div class="mt-tot">'+
           '<div><div class="mt-tot-l">Totalt</div><div class="mt-tot-v">'+totalLine+'</div></div>'+
-          '<div class="mt-terms">'+esc(terms)+'</div>'+
         '</div>'+
         '<div class="mt-btns">'+
           '<button class="mt-btn ghost" data-act="close">Avbryt</button>'+
           '<button class="mt-btn primary" data-act="submit"'+(modal.busy?' disabled':'')+'>'+esc(ctaLabel)+'</button>'+
-        '</div>'+
+        '</div>';
+    }
+
+    el('mt-modal').innerHTML =
+      leftCol +
+      '<div class="mt-mright">'+
+        '<button class="mt-mclose" data-act="close" aria-label="Stäng">✕</button>'+
+        '<div class="mt-toast" id="mt-toast" style="position:absolute;left:22px;right:22px;bottom:14px"></div>'+
+        actionsCol +
       '</div>';
   }
 
   function openModal(slug){
     var item = CATALOG.find(function(x){return x.slug===slug;});
     if (!item) return;
+    var act = ACTIVE[slug];
     modal.slug = slug;
-    modal.optionId = (item.options&&item.options[0])?item.options[0].id:null;
-    modal.qty = item.qty_min || 1;
+    if (act && act.option_id) {
+      var match = (item.options||[]).find(function(o){return o.id===act.option_id;});
+      modal.optionId = match ? match.id : ((item.options&&item.options[0])?item.options[0].id:null);
+      modal.qty = num(act.qty) || item.qty_min || 1;
+    } else {
+      modal.optionId = (item.options&&item.options[0])?item.options[0].id:null;
+      modal.qty = item.qty_min || 1;
+    }
     modal.busy = false;
     renderModal();
     el('mt-gridview').style.display = 'none';
