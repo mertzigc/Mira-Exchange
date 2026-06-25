@@ -61,13 +61,14 @@ Segment kan fortfarande skapas under Målgrupp-fliken; dropdownen speglar dem.
 - **Auto-stängning efter slutdatum** — survey respekterar `rsvp_deadline`; landningssidan visar stängt-läge. Deadline parsas via robust `_deadlinePassed()`/`_deadlineMs()` (klarar ISO, ms-tal, **ms-sträng**, sekund-tal) i *både* config och rsvp. Tidigare bugg: `new Date("<ms-sträng>")` gav Invalid Date → stängde aldrig. Sen submit visar nu snyggt stängt-läge.
 - **Datum + tid** på sista anmälan (invite + survey) via `datetime-local` (tidszon hanteras av `toISO`/`fromISOLocalDT`).
 - **Förhandsgranska** — knapp öppnar landningssidan med invitations-token.
-- **Påminnelser** — "🔔 Påminn (N)" skickar bara till dem som fått men ej svarat (backend `reminder:true`-flagga, egen cache-nyckel, ommarkerar inte `invite_sent`).
+- **Påminnelser** — "🔔 Påminn (N)" skickar bara till dem som fått men ej svarat (backend `reminder:true`-flagga, egen cache-nyckel, ommarkerar inte `invite_sent`). ⚠️ Se invarianten i 3d: "har svarat" för **anonyma** undersökningar = bocken, inte `response_json` — annars går påminnelsen till alla (bugg 2026-06-25, fixad i backend `notAnswered` + admins påminn-räkning).
 - **Rubriker/sektioner** — frågetyp "section" delar upp undersökningen i kategorier; hoppas i validering/aggregering/CSV.
 
 ### 3d. Anonymisering
 - **Undersökningsnivå (stark, data-nivå):** toggle "Anonyma svar". Svar lagras i egen datatyp `SurveyResponse` **utan personkoppling**. Gästen får bara en "har svarat"-bock (`arrived=yes`), aldrig vad. Analysvyn visar "Anonymt svar #N". Ny endpoint `GET /admin/invite/:id/responses`.
 - **Frågenivå (UX-nivå):** "Dölj per person" på enskild fråga → aggregat visas men per-person maskeras med 🔒 i tabell + CSV.
 - **Påminnelser funkar ändå** (bocken spårar *att*, inte *vad*).
+- **🔑 INVARIANT — "har svarat" för anonyma undersökningar:** eftersom svaret aldrig sparas på gästen (`response_json=""`) MÅSTE "har svarat" detekteras via bocken **`arrived==="yes"`/`rsvp_status==="yes"`**, ALDRIG via `response_json`. Gäller överallt som räknar svar: påminnelse-filter (backend `notAnswered`), påminn-knappens räkning + bekräftelse-popup, stats (`renderSvStats` via `SV_ANON`), analysvy. Bryts denna på något ställe → fel antal/utskick. (Bug 2026-06-25: backend + popup använde `response_json` → påminnelse gick till samtliga.)
 - Fail-safe: om `anonymous`-fältet saknas i Bubble behandlas undersökningen som icke-anonym (inget falskt löfte).
 - Landningssidan visar "🔒 Dina svar är anonyma"-notis.
 - **Härdat:** misslyckas `SurveyResponse`-skapandet (t.ex. datatyp ej API-exponerad) loggas Bubbles exakta fel och respondenten får `survey_save_failed` — gästen markeras **inte** som svarad (svaret tappas inte tyst). `SurveyResponse` MÅSTE vara API-modify-bar (annars `bubbleCreate failed`).
@@ -179,6 +180,11 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 2. Push `index.js` (robust deadline, härdade anon/optout-fel, segment-`members`-endpoints).
 3. Klistra in `mira-kommunikation-admin.html` (💾 Spara som målgrupp) + `mira-undersokning.html` (snyggt stängt-läge vid sen submit).
 
+**Bunt 6 (påminnelse-fix anonyma undersökningar) — deployat 2026-06-25:**
+1. Ingen Bubble-ändring.
+2. Push `index.js` (anon-medveten `notAnswered` i send-endpointen).
+3. Klistra in `mira-kommunikation-admin.html` (anon-medveten påminn-räkning i popupen).
+
 ---
 
 ## 7. Kvar att göra
@@ -186,6 +192,7 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 > 🎉 **v1.0 av kommunikations-/undersökningsmodulen klar 2026-06-08, driftsatt och skarp-testad (taggar/dubblettkoll/unsubscribe/avprickning/mediaarkiv/karta+video).**
 > ✅ Byggt: Taggar (3f), dubblettkoll (3g), unsubscribe (3h), avprickning inbyggd + fristående kod-sida (3i), mediaarkiv + bilduppladdning (3j), karta + video på landningssidor (3k), statiska list-målgrupper (3b).
 > 🐛 **Buggfixar efter skarp drift (2026-06-23):** deadline parsade fel format → stängde aldrig (3c, fixat robust); anonyma svar + unsubscribe failade tyst pga icke-API-exponerade datatyper (härdade till tydliga fel + loggning, se §1-fallgropen).
+> 🐛 **Buggfix 2026-06-25:** påminnelse på **anonym** undersökning gick till samtliga (även de som svarat) — backend `notAnswered` + admins påminn-räkning använde `response_json` istället för bocken. Fixat på båda ställena. Se invarianten i 3d.
 
 ### Snabbt (timmar)
 - **Mer filtrering** i deltagarlistan.
@@ -227,4 +234,4 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 
 > "Vi fortsätter på Mira FM:s kommunikations-/undersökningsmodul. Du finner handoff-dokumentet plus alla filer i repo (`Mira-Exchange/`). Senaste filer: index.js, emailer.js, mira-kommunikation-admin.html, mira-undersokning.html. Backend ändras av båda → kolla versionsdrift först. v1.0 är klar — nästa steg: [mer filtrering i deltagarlistan / WYSIWYG / nyhetsbrev med block / annan punkt]."
 
-*Senast uppdaterad 2026-06-23: v1.0 driftsatt + skarp-testad. Tillägg: statiska list-målgrupper (3b). Buggfixar: deadline-parsning (3c), tysta API-fel på SurveyResponse/EmailOptout (§1, 3d, 3h).*
+*Senast uppdaterad 2026-06-25: v1.0 i drift. Tillägg: statiska list-målgrupper (3b). Buggfixar: deadline-parsning (3c), tysta API-fel på SurveyResponse/EmailOptout (§1, 3d, 3h), påminnelse till alla på anonyma undersökningar (3d-invarianten + 3c).*
