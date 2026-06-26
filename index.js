@@ -16988,7 +16988,7 @@ app.get("/approval/view/:id", async (req, res) => {
       const url = fileUrlNorm(d.file);
       const titel = d.titel || "Dokument";
       return `<li class="doc">
-        <div class="doc-name">${e(titel)}</div>
+        <div class="doc-name" title="${e(titel)}">${e(titel)}</div>
         <div class="doc-actions">
           <a class="btn-ghost" href="${e(url)}" target="_blank" rel="noopener">Visa</a>
           <a class="btn-ghost" href="${e(url)}" download>Ladda ner</a>
@@ -17055,8 +17055,9 @@ app.get("/approval/view/:id", async (req, res) => {
   ul.docs { list-style:none; }
   .doc { display:flex;align-items:center;justify-content:space-between;gap:12px;
     background:var(--card);border:1px solid var(--border);border-radius:10px;
-    padding:13px 16px;margin-bottom:8px; }
-  .doc-name { font-weight:700;font-size:13px;color:var(--white); }
+    padding:13px 16px;margin-bottom:8px;min-width:0; }
+  .doc-name { font-weight:700;font-size:13px;color:var(--white);
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
   .doc-name.muted { color:var(--w40);font-weight:400; }
   .doc-actions { display:flex;gap:6px;flex-shrink:0; }
   .btn-ghost { display:inline-block;padding:7px 13px;background:var(--input);
