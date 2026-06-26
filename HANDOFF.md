@@ -22,6 +22,14 @@
 - Signeringsbeviset visar separat sektion "Granskat av:" med alla reviewers + tidpunkt + IP
 - Granskare räknas INTE i `recipients_count`/`signed_count` (separata fält) → signers kan sluta utan att vänta på reviewers (parallellt flöde)
 
+**Completion-logik (uppdaterad 2026-06-26):**
+- Process flaggas som klar (`parent.status="Approved"`) ENDAST när **alla signers signat OCH alla reviewers granskat** (om `reviewers_count > 0`)
+- Bekräftelsemail (`approval_signed`) skickas batchat till **samtliga inblandade** (signers + reviewers) vid completion — INTE per signer-action
+- Centralhanteras av `_checkAndCompleteRequest(requestId)` som anropas efter varje signer-`/confirm` och reviewer-`/review`
+- Idempotent — hoppar över om parent redan = Approved (skydd mot dubbla mail)
+- Reviewers länkas till första signers `signed_document` i mailet (samma originals, alla får juridiskt slutdok)
+- Mail-template `approval_signed` är nu role-aware (samma slug, anpassar copy: "din signering"/"din granskning")
+
 **Manuella påminnelser:**
 - Ny route `POST /admin/approval/remind/:request_id` (x-admin-token) — köar `approval_reminder`-mail till alla barn där signers saknar `approved_at` eller reviewers saknar `reviewed_at`
 - "Skicka påminnelse"-knapp i expand-detail i både arkiv-vyn och Deal-popupens historik (visas bara om någon är pending)

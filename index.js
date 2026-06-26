@@ -16340,6 +16340,74 @@ const approvalDocEngine = createApprovalDocEngine({
   bubbleFindAll,
 });
 
+// ── _checkAndCompleteRequest — central completion-helper ────────────────────
+// Anropas efter varje signer-/granskar-handling. Om alla signers signat OCH
+// alla reviewers granskat (eller reviewers_count==0) → sätt parent.status=
+// "Approved" + skicka bekräftelsemail till SAMTLIGA inblandade (signers +
+// reviewers). Idempotent: hoppar över om parent.status redan = Approved.
+async function _checkAndCompleteRequest(requestId) {
+  if (!requestId) return { complete: false };
+  const parent = await bubbleGet("OfferApprovalRequest", requestId).catch(() => null);
+  if (!parent) return { complete: false };
+
+  // Idempotens — om vi redan deklarerat allt klart har mailen gått ut.
+  if (String(parent.status || "").toLowerCase() === "approved") {
+    return { complete: false, already_approved: true };
+  }
+
+  const signersTotal   = Number(parent.recipients_count || 0);
+  const reviewersTotal = Number(parent.reviewers_count || 0);
+  const signersDone    = Number(parent.signed_count || 0);
+  const reviewersDone  = Number(parent.reviewed_count || 0);
+
+  const allSigned   = signersTotal > 0 ? signersDone >= signersTotal : true;
+  const allReviewed = reviewersTotal > 0 ? reviewersDone >= reviewersTotal : true;
+  if (!allSigned || !allReviewed) return { complete: false };
+
+  // Allt klart — finalisera + skicka mail.
+  await bubblePatch("OfferApprovalRequest", requestId, { status: "Approved" });
+
+  const children = await bubbleFindAll("OfferApproval", {
+    constraints: [{ key: "request", constraint_type: "equals", value: requestId }],
+  }).catch(() => []);
+
+  const normUrl = (u) => (u ? String(u).replace(/^\/\//, "https://") : null);
+
+  // Reviewers länkas till en signers signed_document (samma originals,
+  // de behöver bara se slutdokumentet). Vi tar första som finns.
+  const firstSignedUrl = normUrl(
+    (children.find((c) => String(c.role || "Signer") !== "Reviewer" && c.signed_document) || {}).signed_document
+  );
+
+  const rubrik     = parent.rubrik || "Avtal";
+  const senderName = parent.sender_name || "Carotte";
+  const nowIso     = new Date().toISOString();
+
+  let sent = 0;
+  for (const c of (children || [])) {
+    if (!c?.recipient_email) continue;
+    const isReviewer = String(c.role || "Signer") === "Reviewer";
+    const docUrl = isReviewer ? firstSignedUrl : (normUrl(c.signed_document) || firstSignedUrl);
+
+    await bubbleCreate("emailqueue", {
+      template_id: _approvalTemplateId("signed"),
+      to_email:    c.recipient_email,
+      to_name:     c.recipient_email,
+      extra_data:  JSON.stringify({
+        rubrik,
+        sender_name:  senderName,
+        document_url: docUrl,
+        signed_at:    nowIso,
+        role:         c.role || "Signer",
+      }),
+      email_sent:  false,
+    });
+    sent++;
+  }
+
+  return { complete: true, sent };
+}
+
 app.post("/docs/offer-approval/:id", requireSyncSecret, async (req, res) => {
   try {
     const body = req.body || {};
@@ -16761,46 +16829,32 @@ app.post("/approval/confirm/:id", async (req, res) => {
       otp_expires_at: null,
     });
 
-    // Steg 4: parent-rollup. Skydda mot dubbel-räkning om confirm körs på
-    // nytt: räkna bara om status INTE redan var Approved.
+    // Steg 4: parent-rollup. Vi BUMPAR bara signed_count här — status="Approved"
+    // sätts inte längre direkt, utan via _checkAndCompleteRequest som kollar
+    // att alla signers OCH alla reviewers är klara innan process flaggas klar.
+    // Skydda mot dubbel-räkning vid retry: bara om approval inte hade signed_doc
+    // tidigare (den första lyckade confirm:en).
+    const isFirstConfirm = !approval.signed_document;
     try {
-      if (approval.request && String(approval.status || "").toLowerCase() !== "approved") {
+      if (approval.request && isFirstConfirm) {
         const parent = await bubbleGet("OfferApprovalRequest", approval.request);
         if (parent) {
-          const newSigned = Number(parent.signed_count || 0) + 1;
-          const total     = Number(parent.recipients_count || 0);
-          const patch = { signed_count: newSigned };
-          if (total > 0 && newSigned >= total) patch.status = "Approved";
-          await bubblePatch("OfferApprovalRequest", approval.request, patch);
+          await bubblePatch("OfferApprovalRequest", approval.request, {
+            signed_count: Number(parent.signed_count || 0) + 1,
+          });
         }
       }
     } catch (rollupErr) {
       console.warn("[/approval/confirm] parent rollup failed (non-fatal)", rollupErr?.message);
     }
 
-    // Steg 5: bekräftelsemail. Skickas bara om vi INTE redan hade
-    // signed_document på posten (skydd mot dubbla mail vid manuella retries).
-    if (!approval.signed_document) {
-      let rubrik = approval.rubrik || "Avtal";
-      let senderName = "Carotte";
-      if (approval.request) {
-        const parent = await bubbleGet("OfferApprovalRequest", approval.request).catch(() => null);
-        if (parent?.rubrik) rubrik = parent.rubrik;
-        if (parent?.sender_name) senderName = parent.sender_name;
-      }
-
-      await bubbleCreate("emailqueue", {
-        template_id: _approvalTemplateId("signed"),
-        to_email:    approval.recipient_email || "",
-        to_name:     approval.recipient_email || "",
-        extra_data:  JSON.stringify({
-          rubrik,
-          sender_name:  senderName,
-          document_url: docResult.signed_document_url,
-          signed_at:    nowIso,
-        }),
-        email_sent:  false,
-      });
+    // Steg 5: completion-check. Skickar batchat bekräftelsemail till SAMTLIGA
+    // inblandade (signers+reviewers) om alla är klara. Per-signer-mail har
+    // ersatts av detta enhetliga slutmail.
+    try {
+      if (approval.request) await _checkAndCompleteRequest(approval.request);
+    } catch (completeErr) {
+      console.warn("[/approval/confirm] completion check failed (non-fatal)", completeErr?.message);
     }
 
     return res.json({
@@ -16870,6 +16924,14 @@ app.post("/approval/review/:id", async (req, res) => {
       }
     } catch (rollupErr) {
       console.warn("[/approval/review] parent rollup failed (non-fatal)", rollupErr?.message);
+    }
+
+    // Completion-check: om alla signers + alla reviewers nu klara, sätt
+    // parent.status=Approved och skicka batchat bekräftelsemail till alla.
+    try {
+      if (approval.request) await _checkAndCompleteRequest(approval.request);
+    } catch (completeErr) {
+      console.warn("[/approval/review] completion check failed (non-fatal)", completeErr?.message);
     }
 
     return res.json({ ok: true, reviewed_at: nowIso });

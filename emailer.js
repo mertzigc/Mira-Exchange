@@ -1379,24 +1379,28 @@ async function tmplApprovalSigned(e, extra, toName, ctaLabel, item) {
   const rubrik     = x.rubrik || "Avtal";
   const docUrl     = x.document_url || "";
   const signedAt   = x.signed_at ? fmtDateTime(x.signed_at) : "";
+  const isReviewer = String(x.role || "Signer") === "Reviewer";
 
-  const subject = item.subject_override || `Bekräftelse: ${rubrik} signerat`;
+  const subject = item.subject_override || `Bekräftelse: ${rubrik} är klart`;
   const html = wrapLayout({
     toName,
     logoUrl: x.logo_url || "",
     senderName,
     imageUrl: "",
     accent,
-    tag: "Signerat",
-    headline: `${rubrik} är signerat`,
+    tag: isReviewer ? "Klart" : "Signerat",
+    headline: `${rubrik} — processen är klar`,
     body:
       `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
-      + `Tack — din signering är registrerad. Den slutgiltiga PDF:en innehåller `
-      + `originaldokumenten plus ett signeringsbevis med din verifiering.</p>`,
+      + (isReviewer
+          ? `Tack — din granskning är registrerad och alla parter har nu slutfört sina uppgifter. `
+          : `Tack — din signering är registrerad och alla parter har nu slutfört sina uppgifter. `)
+      + `Den slutgiltiga PDF:en innehåller originaldokumenten plus ett signeringsbevis.</p>`,
     details: detailRows([
-      ["Avtal", esc(rubrik)],
-      signedAt && ["Signerat", signedAt],
-      ["Signerat av", esc(toName || "")],
+      ["Avtal",       esc(rubrik)],
+      signedAt &&     ["Slutfört",  signedAt],
+      ["Din roll",    isReviewer ? "Granskare" : "Signerare"],
+      ["Din identitet", esc(toName || "")],
     ]),
     ctaLabel: docUrl ? "Ladda ner signerat dokument" : null,
     ctaUrl:   docUrl || null,
