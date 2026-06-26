@@ -281,15 +281,21 @@
         <h3>1. Dokument</h3>
         <label class="drop" data-aa="drop">
           <div class="ic">⬆</div>
-          <div class="pri">Dra hit PDF-filer eller klicka</div>
-          <div class="sec">Max 25 MB per fil · max 20 filer</div>
-          <input type="file" data-aa="files" accept="application/pdf" multiple>
+          <div class="pri">Dra hit filer eller klicka</div>
+          <div class="sec">PDF, JPG eller PNG · max 25 MB per fil · max 20 filer</div>
+          <input type="file" data-aa="files" accept="application/pdf,image/jpeg,image/png" multiple>
         </label>
         <ul class="files" data-aa="file-list"></ul>
       </div>
 
       <div class="modal-section">
         <h3>2. Mottagare</h3>
+        <div data-aa="user-picker-wrap" class="hidden" style="margin-bottom:10px;">
+          <label style="display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px;font-weight:700;">Snabbval — kontakter på företaget</label>
+          <select data-aa="user-picker" style="width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb);cursor:pointer;">
+            <option value="">Välj från befintliga kontakter…</option>
+          </select>
+        </div>
         <div data-aa="recipients"></div>
         <button type="button" class="rcp-add" data-aa="rcp-add">+ Lägg till mottagare</button>
       </div>
@@ -665,6 +671,7 @@
     $("cc-dd").innerHTML = "";
     $("cc-selected").classList.add("hidden");
     $("cc-search-wrap").classList.remove("hidden");
+    clearUserPicker();
     addRecipient("", "");
     $("err").textContent = "";
     $("submit").disabled = true;
@@ -828,6 +835,7 @@
         ccDd.classList.remove("on");
         ccDd.innerHTML = "";
         ccSearch.value = "";
+        loadUserPicker(it.id);   // ladda kontakter på valt företag
       });
       ccDd.appendChild(row);
     }
@@ -850,6 +858,50 @@
     formState.selectedCc = null;
     $("cc-selected").classList.add("hidden");
     $("cc-search-wrap").classList.remove("hidden");
+    clearUserPicker();
+  });
+
+  // ── User-picker (snabbval bland företagets kontakter) ───────────────────
+  function clearUserPicker() {
+    const wrap   = $("user-picker-wrap");
+    const select = $("user-picker");
+    if (!wrap || !select) return;
+    wrap.classList.add("hidden");
+    // återställ select till default
+    while (select.options.length > 1) select.remove(1);
+    select.value = "";
+  }
+
+  async function loadUserPicker(ccId) {
+    const wrap   = $("user-picker-wrap");
+    const select = $("user-picker");
+    if (!wrap || !select || !ccId) return;
+    clearUserPicker();
+    try {
+      const r = await fetch(HOST + "/admin/approval/users-by-company?clientcompany=" + encodeURIComponent(ccId),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok || !j.items?.length) return;   // tyst om inga kontakter
+      for (const u of j.items) {
+        const opt = document.createElement("option");
+        opt.value = u.email;
+        opt.dataset.name = u.name || "";
+        opt.textContent = u.name && u.name !== u.email ? `${u.name} · ${u.email}` : u.email;
+        select.appendChild(opt);
+      }
+      wrap.classList.remove("hidden");
+    } catch (e) {
+      console.warn("[user-picker] fetch failed", e?.message || e);
+    }
+  }
+
+  // Bind picker-change en gång (på elementet, ej en option)
+  $("user-picker").addEventListener("change", () => {
+    const select = $("user-picker");
+    const opt = select.selectedOptions[0];
+    if (!opt || !opt.value) return;
+    addRecipient(opt.value, opt.dataset.name || "");
+    select.value = "";
   });
 
   // ── Counts + submit-state ───────────────────────────────────────

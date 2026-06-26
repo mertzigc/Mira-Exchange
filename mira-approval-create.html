@@ -199,15 +199,21 @@
       <h2>1. Dokument</h2>
       <label class="drop" data-ac="drop">
         <div class="ic">⬆</div>
-        <div class="pri">Dra hit PDF-filer eller klicka för att välja</div>
-        <div class="sec">Flera filer OK · max 25 MB per fil · max 20 filer totalt</div>
-        <input type="file" data-ac="files" accept="application/pdf" multiple>
+        <div class="pri">Dra hit filer eller klicka för att välja</div>
+        <div class="sec">PDF, JPG eller PNG · max 25 MB per fil · max 20 filer totalt</div>
+        <input type="file" data-ac="files" accept="application/pdf,image/jpeg,image/png" multiple>
       </label>
       <ul class="files" data-ac="file-list"></ul>
     </div>
 
     <div class="ac-panel">
       <h2>2. Mottagare</h2>
+      <div data-ac="user-picker-wrap" class="hidden" style="margin-bottom:10px;">
+        <label style="display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px;font-weight:700;">Snabbval — kontakter på företaget</label>
+        <select data-ac="user-picker" style="width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb);cursor:pointer;">
+          <option value="">Välj från befintliga kontakter…</option>
+        </select>
+      </div>
       <div data-ac="recipients"></div>
       <button type="button" class="rcp-add" data-ac="rcp-add">+ Lägg till mottagare</button>
     </div>
@@ -396,6 +402,40 @@
   }
 
   $("rcp-add").addEventListener("click", () => addRecipient("", ""));
+
+  // ── User-picker (snabbval bland företagets kontakter) ──────────────────
+  // Aktiveras när CLIENTCOMPANY är satt (Deal-mode, CC-mode, eller om
+  // standalone-mode mot framtiden får cc via config). Fetchar Users vars
+  // Associated_company innehåller cc-id:t.
+  async function loadUserPicker() {
+    if (!CLIENTCOMPANY) return;
+    const wrap   = $("user-picker-wrap");
+    const select = $("user-picker");
+    if (!wrap || !select) return;
+    try {
+      const r = await fetch(HOST + "/admin/approval/users-by-company?clientcompany=" + encodeURIComponent(CLIENTCOMPANY),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok || !j.items?.length) return;   // tyst om inga kontakter
+      for (const u of j.items) {
+        const opt = document.createElement("option");
+        opt.value = u.email;
+        opt.dataset.name = u.name || "";
+        opt.textContent = u.name && u.name !== u.email ? `${u.name} · ${u.email}` : u.email;
+        select.appendChild(opt);
+      }
+      wrap.classList.remove("hidden");
+      select.addEventListener("change", () => {
+        const opt = select.selectedOptions[0];
+        if (!opt || !opt.value) return;
+        addRecipient(opt.value, opt.dataset.name || "");
+        select.value = "";    // reset så user kan picka fler
+      });
+    } catch (e) {
+      // tyst — om endpoint failar visar vi bara inte dropdown
+      console.warn("[user-picker] fetch failed", e?.message || e);
+    }
+  }
 
   // ── Counts + submit-state ──────────────────────────────────────
   function updateCounts() {
@@ -700,6 +740,7 @@
   $("sender-name").value = SENDER_NAME;
   addRecipient("", "");
   updateCounts();
+  loadUserPicker();
 
   if (LIST_MODE) {
     $("history-view").classList.remove("hidden");

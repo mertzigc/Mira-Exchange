@@ -17070,7 +17070,12 @@ app.get("/approval/view/:id", async (req, res) => {
     padding:20px;margin-top:8px; }
   .otp-info { font-size:12px;color:var(--w70);margin-bottom:14px;line-height:1.55; }
   .otp-info strong { color:var(--white); }
-  .otp-row { display:flex;gap:10px;align-items:stretch; }
+  .otp-row { display:flex;gap:10px;align-items:stretch;flex-wrap:wrap; }
+  .otp-row > .btn-primary { flex:1 1 100%; }
+  @media (min-width:480px) {
+    .otp-row > .btn-primary { flex:0 0 auto; }
+    .otp-row > input.otp { flex:1 1 auto; }
+  }
   input.otp { flex:1;font-size:22px;letter-spacing:.35em;text-align:center;
     font-family:'SF Mono',Menlo,Consolas,monospace;font-weight:700;
     padding:14px 12px;background:var(--input);border:1px solid var(--border);
@@ -17555,6 +17560,51 @@ app.get("/admin/approval/request/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[/admin/approval/request] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── GET /admin/approval/users-by-company?clientcompany=<id> ─────────────────
+// Returnerar Users vars Associated_company (list) innehåller ClientCompany-id:t.
+// Används av Carotte-UI:t för att snabbt fylla mottagarlistan med befintliga
+// kontakter på kunden. Samma pattern som /admin/forfragan-notiferingen.
+app.options("/admin/approval/users-by-company", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.get("/admin/approval/users-by-company", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const ccId = String(req.query.clientcompany || "").trim();
+    if (!ccId) return res.json({ ok: true, count: 0, items: [] });
+
+    const users = await bubbleFindAll("User", {
+      constraints: [{ key: "Associated_company", constraint_type: "contains", value: ccId }],
+    });
+
+    const items = (users || []).map((u) => {
+      const email = String(
+        u.email
+        || u.Email
+        || (u.authentication && u.authentication.email && u.authentication.email.email)
+        || ""
+      ).trim().toLowerCase();
+      const first = String(u["First Name"] || u.Förnamn || "").trim();
+      const last  = String(u["Last Name"]  || u.Efternamn || "").trim();
+      const name  = (first + " " + last).trim() || email;
+      return email ? { id: u._id, email, name } : null;
+    }).filter(Boolean);
+
+    items.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    return res.json({ ok: true, count: items.length, items });
+  } catch (e) {
+    console.error("[/admin/approval/users-by-company] failed", e);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });

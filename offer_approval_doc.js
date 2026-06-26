@@ -175,7 +175,41 @@ export function createApprovalDocEngine(deps) {
     return Buffer.from(await out.save());
   }
 
-  // ── Hämta tillhörande dokument-objekt och deras PDF-bytes ──────────────
+  // ── Detektera filtyp från URL eller magic bytes (för image-wrap-flödet) ───
+  function detectKind(url, buffer) {
+    const u = String(url || "").toLowerCase();
+    if (/\.pdf(\?|$)/.test(u)) return "pdf";
+    if (/\.(jpe?g)(\?|$)/.test(u)) return "jpg";
+    if (/\.png(\?|$)/.test(u)) return "png";
+    // Fallback: kolla magic bytes
+    if (buffer && buffer.length >= 4) {
+      if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return "pdf"; // %PDF
+      if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return "jpg";
+      if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return "png";
+    }
+    return "unknown";
+  }
+
+  // ── Wrappa en bild som single-page PDF (för merge) ───────────────────────
+  // Bevarar bildens naturliga dimensioner. Skala-down om större än A0 så
+  // PDF:en inte blir överlagligen stor.
+  async function imageToPdfBuffer(imageBuffer, kind) {
+    const doc = await PDFDocument.create();
+    const img = kind === "png"
+      ? await doc.embedPng(imageBuffer)
+      : await doc.embedJpg(imageBuffer);
+    const maxDim = 4960;   // ~A0 @ 600dpi, känd PDF-viewer-vänlig gräns
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = img.width * scale;
+    const h = img.height * scale;
+    const page = doc.addPage([w, h]);
+    page.drawImage(img, { x: 0, y: 0, width: w, height: h });
+    return Buffer.from(await doc.save());
+  }
+
+  // ── Hämta tillhörande dokument-objekt och deras byten ───────────────────
+  // PDF → buffer används direkt vid merge.
+  // JPG/PNG → wrappas som single-page PDF för merge, men hash:as på original.
   async function loadOriginalDocs(source) {
     // source = OfferApprovalRequest (preferred) eller legacy OfferApproval
     const list = Array.isArray(source?.dokument) ? source.dokument : [];
@@ -191,14 +225,31 @@ export function createApprovalDocEngine(deps) {
       const fileUrl = normalizeFileUrl(d.file);
       if (!fileUrl) continue;
       const buffer = await fetchBinary(fileUrl);
+      const kind = detectKind(fileUrl, buffer);
+
+      let mergeBuffer = buffer;
+      if (kind === "jpg" || kind === "png") {
+        try {
+          mergeBuffer = await imageToPdfBuffer(buffer, kind);
+        } catch (e) {
+          throw new Error(`Kunde inte konvertera ${kind.toUpperCase()}-bild till PDF: ${e?.message || String(e)}`);
+        }
+      } else if (kind !== "pdf") {
+        // Okänd typ: hoppa över med varning hellre än att fail:a hela merge:n
+        console.warn("[loadOriginalDocs] skipping unknown file type", fileUrl);
+        continue;
+      }
+
       out.push({
         id: d._id,
         titel: d.titel || d.title || "Dokument",
         beskrivning: d.beskrivning || "",
         fileUrl,
+        kind,                       // "pdf" | "jpg" | "png"
         bytes: buffer.length,
-        hash: sha256(buffer),
-        buffer
+        hash: sha256(buffer),       // hash på ORIGINAL (inte image-wrapped pdf)
+        buffer,                     // original-byten (för audit-trail)
+        mergeBuffer,                // PDF-form för merge
       });
     }
     return out;
@@ -334,7 +385,7 @@ export function createApprovalDocEngine(deps) {
     const certPdf = await renderHtmlToPdf(html);
 
     // 5) Merge: originalen FÖRST, beviset SIST
-    const buffersToMerge = [...originalDocs.map((d) => d.buffer), certPdf];
+    const buffersToMerge = [...originalDocs.map((d) => d.mergeBuffer || d.buffer), certPdf];
     const mergedPdf = await mergePdfs(buffersToMerge);
 
     // 6) Ladda upp till Bubble
