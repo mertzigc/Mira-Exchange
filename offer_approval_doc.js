@@ -346,10 +346,15 @@ export function createApprovalDocEngine(deps) {
       buffer: mergedPdf
     });
 
+    // Bubble returnerar protokoll-relativ URL (//cdn.bubble.io/...) — mail-
+    // klienter resolverar inte det rätt (blir file:// hos vissa). Tvinga https.
+    const absoluteUrl = normalizeFileUrl(uploadedUrl) || uploadedUrl;
+
     // 7) Skriv tillbaka på OfferApproval (om writeBack)
+    // Lagrar absoluteUrl så framtida läsare alltid får https.
     if (writeBack) {
       await bubblePatch("OfferApproval", approvalId, {
-        signed_document: uploadedUrl,
+        signed_document: absoluteUrl,
         signed_document_generated_at: new Date().toISOString()
       });
     }
@@ -357,7 +362,7 @@ export function createApprovalDocEngine(deps) {
     return {
       ok: true,
       approval_id: approvalId,
-      signed_document_url: uploadedUrl,
+      signed_document_url: absoluteUrl,
       bytes: mergedPdf.length,
       original_docs: originalDocs.map((d) => ({
         id: d.id,
