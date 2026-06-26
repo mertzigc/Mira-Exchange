@@ -58,8 +58,14 @@ export function startEmailPoller({ bubbleFind, bubbleGet, bubblePatch }) {
 // Huvud-poller: hämtar osända rader, skickar, markerar
 // ────────────────────────────────────────────────────────────
 async function processEmailQueue() {
+  // Filtrera bort failande rader (error_message satt) så kön inte fastnar på
+  // sega gamla rows. Christian kan reviewa dem i Bubble admin (search:
+  // email_sent=false AND error_message is not empty) och manuellt åtgärda.
   const queue = await _bubbleFind("emailqueue", {
-    constraints: [{ key: "email_sent", constraint_type: "equals", value: false }],
+    constraints: [
+      { key: "email_sent",    constraint_type: "equals",   value: false },
+      { key: "error_message", constraint_type: "is_empty", value: true  },
+    ],
     limit: 20,
     sort_field: "Created Date",
     descending: false

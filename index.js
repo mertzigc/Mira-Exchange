@@ -17058,6 +17058,60 @@ app.get("/approval/view/:id", async (req, res) => {
       </li>`;
     }).join("") || `<li class="doc"><div class="doc-name muted">Inga dokument bifogade</div></li>`;
 
+    // Hämta sibling-approvals (övriga parter) för status-display
+    let parties = [];
+    if (approval.request) {
+      const siblings = await bubbleFindAll("OfferApproval", {
+        constraints: [{ key: "request", constraint_type: "equals", value: approval.request }],
+      }).catch(() => []);
+      parties = (siblings || []).map((s) => {
+        const sRole = String(s.role || "Signer");
+        const isMe  = s._id === approvalId;
+        const done  = sRole === "Reviewer" ? !!s.reviewed_at : !!s.approved_at;
+        return {
+          isMe,
+          role: sRole,
+          email: s.recipient_email || "",
+          done,
+          doneAt: sRole === "Reviewer" ? s.reviewed_at : s.approved_at,
+        };
+      });
+    }
+
+    const fmtPartyTime = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (isNaN(d)) return "";
+      return d.toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" });
+    };
+
+    const partiesHtml = parties.length > 1
+      ? parties.map((p) => `
+          <li class="party${p.isMe ? " is-me" : ""}">
+            <div class="party-name">
+              ${e(p.email)}${p.isMe ? ' <span class="party-self">(du)</span>' : ""}
+            </div>
+            <div class="party-role">${p.role === "Reviewer" ? "Granskare" : "Signerare"}</div>
+            <div class="party-status">${p.done
+              ? `<span class="party-ok">✓ ${e(p.role === "Reviewer" ? "Granskat" : "Signerat")}${p.doneAt ? ` · ${e(fmtPartyTime(p.doneAt))}` : ""}</span>`
+              : `<span class="party-pending">Väntar</span>`}</div>
+          </li>
+        `).join("")
+      : "";
+
+    // Förklarings-copy beroende på role
+    const explainText = isReviewer
+      ? "Genom att klicka på <strong>Godkänn granskning</strong> bekräftar du att du tagit del av dokumenten. Detta är inte en juridisk signering — bara en kvittens på granskningen."
+      : "Genom att <strong>signera</strong> blir du juridiskt bunden av avtalet. När alla parter slutfört sin del skickas en bekräftelse med det slutgiltiga dokumentet till alla.";
+
+    // Done-state copy beroende på om alla är klara
+    const allDone = parties.length > 0 && parties.every((p) => p.done);
+    const doneCopy = allDone
+      ? "Tack — alla parter har slutfört sina uppgifter. Signeringsprocessen är nu klar och bekräftelse skickas via mail."
+      : isReviewer
+        ? "Tack — din granskning är registrerad. Bekräftelse skickas via mail när alla parter slutfört sina uppgifter."
+        : "Tack — din signering är registrerad. Bekräftelse skickas via mail när alla parter slutfört sina uppgifter.";
+
     // Signed view (redan godkänd) eller signeringsformulär
     const signedDocUrl = approval.signed_document ? fileUrlNorm(approval.signed_document) : "";
     const initialView = alreadyApproved ? "done" : "sign";
@@ -17128,6 +17182,27 @@ app.get("/approval/view/:id", async (req, res) => {
     text-transform:uppercase;transition:.15s; }
   .btn-ghost:hover { background:var(--deep);color:var(--white);border-color:var(--orange); }
 
+  /* Övriga parter */
+  ul.parties { list-style:none; }
+  .party { display:grid;grid-template-columns:1fr 100px 1fr;gap:12px;align-items:center;
+    background:var(--card);border:1px solid var(--border);border-radius:8px;
+    padding:10px 14px;margin-bottom:6px;font-size:12px;min-width:0; }
+  @media (max-width:560px){.party{grid-template-columns:1fr;gap:4px;padding:12px 14px;}}
+  .party.is-me { border-color:var(--orange);background:rgba(244,123,48,.06); }
+  .party-name { color:var(--white);font-weight:600;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0; }
+  .party-self { color:var(--orange);font-weight:400;font-size:11px; }
+  .party-role { color:var(--w40);font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700; }
+  .party-status { text-align:right;font-size:11px; }
+  @media (max-width:560px){.party-status{text-align:left;}}
+  .party-ok { color:var(--green); }
+  .party-pending { color:var(--w40);font-style:italic; }
+
+  .explain { font-size:13px;color:var(--w70);line-height:1.6;
+    background:var(--card);border-left:3px solid var(--orange);
+    padding:11px 14px;border-radius:0 6px 6px 0;margin-bottom:12px; }
+  .explain strong { color:var(--white); }
+
   .otp-wrap { background:var(--card);border:1px solid var(--border);border-radius:12px;
     padding:20px;margin-top:8px; }
   .otp-info { font-size:12px;color:var(--w70);margin-bottom:14px;line-height:1.55; }
@@ -17179,11 +17254,17 @@ app.get("/approval/view/:id", async (req, res) => {
     <div class="sender">Från ${e(senderName)} · till ${e(approval.recipient_email || "")}</div>
     ${meddelande ? `<div class="message">${e(meddelande)}</div>` : ""}
 
-    <h2 class="section">Dokument att signera</h2>
+    <h2 class="section">${isReviewer ? "Dokument att granska" : "Dokument att signera"}</h2>
     <ul class="docs">${docsHtml}</ul>
+
+    ${partiesHtml ? `
+      <h2 class="section">Övriga parter</h2>
+      <ul class="parties">${partiesHtml}</ul>
+    ` : ""}
 
     <div id="sign-block" class="${initialView === "done" ? "hidden" : ""}">
       <h2 class="section">${isReviewer ? "Granska" : "Signera"}</h2>
+      <p class="explain">${explainText}</p>
       <div class="otp-wrap">
         ${isReviewer
           ? `<p class="otp-info">Klicka på knappen nedan för att registrera att du granskat dokumentet. Ingen e-postkod behövs.</p>
@@ -17205,9 +17286,7 @@ app.get("/approval/view/:id", async (req, res) => {
     <div id="done-block" class="done ${initialView === "done" ? "" : "hidden"}">
       <div class="check">✓</div>
       <h1>${isReviewer ? "Granskat" : "Signerat"}</h1>
-      <p>${isReviewer
-          ? "Tack — granskningen är registrerad."
-          : "Tack — signeringen är registrerad och du har fått en bekräftelse via mail."}</p>
+      <p>${doneCopy}</p>
       <p id="dl-wrap" style="margin-top:22px;${signedDocUrl ? "" : "display:none;"}">
         <a class="btn-primary" id="dl-link" style="text-decoration:none;display:inline-block;"
            href="${e(signedDocUrl)}" target="_blank" rel="noopener">Ladda ner signerat dokument</a>
