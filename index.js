@@ -18742,17 +18742,31 @@ app.get("/admin/forfragan/offers", async (req, res) => {
     const q = String(req.query.q || "").trim().toLowerCase();
     const all = await bubbleFindAll(FORFRAGAN.OFFER_TYPE, {});
 
+    // Tjänste-erbjudanden (kontrakt/abonnemang via ServiceCatalog) ska INTE visas i
+    // förfrågan-wizarden — de hör hemma i mira-kund-dashboard-tjanster.html. Bygg ett
+    // set av deras id:n från alla ServiceCatalog.offers och exkludera dem nedan.
+    const serviceOfferIds = new Set();
+    try {
+      const catalogs = await bubbleFindAll(SERVICES.CATALOG_TYPE, {});
+      for (const c of catalogs) for (const oid of _ffIdsOf(c[SERVICES.SC_OFFERS])) serviceOfferIds.add(oid);
+    } catch (e) { console.warn("[/admin/forfragan/offers] catalog-filter fail (visar ändå alla)", e?.message); }
+
     // debug=1 → visa VARJE erbjudande + varför det ev. exkluderas (ingen filtrering)
     if (String(req.query.debug || "") === "1") {
-      return res.json({ ok: true, total: all.length, offers: all.map((o) => ({
-        title: o.Title, status: o[FORFRAGAN.OFFER_STATUS] ?? null,
+      return res.json({ ok: true, total: all.length, service_offer_count: serviceOfferIds.size, offers: all.map((o) => ({
+        id: bubbleId(o), title: o.Title, status: o[FORFRAGAN.OFFER_STATUS] ?? null,
         startdatum: o[FORFRAGAN.OFFER_START] ?? null, slutdatum: o[FORFRAGAN.OFFER_END] ?? null,
         kundforetag: _ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]),
-        excluded_reason: _ffOfferReason(o), shown_as: _ffOfferReason(o) ? "DOLT" : (_ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]).length ? "unik" : "allmän"),
+        is_service_offer: serviceOfferIds.has(bubbleId(o)),
+        excluded_reason: serviceOfferIds.has(bubbleId(o)) ? "tjänste-erbjudande (kontrakt)" : _ffOfferReason(o),
+        shown_as: serviceOfferIds.has(bubbleId(o)) ? "DOLT (tjänst)" : (_ffOfferReason(o) ? "DOLT" : (_ffIdsOf(o[FORFRAGAN.OFFER_COMPANY]).length ? "unik" : "allmän")),
       })) });
     }
 
-    let rows = all.filter(_ffOfferPublished).map(_ffOfferOut);
+    let rows = all
+      .filter((o) => !serviceOfferIds.has(bubbleId(o)))   // bort med kontrakt/abonnemang
+      .filter(_ffOfferPublished)
+      .map(_ffOfferOut);
     if (q) rows = rows.filter((o) => (o.title + " " + o.description).toLowerCase().includes(q));
     // allmänna = Kundföretag tom; unika = Kundföretag innehåller company
     const general = rows.filter((o) => !o.company_ids.length);
