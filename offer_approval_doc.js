@@ -24,7 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = path.join(__dirname, "approval-cert.template.html");
 
 export function createApprovalDocEngine(deps) {
-  const { bubbleGet, bubblePatch, bubbleUploadFile } = deps;
+  const { bubbleGet, bubblePatch, bubbleUploadFile, bubbleFindAll } = deps;
   if (!bubbleGet || !bubblePatch || !bubbleUploadFile) {
     throw new Error("createApprovalDocEngine: bubbleGet/bubblePatch/bubbleUploadFile required");
   }
@@ -227,6 +227,32 @@ export function createApprovalDocEngine(deps) {
     `;
   }
 
+  // Bygg granskar-sektion från reviewer-syskon. Tomt om inga reviewers finns.
+  async function buildReviewersBlock(requestId) {
+    if (!requestId || !bubbleFindAll) return "";
+    const siblings = await bubbleFindAll("OfferApproval", {
+      constraints: [
+        { key: "request", constraint_type: "equals", value: requestId },
+        { key: "role",    constraint_type: "equals", value: "Reviewer" },
+      ],
+    }).catch(() => []);
+    const reviewers = (siblings || []).filter((r) => r.reviewed_at);
+    if (!reviewers.length) return "";
+
+    const rows = reviewers.map((r) => `
+      <li>
+        <div class="doc-titel">${esc(r.recipient_email || "—")}</div>
+        <div class="doc-meta">Godkänd granskning ${esc(fmtDateSE(r.reviewed_at))}</div>
+        ${r.approved_ip ? `<div class="doc-hash"><span class="lbl">IP:</span> ${esc(r.approved_ip)}</div>` : ""}
+      </li>
+    `).join("");
+
+    return `
+      <h2>Granskat av</h2>
+      <ul class="docs">${rows}</ul>
+    `;
+  }
+
   // ── Klientföretags-namn hämtas pragmatiskt (Bubble har inget fast schema) ─
   function clientCompanyName(cc, fallbackId) {
     if (!cc) return fallbackId || "—";
@@ -296,9 +322,11 @@ export function createApprovalDocEngine(deps) {
       status:              approval.status || "—",
       generated_at:        fmtDateSE(new Date().toISOString())
     };
+    const reviewersBlock = await buildReviewersBlock(requestId);
     const rawSlots = {
-      DOCS_HTML:     buildDocsHtml(originalDocs),
-      MESSAGE_BLOCK: buildMessageBlock(meddelande)
+      DOCS_HTML:       buildDocsHtml(originalDocs),
+      MESSAGE_BLOCK:   buildMessageBlock(meddelande),
+      REVIEWERS_BLOCK: reviewersBlock,
     };
     const html = renderTemplate(tpl, vars, rawSlots);
 

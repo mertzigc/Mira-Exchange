@@ -73,10 +73,12 @@
   li.file .rm{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 6px}
 
   /* Recipients */
-  .rcp-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-bottom:8px;align-items:center}
-  .rcp-row input{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;
+  .rcp-row{display:grid;grid-template-columns:1fr 1fr 110px auto;gap:8px;margin-bottom:8px;align-items:center}
+  @media (max-width:560px){.rcp-row{grid-template-columns:1fr 110px auto}.rcp-row .rcp-name{display:none}}
+  .rcp-row input, .rcp-row select{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;
     color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb)}
-  .rcp-row input:focus{outline:none;border-color:var(--orange)}
+  .rcp-row input:focus, .rcp-row select:focus{outline:none;border-color:var(--orange)}
+  .rcp-row select{cursor:pointer}
   .rcp-rm{background:none;border:1px solid var(--border);color:var(--w40);width:32px;height:34px;
     border-radius:8px;cursor:pointer;font-size:14px}
   .rcp-rm:hover{color:var(--red);border-color:var(--red)}
@@ -348,8 +350,13 @@
   // ── Mottagare ──────────────────────────────────────────────────
   const rcpWrap = $("recipients");
 
-  function addRecipient(email, name) {
-    state.recipients.push({ email: email || "", name: name || "", id: nextId++ });
+  function addRecipient(email, name, role) {
+    state.recipients.push({
+      email: email || "",
+      name:  name || "",
+      role:  role === "Reviewer" ? "Reviewer" : "Signer",
+      id:    nextId++,
+    });
     renderRecipients();
     updateCounts();
   }
@@ -361,12 +368,17 @@
       row.className = "rcp-row";
       row.innerHTML =
         `<input type="email" placeholder="e-post" value="${escapeAttr(r.email)}" data-id="${r.id}" data-k="email">` +
-        `<input type="text"  placeholder="namn (valfritt)" value="${escapeAttr(r.name)}" data-id="${r.id}" data-k="name">` +
+        `<input class="rcp-name" type="text" placeholder="namn (valfritt)" value="${escapeAttr(r.name)}" data-id="${r.id}" data-k="name">` +
+        `<select data-id="${r.id}" data-k="role" title="Roll">
+           <option value="Signer"${r.role === "Signer" ? " selected" : ""}>Signerar</option>
+           <option value="Reviewer"${r.role === "Reviewer" ? " selected" : ""}>Granskar</option>
+         </select>` +
         `<button class="rcp-rm" data-id="${r.id}" title="Ta bort">×</button>`;
       rcpWrap.appendChild(row);
     }
-    rcpWrap.querySelectorAll("input").forEach((inp) => {
-      inp.addEventListener("input", () => {
+    rcpWrap.querySelectorAll("input, select").forEach((inp) => {
+      const ev = inp.tagName === "SELECT" ? "change" : "input";
+      inp.addEventListener(ev, () => {
         const id = Number(inp.dataset.id);
         const k  = inp.dataset.k;
         const r  = state.recipients.find((x) => x.id === id);
@@ -406,7 +418,11 @@
       : null;
     const recipients = state.recipients
       .filter((r) => /\S+@\S+\.\S+/.test(r.email))
-      .map((r) => ({ email: r.email.trim(), name: (r.name || "").trim() }));
+      .map((r) => ({
+        email: r.email.trim(),
+        name:  (r.name || "").trim(),
+        role:  r.role === "Reviewer" ? "Reviewer" : "Signer",
+      }));
 
     if (!state.files.length) return setErr("Lägg till minst en PDF.");
     if (!recipients.length)  return setErr("Lägg till minst en mottagare med giltig e-post.");
@@ -586,24 +602,38 @@
         req.meddelande ? ["Meddelande", req.meddelande] : null,
       ].filter(Boolean);
 
-      const rcpRowsHtml = apps.map((a) => `
-        <tr>
-          <td class="email">${escapeHtml(a.recipient_email)}</td>
-          <td>${statusPill(a.status)}</td>
-          <td>${a.approved_at ? escapeHtml(fmtDateTime(a.approved_at)) : "—"}</td>
-          <td>${a.approved_ip ? escapeHtml(a.approved_ip) : "—"}</td>
-          <td>${a.signed_document
-                  ? `<a href="${escapeAttr(a.signed_document)}" target="_blank" rel="noopener">PDF ↗</a>`
-                  : (a.approval_link
-                      ? `<a href="${escapeAttr(a.approval_link)}" target="_blank" rel="noopener">länk ↗</a>`
-                      : "—")}</td>
-        </tr>
-      `).join("");
+      const rcpRowsHtml = apps.map((a) => {
+        const role = a.role || "Signer";
+        const isReviewer = role === "Reviewer";
+        const completedAt = isReviewer ? a.reviewed_at : a.approved_at;
+        return `
+          <tr>
+            <td class="email">${escapeHtml(a.recipient_email)}</td>
+            <td>${isReviewer ? '<span class="pill s-Draft"><span class="dot"></span>Granskare</span>' : '<span class="pill s-Sent"><span class="dot"></span>Signerare</span>'}</td>
+            <td>${statusPill(a.status)}</td>
+            <td>${completedAt ? escapeHtml(fmtDateTime(completedAt)) : "—"}</td>
+            <td>${a.signed_document
+                    ? `<a href="${escapeAttr(a.signed_document)}" target="_blank" rel="noopener">PDF ↗</a>`
+                    : (a.approval_link
+                        ? `<a href="${escapeAttr(a.approval_link)}" target="_blank" rel="noopener">länk ↗</a>`
+                        : "—")}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const anyPending = apps.some((a) =>
+        (a.role === "Reviewer") ? !a.reviewed_at : !a.approved_at
+      );
 
       container.innerHTML = `
         <div class="meta-grid">
           ${metaRows.map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div>${escapeHtml(String(v))}</div>`).join("")}
         </div>
+
+        ${anyPending ? `<div style="margin-bottom:14px;">
+          <button class="rcp-add ac-remind" data-req="${escapeAttr(reqId)}" style="background:var(--input);">Skicka påminnelse till de som inte slutfört</button>
+          <span class="ac-remind-status" style="margin-left:10px;font-size:11px;color:var(--w40);"></span>
+        </div>` : ""}
 
         <h4>Dokument (${docs.length})</h4>
         ${docs.length
@@ -612,11 +642,40 @@
 
         <h4>Mottagare (${apps.length})</h4>
         <table class="rcp-table">
-          <thead><tr><th>E-post</th><th>Status</th><th>Signerat</th><th>IP</th><th>Dokument</th></tr></thead>
+          <thead><tr><th>E-post</th><th>Roll</th><th>Status</th><th>Slutfört</th><th>Dokument</th></tr></thead>
           <tbody>${rcpRowsHtml || `<tr><td colspan="5" style="text-align:center;color:var(--w40);">Inga mottagare</td></tr>`}</tbody>
         </table>
       `;
       container.dataset.loaded = "1";
+
+      // Bind påminnelse-knapp
+      const remindBtn = container.querySelector(".ac-remind");
+      if (remindBtn) {
+        remindBtn.addEventListener("click", async () => {
+          const status = container.querySelector(".ac-remind-status");
+          remindBtn.disabled = true;
+          remindBtn.textContent = "Skickar…";
+          try {
+            const r = await fetch(HOST + "/admin/approval/remind/" + encodeURIComponent(reqId), {
+              method: "POST", headers: { "x-admin-token": TOKEN },
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !j.ok) {
+              if (status) status.textContent = "Fel: " + (j.error || r.status);
+              remindBtn.disabled = false;
+              remindBtn.textContent = "Försök igen";
+              return;
+            }
+            if (status) status.textContent = `Skickade ${j.sent} påminnelser`;
+            remindBtn.textContent = "Skickat ✓";
+            container.dataset.loaded = "0";  // tvinga refresh nästa expand
+          } catch (e) {
+            if (status) status.textContent = "Nätverksfel";
+            remindBtn.disabled = false;
+            remindBtn.textContent = "Försök igen";
+          }
+        });
+      }
     } catch (e) {
       container.innerHTML = `<div class="hist-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
     }

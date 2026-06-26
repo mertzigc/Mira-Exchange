@@ -9,6 +9,38 @@
 
 **Beslut + leverans (2026-06-24):** allt signeringsflöde flyttat till Render. Bubble är databas + tre HTML-block för Carotte-UI. End-to-end smoke-testat: invite-mail → Mira-stilad landningssida → OTP → signering → mergad PDF + signeringsbevis → bekräftelsemail. Klart, live, fungerar.
 
+### Granskar-roll + manuella påminnelser — KODAT 2026-06-24
+
+**Nytt efter internt testande:**
+
+**Granskar-roll:**
+- OfferApproval har nytt fält `role` ("Signer" | "Reviewer", default "Signer") + `reviewed_at`
+- OfferApprovalRequest har nytt `reviewers_count` + `reviewed_count`
+- Skapande-UI: per-recipient dropdown ("Signerar" / "Granskar")
+- Granskare får eget invite-mail (`approval_review_invite`-template), egen landningssida UTAN OTP — bara "Godkänn granskning"-knapp
+- Ny route `POST /approval/review/:id` (token-grindad, ingen OTP) som loggar `reviewed_at` + IP/UA, bumpar parent.reviewed_count
+- Signeringsbeviset visar separat sektion "Granskat av:" med alla reviewers + tidpunkt + IP
+- Granskare räknas INTE i `recipients_count`/`signed_count` (separata fält) → signers kan sluta utan att vänta på reviewers (parallellt flöde)
+
+**Manuella påminnelser:**
+- Ny route `POST /admin/approval/remind/:request_id` (x-admin-token) — köar `approval_reminder`-mail till alla barn där signers saknar `approved_at` eller reviewers saknar `reviewed_at`
+- "Skicka påminnelse"-knapp i expand-detail i både arkiv-vyn och Deal-popupens historik (visas bara om någon är pending)
+- Returnerar `{sent: N}` så UI kan visa "Skickade N påminnelser"
+
+**Nya env vars (Render):**
+| Namn | Värde |
+|---|---|
+| `APPROVAL_REVIEW_INVITE_TEMPLATE_ID` | Bubble unique_id för EmailTemplate slug=approval_review_invite |
+| `APPROVAL_REMINDER_TEMPLATE_ID` | Bubble unique_id för EmailTemplate slug=approval_reminder |
+
+**Nya Bubble-fält:**
+- OfferApproval: `role` (text/option), `reviewed_at` (date)
+- OfferApprovalRequest: `reviewers_count` (number), `reviewed_count` (number)
+
+**Nya EmailTemplate-rader:** `approval_review_invite`, `approval_reminder`
+
+---
+
 ### BankID-beslut 2026-06-24 (omprövas ej före 2027 om volymen inte ändras)
 
 **Scope-uppdelning bekräftad:**

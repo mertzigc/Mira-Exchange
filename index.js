@@ -438,6 +438,7 @@ function requireApiKey(req, res, next) {
     "/approval/view/",
     "/approval/request-otp/",
     "/approval/confirm/",
+    "/approval/review/",           // granskar-bekräftelse (ingen OTP, token-grindad)
   ];
   if (openPaths.has(req.path) || openPrefixes.some(p => req.path.startsWith(p))) {
     return next();
@@ -16336,6 +16337,7 @@ const approvalDocEngine = createApprovalDocEngine({
   bubbleGet,
   bubblePatch,
   bubbleUploadFile,
+  bubbleFindAll,
 });
 
 app.post("/docs/offer-approval/:id", requireSyncSecret, async (req, res) => {
@@ -16373,9 +16375,11 @@ app.post("/docs/offer-approval/:id", requireSyncSecret, async (req, res) => {
 // unique_id som env vars i Render. Subject/cta_label får vara tomma — vår
 // emailer-template fyller defaults via tmpl.subject || item.subject_override.
 const APPROVAL_TEMPLATE_IDS = {
-  invite: process.env.APPROVAL_INVITE_TEMPLATE_ID || "",
-  otp:    process.env.APPROVAL_OTP_TEMPLATE_ID    || "",
-  signed: process.env.APPROVAL_SIGNED_TEMPLATE_ID || "",
+  invite:        process.env.APPROVAL_INVITE_TEMPLATE_ID        || "",
+  otp:           process.env.APPROVAL_OTP_TEMPLATE_ID           || "",
+  signed:        process.env.APPROVAL_SIGNED_TEMPLATE_ID        || "",
+  review_invite: process.env.APPROVAL_REVIEW_INVITE_TEMPLATE_ID || "",
+  reminder:      process.env.APPROVAL_REMINDER_TEMPLATE_ID      || "",
 };
 function _approvalTemplateId(kind) {
   const id = APPROVAL_TEMPLATE_IDS[kind];
@@ -16459,13 +16463,15 @@ app.post(
       if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
       }
-      // Fail-fast: alla tre template-IDs MÅSTE finnas innan vi skapar Dokument/
+      // Fail-fast: alla template-IDs MÅSTE finnas innan vi skapar Dokument/
       // Request/Approval — annars riskerar vi orphan-data när invite-mail
       // failar på sista steget. Bättre att returnera 503 utan att skriva alls.
       try {
         _approvalTemplateId("invite");
         _approvalTemplateId("otp");
         _approvalTemplateId("signed");
+        _approvalTemplateId("review_invite");
+        _approvalTemplateId("reminder");
       } catch (envErr) {
         return res.status(503).json({ ok: false, error: envErr.message });
       }
@@ -16506,6 +16512,17 @@ app.post(
         dokumentIds.push(id);
       }
 
+      // Normalisera roles: default "Signer", "Reviewer" skriver utan OTP/sign
+      const normalizedRecipients = recipients.map((r) => ({
+        email: String(r?.email || "").trim(),
+        name:  String(r?.name || "").trim(),
+        role:  String(r?.role || "Signer").trim() === "Reviewer" ? "Reviewer" : "Signer",
+      })).filter((r) => r.email);
+      if (!normalizedRecipients.length) return res.status(400).json({ ok: false, error: "recipients_required" });
+
+      const signers   = normalizedRecipients.filter((r) => r.role === "Signer").length;
+      const reviewers = normalizedRecipients.filter((r) => r.role === "Reviewer").length;
+
       // 2) Skapa OfferApprovalRequest (moder)
       // Status = "Sent" direkt vid skapande (mailen köas i samma anrop). Om
       // du vill ha "Draft"-fas tillagd senare: gör en separat /approval/draft
@@ -16513,33 +16530,31 @@ app.post(
       const requestId = await bubbleCreate("OfferApprovalRequest", {
         rubrik,
         meddelande,
-        dokument:         dokumentIds,
-        clientcompany:    ccId || null,
-        deal:             dealId || null,
-        sender_email:     senderEmail,
-        sender_name:      senderName,
-        status:           "Sent",
-        recipients_count: recipients.length,
-        signed_count:     0,
-        expires_at:       expiresAt || null,
+        dokument:          dokumentIds,
+        clientcompany:     ccId || null,
+        deal:              dealId || null,
+        sender_email:      senderEmail,
+        sender_name:       senderName,
+        status:            "Sent",
+        recipients_count:  signers,        // räknar bara signers; reviewers separat
+        reviewers_count:   reviewers,
+        signed_count:      0,
+        reviewed_count:    0,
+        expires_at:        expiresAt || null,
       });
 
-      // 3) Skapa OfferApproval per mottagare + invite-mail
+      // 3) Skapa OfferApproval per mottagare + invite-mail per role
       const created = [];
-      for (const r of recipients) {
-        const email = String(r?.email || "").trim();
-        if (!email) continue;
-        const name = String(r?.name || "").trim();
-
+      for (const r of normalizedRecipients) {
+        const { email, name, role } = r;
         const rawToken  = _genToken();
         const tokenHash = _sha256Hex(rawToken);
 
-        // Skapar approval först (utan länk), sen patchar in länken som
-        // innehåller dess egna unique_id.
         const approvalId = await bubbleCreate("OfferApproval", {
           request:         requestId,
           rubrik,                       // bakåtkomp: child speglar för äldre rapport-vyer
           recipient_email: email,
+          role,                         // "Signer" | "Reviewer"
           status:          "Sent",
           token_hash:      tokenHash,
           dokument:        dokumentIds, // speglas så befintliga vyer fortsatt visar dem
@@ -16551,9 +16566,10 @@ app.post(
         const viewUrl = _buildApprovalViewUrl(req, approvalId, rawToken);
         await bubblePatch("OfferApproval", approvalId, { approval_link: viewUrl });
 
-        // Köa invite-mail (pollern skickar inom 2 min)
+        // Köa mail: review_invite för granskare, invite för signers
+        const templateKey = role === "Reviewer" ? "review_invite" : "invite";
         await bubbleCreate("emailqueue", {
-          template_id: _approvalTemplateId("invite"),
+          template_id: _approvalTemplateId(templateKey),
           to_email:    email,
           to_name:     name || email,
           extra_data:  JSON.stringify({
@@ -16566,14 +16582,16 @@ app.post(
           email_sent:  false,
         });
 
-        created.push({ approval_id: approvalId, recipient_email: email, view_url: viewUrl });
+        created.push({ approval_id: approvalId, recipient_email: email, role, view_url: viewUrl });
       }
 
       return res.json({
-        ok:              true,
-        request_id:      requestId,
-        dokument_ids:    dokumentIds,
-        approvals:       created,
+        ok:               true,
+        request_id:       requestId,
+        dokument_ids:     dokumentIds,
+        approvals:        created,
+        signers_count:    signers,
+        reviewers_count:  reviewers,
         recipients_count: created.length,
       });
     } catch (e) {
@@ -16799,6 +16817,70 @@ app.post("/approval/confirm/:id", async (req, res) => {
   }
 });
 
+// ── POST /approval/review/:id — granskar-bekräftelse (ingen OTP) ────────────
+// Reviewer-version av /confirm. Endast token-grindad. Sätter reviewed_at +
+// approved_ip/ua (för audit-trail) och bumpar parent.reviewed_count.
+// Triggar INTE doc-gen (signed_document är signers ansvar).
+app.options("/approval/review/:id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.post("/approval/review/:id", async (req, res) => {
+  _approvalCors(req, res);
+  const ip = _clientIp(req);
+  if (_publicRateLimited(ip, 30)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+
+  try {
+    const approvalId = String(req.params.id || "").trim();
+    const rawToken   = String((req.body || {}).token || "").trim();
+
+    const r = await _fetchApprovalByToken(approvalId, rawToken);
+    if (r.error) return res.status(r.status).json({ ok: false, error: r.error });
+    const approval = r.approval;
+
+    if (String(approval.role || "Signer") !== "Reviewer") {
+      return res.status(400).json({ ok: false, error: "not_a_reviewer_approval" });
+    }
+
+    // Idempotens: om redan granskat, returnera bara ok.
+    if (approval.reviewed_at) {
+      return res.json({ ok: true, already_reviewed: true });
+    }
+
+    const userAgent = String(req.headers["user-agent"] || "").slice(0, 500);
+    const nowIso    = new Date().toISOString();
+
+    await bubblePatch("OfferApproval", approvalId, {
+      reviewed_at:         nowIso,
+      approved_ip:         ip || "",
+      approved_user_agent: userAgent,
+      status:              "Approved",   // reviewer-flow: "klar" = Approved
+    });
+
+    // Parent-rollup: reviewed_count++
+    try {
+      if (approval.request) {
+        const parent = await bubbleGet("OfferApprovalRequest", approval.request);
+        if (parent) {
+          const newReviewed = Number(parent.reviewed_count || 0) + 1;
+          await bubblePatch("OfferApprovalRequest", approval.request, {
+            reviewed_count: newReviewed,
+          });
+        }
+      }
+    } catch (rollupErr) {
+      console.warn("[/approval/review] parent rollup failed (non-fatal)", rollupErr?.message);
+    }
+
+    return res.json({ ok: true, reviewed_at: nowIso });
+  } catch (e) {
+    console.error("[/approval/review] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
 // ── GET /approval/view/:id?t=<rawToken> — server-renderad landningssida ────
 // Validerar token serverside, lyfter in approval-data i HTML:n, embeddar
 // JS som auto-skickar OTP och driver hela signeringen client-side.
@@ -16886,9 +16968,10 @@ app.get("/approval/view/:id", async (req, res) => {
         .catch((e) => console.warn("[/approval/view] viewed-bump failed", e?.message));
     }
 
-    const alreadyApproved =
-      String(approval.status || "").toLowerCase() === "approved" &&
-      !!approval.approved_at;
+    const isReviewer = String(approval.role || "Signer") === "Reviewer";
+    const alreadyApproved = isReviewer
+      ? !!approval.reviewed_at
+      : (String(approval.status || "").toLowerCase() === "approved" && !!approval.approved_at);
 
     // Säker HTML-escape (åtskild från frontends own JSON)
     const e = (s) => String(s ?? "")
@@ -16924,6 +17007,7 @@ app.get("/approval/view/:id", async (req, res) => {
       recipient:   approval.recipient_email || "",
       signed_doc:  signedDocUrl,
       initial:     initialView,
+      is_reviewer: isReviewer,
     };
 
     const html = `<!doctype html>
@@ -17031,23 +17115,31 @@ app.get("/approval/view/:id", async (req, res) => {
     <ul class="docs">${docsHtml}</ul>
 
     <div id="sign-block" class="${initialView === "done" ? "hidden" : ""}">
-      <h2 class="section">Signera</h2>
+      <h2 class="section">${isReviewer ? "Granska" : "Signera"}</h2>
       <div class="otp-wrap">
-        <p class="otp-info" id="otp-info">Vi skickar en engångskod till <strong>${e(approval.recipient_email || "")}</strong>…</p>
-        <div class="otp-row">
-          <input class="otp" id="otp" type="text" inputmode="numeric" pattern="[0-9]*"
-            maxlength="6" placeholder="••••••" autocomplete="one-time-code" />
-          <button class="btn-primary" id="sign-btn" disabled>Signera</button>
-        </div>
-        <div class="err" id="err"></div>
-        <button class="resend" id="resend-btn" disabled>Skicka koden igen</button>
+        ${isReviewer
+          ? `<p class="otp-info">Klicka på knappen nedan för att registrera att du granskat dokumentet. Ingen e-postkod behövs.</p>
+             <div class="otp-row">
+               <button class="btn-primary" id="sign-btn" style="width:100%;">Godkänn granskning</button>
+             </div>
+             <div class="err" id="err"></div>`
+          : `<p class="otp-info" id="otp-info">Vi skickar en engångskod till <strong>${e(approval.recipient_email || "")}</strong>…</p>
+             <div class="otp-row">
+               <input class="otp" id="otp" type="text" inputmode="numeric" pattern="[0-9]*"
+                 maxlength="6" placeholder="••••••" autocomplete="one-time-code" />
+               <button class="btn-primary" id="sign-btn" disabled>Signera</button>
+             </div>
+             <div class="err" id="err"></div>
+             <button class="resend" id="resend-btn" disabled>Skicka koden igen</button>`}
       </div>
     </div>
 
     <div id="done-block" class="done ${initialView === "done" ? "" : "hidden"}">
       <div class="check">✓</div>
-      <h1>Signerat</h1>
-      <p>Tack — signeringen är registrerad och du har fått en bekräftelse via mail.</p>
+      <h1>${isReviewer ? "Granskat" : "Signerat"}</h1>
+      <p>${isReviewer
+          ? "Tack — granskningen är registrerad."
+          : "Tack — signeringen är registrerad och du har fått en bekräftelse via mail."}</p>
       <p id="dl-wrap" style="margin-top:22px;${signedDocUrl ? "" : "display:none;"}">
         <a class="btn-primary" id="dl-link" style="text-decoration:none;display:inline-block;"
            href="${e(signedDocUrl)}" target="_blank" rel="noopener">Ladda ner signerat dokument</a>
@@ -17066,13 +17158,53 @@ app.get("/approval/view/:id", async (req, res) => {
   const D = ${JSON.stringify(fePayload)};
   if (D.initial === "done") return;
 
-  const otp     = document.getElementById("otp");
   const signBtn = document.getElementById("sign-btn");
+  const errEl   = document.getElementById("err");
+  function setErr(m){ errEl.textContent = m || ""; }
+
+  function showDoneUI(signedDocUrl) {
+    document.getElementById("sign-block").classList.add("hidden");
+    document.getElementById("done-block").classList.remove("hidden");
+    if (signedDocUrl) {
+      const wrap = document.getElementById("dl-wrap");
+      const link = document.getElementById("dl-link");
+      if (link) link.href = signedDocUrl;
+      if (wrap) wrap.style.display = "";
+    }
+  }
+
+  // ── REVIEWER-FLÖDE: bara klick på "Godkänn granskning" → POST /review ──
+  if (D.is_reviewer) {
+    signBtn.addEventListener("click", async () => {
+      setErr("");
+      signBtn.disabled = true;
+      signBtn.textContent = "Registrerar…";
+      try {
+        const r = await fetch("/approval/review/" + encodeURIComponent(D.approval_id), {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ token: D.token })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) {
+          setErr("Kunde inte registrera: " + (j.error || r.status));
+          signBtn.disabled = false;
+          signBtn.textContent = "Godkänn granskning";
+          return;
+        }
+        showDoneUI(null);
+      } catch (e) {
+        setErr("Nätverksfel: " + (e.message || e));
+        signBtn.disabled = false;
+        signBtn.textContent = "Godkänn granskning";
+      }
+    });
+    return;
+  }
+
+  // ── SIGNER-FLÖDE: OTP-baserat (befintligt) ──
+  const otp     = document.getElementById("otp");
   const resend  = document.getElementById("resend-btn");
   const info    = document.getElementById("otp-info");
-  const errEl   = document.getElementById("err");
-
-  function setErr(m){ errEl.textContent = m || ""; }
   function setInfo(m){ info.textContent = m; }
 
   let cooldownTimer = null;
@@ -17140,16 +17272,7 @@ app.get("/approval/view/:id", async (req, res) => {
         signBtn.disabled = otp.value.length !== 6;
         return;
       }
-      // Klart — visa bekräftelse
-      document.getElementById("sign-block").classList.add("hidden");
-      const done = document.getElementById("done-block");
-      done.classList.remove("hidden");
-      if (j.signed_document_url) {
-        const wrap = document.getElementById("dl-wrap");
-        const link = document.getElementById("dl-link");
-        if (link) link.href = j.signed_document_url;
-        if (wrap) wrap.style.display = "";
-      }
+      showDoneUI(j.signed_document_url || null);
     } catch (e) {
       setErr("Nätverksfel: " + (e.message || e));
       signBtn.textContent = "Signera";
@@ -17402,7 +17525,9 @@ app.get("/admin/approval/request/:id", async (req, res) => {
         sender_name:      request.sender_name || "",
         status:           request.status || "",
         recipients_count: Number(request.recipients_count || 0),
+        reviewers_count:  Number(request.reviewers_count || 0),
         signed_count:     Number(request.signed_count || 0),
+        reviewed_count:   Number(request.reviewed_count || 0),
         created_date:     request["Created Date"] || null,
         expires_at:       request.expires_at || null,
         clientcompany:    request.clientcompany || null,
@@ -17411,8 +17536,10 @@ app.get("/admin/approval/request/:id", async (req, res) => {
       approvals: children.map((c) => ({
         id:                  c._id,
         recipient_email:     c.recipient_email || "",
+        role:                c.role || "Signer",
         status:              c.status || "",
         approved_at:         c.approved_at || null,
+        reviewed_at:         c.reviewed_at || null,
         approved_ip:         c.approved_ip || "",
         approved_user_agent: c.approved_user_agent || "",
         signed_document:     normUrl(c.signed_document),
@@ -17427,6 +17554,72 @@ app.get("/admin/approval/request/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[/admin/approval/request] failed", e);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── POST /admin/approval/remind/:request_id — manuell påminnelse ─────────────
+// Skickar påminnelse-mail till alla barn-OfferApprovals som INTE är klara än
+// (signers utan approved_at; reviewers utan reviewed_at). Carotte-UI trigg.
+app.options("/admin/approval/remind/:request_id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+
+app.post("/admin/approval/remind/:request_id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    _approvalTemplateId("reminder");   // fail-fast om env saknas
+    const reqId = String(req.params.request_id || "").trim();
+    if (!reqId) return res.status(400).json({ ok: false, error: "missing_id" });
+
+    const request = await bubbleGet("OfferApprovalRequest", reqId).catch(() => null);
+    if (!request) return res.status(404).json({ ok: false, error: "request_not_found" });
+
+    const children = await bubbleFindAll("OfferApproval", {
+      constraints: [{ key: "request", constraint_type: "equals", value: reqId }],
+    }).catch(() => []);
+
+    const pending = (children || []).filter((c) => {
+      const role = String(c.role || "Signer");
+      return role === "Reviewer" ? !c.reviewed_at : !c.approved_at;
+    });
+
+    if (!pending.length) {
+      return res.json({ ok: true, sent: 0, message: "Alla är redan klara" });
+    }
+
+    const rubrik     = request.rubrik || "Avtal";
+    const senderName = request.sender_name || "Carotte";
+    const expiresAt  = request.expires_at || null;
+
+    let sent = 0;
+    for (const c of pending) {
+      if (!c.recipient_email) continue;
+      await bubbleCreate("emailqueue", {
+        template_id: _approvalTemplateId("reminder"),
+        to_email:    c.recipient_email,
+        to_name:     c.recipient_email,
+        extra_data:  JSON.stringify({
+          rubrik,
+          sender_name: senderName,
+          view_url:    c.approval_link || "",
+          role:        c.role || "Signer",
+          expires_at:  expiresAt,
+        }),
+        email_sent:  false,
+      });
+      sent++;
+    }
+
+    return res.json({ ok: true, sent, pending_count: pending.length });
+  } catch (e) {
+    console.error("[/admin/approval/remind] failed", e);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });

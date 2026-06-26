@@ -168,9 +168,11 @@ async function buildEmail(item) {
     case "invite_invitation": return tmplInviteInvitation(entity, extra, toName, ctaLabel, ctx);
     case "news_announcement": return tmplNewsAnnouncement(entity, extra, toName, ctaLabel, ctx);
     case "survey_invitation": return tmplSurveyInvitation(entity, extra, toName, ctaLabel, ctx);
-    case "approval_invite":   return tmplApprovalInvite(entity, extra, toName, ctaLabel, ctx);
-    case "approval_otp":      return tmplApprovalOtp(entity, extra, toName, ctaLabel, ctx);
-    case "approval_signed":   return tmplApprovalSigned(entity, extra, toName, ctaLabel, ctx);
+    case "approval_invite":        return tmplApprovalInvite(entity, extra, toName, ctaLabel, ctx);
+    case "approval_otp":           return tmplApprovalOtp(entity, extra, toName, ctaLabel, ctx);
+    case "approval_signed":        return tmplApprovalSigned(entity, extra, toName, ctaLabel, ctx);
+    case "approval_review_invite": return tmplApprovalReviewInvite(entity, extra, toName, ctaLabel, ctx);
+    case "approval_reminder":      return tmplApprovalReminder(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1399,6 +1401,74 @@ async function tmplApprovalSigned(e, extra, toName, ctaLabel, item) {
     ctaLabel: docUrl ? "Ladda ner signerat dokument" : null,
     ctaUrl:   docUrl || null,
     miraNote: docUrl ? null : "Du får en länk till dokumentet inom kort.",
+  });
+  return { subject, html };
+}
+
+async function tmplApprovalReviewInvite(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.sender_name || x.company_name || "Carotte";
+  const accent     = x.accent_color || "#df6f39";
+  const rubrik     = x.rubrik || "Avtal att granska";
+  const viewUrl    = x.view_url || "";
+  const message    = x.message || "";
+
+  const subject = item.subject_override || `${rubrik} — väntar på din granskning`;
+  const html = wrapLayout({
+    toName,
+    logoUrl: x.logo_url || "",
+    senderName,
+    imageUrl: "",
+    accent,
+    tag: "Granskning",
+    headline: rubrik,
+    body:
+      `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+      + `${esc(senderName)} har skickat ett dokument till dig för granskning. `
+      + `Klicka på knappen nedan för att se dokumentet och godkänna granskningen.</p>`
+      + (message ? `<p style="font-size:13px;color:#8892aa;line-height:1.65;margin-top:14px;white-space:pre-wrap;">${esc(message)}</p>` : ""),
+    details: detailRows([
+      ["Avsändare", esc(senderName)],
+      ["Din roll",  "Granskare"],
+      x.expires_at && ["Giltigt till", fmtDateTime(x.expires_at)],
+    ]),
+    ctaLabel: "Granska dokumentet",
+    ctaUrl: viewUrl,
+    miraNote: "Granskning kräver ingen e-postkod — bara ett klick för att bekräfta att du läst.",
+  });
+  return { subject, html };
+}
+
+async function tmplApprovalReminder(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const senderName = x.sender_name || x.company_name || "Carotte";
+  const accent     = x.accent_color || "#df6f39";
+  const rubrik     = x.rubrik || "Avtal";
+  const viewUrl    = x.view_url || "";
+  const role       = (x.role || "Signer") === "Reviewer" ? "Reviewer" : "Signer";
+  const action     = role === "Reviewer" ? "granska" : "signera";
+  const actionCap  = role === "Reviewer" ? "Granska" : "Signera";
+
+  const subject = item.subject_override || `Påminnelse: ${rubrik} väntar på din ${role === "Reviewer" ? "granskning" : "signering"}`;
+  const html = wrapLayout({
+    toName,
+    logoUrl: x.logo_url || "",
+    senderName,
+    imageUrl: "",
+    accent,
+    tag: "Påminnelse",
+    headline: `Glöm inte att ${action} ${rubrik}`,
+    body:
+      `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+      + `Det här är en vänlig påminnelse om att ${esc(senderName)} väntar på att du ${action}r `
+      + `<strong style="color:#e8eaf0;">${esc(rubrik)}</strong>. Använd länken nedan för att slutföra.</p>`,
+    details: detailRows([
+      ["Avsändare", esc(senderName)],
+      x.expires_at && ["Sista dag", fmtDateTime(x.expires_at)],
+    ]),
+    ctaLabel: `${actionCap} nu`,
+    ctaUrl: viewUrl,
+    miraNote: "Har du redan slutfört? Då kan du bortse från detta mail.",
   });
   return { subject, html };
 }
