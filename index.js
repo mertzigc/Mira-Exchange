@@ -20353,5 +20353,108 @@ app.post("/admin/contracts/create", async (req, res) => {
   }
 });
 
+// ── PATCH /admin/contracts/:id — multifunktionell uppdatering ───────────────
+// Auth: x-admin-token. Body: PARTIAL — bara fält som faktiskt skickas patchas.
+// Stödjer: edit (alla fält), end (skicka slutdatum), pause (status_override:"Pausat"),
+// resume (status_override:null), upgrade (nytt offer_id), etc.
+// Använder "in"-check så null kan skickas explicit för att tömma fält.
+// Returnerar { ok, contract_id, contract: <enriched>, patched_fields: [...] }.
+app.options("/admin/contracts/:id", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.patch("/admin/contracts/:id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const contractId = String(req.params.id || "").trim();
+  if (!contractId) return res.status(400).json({ ok: false, error: "contract_id krävs" });
+
+  try {
+    const b = req.body || {};
+    const stringifyMaybeObject = (v) => {
+      if (v == null) return null;
+      if (typeof v === "string") return v;
+      try { return JSON.stringify(v); } catch (_) { return null; }
+    };
+
+    // Bygg PATCH-payload — bara fält som faktiskt skickades ("in"-check).
+    const patch = {};
+    if ("contract_type" in b)          patch[SERVICES.CT_TYPE]              = b.contract_type;
+    if ("office_id" in b)              patch[SERVICES.CT_OFFICE]            = b.office_id || null;
+    if ("offer_id" in b)               patch[SERVICES.CT_OFFER]             = b.offer_id || null;
+    if ("qty" in b)                    patch[SERVICES.CT_QTY]               = b.qty != null ? Number(b.qty) : null;
+    if ("monthly_cost" in b)           patch[SERVICES.CT_MONTHLY]           = b.monthly_cost != null ? Number(b.monthly_cost) : null;
+    if ("category" in b)               patch[SERVICES.CT_KATEGORI]          = b.category;
+    if ("startdatum" in b)             patch[SERVICES.CT_START]             = b.startdatum || null;
+    if ("slutdatum" in b)              patch[SERVICES.CT_END]               = b.slutdatum || null;
+    if ("binding_months" in b)         patch[SERVICES.CT_BINDING]           = b.binding_months != null ? Number(b.binding_months) : null;
+    if ("notice_months" in b)          patch[SERVICES.CT_NOTICE]            = b.notice_months != null ? Number(b.notice_months) : null;
+    if ("auto_renew_months" in b)      patch[SERVICES.CT_AUTO_RENEW]        = b.auto_renew_months != null ? Number(b.auto_renew_months) : null;
+    if ("price_regulation_type" in b)  patch[SERVICES.CT_PRICE_REG_TYPE]    = b.price_regulation_type || null;
+    if ("price_regulation_next" in b)  patch[SERVICES.CT_PRICE_REG_NEXT]    = b.price_regulation_next || null;
+    if ("rate_card_json" in b)         patch[SERVICES.CT_RATE_CARD_JSON]    = stringifyMaybeObject(b.rate_card_json);
+    if ("volume_json" in b)            patch[SERVICES.CT_VOLUME_JSON]       = stringifyMaybeObject(b.volume_json);
+    if ("signed_pdf" in b)             patch[SERVICES.CT_SIGNED_PDF]        = b.signed_pdf || null;
+    if ("signed_at" in b)              patch[SERVICES.CT_SIGNED_AT]         = b.signed_at || null;
+    if ("offer_approval_id" in b)      patch[SERVICES.CT_OFFER_APPROVAL]    = b.offer_approval_id || null;
+    if ("commission_id" in b)          patch[SERVICES.CT_COMMISSION]        = b.commission_id || null;
+    if ("master_contract_id" in b)     patch[SERVICES.CT_MASTER]            = b.master_contract_id || null;
+    if ("status_override" in b)        patch[SERVICES.CT_STATUS_OVERRIDE]   = b.status_override || null;
+    if ("parsed_confidence_json" in b) patch[SERVICES.CT_PARSED_CONFIDENCE] = stringifyMaybeObject(b.parsed_confidence_json);
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ ok: false, error: "inga fält att uppdatera" });
+    }
+
+    await bubblePatch(SERVICES.CONTRACT_TYPE, contractId, patch);
+
+    // Returnera enriched contract så frontend kan re-rendera utan extra fetch
+    const fresh = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId).catch(() => null);
+    let enriched = null;
+    if (fresh) {
+      const companyId = _ffIdOf(fresh[SERVICES.CT_COMPANY]);
+      const cc = companyId ? await bubbleGet("ClientCompany", companyId).catch(() => null) : null;
+      const customerName = cc
+        ? (cc.Name_company || cc.name || cc.Name || cc.company_name || cc.namn || null)
+        : null;
+      const ofId = _ffIdOf(fresh[SERVICES.CT_OFFICE]);
+      const officeById = new Map();
+      if (ofId) {
+        const o = await bubbleGet(SERVICES.OFFICE_TYPE, ofId).catch(() => null);
+        if (o) officeById.set(ofId, o);
+      }
+      const oId = _ffIdOf(fresh[SERVICES.CT_OFFER]);
+      const offerById = new Map();
+      if (oId) {
+        const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, oId).catch(() => null);
+        if (o) offerById.set(oId, o);
+      }
+      enriched = _enrichContract(fresh, {
+        customerName, officeById, offerById,
+        offerToSlug: new Map(), catalogBySlug: new Map(),
+      });
+    }
+
+    console.log(`[admin/contracts/patch] ${contractId} uppdaterad: ${Object.keys(patch).join(", ")}`);
+    return res.json({
+      ok: true,
+      contract_id: contractId,
+      contract: enriched,
+      patched_fields: Object.keys(patch),
+    });
+  } catch (e) {
+    console.error("[/admin/contracts/:id] PATCH failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
