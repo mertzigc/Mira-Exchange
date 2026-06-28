@@ -1,0 +1,673 @@
+<!--
+  MIRA – ABONNEMANG (KUNDKORT-FLIK)  — SKISS Fas 2, 2026-06-28
+  -------------------------------------------------------------
+  Flik på Carottes interna kundkort (Företag-popup). Visar valda
+  kundens alla Contracts grupperade per Office, plus account-scope
+  (Mira-abonnemang) överst. Klick på rad → expand-panel inline med
+  detaljer + bilagor + actions.
+
+  DESIGN-SPRÅK lånat från mira-kund-dashboard-tjanster.html men
+  anpassat för internt verktyg (info-tätt, list-orienterat, inga
+  hjältebilder).
+
+  STATUS: STATISK SKISS. Demo-data hårdkodad i SAMPLE-objektet.
+  Ingen Render-koppling, ingen Bubble-koppling. För UX-feedback.
+
+  KOMMANDE KOPPLING I BUBBLE (Fas 2 backend):
+    #ab_api_host         = https://mira-exchange.onrender.com
+    #ab_planning_token   = <PLANNING_ADMIN_TOKEN>
+    #ab_clientcompany    = <Current Company's unique id>
+    #ab_clientcompany_nm = <Current Company's Name_company>
+-->
+
+<style>
+  .ab-kund * { box-sizing: border-box; }
+  .ab-kund {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    width: 100%;
+    --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
+    --line:rgba(255,255,255,0.07); --line-strong:rgba(255,255,255,0.14);
+    --acc:#db6923; --acc-soft:rgba(219,105,35,0.15);
+    --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35); --t4:rgba(255,255,255,0.20);
+    --ok:#10b981; --warn:#facc15; --err:#f87171; --info:#6366f1;
+    color: var(--t1);
+    background: var(--bg-deep);
+    padding: 22px 24px;
+    border-radius: 12px;
+  }
+
+  /* Header */
+  .ab-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    margin-bottom:18px; padding-bottom:14px; border-bottom:0.5px solid var(--line); }
+  .ab-head-l h2 { font-family:Georgia,serif; font-size:24px; font-weight:700; margin:0;
+    letter-spacing:-0.01em; color:#fff; line-height:1.1; }
+  .ab-head-l .ab-cust { font-size:12px; color:var(--t3); margin-top:4px;
+    text-transform:uppercase; letter-spacing:0.08em; }
+  .ab-head-r { display:flex; align-items:center; gap:18px; }
+  .ab-sumblock { text-align:right; }
+  .ab-sumblock .ab-sk-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; }
+  .ab-sumblock .ab-sk-v { font-size:18px; font-weight:800; color:var(--acc); letter-spacing:-0.01em; }
+  .ab-btn { padding:9px 15px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+    font-family:inherit; transition:all 0.15s; border:none; line-height:1; }
+  .ab-btn.primary { background:var(--acc); color:#1c1206; font-weight:700; }
+  .ab-btn.primary:hover { background:#ff8c45; }
+  .ab-btn.ghost { background:transparent; border:0.5px solid var(--line-strong); color:var(--t1); }
+  .ab-btn.ghost:hover { border-color:var(--t2); }
+  .ab-btn.danger { background:rgba(248,113,113,0.10); border:0.5px solid rgba(248,113,113,0.35); color:var(--err); }
+  .ab-btn.danger:hover { background:rgba(248,113,113,0.18); }
+  .ab-btn.tiny { padding:6px 10px; font-size:11px; }
+
+  /* Office-sektioner */
+  .ab-sect { margin-bottom:24px; }
+  .ab-sect-h { display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:10px; padding:0 4px; }
+  .ab-sect-l { display:flex; align-items:baseline; gap:10px; }
+  .ab-sect-name { font-size:13px; font-weight:600; color:var(--t1); }
+  .ab-sect-id { font-size:11px; color:var(--t3); font-weight:500; }
+  .ab-sect-addr { font-size:11px; color:var(--t3); }
+
+  /* Contract-rader */
+  .ab-rows { display:flex; flex-direction:column; gap:6px; }
+  .ab-row { background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; transition:border-color 0.15s; }
+  .ab-row:hover { border-color:var(--line-strong); }
+  .ab-row.open { border-color:rgba(219,105,35,0.40); }
+
+  .ab-rowhead { display:grid; grid-template-columns:1.6fr 1.2fr 0.8fr 1fr auto; gap:14px;
+    align-items:center; padding:13px 16px; cursor:pointer; }
+  @media (max-width:920px){
+    .ab-rowhead { grid-template-columns:1fr 1fr; gap:10px; }
+    .ab-rowhead .ab-rh-end { grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; }
+  }
+
+  /* Cell: tjänst + typ */
+  .ab-rh-svc { min-width:0; }
+  .ab-rh-svc .ab-svcname { font-size:13px; font-weight:600; color:var(--t1);
+    letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ab-rh-svc .ab-svcvar { font-size:11px; color:var(--t3); margin-top:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* Cell: typ + kategori */
+  .ab-rh-meta { display:flex; flex-direction:column; gap:5px; }
+  .ab-pills { display:flex; flex-wrap:wrap; gap:5px; }
+  .ab-pill { font-size:10px; padding:3px 8px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; line-height:1.3; }
+  .ab-pill.t-sub { background:rgba(219,105,35,0.18); color:var(--acc); border:0.5px solid rgba(219,105,35,0.35); }
+  .ab-pill.t-rate { background:rgba(99,102,241,0.18); color:#a5a8f0; border:0.5px solid rgba(99,102,241,0.35); }
+  .ab-pill.t-hyb { background:rgba(168,85,247,0.18); color:#c4a4f5; border:0.5px solid rgba(168,85,247,0.35); }
+  .ab-cat { font-size:11px; color:var(--t3); }
+
+  /* Cell: status */
+  .ab-rh-status .ab-st { font-size:11px; padding:4px 10px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; display:inline-block; line-height:1.3; }
+  .ab-st.s-aktiv { background:rgba(16,185,129,0.15); color:var(--ok); border:0.5px solid rgba(16,185,129,0.35); }
+  .ab-st.s-utgar { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
+  .ab-st.s-avslutad { background:rgba(255,255,255,0.05); color:var(--t3); border:0.5px solid var(--line); }
+  .ab-st.s-pausat,
+  .ab-st.s-vilande,
+  .ab-st.s-tvistig { background:rgba(248,113,113,0.12); color:var(--err); border:0.5px solid rgba(248,113,113,0.40); }
+
+  /* Cell: pris + slutdatum */
+  .ab-rh-cost { text-align:right; }
+  .ab-cost-v { font-size:14px; font-weight:700; color:var(--t1); letter-spacing:-0.01em; }
+  .ab-cost-v small { font-size:11px; font-weight:500; color:var(--t3); margin-left:2px; }
+  .ab-cost-end { font-size:11px; color:var(--t3); margin-top:2px; }
+
+  /* Cell: actions */
+  .ab-rh-act { display:flex; align-items:center; gap:6px; }
+  .ab-chev { width:22px; height:22px; display:flex; align-items:center; justify-content:center;
+    color:var(--t3); transition:transform 0.2s, color 0.2s; }
+  .ab-row.open .ab-chev { transform:rotate(180deg); color:var(--acc); }
+
+  /* Expand-panel */
+  .ab-rowbody { display:none; border-top:0.5px solid var(--line); padding:18px 20px;
+    background:var(--bg-deep); }
+  .ab-row.open .ab-rowbody { display:block; }
+
+  .ab-bgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:18px; }
+  @media (max-width:820px){ .ab-bgrid { grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:560px){ .ab-bgrid { grid-template-columns:1fr; } }
+
+  .ab-fld { }
+  .ab-fld-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em;
+    font-weight:600; margin-bottom:4px; }
+  .ab-fld-v { font-size:13px; color:var(--t1); }
+  .ab-fld-v.muted { color:var(--t3); }
+  .ab-fld-v a { color:var(--acc); text-decoration:none; }
+  .ab-fld-v a:hover { text-decoration:underline; }
+
+  /* Bilagor */
+  .ab-att { background:var(--bg); border:0.5px solid var(--line); border-radius:9px;
+    padding:14px 16px; margin-bottom:14px; }
+  .ab-att-h { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .ab-att-t { font-size:11px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em;
+    font-weight:600; }
+  .ab-att-list { display:flex; flex-direction:column; gap:6px; }
+  .ab-att-row { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 11px; background:rgba(255,255,255,0.02); border:0.5px solid var(--line);
+    border-radius:7px; }
+  .ab-att-meta { display:flex; align-items:center; gap:10px; min-width:0; }
+  .ab-att-ic { width:24px; height:30px; background:rgba(219,105,35,0.10);
+    border:0.5px solid rgba(219,105,35,0.30); border-radius:4px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; color:var(--acc); letter-spacing:0.05em; }
+  .ab-att-tx { min-width:0; }
+  .ab-att-name { font-size:12px; font-weight:600; color:var(--t1); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .ab-att-sub { font-size:10px; color:var(--t3); margin-top:1px; }
+  .ab-att-act { display:flex; gap:6px; flex-shrink:0; }
+  .ab-att-empty { font-size:12px; color:var(--t3); text-align:center; padding:14px 0;
+    font-style:italic; }
+
+  .ab-rowact { display:flex; gap:8px; justify-content:flex-end; padding-top:14px;
+    border-top:0.5px solid var(--line); }
+
+  /* Empty state */
+  .ab-empty { text-align:center; padding:48px 16px; color:var(--t3); font-size:13px;
+    background:var(--bg); border:1px dashed var(--line); border-radius:10px; }
+  .ab-empty .ab-empty-t { font-size:14px; color:var(--t2); margin-bottom:6px; }
+
+  /* Account-scope rad-variant (för Mira-abonnemang) */
+  .ab-row.account { background:linear-gradient(180deg,var(--bg) 0%,var(--bg-row) 100%); }
+
+  /* Create-modal */
+  .ab-mask { display:none; position:fixed; inset:0; background:rgba(10,12,22,0.78);
+    z-index:9000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto; }
+  .ab-mask.on { display:flex; }
+  .ab-modal { background:var(--bg); border:1px solid var(--line-strong); border-radius:14px;
+    width:100%; max-width:680px; overflow:hidden; }
+  .ab-modal-h { padding:18px 22px; border-bottom:0.5px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; }
+  .ab-modal-h h3 { font-family:Georgia,serif; font-size:20px; margin:0; font-weight:700; color:#fff; }
+  .ab-modal-close { width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,0.06);
+    border:0.5px solid var(--line-strong); color:var(--t1); cursor:pointer; font-size:16px;
+    line-height:28px; text-align:center; font-family:inherit; }
+  .ab-modal-b { padding:20px 22px; }
+
+  /* Type-väljare i create-modal */
+  .ab-typesel { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:18px; }
+  @media (max-width:560px){ .ab-typesel { grid-template-columns:1fr; } }
+  .ab-typecard { padding:14px 12px; background:rgba(255,255,255,0.02); border:1px solid var(--line);
+    border-radius:9px; cursor:pointer; transition:all 0.15s; }
+  .ab-typecard:hover { border-color:var(--line-strong); }
+  .ab-typecard.on { border-color:var(--acc); background:var(--acc-soft); }
+  .ab-typecard-t { font-size:13px; font-weight:600; color:var(--t1); margin-bottom:3px; }
+  .ab-typecard-d { font-size:11px; color:var(--t3); line-height:1.4; }
+
+  .ab-form-row { margin-bottom:13px; }
+  .ab-form-row label { display:block; font-size:10px; color:var(--t3); text-transform:uppercase;
+    letter-spacing:0.08em; font-weight:600; margin-bottom:5px; }
+  .ab-form-row input,
+  .ab-form-row select,
+  .ab-form-row textarea {
+    width:100%; padding:9px 11px; background:rgba(255,255,255,0.03);
+    border:0.5px solid var(--line-strong); border-radius:7px; color:var(--t1);
+    font-size:13px; font-family:inherit; outline:none; }
+  .ab-form-row input:focus,
+  .ab-form-row select:focus,
+  .ab-form-row textarea:focus { border-color:var(--acc); }
+  .ab-form-row textarea { resize:vertical; min-height:60px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; }
+  .ab-form-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:480px){ .ab-form-2 { grid-template-columns:1fr; } }
+  .ab-modal-foot { display:flex; justify-content:space-between; gap:10px;
+    padding:14px 22px; border-top:0.5px solid var(--line); background:var(--bg-deep); }
+</style>
+
+<!-- Bubble fyller hidden inputs när blocket bäddas in på riktigt -->
+<input type="hidden" id="ab_api_host"         value="https://mira-exchange.onrender.com">
+<input type="hidden" id="ab_planning_token"   value="">
+<input type="hidden" id="ab_clientcompany"    value="">
+<input type="hidden" id="ab_clientcompany_nm" value="">
+
+<div class="ab-kund">
+  <div class="ab-head">
+    <div class="ab-head-l">
+      <h2 id="ab-cust-name">Electronic Arts AB</h2>
+      <div class="ab-cust">Abonnemang &amp; avtal</div>
+    </div>
+    <div class="ab-head-r">
+      <div class="ab-sumblock">
+        <div class="ab-sk-l">Aktiva</div>
+        <div class="ab-sk-v" id="ab-sum-count">5 st</div>
+      </div>
+      <div class="ab-sumblock">
+        <div class="ab-sk-l">Per månad</div>
+        <div class="ab-sk-v" id="ab-sum-cost">258 412 kr</div>
+      </div>
+      <button class="ab-btn primary" id="ab-create-btn">+ Nytt abonnemang</button>
+    </div>
+  </div>
+
+  <div id="ab-sections"></div>
+
+  <!-- Create-modal -->
+  <div class="ab-mask" id="ab-create-mask">
+    <div class="ab-modal" role="dialog" aria-modal="true">
+      <div class="ab-modal-h">
+        <h3>Nytt abonnemang för Electronic Arts AB</h3>
+        <button class="ab-modal-close" id="ab-create-close" aria-label="Stäng">&times;</button>
+      </div>
+      <div class="ab-modal-b">
+        <div style="font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; margin-bottom:8px;">Kontraktstyp</div>
+        <div class="ab-typesel">
+          <div class="ab-typecard on" data-type="Subscription">
+            <div class="ab-typecard-t">Subscription</div>
+            <div class="ab-typecard-d">Fast månadskostnad. HK, Reception, Mira.</div>
+          </div>
+          <div class="ab-typecard" data-type="RateCard">
+            <div class="ab-typecard-t">RateCard</div>
+            <div class="ab-typecard-d">Roller × kr/h. Staff Bemanning.</div>
+          </div>
+          <div class="ab-typecard" data-type="Hybrid">
+            <div class="ab-typecard-t">Hybrid</div>
+            <div class="ab-typecard-d">Fast bas + rörlig debitering.</div>
+          </div>
+        </div>
+
+        <div class="ab-form-2">
+          <div class="ab-form-row">
+            <label>Erbjudande</label>
+            <select><option>Housekeeping — 5 dgr/vecka</option><option>Housekeeping — 3 dgr/vecka</option><option>Reception — Receptionist</option></select>
+          </div>
+          <div class="ab-form-row">
+            <label>Kontor</label>
+            <select><option>01 — Huvudkontoret, Södermalmsallén 36</option><option>02 — Filial Sundbyberg</option></select>
+          </div>
+        </div>
+
+        <div class="ab-form-2" id="ab-sub-fields">
+          <div class="ab-form-row">
+            <label>Månadskostnad (SEK, exkl. moms)</label>
+            <input type="number" placeholder="188 282">
+          </div>
+          <div class="ab-form-row">
+            <label>Antal</label>
+            <input type="number" value="1">
+          </div>
+          <div class="ab-form-row">
+            <label>Startdatum</label>
+            <input type="date">
+          </div>
+          <div class="ab-form-row">
+            <label>Slutdatum</label>
+            <input type="date">
+          </div>
+          <div class="ab-form-row">
+            <label>Bindning (mån)</label>
+            <input type="number" value="36">
+          </div>
+          <div class="ab-form-row">
+            <label>Uppsägningstid (mån)</label>
+            <input type="number" value="3">
+          </div>
+          <div class="ab-form-row">
+            <label>Auto-förlängning (mån, valfritt)</label>
+            <input type="number" placeholder="0 = ingen">
+          </div>
+          <div class="ab-form-row">
+            <label>Prisreglering</label>
+            <select>
+              <option value="index_cleaning">Cleaning Index (SCB/Almega)</option>
+              <option value="index_kpi">KPI</option>
+              <option value="lon_kollektiv">Lönekollektiv</option>
+              <option value="fast">Fast pris</option>
+              <option value="ingen">Ingen</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="ab-form-row">
+          <label>Volym (JSON — strukturerad: kvm, housekeepers, hours_mf…)</label>
+          <textarea rows="2" placeholder='{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}'></textarea>
+        </div>
+      </div>
+      <div class="ab-modal-foot">
+        <button class="ab-btn ghost" id="ab-create-cancel">Avbryt</button>
+        <div style="display:flex; gap:8px;">
+          <button class="ab-btn ghost" id="ab-create-draft">Spara som utkast</button>
+          <button class="ab-btn primary" id="ab-create-save">Skapa abonnemang</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Demo-data ─────────────────────────────────────────────────────────────
+  // Strukturen speglar /services/dashboard:s active_account + active_by_office
+  // plus full Contract-data per rad (med Fas 1-fälten).
+  var SAMPLE = {
+    customer: { id:'ea-demo', name:'Electronic Arts AB' },
+    offices: [
+      { id:'o1', kontors_id:'01', name:'Huvudkontoret', address:'Södermalmsallén 36, 118 28 Stockholm' },
+      { id:'o2', kontors_id:'02', name:'Filial Sundbyberg', address:'Esplanaden 14, 172 67 Sundbyberg' }
+    ],
+    account_contracts: [
+      { id:'c-mira-pro', service_name:'Mira-abonnemang', variant:'Pro · obegränsat användare',
+        contract_type:'Subscription', category:'platform',
+        monthly_cost:0, status:'aktiv',
+        startdatum:'2024-09-01', slutdatum:'2027-08-31',
+        binding_months:36, notice_months:3, auto_renew_months:12,
+        price_regulation_type:'ingen', price_regulation_next:null,
+        volume_json:'{"users": "unlimited"}', rate_card_json:null,
+        signed_at:'2024-08-25', signed_pdf:'mira-2024.pdf',
+        attachments:[
+          { name:'Avtal Mira Pro.pdf', kind:'huvuddok', size:'132 KB', uploaded:'2024-08-25' }
+        ],
+        offer_approval_id:'oar-mira-1', commission_id:null }
+    ],
+    contracts_by_office: {
+      o1: [
+        { id:'c-hk-01', service_name:'Housekeeping', variant:'5 dgr/vecka · 12 600 kvm',
+          contract_type:'Subscription', category:'Housekeeping',
+          monthly_cost:188282, status:'aktiv',
+          startdatum:'2025-12-01', slutdatum:'2028-11-30',
+          binding_months:36, notice_months:3, auto_renew_months:null,
+          price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+          volume_json:'{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}',
+          rate_card_json:null,
+          signed_at:'2025-09-05', signed_pdf:'hk-ea-dice-signed.pdf',
+          attachments:[
+            { name:'Huvudavtal HK x EA.pdf', kind:'huvuddok', size:'344 KB', uploaded:'2025-09-05' },
+            { name:'Appendix 2 - Floor Plan.pdf', kind:'bilaga', size:'2.7 MB', uploaded:'2025-08-01' },
+            { name:'Appendix 4 - Price List 20250825.docx', kind:'bilaga', size:'62 KB', uploaded:'2025-08-25' },
+            { name:'Appendix 5 - KPI & SLA.pdf', kind:'bilaga', size:'90 KB', uploaded:'2025-07-24' },
+            { name:'Appendix 7 - Consumables Price List.xlsx', kind:'bilaga', size:'23 KB', uploaded:'2026-01-08' }
+          ],
+          offer_approval_id:'oar-hk-1', commission_id:'c-1' },
+
+        { id:'c-rec-01', service_name:'Reception', variant:'Concierge · 1 person',
+          contract_type:'Subscription', category:'Other facility services',
+          monthly_cost:79990, status:'utgar_snart',
+          startdatum:'2025-01-15', slutdatum:'2026-07-14',
+          binding_months:12, notice_months:3, auto_renew_months:12,
+          price_regulation_type:'lon_kollektiv', price_regulation_next:'2026-07-01',
+          volume_json:'{"persons": 1, "hours_per_week": 40}', rate_card_json:null,
+          signed_at:'2024-12-10', signed_pdf:'rec-ea-2025.pdf',
+          attachments:[
+            { name:'Huvudavtal Reception.pdf', kind:'huvuddok', size:'180 KB', uploaded:'2024-12-10' }
+          ],
+          offer_approval_id:'oar-rec-1', commission_id:'c-2' },
+
+        { id:'c-staff-01', service_name:'Staff Bemanning', variant:'Ramavtal · 10 roller',
+          contract_type:'RateCard', category:'Staff',
+          monthly_cost:0, status:'aktiv',
+          startdatum:'2025-05-01', slutdatum:'2027-05-01',
+          binding_months:24, notice_months:3, auto_renew_months:null,
+          price_regulation_type:'lon_kollektiv', price_regulation_next:'2027-07-01',
+          volume_json:null,
+          rate_card_json:'[{"role":"Hovmästare","price_per_h":428},{"role":"Bartender Trend","price_per_h":400},{"role":"Servering","price_per_h":365},{"role":"Restaurangbiträde","price_per_h":315},{"role":"Kock","price_per_h":402},{"role":"Souschef","price_per_h":440},{"role":"Köksbiträde","price_per_h":315},{"role":"Diskare","price_per_h":300},{"role":"Reception","price_per_h":375},{"role":"Housekeeping","price_per_h":350}]',
+          signed_at:'2025-04-15', signed_pdf:'staff-ea-bemanning.pdf',
+          attachments:[
+            { name:'Bemanningsavtal EA.pdf', kind:'huvuddok', size:'180 KB', uploaded:'2025-04-15' }
+          ],
+          offer_approval_id:'oar-staff-1', commission_id:'c-3' }
+      ],
+      o2: [
+        { id:'c-hk-02', service_name:'Housekeeping', variant:'3 dgr/vecka · 4 800 kvm',
+          contract_type:'Subscription', category:'Housekeeping',
+          monthly_cost:67450, status:'aktiv',
+          startdatum:'2026-02-01', slutdatum:'2029-01-31',
+          binding_months:36, notice_months:3, auto_renew_months:null,
+          price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+          volume_json:'{"kvm": 4800, "housekeepers": 3, "hours_mf": 12}',
+          rate_card_json:null,
+          signed_at:'2026-01-20', signed_pdf:'hk-sundbyberg-2026.pdf',
+          attachments:[
+            { name:'Avtal HK Sundbyberg.pdf', kind:'huvuddok', size:'298 KB', uploaded:'2026-01-20' }
+          ],
+          offer_approval_id:'oar-hk-2', commission_id:'c-4' }
+      ]
+    }
+  };
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function fmtKr(v){
+    var n = Math.round(Number(v)||0);
+    return n.toLocaleString('sv-SE') + ' kr';
+  }
+  function fmtDate(s){
+    if(!s) return '—';
+    var d = new Date(s);
+    if(isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('sv-SE',{year:'numeric',month:'short',day:'numeric'});
+  }
+  function daysUntil(s){
+    if(!s) return null;
+    var d = new Date(s).getTime();
+    if(isNaN(d)) return null;
+    return Math.round((d - Date.now()) / 86400000);
+  }
+
+  function typePillHtml(t){
+    var cls = 'ab-pill ' + (t==='Subscription' ? 't-sub' : t==='RateCard' ? 't-rate' : 't-hyb');
+    return '<span class="'+cls+'">'+esc(t)+'</span>';
+  }
+  function statusPillHtml(s, slutdatum){
+    var d = daysUntil(slutdatum);
+    var label = s;
+    if(s==='aktiv') label='Aktiv';
+    else if(s==='utgar_snart') label = 'Utgår ' + (d!=null ? 'om '+d+' d' : 'snart');
+    else if(s==='avslutad') label='Avslutad';
+    else if(s==='pausat') label='Pausat';
+    else if(s==='vilande') label='Vilande';
+    else if(s==='tvistig') label='Tvistig';
+    return '<span class="ab-st s-'+esc(s)+'">'+esc(label)+'</span>';
+  }
+
+  function rowHtml(ct){
+    var costLine = ct.contract_type==='RateCard'
+      ? '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · '+(ct.rate_card_json?JSON.parse(ct.rate_card_json).length:0)+' roller</div>'
+      : '<div class="ab-cost-v">'+fmtKr(ct.monthly_cost)+'<small>/mån</small></div><div class="ab-cost-end">Utgår '+fmtDate(ct.slutdatum)+'</div>';
+
+    var attCount = (ct.attachments||[]).length;
+    var attListHtml = attCount === 0
+      ? '<div class="ab-att-empty">Inga bilagor ännu. Ladda upp för att koppla Floor Plan, Price List, KPI/SLA m.fl.</div>'
+      : (ct.attachments.map(function(a){
+          var label = a.kind==='huvuddok' ? 'Huvuddok' : 'Bilaga';
+          return '<div class="ab-att-row">'
+            + '<div class="ab-att-meta">'
+            +   '<div class="ab-att-ic">PDF</div>'
+            +   '<div class="ab-att-tx">'
+            +     '<div class="ab-att-name">'+esc(a.name)+'</div>'
+            +     '<div class="ab-att-sub">'+esc(label)+' · '+esc(a.size)+' · uppladdad '+fmtDate(a.uploaded)+'</div>'
+            +   '</div>'
+            + '</div>'
+            + '<div class="ab-att-act">'
+            +   '<button class="ab-btn ghost tiny">Visa</button>'
+            +   '<button class="ab-btn ghost tiny">Ersätt</button>'
+            +   '<button class="ab-btn danger tiny">Ta bort</button>'
+            + '</div>'
+          + '</div>';
+        }).join(''));
+
+    var rateCardPreview = '';
+    if (ct.contract_type === 'RateCard' && ct.rate_card_json) {
+      try {
+        var arr = JSON.parse(ct.rate_card_json);
+        rateCardPreview = '<div class="ab-att" style="margin-top:0;">'
+          + '<div class="ab-att-h"><div class="ab-att-t">Rate-card ('+arr.length+' roller)</div></div>'
+          + '<div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px 16px;">'
+          + arr.slice(0, 10).map(function(r){
+              return '<div style="display:flex; justify-content:space-between; font-size:12px; padding:4px 0; border-bottom:0.5px solid var(--line);">'
+                + '<span style="color:var(--t2);">'+esc(r.role)+'</span>'
+                + '<span style="color:var(--t1); font-weight:600;">'+fmtKr(r.price_per_h)+'<small style="color:var(--t3); font-weight:500;">/h</small></span>'
+                + '</div>';
+            }).join('')
+          + '</div></div>';
+      } catch (_) {}
+    }
+
+    return ''
+      + '<div class="ab-row" data-id="'+esc(ct.id)+'">'
+      +   '<div class="ab-rowhead">'
+      +     '<div class="ab-rh-svc">'
+      +       '<div class="ab-svcname">'+esc(ct.service_name)+'</div>'
+      +       '<div class="ab-svcvar">'+esc(ct.variant)+'</div>'
+      +     '</div>'
+      +     '<div class="ab-rh-meta">'
+      +       '<div class="ab-pills">'+typePillHtml(ct.contract_type)+'</div>'
+      +       '<div class="ab-cat">'+esc(ct.category)+'</div>'
+      +     '</div>'
+      +     '<div class="ab-rh-status">'+statusPillHtml(ct.status, ct.slutdatum)+'</div>'
+      +     '<div class="ab-rh-cost">'+costLine+'</div>'
+      +     '<div class="ab-rh-act">'
+      +       '<div class="ab-chev">'
+      +         '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      +       '</div>'
+      +     '</div>'
+      +   '</div>'
+      +   '<div class="ab-rowbody">'
+      +     '<div class="ab-bgrid">'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Startdatum</div><div class="ab-fld-v">'+fmtDate(ct.startdatum)+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Slutdatum</div><div class="ab-fld-v">'+fmtDate(ct.slutdatum)+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Signerat</div><div class="ab-fld-v">'+fmtDate(ct.signed_at)+(ct.signed_pdf?' · <a href="#">'+esc(ct.signed_pdf)+'</a>':'')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Bindning</div><div class="ab-fld-v">'+(ct.binding_months?ct.binding_months+' mån':'—')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Uppsägning</div><div class="ab-fld-v">'+(ct.notice_months?ct.notice_months+' mån':'—')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Auto-förlängning</div><div class="ab-fld-v '+(ct.auto_renew_months?'':'muted')+'">'+(ct.auto_renew_months?ct.auto_renew_months+' mån':'Ingen')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Prisreglering</div><div class="ab-fld-v">'+esc(ct.price_regulation_type||'—')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Nästa prisrev.</div><div class="ab-fld-v '+(ct.price_regulation_next?'':'muted')+'">'+(ct.price_regulation_next?fmtDate(ct.price_regulation_next):'—')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Signeringsprocess</div><div class="ab-fld-v">'+(ct.offer_approval_id?'<a href="#">'+esc(ct.offer_approval_id)+'</a>':'<span class="muted">—</span>')+'</div></div>'
+      +     '</div>'
+      +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">'+esc(ct.volume_json)+'</div></div>' : '')
+      +     rateCardPreview
+      +     '<div class="ab-att">'
+      +       '<div class="ab-att-h">'
+      +         '<div class="ab-att-t">Bilagor ('+attCount+')</div>'
+      +         '<button class="ab-btn ghost tiny">+ Ladda upp</button>'
+      +       '</div>'
+      +       '<div class="ab-att-list">'+attListHtml+'</div>'
+      +     '</div>'
+      +     '<div class="ab-rowact">'
+      +       '<button class="ab-btn ghost tiny">Redigera</button>'
+      +       '<button class="ab-btn ghost tiny">Pausa</button>'
+      +       '<button class="ab-btn danger tiny">Avsluta</button>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+  }
+
+  function sectionHtml(title, kontorsId, addr, contracts, isAccount){
+    var rows = contracts.map(rowHtml).join('');
+    var idLabel = kontorsId ? '<span class="ab-sect-id">'+esc(kontorsId)+'</span>' : '';
+    var addrLabel = addr ? '<div class="ab-sect-addr">'+esc(addr)+'</div>' : '';
+    return ''
+      + '<div class="ab-sect">'
+      +   '<div class="ab-sect-h">'
+      +     '<div class="ab-sect-l">'
+      +       '<div class="ab-sect-name">'+esc(title)+'</div>'
+      +       idLabel
+      +     '</div>'
+      +     addrLabel
+      +   '</div>'
+      +   '<div class="ab-rows">'+rows+'</div>'
+      + '</div>';
+  }
+
+  function renderAll(){
+    var sections = [];
+
+    // Account-scope (Mira) — alltid överst om finns
+    if (SAMPLE.account_contracts && SAMPLE.account_contracts.length > 0) {
+      sections.push(sectionHtml('Account-scope', 'Account', 'Gäller hela kunden — oavsett kontor',
+        SAMPLE.account_contracts, true));
+    }
+
+    // Office-scope
+    SAMPLE.offices.forEach(function(of){
+      var list = (SAMPLE.contracts_by_office[of.id] || []);
+      if (list.length === 0) {
+        sections.push('<div class="ab-sect">'
+          + '<div class="ab-sect-h"><div class="ab-sect-l"><div class="ab-sect-name">'+esc(of.name)+'</div><span class="ab-sect-id">'+esc(of.kontors_id)+'</span></div><div class="ab-sect-addr">'+esc(of.address)+'</div></div>'
+          + '<div class="ab-empty"><div class="ab-empty-t">Inga abonnemang för detta kontor</div>Klicka "+ Nytt abonnemang" för att lägga till.</div>'
+          + '</div>');
+      } else {
+        sections.push(sectionHtml(of.name, of.kontors_id, of.address, list, false));
+      }
+    });
+
+    $('ab-sections').innerHTML = sections.join('');
+
+    // Sätt total + count
+    var allCt = (SAMPLE.account_contracts || []).slice();
+    SAMPLE.offices.forEach(function(of){ allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
+    var aktiva = allCt.filter(function(c){ return c.status==='aktiv' || c.status==='utgar_snart'; });
+    var totMonthly = allCt
+      .filter(function(c){ return c.contract_type==='Subscription' && (c.status==='aktiv' || c.status==='utgar_snart'); })
+      .reduce(function(sum, c){ return sum + Number(c.monthly_cost || 0); }, 0);
+    $('ab-sum-count').textContent = aktiva.length + ' st';
+    $('ab-sum-cost').textContent = fmtKr(totMonthly);
+    if (SAMPLE.customer && SAMPLE.customer.name) $('ab-cust-name').textContent = SAMPLE.customer.name;
+
+    // Bind click → expand
+    document.querySelectorAll('.ab-kund .ab-rowhead').forEach(function(head){
+      head.addEventListener('click', function(){
+        head.parentElement.classList.toggle('open');
+      });
+    });
+  }
+
+  // Create-modal
+  $('ab-create-btn').addEventListener('click', function(){ $('ab-create-mask').classList.add('on'); });
+  $('ab-create-close').addEventListener('click', function(){ $('ab-create-mask').classList.remove('on'); });
+  $('ab-create-cancel').addEventListener('click', function(){ $('ab-create-mask').classList.remove('on'); });
+  document.querySelectorAll('.ab-typesel .ab-typecard').forEach(function(card){
+    card.addEventListener('click', function(){
+      document.querySelectorAll('.ab-typesel .ab-typecard').forEach(function(c){ c.classList.remove('on'); });
+      card.classList.add('on');
+    });
+  });
+
+  // ── Live data-fetch (Fas 2a) ────────────────────────────────────────────
+  // Om hidden inputs ab_clientcompany + ab_planning_token är satta av Bubble:
+  // hämta verklig data från Render. Annars kör demo-SAMPLE.
+  function readHidden(id){ var e = $(id); return e ? String(e.value||'').trim() : ''; }
+  async function loadLive(){
+    var apiHost = readHidden('ab_api_host') || 'https://mira-exchange.onrender.com';
+    var token   = readHidden('ab_planning_token');
+    var ccId    = readHidden('ab_clientcompany');
+    if (!token || !ccId) return; // demo-läge
+
+    try {
+      var r = await fetch(apiHost + '/admin/contracts/by-company?company_id=' + encodeURIComponent(ccId), {
+        headers: { 'x-admin-token': token }
+      });
+      if (!r.ok) { console.warn('[ab] fetch failed', r.status); return; }
+      var data = await r.json();
+      if (!data.ok) { console.warn('[ab] api error', data.error); return; }
+
+      // Mappa backend-format → SAMPLE (samma struktur sedan grunden — minimal anpassning)
+      SAMPLE.customer = data.customer || SAMPLE.customer;
+      SAMPLE.offices  = (data.offices || []).map(function(o){
+        return { id:o.id, kontors_id:o.kontors_id||'—', name:o.name||'Kontor', address:o.address||'' };
+      });
+      // attachments från BE är ID-array. För kund-fliken visar vi count tills Fas 2d
+      // lägger till per-Dokument meta. Mappa till tom-array-objekt med rätt count.
+      function mapCt(c){
+        var ids = Array.isArray(c.attachments) ? c.attachments : [];
+        c.attachments = ids.map(function(id, i){
+          return { name:'Bilaga ' + (i+1), kind:i===0?'huvuddok':'bilaga', size:'—', uploaded:c.signed_at };
+        });
+        // Backend ger service_name/service_variant; SAMPLE använder samma → ingen ompackning
+        return c;
+      }
+      SAMPLE.account_contracts = (data.account_contracts || []).map(mapCt);
+      SAMPLE.contracts_by_office = {};
+      Object.keys(data.contracts_by_office || {}).forEach(function(oid){
+        SAMPLE.contracts_by_office[oid] = (data.contracts_by_office[oid] || []).map(mapCt);
+      });
+
+      console.log('[ab] live-data laddad: ' + (data.total_contracts || 0) + ' contracts');
+      renderAll();
+    } catch (e) {
+      console.warn('[ab] live-fetch fail', e?.message);
+      // Fallback: SAMPLE-data redan renderad
+    }
+  }
+
+  renderAll();
+  loadLive();
+})();
+</script>

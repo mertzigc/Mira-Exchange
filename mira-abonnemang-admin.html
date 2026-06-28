@@ -1,0 +1,753 @@
+<!--
+  MIRA – ABONNEMANG ADMIN (GLOBAL VY)  — SKISS Fas 2, 2026-06-28
+  -------------------------------------------------------------
+  Egen sida i Carotte-backend. Sorterbar tabell över ALLA Contracts
+  oavsett kund. Filter på status / kategori / kontraktstyp / kund /
+  slutdatum-range. Klick på rad → expand med samma detalj-panel som
+  kundkort-fliken.
+
+  DESIGN-SPRÅK lånat från mira-kund-dashboard-tjanster.html
+  + mira-abonnemang-kund.html.
+
+  STATUS: STATISK SKISS. Demo-data hårdkodad i SAMPLE. Ingen Render-
+  koppling. För UX-feedback.
+
+  KOMMANDE KOPPLING I BUBBLE (Fas 2 backend):
+    #aa_api_host         = https://mira-exchange.onrender.com
+    #aa_planning_token   = <PLANNING_ADMIN_TOKEN>
+-->
+
+<style>
+  .aa-admin * { box-sizing: border-box; }
+  .aa-admin {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    width: 100%;
+    --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
+    --line:rgba(255,255,255,0.07); --line-strong:rgba(255,255,255,0.14);
+    --acc:#db6923; --acc-soft:rgba(219,105,35,0.15);
+    --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35); --t4:rgba(255,255,255,0.20);
+    --ok:#10b981; --warn:#facc15; --err:#f87171; --info:#6366f1;
+    color: var(--t1);
+    background: var(--bg-deep);
+    padding: 24px 28px;
+    border-radius: 12px;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .aa-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap;
+    margin-bottom:20px; padding-bottom:16px; border-bottom:0.5px solid var(--line); }
+  .aa-head h1 { font-family:Georgia,serif; font-size:28px; font-weight:700; margin:0;
+    letter-spacing:-0.01em; color:#fff; line-height:1.1; }
+  .aa-head-sub { font-size:11px; color:var(--t3); margin-top:5px;
+    text-transform:uppercase; letter-spacing:0.10em; }
+  .aa-head-r { display:flex; align-items:center; gap:14px; }
+
+  .aa-kpis { display:flex; gap:24px; padding-right:14px;
+    border-right:0.5px solid var(--line); }
+  .aa-kpi { text-align:right; }
+  .aa-kpi-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
+  .aa-kpi-v { font-size:20px; font-weight:800; color:#fff; letter-spacing:-0.01em; margin-top:2px; }
+  .aa-kpi-v.acc { color:var(--acc); }
+  .aa-kpi-v.warn { color:var(--warn); }
+
+  .aa-btn { padding:10px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+    font-family:inherit; transition:all 0.15s; border:none; line-height:1; }
+  .aa-btn.primary { background:var(--acc); color:#1c1206; font-weight:700; }
+  .aa-btn.primary:hover { background:#ff8c45; }
+  .aa-btn.ghost { background:transparent; border:0.5px solid var(--line-strong); color:var(--t1); }
+  .aa-btn.ghost:hover { border-color:var(--t2); }
+  .aa-btn.tiny { padding:6px 10px; font-size:11px; }
+  .aa-btn.danger { background:rgba(248,113,113,0.10); border:0.5px solid rgba(248,113,113,0.35); color:var(--err); }
+  .aa-btn.danger:hover { background:rgba(248,113,113,0.18); }
+
+  /* Filter-rad */
+  .aa-filters { background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:14px 16px; margin-bottom:14px;
+    display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  .aa-fgroup { display:flex; align-items:center; gap:6px; min-width:0; }
+  .aa-fl { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
+
+  .aa-search { padding:8px 12px; background:rgba(255,255,255,0.03);
+    border:0.5px solid var(--line-strong); border-radius:7px; color:var(--t1);
+    font-size:12px; font-family:inherit; outline:none; min-width:240px; }
+  .aa-search:focus { border-color:var(--acc); }
+  .aa-search::placeholder { color:var(--t3); }
+
+  .aa-chip-row { display:flex; gap:5px; flex-wrap:wrap; }
+  .aa-chip { font-size:11px; padding:5px 10px; border-radius:20px;
+    background:rgba(255,255,255,0.03); border:0.5px solid var(--line); color:var(--t2);
+    cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3; }
+  .aa-chip:hover { border-color:var(--line-strong); color:var(--t1); }
+  .aa-chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); font-weight:600; }
+  .aa-chip.on.ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
+  .aa-chip.on.warn { background:rgba(250,204,21,0.18); border-color:var(--warn); color:var(--warn); }
+
+  .aa-date { padding:6px 9px; background:rgba(255,255,255,0.03);
+    border:0.5px solid var(--line-strong); border-radius:6px; color:var(--t1);
+    font-size:11px; font-family:inherit; outline:none; }
+  .aa-date:focus { border-color:var(--acc); }
+  .aa-date-sep { font-size:11px; color:var(--t3); }
+
+  .aa-filters-clear { font-size:11px; color:var(--t3); cursor:pointer; padding:5px 10px;
+    border-radius:6px; transition:all 0.15s; }
+  .aa-filters-clear:hover { color:var(--acc); }
+
+  /* Tabell */
+  .aa-tablewrap { background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; }
+  .aa-tablecount { padding:11px 16px; font-size:11px; color:var(--t3);
+    text-transform:uppercase; letter-spacing:0.08em; border-bottom:0.5px solid var(--line);
+    display:flex; justify-content:space-between; align-items:center; }
+  .aa-tablecount b { color:var(--t1); font-weight:700; }
+
+  .aa-table { width:100%; border-collapse:collapse; }
+  .aa-table thead th { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em;
+    font-weight:600; text-align:left; padding:11px 14px; cursor:pointer; user-select:none;
+    border-bottom:0.5px solid var(--line); background:rgba(0,0,0,0.10); }
+  .aa-table thead th.right { text-align:right; }
+  .aa-table thead th:hover { color:var(--t1); }
+  .aa-table thead th .aa-sort { display:inline-block; margin-left:4px; opacity:0.4; font-size:9px; }
+  .aa-table thead th.sorted .aa-sort { opacity:1; color:var(--acc); }
+
+  .aa-table tbody tr { border-bottom:0.5px solid var(--line); transition:background 0.1s; }
+  .aa-table tbody tr:hover { background:rgba(255,255,255,0.025); cursor:pointer; }
+  .aa-table tbody tr.open { background:rgba(219,105,35,0.05); }
+  .aa-table tbody td { padding:13px 14px; font-size:12px; vertical-align:middle; }
+  .aa-table tbody td.right { text-align:right; }
+
+  /* Cell-innehåll */
+  .aa-c-cust { font-size:13px; font-weight:600; color:var(--t1); }
+  .aa-c-cust-sub { font-size:10px; color:var(--t3); margin-top:1px; }
+  .aa-c-svc { font-size:12px; font-weight:500; color:var(--t1); }
+  .aa-c-svc-sub { font-size:10px; color:var(--t3); margin-top:1px; }
+  .aa-c-office { display:flex; align-items:center; gap:6px; }
+  .aa-c-office-id { font-size:10px; color:var(--t3); background:rgba(255,255,255,0.05);
+    padding:2px 6px; border-radius:4px; font-weight:600; }
+  .aa-c-office-n { font-size:11px; color:var(--t2); }
+  .aa-c-cost { font-size:13px; font-weight:700; color:var(--t1); letter-spacing:-0.01em; }
+  .aa-c-cost small { font-size:10px; font-weight:500; color:var(--t3); margin-left:2px; }
+  .aa-c-cost.rate { font-size:11px; font-weight:500; color:var(--t2); font-style:italic; }
+  .aa-c-end { font-size:12px; color:var(--t1); }
+  .aa-c-end-sub { font-size:10px; color:var(--t3); margin-top:1px; }
+  .aa-c-end-sub.warn { color:var(--warn); }
+
+  /* Pill (samma som kund-blocket) */
+  .aa-pill { font-size:10px; padding:3px 8px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; line-height:1.3;
+    display:inline-block; }
+  .aa-pill.t-sub { background:rgba(219,105,35,0.18); color:var(--acc); border:0.5px solid rgba(219,105,35,0.35); }
+  .aa-pill.t-rate { background:rgba(99,102,241,0.18); color:#a5a8f0; border:0.5px solid rgba(99,102,241,0.35); }
+  .aa-pill.t-hyb { background:rgba(168,85,247,0.18); color:#c4a4f5; border:0.5px solid rgba(168,85,247,0.35); }
+
+  .aa-st { font-size:10px; padding:3px 8px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; display:inline-block; line-height:1.3; }
+  .aa-st.s-aktiv { background:rgba(16,185,129,0.15); color:var(--ok); border:0.5px solid rgba(16,185,129,0.35); }
+  .aa-st.s-utgar_snart { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
+  .aa-st.s-avslutad { background:rgba(255,255,255,0.05); color:var(--t3); border:0.5px solid var(--line); }
+  .aa-st.s-pausat,
+  .aa-st.s-vilande,
+  .aa-st.s-tvistig { background:rgba(248,113,113,0.12); color:var(--err); border:0.5px solid rgba(248,113,113,0.40); }
+
+  /* Expand-rad (under huvudraden) */
+  .aa-expand-tr { display:none; }
+  .aa-expand-tr.on { display:table-row; }
+  .aa-expand-cell { padding:0 !important; }
+  .aa-expand-inner { background:var(--bg-deep); padding:20px 24px; border-top:0.5px solid var(--line);
+    border-bottom:0.5px solid var(--line); }
+  .aa-expand-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; margin-bottom:16px; }
+  @media (max-width:1024px){ .aa-expand-grid { grid-template-columns:repeat(3,1fr); } }
+  @media (max-width:760px){ .aa-expand-grid { grid-template-columns:repeat(2,1fr); } }
+
+  .aa-fld-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em;
+    font-weight:600; margin-bottom:4px; }
+  .aa-fld-v { font-size:13px; color:var(--t1); }
+  .aa-fld-v.muted { color:var(--t3); }
+  .aa-fld-v a { color:var(--acc); text-decoration:none; }
+  .aa-fld-v a:hover { text-decoration:underline; }
+
+  .aa-att { background:var(--bg); border:0.5px solid var(--line); border-radius:9px;
+    padding:14px 16px; margin-bottom:14px; }
+  .aa-att-h { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .aa-att-t { font-size:11px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
+  .aa-att-list { display:flex; flex-direction:column; gap:6px; }
+  .aa-att-row { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 11px; background:rgba(255,255,255,0.02); border:0.5px solid var(--line); border-radius:7px; }
+  .aa-att-meta { display:flex; align-items:center; gap:10px; min-width:0; }
+  .aa-att-ic { width:24px; height:30px; background:rgba(219,105,35,0.10);
+    border:0.5px solid rgba(219,105,35,0.30); border-radius:4px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; color:var(--acc); letter-spacing:0.05em; }
+  .aa-att-tx { min-width:0; }
+  .aa-att-name { font-size:12px; font-weight:600; color:var(--t1); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .aa-att-sub { font-size:10px; color:var(--t3); margin-top:1px; }
+  .aa-att-empty { font-size:12px; color:var(--t3); text-align:center; padding:14px 0; font-style:italic; }
+  .aa-att-act { display:flex; gap:6px; flex-shrink:0; }
+
+  .aa-expand-foot { display:flex; justify-content:space-between; align-items:center;
+    padding-top:14px; border-top:0.5px solid var(--line); }
+  .aa-expand-meta { font-size:11px; color:var(--t3); }
+  .aa-expand-meta b { color:var(--t2); font-weight:600; }
+  .aa-expand-actions { display:flex; gap:8px; }
+
+  /* Pagination + empty */
+  .aa-pag { padding:14px 16px; border-top:0.5px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--t3); }
+  .aa-pag-c { display:flex; gap:6px; align-items:center; }
+
+  .aa-empty { text-align:center; padding:60px 16px; color:var(--t3); font-size:13px; }
+  .aa-empty-t { font-size:14px; color:var(--t2); margin-bottom:6px; }
+</style>
+
+<input type="hidden" id="aa_api_host"       value="https://mira-exchange.onrender.com">
+<input type="hidden" id="aa_planning_token" value="">
+
+<div class="aa-admin">
+  <div class="aa-head">
+    <div>
+      <h1>Alla abonnemang</h1>
+      <div class="aa-head-sub">Global översikt · alla kunder · alla kontor</div>
+    </div>
+    <div class="aa-head-r">
+      <div class="aa-kpis">
+        <div class="aa-kpi">
+          <div class="aa-kpi-l">Aktiva</div>
+          <div class="aa-kpi-v" id="aa-kpi-aktiva">42</div>
+        </div>
+        <div class="aa-kpi">
+          <div class="aa-kpi-l">Per månad</div>
+          <div class="aa-kpi-v acc" id="aa-kpi-monthly">1,8 Mkr</div>
+        </div>
+        <div class="aa-kpi">
+          <div class="aa-kpi-l">Utgår &lt;30 d</div>
+          <div class="aa-kpi-v warn" id="aa-kpi-utgar">3</div>
+        </div>
+      </div>
+      <button class="aa-btn primary" id="aa-create-btn">+ Nytt abonnemang</button>
+    </div>
+  </div>
+
+  <div class="aa-filters">
+    <div class="aa-fgroup">
+      <input type="text" class="aa-search" id="aa-search" placeholder="Sök kund eller tjänst...">
+    </div>
+
+    <div class="aa-fgroup">
+      <span class="aa-fl">Status</span>
+      <div class="aa-chip-row" id="aa-fil-status">
+        <div class="aa-chip on ok" data-val="aktiv">Aktiv</div>
+        <div class="aa-chip on warn" data-val="utgar_snart">Utgår snart</div>
+        <div class="aa-chip" data-val="avslutad">Avslutad</div>
+        <div class="aa-chip" data-val="pausat">Pausat</div>
+      </div>
+    </div>
+
+    <div class="aa-fgroup">
+      <span class="aa-fl">Typ</span>
+      <div class="aa-chip-row" id="aa-fil-type">
+        <div class="aa-chip on" data-val="Subscription">Subscription</div>
+        <div class="aa-chip on" data-val="RateCard">RateCard</div>
+        <div class="aa-chip on" data-val="Hybrid">Hybrid</div>
+      </div>
+    </div>
+
+    <div class="aa-fgroup">
+      <span class="aa-fl">Kategori</span>
+      <div class="aa-chip-row" id="aa-fil-cat">
+        <div class="aa-chip on" data-val="Housekeeping">Housekeeping</div>
+        <div class="aa-chip on" data-val="Staff">Staff</div>
+        <div class="aa-chip on" data-val="Food &amp; Event">Food &amp; Event</div>
+        <div class="aa-chip on" data-val="Other facility services">Other facility</div>
+        <div class="aa-chip on" data-val="platform">Mira</div>
+      </div>
+    </div>
+
+    <div class="aa-fgroup">
+      <span class="aa-fl">Slutdatum</span>
+      <input type="date" class="aa-date" id="aa-fil-from">
+      <span class="aa-date-sep">→</span>
+      <input type="date" class="aa-date" id="aa-fil-to">
+    </div>
+
+    <span class="aa-filters-clear" id="aa-fil-clear">Rensa filter</span>
+  </div>
+
+  <div class="aa-tablewrap">
+    <div class="aa-tablecount">
+      Visar <b id="aa-shown-count">12</b> av <b id="aa-total-count">12</b> abonnemang
+      <span style="color:var(--t3); font-weight:400;">Klicka rad för detaljer</span>
+    </div>
+
+    <table class="aa-table">
+      <thead>
+        <tr>
+          <th data-sort="customer">Kund <span class="aa-sort">▼</span></th>
+          <th data-sort="office">Kontor <span class="aa-sort">▼</span></th>
+          <th data-sort="service">Tjänst <span class="aa-sort">▼</span></th>
+          <th data-sort="type">Typ <span class="aa-sort">▼</span></th>
+          <th data-sort="status">Status <span class="aa-sort">▼</span></th>
+          <th data-sort="cost" class="right">Månadskostnad <span class="aa-sort">▼</span></th>
+          <th data-sort="end" class="sorted right">Slutdatum <span class="aa-sort">▲</span></th>
+        </tr>
+      </thead>
+      <tbody id="aa-tbody"></tbody>
+    </table>
+
+    <div class="aa-pag">
+      <span>Sida 1 av 1 · 12 rader</span>
+      <div class="aa-pag-c">
+        <button class="aa-btn ghost tiny" disabled>← Förra</button>
+        <button class="aa-btn ghost tiny" disabled>Nästa →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var SAMPLE = [
+    // EA Digital Illusions
+    { id:'c-hk-01', customer:'Electronic Arts AB', customer_id:'ea',
+      office_id:'01', office_name:'Huvudkontoret', office_addr:'Södermalmsallén 36',
+      service_name:'Housekeeping', service_variant:'5 dgr/vecka · 12 600 kvm',
+      contract_type:'Subscription', category:'Housekeeping',
+      monthly_cost:188282, status:'aktiv',
+      startdatum:'2025-12-01', slutdatum:'2028-11-30',
+      binding_months:36, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+      signed_at:'2025-09-05', signed_pdf:'hk-ea-dice-signed.pdf',
+      attachments_count:5, offer_approval_id:'oar-hk-1' },
+
+    { id:'c-rec-01', customer:'Electronic Arts AB', customer_id:'ea',
+      office_id:'01', office_name:'Huvudkontoret',
+      service_name:'Reception', service_variant:'Concierge · 1 person',
+      contract_type:'Subscription', category:'Other facility services',
+      monthly_cost:79990, status:'utgar_snart',
+      startdatum:'2025-01-15', slutdatum:'2026-07-14',
+      binding_months:12, notice_months:3, auto_renew_months:12,
+      price_regulation_type:'lon_kollektiv', price_regulation_next:'2026-07-01',
+      signed_at:'2024-12-10', signed_pdf:'rec-ea-2025.pdf', attachments_count:1, offer_approval_id:'oar-rec-1' },
+
+    { id:'c-staff-01', customer:'Electronic Arts AB', customer_id:'ea',
+      office_id:'01', office_name:'Huvudkontoret',
+      service_name:'Staff Bemanning', service_variant:'Ramavtal · 10 roller',
+      contract_type:'RateCard', category:'Staff',
+      monthly_cost:0, status:'aktiv',
+      startdatum:'2025-05-01', slutdatum:'2027-05-01',
+      binding_months:24, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'lon_kollektiv', price_regulation_next:'2027-07-01',
+      signed_at:'2025-04-15', signed_pdf:'staff-ea-bemanning.pdf', attachments_count:1, offer_approval_id:'oar-staff-1' },
+
+    { id:'c-mira-1', customer:'Electronic Arts AB', customer_id:'ea',
+      office_id:'-', office_name:'Account',
+      service_name:'Mira-abonnemang', service_variant:'Pro · obegränsat',
+      contract_type:'Subscription', category:'platform',
+      monthly_cost:0, status:'aktiv',
+      startdatum:'2024-09-01', slutdatum:'2027-08-31',
+      binding_months:36, notice_months:3, auto_renew_months:12,
+      price_regulation_type:'ingen', price_regulation_next:null,
+      signed_at:'2024-08-25', signed_pdf:'mira-2024.pdf', attachments_count:1, offer_approval_id:'oar-mira-1' },
+
+    // Scandic
+    { id:'c-staff-sca', customer:'Scandic Hotels AB', customer_id:'scandic',
+      office_id:'01', office_name:'Sveavägen 167',
+      service_name:'Staff Bemanning', service_variant:'Ramavtal · 10 roller',
+      contract_type:'RateCard', category:'Staff',
+      monthly_cost:0, status:'aktiv',
+      startdatum:'2025-05-15', slutdatum:'2027-05-15',
+      binding_months:24, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'lon_kollektiv', price_regulation_next:'2027-07-01',
+      signed_at:'2025-05-10', signed_pdf:'staff-scandic.pdf', attachments_count:2, offer_approval_id:'oar-staff-2' },
+
+    { id:'c-mira-sca', customer:'Scandic Hotels AB', customer_id:'scandic',
+      office_id:'-', office_name:'Account',
+      service_name:'Mira-abonnemang', service_variant:'Pro',
+      contract_type:'Subscription', category:'platform',
+      monthly_cost:0, status:'aktiv',
+      startdatum:'2025-05-15', slutdatum:'2027-05-15',
+      binding_months:24, notice_months:3, auto_renew_months:12,
+      price_regulation_type:'ingen', price_regulation_next:null,
+      signed_at:'2025-05-10', attachments_count:0, offer_approval_id:null },
+
+    // Klarna
+    { id:'c-hk-kla', customer:'Klarna Bank AB', customer_id:'klarna',
+      office_id:'01', office_name:'Sveavägen 46',
+      service_name:'Housekeeping', service_variant:'5 dgr/vecka · 4 200 kvm',
+      contract_type:'Subscription', category:'Housekeeping',
+      monthly_cost:62800, status:'aktiv',
+      startdatum:'2026-03-01', slutdatum:'2029-02-28',
+      binding_months:36, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+      signed_at:'2026-02-12', signed_pdf:'hk-klarna.pdf', attachments_count:3, offer_approval_id:'oar-hk-3' },
+
+    { id:'c-rec-kla', customer:'Klarna Bank AB', customer_id:'klarna',
+      office_id:'01', office_name:'Sveavägen 46',
+      service_name:'Reception', service_variant:'Receptionist · 1 person',
+      contract_type:'Subscription', category:'Other facility services',
+      monthly_cost:69990, status:'aktiv',
+      startdatum:'2026-03-01', slutdatum:'2027-02-28',
+      binding_months:12, notice_months:3, auto_renew_months:12,
+      price_regulation_type:'lon_kollektiv', price_regulation_next:'2027-04-01',
+      signed_at:'2026-02-15', signed_pdf:'rec-klarna.pdf', attachments_count:1, offer_approval_id:'oar-rec-2' },
+
+    // Spotify
+    { id:'c-hk-spo', customer:'Spotify AB', customer_id:'spotify',
+      office_id:'01', office_name:'Regeringsgatan 19',
+      service_name:'Housekeeping', service_variant:'5 dgr/vecka · 8 400 kvm',
+      contract_type:'Subscription', category:'Housekeeping',
+      monthly_cost:135200, status:'utgar_snart',
+      startdatum:'2023-08-01', slutdatum:'2026-07-31',
+      binding_months:36, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+      signed_at:'2023-07-10', signed_pdf:'hk-spotify-2023.pdf', attachments_count:4, offer_approval_id:'oar-hk-spo' },
+
+    // Tieto
+    { id:'c-hk-tie', customer:'Tietoevry Sweden AB', customer_id:'tieto',
+      office_id:'01', office_name:'Fjärde bassängvägen 15',
+      service_name:'Housekeeping', service_variant:'3 dgr/vecka · 3 200 kvm',
+      contract_type:'Subscription', category:'Housekeeping',
+      monthly_cost:42100, status:'aktiv',
+      startdatum:'2025-09-01', slutdatum:'2028-08-31',
+      binding_months:36, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+      signed_at:'2025-08-12', signed_pdf:'hk-tieto.pdf', attachments_count:3, offer_approval_id:'oar-hk-tie' },
+
+    { id:'c-fe-tie', customer:'Tietoevry Sweden AB', customer_id:'tieto',
+      office_id:'01', office_name:'Fjärde bassängvägen 15',
+      service_name:'Lunch-abonnemang', service_variant:'Mån-fre · 80 portioner',
+      contract_type:'Hybrid', category:'Food &amp; Event',
+      monthly_cost:48000, status:'aktiv',
+      startdatum:'2026-04-01', slutdatum:'2027-03-31',
+      binding_months:12, notice_months:1, auto_renew_months:12,
+      price_regulation_type:'fast', price_regulation_next:null,
+      signed_at:'2026-03-15', signed_pdf:'lunch-tieto.pdf', attachments_count:2, offer_approval_id:'oar-fe-tie' },
+
+    // Avslutad-exempel
+    { id:'c-hk-old', customer:'Volvo Cars Sverige AB', customer_id:'volvo',
+      office_id:'01', office_name:'Kista',
+      service_name:'Housekeeping', service_variant:'5 dgr/vecka · 5 600 kvm',
+      contract_type:'Subscription', category:'Housekeeping',
+      monthly_cost:84200, status:'avslutad',
+      startdatum:'2022-01-01', slutdatum:'2025-12-31',
+      binding_months:36, notice_months:3, auto_renew_months:null,
+      price_regulation_type:'index_cleaning', price_regulation_next:null,
+      signed_at:'2021-12-15', signed_pdf:'hk-volvo-2022.pdf', attachments_count:2, offer_approval_id:null }
+  ];
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function fmtKr(v){
+    var n = Math.round(Number(v)||0);
+    if (n >= 1000000) return (n/1000000).toFixed(1).replace('.',',') + ' Mkr';
+    return n.toLocaleString('sv-SE') + ' kr';
+  }
+  function fmtDate(s){
+    if(!s) return '—';
+    var d = new Date(s);
+    if(isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('sv-SE',{year:'numeric',month:'short',day:'numeric'});
+  }
+  function daysUntil(s){
+    if(!s) return null;
+    var d = new Date(s).getTime();
+    if(isNaN(d)) return null;
+    return Math.round((d - Date.now()) / 86400000);
+  }
+
+  // State
+  var STATE = {
+    sort_by: 'end',
+    sort_dir: 'asc',
+    filter_status: ['aktiv','utgar_snart'],
+    filter_type: ['Subscription','RateCard','Hybrid'],
+    filter_cat: ['Housekeeping','Staff','Food &amp; Event','Other facility services','platform'],
+    filter_search: '',
+    filter_from: '',
+    filter_to: '',
+    open_id: null
+  };
+
+  function applyFilters(){
+    var rows = SAMPLE.slice();
+    rows = rows.filter(function(r){
+      if (STATE.filter_status.indexOf(r.status) < 0) return false;
+      if (STATE.filter_type.indexOf(r.contract_type) < 0) return false;
+      // category-filter accepterar både Food & Event och Food &amp; Event
+      var catNorm = r.category.replace(/&amp;/g,'&');
+      var passingCats = STATE.filter_cat.map(function(c){ return c.replace(/&amp;/g,'&'); });
+      if (passingCats.indexOf(catNorm) < 0) return false;
+
+      if (STATE.filter_search) {
+        var q = STATE.filter_search.toLowerCase();
+        var blob = (r.customer + ' ' + r.service_name + ' ' + r.service_variant + ' ' + r.office_name).toLowerCase();
+        if (blob.indexOf(q) < 0) return false;
+      }
+      if (STATE.filter_from && r.slutdatum && r.slutdatum < STATE.filter_from) return false;
+      if (STATE.filter_to && r.slutdatum && r.slutdatum > STATE.filter_to) return false;
+      return true;
+    });
+
+    rows.sort(function(a, b){
+      var av, bv;
+      switch (STATE.sort_by) {
+        case 'customer': av=a.customer; bv=b.customer; break;
+        case 'office':   av=a.office_name; bv=b.office_name; break;
+        case 'service':  av=a.service_name; bv=b.service_name; break;
+        case 'type':     av=a.contract_type; bv=b.contract_type; break;
+        case 'status':   av=a.status; bv=b.status; break;
+        case 'cost':     av=Number(a.monthly_cost||0); bv=Number(b.monthly_cost||0); break;
+        case 'end':      av=a.slutdatum||''; bv=b.slutdatum||''; break;
+        default: av=''; bv='';
+      }
+      if (av < bv) return STATE.sort_dir === 'asc' ? -1 : 1;
+      if (av > bv) return STATE.sort_dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return rows;
+  }
+
+  function rowHtml(r){
+    var typeCls = r.contract_type === 'Subscription' ? 't-sub' : r.contract_type === 'RateCard' ? 't-rate' : 't-hyb';
+    var stLabel = r.status === 'aktiv' ? 'Aktiv'
+      : r.status === 'utgar_snart' ? 'Utgår snart'
+      : r.status === 'avslutad' ? 'Avslutad'
+      : r.status === 'pausat' ? 'Pausat'
+      : r.status === 'vilande' ? 'Vilande'
+      : r.status === 'tvistig' ? 'Tvistig' : r.status;
+
+    var costCell = r.contract_type === 'RateCard'
+      ? '<div class="aa-c-cost rate">Per uppdrag</div>'
+      : '<div class="aa-c-cost">'+fmtKr(r.monthly_cost)+'<small>/mån</small></div>';
+
+    var endDays = daysUntil(r.slutdatum);
+    var endSubCls = (endDays != null && endDays <= 30 && endDays >= 0) ? 'aa-c-end-sub warn' : 'aa-c-end-sub';
+    var endSubText = endDays == null ? ''
+      : endDays < 0 ? Math.abs(endDays) + ' d sedan'
+      : endDays + ' d kvar';
+
+    var officeCell = r.office_id === '-'
+      ? '<span class="aa-c-office-id" style="background:rgba(219,105,35,0.15); color:var(--acc);">ACC</span>'
+      : '<span class="aa-c-office-id">'+esc(r.office_id)+'</span><span class="aa-c-office-n">'+esc(r.office_name)+'</span>';
+
+    var openCls = STATE.open_id === r.id ? 'open' : '';
+
+    var main = ''
+      + '<tr class="aa-mainrow '+openCls+'" data-id="'+esc(r.id)+'">'
+      +   '<td><div class="aa-c-cust">'+esc(r.customer)+'</div></td>'
+      +   '<td><div class="aa-c-office">'+officeCell+'</div></td>'
+      +   '<td><div class="aa-c-svc">'+esc(r.service_name)+'</div><div class="aa-c-svc-sub">'+esc(r.service_variant)+'</div></td>'
+      +   '<td><span class="aa-pill '+typeCls+'">'+esc(r.contract_type)+'</span><div class="aa-c-svc-sub" style="margin-top:4px;">'+r.category+'</div></td>'
+      +   '<td><span class="aa-st s-'+esc(r.status)+'">'+esc(stLabel)+'</span></td>'
+      +   '<td class="right">'+costCell+'</td>'
+      +   '<td class="right">'
+      +     '<div class="aa-c-end">'+fmtDate(r.slutdatum)+'</div>'
+      +     (endSubText ? '<div class="'+endSubCls+'">'+endSubText+'</div>' : '')
+      +   '</td>'
+      + '</tr>';
+
+    if (STATE.open_id !== r.id) return main;
+
+    // Expand-rad
+    var expand = ''
+      + '<tr class="aa-expand-tr on">'
+      +   '<td class="aa-expand-cell" colspan="7">'
+      +     '<div class="aa-expand-inner">'
+      +       '<div class="aa-expand-grid">'
+      +         '<div><div class="aa-fld-l">Startdatum</div><div class="aa-fld-v">'+fmtDate(r.startdatum)+'</div></div>'
+      +         '<div><div class="aa-fld-l">Slutdatum</div><div class="aa-fld-v">'+fmtDate(r.slutdatum)+'</div></div>'
+      +         '<div><div class="aa-fld-l">Bindning</div><div class="aa-fld-v">'+(r.binding_months?r.binding_months+' mån':'—')+'</div></div>'
+      +         '<div><div class="aa-fld-l">Uppsägning</div><div class="aa-fld-v">'+(r.notice_months?r.notice_months+' mån':'—')+'</div></div>'
+      +         '<div><div class="aa-fld-l">Auto-förlängning</div><div class="aa-fld-v '+(r.auto_renew_months?'':'muted')+'">'+(r.auto_renew_months?r.auto_renew_months+' mån':'Ingen')+'</div></div>'
+      +         '<div><div class="aa-fld-l">Prisreglering</div><div class="aa-fld-v">'+esc(r.price_regulation_type||'—')+'</div></div>'
+      +         '<div><div class="aa-fld-l">Nästa prisrev.</div><div class="aa-fld-v '+(r.price_regulation_next?'':'muted')+'">'+(r.price_regulation_next?fmtDate(r.price_regulation_next):'—')+'</div></div>'
+      +         '<div><div class="aa-fld-l">Signerat</div><div class="aa-fld-v">'+fmtDate(r.signed_at)+(r.signed_pdf?' · <a href="#">'+esc(r.signed_pdf)+'</a>':'')+'</div></div>'
+      +       '</div>'
+      +       '<div class="aa-att">'
+      +         '<div class="aa-att-h">'
+      +           '<div class="aa-att-t">Bilagor ('+r.attachments_count+')</div>'
+      +           '<button class="aa-btn ghost tiny">+ Ladda upp</button>'
+      +         '</div>'
+      +         (r.attachments_count === 0
+      +           ? '<div class="aa-att-empty">Inga bilagor ännu. Floor Plan, Price List, KPI/SLA, Onboarding…</div>'
+      +           : '<div class="aa-att-list">'
+      +             + '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">'+esc(r.signed_pdf||'Huvudavtal.pdf')+'</div><div class="aa-att-sub">Huvuddok · 344 KB · uppladdad '+fmtDate(r.signed_at)+'</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Visa</button></div></div>'
+      +             + (r.attachments_count > 1 ? '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">Övriga ('+(r.attachments_count-1)+') bilagor</div><div class="aa-att-sub">Klicka för full lista</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Öppna lista</button></div></div>' : '')
+      +             + '</div>'
+      +         )
+      +       '</div>'
+      +       '<div class="aa-expand-foot">'
+      +         '<div class="aa-expand-meta">Contract <b>'+esc(r.id)+'</b>'
+      +           + (r.offer_approval_id ? ' · OfferApproval <b><a href="#" style="color:var(--acc);">'+esc(r.offer_approval_id)+'</a></b>' : '')
+      +         + '</div>'
+      +         '<div class="aa-expand-actions">'
+      +           '<button class="aa-btn ghost tiny">Öppna kundkort</button>'
+      +           '<button class="aa-btn ghost tiny">Redigera</button>'
+      +           '<button class="aa-btn ghost tiny">Pausa</button>'
+      +           '<button class="aa-btn danger tiny">Avsluta</button>'
+      +         '</div>'
+      +       '</div>'
+      +     '</div>'
+      +   '</td>'
+      + '</tr>';
+
+    return main + expand;
+  }
+
+  function renderTable(){
+    var rows = applyFilters();
+    $('aa-tbody').innerHTML = rows.map(rowHtml).join('') || '<tr><td colspan="7"><div class="aa-empty"><div class="aa-empty-t">Inga abonnemang matchar filtren</div>Justera filter eller skapa nytt.</div></td></tr>';
+    $('aa-shown-count').textContent = rows.length;
+    $('aa-total-count').textContent = SAMPLE.length;
+
+    // KPIs på FULL data (inte filtrerad)
+    var aktiva = SAMPLE.filter(function(r){ return r.status==='aktiv' || r.status==='utgar_snart'; });
+    var totMonthly = SAMPLE
+      .filter(function(r){ return r.contract_type==='Subscription' && (r.status==='aktiv' || r.status==='utgar_snart'); })
+      .reduce(function(sum, r){ return sum + Number(r.monthly_cost || 0); }, 0);
+    var utgar = SAMPLE.filter(function(r){
+      var d = daysUntil(r.slutdatum);
+      return r.status === 'utgar_snart' || (d != null && d >= 0 && d <= 30);
+    });
+    $('aa-kpi-aktiva').textContent = aktiva.length;
+    $('aa-kpi-monthly').textContent = fmtKr(totMonthly);
+    $('aa-kpi-utgar').textContent = utgar.length;
+
+    // Bind row-clicks
+    document.querySelectorAll('.aa-admin .aa-mainrow').forEach(function(tr){
+      tr.addEventListener('click', function(){
+        var id = tr.getAttribute('data-id');
+        STATE.open_id = STATE.open_id === id ? null : id;
+        renderTable();
+      });
+    });
+  }
+
+  // Bind filters
+  function bindChipGroup(containerId, key){
+    document.querySelectorAll('#'+containerId+' .aa-chip').forEach(function(c){
+      c.addEventListener('click', function(){
+        c.classList.toggle('on');
+        var val = c.getAttribute('data-val');
+        var arr = STATE[key];
+        var idx = arr.indexOf(val);
+        if (c.classList.contains('on') && idx < 0) arr.push(val);
+        else if (!c.classList.contains('on') && idx >= 0) arr.splice(idx, 1);
+        renderTable();
+      });
+    });
+  }
+  bindChipGroup('aa-fil-status', 'filter_status');
+  bindChipGroup('aa-fil-type', 'filter_type');
+  bindChipGroup('aa-fil-cat', 'filter_cat');
+
+  $('aa-search').addEventListener('input', function(e){
+    STATE.filter_search = e.target.value;
+    renderTable();
+  });
+  $('aa-fil-from').addEventListener('change', function(e){
+    STATE.filter_from = e.target.value;
+    renderTable();
+  });
+  $('aa-fil-to').addEventListener('change', function(e){
+    STATE.filter_to = e.target.value;
+    renderTable();
+  });
+  $('aa-fil-clear').addEventListener('click', function(){
+    STATE.filter_search = '';
+    STATE.filter_from = '';
+    STATE.filter_to = '';
+    STATE.filter_status = ['aktiv','utgar_snart','avslutad','pausat'];
+    STATE.filter_type = ['Subscription','RateCard','Hybrid'];
+    STATE.filter_cat = ['Housekeeping','Staff','Food &amp; Event','Other facility services','platform'];
+    $('aa-search').value = '';
+    $('aa-fil-from').value = '';
+    $('aa-fil-to').value = '';
+    document.querySelectorAll('.aa-admin .aa-chip').forEach(function(c){ c.classList.add('on'); });
+    renderTable();
+  });
+
+  // Sort
+  document.querySelectorAll('.aa-table thead th').forEach(function(th){
+    th.addEventListener('click', function(){
+      var col = th.getAttribute('data-sort');
+      if (!col) return;
+      if (STATE.sort_by === col) {
+        STATE.sort_dir = STATE.sort_dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        STATE.sort_by = col;
+        STATE.sort_dir = 'asc';
+      }
+      document.querySelectorAll('.aa-table thead th').forEach(function(x){ x.classList.remove('sorted'); x.querySelector('.aa-sort').textContent = '▼'; });
+      th.classList.add('sorted');
+      th.querySelector('.aa-sort').textContent = STATE.sort_dir === 'asc' ? '▲' : '▼';
+      renderTable();
+    });
+  });
+
+  // Create-knappen (placeholder)
+  $('aa-create-btn').addEventListener('click', function(){
+    alert('Create-modal (samma som kundkort-fliken) öppnas här. För skissen: se mira-abonnemang-kund.html.');
+  });
+
+  // ── Live data-fetch (Fas 2a) ────────────────────────────────────────────
+  // Om hidden input aa_planning_token är satt av Bubble: hämta verklig data
+  // från Render. Annars kör demo-SAMPLE.
+  function readHidden(id){ var e = $(id); return e ? String(e.value||'').trim() : ''; }
+  async function loadLive(){
+    var apiHost = readHidden('aa_api_host') || 'https://mira-exchange.onrender.com';
+    var token   = readHidden('aa_planning_token');
+    if (!token) return; // demo-läge
+
+    try {
+      var r = await fetch(apiHost + '/admin/contracts/all', {
+        headers: { 'x-admin-token': token }
+      });
+      if (!r.ok) { console.warn('[aa] fetch failed', r.status); return; }
+      var data = await r.json();
+      if (!data.ok) { console.warn('[aa] api error', data.error); return; }
+
+      // Mappa BE-items → SAMPLE-rader. Strukturen matchar nästan exakt — vi
+      // anpassar bara nyckelnamn där admin-vyn använder andra benämningar.
+      SAMPLE.length = 0;
+      (data.items || []).forEach(function(c){
+        SAMPLE.push({
+          id:                      c.id,
+          customer:                c.customer_name || '— okänd kund —',
+          customer_id:             c.customer_id,
+          office_id:               c.office_id ? (c.office_kontors_id || c.office_id) : '-',
+          office_name:             c.office_name || (c.office_id ? 'Kontor' : 'Account'),
+          office_addr:             c.office_address || '',
+          service_name:            c.service_name || '— okänd tjänst —',
+          service_variant:         c.service_variant || '',
+          contract_type:           c.contract_type,
+          category:                c.category || '—',
+          monthly_cost:            c.monthly_cost,
+          status:                  c.status,
+          startdatum:              c.startdatum,
+          slutdatum:               c.slutdatum,
+          binding_months:          c.binding_months,
+          notice_months:           c.notice_months,
+          auto_renew_months:       c.auto_renew_months,
+          price_regulation_type:   c.price_regulation_type,
+          price_regulation_next:   c.price_regulation_next,
+          signed_at:               c.signed_at,
+          signed_pdf:              c.signed_pdf,
+          attachments_count:       Number(c.attachments_count || 0),
+          offer_approval_id:       c.offer_approval_id
+        });
+      });
+
+      console.log('[aa] live-data laddad: ' + SAMPLE.length + ' contracts (av totalt ' + (data.total||SAMPLE.length) + ')');
+      renderTable();
+    } catch (e) {
+      console.warn('[aa] live-fetch fail', e?.message);
+      // Fallback: SAMPLE-data redan renderad
+    }
+  }
+
+  renderTable();
+  loadLive();
+})();
+</script>

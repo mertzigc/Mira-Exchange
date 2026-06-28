@@ -19959,5 +19959,285 @@ app.options("/services/request-activation", (req, res) => {
   res.sendStatus(204);
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// Contract admin-modul (Fas 2, sektion 0g/10) — READ-endpoints
+// Auth: x-admin-token = PLANNING_ADMIN_TOKEN (samma som /admin/approval/*).
+// CORS: _approvalCors (Carotte-bubble + mira-fm.com).
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Hjälpare: bygg "rikt" Contract-objekt med alla Fas 1-fält + härlett ─────
+function _enrichContract(ct, ctx) {
+  const offerId = _ffIdOf(ct[SERVICES.CT_OFFER]);
+  const officeId = _ffIdOf(ct[SERVICES.CT_OFFICE]);
+  const offer = offerId && ctx.offerById ? ctx.offerById.get(offerId) : null;
+  const office = officeId && ctx.officeById ? ctx.officeById.get(officeId) : null;
+  const catalogSlug = offerId && ctx.offerToSlug ? ctx.offerToSlug.get(offerId) : null;
+  const catalogEntry = catalogSlug && ctx.catalogBySlug ? ctx.catalogBySlug.get(catalogSlug) : null;
+
+  const qty = Number(ct[SERVICES.CT_QTY] || 1);
+  const offerTitle = offer?.Title || "";
+  const serviceName = catalogEntry?.[SERVICES.SC_NAME] || offer?.Title || offerTitle;
+  const variantText = offerTitle + (qty > 1 ? " · " + qty + " st" : "");
+
+  return {
+    id:                 bubbleId(ct),
+    customer_id:        _ffIdOf(ct[SERVICES.CT_COMPANY]),
+    customer_name:      ctx.customerName || null,
+    office_id:          officeId || null,
+    office_name:        office?.[SERVICES.OF_NAME] || null,
+    office_kontors_id:  office?.[SERVICES.OF_KONTORSID] || null,
+    office_address:     (office?.[SERVICES.OF_ADDRESS] && office[SERVICES.OF_ADDRESS].address) || null,
+    service_slug:       catalogSlug || null,
+    service_name:       serviceName,
+    service_variant:    variantText,
+    offer_id:           offerId,
+    offer_title:        offerTitle,
+    // Befintliga Contract-fält
+    contract_type:      ct[SERVICES.CT_TYPE] || SERVICES.TYPE_SUBSCRIPTION,
+    category:           ct[SERVICES.CT_KATEGORI] || offer?.Category || null,
+    monthly_cost:       Math.round(Number(ct[SERVICES.CT_MONTHLY] || 0)),
+    qty,
+    slutdatum:          ct[SERVICES.CT_END] || null,
+    // Fas 1-fält
+    startdatum:                 ct[SERVICES.CT_START] || null,
+    binding_months:             ct[SERVICES.CT_BINDING] != null ? Number(ct[SERVICES.CT_BINDING]) : null,
+    notice_months:              ct[SERVICES.CT_NOTICE] != null ? Number(ct[SERVICES.CT_NOTICE]) : null,
+    auto_renew_months:          ct[SERVICES.CT_AUTO_RENEW] != null ? Number(ct[SERVICES.CT_AUTO_RENEW]) : null,
+    price_regulation_type:      ct[SERVICES.CT_PRICE_REG_TYPE] || null,
+    price_regulation_next:      ct[SERVICES.CT_PRICE_REG_NEXT] || null,
+    rate_card_json:             ct[SERVICES.CT_RATE_CARD_JSON] || null,
+    volume_json:                ct[SERVICES.CT_VOLUME_JSON] || null,
+    attachments:                _ffIdsOf(ct[SERVICES.CT_ATTACHMENTS]),
+    attachments_count:          _ffIdsOf(ct[SERVICES.CT_ATTACHMENTS]).length,
+    signed_pdf:                 ct[SERVICES.CT_SIGNED_PDF] || null,
+    signed_at:                  ct[SERVICES.CT_SIGNED_AT] || null,
+    offer_approval_id:          ct[SERVICES.CT_OFFER_APPROVAL] || null,
+    commission_id:              ct[SERVICES.CT_COMMISSION] || null,
+    master_contract_id:         ct[SERVICES.CT_MASTER] || null,
+    status_override:            ct[SERVICES.CT_STATUS_OVERRIDE] || null,
+    parsed_confidence_json:     ct[SERVICES.CT_PARSED_CONFIDENCE] || null,
+    // Härlett
+    status:             _deriveContractStatus(ct, Date.now()),
+    created_date:       ct["Created Date"] || null,
+    modified_date:      ct["Modified Date"] || null,
+  };
+}
+
+// ── GET /admin/contracts/by-company?company_id=… ─────────────────────────────
+// För kundkort-fliken (mira-abonnemang-kund.html). Returnerar ALLA Contracts
+// för kunden (även avslutade), grupperade per Office + account-scope.
+// Skiljer sig från /services/dashboard som är kund-facing och filtrerar
+// utgångna tiles + är bunden till ServiceCatalog.
+app.options("/admin/contracts/by-company", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/contracts/by-company", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const companyId = String(req.query.company_id || "").trim();
+  if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+
+  try {
+    // 1) Customer-name
+    const cc = await bubbleGet("ClientCompany", companyId).catch(() => null);
+    const customerName = cc
+      ? (cc.Name_company || cc.name || cc.Name || cc.company_name || cc.namn || null)
+      : null;
+
+    // 2) Contracts (alla statusar — admin vill se historik)
+    const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+      constraints: [{ key: SERVICES.CT_COMPANY, constraint_type: "equals", value: companyId }],
+    }).catch(() => []);
+
+    // 3) Offices för kunden
+    const officesRaw = await bubbleFindAll(SERVICES.OFFICE_TYPE, {
+      constraints: [{ key: SERVICES.OF_COMPANY, constraint_type: "equals", value: companyId }],
+    }).catch(() => []);
+    const officeById = new Map();
+    for (const o of officesRaw) officeById.set(bubbleId(o), o);
+
+    // 4) Erbjudanden (för titel + kategori) — samla unika id:n
+    const offerIds = new Set();
+    for (const ct of contracts) {
+      const oid = _ffIdOf(ct[SERVICES.CT_OFFER]);
+      if (oid) offerIds.add(oid);
+    }
+    const offerById = new Map();
+    for (const oid of offerIds) {
+      const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, oid).catch(() => null);
+      if (o) offerById.set(oid, o);
+    }
+
+    // 5) ServiceCatalog → slug-map för offer → service_name
+    const catalogsRaw = await bubbleFindAll(SERVICES.CATALOG_TYPE, {
+      sort_field: SERVICES.SC_DISPLAY, descending: false,
+    }).catch(() => []);
+    const offerToSlug = new Map();
+    const catalogBySlug = new Map();
+    for (const c of catalogsRaw) {
+      const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+      if (!slug) continue;
+      catalogBySlug.set(slug, c);
+      for (const oid of _ffIdsOf(c[SERVICES.SC_OFFERS])) {
+        offerToSlug.set(oid, slug);
+      }
+    }
+
+    const ctx = { customerName, officeById, offerById, offerToSlug, catalogBySlug };
+
+    // 6) Bygg account-scope + per-office-grupper
+    const enriched = contracts.map((ct) => _enrichContract(ct, ctx));
+    const accountContracts = [];
+    const byOffice = {};
+    for (const o of officesRaw) byOffice[bubbleId(o)] = [];
+
+    for (const e of enriched) {
+      const cat = catalogBySlug.get(e.service_slug);
+      const catCategory = cat?.[SERVICES.SC_CATEGORY];
+      if (catCategory === "platform" || !e.office_id) {
+        accountContracts.push(e);
+      } else if (byOffice[e.office_id]) {
+        byOffice[e.office_id].push(e);
+      } else {
+        // Office-id saknas i offices-listan (kanske borttaget kontor) — lägg under account
+        accountContracts.push({ ...e, missing_office: true });
+      }
+    }
+
+    // 7) Office-summary
+    const offices = officesRaw.map((o) => ({
+      id:           bubbleId(o),
+      kontors_id:   o[SERVICES.OF_KONTORSID] || null,
+      name:         o[SERVICES.OF_NAME] || "Kontor",
+      address:      (o[SERVICES.OF_ADDRESS] && o[SERVICES.OF_ADDRESS].address) || null,
+    })).sort((a, b) => {
+      const aid = a.kontors_id || "zzz", bid = b.kontors_id || "zzz";
+      if (aid !== bid) return aid.localeCompare(bid);
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    return res.json({
+      ok: true,
+      customer: { id: companyId, name: customerName },
+      offices,
+      account_contracts: accountContracts,
+      contracts_by_office: byOffice,
+      total_contracts: enriched.length,
+    });
+  } catch (e) {
+    console.error("[/admin/contracts/by-company] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── GET /admin/contracts/all — global admin-vy ───────────────────────────────
+// För mira-abonnemang-admin.html. Returnerar ALLA Contracts oavsett kund,
+// enrichade med customer_name + service_name + office_name. Frontend
+// filtrerar client-side (status/typ/kategori/datum) — det är trivialt vid
+// nuvarande volym, vi optimerar med server-side constraints om/när det krävs.
+//
+// Query: ?status=&type=&category=&from=&to=&limit= (limit default 500).
+// Server-side filter på status (om angivet) för att slippa rita avslutade
+// om frontend inte vill se dem.
+app.options("/admin/contracts/all", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/contracts/all", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
+
+    // 1) Alla Contracts
+    const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+      sort_field: SERVICES.CT_END, descending: false,
+    }).catch(() => []);
+
+    // 2) Samla alla unika customer/office/offer-id:n och enrich i batchar
+    const ccIds = new Set();
+    const officeIds = new Set();
+    const offerIds = new Set();
+    for (const ct of contracts) {
+      const ccId = _ffIdOf(ct[SERVICES.CT_COMPANY]);
+      const ofId = _ffIdOf(ct[SERVICES.CT_OFFICE]);
+      const oId  = _ffIdOf(ct[SERVICES.CT_OFFER]);
+      if (ccId) ccIds.add(ccId);
+      if (ofId) officeIds.add(ofId);
+      if (oId)  offerIds.add(oId);
+    }
+
+    const ccById = new Map();
+    await Promise.all([...ccIds].map(async (id) => {
+      const cc = await bubbleGet("ClientCompany", id).catch(() => null);
+      if (cc) ccById.set(id, cc);
+    }));
+
+    const officeById = new Map();
+    await Promise.all([...officeIds].map(async (id) => {
+      const o = await bubbleGet(SERVICES.OFFICE_TYPE, id).catch(() => null);
+      if (o) officeById.set(id, o);
+    }));
+
+    const offerById = new Map();
+    await Promise.all([...offerIds].map(async (id) => {
+      const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null);
+      if (o) offerById.set(id, o);
+    }));
+
+    const catalogsRaw = await bubbleFindAll(SERVICES.CATALOG_TYPE, {
+      sort_field: SERVICES.SC_DISPLAY, descending: false,
+    }).catch(() => []);
+    const offerToSlug = new Map();
+    const catalogBySlug = new Map();
+    for (const c of catalogsRaw) {
+      const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+      if (!slug) continue;
+      catalogBySlug.set(slug, c);
+      for (const oid of _ffIdsOf(c[SERVICES.SC_OFFERS])) {
+        offerToSlug.set(oid, slug);
+      }
+    }
+
+    // 3) Enrich varje Contract
+    const items = contracts.slice(0, limit).map((ct) => {
+      const ccId = _ffIdOf(ct[SERVICES.CT_COMPANY]);
+      const cc = ccId && ccById.get(ccId);
+      const customerName = cc
+        ? (cc.Name_company || cc.name || cc.Name || cc.company_name || cc.namn || null)
+        : null;
+      const ctx = { customerName, officeById, offerById, offerToSlug, catalogBySlug };
+      return _enrichContract(ct, ctx);
+    });
+
+    return res.json({
+      ok: true,
+      count: items.length,
+      total: contracts.length,
+      items,
+    });
+  } catch (e) {
+    console.error("[/admin/contracts/all] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
