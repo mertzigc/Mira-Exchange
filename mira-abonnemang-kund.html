@@ -670,7 +670,7 @@
       console.log('[ab] live-data laddad: ' + (data.total_contracts || 0) + ' contracts');
       renderAll();
     } catch (e) {
-      console.warn('[ab] live-fetch fail', e?.message);
+      console.warn('[ab] live-fetch fail', e && e.message);
       // Fallback: SAMPLE-data redan renderad
     }
   }

@@ -751,7 +751,7 @@
       console.log('[aa] live-data laddad: ' + SAMPLE.length + ' contracts (av totalt ' + (data.total||SAMPLE.length) + ')');
       renderTable();
     } catch (e) {
-      console.warn('[aa] live-fetch fail', e?.message);
+      console.warn('[aa] live-fetch fail', e && e.message);
       // Fallback: SAMPLE-data redan renderad
     }
   }
