@@ -543,9 +543,13 @@
       +       '<div class="ab-att-list">'+attListHtml+'</div>'
       +     '</div>'
       +     '<div class="ab-rowact">'
-      +       '<button class="ab-btn ghost tiny">Redigera</button>'
-      +       '<button class="ab-btn ghost tiny">Pausa</button>'
-      +       '<button class="ab-btn danger tiny">Avsluta</button>'
+      +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="'+esc(ct.id)+'">Redigera</button>'
+      +       (ct.status === 'pausat'
+      +         ? '<button class="ab-btn ghost tiny" data-act="resume" data-id="'+esc(ct.id)+'">Återuppta</button>'
+      +         : '<button class="ab-btn ghost tiny" data-act="pause" data-id="'+esc(ct.id)+'">Pausa</button>')
+      +       (ct.status === 'avslutad'
+      +         ? '<button class="ab-btn ghost tiny" data-act="reopen" data-id="'+esc(ct.id)+'">Återöppna</button>'
+      +         : '<button class="ab-btn danger tiny" data-act="end" data-id="'+esc(ct.id)+'">Avsluta</button>')
       +     '</div>'
       +   '</div>'
       + '</div>';
@@ -609,6 +613,8 @@
         head.parentElement.classList.toggle('open');
       });
     });
+    // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna)
+    if (typeof bindActions === 'function') bindActions();
   }
 
   // Create-modal
@@ -667,6 +673,73 @@
       console.warn('[ab] live-fetch fail', e?.message);
       // Fallback: SAMPLE-data redan renderad
     }
+  }
+
+  // ── Action-handlers (Fas 2c-1) ──────────────────────────────────────────
+  // Pausa / Återuppta / Avsluta / Återöppna — alla via PATCH /admin/contracts/:id
+  // Redigera triggar placeholder tills 2c-2.
+  async function patchContractAction(id, body){
+    var apiHost = readHidden('ab_api_host') || 'https://mira-exchange.onrender.com';
+    var token   = readHidden('ab_planning_token');
+    if (!token) {
+      alert('Demo-läge: ingen PATCH skickas (ab_planning_token saknas i Bubble-bindningen).');
+      return null;
+    }
+    try {
+      var r = await fetch(apiHost + '/admin/contracts/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        headers: { 'x-admin-token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      var data = await r.json();
+      if (!data.ok) {
+        alert('Fel: ' + (data.error || ('HTTP ' + r.status)));
+        return null;
+      }
+      return data;
+    } catch (e) {
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+      return null;
+    }
+  }
+
+  function bindActions(){
+    document.querySelectorAll('.ab-kund [data-act]').forEach(function(btn){
+      btn.addEventListener('click', async function(ev){
+        ev.stopPropagation(); // Annars toggleas expand-panelen
+        var act = btn.getAttribute('data-act');
+        var id  = btn.getAttribute('data-id');
+        if (!id) return;
+
+        var body = null;
+        if (act === 'pause')        body = { status_override: 'Pausat' };
+        else if (act === 'resume')  body = { status_override: null };
+        else if (act === 'end') {
+          if (!confirm('Avsluta abonnemanget? Slutdatum sätts till dagens datum.')) return;
+          body = { slutdatum: new Date().toISOString().slice(0, 10) };
+        }
+        else if (act === 'reopen') {
+          if (!confirm('Återöppna abonnemanget? Slutdatum tas bort.')) return;
+          body = { slutdatum: null };
+        }
+        else if (act === 'edit') {
+          alert('Redigera-modal kommer i steg 2c-2.');
+          return;
+        }
+        if (!body) return;
+
+        var original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '...';
+        var result = await patchContractAction(id, body);
+        btn.disabled = false;
+        btn.textContent = original;
+        if (result && result.ok) {
+          // Re-fetch + re-render. Behåll vilken rad som är öppen.
+          await loadLive();
+        }
+      });
+    });
   }
 
   renderAll();
