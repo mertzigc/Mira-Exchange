@@ -16340,6 +16340,131 @@ const approvalDocEngine = createApprovalDocEngine({
   bubbleFindAll,
 });
 
+// ── _deriveContractStatus — härled status för tile-pill ────────────────────
+// Klient-side använder denna sträng för att rendera badge. Server returnerar
+// den i _buildServicesDashboard så frontend slipper räkna själv.
+// Konstanter i SERVICES (STATUS_*, UTGAR_SNART_DAYS).
+function _deriveContractStatus(contract, nowMs) {
+  // Manuell override har företräde
+  const override = contract && contract[SERVICES.CT_STATUS_OVERRIDE];
+  if (override) {
+    const s = String(override).toLowerCase();
+    if (s === "pausat")  return SERVICES.STATUS_OVERRIDE_PAUSED;
+    if (s === "tvistig") return SERVICES.STATUS_OVERRIDE_DISPUTED;
+    if (s === "vilande") return SERVICES.STATUS_OVERRIDE_DORMANT;
+  }
+  const endRaw = contract && contract[SERVICES.CT_END];
+  const end = endRaw ? Date.parse(endRaw) : null;
+  if (end && Number.isFinite(end)) {
+    if (end < nowMs) return SERVICES.STATUS_AVSLUTAD;
+    if (end - nowMs <= SERVICES.UTGAR_SNART_DAYS * 864e5) return SERVICES.STATUS_UTGAR_SNART;
+  }
+  return SERVICES.STATUS_AKTIV;
+}
+
+// ── _createContractsFromApprovalRequest — auto-Contract vid signering ──────
+// Anropas från _checkAndCompleteRequest direkt efter parent.status="Approved".
+// Idempotent: skippar om Contract redan finns med offer_approval == parent._id.
+// Skapar BARA Subscription-specs auto. RateCard/Hybrid kräver manuell granskning
+// i admin-blocket (Fas 2-3). Felar mjukt — Approval-flödet ska aldrig brytas.
+async function _createContractsFromApprovalRequest(parent) {
+  if (!parent || !parent._id) return { created: 0, reason: "no_parent" };
+
+  // Safety-valve — Carotte kan stänga av per process
+  const autoFlag = parent[SERVICES.OAR_AUTO_CREATE];
+  if (autoFlag === false || String(autoFlag).toLowerCase() === "no") {
+    return { created: 0, reason: "auto_create_disabled" };
+  }
+
+  // Idempotens — har vi redan skapat Contracts för detta request?
+  const existing = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+    constraints: [{ key: SERVICES.CT_OFFER_APPROVAL, constraint_type: "equals", value: parent._id }],
+  }).catch(() => []);
+  if (existing.length > 0) {
+    return { created: 0, already_existed: existing.length };
+  }
+
+  // Läs spec-array
+  let specs = [];
+  const rawJson = parent[SERVICES.OAR_CONTRACT_TEMPLATE];
+  if (rawJson && String(rawJson).trim()) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (Array.isArray(parsed)) specs = parsed;
+    } catch (e) {
+      console.warn(`[auto-contract] invalid contract_template_json on request ${parent._id}`, e?.message);
+      return { created: 0, error: "invalid_contract_template_json" };
+    }
+  }
+  if (specs.length === 0) return { created: 0, reason: "no_specs" };
+
+  const companyId = parent.clientcompany;
+  if (!companyId) return { created: 0, error: "no_clientcompany_on_parent" };
+
+  const nowIso = new Date().toISOString();
+  const created = [];
+  const skipped = [];
+
+  for (const spec of specs) {
+    // Fas 1: bara Subscription auto-skapas. RateCard + Hybrid kräver manuell granskning.
+    const ctype = String(spec.contract_type || SERVICES.TYPE_SUBSCRIPTION);
+    if (ctype !== SERVICES.TYPE_SUBSCRIPTION) {
+      skipped.push({ service_slug: spec.service_slug, reason: `type_${ctype}_not_auto` });
+      continue;
+    }
+    if (!spec.offer_id) {
+      skipped.push({ service_slug: spec.service_slug, reason: "missing_offer_id" });
+      continue;
+    }
+
+    // Volume_json kan vara objekt ELLER sträng — Bubble vill ha sträng
+    const volumeJson = spec.volume_json
+      ? (typeof spec.volume_json === "string" ? spec.volume_json : JSON.stringify(spec.volume_json))
+      : null;
+    const rateCardJson = spec.rate_card_json
+      ? (typeof spec.rate_card_json === "string" ? spec.rate_card_json : JSON.stringify(spec.rate_card_json))
+      : null;
+
+    // Använd SERVICES.CT_*-konstanter konsekvent (case-sensitivt mot Bubble)
+    const payload = {
+      [SERVICES.CT_COMPANY]:           companyId,
+      [SERVICES.CT_OFFER]:             spec.offer_id,
+      [SERVICES.CT_OFFICE]:            spec.office_id || null,
+      [SERVICES.CT_QTY]:               Number(spec.qty || 1),
+      [SERVICES.CT_MONTHLY]:           Number(spec.monthly_cost || 0),
+      [SERVICES.CT_END]:               spec.slutdatum || null,
+      [SERVICES.CT_KATEGORI]:          spec.category || null,
+      [SERVICES.CT_START]:             spec.startdatum || nowIso,
+      [SERVICES.CT_TYPE]:              ctype,
+      [SERVICES.CT_BINDING]:           spec.binding_months != null ? Number(spec.binding_months) : null,
+      [SERVICES.CT_NOTICE]:            spec.notice_months != null ? Number(spec.notice_months) : null,
+      [SERVICES.CT_AUTO_RENEW]:        spec.auto_renew_months != null ? Number(spec.auto_renew_months) : null,
+      [SERVICES.CT_PRICE_REG_TYPE]:    spec.price_regulation_type || null,
+      [SERVICES.CT_PRICE_REG_NEXT]:    spec.price_regulation_next || null,
+      [SERVICES.CT_RATE_CARD_JSON]:    rateCardJson,
+      [SERVICES.CT_VOLUME_JSON]:       volumeJson,
+      [SERVICES.CT_SIGNED_AT]:         nowIso,
+      [SERVICES.CT_OFFER_APPROVAL]:    parent._id,
+      [SERVICES.CT_COMMISSION]:        spec.commission_id || null,
+    };
+
+    // Droppa null-fält så Bubble behåller defaults för obetalda fält
+    const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
+
+    try {
+      const contractId = await bubbleCreate(SERVICES.CONTRACT_TYPE, finalPayload);
+      created.push({ id: contractId, service_slug: spec.service_slug });
+      console.log(`[auto-contract] skapade Contract ${contractId} (${spec.service_slug}) från request ${parent._id}`);
+    } catch (e) {
+      // Mjukt fel — fortsätt med övriga specs
+      console.error(`[auto-contract] misslyckades skapa Contract för ${spec.service_slug}:`, e?.message, e?.detail);
+      skipped.push({ service_slug: spec.service_slug, reason: "bubble_create_failed", error: e?.message });
+    }
+  }
+
+  return { created: created.length, contracts: created, skipped };
+}
+
 // ── _checkAndCompleteRequest — central completion-helper ────────────────────
 // Anropas efter varje signer-/granskar-handling. Om alla signers signat OCH
 // alla reviewers granskat (eller reviewers_count==0) → sätt parent.status=
@@ -16366,6 +16491,19 @@ async function _checkAndCompleteRequest(requestId) {
 
   // Allt klart — finalisera + skicka mail.
   await bubblePatch("OfferApprovalRequest", requestId, { status: "Approved" });
+
+  // Auto-Contract (Fas 1, sektion 0g). Idempotent + skippar RateCard/Hybrid.
+  // Felar mjukt — bekräftelsemail går alltid ut även om Contract-skapande fallerar.
+  try {
+    const ctRes = await _createContractsFromApprovalRequest(parent);
+    if (ctRes?.created > 0) {
+      console.log(`[approval-complete] auto-skapade ${ctRes.created} Contract från request ${requestId}`);
+    } else if (ctRes?.skipped?.length > 0) {
+      console.log(`[approval-complete] hoppade över ${ctRes.skipped.length} contract-specs (RateCard/Hybrid/manuella) för request ${requestId}`);
+    }
+  } catch (autoErr) {
+    console.warn(`[approval-complete] auto-contract failed (non-fatal) för request ${requestId}`, autoErr?.message);
+  }
 
   const children = await bubbleFindAll("OfferApproval", {
     constraints: [{ key: "request", constraint_type: "equals", value: requestId }],
@@ -19331,14 +19469,54 @@ const SERVICES = {
   SC_ONBOARDING:    "onboarding_json",
 
   // Contract-fält (Bubble case-sensitive — verifierat via /services/dashboard?debug=1).
-  // Inkonsekvent case: Kundföretag/Månadskostnad/Slutdatum är capitalized,
-  // erbjudande är lowercase. Stämmer med Bubble Data API:s all_field_names.
+  // Inkonsekvent case på BEFINTLIGA: Kundföretag/Månadskostnad/Slutdatum är capitalized,
+  // erbjudande är lowercase. NYA fält (Fas 1, sektion 0g) standardiseras till
+  // lowercase_underscore. Stämmer med Bubble Data API:s all_field_names.
   CT_COMPANY:     "Kundföretag",
   CT_OFFER:       "erbjudande",
-  CT_QTY:         "Produktantal",
+  CT_QTY:         "Produktantal",        // DEPRECATED — använd volume_json framåt
   CT_MONTHLY:     "Månadskostnad",
   CT_END:         "Slutdatum",
   CT_OFFICE:      "Kontor",
+  CT_KATEGORI:    "kategori",
+
+  // NYA fält Fas 1 (2026-06-28). Skapa exakt så här i Bubble-editorn.
+  CT_START:                 "startdatum",
+  CT_TYPE:                  "contract_type",            // option set
+  CT_BINDING:               "binding_months",
+  CT_NOTICE:                "notice_months",
+  CT_AUTO_RENEW:            "auto_renew_months",
+  CT_PRICE_REG_TYPE:        "price_regulation_type",    // option set
+  CT_PRICE_REG_NEXT:        "price_regulation_next",
+  CT_RATE_CARD_JSON:        "rate_card_json",
+  CT_VOLUME_JSON:           "volume_json",
+  CT_ATTACHMENTS:           "attachments",              // List of Dokument
+  CT_SIGNED_PDF:            "signed_pdf",
+  CT_SIGNED_AT:             "signed_at",
+  CT_OFFER_APPROVAL:        "offer_approval",           // → OfferApprovalRequest
+  CT_COMMISSION:            "commission",               // → Comission
+  CT_MASTER:                "master_contract",          // → Contract
+  CT_STATUS_OVERRIDE:       "status_override",          // option set
+  CT_PARSED_CONFIDENCE:     "parsed_confidence_json",
+
+  // OfferApprovalRequest-fält Fas 1 (utöver de befintliga som dokumenterats i 0e).
+  OAR_TYPE:                 "OfferApprovalRequest",
+  OAR_CONTRACT_TEMPLATE:    "contract_template_json",
+  OAR_AUTO_CREATE:          "auto_create_contract",     // yes/no, default yes
+
+  // contract_type-option-set-värden (display-strings från Bubble Data API)
+  TYPE_SUBSCRIPTION:        "Subscription",
+  TYPE_RATECARD:            "RateCard",
+  TYPE_HYBRID:              "Hybrid",
+
+  // Status-härledning (klient-side i tile, server returnerar)
+  STATUS_AKTIV:             "aktiv",
+  STATUS_UTGAR_SNART:       "utgar_snart",
+  STATUS_AVSLUTAD:          "avslutad",
+  STATUS_OVERRIDE_PAUSED:   "pausat",
+  STATUS_OVERRIDE_DORMANT:  "vilande",
+  STATUS_OVERRIDE_DISPUTED: "tvistig",
+  UTGAR_SNART_DAYS:         30,
 
   // Office-fält (verifierat 2026-06-25 via debug)
   OFFICE_TYPE:    "Office",
@@ -19514,12 +19692,21 @@ async function _buildServicesDashboard(companyId) {
     const qty = Number(ct[SERVICES.CT_QTY] || 1);
     const offerTitle = offer?.Title || "";
     const officeId = _ffIdOf(ct[SERVICES.CT_OFFICE]);
+    // Fas 1: status-härledning + contract_id/type så framtida tile-rendering
+    // kan visa "Utgår 30 nov"-pill direkt utan extra fetch.
+    const status = _deriveContractStatus(ct, now);
+    const contractId = bubbleId(ct);
+    const contractType = ct[SERVICES.CT_TYPE] || SERVICES.TYPE_SUBSCRIPTION;
     const entry = {
       option_id: offerId,
       qty,
       monthly_cost: Math.round(Number(ct[SERVICES.CT_MONTHLY] || 0)),
       info: offerTitle + (qty > 1 ? " · " + qty + " st" : ""),
       office_id: officeId || null,
+      status,
+      contract_id: contractId,
+      contract_type: String(contractType),
+      end_date: ct[SERVICES.CT_END] || null,
     };
 
     const category = slugCategory.get(slug);
@@ -19578,8 +19765,44 @@ app.get("/services/dashboard", async (req, res) => {
         produktantal: ct[SERVICES.CT_QTY],
         manadskostnad: ct[SERVICES.CT_MONTHLY],
         slutdatum: ct[SERVICES.CT_END],
+        // Fas 1 verifiering: värden för nya fält (visar null om fältet saknas i Bubble än)
+        startdatum:                ct[SERVICES.CT_START] || null,
+        contract_type:             ct[SERVICES.CT_TYPE] || null,
+        binding_months:            ct[SERVICES.CT_BINDING] || null,
+        notice_months:             ct[SERVICES.CT_NOTICE] || null,
+        auto_renew_months:         ct[SERVICES.CT_AUTO_RENEW] || null,
+        price_regulation_type:     ct[SERVICES.CT_PRICE_REG_TYPE] || null,
+        price_regulation_next:     ct[SERVICES.CT_PRICE_REG_NEXT] || null,
+        rate_card_json:            ct[SERVICES.CT_RATE_CARD_JSON] || null,
+        volume_json:               ct[SERVICES.CT_VOLUME_JSON] || null,
+        signed_pdf:                ct[SERVICES.CT_SIGNED_PDF] || null,
+        signed_at:                 ct[SERVICES.CT_SIGNED_AT] || null,
+        offer_approval:            ct[SERVICES.CT_OFFER_APPROVAL] || null,
+        commission:                ct[SERVICES.CT_COMMISSION] || null,
+        master_contract:           ct[SERVICES.CT_MASTER] || null,
+        status_override:           ct[SERVICES.CT_STATUS_OVERRIDE] || null,
+        derived_status:            _deriveContractStatus(ct, Date.now()),
         all_field_names: Object.keys(ct).filter(k => !k.startsWith("_") && !["Created Date","Modified Date","Created By","Slug"].includes(k)),
       })) : { _err: contractsRaw._err };
+
+      // Fas 1 schema-koll: vilka av de förväntade fälten finns på minst en Contract?
+      const expectedNewFields = [
+        SERVICES.CT_START, SERVICES.CT_TYPE, SERVICES.CT_BINDING, SERVICES.CT_NOTICE,
+        SERVICES.CT_AUTO_RENEW, SERVICES.CT_PRICE_REG_TYPE, SERVICES.CT_PRICE_REG_NEXT,
+        SERVICES.CT_RATE_CARD_JSON, SERVICES.CT_VOLUME_JSON, SERVICES.CT_ATTACHMENTS,
+        SERVICES.CT_SIGNED_PDF, SERVICES.CT_SIGNED_AT, SERVICES.CT_OFFER_APPROVAL,
+        SERVICES.CT_COMMISSION, SERVICES.CT_MASTER, SERVICES.CT_STATUS_OVERRIDE,
+        SERVICES.CT_PARSED_CONFIDENCE,
+      ];
+      const seenFields = new Set();
+      if (Array.isArray(contractsRaw)) {
+        for (const ct of contractsRaw) for (const k of Object.keys(ct || {})) seenFields.add(k);
+      }
+      const schemaCheck = {
+        present: expectedNewFields.filter((f) => seenFields.has(f)),
+        missing: expectedNewFields.filter((f) => !seenFields.has(f)),
+        note: "Saknat fält = inte ännu skapat i Bubble ELLER ingen Contract har värde där. Skapa en test-Contract med fältet ifyllt för säker verifiering.",
+      };
       const officesSummary = Array.isArray(officesRaw) ? officesRaw.map((o) => ({
         _id: o._id,
         all_field_names: Object.keys(o).filter(k => !k.startsWith("_") && !["Created Date","Modified Date","Created By","Slug"].includes(k)),
@@ -19592,6 +19815,7 @@ app.get("/services/dashboard", async (req, res) => {
         company_id: companyId,
         contracts_found: Array.isArray(contractsRaw) ? contractsRaw.length : -1,
         contracts: contractsSummary,
+        fas1_schema_check: schemaCheck,
         offices_found: Array.isArray(officesRaw) ? officesRaw.length : -1,
         offices: officesSummary,
         catalog_offer_map: offerMap,

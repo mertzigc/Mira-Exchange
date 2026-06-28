@@ -5,6 +5,126 @@
 
 ---
 
+## 0g. Tjänste-grid admin-modul + avtals-lifecycle — BYGGE PÅBÖRJAT 2026-06-28
+
+Bygger den admin-modul som 0f föreslog, plus två större tilläggsfeatures:
+PDF-import av befintliga avtal (LLM-parsning) och PDF-generering från
+avtalsmall som auto-skickas in i OfferApproval-flödet. Beslut LÅSTA
+2026-06-28 efter genomgång av Carotte-avtal i `Avtal från Carotte/`.
+
+### Beslut (2026-06-28)
+1. **Full scope, inte MVP.** Subscription + RateCard + Hybrid + F&E (offert-baserad).
+2. **Contract-typen utökas** med ~17 nya fält + 3 nya Option Sets (se Fas 1 nedan).
+3. **Bilagor som separata Dokument-rader** (Floor Plan, KPI/SLA, Onboarding…), list på Contract — redigerbara separat utan ny signering.
+4. **F&E-tile är "aktiv"** om senaste FortnoxOrder.delivery_date ≤ 6 mån. Ingen Contract krävs för F&E (i nuläget — ändras när F&E-abonnemang lanseras).
+5. **PDF-import** via Anthropic Haiku 4.5 + structured output (tool-use). Carotte granskar parsed JSON innan Contract skapas. Originalet sparas som `signed_pdf`.
+6. **ContractTemplate** = ny Bubble-typ (Fas 5). Default-mallar extraheras från `Avtal från Carotte/` (EA HK-avtalet är 99% färdigt som template).
+7. **Auto-Contract vid Approved** körs i `_checkAndCompleteRequest`, bara om `kontraktstyp=Subscription` och `auto_create_contract != no`. RateCard/Hybrid kräver manuell skapande (säkerhetsmarginal).
+
+### Konceptuella avtalstyper (från avtalsgenomgång)
+| Typ | Exempel | Pricing-modell | Auto-Contract? |
+|---|---|---|---|
+| **Subscription** | HK x EA (188 282/mån + Cleaning Index) | Fast månad + index | JA (auto vid signering) |
+| **RateCard** | Staff x Scandic Bemanning | Roller × kr/h, OB-tillägg, ingen månad | NEJ (manuellt skapas) |
+| **Hybrid** | T.ex. Reception med fast bas + tilläggsdebitering | Båda | Beroende på flagga |
+| **One-off Offer** | F&E offerter idag | Per uppdrag, ingen subscription | NEJ (lever som Erbjudande + OfferApproval) |
+
+### 5 faser (sekventiellt, varje testbar isolerat)
+
+1. **Fundament — PÅGÅR.** Bubble-schema-utbyggnad (Christian), `_createContractsFromApprovalRequest`-hook i `_checkAndCompleteRequest` (Render), status-härledning i `_buildServicesDashboard`. 2-3 dgr kod, ½-1 dag Bubble-schema, ½ dag test.
+2. **Admin-block.** Kundkort-flik "Abonnemang" + global "Alla abonnemang"-vy. Manuell create/edit/end + bilagor (List of Dokument). 3-5 dgr.
+3. **RateCard + Hybrid + F&E.** Kontraktstyp-väljare i admin, RateCard-formulär, F&E-tile-logik (senaste FortnoxOrder.delivery_date ≤6 mån). 3-4 dgr.
+4. **PDF-import + LLM-parsning.** Drag-drop befintligt avtal → `pdf-parse` → Anthropic Haiku 4.5 (structured tool-use) → review-form → Contract skapas direkt (skipping OfferApproval, det är redan signerat). 4-5 dgr.
+5. **Template + PDF-generering.** Ny Bubble-typ `ContractTemplate` (version-aware). Bygg 3 default-mallar från befintliga avtal. Flöde: välj mall → fyll spec → HTML-preview → puppeteer-PDF → POST `/approval/create`. 5-7 dgr.
+
+**Total:** ~17-24 kod-dagar + 3 dgr Bubble-schema + 6-9 dgr Carotte-test ≈ 4-6 veckor kalendertid.
+
+### Fas 1 — Bubble-fält att skapa (Christian)
+
+**Contract — utöka befintlig typ.** Lowercase + underscore för alla nya fält (befintliga `Kundföretag`/`erbjudande`/`Kontor`/`Månadskostnad`/`Slutdatum`/`Produktantal`/`kategori` lämnas orörda):
+
+| Fält | Typ |
+|---|---|
+| `startdatum` | date |
+| `contract_type` | option set `contract_type` |
+| `binding_months` | number |
+| `notice_months` | number |
+| `auto_renew_months` | number |
+| `price_regulation_type` | option set `price_regulation_type` |
+| `price_regulation_next` | date |
+| `rate_card_json` | text (long) |
+| `volume_json` | text |
+| `attachments` | List of Dokument |
+| `signed_pdf` | file |
+| `signed_at` | date |
+| `offer_approval` | OfferApprovalRequest |
+| `commission` | Comission |
+| `master_contract` | Contract |
+| `status_override` | option set `contract_status_override` |
+| `parsed_confidence_json` | text |
+
+**OfferApprovalRequest — utöka befintlig typ:**
+
+| Fält | Typ |
+|---|---|
+| `contract_template_json` | text (long) |
+| `auto_create_contract` | yes/no (default `yes`) |
+
+**Nya Option Sets:**
+
+1. `contract_type` — `Subscription`, `RateCard`, `Hybrid`
+2. `price_regulation_type` — `index_cleaning`, `index_kpi`, `lon_kollektiv`, `fast`, `ingen`
+3. `contract_status_override` — `Pausat`, `Tvistig`, `Vilande`
+
+**Verifiera:** `curl "$HOST/services/dashboard?company_id=<någon-kund>&debug=1"` → kolla att de nya fältnamnen finns i `contracts_raw[].all_field_names`.
+
+### Fas 1 — Render-kod (kodat 2026-06-28, ej deployat)
+
+**Tillagt i `index.js`:**
+- `SERVICES`-konstanten utökad med nya Contract-fält-namn (CT_START, CT_TYPE, CT_BINDING, …).
+- `_deriveContractStatus(contract, now)` → returnerar `aktiv` / `utgar_snart` / `avslutad` / `pausat` / `vilande` / `tvistig`. 30-dagars-gräns för utgår_snart.
+- `_createContractsFromApprovalRequest(parent)` → idempotent (skippar om Contract redan finns med `offer_approval == parent._id`). Läser `contract_template_json` array, hoppar över specs där `contract_type != Subscription` (manuella). Auto-Contract-skapande safety-valve via `parent.auto_create_contract != "no"`.
+- Hookad i `_checkAndCompleteRequest` direkt efter `status=Approved`-patchen, före bekräftelsemail. Fel är non-fatal (loggar warning).
+- `_buildServicesDashboard`s tile-entries fick `status`, `contract_id`, `contract_type` så framtida kund-block kan visa "Utgår 30 nov"-pill direkt utan extra fetch.
+
+**Spec-formatet i `contract_template_json` (förväntat av auto-hook):**
+```json
+[
+  {
+    "service_slug": "housekeeping",
+    "offer_id": "<Erbjudande _id>",
+    "office_id": "<Office _id>",
+    "contract_type": "Subscription",
+    "monthly_cost": 188282,
+    "qty": 1,
+    "startdatum": "2025-12-01",
+    "slutdatum": "2028-11-30",
+    "binding_months": 36,
+    "notice_months": 3,
+    "auto_renew_months": null,
+    "price_regulation_type": "index_cleaning",
+    "price_regulation_next": "2026-06-01",
+    "volume_json": {"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4},
+    "category": "Housekeeping",
+    "commission_id": "<Comission _id, valfri>"
+  }
+]
+```
+
+RateCard/Hybrid-specs i samma array skapar inget auto — väntar på manuell granskning i admin-blocket (Fas 2-3).
+
+### Öppna beslut Fas 1
+- (sätts allteftersom)
+
+### Pågående filer/datatyper
+- `ServiceCatalog` (live, 0f)
+- `Contract` (utökas Fas 1)
+- `OfferApprovalRequest` (utökas Fas 1)
+- `ContractTemplate` (ny — skapas Fas 5)
+- `Office` (oförändrad)
+
+---
+
 ## 0f. Tjänste-grid på kund-dashboard — LIVE 2026-06-28, admin-spår PLANERAS
 
 **Vad finns idag (live):**

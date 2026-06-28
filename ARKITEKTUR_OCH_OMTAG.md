@@ -1,7 +1,12 @@
-# Mira-Exchange — Arkitektur-karta & Designdokument för sync-omtag
+# Mira-Exchange — Arkitektur-karta & Designdokument
 
-> Steg 0 (audit) levererad 2026-06-04. INGEN kod ändrad. Detta dokument är underlag för beslut innan omtaget börjar.
-> Källa: full läsning av `index.js` (15 888 rader / 604 KB), `emailer.js` (63 KB) och fem `.sh`-cronscript.
+> Detta dokument är djupdesign och beslutsmotivering. Operativ status (PÅGÅR/KLART/etc) per spår läses i `HANDOFF.md`.
+>
+> **Scope:**
+> - §1-9 Sync-omtag (Fortnox/Tengella → Bubble för fakturor/ordrar/offerter/workorders). Designfas slutförd 2026-06-04, omtaget LIVE 2026-06-08. Operativ status: HANDOFF §0.
+> - §10 Tjänste-grid + abonnemangsmodul (kund-dashboard + admin-modul + avtals-lifecycle). Bygge påbörjat 2026-06-28. Operativ status: HANDOFF §0f (live-delar) + §0g (pågående).
+>
+> Källa: full läsning av `index.js`, `emailer.js`, cronscript samt avtalsgenomgång (`Avtal från Carotte/`).
 
 ---
 
@@ -394,3 +399,268 @@ Krav som byggs in redan nu så push blir möjlig utan omskrivning: (a) offer-rad
 - **9d** `tengella-workorder` (global discovery, inbäddade rader, icke-ekonomiskt huvud).
 - **9e** Cron: lägg order/offer/workorder + PDF i `sync_v2_cron.sh` (nightly modified + full).
 - Genomgående samma kvalitetsgrind som faktura: diff-läge bevisar innan write, reconcile validerar.
+
+---
+
+## 10. Tjänste-grid + abonnemangsmodul — designdokument (2026-06-28)
+
+### 10.1 Kontext
+Helt annat spår än §1-9. Inget sync-jobb — vi bygger Carottes affärslogiklager för abonnemang.
+
+- **Live sedan 2026-06-28 (HANDOFF §0f):** kund-facing tjänste-grid på Mira-dashboard. Tiles per Office, popup-detalj, Mira-abonnemang som account-scope. `/services/dashboard` + `/services/request-activation`.
+- **Bygge påbörjat 2026-06-28 (HANDOFF §0g):** admin-modul för Carotte att administrera kundernas Contracts, plus auto-koppling från OfferApproval Approved → Contract skapas → tile tänds. Två tilläggsfeatures i samma spår: PDF-import av befintliga avtal (LLM-parsning) och PDF-generering från avtalsmall som auto-skickas in i OfferApproval-flödet.
+
+Detta kapitel = designprinciper, datamodell och flöden. Operativa faser, fält-listor och teststeg lever i HANDOFF §0g.
+
+### 10.2 Konceptuella avtalstyper
+
+Avtalsgenomgång 2026-06-28 (HK x EA, Staff x Scandic Bemanning, Scandic Master Resource Consultancy m.fl. i `Avtal från Carotte/`) avslöjade att Carottes avtal inte är ETT koncept utan minst tre:
+
+| Typ | Exempel | Pricing | Auto-Contract vid signering? |
+|---|---|---|---|
+| **Subscription** | HK x EA (188 282 SEK/mån + Cleaning Index) | Fast månadskostnad + indexreglering | JA |
+| **RateCard** | Staff x Scandic Bemanning | Roller × kr/h, OB-tillägg, ingen månadskostnad | NEJ (manuellt skapas) |
+| **Hybrid** | T.ex. Reception med fast bas + tilläggsdebitering | Båda | Beroende på flagga |
+| **One-off Offer** | F&E offerter idag | Per uppdrag, ingen subscription | NEJ — lever som Erbjudande + OfferApproval, fakturerat uppdrag, ingen Contract skapas |
+
+**Konsekvens:** ett platt `monthly_cost`-fält räcker inte. Contract-typen i Bubble måste rymma både fast månadssubscription och rate-card. F&E-tile-statusen kan inte bero på Contract — den härleds från senaste FortnoxOrder.
+
+### 10.3 Datamodell
+
+**Princip:** Contract är persistent, OfferApprovalRequest är transient. Carotte fyller spec på OfferApprovalRequest vid skapande, motorn skapar N Contracts vid Approved. Bilagor (Floor Plan, KPI/SLA, Onboarding…) lever som separata Dokument-rader länkade från Contract så de kan revideras (t.ex. Price List efter indexreglering) utan ny signering av huvudavtalet.
+
+**Contract (Bubble-typ, utökas Fas 1):**
+- Befintliga: `Kundföretag` / `erbjudande` / `Kontor` / `Produktantal` / `Månadskostnad` / `Slutdatum` / `kategori`. Inkonsekvent case bevarad för bakåtkompat (`Kundföretag` cap, `erbjudande` lower). `Produktantal` avvecklas till förmån för strukturerat `volume_json`. `kategori` blir härledbart från Erbjudande.Category men behålls tills frontend rivit beroendet.
+- Nya: ~17 fält som ger livscykel, kontraktstyp, prisreglering, bilagor, signaturspårning och bakåtspårning. Fullständig fält-lista per typ i HANDOFF §0g (inte duplicerad här — single source).
+
+**OfferApprovalRequest (Bubble-typ, utökas Fas 1):**
+- `contract_template_json` (text/long): JSON-array av Contract-specs som ska skapas vid Approved. En signering kan ge flera Contracts (Scandic-mönstret: ramavtal som täcker fler tjänster).
+- `auto_create_contract` (yes/no, default yes): safety-valve mot oönskad auto-create per process.
+
+**ContractTemplate (ny Bubble-typ, skapas Fas 5):**
+- `template_html` (text/long): Handlebars-stiliserad HTML, A4-mall (samma teknik som `approval-cert.template.html`).
+- `category` (option set, samma som FORFRAGAN.SUPPLIER_BY_CATEGORY-nycklarna): Food & Event / Staff / Housekeeping / Other facility services.
+- `contract_type` (option set, samma som Contract.contract_type): Subscription / RateCard / Hybrid.
+- `version` (number) + `superseded_by` (ContractTemplate, valfri): versionerad — ett aktivt utkast (draft) frusen mot specifik version, ny version skapas vid mall-revidering, draft påverkas inte.
+- `name` + `subtitle` + `default_spec_json` (text/long): pre-fill för `contract_template_json` (typ "3 mån uppsägning, Cleaning Index för HK").
+
+**Bilagor:** `Contract.attachments` är List of Dokument. En Dokument-rad har redan PDF-fil-fält (befintligt schema). Vid PDF-import laddar Carotte upp huvuddokumentet + valfria bilagor separat. Vid template-generering bifogar Carotte bilagor i admin-formuläret innan PDF-render — varje bilaga blir egen Dokument-rad och kopplas till Contract via `attachments`.
+
+### 10.4 Lifecycle-flöde
+
+Komplett kedja från kund-aktivering till tile-aktivering. Befintligt fett, nya hooks `[NYTT]`:
+
+```
+Kund klickar "Aktivera" på tile (kund-dashboard)
+   │
+   │ /services/request-activation (LIVE)
+   ▼
+Comission skapas (källagnostisk, sätter Comission.lead/Deal i sin tur)
+   │
+   │ [NYTT — Fas 2/3]
+   ▼
+Carotte ser aktiveringen i admin (Comission med source="Mira")
+   │
+   │ Carotte bygger offert/avtal — TVÅ vägar:
+   │
+   ├─── (a) PDF-import [Fas 4]                ─── (b) Template-generering [Fas 5]
+   │    Drag-drop befintlig PDF                    Välj ContractTemplate (HK/Reception/Staff)
+   │    /admin/contract/import                     Pre-fyll spec från template-defaults
+   │    pdf-parse + Anthropic Haiku 4.5            Carotte fyller kundspecifika fält
+   │    Strukturerad JSON tillbaka                 Bilagor (Floor Plan, KPI/SLA…)
+   │    Carotte granskar i review-form             Render HTML → puppeteer-PDF
+   │    Contract skapas DIREKT                     POST /approval/create
+   │    (signerat redan — skipping OfferApproval)
+   │                                                Standard OfferApproval-flödet
+   │                                                Granskare + signers + OTP
+   │                                                Signering → /approval/confirm
+   │                                                _checkAndCompleteRequest
+   │                                                  │
+   │                                                  │ status="Approved" [BEFINTLIGT]
+   │                                                  │
+   │                                                  │ [NYTT — Fas 1, sektion 10.5]
+   │                                                  ▼
+   │                                                _createContractsFromApprovalRequest
+   │                                                  Läs contract_template_json
+   │                                                  För varje Subscription-spec → bubbleCreate Contract
+   │                                                  RateCard/Hybrid skipas (manuella)
+   │                                                  │
+   ▼                                                  ▼
+Contract finns i Bubble (signed_pdf + signed_at + offer_approval bakåtspårning)
+   │
+   │ Bekräftelsemail till signers + reviewers [BEFINTLIGT]
+   │
+   │ Nästa /services/dashboard-anrop från kund-frontend
+   ▼
+_buildServicesDashboard hittar Contract med Slutdatum > now
+   │ Härleder status (_deriveContractStatus)
+   │ Returnerar entry med { status, contract_id, contract_type, end_date }
+   ▼
+Tile tänds som AKTIV i kundens browser. Status-pill differentierad per kontraktstyp.
+```
+
+**Lifecycle-statusar (frontend härled-bara, ingen ny enum-typ behövs):**
+- `Förslag` — ingen Comission finns för kombinationen (kund, slug, kontor)
+- `Förfrågan` — Comission finns, status ≠ Avslutad, ingen OfferApprovalRequest
+- `Offert` — OfferApprovalRequest finns, status ≠ Approved
+- `Aktiv` — Contract finns, Slutdatum > now
+- `Utgår snart` — Contract finns, Slutdatum − now ≤ 30d
+- `Avslutad` — Contract finns, Slutdatum ≤ now
+- `Pausat` / `Vilande` / `Tvistig` — Contract.status_override satt
+
+### 10.5 Auto-Contract-hook (Subscription only)
+
+**Hook-punkt:** `_checkAndCompleteRequest` direkt efter `bubblePatch("OfferApprovalRequest", id, {status:"Approved"})`, FÖRE bekräftelsemail. Inte i `/approval/confirm` eller `/approval/review` separat — den centrala completion-helpern är den enda code-path där processen verkligen blir helt klar (sista signer ELLER sista reviewer triggar).
+
+**Idempotens:** läs alla Contract där `offer_approval == parent._id`. Om count > 0 → skip helt. Skydd mot retry vid Approved-status (samma princip som `_checkAndCompleteRequest`s egen idempotens på `parent.status === "Approved"`).
+
+**Safety-valve:** om `parent.auto_create_contract === false` (eller "no") → skip. Carotte kan stänga av per process i skapande-UI:t. Default = yes.
+
+**Kontraktstyp-filter:** loopa `contract_template_json`-array. Bara specs med `contract_type === "Subscription"` skapas auto. RateCard + Hybrid hoppas över med log — de kräver manuell granskning i admin-blocket (Fas 2-3) eftersom prislogik + bemanningsåtagande behöver mänskligt öga.
+
+**Mjuk-fel:** auto-Contract felar ALDRIG Approval-flödet. Try/catch runt hook-anropet, fel loggas som warning, bekräftelsemail går ut ändå. Carotte kan skapa Contract:et manuellt om det fallerat.
+
+**Fält-mappning spec → Contract:** spec.field → SERVICES.CT_*-konstanter (case-sensitivt mot Bubble). volume_json/rate_card_json konverteras till JSON-sträng om de skickas som objekt (Bubble vill ha sträng på text-fält). Null-fält droppas från payload så Bubble behåller defaults.
+
+### 10.6 Status-härledning
+
+`_deriveContractStatus(contract, nowMs)` är ren funktion utan side-effects, returnerar enum-string. Anropas i `_buildServicesDashboard` så frontend slipper räkna själv.
+
+**Logik (prioritetsordning):**
+1. Om `contract.status_override` är satt → returnera den (pausat/vilande/tvistig).
+2. Annars läs `Slutdatum`. Saknas → `aktiv` (öppet avtal utan slutdatum).
+3. Slutdatum < now → `avslutad`.
+4. Slutdatum − now ≤ 30d → `utgar_snart`.
+5. Annars → `aktiv`.
+
+**Tile-rendering kontraktstyp-differentierad** (frontend, Fas 3):
+- Subscription aktiv: `Aktiv — 188 282 kr/mån`
+- RateCard aktiv: `Aktivt ramavtal — 10 roller`
+- Båda utgår snart: `Utgår 30 nov` (gul border)
+- F&E (offert-baserad, ingen Contract): `Senast: Sommarfest 12 maj` om FortnoxOrder.delivery_date ≤ 6 mån
+
+### 10.7 PDF-import-spår (Fas 4)
+
+**Mål:** snabbt få in Carottes befintliga kundbas i Contract-modellen utan att skriva av varje avtal manuellt.
+
+**Pipeline:**
+```
+Carotte: drag-drop befintlig avtals-PDF i admin-block
+   ↓
+POST /admin/contract/import (multipart, x-admin-token)
+   ↓
+pdf-parse extraherar all text + sid-positioner
+   ↓
+Anthropic Haiku 4.5 + system-prompt "extrahera Carotte-avtalsfält"
+   ↓ tool-use för structured output (JSON Schema-grindad)
+   ↓
+Strukturerad JSON tillbaka (kontraktstyp, månadskostnad, datum, bindning, prisreglering, volym, rate-card)
++ parsed_confidence_json (per-fält säkerhetsindikator)
+   ↓
+Render returnerar draft + originalet sparas som Dokument-rad i Bubble
+   ↓
+Carotte ser draft i editable review-form (HTML-block)
++ varje fält visar parsed value + LLM-säkerhet (chip "98%" eller "låg")
++ klick på fält visar PDF-sidan där värdet hittades (deep-link via sid-position)
+   ↓
+Carotte granskar, rättar, godkänner → "Skapa Contract"
+   ↓
+Contract skapas DIREKT (status = aktivt, signed_pdf = uppladdade originalet, parsed_confidence_json sparas för audit)
+SKIPPING OfferApproval — det är redan signerat
+```
+
+**Säkerhet:**
+- LLM kan halucinera siffror. Carotte MÅSTE granska varje fält. UI tvingar review innan "Skapa Contract"-knappen aktiveras.
+- `parsed_confidence_json` lagras för audit ("hur säker var LLM:n på detta värde när det importerades?").
+- Bilagor (Floor Plan, KPI/SLA) parsas INTE — bildrika PDF:er kostar för mycket att skicka till LLM och ger osäkra resultat. Carotte laddar upp bilagor separat efteråt som Dokument-rader i Contract.attachments.
+
+**Modellval:** Haiku 4.5 (`claude-haiku-4-5-20251001`). Snabbt, billigt, bra på structured extraction. ~3-5k input tokens + ~1-2k output tokens per avtal = försumbar kostnad. Sonnet/Opus är overkill för fält-extraktion.
+
+**Anthropic SDK:** `@anthropic-ai/sdk` läggs till i `package.json`. ENV `ANTHROPIC_API_KEY` sätts på Render.
+
+### 10.8 Template-spår (Fas 5)
+
+**Mål:** skapa nya avtal från strukturerade mallar med variable substitution, generera A4-PDF, skicka in i OfferApproval-flödet, auto-Contract vid signering.
+
+**Pipeline:**
+```
+Carotte: "Skapa nytt avtal"-knapp i admin-block (kundkort eller global vy)
+   ↓
+Välj ContractTemplate (HK Subscription / Reception Subscription / Staff RateCard / …)
+   ↓
+Render: GET /admin/contract/template/:id → template_html + default_spec_json
+   ↓
+Pre-fyll formulär med template-defaults (3 mån uppsägning, Cleaning Index, …)
+   ↓
+Carotte fyller kundspecifika fält: månadskostnad, yta, kontaktpersoner, startdatum, bilagor
+   ↓
+POST /admin/contract/render-preview {template_id, spec, attachments_ids}
+   ↓
+Render: Handlebars-substitution i template_html med spec-värden
+   ↓
+puppeteer-core renderar HTML → PDF
++ pdf-lib mergar in bilagor-Dokument bakom huvuddokumentet (samma teknik som approval-cert)
+   ↓
+Returnera PDF-preview i iframe — Carotte granskar visuellt
+   ↓
+"Skicka för signering" → POST /approval/create med renderad PDF som dokument + recipients
++ contract_template_json sätts på OfferApprovalRequest med spec som ska bli Contract vid Approved
+   ↓
+Standard OfferApproval-flödet tar över
+   ↓
+Vid Approved: auto-Contract via Fas 1-hook (sektion 10.5)
+```
+
+**Mall-strategi:**
+- 3 default-mallar i Fas 5: HK Subscription, Reception Subscription, Staff RateCard.
+- **Extraheras från befintliga avtal i `Avtal från Carotte/`** — EA HK-avtalet är 99% färdigt som template. Variabler injiceras där hårdkodade värden står (EA → `{{client_name}}`, 188 282 → `{{monthly_cost}}`, etc.).
+- Mallarna versioneras (`ContractTemplate.version` + `superseded_by`). Befintligt utkast (draft som ännu inte skickats) är pinnat till specifik version. Ny version påverkar bara framtida utkast.
+- Mallar är HTML, inte Word-mallar. Det gör branding-kontrollen tight och eliminerar konverteringsrisker.
+
+**Återanvändning:** `puppeteer-core` + `@sparticuz/chromium` + `pdf-lib` finns redan installerade för signeringsbeviset. Samma engine för Contract-PDF.
+
+### 10.9 Beslut låsta (2026-06-28)
+
+1. **Full scope, inte MVP.** Subscription + RateCard + Hybrid + F&E (offert-baserad). Anledning: kundvolym + framtida F&E-abonnemang gör att MVP-vägen skapar arkitekturskuld.
+2. **Contract-typen utökas i Bubble** med ~17 nya fält + 3 nya Option Sets. Lista i HANDOFF §0g.
+3. **Bilagor som separata Dokument-rader** (Floor Plan, KPI/SLA, Onboarding…), list på Contract. Redigerbara separat utan ny signering — kritiskt för avtal med Cleaning Index-revisioner som ändrar Appendix 4 utan att huvudavtalet rörs.
+4. **F&E-tile är "aktiv"** om senaste FortnoxOrder.delivery_date ≤ 6 månader. Ingen Contract krävs för F&E. Ändras när F&E-abonnemang lanseras (då skapas Subscription Contract på vanligt sätt).
+5. **PDF-import via Anthropic Haiku 4.5 + structured tool-use.** Carotte granskar parsed JSON innan Contract skapas. `parsed_confidence_json` sparas för audit.
+6. **ContractTemplate som ny Bubble-typ** (Fas 5). Default-mallar extraheras från `Avtal från Carotte/`.
+7. **Auto-Contract vid Approved** körs i `_checkAndCompleteRequest`, bara om `contract_type === "Subscription"` och `auto_create_contract != "no"`. RateCard + Hybrid kräver manuell skapande i admin-blocket (säkerhetsmarginal — prislogik och bemanningsåtagande behöver mänskligt öga).
+
+### 10.10 Föreslagen byggordning (5 faser)
+
+Detaljer + operativ status per fas finns i HANDOFF §0g. Kort summary här:
+
+| Fas | Vad | Kärnleverans |
+|---|---|---|
+| 1. Fundament | Bubble-schema-utbyggnad + `_createContractsFromApprovalRequest`-hook + status-härledning i `_buildServicesDashboard` | Auto-Contract fungerar för Subscription, tile får härledd status |
+| 2. Admin-block | Kundkort-flik "Abonnemang" + global "Alla abonnemang"-vy. Manuell create/edit/end + bilagor | Carotte produktivt verktyg innan resten är klart |
+| 3. RateCard + Hybrid + F&E | Kontraktstyp-väljare i admin, RateCard-formulär, F&E-tile-logik (FortnoxOrder.delivery_date ≤ 6 mån) | Komplett täckning av alla avtalskoncept |
+| 4. PDF-import | `pdf-parse` + Anthropic Haiku 4.5 + review-UI + Contract skapas direkt | Snabb on-boarding av befintlig kundbas |
+| 5. Template + PDF-generering | `ContractTemplate`-typ + 3 default-mallar från `Avtal från Carotte/` + puppeteer-render + `/approval/create`-koppling | Helt skapa-skicka-signera-aktivera-pipeline |
+
+Sekventiellt, inte parallellt — varje fas testbar isolerat innan nästa börjar. Total ~17-24 kod-dagar + Bubble-schema + Carotte-test = ~4-6 veckor kalendertid.
+
+### 10.11 Synk mot sync-omtagets principer
+
+Tjänste-grid-koden följer designprinciperna från §3.4, §8.5 och §1.5:
+
+| §-referens (sync) | Princip | Tjänste-grid-tillämpning |
+|---|---|---|
+| §3.4 | Diff-läge istället för shadow-typ för verifiering | `?debug=1` på `/services/dashboard` returnerar `fas1_schema_check` (present/missing-fält per Contract) + per-contract dump utan write. Samma andas: verifiering utan side-effects. |
+| §8.5 | Bubble-helper kastar vid fel istället för att svälja till `[]` | `_createContractsFromApprovalRequest` loggar synligt vid fel, kastar inte tyst. Felar mjukt mot Approval-flödet (try/catch + warning), men inom hook-funktionen själv är felhantering explicit. |
+| §1.5 | `bubbleFind` default `limit:1` är fotgevär | Vi använder `bubbleFindAll` för idempotens-check (`Contract.offer_approval == parent._id`) och för dashboard-listning. Aldrig `bubbleFind` med default limit. |
+| §8.5 | Connection-id:n från EN konstantkälla | `SERVICES`-konstanten är vår single source för Contract/OfferApprovalRequest-fältnamn. Allt case-sensitivt går via `SERVICES.CT_*`/`SERVICES.OAR_*`. |
+| §8.6 | Minimal yta tills utfasning — nya routes utan att röra gamla | Fas 1 lägger till `_createContractsFromApprovalRequest` + status-härledning utan att riva något. `_checkAndCompleteRequest` får en mjuk hook (try/catch, non-fatal). Befintligt OfferApproval-beteende oförändrat. |
+
+### 10.12 Öppna frågor
+
+- **Retention på Contract.signed_pdf:** samma file-GC-problem som §9.4. Bubbles Data API har ingen file-delete, så att nolla `signed_pdf` frigör inte lagring — bara pekaren. Beslut om retention tas senare; lagring nu, GC-mekanik via Bubble backend-workflow `delete_file` om/när det blir nödvändigt.
+- **ContractTemplate.version vs aktiva utkast:** mitt förslag är pin per draft (sparas mot specifik version), ny version skapas vid mall-revidering, draft påverkas inte. Alternativ: rebase draft mot senaste version (riskerar att Carotte arbetar med en spec som ändras under fötterna). Beslut tas i Fas 5.
+- **F&E-tile-regeln 6 mån:** ska vara konfigurerbar per ServiceCatalog-rad (nytt fält `active_window_months`) eller global konstant? Förslag: global tills någon kategori kräver något annat. Spara inte komplexitet på framtid.
+- **Multi-Office signering:** kan `contract_template_json` ha specs med olika `office_id` i samma OfferApprovalRequest? Tekniskt JA (auto-hook loopar alla specs oavsett office). UX-fråga: ska Carotte få bygga sådana i admin-blocket eller är one-spec-per-request MVP? Beslut tas i Fas 2.
+- **RateCard-fakturering:** när Comission läggs för en kund med aktivt RateCard-Contract, ska prislogiken auto-fylla rad-priser från `rate_card_json`? Spår för Fas 3 — kräver Comission-koppling mot Contract via Office/kategori.
+- **`Produktantal`-avveckling:** nya fältet `volume_json` är strukturerat och rikare. Frontend (kund-tile, admin-vy) måste först läsa `volume_json` parallellt, sedan kan `Produktantal` strykas. Tidpunkt: Fas 2 (admin-block migrerar UI:t).
+- **`kategori`-avveckling på Contract:** Erbjudande.Category är single source. Contract.kategori är duplikat. Avveckling i Fas 3 när frontend härleder från relationen. Risk: Erbjudande utan Category → Contract utan kategori → måste vara explicit fel-hantering.
