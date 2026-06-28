@@ -284,7 +284,7 @@
   // Scoped query-helpers: alla lookups går mot just denna instans root.
   const $   = (key) => root.querySelector(`[data-ac="${key}"]`);
   const $$  = (key) => root.querySelectorAll(`[data-ac="${key}"]`);
-  const cfg = (key) => root.querySelector(`[data-mira="${key}"]`)?.value || "";
+  const cfg = (key) => { const el = root.querySelector(`[data-mira="${key}"]`); return (el && el.value) || ""; };
 
   const HOST          = cfg("api_host").replace(/\/+$/, "");
   const TOKEN         = cfg("planning_token");
@@ -416,7 +416,7 @@
       const r = await fetch(HOST + "/admin/approval/users-by-company?clientcompany=" + encodeURIComponent(CLIENTCOMPANY),
         { headers: { "x-admin-token": TOKEN } });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok || !j.items?.length) return;   // tyst om inga kontakter
+      if (!r.ok || !j.ok || !(j.items && j.items.length)) return;   // tyst om inga kontakter
       for (const u of j.items) {
         const opt = document.createElement("option");
         opt.value = u.email;
@@ -433,7 +433,7 @@
       });
     } catch (e) {
       // tyst — om endpoint failar visar vi bara inte dropdown
-      console.warn("[user-picker] fetch failed", e?.message || e);
+      console.warn("[user-picker] fetch failed", (e && e.message) || e);
     }
   }
 
@@ -510,7 +510,7 @@
   function showDone(j) {
     $("form-view").classList.add("hidden");
     $("done-view").classList.remove("hidden");
-    $("done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
+    $("done-cnt").textContent = j.recipients_count || (j.approvals && j.approvals.length) || 0;
     const list = $("done-list");
     list.innerHTML = "";
     for (const a of (j.approvals || [])) {
@@ -542,7 +542,7 @@
   // ── Helpers ─────────────────────────────────────────────────────
   function setErr(m) { $("err").textContent = m || ""; }
   function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
       "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
     })[c]);
   }

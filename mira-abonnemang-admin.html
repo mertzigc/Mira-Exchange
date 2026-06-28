@@ -1,5 +1,5 @@
 <!--
-  MIRA – ABONNEMANG ADMIN (GLOBAL VY)  — SKISS Fas 2, 2026-06-28
+  MIRA – ABONNEMANG ADMIN (GLOBAL VY)  — Fas 2, 2026-06-28
   -------------------------------------------------------------
   Egen sida i Carotte-backend. Sorterbar tabell över ALLA Contracts
   oavsett kund. Filter på status / kategori / kontraktstyp / kund /
@@ -9,17 +9,20 @@
   DESIGN-SPRÅK lånat från mira-kund-dashboard-tjanster.html
   + mira-abonnemang-kund.html.
 
-  STATUS: STATISK SKISS. Demo-data hårdkodad i SAMPLE. Ingen Render-
-  koppling. För UX-feedback.
+  ARKITEKTUR följer mira-approval-archive.html:
+    - .aa-wrap som root + multi-instance claim-mekanism
+    - hidden inputs med data-mira="..."
+    - scoped helpers $('key') + cfg('key') mot root
+    - ES5-säker (inga ?. eller ??)
 
-  KOMMANDE KOPPLING I BUBBLE (Fas 2 backend):
-    #aa_api_host         = https://mira-exchange.onrender.com
-    #aa_planning_token   = <PLANNING_ADMIN_TOKEN>
+  KOPPLING I BUBBLE:
+    data-mira="api_host"        = https://mira-exchange.onrender.com
+    data-mira="planning_token"  = <PLANNING_ADMIN_TOKEN>
 -->
 
 <style>
-  .aa-admin * { box-sizing: border-box; }
-  .aa-admin {
+  .aa-wrap, .aa-wrap * { box-sizing: border-box; }
+  .aa-wrap {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     width: 100%;
     --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
@@ -33,6 +36,7 @@
     border-radius: 12px;
     min-height: 100vh;
   }
+  .aa-wrap input[type=hidden]{display:none}
 
   /* Header */
   .aa-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap;
@@ -201,10 +205,11 @@
   .aa-empty-t { font-size:14px; color:var(--t2); margin-bottom:6px; }
 </style>
 
-<input type="hidden" id="aa_api_host"       value="https://mira-exchange.onrender.com">
-<input type="hidden" id="aa_planning_token" value="">
+<div class="aa-wrap">
 
-<div class="aa-admin">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="">
+
   <div class="aa-head">
     <div>
       <h1>Alla abonnemang</h1>
@@ -214,29 +219,29 @@
       <div class="aa-kpis">
         <div class="aa-kpi">
           <div class="aa-kpi-l">Aktiva</div>
-          <div class="aa-kpi-v" id="aa-kpi-aktiva">42</div>
+          <div class="aa-kpi-v" data-aa="kpi-aktiva">42</div>
         </div>
         <div class="aa-kpi">
           <div class="aa-kpi-l">Per månad</div>
-          <div class="aa-kpi-v acc" id="aa-kpi-monthly">1,8 Mkr</div>
+          <div class="aa-kpi-v acc" data-aa="kpi-monthly">1,8 Mkr</div>
         </div>
         <div class="aa-kpi">
           <div class="aa-kpi-l">Utgår &lt;30 d</div>
-          <div class="aa-kpi-v warn" id="aa-kpi-utgar">3</div>
+          <div class="aa-kpi-v warn" data-aa="kpi-utgar">3</div>
         </div>
       </div>
-      <button class="aa-btn primary" id="aa-create-btn">+ Nytt abonnemang</button>
+      <button class="aa-btn primary" data-aa="create-btn">+ Nytt abonnemang</button>
     </div>
   </div>
 
   <div class="aa-filters">
     <div class="aa-fgroup">
-      <input type="text" class="aa-search" id="aa-search" placeholder="Sök kund eller tjänst...">
+      <input type="text" class="aa-search" data-aa="search" placeholder="Sök kund eller tjänst...">
     </div>
 
     <div class="aa-fgroup">
       <span class="aa-fl">Status</span>
-      <div class="aa-chip-row" id="aa-fil-status">
+      <div class="aa-chip-row" data-aa="fil-status">
         <div class="aa-chip on ok" data-val="aktiv">Aktiv</div>
         <div class="aa-chip on warn" data-val="utgar_snart">Utgår snart</div>
         <div class="aa-chip" data-val="avslutad">Avslutad</div>
@@ -247,7 +252,7 @@
 
     <div class="aa-fgroup">
       <span class="aa-fl">Typ</span>
-      <div class="aa-chip-row" id="aa-fil-type">
+      <div class="aa-chip-row" data-aa="fil-type">
         <div class="aa-chip on" data-val="Subscription">Subscription</div>
         <div class="aa-chip on" data-val="RateCard">RateCard</div>
         <div class="aa-chip on" data-val="Hybrid">Hybrid</div>
@@ -256,7 +261,7 @@
 
     <div class="aa-fgroup">
       <span class="aa-fl">Kategori</span>
-      <div class="aa-chip-row" id="aa-fil-cat">
+      <div class="aa-chip-row" data-aa="fil-cat">
         <div class="aa-chip on" data-val="Housekeeping">Housekeeping</div>
         <div class="aa-chip on" data-val="Staff">Staff</div>
         <div class="aa-chip on" data-val="Food &amp; Event">Food &amp; Event</div>
@@ -267,21 +272,21 @@
 
     <div class="aa-fgroup">
       <span class="aa-fl">Slutdatum</span>
-      <input type="date" class="aa-date" id="aa-fil-from">
+      <input type="date" class="aa-date" data-aa="fil-from">
       <span class="aa-date-sep">→</span>
-      <input type="date" class="aa-date" id="aa-fil-to">
+      <input type="date" class="aa-date" data-aa="fil-to">
     </div>
 
-    <span class="aa-filters-clear" id="aa-fil-clear">Rensa filter</span>
+    <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
   </div>
 
   <div class="aa-tablewrap">
     <div class="aa-tablecount">
-      Visar <b id="aa-shown-count">12</b> av <b id="aa-total-count">12</b> abonnemang
+      Visar <b data-aa="shown-count">12</b> av <b data-aa="total-count">12</b> abonnemang
       <span style="color:var(--t3); font-weight:400;">Klicka rad för detaljer</span>
     </div>
 
-    <table class="aa-table">
+    <table class="aa-table" data-aa="table">
       <thead>
         <tr>
           <th data-sort="customer">Kund <span class="aa-sort">▼</span></th>
@@ -293,7 +298,7 @@
           <th data-sort="end" class="sorted right">Slutdatum <span class="aa-sort">▲</span></th>
         </tr>
       </thead>
-      <tbody id="aa-tbody"></tbody>
+      <tbody data-aa="tbody"></tbody>
     </table>
 
     <div class="aa-pag">
@@ -308,6 +313,21 @@
 
 <script>
 (function () {
+  // ── Multi-instance support ──────────────────────────────────────
+  var root = (function () {
+    var all = document.querySelectorAll('.aa-wrap');
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i];
+      if (!r.dataset.aaInit) { r.dataset.aaInit = '1'; return r; }
+    }
+    return null;
+  })();
+  if (!root) return;
+
+  // Scoped helpers
+  function $(key){ return root.querySelector('[data-aa="' + key + '"]'); }
+  function cfg(key){ var el = root.querySelector('[data-mira="' + key + '"]'); return (el && el.value) || ''; }
+
   var SAMPLE = [
     // EA Digital Illusions
     { id:'c-hk-01', customer:'Electronic Arts AB', customer_id:'ea',
@@ -437,7 +457,6 @@
       signed_at:'2021-12-15', signed_pdf:'hk-volvo-2022.pdf', attachments_count:2, offer_approval_id:null }
   ];
 
-  function $(id){ return document.getElementById(id); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function fmtKr(v){
     var n = Math.round(Number(v)||0);
@@ -604,9 +623,9 @@
 
   function renderTable(){
     var rows = applyFilters();
-    $('aa-tbody').innerHTML = rows.map(rowHtml).join('') || '<tr><td colspan="7"><div class="aa-empty"><div class="aa-empty-t">Inga abonnemang matchar filtren</div>Justera filter eller skapa nytt.</div></td></tr>';
-    $('aa-shown-count').textContent = rows.length;
-    $('aa-total-count').textContent = SAMPLE.length;
+    $('tbody').innerHTML = rows.map(rowHtml).join('') || '<tr><td colspan="7"><div class="aa-empty"><div class="aa-empty-t">Inga abonnemang matchar filtren</div>Justera filter eller skapa nytt.</div></td></tr>';
+    $('shown-count').textContent = rows.length;
+    $('total-count').textContent = SAMPLE.length;
 
     // KPIs på FULL data (inte filtrerad)
     var aktiva = SAMPLE.filter(function(r){ return r.status==='aktiv' || r.status==='utgar_snart'; });
@@ -617,104 +636,122 @@
       var d = daysUntil(r.slutdatum);
       return r.status === 'utgar_snart' || (d != null && d >= 0 && d <= 30);
     });
-    $('aa-kpi-aktiva').textContent = aktiva.length;
-    $('aa-kpi-monthly').textContent = fmtKr(totMonthly);
-    $('aa-kpi-utgar').textContent = utgar.length;
+    $('kpi-aktiva').textContent = aktiva.length;
+    $('kpi-monthly').textContent = fmtKr(totMonthly);
+    $('kpi-utgar').textContent = utgar.length;
 
     // Bind row-clicks
-    document.querySelectorAll('.aa-admin .aa-mainrow').forEach(function(tr){
-      tr.addEventListener('click', function(){
-        var id = tr.getAttribute('data-id');
-        STATE.open_id = STATE.open_id === id ? null : id;
-        renderTable();
-      });
-    });
+    var mainrows = root.querySelectorAll('.aa-mainrow');
+    for (var i = 0; i < mainrows.length; i++) {
+      (function(tr){
+        tr.addEventListener('click', function(){
+          var id = tr.getAttribute('data-id');
+          STATE.open_id = STATE.open_id === id ? null : id;
+          renderTable();
+        });
+      })(mainrows[i]);
+    }
     // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna/öppna kundkort)
-    if (typeof bindActions === 'function') bindActions();
+    bindActions();
   }
 
   // Bind filters
-  function bindChipGroup(containerId, key){
-    document.querySelectorAll('#'+containerId+' .aa-chip').forEach(function(c){
-      c.addEventListener('click', function(){
-        c.classList.toggle('on');
-        var val = c.getAttribute('data-val');
-        var arr = STATE[key];
-        var idx = arr.indexOf(val);
-        if (c.classList.contains('on') && idx < 0) arr.push(val);
-        else if (!c.classList.contains('on') && idx >= 0) arr.splice(idx, 1);
-        renderTable();
-      });
-    });
+  function bindChipGroup(key, stateKey){
+    var container = $(key);
+    if (!container) return;
+    var chips = container.querySelectorAll('.aa-chip');
+    for (var i = 0; i < chips.length; i++) {
+      (function(c){
+        c.addEventListener('click', function(){
+          c.classList.toggle('on');
+          var val = c.getAttribute('data-val');
+          var arr = STATE[stateKey];
+          var idx = arr.indexOf(val);
+          if (c.classList.contains('on') && idx < 0) arr.push(val);
+          else if (!c.classList.contains('on') && idx >= 0) arr.splice(idx, 1);
+          renderTable();
+        });
+      })(chips[i]);
+    }
   }
-  bindChipGroup('aa-fil-status', 'filter_status');
-  bindChipGroup('aa-fil-type', 'filter_type');
-  bindChipGroup('aa-fil-cat', 'filter_cat');
+  bindChipGroup('fil-status', 'filter_status');
+  bindChipGroup('fil-type', 'filter_type');
+  bindChipGroup('fil-cat', 'filter_cat');
 
-  $('aa-search').addEventListener('input', function(e){
+  $('search').addEventListener('input', function(e){
     STATE.filter_search = e.target.value;
     renderTable();
   });
-  $('aa-fil-from').addEventListener('change', function(e){
+  $('fil-from').addEventListener('change', function(e){
     STATE.filter_from = e.target.value;
     renderTable();
   });
-  $('aa-fil-to').addEventListener('change', function(e){
+  $('fil-to').addEventListener('change', function(e){
     STATE.filter_to = e.target.value;
     renderTable();
   });
-  $('aa-fil-clear').addEventListener('click', function(){
+  $('fil-clear').addEventListener('click', function(){
     STATE.filter_search = '';
     STATE.filter_from = '';
     STATE.filter_to = '';
     STATE.filter_status = ['aktiv','utgar_snart','avslutad','pausat'];
     STATE.filter_type = ['Subscription','RateCard','Hybrid'];
     STATE.filter_cat = ['Housekeeping','Staff','Food &amp; Event','Other facility services','platform'];
-    $('aa-search').value = '';
-    $('aa-fil-from').value = '';
-    $('aa-fil-to').value = '';
-    document.querySelectorAll('.aa-admin .aa-chip').forEach(function(c){ c.classList.add('on'); });
+    $('search').value = '';
+    $('fil-from').value = '';
+    $('fil-to').value = '';
+    var allChips = root.querySelectorAll('.aa-chip');
+    for (var i = 0; i < allChips.length; i++) allChips[i].classList.add('on');
     renderTable();
   });
 
   // Sort
-  document.querySelectorAll('.aa-table thead th').forEach(function(th){
-    th.addEventListener('click', function(){
-      var col = th.getAttribute('data-sort');
-      if (!col) return;
-      if (STATE.sort_by === col) {
-        STATE.sort_dir = STATE.sort_dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        STATE.sort_by = col;
-        STATE.sort_dir = 'asc';
-      }
-      document.querySelectorAll('.aa-table thead th').forEach(function(x){ x.classList.remove('sorted'); x.querySelector('.aa-sort').textContent = '▼'; });
-      th.classList.add('sorted');
-      th.querySelector('.aa-sort').textContent = STATE.sort_dir === 'asc' ? '▲' : '▼';
-      renderTable();
-    });
-  });
+  var headerThs = root.querySelectorAll('.aa-table thead th');
+  for (var i = 0; i < headerThs.length; i++) {
+    (function(th){
+      th.addEventListener('click', function(){
+        var col = th.getAttribute('data-sort');
+        if (!col) return;
+        if (STATE.sort_by === col) {
+          STATE.sort_dir = STATE.sort_dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          STATE.sort_by = col;
+          STATE.sort_dir = 'asc';
+        }
+        var allThs = root.querySelectorAll('.aa-table thead th');
+        for (var k = 0; k < allThs.length; k++) {
+          allThs[k].classList.remove('sorted');
+          var sortSpan = allThs[k].querySelector('.aa-sort');
+          if (sortSpan) sortSpan.textContent = '▼';
+        }
+        th.classList.add('sorted');
+        var thSort = th.querySelector('.aa-sort');
+        if (thSort) thSort.textContent = STATE.sort_dir === 'asc' ? '▲' : '▼';
+        renderTable();
+      });
+    })(headerThs[i]);
+  }
 
   // Create-knappen (placeholder)
-  $('aa-create-btn').addEventListener('click', function(){
+  $('create-btn').addEventListener('click', function(){
     alert('Create-modal (samma som kundkort-fliken) öppnas här. För skissen: se mira-abonnemang-kund.html.');
   });
 
   // ── Live data-fetch (Fas 2a) ────────────────────────────────────────────
-  // Om hidden input aa_planning_token är satt av Bubble: hämta verklig data
+  // Om hidden input planning_token är satt av Bubble: hämta verklig data
   // från Render. Annars kör demo-SAMPLE.
-  function readHidden(id){ var e = $(id); return e ? String(e.value||'').trim() : ''; }
-  async function loadLive(){
-    var apiHost = readHidden('aa_api_host') || 'https://mira-exchange.onrender.com';
-    var token   = readHidden('aa_planning_token');
-    if (!token) return; // demo-läge
+  function loadLive(){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    var token   = cfg('planning_token');
+    if (!token) return Promise.resolve(); // demo-läge
 
-    try {
-      var r = await fetch(apiHost + '/admin/contracts/all', {
-        headers: { 'x-admin-token': token }
-      });
-      if (!r.ok) { console.warn('[aa] fetch failed', r.status); return; }
-      var data = await r.json();
+    return fetch(apiHost + '/admin/contracts/all', {
+      headers: { 'x-admin-token': token }
+    }).then(function(r){
+      if (!r.ok) { console.warn('[aa] fetch failed', r.status); return null; }
+      return r.json();
+    }).then(function(data){
+      if (!data) return;
       if (!data.ok) { console.warn('[aa] api error', data.error); return; }
 
       // Mappa BE-items → SAMPLE-rader. Strukturen matchar nästan exakt — vi
@@ -750,80 +787,85 @@
 
       console.log('[aa] live-data laddad: ' + SAMPLE.length + ' contracts (av totalt ' + (data.total||SAMPLE.length) + ')');
       renderTable();
-    } catch (e) {
+    }).catch(function(e){
       console.warn('[aa] live-fetch fail', e && e.message);
       // Fallback: SAMPLE-data redan renderad
-    }
+    });
   }
 
   // ── Action-handlers (Fas 2c-1) ──────────────────────────────────────────
-  async function patchContractAction(id, body){
-    var apiHost = readHidden('aa_api_host') || 'https://mira-exchange.onrender.com';
-    var token   = readHidden('aa_planning_token');
+  function patchContractAction(id, body){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    var token   = cfg('planning_token');
     if (!token) {
-      alert('Demo-läge: ingen PATCH skickas (aa_planning_token saknas i Bubble-bindningen).');
-      return null;
+      alert('Demo-läge: ingen PATCH skickas (planning_token saknas i Bubble-bindningen).');
+      return Promise.resolve(null);
     }
-    try {
-      var r = await fetch(apiHost + '/admin/contracts/' + encodeURIComponent(id), {
-        method: 'PATCH',
-        headers: { 'x-admin-token': token, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      var data = await r.json();
-      if (!data.ok) {
-        alert('Fel: ' + (data.error || ('HTTP ' + r.status)));
+    return fetch(apiHost + '/admin/contracts/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'x-admin-token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().then(function(data){ return { r: r, data: data }; });
+    }).then(function(res){
+      var data = res.data;
+      if (!data || !data.ok) {
+        alert('Fel: ' + ((data && data.error) || ('HTTP ' + res.r.status)));
         return null;
       }
       return data;
-    } catch (e) {
+    }).catch(function(e){
       alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
       return null;
-    }
+    });
   }
 
   function bindActions(){
-    document.querySelectorAll('.aa-admin [data-act]').forEach(function(btn){
-      btn.addEventListener('click', async function(ev){
-        ev.stopPropagation(); // Annars toggleas raden
-        var act = btn.getAttribute('data-act');
-        var id  = btn.getAttribute('data-id');
-        if (!id) return;
+    var actBtns = root.querySelectorAll('[data-act]');
+    for (var i = 0; i < actBtns.length; i++) {
+      (function(btn){
+        btn.addEventListener('click', function(ev){
+          ev.stopPropagation(); // Annars toggleas raden
+          var act = btn.getAttribute('data-act');
+          var id  = btn.getAttribute('data-id');
+          if (!id) return;
 
-        if (act === 'open-customer') {
-          // Placeholder — Bubble-routing till kundkort-fliken byggs separat
-          alert('Öppna kundkort för ' + id + ' (Bubble-navigering kopplas i separat steg).');
-          return;
-        }
+          if (act === 'open-customer') {
+            // Placeholder — Bubble-routing till kundkort-fliken byggs separat
+            alert('Öppna kundkort för ' + id + ' (Bubble-navigering kopplas i separat steg).');
+            return;
+          }
 
-        var body = null;
-        if (act === 'pause')        body = { status_override: 'Pausat' };
-        else if (act === 'resume')  body = { status_override: null };
-        else if (act === 'end') {
-          if (!confirm('Avsluta abonnemanget? Slutdatum sätts till dagens datum.')) return;
-          body = { slutdatum: new Date().toISOString().slice(0, 10) };
-        }
-        else if (act === 'reopen') {
-          if (!confirm('Återöppna abonnemanget? Slutdatum tas bort.')) return;
-          body = { slutdatum: null };
-        }
-        else if (act === 'edit') {
-          alert('Redigera-modal kommer i steg 2c-2.');
-          return;
-        }
-        if (!body) return;
+          var body = null;
+          if (act === 'pause')        body = { status_override: 'Pausat' };
+          else if (act === 'resume')  body = { status_override: null };
+          else if (act === 'end') {
+            if (!confirm('Avsluta abonnemanget? Slutdatum sätts till dagens datum.')) return;
+            body = { slutdatum: new Date().toISOString().slice(0, 10) };
+          }
+          else if (act === 'reopen') {
+            if (!confirm('Återöppna abonnemanget? Slutdatum tas bort.')) return;
+            body = { slutdatum: null };
+          }
+          else if (act === 'edit') {
+            alert('Redigera-modal kommer i steg 2c-2.');
+            return;
+          }
+          if (!body) return;
 
-        var original = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = '...';
-        var result = await patchContractAction(id, body);
-        btn.disabled = false;
-        btn.textContent = original;
-        if (result && result.ok) {
-          await loadLive();
-        }
-      });
-    });
+          var original = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = '...';
+          patchContractAction(id, body).then(function(result){
+            btn.disabled = false;
+            btn.textContent = original;
+            if (result && result.ok) {
+              loadLive();
+            }
+          });
+        });
+      })(actBtns[i]);
+    }
   }
 
   renderTable();

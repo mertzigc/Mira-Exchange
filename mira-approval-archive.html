@@ -380,7 +380,7 @@
   // Create-panel ligger nu inne i .aa-wrap (inline-expand istället för modal)
   // → ingen separat claim behövs, allt scopas direkt mot root.
   const $   = (key) => root.querySelector(`[data-aa="${key}"]`);
-  const cfg = (key) => root.querySelector(`[data-mira="${key}"]`)?.value || "";
+  const cfg = (key) => { const el = root.querySelector(`[data-mira="${key}"]`); return (el && el.value) || ""; };
 
   const HOST         = cfg("api_host").replace(/\/+$/, "");
   const TOKEN        = cfg("planning_token");
@@ -401,7 +401,7 @@
 
   // ── Helpers ─────────────────────────────────────────────────────
   function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
       "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
     })[c]);
   }
@@ -881,7 +881,7 @@
       const r = await fetch(HOST + "/admin/approval/users-by-company?clientcompany=" + encodeURIComponent(ccId),
         { headers: { "x-admin-token": TOKEN } });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok || !j.items?.length) return;   // tyst om inga kontakter
+      if (!r.ok || !j.ok || !(j.items && j.items.length)) return;   // tyst om inga kontakter
       for (const u of j.items) {
         const opt = document.createElement("option");
         opt.value = u.email;
@@ -891,7 +891,7 @@
       }
       wrap.classList.remove("hidden");
     } catch (e) {
-      console.warn("[user-picker] fetch failed", e?.message || e);
+      console.warn("[user-picker] fetch failed", (e && e.message) || e);
     }
   }
 
@@ -941,7 +941,7 @@
       sender_email: SENDER_EMAIL,
       sender_name:  senderName,
       recipients,
-      clientcompany: formState.selectedCc?.id || null,
+      clientcompany: (formState.selectedCc && formState.selectedCc.id) || null,
       deal:          null,
       expires_at:    expIso,
     };
@@ -979,7 +979,7 @@
   function showDone(j) {
     $("form").classList.add("hidden");
     $("done").classList.remove("hidden");
-    $("done-cnt").textContent = j.recipients_count || (j.approvals?.length ?? 0);
+    $("done-cnt").textContent = j.recipients_count || (j.approvals && j.approvals.length) || 0;
     const list = $("done-list");
     list.innerHTML = "";
     for (const a of (j.approvals || [])) {

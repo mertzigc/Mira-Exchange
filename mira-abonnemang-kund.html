@@ -1,28 +1,29 @@
 <!--
-  MIRA – ABONNEMANG (KUNDKORT-FLIK)  — SKISS Fas 2, 2026-06-28
+  MIRA – ABONNEMANG (KUNDKORT-FLIK)  — Fas 2, 2026-06-28
   -------------------------------------------------------------
   Flik på Carottes interna kundkort (Företag-popup). Visar valda
   kundens alla Contracts grupperade per Office, plus account-scope
   (Mira-abonnemang) överst. Klick på rad → expand-panel inline med
   detaljer + bilagor + actions.
 
-  DESIGN-SPRÅK lånat från mira-kund-dashboard-tjanster.html men
-  anpassat för internt verktyg (info-tätt, list-orienterat, inga
-  hjältebilder).
+  ARKITEKTUR (samma mönster som mira-approval-create.html):
+    - Wrapper-div .ab-wrap claimar sig själv via IIFE-claim-mekanism
+      (multi-instance-säkert om blocket bäddas in flera gånger)
+    - Scoped helpers $ / cfg arbetar mot root, inga document.getElementById
+    - Hidden inputs binds via data-mira="..." (Bubble-kopplingen)
 
-  STATUS: STATISK SKISS. Demo-data hårdkodad i SAMPLE-objektet.
-  Ingen Render-koppling, ingen Bubble-koppling. För UX-feedback.
+  KOPPLING I BUBBLE (sätt value="" via dynamic data — raw HTML-tokens):
+    data-mira="api_host"          = https://mira-exchange.onrender.com
+    data-mira="planning_token"    = PLANNING_ADMIN_TOKEN
+    data-mira="clientcompany"     = Current Company's unique id
+    data-mira="clientcompany_nm"  = Current Company's Name_company
 
-  KOMMANDE KOPPLING I BUBBLE (Fas 2 backend):
-    #ab_api_host         = https://mira-exchange.onrender.com
-    #ab_planning_token   = <PLANNING_ADMIN_TOKEN>
-    #ab_clientcompany    = <Current Company's unique id>
-    #ab_clientcompany_nm = <Current Company's Name_company>
+  Om planning_token eller clientcompany saknas körs demo-SAMPLE.
 -->
 
 <style>
-  .ab-kund * { box-sizing: border-box; }
-  .ab-kund {
+  .ab-wrap, .ab-wrap * { box-sizing: border-box; }
+  .ab-wrap {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     width: 100%;
     --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
@@ -35,6 +36,7 @@
     padding: 22px 24px;
     border-radius: 12px;
   }
+  .ab-wrap input[type=hidden] { display:none; }
 
   /* Header */
   .ab-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap;
@@ -214,43 +216,45 @@
     padding:14px 22px; border-top:0.5px solid var(--line); background:var(--bg-deep); }
 </style>
 
-<!-- Bubble fyller hidden inputs när blocket bäddas in på riktigt -->
-<input type="hidden" id="ab_api_host"         value="https://mira-exchange.onrender.com">
-<input type="hidden" id="ab_planning_token"   value="">
-<input type="hidden" id="ab_clientcompany"    value="">
-<input type="hidden" id="ab_clientcompany_nm" value="">
+<div class="ab-wrap">
 
-<div class="ab-kund">
+  <!-- Bubble-config: sätt value="" via dynamic data. Hidden inputs lever
+       inuti .ab-wrap så de scopas tillsammans med resten. -->
+  <input type="hidden" data-mira="api_host"         value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"   value="">
+  <input type="hidden" data-mira="clientcompany"    value="">
+  <input type="hidden" data-mira="clientcompany_nm" value="">
+
   <div class="ab-head">
     <div class="ab-head-l">
-      <h2 id="ab-cust-name">Electronic Arts AB</h2>
+      <h2 data-ab="cust-name">Electronic Arts AB</h2>
       <div class="ab-cust">Abonnemang &amp; avtal</div>
     </div>
     <div class="ab-head-r">
       <div class="ab-sumblock">
         <div class="ab-sk-l">Aktiva</div>
-        <div class="ab-sk-v" id="ab-sum-count">5 st</div>
+        <div class="ab-sk-v" data-ab="sum-count">5 st</div>
       </div>
       <div class="ab-sumblock">
         <div class="ab-sk-l">Per månad</div>
-        <div class="ab-sk-v" id="ab-sum-cost">258 412 kr</div>
+        <div class="ab-sk-v" data-ab="sum-cost">258 412 kr</div>
       </div>
-      <button class="ab-btn primary" id="ab-create-btn">+ Nytt abonnemang</button>
+      <button class="ab-btn primary" data-ab="create-btn">+ Nytt abonnemang</button>
     </div>
   </div>
 
-  <div id="ab-sections"></div>
+  <div data-ab="sections"></div>
 
   <!-- Create-modal -->
-  <div class="ab-mask" id="ab-create-mask">
+  <div class="ab-mask" data-ab="create-mask">
     <div class="ab-modal" role="dialog" aria-modal="true">
       <div class="ab-modal-h">
-        <h3>Nytt abonnemang för Electronic Arts AB</h3>
-        <button class="ab-modal-close" id="ab-create-close" aria-label="Stäng">&times;</button>
+        <h3 data-ab="create-title">Nytt abonnemang för Electronic Arts AB</h3>
+        <button class="ab-modal-close" data-ab="create-close" aria-label="Stäng">&times;</button>
       </div>
       <div class="ab-modal-b">
         <div style="font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; margin-bottom:8px;">Kontraktstyp</div>
-        <div class="ab-typesel">
+        <div class="ab-typesel" data-ab="typesel">
           <div class="ab-typecard on" data-type="Subscription">
             <div class="ab-typecard-t">Subscription</div>
             <div class="ab-typecard-d">Fast månadskostnad. HK, Reception, Mira.</div>
@@ -276,7 +280,7 @@
           </div>
         </div>
 
-        <div class="ab-form-2" id="ab-sub-fields">
+        <div class="ab-form-2" data-ab="sub-fields">
           <div class="ab-form-row">
             <label>Månadskostnad (SEK, exkl. moms)</label>
             <input type="number" placeholder="188 282">
@@ -323,10 +327,10 @@
         </div>
       </div>
       <div class="ab-modal-foot">
-        <button class="ab-btn ghost" id="ab-create-cancel">Avbryt</button>
+        <button class="ab-btn ghost" data-ab="create-cancel">Avbryt</button>
         <div style="display:flex; gap:8px;">
-          <button class="ab-btn ghost" id="ab-create-draft">Spara som utkast</button>
-          <button class="ab-btn primary" id="ab-create-save">Skapa abonnemang</button>
+          <button class="ab-btn ghost" data-ab="create-draft">Spara som utkast</button>
+          <button class="ab-btn primary" data-ab="create-save">Skapa abonnemang</button>
         </div>
       </div>
     </div>
@@ -335,6 +339,33 @@
 
 <script>
 (function () {
+  // ── Multi-instance support ──────────────────────────────────────
+  // Claim första oclaim:ade .ab-wrap. Varje IIFE-instans (en per HTML-block)
+  // tar sin egen root. Detta gör att flera block kan samsas i samma DOM
+  // utan att deras event listeners eller config blandas ihop.
+  var root = (function () {
+    var all = document.querySelectorAll('.ab-wrap');
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i];
+      if (!r.dataset.abInit) { r.dataset.abInit = '1'; return r; }
+    }
+    return null;
+  })();
+  if (!root) return;
+
+  // Scoped query-helpers: alla lookups går mot just denna instans root.
+  function $(key) { return root.querySelector('[data-ab="' + key + '"]'); }
+  function $$(key) { return root.querySelectorAll('[data-ab="' + key + '"]'); }
+  function cfg(key) {
+    var el = root.querySelector('[data-mira="' + key + '"]');
+    return (el && el.value) || '';
+  }
+
+  var HOST          = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+  var TOKEN         = cfg('planning_token');
+  var CLIENTCOMPANY = cfg('clientcompany');
+  var CC_NAME       = cfg('clientcompany_nm');
+
   // ── Demo-data ─────────────────────────────────────────────────────────────
   // Strukturen speglar /services/dashboard:s active_account + active_by_office
   // plus full Contract-data per rad (med Fas 1-fälten).
@@ -423,58 +454,62 @@
     }
   };
 
-  function $(id){ return document.getElementById(id); }
-  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-  function fmtKr(v){
-    var n = Math.round(Number(v)||0);
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fmtKr(v) {
+    var n = Math.round(Number(v) || 0);
     return n.toLocaleString('sv-SE') + ' kr';
   }
-  function fmtDate(s){
-    if(!s) return '—';
+  function fmtDate(s) {
+    if (!s) return '—';
     var d = new Date(s);
-    if(isNaN(d.getTime())) return s;
-    return d.toLocaleDateString('sv-SE',{year:'numeric',month:'short',day:'numeric'});
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('sv-SE', { year:'numeric', month:'short', day:'numeric' });
   }
-  function daysUntil(s){
-    if(!s) return null;
+  function daysUntil(s) {
+    if (!s) return null;
     var d = new Date(s).getTime();
-    if(isNaN(d)) return null;
+    if (isNaN(d)) return null;
     return Math.round((d - Date.now()) / 86400000);
   }
 
-  function typePillHtml(t){
-    var cls = 'ab-pill ' + (t==='Subscription' ? 't-sub' : t==='RateCard' ? 't-rate' : 't-hyb');
-    return '<span class="'+cls+'">'+esc(t)+'</span>';
+  function typePillHtml(t) {
+    var cls = 'ab-pill ' + (t === 'Subscription' ? 't-sub' : t === 'RateCard' ? 't-rate' : 't-hyb');
+    return '<span class="' + cls + '">' + esc(t) + '</span>';
   }
-  function statusPillHtml(s, slutdatum){
+  function statusPillHtml(s, slutdatum) {
     var d = daysUntil(slutdatum);
     var label = s;
-    if(s==='aktiv') label='Aktiv';
-    else if(s==='utgar_snart') label = 'Utgår ' + (d!=null ? 'om '+d+' d' : 'snart');
-    else if(s==='avslutad') label='Avslutad';
-    else if(s==='pausat') label='Pausat';
-    else if(s==='vilande') label='Vilande';
-    else if(s==='tvistig') label='Tvistig';
-    else if(s==='okand') label='Okänd';
-    return '<span class="ab-st s-'+esc(s)+'">'+esc(label)+'</span>';
+    if (s === 'aktiv') label = 'Aktiv';
+    else if (s === 'utgar_snart') label = 'Utgår ' + (d != null ? 'om ' + d + ' d' : 'snart');
+    else if (s === 'avslutad') label = 'Avslutad';
+    else if (s === 'pausat') label = 'Pausat';
+    else if (s === 'vilande') label = 'Vilande';
+    else if (s === 'tvistig') label = 'Tvistig';
+    else if (s === 'okand') label = 'Okänd';
+    return '<span class="ab-st s-' + esc(s) + '">' + esc(label) + '</span>';
   }
 
-  function rowHtml(ct){
-    var costLine = ct.contract_type==='RateCard'
-      ? '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · '+(ct.rate_card_json?JSON.parse(ct.rate_card_json).length:0)+' roller</div>'
-      : '<div class="ab-cost-v">'+fmtKr(ct.monthly_cost)+'<small>/mån</small></div><div class="ab-cost-end">Utgår '+fmtDate(ct.slutdatum)+'</div>';
+  function rowHtml(ct) {
+    var costLine = ct.contract_type === 'RateCard'
+      ? '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · ' + (ct.rate_card_json ? JSON.parse(ct.rate_card_json).length : 0) + ' roller</div>'
+      : '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div><div class="ab-cost-end">Utgår ' + fmtDate(ct.slutdatum) + '</div>';
 
-    var attCount = (ct.attachments||[]).length;
+    var attList = ct.attachments || [];
+    var attCount = attList.length;
     var attListHtml = attCount === 0
       ? '<div class="ab-att-empty">Inga bilagor ännu. Ladda upp för att koppla Floor Plan, Price List, KPI/SLA m.fl.</div>'
-      : (ct.attachments.map(function(a){
-          var label = a.kind==='huvuddok' ? 'Huvuddok' : 'Bilaga';
+      : (attList.map(function (a) {
+          var label = a.kind === 'huvuddok' ? 'Huvuddok' : 'Bilaga';
           return '<div class="ab-att-row">'
             + '<div class="ab-att-meta">'
             +   '<div class="ab-att-ic">PDF</div>'
             +   '<div class="ab-att-tx">'
-            +     '<div class="ab-att-name">'+esc(a.name)+'</div>'
-            +     '<div class="ab-att-sub">'+esc(label)+' · '+esc(a.size)+' · uppladdad '+fmtDate(a.uploaded)+'</div>'
+            +     '<div class="ab-att-name">' + esc(a.name) + '</div>'
+            +     '<div class="ab-att-sub">' + esc(label) + ' · ' + esc(a.size) + ' · uppladdad ' + fmtDate(a.uploaded) + '</div>'
             +   '</div>'
             + '</div>'
             + '<div class="ab-att-act">'
@@ -490,12 +525,12 @@
       try {
         var arr = JSON.parse(ct.rate_card_json);
         rateCardPreview = '<div class="ab-att" style="margin-top:0;">'
-          + '<div class="ab-att-h"><div class="ab-att-t">Rate-card ('+arr.length+' roller)</div></div>'
+          + '<div class="ab-att-h"><div class="ab-att-t">Rate-card (' + arr.length + ' roller)</div></div>'
           + '<div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px 16px;">'
-          + arr.slice(0, 10).map(function(r){
+          + arr.slice(0, 10).map(function (r) {
               return '<div style="display:flex; justify-content:space-between; font-size:12px; padding:4px 0; border-bottom:0.5px solid var(--line);">'
-                + '<span style="color:var(--t2);">'+esc(r.role)+'</span>'
-                + '<span style="color:var(--t1); font-weight:600;">'+fmtKr(r.price_per_h)+'<small style="color:var(--t3); font-weight:500;">/h</small></span>'
+                + '<span style="color:var(--t2);">' + esc(r.role) + '</span>'
+                + '<span style="color:var(--t1); font-weight:600;">' + fmtKr(r.price_per_h) + '<small style="color:var(--t3); font-weight:500;">/h</small></span>'
                 + '</div>';
             }).join('')
           + '</div></div>';
@@ -503,18 +538,18 @@
     }
 
     return ''
-      + '<div class="ab-row" data-id="'+esc(ct.id)+'">'
+      + '<div class="ab-row" data-id="' + esc(ct.id) + '">'
       +   '<div class="ab-rowhead">'
       +     '<div class="ab-rh-svc">'
-      +       '<div class="ab-svcname">'+esc(ct.service_name)+'</div>'
-      +       '<div class="ab-svcvar">'+esc(ct.variant)+'</div>'
+      +       '<div class="ab-svcname">' + esc(ct.service_name) + '</div>'
+      +       '<div class="ab-svcvar">' + esc(ct.variant) + '</div>'
       +     '</div>'
       +     '<div class="ab-rh-meta">'
-      +       '<div class="ab-pills">'+typePillHtml(ct.contract_type)+'</div>'
-      +       '<div class="ab-cat">'+esc(ct.category)+'</div>'
+      +       '<div class="ab-pills">' + typePillHtml(ct.contract_type) + '</div>'
+      +       '<div class="ab-cat">' + esc(ct.category) + '</div>'
       +     '</div>'
-      +     '<div class="ab-rh-status">'+statusPillHtml(ct.status, ct.slutdatum)+'</div>'
-      +     '<div class="ab-rh-cost">'+costLine+'</div>'
+      +     '<div class="ab-rh-status">' + statusPillHtml(ct.status, ct.slutdatum) + '</div>'
+      +     '<div class="ab-rh-cost">' + costLine + '</div>'
       +     '<div class="ab-rh-act">'
       +       '<div class="ab-chev">'
       +         '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
@@ -523,56 +558,56 @@
       +   '</div>'
       +   '<div class="ab-rowbody">'
       +     '<div class="ab-bgrid">'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Startdatum</div><div class="ab-fld-v">'+fmtDate(ct.startdatum)+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Slutdatum</div><div class="ab-fld-v">'+fmtDate(ct.slutdatum)+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Signerat</div><div class="ab-fld-v">'+fmtDate(ct.signed_at)+(ct.signed_pdf?' · <a href="#">'+esc(ct.signed_pdf)+'</a>':'')+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Bindning</div><div class="ab-fld-v">'+(ct.binding_months?ct.binding_months+' mån':'—')+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Uppsägning</div><div class="ab-fld-v">'+(ct.notice_months?ct.notice_months+' mån':'—')+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Auto-förlängning</div><div class="ab-fld-v '+(ct.auto_renew_months?'':'muted')+'">'+(ct.auto_renew_months?ct.auto_renew_months+' mån':'Ingen')+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Prisreglering</div><div class="ab-fld-v">'+esc(ct.price_regulation_type||'—')+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Nästa prisrev.</div><div class="ab-fld-v '+(ct.price_regulation_next?'':'muted')+'">'+(ct.price_regulation_next?fmtDate(ct.price_regulation_next):'—')+'</div></div>'
-      +       '<div class="ab-fld"><div class="ab-fld-l">Signeringsprocess</div><div class="ab-fld-v">'+(ct.offer_approval_id?'<a href="#">'+esc(ct.offer_approval_id)+'</a>':'<span class="muted">—</span>')+'</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Startdatum</div><div class="ab-fld-v">' + fmtDate(ct.startdatum) + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Slutdatum</div><div class="ab-fld-v">' + fmtDate(ct.slutdatum) + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Signerat</div><div class="ab-fld-v">' + fmtDate(ct.signed_at) + (ct.signed_pdf ? ' · <a href="#">' + esc(ct.signed_pdf) + '</a>' : '') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Bindning</div><div class="ab-fld-v">' + (ct.binding_months ? ct.binding_months + ' mån' : '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Uppsägning</div><div class="ab-fld-v">' + (ct.notice_months ? ct.notice_months + ' mån' : '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Auto-förlängning</div><div class="ab-fld-v ' + (ct.auto_renew_months ? '' : 'muted') + '">' + (ct.auto_renew_months ? ct.auto_renew_months + ' mån' : 'Ingen') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Prisreglering</div><div class="ab-fld-v">' + esc(ct.price_regulation_type || '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Nästa prisrev.</div><div class="ab-fld-v ' + (ct.price_regulation_next ? '' : 'muted') + '">' + (ct.price_regulation_next ? fmtDate(ct.price_regulation_next) : '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Signeringsprocess</div><div class="ab-fld-v">' + (ct.offer_approval_id ? '<a href="#">' + esc(ct.offer_approval_id) + '</a>' : '<span class="muted">—</span>') + '</div></div>'
       +     '</div>'
-      +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">'+esc(ct.volume_json)+'</div></div>' : '')
+      +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">' + esc(ct.volume_json) + '</div></div>' : '')
       +     rateCardPreview
       +     '<div class="ab-att">'
       +       '<div class="ab-att-h">'
-      +         '<div class="ab-att-t">Bilagor ('+attCount+')</div>'
+      +         '<div class="ab-att-t">Bilagor (' + attCount + ')</div>'
       +         '<button class="ab-btn ghost tiny">+ Ladda upp</button>'
       +       '</div>'
-      +       '<div class="ab-att-list">'+attListHtml+'</div>'
+      +       '<div class="ab-att-list">' + attListHtml + '</div>'
       +     '</div>'
       +     '<div class="ab-rowact">'
-      +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="'+esc(ct.id)+'">Redigera</button>'
+      +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="' + esc(ct.id) + '">Redigera</button>'
       +       (ct.status === 'pausat'
-      +         ? '<button class="ab-btn ghost tiny" data-act="resume" data-id="'+esc(ct.id)+'">Återuppta</button>'
-      +         : '<button class="ab-btn ghost tiny" data-act="pause" data-id="'+esc(ct.id)+'">Pausa</button>')
+      +         ? '<button class="ab-btn ghost tiny" data-act="resume" data-id="' + esc(ct.id) + '">Återuppta</button>'
+      +         : '<button class="ab-btn ghost tiny" data-act="pause" data-id="' + esc(ct.id) + '">Pausa</button>')
       +       (ct.status === 'avslutad'
-      +         ? '<button class="ab-btn ghost tiny" data-act="reopen" data-id="'+esc(ct.id)+'">Återöppna</button>'
-      +         : '<button class="ab-btn danger tiny" data-act="end" data-id="'+esc(ct.id)+'">Avsluta</button>')
+      +         ? '<button class="ab-btn ghost tiny" data-act="reopen" data-id="' + esc(ct.id) + '">Återöppna</button>'
+      +         : '<button class="ab-btn danger tiny" data-act="end" data-id="' + esc(ct.id) + '">Avsluta</button>')
       +     '</div>'
       +   '</div>'
       + '</div>';
   }
 
-  function sectionHtml(title, kontorsId, addr, contracts, isAccount){
+  function sectionHtml(title, kontorsId, addr, contracts, isAccount) {
     var rows = contracts.map(rowHtml).join('');
-    var idLabel = kontorsId ? '<span class="ab-sect-id">'+esc(kontorsId)+'</span>' : '';
-    var addrLabel = addr ? '<div class="ab-sect-addr">'+esc(addr)+'</div>' : '';
+    var idLabel = kontorsId ? '<span class="ab-sect-id">' + esc(kontorsId) + '</span>' : '';
+    var addrLabel = addr ? '<div class="ab-sect-addr">' + esc(addr) + '</div>' : '';
     return ''
       + '<div class="ab-sect">'
       +   '<div class="ab-sect-h">'
       +     '<div class="ab-sect-l">'
-      +       '<div class="ab-sect-name">'+esc(title)+'</div>'
+      +       '<div class="ab-sect-name">' + esc(title) + '</div>'
       +       idLabel
       +     '</div>'
       +     addrLabel
       +   '</div>'
-      +   '<div class="ab-rows">'+rows+'</div>'
+      +   '<div class="ab-rows">' + rows + '</div>'
       + '</div>';
   }
 
-  function renderAll(){
+  function renderAll() {
     var sections = [];
 
     // Account-scope (Mira) — alltid överst om finns
@@ -582,11 +617,11 @@
     }
 
     // Office-scope
-    SAMPLE.offices.forEach(function(of){
+    SAMPLE.offices.forEach(function (of) {
       var list = (SAMPLE.contracts_by_office[of.id] || []);
       if (list.length === 0) {
         sections.push('<div class="ab-sect">'
-          + '<div class="ab-sect-h"><div class="ab-sect-l"><div class="ab-sect-name">'+esc(of.name)+'</div><span class="ab-sect-id">'+esc(of.kontors_id)+'</span></div><div class="ab-sect-addr">'+esc(of.address)+'</div></div>'
+          + '<div class="ab-sect-h"><div class="ab-sect-l"><div class="ab-sect-name">' + esc(of.name) + '</div><span class="ab-sect-id">' + esc(of.kontors_id) + '</span></div><div class="ab-sect-addr">' + esc(of.address) + '</div></div>'
           + '<div class="ab-empty"><div class="ab-empty-t">Inga abonnemang för detta kontor</div>Klicka "+ Nytt abonnemang" för att lägga till.</div>'
           + '</div>');
       } else {
@@ -594,53 +629,65 @@
       }
     });
 
-    $('ab-sections').innerHTML = sections.join('');
+    $('sections').innerHTML = sections.join('');
 
     // Sätt total + count
     var allCt = (SAMPLE.account_contracts || []).slice();
-    SAMPLE.offices.forEach(function(of){ allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
-    var aktiva = allCt.filter(function(c){ return c.status==='aktiv' || c.status==='utgar_snart'; });
+    SAMPLE.offices.forEach(function (of) { allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
+    var aktiva = allCt.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
     var totMonthly = allCt
-      .filter(function(c){ return c.contract_type==='Subscription' && (c.status==='aktiv' || c.status==='utgar_snart'); })
-      .reduce(function(sum, c){ return sum + Number(c.monthly_cost || 0); }, 0);
-    $('ab-sum-count').textContent = aktiva.length + ' st';
-    $('ab-sum-cost').textContent = fmtKr(totMonthly);
-    if (SAMPLE.customer && SAMPLE.customer.name) $('ab-cust-name').textContent = SAMPLE.customer.name;
+      .filter(function (c) { return c.contract_type === 'Subscription' && (c.status === 'aktiv' || c.status === 'utgar_snart'); })
+      .reduce(function (sum, c) { return sum + Number(c.monthly_cost || 0); }, 0);
+    $('sum-count').textContent = aktiva.length + ' st';
+    $('sum-cost').textContent = fmtKr(totMonthly);
 
-    // Bind click → expand
-    document.querySelectorAll('.ab-kund .ab-rowhead').forEach(function(head){
-      head.addEventListener('click', function(){
+    var custName = (SAMPLE.customer && SAMPLE.customer.name) || CC_NAME || '';
+    if (custName) {
+      $('cust-name').textContent = custName;
+      var ct = $('create-title');
+      if (ct) ct.textContent = 'Nytt abonnemang för ' + custName;
+    }
+
+    // Bind click → expand (scoped till denna instans)
+    root.querySelectorAll('.ab-rowhead').forEach(function (head) {
+      head.addEventListener('click', function () {
         head.parentElement.classList.toggle('open');
       });
     });
     // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna)
-    if (typeof bindActions === 'function') bindActions();
+    bindActions();
   }
 
   // Create-modal
-  $('ab-create-btn').addEventListener('click', function(){ $('ab-create-mask').classList.add('on'); });
-  $('ab-create-close').addEventListener('click', function(){ $('ab-create-mask').classList.remove('on'); });
-  $('ab-create-cancel').addEventListener('click', function(){ $('ab-create-mask').classList.remove('on'); });
-  document.querySelectorAll('.ab-typesel .ab-typecard').forEach(function(card){
-    card.addEventListener('click', function(){
-      document.querySelectorAll('.ab-typesel .ab-typecard').forEach(function(c){ c.classList.remove('on'); });
+  var createBtn = $('create-btn');
+  var createMask = $('create-mask');
+  var createClose = $('create-close');
+  var createCancel = $('create-cancel');
+  if (createBtn && createMask) {
+    createBtn.addEventListener('click', function () { createMask.classList.add('on'); });
+  }
+  if (createClose && createMask) {
+    createClose.addEventListener('click', function () { createMask.classList.remove('on'); });
+  }
+  if (createCancel && createMask) {
+    createCancel.addEventListener('click', function () { createMask.classList.remove('on'); });
+  }
+  root.querySelectorAll('.ab-typesel .ab-typecard').forEach(function (card) {
+    card.addEventListener('click', function () {
+      root.querySelectorAll('.ab-typesel .ab-typecard').forEach(function (c) { c.classList.remove('on'); });
       card.classList.add('on');
     });
   });
 
   // ── Live data-fetch (Fas 2a) ────────────────────────────────────────────
-  // Om hidden inputs ab_clientcompany + ab_planning_token är satta av Bubble:
+  // Om hidden inputs planning_token + clientcompany är satta av Bubble:
   // hämta verklig data från Render. Annars kör demo-SAMPLE.
-  function readHidden(id){ var e = $(id); return e ? String(e.value||'').trim() : ''; }
-  async function loadLive(){
-    var apiHost = readHidden('ab_api_host') || 'https://mira-exchange.onrender.com';
-    var token   = readHidden('ab_planning_token');
-    var ccId    = readHidden('ab_clientcompany');
-    if (!token || !ccId) return; // demo-läge
+  async function loadLive() {
+    if (!TOKEN || !CLIENTCOMPANY) return; // demo-läge
 
     try {
-      var r = await fetch(apiHost + '/admin/contracts/by-company?company_id=' + encodeURIComponent(ccId), {
-        headers: { 'x-admin-token': token }
+      var r = await fetch(HOST + '/admin/contracts/by-company?company_id=' + encodeURIComponent(CLIENTCOMPANY), {
+        headers: { 'x-admin-token': TOKEN }
       });
       if (!r.ok) { console.warn('[ab] fetch failed', r.status); return; }
       var data = await r.json();
@@ -648,22 +695,22 @@
 
       // Mappa backend-format → SAMPLE (samma struktur sedan grunden — minimal anpassning)
       SAMPLE.customer = data.customer || SAMPLE.customer;
-      SAMPLE.offices  = (data.offices || []).map(function(o){
-        return { id:o.id, kontors_id:o.kontors_id||'—', name:o.name||'Kontor', address:o.address||'' };
+      SAMPLE.offices  = (data.offices || []).map(function (o) {
+        return { id:o.id, kontors_id:o.kontors_id || '—', name:o.name || 'Kontor', address:o.address || '' };
       });
       // attachments från BE är ID-array. För kund-fliken visar vi count tills Fas 2d
       // lägger till per-Dokument meta. Mappa till tom-array-objekt med rätt count.
-      function mapCt(c){
+      function mapCt(c) {
         var ids = Array.isArray(c.attachments) ? c.attachments : [];
-        c.attachments = ids.map(function(id, i){
-          return { name:'Bilaga ' + (i+1), kind:i===0?'huvuddok':'bilaga', size:'—', uploaded:c.signed_at };
+        c.attachments = ids.map(function (id, i) {
+          return { name:'Bilaga ' + (i + 1), kind: i === 0 ? 'huvuddok' : 'bilaga', size:'—', uploaded:c.signed_at };
         });
         // Backend ger service_name/service_variant; SAMPLE använder samma → ingen ompackning
         return c;
       }
       SAMPLE.account_contracts = (data.account_contracts || []).map(mapCt);
       SAMPLE.contracts_by_office = {};
-      Object.keys(data.contracts_by_office || {}).forEach(function(oid){
+      Object.keys(data.contracts_by_office || {}).forEach(function (oid) {
         SAMPLE.contracts_by_office[oid] = (data.contracts_by_office[oid] || []).map(mapCt);
       });
 
@@ -678,17 +725,15 @@
   // ── Action-handlers (Fas 2c-1) ──────────────────────────────────────────
   // Pausa / Återuppta / Avsluta / Återöppna — alla via PATCH /admin/contracts/:id
   // Redigera triggar placeholder tills 2c-2.
-  async function patchContractAction(id, body){
-    var apiHost = readHidden('ab_api_host') || 'https://mira-exchange.onrender.com';
-    var token   = readHidden('ab_planning_token');
-    if (!token) {
-      alert('Demo-läge: ingen PATCH skickas (ab_planning_token saknas i Bubble-bindningen).');
+  async function patchContractAction(id, body) {
+    if (!TOKEN) {
+      alert('Demo-läge: ingen PATCH skickas (data-mira="planning_token" saknas i Bubble-bindningen).');
       return null;
     }
     try {
-      var r = await fetch(apiHost + '/admin/contracts/' + encodeURIComponent(id), {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(id), {
         method: 'PATCH',
-        headers: { 'x-admin-token': token, 'Content-Type': 'application/json' },
+        headers: { 'x-admin-token': TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
       var data = await r.json();
@@ -703,9 +748,9 @@
     }
   }
 
-  function bindActions(){
-    document.querySelectorAll('.ab-kund [data-act]').forEach(function(btn){
-      btn.addEventListener('click', async function(ev){
+  function bindActions() {
+    root.querySelectorAll('[data-act]').forEach(function (btn) {
+      btn.addEventListener('click', async function (ev) {
         ev.stopPropagation(); // Annars toggleas expand-panelen
         var act = btn.getAttribute('data-act');
         var id  = btn.getAttribute('data-id');
@@ -742,6 +787,7 @@
     });
   }
 
+  // ── Init ────────────────────────────────────────────────────────
   renderAll();
   loadLive();
 })();
