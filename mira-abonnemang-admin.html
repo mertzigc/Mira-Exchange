@@ -592,26 +592,26 @@
       +           '<button class="aa-btn ghost tiny">+ Ladda upp</button>'
       +         '</div>'
       +         (r.attachments_count === 0
-      +           ? '<div class="aa-att-empty">Inga bilagor ännu. Floor Plan, Price List, KPI/SLA, Onboarding…</div>'
-      +           : '<div class="aa-att-list">'
-      +             + '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">'+esc(r.signed_pdf||'Huvudavtal.pdf')+'</div><div class="aa-att-sub">Huvuddok · 344 KB · uppladdad '+fmtDate(r.signed_at)+'</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Visa</button></div></div>'
-      +             + (r.attachments_count > 1 ? '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">Övriga ('+(r.attachments_count-1)+') bilagor</div><div class="aa-att-sub">Klicka för full lista</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Öppna lista</button></div></div>' : '')
-      +             + '</div>'
-      +         )
+                  ? '<div class="aa-att-empty">Inga bilagor ännu. Floor Plan, Price List, KPI/SLA, Onboarding…</div>'
+                  : '<div class="aa-att-list">'
+                    + '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">'+esc(r.signed_pdf||'Huvudavtal.pdf')+'</div><div class="aa-att-sub">Huvuddok · 344 KB · uppladdad '+fmtDate(r.signed_at)+'</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Visa</button></div></div>'
+                    + (r.attachments_count > 1 ? '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">Övriga ('+(r.attachments_count-1)+') bilagor</div><div class="aa-att-sub">Klicka för full lista</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Öppna lista</button></div></div>' : '')
+                    + '</div>'
+                )
       +       '</div>'
       +       '<div class="aa-expand-foot">'
       +         '<div class="aa-expand-meta">Contract <b>'+esc(r.id)+'</b>'
-      +           + (r.offer_approval_id ? ' · OfferApproval <b><a href="#" style="color:var(--acc);">'+esc(r.offer_approval_id)+'</a></b>' : '')
-      +         + '</div>'
+      +           (r.offer_approval_id ? ' · OfferApproval <b><a href="#" style="color:var(--acc);">'+esc(r.offer_approval_id)+'</a></b>' : '')
+      +         '</div>'
       +         '<div class="aa-expand-actions">'
       +           '<button class="aa-btn ghost tiny" data-act="open-customer" data-id="'+esc(r.customer_id||'')+'">Öppna kundkort</button>'
       +           '<button class="aa-btn ghost tiny" data-act="edit" data-id="'+esc(r.id)+'">Redigera</button>'
       +           (r.status === 'pausat'
-      +             ? '<button class="aa-btn ghost tiny" data-act="resume" data-id="'+esc(r.id)+'">Återuppta</button>'
-      +             : '<button class="aa-btn ghost tiny" data-act="pause" data-id="'+esc(r.id)+'">Pausa</button>')
+                    ? '<button class="aa-btn ghost tiny" data-act="resume" data-id="'+esc(r.id)+'">Återuppta</button>'
+                    : '<button class="aa-btn ghost tiny" data-act="pause" data-id="'+esc(r.id)+'">Pausa</button>')
       +           (r.status === 'avslutad'
-      +             ? '<button class="aa-btn ghost tiny" data-act="reopen" data-id="'+esc(r.id)+'">Återöppna</button>'
-      +             : '<button class="aa-btn danger tiny" data-act="end" data-id="'+esc(r.id)+'">Avsluta</button>')
+                    ? '<button class="aa-btn ghost tiny" data-act="reopen" data-id="'+esc(r.id)+'">Återöppna</button>'
+                    : '<button class="aa-btn danger tiny" data-act="end" data-id="'+esc(r.id)+'">Avsluta</button>')
       +         '</div>'
       +       '</div>'
       +     '</div>'
