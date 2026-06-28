@@ -19473,16 +19473,16 @@ const SERVICES = {
   SC_TM_ROLE:       "testimonial_role",
   SC_ONBOARDING:    "onboarding_json",
 
-  // Contract-fält (Bubble case-sensitive — verifierat via /services/dashboard?debug=1).
-  // Inkonsekvent case på BEFINTLIGA: Kundföretag/Månadskostnad/Slutdatum är capitalized,
-  // erbjudande är lowercase. NYA fält (Fas 1, sektion 0g) standardiseras till
-  // lowercase_underscore. Stämmer med Bubble Data API:s all_field_names.
-  CT_COMPANY:     "Kundföretag",
+  // Contract-fält — exakta Bubble Data API-slugar (lowercase med svensk diakritik).
+  // Verifierat via /services/dashboard?debug=1 → all_field_names 2026-06-28.
+  // VIKTIGT: Bubble FIND är case-insensitive, men JS object-access ÄR case-sensitive
+  // → måste matcha slugen exakt för att enrich ska fungera (annars tysta undefined).
+  CT_COMPANY:     "kundföretag",
   CT_OFFER:       "erbjudande",
-  CT_QTY:         "Produktantal",        // DEPRECATED — använd volume_json framåt
-  CT_MONTHLY:     "Månadskostnad",
-  CT_END:         "Slutdatum",
-  CT_OFFICE:      "Kontor",
+  CT_QTY:         "produktantal",        // DEPRECATED — använd volume_json framåt
+  CT_MONTHLY:     "månadskostnad",
+  CT_END:         "slutdatum",
+  CT_OFFICE:      "kontor",
   CT_KATEGORI:    "kategori",
 
   // NYA fält Fas 1 (2026-06-28). Skapa exakt så här i Bubble-editorn.
