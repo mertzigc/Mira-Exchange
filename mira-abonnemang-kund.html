@@ -101,8 +101,9 @@
   .ab-rh-status .ab-st { font-size:11px; padding:4px 10px; border-radius:20px;
     text-transform:uppercase; letter-spacing:0.06em; font-weight:600; display:inline-block; line-height:1.3; }
   .ab-st.s-aktiv { background:rgba(16,185,129,0.15); color:var(--ok); border:0.5px solid rgba(16,185,129,0.35); }
-  .ab-st.s-utgar { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
+  .ab-st.s-utgar_snart { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
   .ab-st.s-avslutad { background:rgba(255,255,255,0.05); color:var(--t3); border:0.5px solid var(--line); }
+  .ab-st.s-okand { background:rgba(255,255,255,0.04); color:var(--t3); border:0.5px dashed var(--line-strong); }
   .ab-st.s-pausat,
   .ab-st.s-vilande,
   .ab-st.s-tvistig { background:rgba(248,113,113,0.12); color:var(--err); border:0.5px solid rgba(248,113,113,0.40); }
@@ -454,6 +455,7 @@
     else if(s==='pausat') label='Pausat';
     else if(s==='vilande') label='Vilande';
     else if(s==='tvistig') label='Tvistig';
+    else if(s==='okand') label='Okänd';
     return '<span class="ab-st s-'+esc(s)+'">'+esc(label)+'</span>';
   }
 

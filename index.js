@@ -16355,11 +16355,15 @@ function _deriveContractStatus(contract, nowMs) {
     if (s === "vilande") return SERVICES.STATUS_OVERRIDE_DORMANT;
   }
   const endRaw = contract && contract[SERVICES.CT_END];
+  const startRaw = contract && contract[SERVICES.CT_START];
   const end = endRaw ? Date.parse(endRaw) : null;
   if (end && Number.isFinite(end)) {
     if (end < nowMs) return SERVICES.STATUS_AVSLUTAD;
     if (end - nowMs <= SERVICES.UTGAR_SNART_DAYS * 864e5) return SERVICES.STATUS_UTGAR_SNART;
+    return SERVICES.STATUS_AKTIV;
   }
+  // Saknar både start och slut → legacy/odefinierat (inte Fas 1-tracked)
+  if (!startRaw && !endRaw) return SERVICES.STATUS_OKAND;
   return SERVICES.STATUS_AKTIV;
 }
 
@@ -19514,6 +19518,7 @@ const SERVICES = {
   STATUS_AKTIV:             "aktiv",
   STATUS_UTGAR_SNART:       "utgar_snart",
   STATUS_AVSLUTAD:          "avslutad",
+  STATUS_OKAND:             "okand",          // legacy: saknar både start/slutdatum
   STATUS_OVERRIDE_PAUSED:   "pausat",
   STATUS_OVERRIDE_DORMANT:  "vilande",
   STATUS_OVERRIDE_DISPUTED: "tvistig",
@@ -20234,6 +20239,114 @@ app.get("/admin/contracts/all", async (req, res) => {
     });
   } catch (e) {
     console.error("[/admin/contracts/all] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── POST /admin/contracts/create — manuellt skapande från admin-block ───────
+// Auth: x-admin-token. Body:
+//   {
+//     company_id: required,
+//     contract_type: required (Subscription/RateCard/Hybrid),
+//     office_id, offer_id, category,
+//     monthly_cost (number), qty (number),
+//     startdatum, slutdatum (YYYY-MM-DD eller ISO),
+//     binding_months, notice_months, auto_renew_months (number),
+//     price_regulation_type, price_regulation_next,
+//     rate_card_json, volume_json (objekt ELLER sträng → JSON-string skrivs),
+//     status_override (Pausat/Vilande/Tvistig),
+//     signed_at, signed_pdf, offer_approval_id, commission_id, master_contract_id
+//   }
+// Returnerar { ok, contract_id, contract: <enriched> }.
+app.options("/admin/contracts/create", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/create", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const b = req.body || {};
+    const companyId = String(b.company_id || "").trim();
+    const contractType = String(b.contract_type || SERVICES.TYPE_SUBSCRIPTION).trim();
+    if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+    if (![SERVICES.TYPE_SUBSCRIPTION, SERVICES.TYPE_RATECARD, SERVICES.TYPE_HYBRID].includes(contractType)) {
+      return res.status(400).json({ ok: false, error: "ogiltig contract_type" });
+    }
+
+    const stringifyMaybeObject = (v) => {
+      if (v == null) return null;
+      if (typeof v === "string") return v;
+      try { return JSON.stringify(v); } catch (_) { return null; }
+    };
+
+    const payload = {
+      [SERVICES.CT_COMPANY]:            companyId,
+      [SERVICES.CT_TYPE]:               contractType,
+      [SERVICES.CT_OFFER]:              b.offer_id || null,
+      [SERVICES.CT_OFFICE]:             b.office_id || null,
+      [SERVICES.CT_QTY]:                b.qty != null ? Number(b.qty) : 1,
+      [SERVICES.CT_MONTHLY]:            b.monthly_cost != null ? Number(b.monthly_cost) : 0,
+      [SERVICES.CT_KATEGORI]:           b.category || null,
+      [SERVICES.CT_START]:              b.startdatum || null,
+      [SERVICES.CT_END]:                b.slutdatum || null,
+      [SERVICES.CT_BINDING]:            b.binding_months != null ? Number(b.binding_months) : null,
+      [SERVICES.CT_NOTICE]:             b.notice_months != null ? Number(b.notice_months) : null,
+      [SERVICES.CT_AUTO_RENEW]:         b.auto_renew_months != null ? Number(b.auto_renew_months) : null,
+      [SERVICES.CT_PRICE_REG_TYPE]:     b.price_regulation_type || null,
+      [SERVICES.CT_PRICE_REG_NEXT]:     b.price_regulation_next || null,
+      [SERVICES.CT_RATE_CARD_JSON]:     stringifyMaybeObject(b.rate_card_json),
+      [SERVICES.CT_VOLUME_JSON]:        stringifyMaybeObject(b.volume_json),
+      [SERVICES.CT_SIGNED_PDF]:         b.signed_pdf || null,
+      [SERVICES.CT_SIGNED_AT]:          b.signed_at || null,
+      [SERVICES.CT_OFFER_APPROVAL]:     b.offer_approval_id || null,
+      [SERVICES.CT_COMMISSION]:         b.commission_id || null,
+      [SERVICES.CT_MASTER]:             b.master_contract_id || null,
+      [SERVICES.CT_STATUS_OVERRIDE]:    b.status_override || null,
+      [SERVICES.CT_PARSED_CONFIDENCE]:  stringifyMaybeObject(b.parsed_confidence_json),
+    };
+
+    // Droppa null/undefined så Bubble behåller defaults
+    const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
+
+    const contractId = await bubbleCreate(SERVICES.CONTRACT_TYPE, finalPayload);
+
+    // Returnera enriched contract
+    const fresh = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId).catch(() => null);
+    let enriched = null;
+    if (fresh) {
+      const cc = await bubbleGet("ClientCompany", companyId).catch(() => null);
+      const customerName = cc
+        ? (cc.Name_company || cc.name || cc.Name || cc.company_name || cc.namn || null)
+        : null;
+      const officeById = new Map();
+      if (b.office_id) {
+        const o = await bubbleGet(SERVICES.OFFICE_TYPE, b.office_id).catch(() => null);
+        if (o) officeById.set(b.office_id, o);
+      }
+      const offerById = new Map();
+      if (b.offer_id) {
+        const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, b.offer_id).catch(() => null);
+        if (o) offerById.set(b.offer_id, o);
+      }
+      enriched = _enrichContract(fresh, {
+        customerName, officeById, offerById,
+        offerToSlug: new Map(), catalogBySlug: new Map(),
+      });
+    }
+
+    console.log(`[admin/contracts/create] skapad ${contractId} för ${companyId} (${contractType})`);
+    return res.json({ ok: true, contract_id: contractId, contract: enriched });
+  } catch (e) {
+    console.error("[/admin/contracts/create] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });

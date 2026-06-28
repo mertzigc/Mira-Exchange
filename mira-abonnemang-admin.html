@@ -145,6 +145,7 @@
   .aa-st.s-aktiv { background:rgba(16,185,129,0.15); color:var(--ok); border:0.5px solid rgba(16,185,129,0.35); }
   .aa-st.s-utgar_snart { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
   .aa-st.s-avslutad { background:rgba(255,255,255,0.05); color:var(--t3); border:0.5px solid var(--line); }
+  .aa-st.s-okand { background:rgba(255,255,255,0.04); color:var(--t3); border:0.5px dashed var(--line-strong); }
   .aa-st.s-pausat,
   .aa-st.s-vilande,
   .aa-st.s-tvistig { background:rgba(248,113,113,0.12); color:var(--err); border:0.5px solid rgba(248,113,113,0.40); }
@@ -240,6 +241,7 @@
         <div class="aa-chip on warn" data-val="utgar_snart">Utgår snart</div>
         <div class="aa-chip" data-val="avslutad">Avslutad</div>
         <div class="aa-chip" data-val="pausat">Pausat</div>
+        <div class="aa-chip" data-val="okand">Okänd</div>
       </div>
     </div>
 
@@ -515,7 +517,8 @@
       : r.status === 'avslutad' ? 'Avslutad'
       : r.status === 'pausat' ? 'Pausat'
       : r.status === 'vilande' ? 'Vilande'
-      : r.status === 'tvistig' ? 'Tvistig' : r.status;
+      : r.status === 'tvistig' ? 'Tvistig'
+      : r.status === 'okand' ? 'Okänd' : r.status;
 
     var costCell = r.contract_type === 'RateCard'
       ? '<div class="aa-c-cost rate">Per uppdrag</div>'
