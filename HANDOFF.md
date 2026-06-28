@@ -1,7 +1,111 @@
 # HANDOFF — Mira-Exchange sync-omtag
 
-> Senast uppdaterad 2026-06-24. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
+> Senast uppdaterad 2026-06-28. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
+
+---
+
+## 0f. Tjänste-grid på kund-dashboard — LIVE 2026-06-28, admin-spår PLANERAS
+
+**Vad finns idag (live):**
+- Kund ser ett tjänste-grid överst på sin Mira-dashboard. Mira-abonnemang (account-scope) + facility-tiles (office-scope) per kontor.
+- Aktiva tiles: grön border + grön "AKTIV"-pill. Inaktiva: "Förslag" + "Läs mer →".
+- Klick → 3-kolumns popup (visuell / info / actions). Bildspel-thumbnails (Erbjudande.Bildspel) växlar hero-bild. Fakta-chips (Målgrupp/Logistik/Capacity). Sociala bevis + onboarding-block per katalogpost. Sekundär CTA "Prata med rådgivare först →" (mailto).
+- Office-dropdown vid 2+ kontor (filtrerar tile-griden per Kontor). Mira-tilen visas oavsett valt kontor.
+- "Aktivera" POST:ar till `/services/request-activation` som återanvänder samma kärna som `/admin/forfragan/create` (skapar Comission + notify-mail + iOS-push).
+
+**Status:**
+
+| Komponent | Status |
+|---|---|
+| `mira-kund-dashboard-tjanster.html` (live fetch + 3-kol popup + office-dropdown) | ✅ Live |
+| Render endpoints `/services/dashboard` + `/services/request-activation` + `?debug=1` | ✅ Live, rate-limit 300/h |
+| ServiceCatalog-datatyp i Bubble (slug/name/icon/icon_color/offers/has_qty/qty_*/rating/testimonial_*/onboarding_json/category/display_order) | ✅ Live, posterna för mira/reception/catering/housekeeping inlagda |
+| Office-grouping (active_account vs active_by_office) | ✅ Live |
+| Pricing från kvm × rate (kalkylator-modellen) | ⏳ Steg 2 — kräver `Arbetsplatser` (number) på Office + `pricing_formula_json` på Erbjudande |
+| Admin-modul för Carotte (skapa/redigera abonnemang) | ⏳ Nästa spår — se "Nästa spår" nedan |
+| Lifecycle-koppling: aktivera → lead/förfrågan → OfferApproval → Contract | ⏳ Nästa spår |
+
+### Filer
+- `mira-kund-dashboard-tjanster.html` — kund-facing block, embeddat överst på dashboard_company_utkast
+- `index.js` — `SERVICES`-konstanten + `_buildServicesDashboard()` + GET/POST endpoints
+- `pricing_engine.js` — återanvändbar formelmotor (samma som forfragan-wizard) för per_kvm/per_person/fixed/addon_per_unit
+
+### Datamodell — Bubble-fältnamn (case-sensitive, verifierat via debug)
+
+**ServiceCatalog**: `slug` (text, lowercase ASCII), `name`, `subtitle`, `category` (`platform`|`facility`), `display_order` (number), `icon` (list/sparkle/cup/droplet/user/leaf/printer/fruit), `icon_color` (hex), `image` (fallback), `offers` (List of Erbjudande), `has_qty` (yes/no), `qty_label`, `qty_min`, `qty_max`, `from_price`, `from_unit`, `rating` (0-5), `rating_count`, `testimonial_quote`, `testimonial_author`, `testimonial_role`, `onboarding_json` (JSON-array `[{week,title,desc},…]`).
+
+**Erbjudande** (extra fält vi använder utöver forfragan): `Unit` (option set: mån/person/kg/timme/dygn), `Bildspel` (List of images), `Image`, `Description_long`, `Produktinnehåll`, `Villkor`, `Målgrupp`, `Logistik`, `Capacity`, `PrisPerPerson`, `pricing_formula_json`.
+
+**Contract** (case-sensitive — verifierat 2026-06-25): `Kundföretag` (cap K), `erbjudande` (lower e — LÄTT att råka anta cap E), `Kontor` (cap K), `Produktantal`, `Månadskostnad`, `Slutdatum`, `kategori` (lower k). Bubble-editorn versaliserar visningsnamnet → kör `?debug=1` för att se all_field_names från API:t innan du mappar.
+
+**Office**: `Office_title`, `Kundföretag`, `office_address` (object med .address), `KontorsID` (text "01"/"02"/…), `Yta` (TEXT idag — bör bli number), `Arbetsplatser` (saknas, behövs för pricing-steg 2).
+
+### Endpoints (live)
+- `GET /services/dashboard?company_id=X[&debug=1]` — returnerar `{catalog, offices, active_account, active_by_office}`. CORS-allowlist KUND_KPI_ALLOWED, rate-limit 300/h, `Cache-Control: no-store`. Debug-läge returnerar contracts + offices raw + all_field_names för felsökning.
+- `POST /services/request-activation` — body `{company_id, service_slug, service_name, option_id, qty, category_hint}` → skapar Comission via samma fältmappning som /admin/forfragan/create. Notify-mail + iOS-push återanvänds.
+
+### Nästa spår: admin-modul + lifecycle-koppling (PLANERAS)
+
+**Mål från Christian (2026-06-28):**
+> "Vi behöver kunna administrera kundernas generella abonnemang på vår egna dashboard-backend. När de klickar aktivera skapas en lead och förfrågan. Sen ska vi offerera på detta. Jag vill dels nyttja den nya offerapproval-motorn, dels koppla till ett påskrivet contract som sen visas som aktiverat hos kund och oss."
+
+**Två nya HTML-block att bygga:**
+
+1. **Kundkort-flik "Abonnemang"** (per kund) — visar valda kundens alla Contracts grupperade per Office. Popup för skapa/redigera/avsluta. Bäddas in i kundkortet (se screenshot 2026-06-28 — flikraden EA/Dice / Personer / Historik / Affärer / Leads / Offerter / Ordrar / Fakturor / Avtal / Drift / Planering / Inställningar).
+
+2. **Global översikt "Alla abonnemang"** — alla Contracts oavsett kund, kolumnsorterbar + filter per kund/status/kategori/slutdatum-range. Popup för skapa/redigera. Egen sida i Carotte-backend.
+
+**Lifecycle-flödet ska se ut så här (nytt):**
+
+```
+Kund klickar "Aktivera" på tile
+   ↓
+Comission skapas (redan implementerat)
+   ↓ NYTT
+Lead skapas och kopplas till Deal/Affär
+   ↓ NYTT
+Carotte-admin bygger offert (existerande Deal-flöde)
+   ↓ NYTT
+OfferApprovalRequest skickas till kund (existerande, sektion 0e)
+   ↓ NYTT
+Kund signerar via befintlig landningssida
+   ↓ NYTT
+Contract skapas automatiskt vid `status=Approved`:
+   Contract.erbjudande = OfferApproval.dokument-relaterat erbjudande
+   Contract.Kontor     = Comission.Office (eller fråga vid signering)
+   Contract.Månadskostnad = från signerad offert
+   Contract.Startdatum = signeringsdatum
+   ↓
+Kundens tile blir AKTIV (befintlig logik tar över)
+   ↓
+Carottes admin-vy visar Contract som live
+```
+
+**Datakopplingar som saknas idag:**
+- `Comission.lead` (skapas redan i `/admin/forfragan/create`) → Deal (manuellt idag, kan auto-kopplas via `Comission.lead.Deal`?)
+- `OfferApprovalRequest.deal` → Deal (finns)
+- `OfferApprovalRequest.contract_to_create` → ServiceCatalog/Erbjudande (NYTT — så vi vet vilket Contract som ska skapas vid godkännande)
+- `Contract.offer_approval` → OfferApprovalRequest (NYTT — bakåtspårning)
+
+**Förslag på förbättringar att överväga i nästa session:**
+
+*Dataeffektivitet:*
+- Subscription-history: ny Contract per ändring (vs editing in-place) — för att kunna visa "ni hade Receptionist sedan 2024, Concierge sedan 2026" i kundens dashboard.
+- Pris ska bara komma från ETT ställe: Erbjudande.pricing_formula_json räknar pris med kontorets Yta/Arbetsplatser som answers. När Contract skapas frys priset i `Månadskostnad`. Dashboarden visar Månadskostnad om aktiv, annars beräknat "från-pris" från katalog.
+- Stoppa duplicering av kategori — använd Erbjudande.Category som single source. Contract.kategori kan tas bort eller härledas.
+
+*UX:*
+- Lifecycle-status-badge på Contracts: `förslag` → `förfrågan skickad` → `offert väntar` → `signerad` → `aktiv` → `utgår om X dagar` → `avslutad`.
+- Renewal-flow: 90 dagar före Slutdatum → auto-mail till kund + uppgift hos Carotte.
+- "Uppgradera"-flöde direkt i kundens popup: byt nivå (Receptionist → Concierge) → ny förfrågan med kategori "uppgradering".
+- Audit-loggen: lägg till Comission/OfferApproval-trail på Contract så Carotte ser hela kedjan.
+
+**Öppna frågor till nästa session:**
+1. Ska Contract skapas automatiskt vid signering, eller manuellt av Carotte-admin för säkerhetsmarginal?
+2. Hur hanteras "uppgradering" — nytt Contract som ersätter, eller patch på befintligt?
+3. Var visas pågående förfrågningar/offerter i kundens dashboard — egen sektion under tiles, eller status-pill på inaktiva tiles ("Förfrågan skickad, väntar")?
+4. Behöver vi `ContractTemplate` så Carotte kan skapa snabb-Contracts från ServiceCatalog utan fullt förfrågan-flöde? (för "vi tar bara fakturan, allt övrigt är klart")
 
 ---
 
