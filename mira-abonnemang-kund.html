@@ -272,46 +272,47 @@
         <div class="ab-form-2">
           <div class="ab-form-row">
             <label>Erbjudande</label>
-            <select><option>Housekeeping — 5 dgr/vecka</option><option>Housekeeping — 3 dgr/vecka</option><option>Reception — Receptionist</option></select>
+            <select data-ab="f-offer"><option value="">Laddar erbjudanden...</option></select>
           </div>
           <div class="ab-form-row">
             <label>Kontor</label>
-            <select><option>01 — Huvudkontoret, Södermalmsallén 36</option><option>02 — Filial Sundbyberg</option></select>
+            <select data-ab="f-office"><option value="">Account-scope (oavsett kontor)</option></select>
           </div>
         </div>
 
         <div class="ab-form-2" data-ab="sub-fields">
           <div class="ab-form-row">
             <label>Månadskostnad (SEK, exkl. moms)</label>
-            <input type="number" placeholder="188 282">
+            <input type="number" placeholder="188 282" data-ab="f-monthly">
           </div>
           <div class="ab-form-row">
             <label>Antal</label>
-            <input type="number" value="1">
+            <input type="number" value="1" data-ab="f-qty">
           </div>
           <div class="ab-form-row">
             <label>Startdatum</label>
-            <input type="date">
+            <input type="date" data-ab="f-start">
           </div>
           <div class="ab-form-row">
             <label>Slutdatum</label>
-            <input type="date">
+            <input type="date" data-ab="f-end">
           </div>
           <div class="ab-form-row">
             <label>Bindning (mån)</label>
-            <input type="number" value="36">
+            <input type="number" value="36" data-ab="f-binding">
           </div>
           <div class="ab-form-row">
             <label>Uppsägningstid (mån)</label>
-            <input type="number" value="3">
+            <input type="number" value="3" data-ab="f-notice">
           </div>
           <div class="ab-form-row">
             <label>Auto-förlängning (mån, valfritt)</label>
-            <input type="number" placeholder="0 = ingen">
+            <input type="number" placeholder="0 = ingen" data-ab="f-autorenew">
           </div>
           <div class="ab-form-row">
             <label>Prisreglering</label>
-            <select>
+            <select data-ab="f-pricereg">
+              <option value="">— välj —</option>
               <option value="index_cleaning">Cleaning Index (SCB/Almega)</option>
               <option value="index_kpi">KPI</option>
               <option value="lon_kollektiv">Lönekollektiv</option>
@@ -323,7 +324,7 @@
 
         <div class="ab-form-row">
           <label>Volym (JSON — strukturerad: kvm, housekeepers, hours_mf…)</label>
-          <textarea rows="2" placeholder='{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}'></textarea>
+          <textarea rows="2" placeholder='{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}' data-ab="f-volume"></textarea>
         </div>
       </div>
       <div class="ab-modal-foot">
@@ -768,7 +769,9 @@
           body = { slutdatum: null };
         }
         else if (act === 'edit') {
-          alert('Redigera-modal kommer i steg 2c-2.');
+          var ct = findContractById(id);
+          if (ct) openModal('edit', ct);
+          else alert('Hittade inte abonnemanget i state.');
           return;
         }
         if (!body) return;
@@ -787,8 +790,222 @@
     });
   }
 
+  // ── 2c-2: Create + Edit-modal med live-dropdowns ─────────────────────────
+  var CATALOG = [];        // [{id, label, category, price, unit}]
+  var OFFICES_PICK = [];   // [{id, label}]
+  var MODAL_MODE = 'create';
+  var EDITING_ID = null;
+
+  function findContractById(id) {
+    var list = (SAMPLE.account_contracts || []).slice();
+    Object.keys(SAMPLE.contracts_by_office || {}).forEach(function (oid) {
+      list = list.concat(SAMPLE.contracts_by_office[oid] || []);
+    });
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  async function loadCatalog() {
+    if (!CLIENTCOMPANY) return;
+    try {
+      var r = await fetch(HOST + '/services/dashboard?company_id=' + encodeURIComponent(CLIENTCOMPANY));
+      if (!r.ok) { console.warn('[ab] catalog fetch failed', r.status); return; }
+      var d = await r.json();
+      if (!d.ok) return;
+
+      CATALOG = [];
+      (d.catalog || []).forEach(function (svc) {
+        (svc.options || []).forEach(function (opt) {
+          CATALOG.push({
+            id: opt.id,
+            label: (svc.name || svc.slug) + ' — ' + (opt.name || ''),
+            category: svc.category || null,
+            price: opt.price,
+            unit: opt.unit
+          });
+        });
+      });
+      OFFICES_PICK = (d.offices || []).map(function (o) {
+        return { id: o.id, label: (o.kontors_id ? o.kontors_id + ' — ' : '') + (o.name || 'Kontor') };
+      });
+      populateDropdowns();
+      console.log('[ab] catalog: ' + CATALOG.length + ' erbjudanden, ' + OFFICES_PICK.length + ' kontor');
+    } catch (e) {
+      console.warn('[ab] catalog fetch fail', e && e.message);
+    }
+  }
+
+  function populateDropdowns() {
+    var offerSel = $('f-offer');
+    if (offerSel) {
+      var offerHtml = '<option value="">— välj erbjudande —</option>';
+      offerHtml += CATALOG.map(function (o) {
+        return '<option value="' + esc(o.id) + '" data-cat="' + esc(o.category || '') + '">' + esc(o.label) + '</option>';
+      }).join('');
+      offerSel.innerHTML = offerHtml;
+    }
+    var officeSel = $('f-office');
+    if (officeSel) {
+      var officeHtml = '<option value="">Account-scope (oavsett kontor)</option>';
+      officeHtml += OFFICES_PICK.map(function (o) {
+        return '<option value="' + esc(o.id) + '">' + esc(o.label) + '</option>';
+      }).join('');
+      officeSel.innerHTML = officeHtml;
+    }
+  }
+
+  function setVal(key, value) {
+    var el = $(key);
+    if (el) el.value = value == null ? '' : value;
+  }
+  function readVal(key) {
+    var el = $(key);
+    return el ? String(el.value || '').trim() : '';
+  }
+  function setActiveTypecard(type) {
+    root.querySelectorAll('.ab-typecard').forEach(function (c) {
+      if (c.getAttribute('data-type') === type) c.classList.add('on');
+      else c.classList.remove('on');
+    });
+  }
+  function getActiveTypecard() {
+    var on = root.querySelector('.ab-typecard.on');
+    return on ? on.getAttribute('data-type') : 'Subscription';
+  }
+  function resetForm() {
+    setActiveTypecard('Subscription');
+    setVal('f-offer', '');
+    setVal('f-office', '');
+    setVal('f-monthly', '');
+    setVal('f-qty', 1);
+    setVal('f-start', '');
+    setVal('f-end', '');
+    setVal('f-binding', 36);
+    setVal('f-notice', 3);
+    setVal('f-autorenew', '');
+    setVal('f-pricereg', '');
+    setVal('f-volume', '');
+  }
+
+  function openModal(mode, ct) {
+    MODAL_MODE = mode || 'create';
+    EDITING_ID = (mode === 'edit' && ct) ? ct.id : null;
+
+    var titleEl = $('create-title');
+    var saveBtn = $('create-save');
+    if (titleEl) {
+      titleEl.textContent = mode === 'edit'
+        ? 'Redigera abonnemang'
+        : ('Nytt abonnemang för ' + (CC_NAME || 'kund'));
+    }
+    if (saveBtn) saveBtn.textContent = mode === 'edit' ? 'Spara ändringar' : 'Skapa abonnemang';
+
+    resetForm();
+    if (mode === 'edit' && ct) {
+      setActiveTypecard(ct.contract_type || 'Subscription');
+      setVal('f-offer', ct.offer_id || '');
+      setVal('f-office', ct.office_id || '');
+      setVal('f-monthly', ct.monthly_cost != null ? ct.monthly_cost : '');
+      setVal('f-qty', ct.qty || 1);
+      setVal('f-start', (ct.startdatum || '').slice(0, 10));
+      setVal('f-end', (ct.slutdatum || '').slice(0, 10));
+      setVal('f-binding', ct.binding_months || '');
+      setVal('f-notice', ct.notice_months || '');
+      setVal('f-autorenew', ct.auto_renew_months || '');
+      setVal('f-pricereg', ct.price_regulation_type || '');
+      setVal('f-volume', ct.volume_json || '');
+    }
+
+    var mask = $('create-mask');
+    if (mask) mask.classList.add('on');
+  }
+
+  function readSelectedCategory() {
+    var sel = $('f-offer');
+    if (!sel || !sel.value) return null;
+    var opts = sel.options;
+    for (var i = 0; i < opts.length; i++) {
+      if (opts[i].value === sel.value) return opts[i].getAttribute('data-cat') || null;
+    }
+    return null;
+  }
+
+  async function submitForm() {
+    if (!TOKEN) {
+      alert('Demo-läge: skickas inte (planning_token saknas).');
+      return;
+    }
+    var payload = {
+      contract_type: getActiveTypecard(),
+      offer_id: readVal('f-offer') || null,
+      office_id: readVal('f-office') || null,
+      monthly_cost: readVal('f-monthly') ? Number(readVal('f-monthly')) : 0,
+      qty: readVal('f-qty') ? Number(readVal('f-qty')) : 1,
+      startdatum: readVal('f-start') || null,
+      slutdatum: readVal('f-end') || null,
+      binding_months: readVal('f-binding') ? Number(readVal('f-binding')) : null,
+      notice_months: readVal('f-notice') ? Number(readVal('f-notice')) : null,
+      auto_renew_months: readVal('f-autorenew') ? Number(readVal('f-autorenew')) : null,
+      price_regulation_type: readVal('f-pricereg') || null,
+      volume_json: readVal('f-volume') || null,
+      category: readSelectedCategory()
+    };
+
+    var url, method;
+    if (MODAL_MODE === 'edit' && EDITING_ID) {
+      url = HOST + '/admin/contracts/' + encodeURIComponent(EDITING_ID);
+      method = 'PATCH';
+    } else {
+      payload.company_id = CLIENTCOMPANY;
+      url = HOST + '/admin/contracts/create';
+      method = 'POST';
+    }
+
+    var saveBtn = $('create-save');
+    var original = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Sparar...'; }
+
+    try {
+      var r = await fetch(url, {
+        method: method,
+        headers: { 'x-admin-token': TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var data = await r.json();
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
+      if (!data.ok) {
+        alert('Fel: ' + (data.error || ('HTTP ' + r.status)));
+        return;
+      }
+      var mask = $('create-mask');
+      if (mask) mask.classList.remove('on');
+      await loadLive();
+    } catch (e) {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  function bindModal() {
+    var openBtn = $('create-btn');
+    if (openBtn) openBtn.addEventListener('click', function () { openModal('create', null); });
+    var close = $('create-close');
+    if (close) close.addEventListener('click', function () { $('create-mask').classList.remove('on'); });
+    var cancel = $('create-cancel');
+    if (cancel) cancel.addEventListener('click', function () { $('create-mask').classList.remove('on'); });
+    var save = $('create-save');
+    if (save) save.addEventListener('click', submitForm);
+    root.querySelectorAll('.ab-typecard').forEach(function (c) {
+      c.addEventListener('click', function () { setActiveTypecard(c.getAttribute('data-type')); });
+    });
+  }
+
   // ── Init ────────────────────────────────────────────────────────
+  bindModal();
   renderAll();
   loadLive();
+  loadCatalog();
 })();
 </script>
