@@ -20288,6 +20288,22 @@ app.post("/admin/contracts/create", async (req, res) => {
       try { return JSON.stringify(v); } catch (_) { return null; }
     };
 
+    // Kategori-härledning: Contract.kategori är option-set "Category"
+    // (Food & Event / Housekeeping / Staff / Other facility services).
+    // Frontend kan skicka "platform"/"facility" från ServiceCatalog.category
+    // (helt annat begrepp) eller ingenting. Härled från Erbjudande.Category
+    // som är samma option-set som Contract.kategori.
+    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Staff", "Other facility services"];
+    let resolvedCategory = (b.category && VALID_CATEGORIES.includes(b.category)) ? b.category : null;
+    if (!resolvedCategory && b.offer_id) {
+      try {
+        const offer = await bubbleGet(FORFRAGAN.OFFER_TYPE, b.offer_id);
+        if (offer && offer.Category && VALID_CATEGORIES.includes(offer.Category)) {
+          resolvedCategory = offer.Category;
+        }
+      } catch (_) { /* faller tillbaka till null */ }
+    }
+
     const payload = {
       [SERVICES.CT_COMPANY]:            companyId,
       [SERVICES.CT_TYPE]:               contractType,
@@ -20295,7 +20311,7 @@ app.post("/admin/contracts/create", async (req, res) => {
       [SERVICES.CT_OFFICE]:             b.office_id || null,
       [SERVICES.CT_QTY]:                b.qty != null ? Number(b.qty) : 1,
       [SERVICES.CT_MONTHLY]:            b.monthly_cost != null ? Number(b.monthly_cost) : 0,
-      [SERVICES.CT_KATEGORI]:           b.category || null,
+      [SERVICES.CT_KATEGORI]:           resolvedCategory,
       [SERVICES.CT_START]:              b.startdatum || null,
       [SERVICES.CT_END]:                b.slutdatum || null,
       [SERVICES.CT_BINDING]:            b.binding_months != null ? Number(b.binding_months) : null,
@@ -20390,7 +20406,20 @@ app.patch("/admin/contracts/:id", async (req, res) => {
     if ("offer_id" in b)               patch[SERVICES.CT_OFFER]             = b.offer_id || null;
     if ("qty" in b)                    patch[SERVICES.CT_QTY]               = b.qty != null ? Number(b.qty) : null;
     if ("monthly_cost" in b)           patch[SERVICES.CT_MONTHLY]           = b.monthly_cost != null ? Number(b.monthly_cost) : null;
-    if ("category" in b)               patch[SERVICES.CT_KATEGORI]          = b.category;
+    if ("category" in b) {
+      // Samma härledning som /create — kategori är option-set, mata bara giltiga värden.
+      const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Staff", "Other facility services"];
+      let resolvedCategory = (b.category && VALID_CATEGORIES.includes(b.category)) ? b.category : null;
+      if (!resolvedCategory && b.offer_id) {
+        try {
+          const offer = await bubbleGet(FORFRAGAN.OFFER_TYPE, b.offer_id);
+          if (offer && offer.Category && VALID_CATEGORIES.includes(offer.Category)) {
+            resolvedCategory = offer.Category;
+          }
+        } catch (_) { /* null */ }
+      }
+      patch[SERVICES.CT_KATEGORI] = resolvedCategory;
+    }
     if ("startdatum" in b)             patch[SERVICES.CT_START]             = b.startdatum || null;
     if ("slutdatum" in b)              patch[SERVICES.CT_END]               = b.slutdatum || null;
     if ("binding_months" in b)         patch[SERVICES.CT_BINDING]           = b.binding_months != null ? Number(b.binding_months) : null;
