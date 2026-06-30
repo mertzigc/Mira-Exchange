@@ -20951,7 +20951,7 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
 
     // 2) Anthropic structured extraction via tool-use
     const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5",
       max_tokens: 4096,
       tools: [CONTRACT_EXTRACT_TOOL],
       tool_choice: { type: "tool", name: "extract_contract_fields" },

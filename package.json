@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.34.0",
+    "@anthropic-ai/sdk": "^0.88.0",
     "@sparticuz/chromium": "^131.0.1",
     "cors": "^2.8.5",
     "express": "^4.19.2",
