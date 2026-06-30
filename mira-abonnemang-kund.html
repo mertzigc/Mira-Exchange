@@ -336,6 +336,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Hidden file-input för bilageupload (delas av alla rader) -->
+  <input type="file" data-ab="att-file" style="display:none;">
 </div>
 
 <script>
@@ -510,13 +513,12 @@
             +   '<div class="ab-att-ic">PDF</div>'
             +   '<div class="ab-att-tx">'
             +     '<div class="ab-att-name">' + esc(a.name) + '</div>'
-            +     '<div class="ab-att-sub">' + esc(label) + ' · ' + esc(a.size) + ' · uppladdad ' + fmtDate(a.uploaded) + '</div>'
+            +     '<div class="ab-att-sub">' + esc(label) + (a.size ? ' · ' + esc(a.size) : '') + (a.uploaded ? ' · uppladdad ' + fmtDate(a.uploaded) : '') + '</div>'
             +   '</div>'
             + '</div>'
             + '<div class="ab-att-act">'
-            +   '<button class="ab-btn ghost tiny">Visa</button>'
-            +   '<button class="ab-btn ghost tiny">Ersätt</button>'
-            +   '<button class="ab-btn danger tiny">Ta bort</button>'
+            +   '<button class="ab-btn ghost tiny" data-act="att-view" data-att-url="' + esc(a.file_url || '') + '">Visa</button>'
+            +   '<button class="ab-btn danger tiny" data-act="att-del" data-ct-id="' + esc(ct.id) + '" data-doc-id="' + esc(a.id || '') + '">Ta bort</button>'
             + '</div>'
           + '</div>';
         }).join(''));
@@ -571,12 +573,12 @@
       +     '</div>'
       +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">' + esc(ct.volume_json) + '</div></div>' : '')
       +     rateCardPreview
-      +     '<div class="ab-att">'
+      +     '<div class="ab-att" data-att-wrap data-ct-id="' + esc(ct.id) + '">'
       +       '<div class="ab-att-h">'
-      +         '<div class="ab-att-t">Bilagor (' + attCount + ')</div>'
-      +         '<button class="ab-btn ghost tiny">+ Ladda upp</button>'
+      +         '<div class="ab-att-t">Bilagor (<span data-att-count>' + attCount + '</span>)</div>'
+      +         '<button class="ab-btn ghost tiny" data-act="att-upload" data-ct-id="' + esc(ct.id) + '">+ Ladda upp</button>'
       +       '</div>'
-      +       '<div class="ab-att-list">' + attListHtml + '</div>'
+      +       '<div class="ab-att-list" data-att-list>' + attListHtml + '</div>'
       +     '</div>'
       +     '<div class="ab-rowact">'
       +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="' + esc(ct.id) + '">Redigera</button>'
@@ -652,10 +654,16 @@
     // Bind click → expand (scoped till denna instans)
     root.querySelectorAll('.ab-rowhead').forEach(function (head) {
       head.addEventListener('click', function () {
-        head.parentElement.classList.toggle('open');
+        var row = head.parentElement;
+        row.classList.toggle('open');
+        // 2d: lazy-loada bilagor första gången raden öppnas
+        if (row.classList.contains('open') && row.getAttribute('data-att-loaded') !== '1') {
+          var ctId = row.getAttribute('data-id');
+          if (ctId) loadAttachments(ctId, row);
+        }
       });
     });
-    // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna)
+    // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna + 2d-actions)
     bindActions();
   }
 
@@ -751,10 +759,36 @@
 
   function bindActions() {
     root.querySelectorAll('[data-act]').forEach(function (btn) {
+      // Skip om redan bunden (re-bindActions efter lazy attachment-load)
+      if (btn.getAttribute('data-act-bound') === '1') return;
+      btn.setAttribute('data-act-bound', '1');
       btn.addEventListener('click', async function (ev) {
         ev.stopPropagation(); // Annars toggleas expand-panelen
         var act = btn.getAttribute('data-act');
         var id  = btn.getAttribute('data-id');
+
+        // 2d: bilagor-actions har egna data-attribut
+        if (act === 'att-view') {
+          var url = btn.getAttribute('data-att-url');
+          if (url) window.open(url, '_blank');
+          else alert('Ingen URL — bilagan är troligen demo-data.');
+          return;
+        }
+        if (act === 'att-del') {
+          var ctId  = btn.getAttribute('data-ct-id');
+          var docId = btn.getAttribute('data-doc-id');
+          if (!ctId || !docId) return;
+          if (!confirm('Ta bort bilagan?')) return;
+          await deleteAttachment(ctId, docId, btn);
+          return;
+        }
+        if (act === 'att-upload') {
+          var ctId = btn.getAttribute('data-ct-id');
+          if (!ctId) return;
+          triggerUpload(ctId);
+          return;
+        }
+
         if (!id) return;
 
         var body = null;
@@ -1002,8 +1036,148 @@
     });
   }
 
+  // ── 2d: Bilagor (upload/list/delete) ─────────────────────────────────────
+  var PENDING_UPLOAD_CT_ID = null;
+
+  function attRowHtml(a, ctId) {
+    var sub = a.beskrivning ? a.beskrivning : 'Bilaga';
+    if (a.latest_update) sub += ' · uppladdad ' + fmtDate(a.latest_update);
+    return '<div class="ab-att-row">'
+      + '<div class="ab-att-meta">'
+      +   '<div class="ab-att-ic">PDF</div>'
+      +   '<div class="ab-att-tx">'
+      +     '<div class="ab-att-name">' + esc(a.titel) + '</div>'
+      +     '<div class="ab-att-sub">' + esc(sub) + '</div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="ab-att-act">'
+      +   '<button class="ab-btn ghost tiny" data-act="att-view" data-att-url="' + esc(a.file_url || '') + '">Visa</button>'
+      +   '<button class="ab-btn danger tiny" data-act="att-del" data-ct-id="' + esc(ctId) + '" data-doc-id="' + esc(a.id) + '">Ta bort</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function renderAttachmentsInRow(rowEl, ctId, items) {
+    var countEl = rowEl.querySelector('[data-att-count]');
+    var listEl  = rowEl.querySelector('[data-att-list]');
+    if (countEl) countEl.textContent = items.length;
+    if (listEl) {
+      if (items.length === 0) {
+        listEl.innerHTML = '<div class="ab-att-empty">Inga bilagor ännu. Ladda upp för att koppla Floor Plan, Price List, KPI/SLA m.fl.</div>';
+      } else {
+        listEl.innerHTML = items.map(function (a) { return attRowHtml(a, ctId); }).join('');
+      }
+    }
+    rowEl.setAttribute('data-att-loaded', '1');
+    // Re-bind nya knappar inom listan
+    bindActions();
+  }
+
+  async function loadAttachments(ctId, rowEl) {
+    if (!TOKEN) {
+      // Demo-läge: visa SAMPLE-bilagor om de finns (men utan URL → "Visa" alert:ar)
+      var ct = findContractById(ctId);
+      var demoItems = (ct && Array.isArray(ct.attachments) ? ct.attachments : []).map(function (a, i) {
+        return {
+          id: 'demo-' + i,
+          titel: a.name || 'Bilaga',
+          beskrivning: a.kind === 'huvuddok' ? 'Huvuddok' : 'Bilaga',
+          file_url: null,
+          latest_update: a.uploaded || null,
+        };
+      });
+      renderAttachmentsInRow(rowEl, ctId, demoItems);
+      return;
+    }
+    try {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachments', {
+        headers: { 'x-admin-token': TOKEN }
+      });
+      var d = await r.json();
+      if (!d.ok) { console.warn('[ab] attachments api error', d.error); return; }
+      renderAttachmentsInRow(rowEl, ctId, d.items || []);
+    } catch (e) {
+      console.warn('[ab] attachments fetch fail', e && e.message);
+    }
+  }
+
+  function triggerUpload(ctId) {
+    if (!TOKEN) { alert('Demo-läge: ingen upload skickas.'); return; }
+    PENDING_UPLOAD_CT_ID = ctId;
+    var fileEl = $('att-file');
+    if (fileEl) {
+      fileEl.value = ''; // reset så samma fil kan väljas igen
+      fileEl.click();
+    }
+  }
+
+  async function uploadAttachmentFile(ctId, file) {
+    var rowEl = root.querySelector('.ab-row[data-id="' + ctId + '"]');
+    var btn = rowEl && rowEl.querySelector('[data-act="att-upload"]');
+    var orig = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Laddar upp...'; }
+
+    try {
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      fd.append('titel', file.name);
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachment', {
+        method: 'POST',
+        headers: { 'x-admin-token': TOKEN },
+        body: fd
+      });
+      var d = await r.json();
+      if (!d.ok) { alert('Upload misslyckades: ' + (d.error || ('HTTP ' + r.status))); return; }
+      // Re-loada bilagor på den specifika raden
+      if (rowEl) {
+        rowEl.setAttribute('data-att-loaded', '');
+        await loadAttachments(ctId, rowEl);
+      }
+    } catch (e) {
+      alert('Upload-fel: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+  }
+
+  async function deleteAttachment(ctId, docId, btn) {
+    var orig = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachment/' + encodeURIComponent(docId), {
+        method: 'DELETE',
+        headers: { 'x-admin-token': TOKEN }
+      });
+      var d = await r.json();
+      if (!d.ok) { alert('Borttagning misslyckades: ' + (d.error || ('HTTP ' + r.status))); return; }
+      var rowEl = root.querySelector('.ab-row[data-id="' + ctId + '"]');
+      if (rowEl) {
+        rowEl.setAttribute('data-att-loaded', '');
+        await loadAttachments(ctId, rowEl);
+      }
+    } catch (e) {
+      alert('Delete-fel: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+  }
+
+  function bindFileInput() {
+    var fileEl = $('att-file');
+    if (!fileEl) return;
+    fileEl.addEventListener('change', function (ev) {
+      var files = ev.target.files;
+      if (!files || !files[0]) return;
+      var ctId = PENDING_UPLOAD_CT_ID;
+      PENDING_UPLOAD_CT_ID = null;
+      if (!ctId) return;
+      uploadAttachmentFile(ctId, files[0]);
+    });
+  }
+
   // ── Init ────────────────────────────────────────────────────────
   bindModal();
+  bindFileInput();
   renderAll();
   loadLive();
   loadCatalog();

@@ -20485,5 +20485,162 @@ app.patch("/admin/contracts/:id", async (req, res) => {
   }
 });
 
+// ── Bilagor (Fas 2d) — list / upload / delete på Contract.attachments ──────
+// attachments är List of Dokument. Vi tar bara bort från listan, behåller
+// Dokument-raden för audit-trail. Återanvänder _approvalUpload multer-config.
+
+// GET /admin/contracts/:id/attachments → { ok, items:[{id, titel, file_url, latest_update, beskrivning}] }
+app.options("/admin/contracts/:id/attachments", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/contracts/:id/attachments", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const contractId = String(req.params.id || "").trim();
+  if (!contractId) return res.status(400).json({ ok: false, error: "contract_id krävs" });
+
+  try {
+    const contract = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId);
+    if (!contract) return res.status(404).json({ ok: false, error: "contract_not_found" });
+
+    const docIds = _ffIdsOf(contract[SERVICES.CT_ATTACHMENTS]);
+    const docs = await Promise.all(docIds.map((id) =>
+      bubbleGet("Dokument", id).catch(() => null)
+    ));
+
+    const normUrl = (u) => (u ? String(u).replace(/^\/\//, "https://") : null);
+    const items = docs.filter(Boolean).map((d) => ({
+      id:             d._id,
+      titel:          d.titel || "Dokument",
+      beskrivning:    d.beskrivning || null,
+      file_url:       normUrl(d.file),
+      latest_update:  d.latest_update || d["Created Date"] || null,
+      created_date:   d["Created Date"] || null,
+    }));
+
+    return res.json({ ok: true, contract_id: contractId, items });
+  } catch (e) {
+    console.error("[/admin/contracts/:id/attachments] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// POST /admin/contracts/:id/attachment (multipart, fil + valfri titel/beskrivning)
+// Skapar ny Dokument-rad + appendar till Contract.attachments.
+app.options("/admin/contracts/:id/attachment", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/:id/attachment", _approvalUpload.single("file"), async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const contractId = String(req.params.id || "").trim();
+  if (!contractId) return res.status(400).json({ ok: false, error: "contract_id krävs" });
+
+  const file = req.file;
+  if (!file) return res.status(400).json({ ok: false, error: "fil_saknas (file-fält i multipart krävs)" });
+
+  try {
+    const contract = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId);
+    if (!contract) return res.status(404).json({ ok: false, error: "contract_not_found" });
+
+    const fileUrl = await bubbleUploadFile({
+      filename:    file.originalname || "bilaga",
+      contentType: file.mimetype || "application/octet-stream",
+      buffer:      file.buffer,
+    });
+
+    const titel = String((req.body && req.body.titel) || file.originalname || "Bilaga").slice(0, 250);
+    const beskrivning = String((req.body && req.body.beskrivning) || "Bilaga (Contract)").slice(0, 500);
+
+    const docId = await bubbleCreate("Dokument", {
+      titel,
+      beskrivning,
+      file: fileUrl,
+      latest_update: new Date().toISOString(),
+    });
+
+    // Appenda till Contract.attachments
+    const existing = _ffIdsOf(contract[SERVICES.CT_ATTACHMENTS]);
+    const updated = existing.concat([docId]);
+    await bubblePatch(SERVICES.CONTRACT_TYPE, contractId, {
+      [SERVICES.CT_ATTACHMENTS]: updated,
+    });
+
+    console.log(`[admin/contracts/attachment] +${docId} → Contract ${contractId} (totalt ${updated.length})`);
+    return res.json({
+      ok: true,
+      doc_id: docId,
+      titel,
+      file_url: String(fileUrl).replace(/^\/\//, "https://"),
+      total: updated.length,
+    });
+  } catch (e) {
+    console.error("[/admin/contracts/:id/attachment POST] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// DELETE /admin/contracts/:id/attachment/:doc_id → tar bort från Contract.attachments.
+// Dokument-raden behålls för audit-trail (ingen GC i Bubble-API:t ändå).
+app.options("/admin/contracts/:id/attachment/:doc_id", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.delete("/admin/contracts/:id/attachment/:doc_id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const contractId = String(req.params.id || "").trim();
+  const docId      = String(req.params.doc_id || "").trim();
+  if (!contractId || !docId) {
+    return res.status(400).json({ ok: false, error: "contract_id och doc_id krävs" });
+  }
+
+  try {
+    const contract = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId);
+    if (!contract) return res.status(404).json({ ok: false, error: "contract_not_found" });
+
+    const existing = _ffIdsOf(contract[SERVICES.CT_ATTACHMENTS]);
+    const filtered = existing.filter((id) => id !== docId);
+    if (filtered.length === existing.length) {
+      return res.status(404).json({ ok: false, error: "doc_not_in_attachments" });
+    }
+    await bubblePatch(SERVICES.CONTRACT_TYPE, contractId, {
+      [SERVICES.CT_ATTACHMENTS]: filtered,
+    });
+
+    console.log(`[admin/contracts/attachment] -${docId} från Contract ${contractId} (kvar ${filtered.length})`);
+    return res.json({ ok: true, doc_id: docId, total: filtered.length });
+  } catch (e) {
+    console.error("[/admin/contracts/:id/attachment DELETE] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
