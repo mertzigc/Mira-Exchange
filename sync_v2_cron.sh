@@ -98,7 +98,25 @@ reconcile_links() {
 # WU-VARNING: ft_pdf is_empty skannar hela FortnoxInvoice → håll sync_v2_pdf-cronens
 # FREKVENS låg i Render (1/h eller mer sällan), inte */30.
 PDF_MAX_ROUNDS="${PDF_MAX_ROUNDS:-10}"
+# FLAGG-BASERAD (BILLIG): söker needs_pdf_sync==true (indexerad equality) → returnerar
+# bara de få nya. Detta är default i pdf-cronen. INGEN heltabellsskanning. $1=connection_id.
 enrich_invoice_pdfs() {  # $1=connection_id
+  local cid="$1" r=0 found
+  while [ "$r" -lt "$PDF_MAX_ROUNDS" ]; do
+    found="$(curl -sS --max-time 1800 -X POST "$HOST/fortnox/enrich/invoice-pdfs" \
+      -H "x-api-key: $MIRA_RENDER_API_KEY" -H "x-sync-secret: $SYNC_SECRET" \
+      -H "Content-Type: application/json" \
+      -d "{\"connection_id\":\"$cid\",\"flagged_only\":true,\"limit\":40,\"pause_ms\":250,\"pdf_path\":\"preview\"}" \
+      | grep -o '"found":[0-9]*' | head -1 | grep -o '[0-9]*' || true)"
+    found="${found:-0}"
+    r=$((r + 1))
+    echo "[sync_v2] invoice-pdf(flagg) cid=$cid runda=$r found=$found"
+    [ "$found" -lt 40 ] && break
+  done
+}
+# DEEP (DYR, VECKOVIS safety-net): ft_pdf is_empty = heltabellsskanning. Fångar drift
+# (flagga missad, fetch-fel som lämnat tom ft_pdf). KÖRS BARA i full-läget, inte */pdf.
+enrich_invoice_pdfs_deep() {  # $1=connection_id
   local cid="$1" r=0 found
   while [ "$r" -lt "$PDF_MAX_ROUNDS" ]; do
     found="$(curl -sS --max-time 1800 -X POST "$HOST/fortnox/enrich/invoice-pdfs" \
@@ -108,22 +126,21 @@ enrich_invoice_pdfs() {  # $1=connection_id
       | grep -o '"found":[0-9]*' | head -1 | grep -o '[0-9]*' || true)"
     found="${found:-0}"
     r=$((r + 1))
-    echo "[sync_v2] invoice-pdf cid=$cid runda=$r found=$found"
-    [ "$found" -lt 40 ] && break   # dränat → sluta skanna (sparar WU)
+    echo "[sync_v2] invoice-pdf(deep) cid=$cid runda=$r found=$found"
+    [ "$found" -lt 40 ] && break
   done
 }
 
 if [ "$MODE" = "pdf" ]; then
-  echo "[sync_v2] PDF-drän @ $(date -u +%FT%TZ)"
-  # ── Invoice-PDF (KÄRNDATA för kundportalen) ──────────────────────────────────
-  # sync_v2-fakturasynken hämtar INTE PDF (bara data) → fyll saknade ft_pdf. Per
-  # connection, självterminerande (bryter när inget kvar). EJ all_connections →
-  # undviker att TENGELLA-conn skickas till Fortnox (→ 404).
+  echo "[sync_v2] PDF-drän (FLAGG-baserad, WU-billig) @ $(date -u +%FT%TZ)"
+  # WU-fix P1+P2: bara flaggade fakturor (needs_pdf_sync==true, indexerad equality).
+  # INGEN ft_pdf is_empty-heltabellsskanning, INGET Tengella-helsvep. Drift fångas
+  # av deep-svepet i full-läget (veckovis).
   for CID in $FORTNOX_NATIVE; do
     enrich_invoice_pdfs "$CID"
   done
-  # Tengella/HK invoice-PDF (egen route — Tengella-API, ej Fortnox).
-  post /tengella/enrich/invoice-pdfs "{\"pause_ms\":150,\"max_enrich\":300}"
+  # HK/Tengella — flaggad variant (söker bara flaggade HK-fakturor, ej globalt svep).
+  post /tengella/enrich/invoice-pdfs-flagged "{\"limit\":40,\"pause_ms\":200}"
 
   # ── Order-PDF (9c) — bara om order/offer-cutover aktiv ───────────────────────
   if [ "$ORDERS_ENABLED" = "1" ]; then
@@ -157,6 +174,13 @@ if [ "$MODE" = "full" ]; then
   fi
   # TUNG länk-reconcile bara i full (veckovis) — helskanning av kunder + dokument.
   reconcile_links
+  # WU: DEEP PDF-safety-net bara veckovis (is_empty-heltabellsskanning + HK-helsvep).
+  # Fångar drift som flagg-dränet (nattlig pdf-cron) missat. EJ i pdf-läget.
+  echo "[sync_v2] DEEP PDF-safety-net (is_empty + HK-svep) @ $(date -u +%FT%TZ)"
+  for CID in $FORTNOX_NATIVE; do
+    enrich_invoice_pdfs_deep "$CID"
+  done
+  post /tengella/enrich/invoice-pdfs "{\"pause_ms\":150,\"max_enrich\":300}"
 else
   DB="${MODIFIED_DAYS_BACK:-3}"
   # Tengella saknar modified-filter → synka senaste ~2 mån (Linux date; macOS-fallback).

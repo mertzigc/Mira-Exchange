@@ -154,6 +154,11 @@ export function createSyncEngine(deps) {
       await bubblePatch(bubbleType, existingId, payload);
       return { ...base, action: "update" };
     }
+    // WU-fix: flagga PDF-hämtning bara på CREATE (nya fakturor). EJ på update —
+    // saldo/betalningsändringar rör inte PDF:en → ingen re-fetch/churn. Flaggan
+    // gör att PDF-cronen kan söka needs_pdf_sync==true (indexerad equality) i stället
+    // för ft_pdf is_empty (heltabellsskanning). PDF-routen nollar flaggan vid success.
+    if (adapter.flagPdfOnCreate) payload.needs_pdf_sync = true;
     const newId = await bubbleCreate(bubbleType, payload);
     return { ...base, action: "create", id: newId };
   }
@@ -268,6 +273,7 @@ export function createSyncEngine(deps) {
     source: "tengella-invoice",
     bubbleType: INVOICE_TYPE,                              // "FortnoxInvoice"
     keyFields: ["connection_id", "ft_document_number"],    // idempotensnyckel
+    flagPdfOnCreate: true,                                 // WU-fix: needs_pdf_sync=true på create
     // rows: undefined → enkel-dokument-väg (beter sig exakt som före 9a)
 
     async resolveAuth(opts) {
@@ -402,6 +408,7 @@ export function createSyncEngine(deps) {
     source: "fortnox-invoice",
     bubbleType: INVOICE_TYPE,                              // "FortnoxInvoice"
     keyFields: ["connection_id", "ft_document_number"],    // idempotensnyckel
+    flagPdfOnCreate: true,                                 // WU-fix: needs_pdf_sync=true på create
     // rows: undefined → enkel-dokument-väg (beter sig exakt som före 9a)
 
     async resolveAuth(opts) {

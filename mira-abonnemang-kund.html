@@ -214,6 +214,23 @@
   @media (max-width:480px){ .ab-form-2 { grid-template-columns:1fr; } }
   .ab-modal-foot { display:flex; justify-content:space-between; gap:10px;
     padding:14px 22px; border-top:0.5px solid var(--line); background:var(--bg-deep); }
+
+  /* Rate-card-builder (Fas 3a) */
+  .ab-rc-list { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .ab-rc-row { display:grid; grid-template-columns:1fr 130px 36px; gap:8px; align-items:center; }
+  .ab-rc-row input { padding:8px 11px; background:rgba(255,255,255,0.03);
+    border:0.5px solid var(--line-strong); border-radius:6px; color:var(--t1);
+    font-size:12px; font-family:inherit; outline:none; }
+  .ab-rc-row input:focus { border-color:var(--acc); }
+  .ab-rc-rm { width:36px; height:36px; border-radius:6px;
+    background:transparent; border:0.5px solid var(--line-strong); color:var(--t3);
+    cursor:pointer; font-size:16px; font-family:inherit; line-height:1; transition:all 0.15s; }
+  .ab-rc-rm:hover { color:var(--err); border-color:var(--err); }
+  .ab-rc-add { padding:7px 12px; border-radius:6px; font-size:11px; font-weight:600;
+    background:transparent; border:0.5px dashed var(--line-strong); color:var(--t2);
+    cursor:pointer; font-family:inherit; transition:all 0.15s; }
+  .ab-rc-add:hover { border-color:var(--acc); color:var(--acc); }
+  .ab-rc-hint { font-size:11px; color:var(--t3); margin-bottom:8px; line-height:1.4; }
 </style>
 
 <div class="ab-wrap">
@@ -281,7 +298,7 @@
         </div>
 
         <div class="ab-form-2" data-ab="sub-fields">
-          <div class="ab-form-row">
+          <div class="ab-form-row" data-ab="monthly-wrap">
             <label>Månadskostnad (SEK, exkl. moms)</label>
             <input type="number" placeholder="188 282" data-ab="f-monthly">
           </div>
@@ -320,6 +337,13 @@
               <option value="ingen">Ingen</option>
             </select>
           </div>
+        </div>
+
+        <div class="ab-form-row" data-ab="ratecard-wrap" style="display:none;">
+          <label>Rate-card (roller × kr/h)</label>
+          <div class="ab-rc-hint">Lägg till roller med pris per timme. Tomma rader ignoreras vid spara.</div>
+          <div class="ab-rc-list" data-ab="ratecard-list"></div>
+          <button type="button" class="ab-rc-add" data-ab="ratecard-add">+ Lägg till roll</button>
         </div>
 
         <div class="ab-form-row">
@@ -903,11 +927,74 @@
       if (c.getAttribute('data-type') === type) c.classList.add('on');
       else c.classList.remove('on');
     });
+    updateFormVisibility(type);
   }
   function getActiveTypecard() {
     var on = root.querySelector('.ab-typecard.on');
     return on ? on.getAttribute('data-type') : 'Subscription';
   }
+
+  // ── Fas 3a: RateCard-builder + Hybrid-toggle ─────────────────────────────
+  // Subscription → visa monthly, dölj rate-card
+  // RateCard    → dölj monthly, visa rate-card
+  // Hybrid      → visa båda (fast bas + rörlig debitering)
+  function updateFormVisibility(type) {
+    var monthlyWrap = $('monthly-wrap');
+    var rcWrap = $('ratecard-wrap');
+    if (type === 'RateCard') {
+      if (monthlyWrap) monthlyWrap.style.display = 'none';
+      if (rcWrap)      rcWrap.style.display = '';
+    } else if (type === 'Hybrid') {
+      if (monthlyWrap) monthlyWrap.style.display = '';
+      if (rcWrap)      rcWrap.style.display = '';
+    } else {
+      if (monthlyWrap) monthlyWrap.style.display = '';
+      if (rcWrap)      rcWrap.style.display = 'none';
+    }
+  }
+
+  function addRateCardRow(role, price) {
+    var list = $('ratecard-list');
+    if (!list) return;
+    var rowEl = document.createElement('div');
+    rowEl.className = 'ab-rc-row';
+    rowEl.innerHTML =
+      '<input type="text" placeholder="Roll (t.ex. Hovmästare)" data-rc-role value="' + esc(role || '') + '">' +
+      '<input type="number" placeholder="Kr/h" data-rc-price value="' + (price != null ? price : '') + '">' +
+      '<button type="button" class="ab-rc-rm" title="Ta bort rad">&times;</button>';
+    list.appendChild(rowEl);
+    rowEl.querySelector('.ab-rc-rm').addEventListener('click', function () {
+      rowEl.parentNode.removeChild(rowEl);
+    });
+  }
+
+  function loadRateCardJson(jsonStr) {
+    var list = $('ratecard-list');
+    if (list) list.innerHTML = '';
+    if (!jsonStr) return;
+    try {
+      var arr = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+      if (Array.isArray(arr)) {
+        arr.forEach(function (it) { addRateCardRow(it.role, it.price_per_h); });
+      }
+    } catch (e) { /* ogiltig JSON → tom */ }
+  }
+
+  function getRateCardJson() {
+    var list = $('ratecard-list');
+    if (!list) return null;
+    var rows = list.querySelectorAll('.ab-rc-row');
+    var items = [];
+    for (var i = 0; i < rows.length; i++) {
+      var roleEl  = rows[i].querySelector('[data-rc-role]');
+      var priceEl = rows[i].querySelector('[data-rc-price]');
+      var role  = roleEl ? String(roleEl.value || '').trim() : '';
+      var price = priceEl ? Number(priceEl.value) : NaN;
+      if (role && !isNaN(price)) items.push({ role: role, price_per_h: price });
+    }
+    return items.length > 0 ? JSON.stringify(items) : null;
+  }
+
   function resetForm() {
     setActiveTypecard('Subscription');
     setVal('f-offer', '');
@@ -921,6 +1008,7 @@
     setVal('f-autorenew', '');
     setVal('f-pricereg', '');
     setVal('f-volume', '');
+    loadRateCardJson(null);
   }
 
   function openModal(mode, ct) {
@@ -950,6 +1038,7 @@
       setVal('f-autorenew', ct.auto_renew_months || '');
       setVal('f-pricereg', ct.price_regulation_type || '');
       setVal('f-volume', ct.volume_json || '');
+      loadRateCardJson(ct.rate_card_json || null);
     }
 
     var mask = $('create-mask');
@@ -971,11 +1060,17 @@
       alert('Demo-läge: skickas inte (planning_token saknas).');
       return;
     }
+    var ctype = getActiveTypecard();
+    // Monthly_cost: 0 för RateCard (ingen fast månadskostnad), annars läs form
+    var monthly = (ctype === 'RateCard') ? 0 : (readVal('f-monthly') ? Number(readVal('f-monthly')) : 0);
+    // Rate-card: hämta från builder för RateCard + Hybrid, annars null
+    var rateCardJson = (ctype === 'RateCard' || ctype === 'Hybrid') ? getRateCardJson() : null;
+
     var payload = {
-      contract_type: getActiveTypecard(),
+      contract_type: ctype,
       offer_id: readVal('f-offer') || null,
       office_id: readVal('f-office') || null,
-      monthly_cost: readVal('f-monthly') ? Number(readVal('f-monthly')) : 0,
+      monthly_cost: monthly,
       qty: readVal('f-qty') ? Number(readVal('f-qty')) : 1,
       startdatum: readVal('f-start') || null,
       slutdatum: readVal('f-end') || null,
@@ -983,6 +1078,7 @@
       notice_months: readVal('f-notice') ? Number(readVal('f-notice')) : null,
       auto_renew_months: readVal('f-autorenew') ? Number(readVal('f-autorenew')) : null,
       price_regulation_type: readVal('f-pricereg') || null,
+      rate_card_json: rateCardJson,
       volume_json: readVal('f-volume') || null,
       category: readSelectedCategory()
     };
@@ -1034,6 +1130,8 @@
     root.querySelectorAll('.ab-typecard').forEach(function (c) {
       c.addEventListener('click', function () { setActiveTypecard(c.getAttribute('data-type')); });
     });
+    var rcAdd = $('ratecard-add');
+    if (rcAdd) rcAdd.addEventListener('click', function () { addRateCardRow('', ''); });
   }
 
   // ── 2d: Bilagor (upload/list/delete) ─────────────────────────────────────

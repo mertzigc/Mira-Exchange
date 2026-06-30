@@ -14927,7 +14927,8 @@ app.post("/fortnox/enrich/invoice-pdfs", async (req, res) => {
     limit = 25,
     pause_ms = 400,
     pdf_path = "preview",
-    since_invoice_date = null
+    since_invoice_date = null,
+    flagged_only = false   // WU-fix: sök needs_pdf_sync==true (indexerad) i st.f ft_pdf is_empty (heltabellsskanning)
   } = req.body || {};
 
   req.socket?.setTimeout?.(0);
@@ -14951,11 +14952,19 @@ app.post("/fortnox/enrich/invoice-pdfs", async (req, res) => {
         continue;
       }
 
-      const constraints = [
-        { key: "connection_id", constraint_type: "equals", value: cid },
-        { key: "ft_pdf", constraint_type: "is_empty" },
-        { key: "ft_cancelled", constraint_type: "equals", value: false }
-      ];
+      // flagged_only (WU-billigt): needs_pdf_sync==true = indexerad equality, returnerar
+      // bara de få nya. Default-läget (is_empty) = heltabellsskanning → bara veckovis safety-net.
+      const constraints = flagged_only
+        ? [
+            { key: "connection_id", constraint_type: "equals", value: cid },
+            { key: "needs_pdf_sync", constraint_type: "equals", value: true },
+            { key: "ft_cancelled", constraint_type: "equals", value: false }
+          ]
+        : [
+            { key: "connection_id", constraint_type: "equals", value: cid },
+            { key: "ft_pdf", constraint_type: "is_empty" },
+            { key: "ft_cancelled", constraint_type: "equals", value: false }
+          ];
       if (since_invoice_date) {
         constraints.push({ key: "ft_invoice_date", constraint_type: "greater than", value: since_invoice_date });
       }
@@ -15440,6 +15449,86 @@ app.post("/tengella/enrich/invoice-pdfs", async (req, res) => {
     });
   } catch (e) {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), details: e?.details || null });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// WU-FIX (P2): FLAGG-BASERAD HK-PDF — ersätter det dyra globala svepet ovan.
+// I stället för att lista ALLA TengellaCustomers × alla fakturor + findOne per
+// faktura (~3700 Bubble-läsningar/körning), söker vi BARA flaggade HK-fakturor:
+//   FortnoxInvoice [connection=TENGELLA, needs_pdf_sync==true]  (indexerad equality)
+// → returnerar bara de få nya. För varje: hämta Tengella InvoiceId ur ft_raw_json,
+//   getTengellaInvoiceById → Url → ladda ner → upload → patcha ft_pdf + nolla flagga.
+// Det gamla svepet (/tengella/enrich/invoice-pdfs) behålls som VECKOVIS safety-net.
+app.post("/tengella/enrich/invoice-pdfs-flagged", async (req, res) => {
+  const orgNo   = (req.body?.orgNo || TENGELLA_DEFAULT_ORGNO || "").trim();
+  const limit   = Number(req.body?.limit ?? 40) || 40;
+  const pause_ms = Number(req.body?.pause_ms ?? 200);
+  if (!orgNo) return res.status(400).json({ ok: false, error: "orgNo krävs" });
+
+  req.socket?.setTimeout?.(0);
+  res.setTimeout?.(0);
+
+  try {
+    // Indexerad query — bara flaggade HK-fakturor (billigt, ingen heltabellsskanning/svep).
+    const flagged = await bubbleFind("FortnoxInvoice", {
+      constraints: [
+        { key: "connection_id",  constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
+        { key: "needs_pdf_sync", constraint_type: "equals", value: true },
+        { key: "ft_cancelled",   constraint_type: "equals", value: false }
+      ],
+      limit
+    }).catch(() => []);
+    const list = Array.isArray(flagged) ? flagged : [];
+
+    if (!list.length) return res.json({ ok: true, found: 0, enriched: 0, errors: 0, note: "inga flaggade HK-fakturor" });
+
+    const token = await tengellaLogin(orgNo);
+    let enriched = 0, errors = 0, skipped = 0;
+    let first_error = null;
+
+    for (const inv of list) {
+      const id = inv?._id;
+      if (!id) { skipped++; continue; }
+      try {
+        // Tengella InvoiceId (+ ev. CustomerId) ur lagrad raw_json. InvoiceNo (ft_document_number)
+        // duger inte — endpointen kräver InvoiceId.
+        let raw = {};
+        try { raw = inv?.ft_raw_json ? JSON.parse(inv.ft_raw_json) : {}; } catch { raw = {}; }
+        const invoiceId  = raw?.InvoiceId ?? raw?.invoiceId ?? null;
+        const customerId = raw?.CustomerId ?? raw?.customerId ?? null;
+        if (invoiceId == null) {
+          errors++; if (!first_error) first_error = { doc: inv?.ft_document_number, reason: "raw_json saknar InvoiceId" };
+          continue;
+        }
+
+        const detail = await getTengellaInvoiceById({ token, invoiceId, customerId });
+        const pdfUrl = String(detail?.Url ?? detail?.PdfUrl ?? "").trim();
+        if (!pdfUrl) { errors++; if (!first_error) first_error = { doc: inv?.ft_document_number, reason: "ingen Url i Tengella-detail" }; continue; }
+
+        const dl = await downloadToBuffer(pdfUrl);
+        if (!dl.ok || !dl.buf?.length) { errors++; if (!first_error) first_error = { doc: inv?.ft_document_number, reason: "download misslyckades", status: dl.status }; continue; }
+
+        const fileUrl = await bubbleUploadFile({
+          filename: `tengella_invoice_${inv?.ft_document_number || invoiceId}.pdf`,
+          contentType: dl.contentType || "application/pdf",
+          buffer: dl.buf
+        });
+        await bubblePatch("FortnoxInvoice", id, {
+          ft_pdf: fileUrl,
+          ft_pdf_fetched_at: new Date().toISOString(),
+          needs_pdf_sync: false
+        });
+        enriched++;
+      } catch (e) {
+        errors++; if (!first_error) first_error = { doc: inv?.ft_document_number, message: e?.message || String(e) };
+      }
+      if (pause_ms) await sleep(Number(pause_ms));
+    }
+
+    return res.json({ ok: true, found: list.length, enriched, errors, skipped, first_error });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
@@ -19731,7 +19820,83 @@ async function _buildServicesDashboard(companyId) {
     }
   }
 
-  return { catalog, offices, active_account: activeAccount, active_by_office: activeByOffice };
+  // ── Fas 3b: F&E soft-active baserat på senaste FortnoxOrder ─────────────
+  // Beslut HANDOFF 0g: F&E är "aktiv" om senaste FortnoxOrder.delivery_date
+  // (eller ft_order_ts) är ≤ 6 månader bort. F&E har sällan löpande Contract;
+  // istället mäter vi engagemang på senast levererat uppdrag.
+  const FE_CONNECTION_ID  = "1771579463578x385222043661358460";
+  const FE_SOFT_WINDOW_MS = 180 * 86400000;
+  let lastFeOrder = null;
+  try {
+    const orders = await bubbleFindAll("FortnoxOrder", {
+      constraints: [
+        { key: "linked_company", constraint_type: "equals", value: companyId },
+        { key: "connection",     constraint_type: "equals", value: FE_CONNECTION_ID },
+      ],
+      sort_field: "ft_order_ts",
+      descending: true,
+      limit: 5,
+    }).catch(() => []);
+    for (const o of (orders || [])) {
+      const ts = Number(o.ft_order_ts);
+      if (Number.isFinite(ts) && ts > 0) {
+        if (!lastFeOrder || ts > lastFeOrder.ts) {
+          lastFeOrder = {
+            ts,
+            iso:     new Date(ts).toISOString(),
+            doc_no:  o.ft_document_number || null,
+            ref:     o.ft_your_reference || o.ft_our_reference || null,
+          };
+        }
+      }
+    }
+  } catch (e) { /* fall through */ }
+
+  const feSoftActive = !!(lastFeOrder && (now - lastFeOrder.ts) <= FE_SOFT_WINDOW_MS);
+
+  // Hitta F&E-tile i catalog. Pragmatik: matcha catalog-slug eller name mot
+  // F&E-mönster. Vi sätter den som account-scope soft-aktiv (ej ett Contract
+  // utan en levererad order — frontend kan presentera "Senast: 12 maj").
+  if (feSoftActive) {
+    const feSlug = (function () {
+      const candidates = ["food_event", "food-event", "fe", "catering"];
+      for (const c of catalog) {
+        if (candidates.includes(String(c.slug || "").toLowerCase())) return c.slug;
+      }
+      // Fallback: matcha på catalog-namnet
+      for (const c of catalog) {
+        if (/food|event|frukost|lunch|middag|catering|kost|fika/i.test(c.name || "")) return c.slug;
+      }
+      return null;
+    })();
+
+    if (feSlug && !activeAccount[feSlug]) {
+      const dateLabel = new Date(lastFeOrder.ts).toLocaleDateString("sv-SE",
+        { year: "numeric", month: "short", day: "numeric" });
+      activeAccount[feSlug] = {
+        option_id:        null,
+        qty:              0,
+        monthly_cost:     0,
+        info:             "Senast: " + dateLabel + (lastFeOrder.ref ? " · " + lastFeOrder.ref : ""),
+        office_id:        null,
+        status:           SERVICES.STATUS_AKTIV,
+        contract_id:      null,
+        contract_type:    "OneOff",
+        end_date:         null,
+        soft_active:      true,
+        last_order_ts:    lastFeOrder.ts,
+        last_order_iso:   lastFeOrder.iso,
+        last_order_doc:   lastFeOrder.doc_no,
+      };
+    }
+  }
+
+  return {
+    catalog, offices,
+    active_account:  activeAccount,
+    active_by_office: activeByOffice,
+    last_fe_order:   lastFeOrder,   // {ts, iso, doc_no, ref} eller null
+  };
 }
 
 app.get("/services/dashboard", async (req, res) => {
