@@ -256,6 +256,7 @@
         <div class="ab-sk-l">Per månad</div>
         <div class="ab-sk-v" data-ab="sum-cost">258 412 kr</div>
       </div>
+      <button class="ab-btn ghost" data-ab="import-btn" title="Importera befintligt avtal (PDF) — LLM parsar fälten">+ Importera avtal</button>
       <button class="ab-btn primary" data-ab="create-btn">+ Nytt abonnemang</button>
     </div>
   </div>
@@ -363,6 +364,8 @@
 
   <!-- Hidden file-input för bilageupload (delas av alla rader) -->
   <input type="file" data-ab="att-file" style="display:none;">
+  <!-- Hidden file-input för PDF-import (Fas 4) -->
+  <input type="file" data-ab="import-file" accept="application/pdf,.pdf" style="display:none;">
 </div>
 
 <script>
@@ -1087,6 +1090,13 @@
     if (MODAL_MODE === 'edit' && EDITING_ID) {
       url = HOST + '/admin/contracts/' + encodeURIComponent(EDITING_ID);
       method = 'PATCH';
+    } else if (MODAL_MODE === 'import') {
+      payload.company_id        = CLIENTCOMPANY;
+      payload.file_doc_id       = IMPORT_STATE.file_doc_id;
+      payload.file_url          = IMPORT_STATE.file_url;
+      payload.parsed_confidence = IMPORT_STATE.parsed_confidence;
+      url = HOST + '/admin/contracts/import/commit';
+      method = 'POST';
     } else {
       payload.company_id = CLIENTCOMPANY;
       url = HOST + '/admin/contracts/create';
@@ -1273,9 +1283,107 @@
     });
   }
 
+  // ── Fas 4: PDF-import + LLM-parsning ─────────────────────────────────────
+  // Drag-drop befintligt avtal → POST /admin/contracts/import/parse →
+  // Claude Haiku 4.5 returnerar strukturerade fält → modal öppnas i 'import'-
+  // mode (samma som edit men commitar via /import/commit istället för create).
+  var IMPORT_STATE = { file_doc_id: null, file_url: null, parsed_confidence: null };
+
+  function triggerImport() {
+    if (!TOKEN) { alert('Demo-läge: import-knappen kräver planning_token.'); return; }
+    var fileEl = $('import-file');
+    if (!fileEl) return;
+    fileEl.value = '';
+    fileEl.click();
+  }
+
+  async function parseImportFile(file) {
+    var importBtn = $('import-btn');
+    var orig = importBtn ? importBtn.textContent : null;
+    if (importBtn) { importBtn.disabled = true; importBtn.textContent = 'Parsar avtal...'; }
+    try {
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      var r = await fetch(HOST + '/admin/contracts/import/parse', {
+        method: 'POST',
+        headers: { 'x-admin-token': TOKEN },
+        body: fd
+      });
+      var d = await r.json();
+      if (importBtn) { importBtn.disabled = false; importBtn.textContent = orig; }
+      if (!d.ok) {
+        alert('LLM-parsning misslyckades: ' + (d.error || ('HTTP ' + r.status)) + (d.detail ? '\n' + d.detail : ''));
+        return;
+      }
+      // Stoppa file_doc_id + file_url i state, öppna modal i 'import'-mode
+      IMPORT_STATE.file_doc_id = d.file && d.file.doc_id;
+      IMPORT_STATE.file_url    = d.file && d.file.file_url;
+      IMPORT_STATE.parsed_confidence = (d.parsed && d.parsed.confidence) || null;
+      console.log('[ab] import parsed:', d.parsed, 'tokens:', d.tokens);
+      openModalForImport(d.parsed || {}, d.file);
+    } catch (e) {
+      if (importBtn) { importBtn.disabled = false; importBtn.textContent = orig; }
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  function openModalForImport(parsed, fileInfo) {
+    MODAL_MODE = 'import';
+    EDITING_ID = null;
+
+    var titleEl = $('create-title');
+    var saveBtn = $('create-save');
+    if (titleEl) {
+      titleEl.textContent = 'Granska importerat avtal' + (fileInfo && fileInfo.filename ? ' — ' + fileInfo.filename : '');
+    }
+    if (saveBtn) saveBtn.textContent = 'Skapa Contract från import';
+
+    resetForm();
+
+    // Pre-fyll från LLM-output. Sätter bara om värdet finns.
+    var ctype = parsed.contract_type || 'Subscription';
+    setActiveTypecard(ctype);
+    // offer_id + office_id kan inte gissas av LLM (kräver Bubble-id) → Carotte väljer manuellt
+    if (parsed.monthly_cost != null) setVal('f-monthly', parsed.monthly_cost);
+    if (parsed.qty != null)          setVal('f-qty', parsed.qty);
+    if (parsed.startdatum)           setVal('f-start', String(parsed.startdatum).slice(0, 10));
+    if (parsed.slutdatum)            setVal('f-end',   String(parsed.slutdatum).slice(0, 10));
+    if (parsed.binding_months != null)    setVal('f-binding',   parsed.binding_months);
+    if (parsed.notice_months != null)     setVal('f-notice',    parsed.notice_months);
+    if (parsed.auto_renew_months != null) setVal('f-autorenew', parsed.auto_renew_months);
+    if (parsed.price_regulation_type)     setVal('f-pricereg',  parsed.price_regulation_type);
+    if (parsed.price_regulation_next)     setVal('f-pricereg-next', String(parsed.price_regulation_next).slice(0, 10));
+
+    if (parsed.rate_card && parsed.rate_card.length) loadRateCardJson(parsed.rate_card);
+    if (parsed.volume) setVal('f-volume', JSON.stringify(parsed.volume));
+
+    // Visa kort info om vad LLM:n hittade (kund-namn, org.nr) som hint
+    if (parsed.customer_name || parsed.customer_org_no) {
+      var conf = parsed.confidence || {};
+      console.log('[ab] LLM tyckte kunden är:', parsed.customer_name, parsed.customer_org_no,
+        'confidence:', conf);
+    }
+
+    var mask = $('create-mask');
+    if (mask) mask.classList.add('on');
+  }
+
+  function bindImportInput() {
+    var importBtn = $('import-btn');
+    if (importBtn) importBtn.addEventListener('click', triggerImport);
+    var fileEl = $('import-file');
+    if (!fileEl) return;
+    fileEl.addEventListener('change', function (ev) {
+      var files = ev.target.files;
+      if (!files || !files[0]) return;
+      parseImportFile(files[0]);
+    });
+  }
+
   // ── Init ────────────────────────────────────────────────────────
   bindModal();
   bindFileInput();
+  bindImportInput();
   renderAll();
   loadLive();
   loadCatalog();

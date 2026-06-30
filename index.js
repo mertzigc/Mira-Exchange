@@ -9,6 +9,8 @@ import multer from "multer";
 import express from "express";
 import cors from "cors";
 import crypto from "node:crypto";
+import Anthropic from "@anthropic-ai/sdk";
+import pdfParse from "pdf-parse";
 
 // ────────────────────────────────────────────────────────────
 // .env lokalt (Render injicerar env i production)
@@ -20801,6 +20803,288 @@ app.delete("/admin/contracts/:id/attachment/:doc_id", async (req, res) => {
     return res.json({ ok: true, doc_id: docId, total: filtered.length });
   } catch (e) {
     console.error("[/admin/contracts/:id/attachment DELETE] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Fas 4: PDF-import + LLM-parsning (HANDOFF §0g/§10.7)
+// Drag-drop befintligt avtal → pdf-parse → Anthropic Haiku 4.5 (structured
+// tool-use) → review-form → Contract skapas direkt (skipping OfferApproval —
+// avtalet är redan signerat). Originalet sparas som signed_pdf på Contract.
+// ════════════════════════════════════════════════════════════════════════════
+
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+const CONTRACT_EXTRACT_TOOL = {
+  name: "extract_contract_fields",
+  description: "Extrahera strukturerade avtalsfält från ett Carotte-avtalsdokument. Inkludera bara fält du är säker på baserat på texten. Saknade fält ska lämnas tomma (null/undefined). Datum i YYYY-MM-DD-format.",
+  input_schema: {
+    type: "object",
+    properties: {
+      contract_type: {
+        type: "string",
+        enum: ["Subscription", "RateCard", "Hybrid"],
+        description: "Subscription = fast månadskostnad (HK/Reception). RateCard = roller×kr/h (Staff Bemanning). Hybrid = båda."
+      },
+      category: {
+        type: "string",
+        enum: ["Food & Event", "Housekeeping", "Staff", "Other facility services"],
+        description: "Avtalets kategori."
+      },
+      monthly_cost: {
+        type: "number",
+        description: "Fast månadskostnad i SEK exkl. moms. 0 om RateCard."
+      },
+      qty: {
+        type: "integer",
+        description: "Antal enheter (t.ex. antal städare, antal receptioner). Default 1."
+      },
+      startdatum: { type: "string", description: "Avtalets startdatum, format YYYY-MM-DD." },
+      slutdatum:  { type: "string", description: "Avtalets slutdatum, format YYYY-MM-DD." },
+      binding_months:    { type: "integer", description: "Bindningstid i månader." },
+      notice_months:     { type: "integer", description: "Uppsägningstid i månader." },
+      auto_renew_months: { type: "integer", description: "Auto-förlängningsperiod (mån). Saknas = ingen auto-förlängning." },
+      price_regulation_type: {
+        type: "string",
+        enum: ["index_cleaning", "index_kpi", "lon_kollektiv", "fast", "ingen"],
+        description: "Cleaning Index (SCB/Almega) för HK, KPI, lönekollektiv för Staff, fast pris, eller ingen reglering."
+      },
+      price_regulation_next: {
+        type: "string",
+        description: "Nästa prisrevisionsdatum, YYYY-MM-DD."
+      },
+      rate_card: {
+        type: "array",
+        description: "Rate-card för RateCard/Hybrid. Lista av {role, price_per_h}-objekt. Tom för pure Subscription.",
+        items: {
+          type: "object",
+          properties: {
+            role: { type: "string" },
+            price_per_h: { type: "number" }
+          },
+          required: ["role", "price_per_h"]
+        }
+      },
+      volume: {
+        type: "object",
+        description: "Strukturerad volym, t.ex. {kvm: 12600, housekeepers: 7, hours_mf: 25, hours_sun: 4} för HK."
+      },
+      customer_name: {
+        type: "string",
+        description: "Klient/kund-bolagets namn enligt avtalet (kan hjälpa Carotte att verifiera rätt ClientCompany)."
+      },
+      customer_org_no: {
+        type: "string",
+        description: "Klientens organisationsnummer."
+      },
+      confidence: {
+        type: "object",
+        description: "Per-fält confidence 0-1. Nyckel = fält-namn (t.ex. monthly_cost). Värde = sannolikhet att det är rätt.",
+        additionalProperties: { type: "number" }
+      }
+    }
+  }
+};
+
+const CONTRACT_EXTRACT_SYSTEM = `Du är en assistent som extraherar strukturerade fält från Carotte-avtal (Facility Services-avtal med svenska kunder).
+
+Carotte erbjuder följande tjänstetyper:
+- Housekeeping (städ, fast månadsabonnemang, ofta Cleaning Index-reglerat)
+- Staff (bemanning, rate-card med kr/h per roll, lönekollektiv-reglerat)
+- Food & Event (catering, ofta one-off, sällan löpande)
+- Other facility services (Reception, Concierge, Kaffe, Vatten, Frukt, etc.)
+
+Avtalstyper:
+- Subscription: fast månadskostnad. T.ex. HK 188 282 kr/mån + Cleaning Index.
+- RateCard: roller × kr/h. T.ex. Staff Bemanning med "Hovmästare 428 SEK/h, Servering 365 SEK/h".
+- Hybrid: båda (sällsynt).
+
+Datum ska vara YYYY-MM-DD. Saknat fält → lämna tomt. Var konservativ: sätt lågt confidence (<0.5) om du är osäker.
+
+Extrahera ALDRIG fält från headerns "Background"-text eller boilerplate. Endast aktiva bestämmelser i avtalets §-paragrafer.`;
+
+// POST /admin/contracts/import/parse — multipart upload PDF → returnerar parsed
+app.options("/admin/contracts/import/parse", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  if (!anthropic) {
+    return res.status(503).json({ ok: false, error: "ANTHROPIC_API_KEY_missing — sätt env på Render" });
+  }
+
+  const file = req.file;
+  if (!file) return res.status(400).json({ ok: false, error: "fil_saknas (multipart file-fält krävs)" });
+
+  try {
+    // 1) PDF-text-extraktion
+    let pdfData;
+    try {
+      pdfData = await pdfParse(file.buffer);
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: "pdf_parse_failed", detail: e?.message });
+    }
+    const fullText = String(pdfData.text || "").trim();
+    if (fullText.length < 100) {
+      return res.status(400).json({
+        ok: false,
+        error: "pdf_no_text",
+        detail: "PDF saknar extraherbar text (scannad bild?). Endast text-PDF stöds.",
+        chars: fullText.length,
+      });
+    }
+
+    // Begränsa till ~50k tecken (Haiku-context räcker, men avtal sällan så långa).
+    const text = fullText.slice(0, 50000);
+
+    // 2) Anthropic structured extraction via tool-use
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 4096,
+      tools: [CONTRACT_EXTRACT_TOOL],
+      tool_choice: { type: "tool", name: "extract_contract_fields" },
+      system: CONTRACT_EXTRACT_SYSTEM,
+      messages: [{
+        role: "user",
+        content: `Extrahera fält ur följande Carotte-avtal. Returnera bara via tool-anropet.\n\n---\n\n${text}`,
+      }],
+    });
+    const toolUse = msg.content.find((c) => c.type === "tool_use");
+    if (!toolUse || !toolUse.input) {
+      return res.status(500).json({ ok: false, error: "llm_no_tool_use", detail: "Claude returnerade inget tool-use-anrop" });
+    }
+    const parsed = toolUse.input;
+
+    // 3) Spara originalet i Bubble som Dokument (för signed_pdf-länkning vid commit)
+    const fileUrl = await bubbleUploadFile({
+      filename:    file.originalname || "importerat-avtal.pdf",
+      contentType: file.mimetype || "application/pdf",
+      buffer:      file.buffer,
+    });
+    const docId = await bubbleCreate("Dokument", {
+      titel:         file.originalname || "Importerat avtal",
+      beskrivning:   "Importerat befintligt avtal (Fas 4 LLM-parsning)",
+      file:          fileUrl,
+      latest_update: new Date().toISOString(),
+    });
+
+    console.log(`[contracts/import/parse] PDF ${file.originalname} (${pdfData.numpages}s, ${fullText.length} chars) → doc ${docId} · ${msg.usage.input_tokens}+${msg.usage.output_tokens} tokens`);
+
+    return res.json({
+      ok: true,
+      parsed,
+      pdf: {
+        pages: pdfData.numpages || null,
+        chars: fullText.length,
+        truncated: fullText.length > text.length,
+      },
+      file: {
+        doc_id: docId,
+        file_url: String(fileUrl).replace(/^\/\//, "https://"),
+        filename: file.originalname || "importerat-avtal.pdf",
+      },
+      tokens: {
+        input:  msg.usage.input_tokens,
+        output: msg.usage.output_tokens,
+      },
+    });
+  } catch (e) {
+    console.error("[/admin/contracts/import/parse] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// POST /admin/contracts/import/commit — Carotte har granskat parsed → skapa Contract direkt
+// Body: { company_id, contract_type, file_doc_id, file_url, ...alla fält, parsed_confidence }
+// Originalet (file_doc_id) länkas som BÅDE signed_pdf och första attachment-rad.
+app.options("/admin/contracts/import/commit", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/import/commit", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const b = req.body || {};
+    const companyId    = String(b.company_id || "").trim();
+    const contractType = String(b.contract_type || SERVICES.TYPE_SUBSCRIPTION).trim();
+    if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
+    if (![SERVICES.TYPE_SUBSCRIPTION, SERVICES.TYPE_RATECARD, SERVICES.TYPE_HYBRID].includes(contractType)) {
+      return res.status(400).json({ ok: false, error: "ogiltig contract_type" });
+    }
+
+    const stringifyMaybeObject = (v) => {
+      if (v == null) return null;
+      if (typeof v === "string") return v;
+      try { return JSON.stringify(v); } catch (_) { return null; }
+    };
+
+    // Kategori-härledning som i /create
+    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Staff", "Other facility services"];
+    let resolvedCategory = (b.category && VALID_CATEGORIES.includes(b.category)) ? b.category : null;
+    if (!resolvedCategory && b.offer_id) {
+      try {
+        const offer = await bubbleGet(FORFRAGAN.OFFER_TYPE, b.offer_id);
+        if (offer && offer.Category && VALID_CATEGORIES.includes(offer.Category)) {
+          resolvedCategory = offer.Category;
+        }
+      } catch (_) {}
+    }
+
+    const fileDocId = b.file_doc_id || null;
+    const fileUrl   = b.file_url || null;
+    const signedAt  = b.signed_at || b.startdatum || new Date().toISOString();
+
+    const payload = {
+      [SERVICES.CT_COMPANY]:           companyId,
+      [SERVICES.CT_TYPE]:              contractType,
+      [SERVICES.CT_OFFER]:             b.offer_id || null,
+      [SERVICES.CT_OFFICE]:            b.office_id || null,
+      [SERVICES.CT_QTY]:               b.qty != null ? Number(b.qty) : 1,
+      [SERVICES.CT_MONTHLY]:           b.monthly_cost != null ? Number(b.monthly_cost) : 0,
+      [SERVICES.CT_KATEGORI]:          resolvedCategory,
+      [SERVICES.CT_START]:             b.startdatum || null,
+      [SERVICES.CT_END]:               b.slutdatum || null,
+      [SERVICES.CT_BINDING]:           b.binding_months != null ? Number(b.binding_months) : null,
+      [SERVICES.CT_NOTICE]:            b.notice_months != null ? Number(b.notice_months) : null,
+      [SERVICES.CT_AUTO_RENEW]:        b.auto_renew_months != null ? Number(b.auto_renew_months) : null,
+      [SERVICES.CT_PRICE_REG_TYPE]:    b.price_regulation_type || null,
+      [SERVICES.CT_PRICE_REG_NEXT]:    b.price_regulation_next || null,
+      [SERVICES.CT_RATE_CARD_JSON]:    stringifyMaybeObject(b.rate_card_json || b.rate_card),
+      [SERVICES.CT_VOLUME_JSON]:       stringifyMaybeObject(b.volume_json || b.volume),
+      [SERVICES.CT_SIGNED_PDF]:        fileUrl,
+      [SERVICES.CT_SIGNED_AT]:         signedAt,
+      [SERVICES.CT_ATTACHMENTS]:       fileDocId ? [fileDocId] : null,
+      [SERVICES.CT_PARSED_CONFIDENCE]: stringifyMaybeObject(b.parsed_confidence || b.confidence),
+    };
+    const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
+
+    const contractId = await bubbleCreate(SERVICES.CONTRACT_TYPE, finalPayload);
+
+    console.log(`[contracts/import/commit] skapade Contract ${contractId} för ${companyId} (typ ${contractType}, signed_pdf=${fileUrl ? "ja" : "nej"})`);
+    return res.json({ ok: true, contract_id: contractId });
+  } catch (e) {
+    console.error("[/admin/contracts/import/commit] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
