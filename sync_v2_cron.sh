@@ -38,6 +38,11 @@ FORTNOX_NATIVE="$FE $STAFF $GROUP"
 TENGELLA_ORGNO="${TENGELLA_ORGNO:-746-0509}"   # Tengella-tenant (för kund-synk)
 CUST_DAYS="${CUST_DAYS:-${MODIFIED_DAYS_BACK:-3}}"  # lastmodified-fönster för kund-synk
 CUST_PAGES="${CUST_PAGES:-3}"                       # max sidor/kund-synk (inkrementell → litet)
+# WU-fix P0: full-läget skannar bara SENASTE fönstret (gamla ordrar/offerter/fakturor
+# ändras aldrig; nattens modified-sweep fångar alla ändringar oavsett dokumentålder).
+# Tidigare skannade full HELA året varje vecka → söndagens WU-spik. reconcile flyttad
+# till eget månadsvis 'reconcile'-läge.
+FULL_WINDOW_DAYS="${FULL_WINDOW_DAYS:-90}"
 
 post() {  # $1=path  $2=json
   # Resilient: ett hängt/trasigt anrop får INTE döda hela körningen (set -e). Logga och
@@ -52,18 +57,34 @@ post() {  # $1=path  $2=json
   echo
 }
 
-# Veckovis order/offer-resync. Tunga F&E-månader (~500-600 ordrar, rad-tunga offerter)
-# timeoutar som helårs- eller månadssvep → kör 7-dagarsfönster. $1=år. Kräver GNU date
-# (Render Linux). Idempotent → ev. overlap i sista fönstret är ofarlig.
-order_offer_weekly() {
-  local Y="$1" d to END
-  d="$Y-01-01"; END="$((Y + 1))-01-01"
+# WU-fix P0: order/offer-resync bara för SENASTE fönstret (FULL_WINDOW_DAYS), i
+# 7-dagarsbitar (tunga F&E-månader timeoutar annars). Gamla ordrar/offerter ändras
+# aldrig → skanna dem inte varje vecka. Nattens modified-sweep fångar ändå ändringar.
+order_offer_recent() {
+  local d to END
+  d="$(date -u -d "${FULL_WINDOW_DAYS} days ago" +%F)"
+  END="$(date -u -d '+7 days' +%F)"
   while [[ "$d" < "$END" ]]; do
     to="$(date -u -d "$d +6 days" +%F)"
-    echo "[sync_v2] FULL order/offer $d..$to"
+    echo "[sync_v2] FULL order/offer (recent) $d..$to"
     post /sync/v2/fortnox-order "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$to\",\"throttleMs\":250}"
     post /sync/v2/fortnox-offer "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$to\",\"throttleMs\":250}"
     d="$(date -u -d "$d +7 days" +%F)"
+  done
+}
+
+# WU-fix P0: faktura-resync bara för SENASTE fönstret, i månadsbitar (undviker timeout).
+invoices_recent() {
+  local d mend END
+  d="$(date -u -d "${FULL_WINDOW_DAYS} days ago" +%F)"
+  END="$(date -u -d '+1 day' +%F)"
+  while [[ "$d" < "$END" ]]; do
+    mend="$(date -u -d "$d +1 month -1 day" +%F)"
+    [[ "$mend" > "$END" ]] && mend="$END"
+    echo "[sync_v2] FULL invoices (recent) $d..$mend"
+    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$mend\",\"throttleMs\":300}"
+    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$d\",\"todate\":\"$mend\",\"throttleMs\":300}"
+    d="$(date -u -d "$d +1 month" +%F)"
   done
 }
 
@@ -150,32 +171,36 @@ if [ "$MODE" = "pdf" ]; then
   exit 0
 fi
 
+if [ "$MODE" = "reconcile" ]; then
+  # WU-fix P0: TUNG länk-reconcile (helskanning ~7,7k kunder + ~20k dokument inkl
+  # ft_raw_json) — flyttad HIT från veckovisa full. Schemalägg MÅNADSVIS i Render
+  # (t.ex. 0 4 1 * *). Nya/ändrade dokument länkas ändå vid create/update; reconcile
+  # fångar bara historiska noop-docs + efterhands-städade kunder → månadsvis räcker.
+  echo "[sync_v2] RECONCILE (månadsvis) @ $(date -u +%FT%TZ)"
+  sync_customers
+  reconcile_links
+  echo "[sync_v2] reconcile klart @ $(date -u +%FT%TZ)"
+  exit 0
+fi
+
 # Kund-synk FÖRST (nattligt + full) — billig, håller bryggan färsk så att dokument
 # som synkas nedan länkas redan vid create. (PDF-läget exitar ovan, rörs ej.)
 sync_customers
 
 if [ "$MODE" = "full" ]; then
-  YEAR="${SYNC_YEAR:-$(date -u +%Y)}"
-  echo "[sync_v2] FULL resync $YEAR @ $(date -u +%FT%TZ)"
-  # Invoices kvartalsvis (helår i ETT anrop kan hänga >max-time). bash ordsplittar $Q.
-  for Q in "01-01 03-31" "04-01 06-30" "07-01 09-30" "10-01 12-31"; do
-    set -- $Q; QF="$1"; QT="$2"
-    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$YEAR-$QF\",\"todate\":\"$YEAR-$QT\",\"throttleMs\":300}"
-    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$YEAR-$QF\",\"todate\":\"$YEAR-$QT\",\"throttleMs\":300}"
-  done
-  post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\"}"
+  # WU-fix P0: full = FÄRSKT FÖNSTER-safety-net (senaste ${FULL_WINDOW_DAYS}d), INTE hela året.
+  # Gamla dokument ändras aldrig; nattens modified-sweep fångar ändringar oavsett ålder.
+  # reconcile_links flyttad till eget 'reconcile'-läge (månadsvis). Detta kapar söndagsspiken.
+  TSINCE="$(date -u -d "${FULL_WINDOW_DAYS} days ago" +%Y-%m 2>/dev/null || date -u -v-${FULL_WINDOW_DAYS}d +%Y-%m)"
+  echo "[sync_v2] FULL (recent ${FULL_WINDOW_DAYS}d, since=${TSINCE}) @ $(date -u +%FT%TZ)"
+  invoices_recent
+  post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
-    echo "[sync_v2] FULL order/offer (F&E, veckovis) + workorder $YEAR"
-    # OBS: order/offer BARA F&E. Staff har bara faktura i Fortnox; Staffs order/offert
-    # skapas i Intelliplan (egen framtida källa) → /orders ger 400 på Staff-kontot.
-    order_offer_weekly "$YEAR"
-    # Workorder: global discovery (listar allt, billigt), window:ad write till året.
-    post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$YEAR-01\",\"untilYM\":\"$YEAR-12\",\"throttleMs\":300}"
+    echo "[sync_v2] FULL order/offer (F&E, recent) + workorder (since=${TSINCE})"
+    order_offer_recent
+    post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\",\"throttleMs\":300}"
   fi
-  # TUNG länk-reconcile bara i full (veckovis) — helskanning av kunder + dokument.
-  reconcile_links
-  # WU: DEEP PDF-safety-net bara veckovis (is_empty-heltabellsskanning + HK-helsvep).
-  # Fångar drift som flagg-dränet (nattlig pdf-cron) missat. EJ i pdf-läget.
+  # DEEP PDF-safety-net (is_empty + HK-svep) — veckovis, fångar drift. EJ i pdf-läget.
   echo "[sync_v2] DEEP PDF-safety-net (is_empty + HK-svep) @ $(date -u +%FT%TZ)"
   for CID in $FORTNOX_NATIVE; do
     enrich_invoice_pdfs_deep "$CID"
