@@ -20838,7 +20838,11 @@ const CONTRACT_EXTRACT_TOOL = {
       },
       monthly_cost: {
         type: "number",
-        description: "Fast månadskostnad i SEK exkl. moms. 0 om RateCard."
+        description: "Fast månadskostnad i SEK exkl. moms. 0 om RateCard. För Hybrid: basmånadsavgiften (rörliga tilläggstjänster hamnar i rate_card)."
+      },
+      setup_cost: {
+        type: "number",
+        description: "Engångs uppstartskostnad i SEK exkl. moms (t.ex. inköp av städvagn/utrustning). Endast om avtalet nämner en explicit engångskostnad."
       },
       qty: {
         type: "integer",
@@ -20860,12 +20864,13 @@ const CONTRACT_EXTRACT_TOOL = {
       },
       rate_card: {
         type: "array",
-        description: "Rate-card för RateCard/Hybrid. Lista av {role, price_per_h}-objekt. Tom för pure Subscription.",
+        description: "Rate-card för RateCard/Hybrid. Lista av {role, price_per_h, unit?}-objekt. För Staff Bemanning: roller som Hovmästare/Servering. För Hybrid HK/Reception: tilläggstjänster som Månadsstädning, Höjdstädning, Fönsterputs, Extra städ med OB-tillägg. Fältet `unit` beskriver debiteringsenhet: 'per timme' (default), 'per tillfälle', 'engång'. Tom för pure Subscription.",
         items: {
           type: "object",
           properties: {
             role: { type: "string" },
-            price_per_h: { type: "number" }
+            price_per_h: { type: "number" },
+            unit: { type: "string", enum: ["per timme", "per tillfälle", "engång"] }
           },
           required: ["role", "price_per_h"]
         }
@@ -20900,9 +20905,11 @@ Carotte erbjuder följande tjänstetyper:
 - Other facility services (Reception, Concierge, Kaffe, Vatten, Frukt, etc.)
 
 Avtalstyper:
-- Subscription: fast månadskostnad. T.ex. HK 188 282 kr/mån + Cleaning Index.
-- RateCard: roller × kr/h. T.ex. Staff Bemanning med "Hovmästare 428 SEK/h, Servering 365 SEK/h".
-- Hybrid: båda (sällsynt).
+- Subscription: fast månadskostnad, INGA rörliga tilläggstjänster. T.ex. HK 188 282 kr/mån + Cleaning Index.
+- RateCard: roller × kr/h, INGEN fast månad. T.ex. Staff Bemanning med "Hovmästare 428 SEK/h, Servering 365 SEK/h".
+- Hybrid: fast månadsavgift SOM BAS + rörliga tilläggstjänster. VÄLJ HYBRID om avtalet har både månadsavgift OCH pris-per-tillfälle/timme (t.ex. HK med månadsstädning 20 000 kr/tillfälle, höjdstädning 28 000 kr/tillfälle, extra städ 350 kr/h + OB-tillägg). Lägg tilläggstjänsterna i rate_card med lämplig unit.
+
+Engångskostnader (t.ex. uppstartskostnad för inköp av utrustning) → setup_cost, ej rate_card.
 
 Datum ska vara YYYY-MM-DD. Saknat fält → lämna tomt. Var konservativ: sätt lågt confidence (<0.5) om du är osäker.
 

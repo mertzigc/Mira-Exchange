@@ -5,6 +5,76 @@
 
 ---
 
+## 0h. Fas 1-4 LIVE + verifierat 2026-07-02, Fas 5 PLANERAD
+
+**Status per fas (kolla mot 0g för full plan):**
+
+| Fas | Status | Verifierat |
+|---|---|---|
+| 1. Fundament (Bubble-schema + auto-Contract-hook + status-härledning) | ✅ LIVE | 2026-06-29 · CMIAB testad |
+| 2a. Read-endpoints (`/admin/contracts/by-company`, `/admin/contracts/all`) | ✅ LIVE | 2026-06-29 |
+| 2b. Create-endpoint + okand-härdning för legacy Contracts | ✅ LIVE | 2026-06-29 |
+| 2c-1. PATCH-endpoint + frontend pause/resume/end/reopen-actions | ✅ LIVE | 2026-06-29 |
+| 2c-2. Create + Edit modal med live-dropdowns (Erbjudande/Office från `/services/dashboard`) | ✅ LIVE | 2026-06-30 · Skapa+Redigera funkar |
+| 2d. Bilagor — upload/list/delete via `Contract.attachments` (Dokument-rader) | ✅ LIVE | 2026-06-30 |
+| 3a. RateCard-builder + Hybrid-toggle i modal | ✅ LIVE | 2026-07-01 |
+| 3b. F&E-tile soft-active (senaste FortnoxOrder ≤6 mån från F&E-connection) | ✅ LIVE | 2026-07-01 |
+| 4. PDF-import + LLM-parsning (Anthropic Haiku 4.5 structured tool-use) | ✅ LIVE + verifierat | 2026-07-02 · EA HK-avtal 8/8 fält korrekt, Exeger multi-location 9/9 fält |
+| 5. Template + PDF-generering (ContractTemplate + puppeteer + `/approval/create`) | ⏳ NÄSTA SPÅR | — |
+
+### Refaktoreringar under vägen (viktigt att komma ihåg)
+
+1. **CT_*-konstanter är LOWERCASE + diakritik** (verifierat via `/services/dashboard?debug=1` 2026-06-29): `kundföretag`/`kontor`/`produktantal`/`månadskostnad`/`slutdatum` (INTE PascalCase som jag först gissade). Bubble FIND är case-insensitive men JS object-access är case-sensitive — måste matcha slugen exakt.
+2. **Kategori-härledning i backend** (`POST /create` + `PATCH /:id`): frontend kan skicka `"platform"`/`"facility"` från ServiceCatalog eller giltig option-set-värde. Backend har `VALID_CATEGORIES`-guard som härleder från `offer.Category` om ogiltigt.
+3. **HTML-block följer approval-mönstret**: `.ab-wrap` / `.aa-wrap` + `data-mira` på hidden inputs + claim-mekanism + scoped queries via `root.querySelector('[data-ab="..."]')`. INGEN `document.getElementById`, INGEN `?.`/`??` (Bubbles parser krashar). Fixat efter kaskad-bug där approval-blockens `?.` stoppade Bubble från att injicera abonnemang-blockets script.
+4. **`_deriveContractStatus` returnerar `okand`** när både startdatum OCH slutdatum saknas — döljer 183 legacy-Contracts som default i admin-vyn (filter-chip AV).
+5. **`_createContractsFromApprovalRequest` skapar BARA Subscription auto** vid OfferApproval.Approved. RateCard + Hybrid kräver manuell skapande i admin-blocket.
+
+### Fas 4 — verifierat vid två avtal (2026-07-02)
+
+**Test 1 — EA/DICE HK-avtal (188 282 kr/mån):** 8/8 fält korrekt parsade (contract_type, monthly_cost, datum, bindning, uppsägning, prisreglering, customer_name).
+
+**Test 2 — Exeger multi-location HK-avtal:** 9/9 fält korrekt inkl komplex volume_json med två lokaler + prisändring över tid (`{"locations":["Brinellvägen 60","Brinellvägen 32"],"brinellvagen_60_monthly":23570,"brinellvagen_32_monthly_aug_sep":48600,"brinellvagen_32_monthly_oct_onwards":64000}`).
+
+**F&E-avtal (Wistrand STHLM):** Fångade 6/8 fält. Månadskostnad tom, volume tom. Rotorsak: F&E-avtal är strukturellt annorlunda (prislista-baserat, inte fast månadsavgift). **Beslut: F&E-import parkerad** — Christian sa "vi avvaktar med FE" 2026-07-02. F&E-avtal förblir manuell skapande i admin-blocket tills ett bättre F&E-abonnemang-koncept definierats.
+
+**Kostnad per import:** ~0,09 SEK (7 114 input + 451 output tokens på Haiku 4.5). Hela befintlig kundbas ~5-10 SEK.
+
+**Två prompt-fixar 2026-07-02** (efter Exeger-analys):
+- Nytt `setup_cost`-fält i schemat för engångskostnader (uppstartskostnader typ 15 000 kr för utrustning)
+- Prompt uppdaterad: föreslå **Hybrid** när avtalet har både fast månadsavgift OCH pris-per-tillfälle/timme (t.ex. HK med månadsstädning 20 000/tillfälle, höjdstädning, extra städ med OB-tillägg). Tilläggstjänster i `rate_card` med `unit`-fält: `"per timme"`, `"per tillfälle"`, `"engång"`.
+
+### Fas 5 — nästa spår (ContractTemplate + PDF-generering + auto-skicka till /approval/create)
+
+Enligt HANDOFF §0g / ARKITEKTUR §10.8. Kort summary:
+- Ny Bubble-typ `ContractTemplate` med `template_html`, `category`, `contract_type`, `version`, `superseded_by`, `default_spec_json`
+- 3 default-mallar från befintliga avtal i `Avtal från Carotte/`:
+  - HK Subscription (från EA-avtalet — 99% färdigt som template)
+  - Reception Subscription
+  - Staff RateCard (från Scandic Bemanning)
+- Backend-endpoints: `GET/POST /admin/contract-templates`, `POST /admin/contracts/render-preview` (returnerar PDF-buffer), `POST /admin/contracts/render-and-send` (renderar + skickar in i `/approval/create`)
+- Handlebars-substitution med `{{client_name}}`, `{{monthly_cost}}`, etc.
+- Puppeteer-core + pdf-lib redan installerade (från approval-cert)
+- Frontend i kund-blocket: ny knapp "+ Avtal från mall" bredvid "+ Nytt abonnemang" och "+ Importera avtal"
+
+Uppskattad tid: 5-7 kod-dagar + 1 dag Bubble-schema + 2-3 dagar Carotte-test.
+
+### Aktiva filer
+
+- `index.js` (~20 000 rader) — SERVICES-konstanter (rad ~19306), `_createContractsFromApprovalRequest` + `_deriveContractStatus` (rad ~16340), `_enrichContract` + admin/contracts-endpoints (rad ~19960), Fas 4 CONTRACT_EXTRACT_TOOL + parse/commit (nära slutet)
+- `mira-abonnemang-kund.html` (~1350 rader) — kundkort-flik inbäddad i Företag-popupen, `data-mira` hidden inputs: `api_host`, `planning_token`, `clientcompany`, `clientcompany_nm`
+- `mira-abonnemang-admin.html` (~890 rader) — global "Alla abonnemang"-sida, `data-mira` hidden inputs: `api_host`, `planning_token`
+- `ARKITEKTUR_OCH_OMTAG.md` §10 — djupdesign för hela tjänste-grid-spåret
+- `package.json` — dependencies `@anthropic-ai/sdk@^0.88.0` + `pdf-parse@^1.1.1` för Fas 4
+
+### Env vars på Render (bekräftat)
+
+- `PLANNING_ADMIN_TOKEN` — auth för `/admin/contracts/*` + `/admin/approval/*` + `/admin/forfragan/*`
+- `ANTHROPIC_API_KEY` — Fas 4 LLM-parsning (Haiku 4.5)
+- `SYNC_V2_ORDERS=1` — nightly cron (0f-status, oförändrat)
+
+---
+
 ## 0g. Tjänste-grid admin-modul + avtals-lifecycle — BYGGE PÅBÖRJAT 2026-06-28
 
 Bygger den admin-modul som 0f föreslog, plus två större tilläggsfeatures:
