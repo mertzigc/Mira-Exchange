@@ -16752,6 +16752,181 @@ const _approvalUpload = multer({
 
 app.options("/approval/create", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
 
+// ── _createApprovalRequestInternal ─────────────────────────────────────────
+// Extraherad från /approval/create-routen (Fas 5, 2026-07-11) så både HTTP-
+// routen och contract_render.js kan använda samma pipeline utan HTTP-hop.
+//
+// Args: { req, files, payload }
+//   req     — Express-req, används enbart av _buildApprovalViewUrl för host/proto
+//   files   — [{ originalname, mimetype, buffer }] — samma shape som multer ger,
+//             men callers kan bygga arrayen manuellt (contract_render skapar
+//             ett file-objekt från renderad PDF-buffer).
+//   payload — samma JSON-schema som /approval/create-payloaden, plus två
+//             nya optionella Fas 5-fält:
+//               contract_template_json  string  (JSON-array av contract-specs)
+//               auto_create_contract    yes/no  (default "yes")
+//             Sätts på OfferApprovalRequest så _createContractsFromApprovalRequest
+//             kan skapa Contract vid Approved.
+//
+// Kastar Error med .status = 400 vid valideringsfel. Returnerar samma
+// resultat-objekt som HTTP-routen returnerade tidigare.
+async function _createApprovalRequestInternal({ req, files, payload }) {
+  // Fail-fast: alla template-IDs MÅSTE finnas innan vi skapar Dokument/
+  // Request/Approval — annars riskerar vi orphan-data när invite-mail
+  // failar på sista steget.
+  try {
+    _approvalTemplateId("invite");
+    _approvalTemplateId("otp");
+    _approvalTemplateId("signed");
+    _approvalTemplateId("review_invite");
+    _approvalTemplateId("reminder");
+  } catch (envErr) {
+    const e = new Error(envErr.message);
+    e.status = 503;
+    throw e;
+  }
+
+  const rubrik       = String(payload?.rubrik || "").trim();
+  const meddelande   = String(payload?.meddelande || "").trim();
+  const senderEmail  = String(payload?.sender_email || "").trim();
+  const senderName   = String(payload?.sender_name || "Carotte").trim() || "Carotte";
+  const ccId         = payload?.clientcompany || null;
+  const dealId       = payload?.deal || null;
+  const expiresAt    = payload?.expires_at || null;
+  const recipients   = Array.isArray(payload?.recipients) ? payload.recipients : [];
+
+  const _err = (msg, status = 400) => { const e = new Error(msg); e.status = status; return e; };
+
+  if (!rubrik) throw _err("rubrik_required");
+  if (!recipients.length) throw _err("recipients_required");
+  const fileList = Array.isArray(files) ? files : [];
+  if (!fileList.length) throw _err("files_required");
+
+  // Fas 5-fält: contract_template_json (måste vara JSON-array om satt) +
+  // auto_create_contract (default "yes"). Validera tidigt så vi inte skapar
+  // OfferApprovalRequest med skräp-JSON som sedan trasar auto-hook:en.
+  let contractTemplateJson = null;
+  if (payload?.contract_template_json != null && payload.contract_template_json !== "") {
+    const raw = payload.contract_template_json;
+    const asString = typeof raw === "string" ? raw : JSON.stringify(raw);
+    let parsed;
+    try { parsed = JSON.parse(asString); }
+    catch { throw _err("invalid_contract_template_json"); }
+    if (!Array.isArray(parsed)) throw _err("contract_template_json_must_be_array");
+    contractTemplateJson = asString;
+  }
+  let autoCreateContract = null;
+  if (payload?.auto_create_contract != null) {
+    const v = payload.auto_create_contract;
+    if (v === true || String(v).toLowerCase() === "yes")     autoCreateContract = "yes";
+    else if (v === false || String(v).toLowerCase() === "no") autoCreateContract = "no";
+    else throw _err("invalid_auto_create_contract");
+  }
+
+  // 1) Ladda upp filer + skapa Dokument-poster
+  const dokumentIds = [];
+  for (const f of fileList) {
+    const fileUrl = await bubbleUploadFile({
+      filename:    f.originalname || "dokument.pdf",
+      contentType: f.mimetype || "application/pdf",
+      buffer:      f.buffer,
+    });
+    const id = await bubbleCreate("Dokument", {
+      titel:         f.originalname || "Dokument",
+      beskrivning:   "Signeringsunderlag (Mira)",
+      file:          fileUrl,
+      latest_update: new Date().toISOString(),
+    });
+    dokumentIds.push(id);
+  }
+
+  // Normalisera roles: default "Signer", "Reviewer" skriver utan OTP/sign
+  const normalizedRecipients = recipients.map((r) => ({
+    email: String(r?.email || "").trim(),
+    name:  String(r?.name || "").trim(),
+    role:  String(r?.role || "Signer").trim() === "Reviewer" ? "Reviewer" : "Signer",
+  })).filter((r) => r.email);
+  if (!normalizedRecipients.length) throw _err("recipients_required");
+
+  const signers   = normalizedRecipients.filter((r) => r.role === "Signer").length;
+  const reviewers = normalizedRecipients.filter((r) => r.role === "Reviewer").length;
+
+  // 2) Skapa OfferApprovalRequest (moder)
+  // Status = "Sent" direkt vid skapande (mailen köas i samma anrop). Om
+  // du vill ha "Draft"-fas tillagd senare: gör en separat /approval/draft
+  // route och låt /create köra på drafts.
+  const oarPayload = {
+    rubrik,
+    meddelande,
+    dokument:          dokumentIds,
+    clientcompany:     ccId || null,
+    deal:              dealId || null,
+    sender_email:      senderEmail,
+    sender_name:       senderName,
+    status:            "Sent",
+    recipients_count:  signers,        // räknar bara signers; reviewers separat
+    reviewers_count:   reviewers,
+    signed_count:      0,
+    reviewed_count:    0,
+    expires_at:        expiresAt || null,
+  };
+  if (contractTemplateJson !== null) oarPayload[SERVICES.OAR_CONTRACT_TEMPLATE] = contractTemplateJson;
+  if (autoCreateContract   !== null) oarPayload[SERVICES.OAR_AUTO_CREATE]       = autoCreateContract;
+  const requestId = await bubbleCreate("OfferApprovalRequest", oarPayload);
+
+  // 3) Skapa OfferApproval per mottagare + invite-mail per role
+  const created = [];
+  for (const r of normalizedRecipients) {
+    const { email, name, role } = r;
+    const rawToken  = _genToken();
+    const tokenHash = _sha256Hex(rawToken);
+
+    const approvalId = await bubbleCreate("OfferApproval", {
+      request:         requestId,
+      rubrik,                       // bakåtkomp: child speglar för äldre rapport-vyer
+      recipient_email: email,
+      role,                         // "Signer" | "Reviewer"
+      status:          "Sent",
+      token_hash:      tokenHash,
+      dokument:        dokumentIds, // speglas så befintliga vyer fortsatt visar dem
+      clientcompany:   ccId || null,
+      deal:            dealId || null,
+      meddelande,
+    });
+
+    const viewUrl = _buildApprovalViewUrl(req, approvalId, rawToken);
+    await bubblePatch("OfferApproval", approvalId, { approval_link: viewUrl });
+
+    // Köa mail: review_invite för granskare, invite för signers
+    const templateKey = role === "Reviewer" ? "review_invite" : "invite";
+    await bubbleCreate("emailqueue", {
+      template_id: _approvalTemplateId(templateKey),
+      to_email:    email,
+      to_name:     name || email,
+      extra_data:  JSON.stringify({
+        rubrik,
+        sender_name: senderName,
+        message:     meddelande,
+        view_url:    viewUrl,
+        expires_at:  expiresAt || null,
+      }),
+      email_sent:  false,
+    });
+
+    created.push({ approval_id: approvalId, recipient_email: email, role, view_url: viewUrl });
+  }
+
+  return {
+    ok:               true,
+    request_id:       requestId,
+    dokument_ids:     dokumentIds,
+    approvals:        created,
+    signers_count:    signers,
+    reviewers_count:  reviewers,
+    recipients_count: created.length,
+  };
+}
+
 app.post(
   "/approval/create",
   (req, res, next) => { _approvalCors(req, res); next(); },
@@ -16765,137 +16940,14 @@ app.post(
       if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
         return res.status(401).json({ ok: false, error: "unauthorized" });
       }
-      // Fail-fast: alla template-IDs MÅSTE finnas innan vi skapar Dokument/
-      // Request/Approval — annars riskerar vi orphan-data när invite-mail
-      // failar på sista steget. Bättre att returnera 503 utan att skriva alls.
-      try {
-        _approvalTemplateId("invite");
-        _approvalTemplateId("otp");
-        _approvalTemplateId("signed");
-        _approvalTemplateId("review_invite");
-        _approvalTemplateId("reminder");
-      } catch (envErr) {
-        return res.status(503).json({ ok: false, error: envErr.message });
-      }
 
       let payload = {};
       try { payload = JSON.parse(req.body.payload || "{}"); }
       catch { return res.status(400).json({ ok: false, error: "invalid_payload_json" }); }
 
-      const rubrik       = String(payload.rubrik || "").trim();
-      const meddelande   = String(payload.meddelande || "").trim();
-      const senderEmail  = String(payload.sender_email || "").trim();
-      const senderName   = String(payload.sender_name || "Carotte").trim() || "Carotte";
-      const ccId         = payload.clientcompany || null;
-      const dealId       = payload.deal || null;
-      const expiresAt    = payload.expires_at || null;
-      const recipients   = Array.isArray(payload.recipients) ? payload.recipients : [];
-
-      if (!rubrik) return res.status(400).json({ ok: false, error: "rubrik_required" });
-      if (!recipients.length) return res.status(400).json({ ok: false, error: "recipients_required" });
-
       const files = Array.isArray(req.files) ? req.files : [];
-      if (!files.length) return res.status(400).json({ ok: false, error: "files_required" });
-
-      // 1) Ladda upp filer + skapa Dokument-poster
-      const dokumentIds = [];
-      for (const f of files) {
-        const fileUrl = await bubbleUploadFile({
-          filename:    f.originalname || "dokument.pdf",
-          contentType: f.mimetype || "application/pdf",
-          buffer:      f.buffer,
-        });
-        const id = await bubbleCreate("Dokument", {
-          titel:         f.originalname || "Dokument",
-          beskrivning:   "Signeringsunderlag (Mira)",
-          file:          fileUrl,
-          latest_update: new Date().toISOString(),
-        });
-        dokumentIds.push(id);
-      }
-
-      // Normalisera roles: default "Signer", "Reviewer" skriver utan OTP/sign
-      const normalizedRecipients = recipients.map((r) => ({
-        email: String(r?.email || "").trim(),
-        name:  String(r?.name || "").trim(),
-        role:  String(r?.role || "Signer").trim() === "Reviewer" ? "Reviewer" : "Signer",
-      })).filter((r) => r.email);
-      if (!normalizedRecipients.length) return res.status(400).json({ ok: false, error: "recipients_required" });
-
-      const signers   = normalizedRecipients.filter((r) => r.role === "Signer").length;
-      const reviewers = normalizedRecipients.filter((r) => r.role === "Reviewer").length;
-
-      // 2) Skapa OfferApprovalRequest (moder)
-      // Status = "Sent" direkt vid skapande (mailen köas i samma anrop). Om
-      // du vill ha "Draft"-fas tillagd senare: gör en separat /approval/draft
-      // route och låt /create köra på drafts.
-      const requestId = await bubbleCreate("OfferApprovalRequest", {
-        rubrik,
-        meddelande,
-        dokument:          dokumentIds,
-        clientcompany:     ccId || null,
-        deal:              dealId || null,
-        sender_email:      senderEmail,
-        sender_name:       senderName,
-        status:            "Sent",
-        recipients_count:  signers,        // räknar bara signers; reviewers separat
-        reviewers_count:   reviewers,
-        signed_count:      0,
-        reviewed_count:    0,
-        expires_at:        expiresAt || null,
-      });
-
-      // 3) Skapa OfferApproval per mottagare + invite-mail per role
-      const created = [];
-      for (const r of normalizedRecipients) {
-        const { email, name, role } = r;
-        const rawToken  = _genToken();
-        const tokenHash = _sha256Hex(rawToken);
-
-        const approvalId = await bubbleCreate("OfferApproval", {
-          request:         requestId,
-          rubrik,                       // bakåtkomp: child speglar för äldre rapport-vyer
-          recipient_email: email,
-          role,                         // "Signer" | "Reviewer"
-          status:          "Sent",
-          token_hash:      tokenHash,
-          dokument:        dokumentIds, // speglas så befintliga vyer fortsatt visar dem
-          clientcompany:   ccId || null,
-          deal:            dealId || null,
-          meddelande,
-        });
-
-        const viewUrl = _buildApprovalViewUrl(req, approvalId, rawToken);
-        await bubblePatch("OfferApproval", approvalId, { approval_link: viewUrl });
-
-        // Köa mail: review_invite för granskare, invite för signers
-        const templateKey = role === "Reviewer" ? "review_invite" : "invite";
-        await bubbleCreate("emailqueue", {
-          template_id: _approvalTemplateId(templateKey),
-          to_email:    email,
-          to_name:     name || email,
-          extra_data:  JSON.stringify({
-            rubrik,
-            sender_name: senderName,
-            message:     meddelande,
-            view_url:    viewUrl,
-            expires_at:  expiresAt || null,
-          }),
-          email_sent:  false,
-        });
-
-        created.push({ approval_id: approvalId, recipient_email: email, role, view_url: viewUrl });
-      }
-
-      return res.json({
-        ok:               true,
-        request_id:       requestId,
-        dokument_ids:     dokumentIds,
-        approvals:        created,
-        signers_count:    signers,
-        reviewers_count:  reviewers,
-        recipients_count: created.length,
-      });
+      const result = await _createApprovalRequestInternal({ req, files, payload });
+      return res.json(result);
     } catch (e) {
       console.error("[/approval/create] failed", e);
       return res.status(e?.status || 500).json({
