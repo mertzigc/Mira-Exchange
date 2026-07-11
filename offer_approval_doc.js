@@ -12,13 +12,20 @@
 // anropas generateAndStore direkt utan HTTP-hop.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { PDFDocument } from "pdf-lib";
-import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  getBrowser,
+  closeBrowser,
+  renderHtmlToPdf,
+  mergePdfs,
+  detectKind,
+  imageToPdfBuffer,
+  normalizeFileUrl,
+  fetchBinary,
+  sha256,
+} from "./pdf_utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = path.join(__dirname, "approval-cert.template.html");
@@ -29,31 +36,10 @@ export function createApprovalDocEngine(deps) {
     throw new Error("createApprovalDocEngine: bubbleGet/bubblePatch/bubbleUploadFile required");
   }
 
-  // ── Puppeteer browser singleton (återanvänds över anrop, lazy) ──────────
-  // Använder @sparticuz/chromium (slim, ~50 MB) + puppeteer-core. Render's
-  // build environment cachas av detta paket inuti node_modules → ingen
-  // PUPPETEER_CACHE_DIR-pyssel, ingen post-install-trubbel.
-  let _browserPromise = null;
-  async function getBrowser() {
-    if (_browserPromise) {
-      const b = await _browserPromise.catch(() => null);
-      if (b && b.connected !== false) return b;
-      _browserPromise = null;
-    }
-    const executablePath = await chromium.executablePath();
-    _browserPromise = puppeteer.launch({
-      args: [
-        ...chromium.args,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--font-render-hinting=none",
-      ],
-      defaultViewport: chromium.defaultViewport,
-      executablePath,
-      headless: chromium.headless,
-    });
-    return _browserPromise;
-  }
+  // Puppeteer browser-singleton + renderHtmlToPdf/mergePdfs/detectKind/
+  // imageToPdfBuffer/normalizeFileUrl/fetchBinary/sha256 flyttade till
+  // pdf_utils.js (Fas 5, 2026-07-02) så contract_render.js delar samma
+  // Chromium-process. Se toppen av filen för imports.
 
   // ── Mall cache (filen läses en gång per process) ────────────────────────
   let _templateCache = null;
@@ -88,30 +74,6 @@ export function createApprovalDocEngine(deps) {
     return s.slice(0, 24) + (s.length > 24 ? "…" : "");
   }
 
-  function sha256(buf) {
-    return crypto.createHash("sha256").update(buf).digest("hex");
-  }
-
-  // Bubbles file-fält lagras ofta som "//s3.amazonaws.com/..." utan protokoll
-  function normalizeFileUrl(u) {
-    if (!u) return null;
-    let s = String(u).trim();
-    if (!s) return null;
-    if (s.startsWith("//")) s = "https:" + s;
-    if (!/^https?:\/\//i.test(s)) return null;
-    return s;
-  }
-
-  async function fetchBinary(url) {
-    const r = await fetch(url);
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      throw new Error(`fetchBinary ${r.status} ${url} ${txt.slice(0, 200)}`);
-    }
-    const ab = await r.arrayBuffer();
-    return Buffer.from(ab);
-  }
-
   // ── Generisk fältplockning för främmande typer (ClientCompany/Deal) ─────
   // OfferApproval-fälten är confirmade lowercase (se Bubble Data Types-vyn
   // 2026-06-24) och accessas direkt. ClientCompany/Deal-schemat är okänt
@@ -137,74 +99,6 @@ export function createApprovalDocEngine(deps) {
       return v == null ? "" : esc(v);
     });
     return out;
-  }
-
-  async function renderHtmlToPdf(html) {
-    const browser = await getBrowser();
-    const page = await browser.newPage();
-    try {
-      await page.setContent(html, { waitUntil: "networkidle0", timeout: 30000 });
-      const buf = await page.pdf({
-        format: "A4",
-        printBackground: true,
-        margin: { top: "18mm", bottom: "18mm", left: "18mm", right: "18mm" }
-      });
-      return Buffer.from(buf);
-    } finally {
-      await page.close().catch(() => {});
-    }
-  }
-
-  async function mergePdfs(buffers) {
-    const out = await PDFDocument.create();
-    out.setTitle("Signerat avtal");
-    out.setProducer("Mira / Carotte");
-    out.setCreator("mira-exchange offer_approval_doc");
-    out.setCreationDate(new Date());
-
-    for (const buf of buffers) {
-      let src;
-      try {
-        src = await PDFDocument.load(buf, { ignoreEncryption: true });
-      } catch (e) {
-        throw new Error("Kunde inte ladda PDF: " + (e?.message || String(e)));
-      }
-      const pages = await out.copyPages(src, src.getPageIndices());
-      pages.forEach((p) => out.addPage(p));
-    }
-    return Buffer.from(await out.save());
-  }
-
-  // ── Detektera filtyp från URL eller magic bytes (för image-wrap-flödet) ───
-  function detectKind(url, buffer) {
-    const u = String(url || "").toLowerCase();
-    if (/\.pdf(\?|$)/.test(u)) return "pdf";
-    if (/\.(jpe?g)(\?|$)/.test(u)) return "jpg";
-    if (/\.png(\?|$)/.test(u)) return "png";
-    // Fallback: kolla magic bytes
-    if (buffer && buffer.length >= 4) {
-      if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return "pdf"; // %PDF
-      if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return "jpg";
-      if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return "png";
-    }
-    return "unknown";
-  }
-
-  // ── Wrappa en bild som single-page PDF (för merge) ───────────────────────
-  // Bevarar bildens naturliga dimensioner. Skala-down om större än A0 så
-  // PDF:en inte blir överlagligen stor.
-  async function imageToPdfBuffer(imageBuffer, kind) {
-    const doc = await PDFDocument.create();
-    const img = kind === "png"
-      ? await doc.embedPng(imageBuffer)
-      : await doc.embedJpg(imageBuffer);
-    const maxDim = 4960;   // ~A0 @ 600dpi, känd PDF-viewer-vänlig gräns
-    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-    const w = img.width * scale;
-    const h = img.height * scale;
-    const page = doc.addPage([w, h]);
-    page.drawImage(img, { x: 0, y: 0, width: w, height: h });
-    return Buffer.from(await doc.save());
   }
 
   // ── Hämta tillhörande dokument-objekt och deras byten ───────────────────
@@ -386,7 +280,11 @@ export function createApprovalDocEngine(deps) {
 
     // 5) Merge: originalen FÖRST, beviset SIST
     const buffersToMerge = [...originalDocs.map((d) => d.mergeBuffer || d.buffer), certPdf];
-    const mergedPdf = await mergePdfs(buffersToMerge);
+    const mergedPdf = await mergePdfs(buffersToMerge, {
+      title:    "Signerat avtal",
+      producer: "Mira / Carotte",
+      creator:  "mira-exchange offer_approval_doc",
+    });
 
     // 6) Ladda upp till Bubble
     const safeRubrik = String(vars.rubrik).replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60);
@@ -425,13 +323,8 @@ export function createApprovalDocEngine(deps) {
     };
   }
 
-  async function closeBrowser() {
-    if (_browserPromise) {
-      const b = await _browserPromise.catch(() => null);
-      if (b) await b.close().catch(() => {});
-      _browserPromise = null;
-    }
-  }
-
+  // closeBrowser importeras från pdf_utils.js så både approval-cert och
+  // contract_render stänger samma singleton. Exponeras oförändrat mot
+  // index.js så gamla anrop till approvalDocEngine.closeBrowser() funkar.
   return { generateAndStore, closeBrowser };
 }
