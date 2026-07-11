@@ -5,6 +5,7 @@ import { createActivityEngine, ACTIVITY_CONFIG } from "./activity_sync.js";
 import { evalPricing as _evalPricing, validateFormula as _validateFormula, validateForm as _validateForm } from "./pricing_engine.js";
 import { createClientGroupEngine } from "./clientgroup.js";
 import { createApprovalDocEngine } from "./offer_approval_doc.js";
+import { createContractRenderEngine } from "./contract_render.js";
 import multer from "multer";
 import express from "express";
 import cors from "cors";
@@ -16432,6 +16433,10 @@ const approvalDocEngine = createApprovalDocEngine({
   bubbleFindAll,
 });
 
+// Contract-render-engine init:eras EFTER SERVICES-konstantblocket längre ned
+// i filen — här kan vi inte referera SERVICES (TDZ). Se contractRenderEngine
+// deklaration bredvid _servicesUnitOf.
+
 // ── _deriveContractStatus — härled status för tile-pill ────────────────────
 // Klient-side använder denna sträng för att rendera badge. Server returnerar
 // den i _buildServicesDashboard så frontend slipper räkna själv.
@@ -19652,6 +19657,26 @@ const SERVICES = {
   OAR_CONTRACT_TEMPLATE:    "contract_template_json",
   OAR_AUTO_CREATE:          "auto_create_contract",     // yes/no, default yes
 
+  // ContractTemplate-fält Fas 5 (2026-07-11). Verifierat mot Bubble-editor.
+  // UI-filter för "aktiva mallar i Välj mall-dialogen" = is_active=yes AND
+  // superseded_by is empty.
+  CTPL_TYPE:                "ContractTemplate",
+  CTPL_NAME:                "name",
+  CTPL_SUBTITLE:            "subtitle",
+  CTPL_DESCRIPTION:         "description",
+  CTPL_CATEGORY:            "category",                 // option set Category
+  CTPL_CONTRACT_TYPE:       "contract_type",            // option set contract_type
+  CTPL_LANGUAGE:            "language",                 // option set language (sv/en)
+  CTPL_TEMPLATE_HTML:       "template_html",
+  CTPL_DEFAULT_SPEC_JSON:   "default_spec_json",
+  CTPL_DEFAULT_ATTACHMENTS: "default_attachments",      // List of Dokument
+  CTPL_VERSION:             "version",
+  CTPL_SUPERSEDED_BY:       "superseded_by",            // → ContractTemplate
+  CTPL_IS_ACTIVE:           "is_active",                // yes/no
+
+  // Dokument-tillägg Fas 5: TTL för temp-preview-Dokument (city städas lat).
+  DOK_DELETABLE_AFTER:      "deletable_after",
+
   // contract_type-option-set-värden (display-strings från Bubble Data API)
   TYPE_SUBSCRIPTION:        "Subscription",
   TYPE_RATECARD:            "RateCard",
@@ -19680,6 +19705,17 @@ const SERVICES = {
   // bara display-värdet, så vi mappar till prisenhet-suffix.
   UNIT_SUFFIX: { "mån": "/mån", "person": "/person", "kg": "/kg", "timme": "/h", "dygn": "/dygn" },
 };
+
+// Contract-render-motorn (Fas 5, 2026-07-11). Måste init:eras efter SERVICES
+// eftersom vi injicerar konstanten som DI-dep. Delar puppeteer-browser +
+// pdf-lib-merge med approvalDocEngine via pdf_utils.js — en Chromium-process
+// per server-instans.
+const contractRenderEngine = createContractRenderEngine({
+  bubbleGet,
+  bubbleCreate,
+  bubbleUploadFile,
+  SERVICES,
+});
 
 function _servicesUnitOf(offer, fallback) {
   const raw = offer && (offer.Unit || offer.unit);
@@ -21144,6 +21180,63 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
     return res.json({ ok: true, contract_id: contractId });
   } catch (e) {
     console.error("[/admin/contracts/import/commit] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({
+      ok: false, error: e?.message || String(e), detail: e?.detail || null,
+    });
+  }
+});
+
+// ── POST /admin/contracts/render-preview ────────────────────────────────────
+// Fas 5: renderar en ContractTemplate (eller inline template_html för smoke-
+// test) → PDF → temp-Dokument-rad i Bubble med deletable_after = now + 2h.
+// Returnerar file_url + expires_at så admin-blocket kan öppna PDF:en i en
+// iframe för visuell granskning.
+//
+// Auth: x-admin-token = PLANNING_ADMIN_TOKEN.
+// Body (JSON):
+//   {
+//     template_id?:              string   (ContractTemplate._id — hämtar mall + default_attachments)
+//     template_html?:            string   (används om template_id saknas — endast dev/smoke-test)
+//     spec:                      object   ({{}}-variabler för substitution, nested OK)
+//     attachment_dokument_ids?:  string[] (Dokument-ids — overrider default_attachments)
+//   }
+// Måste ha ANTINGEN template_id ELLER template_html.
+app.options("/admin/contracts/render-preview", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/render-preview", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) {
+    return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  try {
+    const b = req.body || {};
+    const templateId   = b.template_id ? String(b.template_id).trim() : null;
+    const templateHtml = b.template_html != null ? String(b.template_html) : null;
+    const spec         = b.spec && typeof b.spec === "object" ? b.spec : {};
+    const attachIds    = Array.isArray(b.attachment_dokument_ids)
+      ? b.attachment_dokument_ids.filter((s) => typeof s === "string" && s.trim())
+      : null;
+
+    if (!templateId && !templateHtml) {
+      return res.status(400).json({ ok: false, error: "template_id_or_template_html_required" });
+    }
+
+    const result = await contractRenderEngine.renderPreview({
+      templateId,
+      templateHtml,
+      spec,
+      attachmentDokumentIds: attachIds,
+    });
+
+    return res.json({ ok: true, preview: result });
+  } catch (e) {
+    console.error("[/admin/contracts/render-preview] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
