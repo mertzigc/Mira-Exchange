@@ -16761,21 +16761,23 @@ app.options("/approval/create", (req, res) => { _approvalCors(req, res); res.sen
 // Extraherad från /approval/create-routen (Fas 5, 2026-07-11) så både HTTP-
 // routen och contract_render.js kan använda samma pipeline utan HTTP-hop.
 //
-// Args: { req, files, payload }
-//   req     — Express-req, används enbart av _buildApprovalViewUrl för host/proto
-//   files   — [{ originalname, mimetype, buffer }] — samma shape som multer ger,
-//             men callers kan bygga arrayen manuellt (contract_render skapar
-//             ett file-objekt från renderad PDF-buffer).
-//   payload — samma JSON-schema som /approval/create-payloaden, plus två
-//             nya optionella Fas 5-fält:
-//               contract_template_json  string  (JSON-array av contract-specs)
-//               auto_create_contract    yes/no  (default "yes")
-//             Sätts på OfferApprovalRequest så _createContractsFromApprovalRequest
-//             kan skapa Contract vid Approved.
+// Args: { req, files, dokumentIds, payload }
+//   req         — Express-req, används enbart av _buildApprovalViewUrl för host/proto
+//   files       — [{ originalname, mimetype, buffer }] — samma shape som multer ger.
+//                 Backend laddar upp + skapar Dokument-rader. Används av HTTP-routen.
+//   dokumentIds — string[] av redan-existerande Dokument-ids (alternativ till files).
+//                 Används av render-and-send som redan har renderat + laddat upp
+//                 mall-PDF + valt bilagor. Antingen files ELLER dokumentIds krävs.
+//   payload     — samma JSON-schema som /approval/create-payloaden, plus två
+//                 nya optionella Fas 5-fält:
+//                   contract_template_json  string  (JSON-array av contract-specs)
+//                   auto_create_contract    yes/no  (default "yes")
+//                 Sätts på OfferApprovalRequest så _createContractsFromApprovalRequest
+//                 kan skapa Contract vid Approved.
 //
 // Kastar Error med .status = 400 vid valideringsfel. Returnerar samma
 // resultat-objekt som HTTP-routen returnerade tidigare.
-async function _createApprovalRequestInternal({ req, files, payload }) {
+async function _createApprovalRequestInternal({ req, files, dokumentIds, payload }) {
   // Fail-fast: alla template-IDs MÅSTE finnas innan vi skapar Dokument/
   // Request/Approval — annars riskerar vi orphan-data när invite-mail
   // failar på sista steget.
@@ -16804,8 +16806,12 @@ async function _createApprovalRequestInternal({ req, files, payload }) {
 
   if (!rubrik) throw _err("rubrik_required");
   if (!recipients.length) throw _err("recipients_required");
+
   const fileList = Array.isArray(files) ? files : [];
-  if (!fileList.length) throw _err("files_required");
+  const existingIds = Array.isArray(dokumentIds)
+    ? dokumentIds.filter((s) => typeof s === "string" && s.trim())
+    : [];
+  if (!fileList.length && !existingIds.length) throw _err("files_or_dokument_ids_required");
 
   // Fas 5-fält: contract_template_json (måste vara JSON-array om satt) +
   // auto_create_contract (default "yes"). Validera tidigt så vi inte skapar
@@ -16828,8 +16834,9 @@ async function _createApprovalRequestInternal({ req, files, payload }) {
     else throw _err("invalid_auto_create_contract");
   }
 
-  // 1) Ladda upp filer + skapa Dokument-poster
-  const dokumentIds = [];
+  // 1) Ladda upp filer + skapa Dokument-poster (om files givna) ELLER
+  //    använd redan-existerande Dokument-ids direkt (från render-and-send).
+  const resolvedDokumentIds = existingIds.length ? existingIds.slice() : [];
   for (const f of fileList) {
     const fileUrl = await bubbleUploadFile({
       filename:    f.originalname || "dokument.pdf",
@@ -16842,7 +16849,7 @@ async function _createApprovalRequestInternal({ req, files, payload }) {
       file:          fileUrl,
       latest_update: new Date().toISOString(),
     });
-    dokumentIds.push(id);
+    resolvedDokumentIds.push(id);
   }
 
   // Normalisera roles: default "Signer", "Reviewer" skriver utan OTP/sign
@@ -16863,7 +16870,7 @@ async function _createApprovalRequestInternal({ req, files, payload }) {
   const oarPayload = {
     rubrik,
     meddelande,
-    dokument:          dokumentIds,
+    dokument:          resolvedDokumentIds,
     clientcompany:     ccId || null,
     deal:              dealId || null,
     sender_email:      senderEmail,
@@ -16893,7 +16900,7 @@ async function _createApprovalRequestInternal({ req, files, payload }) {
       role,                         // "Signer" | "Reviewer"
       status:          "Sent",
       token_hash:      tokenHash,
-      dokument:        dokumentIds, // speglas så befintliga vyer fortsatt visar dem
+      dokument:        resolvedDokumentIds, // speglas så befintliga vyer fortsatt visar dem
       clientcompany:   ccId || null,
       deal:            dealId || null,
       meddelande,
@@ -16924,7 +16931,7 @@ async function _createApprovalRequestInternal({ req, files, payload }) {
   return {
     ok:               true,
     request_id:       requestId,
-    dokument_ids:     dokumentIds,
+    dokument_ids:     resolvedDokumentIds,
     approvals:        created,
     signers_count:    signers,
     reviewers_count:  reviewers,
@@ -21240,6 +21247,297 @@ app.post("/admin/contracts/render-preview", async (req, res) => {
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ContractTemplate CRUD (Fas 5, Steg 4a)
+// Alla routes auth:as med x-admin-token = PLANNING_ADMIN_TOKEN.
+// Versioning-modell: PATCH skapar NY rad med version++ och sätter
+// superseded_by=new_id på gamla. Fältet is_active stängs INTE av automatiskt.
+// UI-filter för "aktiva mallar" = is_active=yes AND superseded_by is empty.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function _ctplAuth(req, res) {
+  if (!PLANNING_ADMIN_TOKEN) {
+    res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+    return false;
+  }
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    res.status(401).json({ ok: false, error: "unauthorized" });
+    return false;
+  }
+  return true;
+}
+
+// Serialisering: Bubble Data API returnerar option-set-värden som display-
+// strängar direkt. default_attachments returneras som List of Dokument-ids.
+// Vi returnerar rådata + _id så frontend kan pinna versionen.
+function _ctplSerialize(row) {
+  if (!row) return null;
+  return {
+    _id:                 row._id,
+    name:                row[SERVICES.CTPL_NAME]                 || null,
+    subtitle:            row[SERVICES.CTPL_SUBTITLE]             || null,
+    description:         row[SERVICES.CTPL_DESCRIPTION]          || null,
+    category:            row[SERVICES.CTPL_CATEGORY]             || null,
+    contract_type:       row[SERVICES.CTPL_CONTRACT_TYPE]        || null,
+    language:            row[SERVICES.CTPL_LANGUAGE]             || null,
+    template_html:       row[SERVICES.CTPL_TEMPLATE_HTML]        || null,
+    default_spec_json:   row[SERVICES.CTPL_DEFAULT_SPEC_JSON]    || null,
+    default_attachments: Array.isArray(row[SERVICES.CTPL_DEFAULT_ATTACHMENTS])
+                          ? row[SERVICES.CTPL_DEFAULT_ATTACHMENTS] : [],
+    version:             Number(row[SERVICES.CTPL_VERSION] || 1),
+    superseded_by:       row[SERVICES.CTPL_SUPERSEDED_BY] || null,
+    is_active:           row[SERVICES.CTPL_IS_ACTIVE] === true
+                          || String(row[SERVICES.CTPL_IS_ACTIVE]).toLowerCase() === "yes",
+    created_date:        row["Created Date"] || null,
+    modified_date:       row["Modified Date"] || null,
+  };
+}
+
+// ── GET /admin/contract-templates ──────────────────────────────────────────
+// Query: ?category=&contract_type=&language=&include_superseded=1
+// Default: bara aktiva (is_active=yes AND superseded_by is empty).
+app.options("/admin/contract-templates", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/contract-templates", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const constraints = [];
+    if (!("include_superseded" in req.query) || req.query.include_superseded === "0") {
+      constraints.push({ key: SERVICES.CTPL_IS_ACTIVE,     constraint_type: "equals", value: "true" });
+      constraints.push({ key: SERVICES.CTPL_SUPERSEDED_BY, constraint_type: "is_empty" });
+    }
+    if (req.query.category)      constraints.push({ key: SERVICES.CTPL_CATEGORY,      constraint_type: "equals", value: String(req.query.category) });
+    if (req.query.contract_type) constraints.push({ key: SERVICES.CTPL_CONTRACT_TYPE, constraint_type: "equals", value: String(req.query.contract_type) });
+    if (req.query.language)      constraints.push({ key: SERVICES.CTPL_LANGUAGE,      constraint_type: "equals", value: String(req.query.language) });
+
+    const rows = await bubbleFindAll(SERVICES.CTPL_TYPE, { constraints });
+    const templates = rows.map(_ctplSerialize);
+    return res.json({ ok: true, count: templates.length, templates });
+  } catch (e) {
+    console.error("[/admin/contract-templates GET] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── GET /admin/contract-templates/:id ──────────────────────────────────────
+app.options("/admin/contract-templates/:id", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/contract-templates/:id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const row = await bubbleGet(SERVICES.CTPL_TYPE, req.params.id);
+    if (!row) return res.status(404).json({ ok: false, error: "template_not_found" });
+    return res.json({ ok: true, template: _ctplSerialize(row) });
+  } catch (e) {
+    console.error("[/admin/contract-templates/:id GET] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ── POST /admin/contract-templates ─────────────────────────────────────────
+// Body:
+//   { name (required), subtitle, description, category, contract_type, language,
+//     template_html (required), default_spec_json, default_attachments (id[]) }
+// Skapar version=1, is_active=yes, superseded_by=empty.
+app.post("/admin/contract-templates", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const b = req.body || {};
+    const name = String(b.name || "").trim();
+    if (!name) return res.status(400).json({ ok: false, error: "name_required" });
+    const templateHtml = b.template_html != null ? String(b.template_html) : null;
+    if (!templateHtml) return res.status(400).json({ ok: false, error: "template_html_required" });
+
+    const defaultAttachments = Array.isArray(b.default_attachments)
+      ? b.default_attachments.filter((s) => typeof s === "string" && s.trim())
+      : [];
+
+    const payload = {
+      [SERVICES.CTPL_NAME]:                name,
+      [SERVICES.CTPL_SUBTITLE]:            b.subtitle      ? String(b.subtitle)      : null,
+      [SERVICES.CTPL_DESCRIPTION]:         b.description   ? String(b.description)   : null,
+      [SERVICES.CTPL_CATEGORY]:            b.category      ? String(b.category)      : null,
+      [SERVICES.CTPL_CONTRACT_TYPE]:       b.contract_type ? String(b.contract_type) : null,
+      [SERVICES.CTPL_LANGUAGE]:            b.language      ? String(b.language)      : null,
+      [SERVICES.CTPL_TEMPLATE_HTML]:       templateHtml,
+      [SERVICES.CTPL_DEFAULT_SPEC_JSON]:   typeof b.default_spec_json === "string"
+                                            ? b.default_spec_json
+                                            : (b.default_spec_json ? JSON.stringify(b.default_spec_json) : null),
+      [SERVICES.CTPL_DEFAULT_ATTACHMENTS]: defaultAttachments.length ? defaultAttachments : null,
+      [SERVICES.CTPL_VERSION]:             1,
+      [SERVICES.CTPL_IS_ACTIVE]:           "true",
+    };
+    const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
+    const id = await bubbleCreate(SERVICES.CTPL_TYPE, finalPayload);
+    const row = await bubbleGet(SERVICES.CTPL_TYPE, id);
+    return res.json({ ok: true, template: _ctplSerialize(row) });
+  } catch (e) {
+    console.error("[/admin/contract-templates POST] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ── PATCH /admin/contract-templates/:id ────────────────────────────────────
+// Skapar NY rad med version++ + superseded_by=empty. Sätter superseded_by=new_id
+// på gamla raden. Delta-patch: bara skickade fält appliceras; övriga kopieras
+// från gamla. Returnerar den nya raden.
+app.patch("/admin/contract-templates/:id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const oldRow = await bubbleGet(SERVICES.CTPL_TYPE, req.params.id);
+    if (!oldRow) return res.status(404).json({ ok: false, error: "template_not_found" });
+
+    const b = req.body || {};
+    // Merga delta på gammal → ny payload. Behåll gamla värden för fält som inte
+    // skickas. Skippa null-check på existerande — de får kopieras rakt av.
+    const merged = {
+      [SERVICES.CTPL_NAME]:                b.name          != null ? String(b.name)          : oldRow[SERVICES.CTPL_NAME],
+      [SERVICES.CTPL_SUBTITLE]:            b.subtitle      != null ? String(b.subtitle)      : oldRow[SERVICES.CTPL_SUBTITLE],
+      [SERVICES.CTPL_DESCRIPTION]:         b.description   != null ? String(b.description)   : oldRow[SERVICES.CTPL_DESCRIPTION],
+      [SERVICES.CTPL_CATEGORY]:            b.category      != null ? String(b.category)      : oldRow[SERVICES.CTPL_CATEGORY],
+      [SERVICES.CTPL_CONTRACT_TYPE]:       b.contract_type != null ? String(b.contract_type) : oldRow[SERVICES.CTPL_CONTRACT_TYPE],
+      [SERVICES.CTPL_LANGUAGE]:            b.language      != null ? String(b.language)      : oldRow[SERVICES.CTPL_LANGUAGE],
+      [SERVICES.CTPL_TEMPLATE_HTML]:       b.template_html != null ? String(b.template_html) : oldRow[SERVICES.CTPL_TEMPLATE_HTML],
+      [SERVICES.CTPL_DEFAULT_SPEC_JSON]:   b.default_spec_json != null
+                                            ? (typeof b.default_spec_json === "string"
+                                                ? b.default_spec_json
+                                                : JSON.stringify(b.default_spec_json))
+                                            : oldRow[SERVICES.CTPL_DEFAULT_SPEC_JSON],
+      [SERVICES.CTPL_DEFAULT_ATTACHMENTS]: Array.isArray(b.default_attachments)
+                                            ? b.default_attachments.filter((s) => typeof s === "string" && s.trim())
+                                            : (Array.isArray(oldRow[SERVICES.CTPL_DEFAULT_ATTACHMENTS])
+                                                ? oldRow[SERVICES.CTPL_DEFAULT_ATTACHMENTS]
+                                                : null),
+      [SERVICES.CTPL_VERSION]:             Number(oldRow[SERVICES.CTPL_VERSION] || 1) + 1,
+      [SERVICES.CTPL_IS_ACTIVE]:           "true",
+    };
+    const finalPayload = Object.fromEntries(Object.entries(merged).filter(([, v]) => v != null));
+
+    const newId = await bubbleCreate(SERVICES.CTPL_TYPE, finalPayload);
+    // Sätt superseded_by på gamla efter att nya finns → aldrig dangling
+    await bubblePatch(SERVICES.CTPL_TYPE, req.params.id, {
+      [SERVICES.CTPL_SUPERSEDED_BY]: newId,
+    });
+
+    const newRow = await bubbleGet(SERVICES.CTPL_TYPE, newId);
+    return res.json({ ok: true, template: _ctplSerialize(newRow), superseded_id: req.params.id });
+  } catch (e) {
+    console.error("[/admin/contract-templates/:id PATCH] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /admin/contracts/render-and-send (Fas 5, Steg 4b)
+// Full pipeline: rendera mall → permanent Dokument → skicka in i
+// _createApprovalRequestInternal med contract_template_json + auto_create_contract.
+// Vid Approved skapas Contract auto för Subscription-specs via Fas 1-hooken.
+//
+// Body (JSON):
+//   template_id           string   (required)
+//   spec                  object   (för PDF-rendering — {{}}-variabler, nested OK)
+//   contract_specs        object[] (för auto-Contract vid Approved — ETT-element-array)
+//                                    Backend pinnar template_id + template_version i varje spec.
+//   attachment_dokument_ids  string[]  (bilagor utöver mallens defaults)
+//   rubrik, meddelande, sender_email, sender_name, clientcompany, deal, expires_at
+//   recipients[]:  [{email, name, role: "Signer"|"Reviewer"}]
+//   auto_create_contract:  yes/no  (default yes)
+// ═══════════════════════════════════════════════════════════════════════════
+app.options("/admin/contracts/render-and-send", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/render-and-send", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const b = req.body || {};
+    const templateId = String(b.template_id || "").trim();
+    if (!templateId) return res.status(400).json({ ok: false, error: "template_id_required" });
+    const spec = b.spec && typeof b.spec === "object" ? b.spec : {};
+    const contractSpecs = Array.isArray(b.contract_specs) ? b.contract_specs : [];
+    const attachIds = Array.isArray(b.attachment_dokument_ids)
+      ? b.attachment_dokument_ids.filter((s) => typeof s === "string" && s.trim())
+      : null;
+    const rubrik = String(b.rubrik || "").trim();
+    if (!rubrik) return res.status(400).json({ ok: false, error: "rubrik_required" });
+    if (!Array.isArray(b.recipients) || !b.recipients.length) {
+      return res.status(400).json({ ok: false, error: "recipients_required" });
+    }
+
+    // 1) Hämta mall → få version för pinning
+    const templateRow = await bubbleGet(SERVICES.CTPL_TYPE, templateId);
+    if (!templateRow) return res.status(404).json({ ok: false, error: "template_not_found" });
+    const templateVersion = Number(templateRow[SERVICES.CTPL_VERSION] || 1);
+
+    // 2) Rendera + persist Dokument (permanent, ingen deletable_after)
+    const rendered = await contractRenderEngine.renderAndPersist({
+      templateId,
+      spec,
+      attachmentDokumentIds: attachIds,
+      titel: rubrik,
+    });
+
+    // 3) Pin template_id + template_version i varje contract_spec för audit
+    const pinnedSpecs = contractSpecs.map((s) => ({
+      ...s,
+      template_id:      templateId,
+      template_version: templateVersion,
+    }));
+
+    // 4) Bygg approval-payload + delegera till helpern
+    const approvalPayload = {
+      rubrik,
+      meddelande:              b.meddelande || "",
+      sender_email:            b.sender_email || "",
+      sender_name:             b.sender_name  || "Carotte",
+      clientcompany:           b.clientcompany || null,
+      deal:                    b.deal || null,
+      expires_at:              b.expires_at || null,
+      recipients:              b.recipients,
+      contract_template_json:  JSON.stringify(pinnedSpecs),
+      auto_create_contract:    b.auto_create_contract != null ? b.auto_create_contract : "yes",
+    };
+
+    const result = await _createApprovalRequestInternal({
+      req,
+      dokumentIds: [rendered.dokument_id],
+      payload:     approvalPayload,
+    });
+
+    return res.json({
+      ok: true,
+      render: {
+        dokument_id:      rendered.dokument_id,
+        file_url:         rendered.file_url,
+        bytes:            rendered.bytes,
+        attachment_count: rendered.attachment_count,
+        warnings:         rendered.warnings,
+      },
+      template: {
+        id:      templateId,
+        version: templateVersion,
+      },
+      approval: result,
+    });
+  } catch (e) {
+    console.error("[/admin/contracts/render-and-send] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 
