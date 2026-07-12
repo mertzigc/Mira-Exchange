@@ -438,6 +438,7 @@ function requireApiKey(req, res, next) {
     "/admin/approval/",            // Carotte-CRM HTML-block, x-admin-token-grindad
     "/admin/clientcompany/",       // ClientCompany-autocomplete + /all för Carotte-UI
     "/admin/contracts/",           // Contract admin-modul (Fas 2, 0g), x-admin-token-grindad
+    "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
     "/approval/create",
     "/approval/view/",
     "/approval/request-otp/",
