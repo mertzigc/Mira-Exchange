@@ -1,0 +1,487 @@
+<title>Mira — Avtal från mall (översikt för Carotte)</title>
+<style>
+  :root {
+    --bg-deep: #141726;
+    --bg:      #1e2235;
+    --bg-card: #262b42;
+    --bg-row:  #2d3251;
+    --line:    rgba(255,255,255,0.07);
+    --line-strong: rgba(255,255,255,0.14);
+    --acc:     #db6923;
+    --acc-soft:rgba(219,105,35,0.15);
+    --acc-strong:#ff8c45;
+    --t1:      rgba(255,255,255,0.88);
+    --t2:      rgba(255,255,255,0.60);
+    --t3:      rgba(255,255,255,0.38);
+    --t4:      rgba(255,255,255,0.20);
+    --ok:      #10b981;
+    --ok-soft: rgba(16,185,129,0.15);
+    --info:    #6366f1;
+    --info-soft:rgba(99,102,241,0.15);
+    --warn:    #facc15;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg-deep); color: var(--t1); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 16px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .doc { max-width: 860px; margin: 0 auto; padding: 48px 28px 80px; }
+  @media (max-width: 640px) { .doc { padding: 32px 20px 60px; } }
+
+  /* ── Hero ─────────────────────────────────────────────────────── */
+  .hero { margin-bottom: 56px; }
+  .hero .eyebrow {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--acc); font-weight: 700; margin-bottom: 12px;
+  }
+  .hero h1 {
+    font-family: Georgia, serif; font-size: 40px; font-weight: 700;
+    margin: 0 0 14px; letter-spacing: -0.015em; color: #fff;
+    line-height: 1.15; text-wrap: balance;
+  }
+  @media (max-width: 640px) { .hero h1 { font-size: 30px; } }
+  .hero .lede {
+    font-size: 17px; color: var(--t2); line-height: 1.55;
+    max-width: 640px; text-wrap: balance;
+  }
+
+  /* ── Sections ─────────────────────────────────────────────────── */
+  section.doc-sect { margin-bottom: 60px; scroll-margin-top: 24px; }
+  section.doc-sect > h2 {
+    font-family: Georgia, serif; font-size: 26px; font-weight: 700;
+    color: #fff; margin: 0 0 8px; letter-spacing: -0.01em;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  section.doc-sect > h2 .num {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--acc); font-weight: 800; padding: 5px 9px;
+    background: var(--acc-soft); border-radius: 20px;
+    font-family: -apple-system, sans-serif;
+  }
+  section.doc-sect > .sub {
+    color: var(--t2); font-size: 15px; margin-bottom: 26px;
+    text-wrap: balance;
+  }
+
+  p { color: var(--t1); margin: 12px 0; }
+  p.note { color: var(--t2); font-size: 14.5px; }
+  strong { color: #fff; font-weight: 600; }
+  em { color: var(--t2); font-style: italic; }
+
+  /* ── Timeline (sektion 1: idag) ──────────────────────────────── */
+  .timeline {
+    display: flex; flex-direction: column; gap: 0;
+    position: relative; padding-left: 44px;
+  }
+  .timeline::before {
+    content: ""; position: absolute;
+    left: 15px; top: 12px; bottom: 12px;
+    width: 2px; background: var(--line-strong);
+  }
+  .tl-step {
+    position: relative; padding: 12px 0 20px;
+  }
+  .tl-step:last-child { padding-bottom: 0; }
+  .tl-dot {
+    position: absolute; left: -43px; top: 16px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--bg-card); border: 2px solid var(--acc);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: var(--acc);
+    font-family: -apple-system, sans-serif;
+  }
+  .tl-t {
+    font-size: 16px; font-weight: 600; color: #fff;
+    margin: 0 0 4px;
+  }
+  .tl-b { color: var(--t2); font-size: 14.5px; line-height: 1.55; }
+  .tl-b em { color: var(--t3); }
+
+  /* ── Three-way choice card (sektion 2) ───────────────────────── */
+  .choice-3 {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 12px; margin: 24px 0;
+  }
+  @media (max-width: 720px) { .choice-3 { grid-template-columns: 1fr; } }
+  .choice {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .choice.new {
+    background: var(--acc-soft); border-color: rgba(219,105,35,0.35);
+  }
+  .choice-badge {
+    display: inline-block; font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 700;
+    padding: 3px 8px; border-radius: 20px;
+    background: rgba(255,255,255,0.08); color: var(--t2);
+    align-self: flex-start;
+  }
+  .choice.new .choice-badge { background: var(--acc); color: #1c1206; }
+  .choice-t {
+    font-family: Georgia, serif; font-size: 17px; font-weight: 700;
+    color: #fff; letter-spacing: -0.005em;
+  }
+  .choice-b {
+    font-size: 13.5px; color: var(--t2); line-height: 1.5;
+  }
+
+  /* ── Wizard flow (sektion 2) ─────────────────────────────────── */
+  .flow {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 24px; margin-top: 8px;
+  }
+  .flow-h {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--acc); font-weight: 700; margin-bottom: 14px;
+  }
+  .flow-steps { display: flex; flex-direction: column; gap: 12px; }
+  .flow-step {
+    display: grid; grid-template-columns: 30px 1fr; gap: 14px;
+    padding: 8px 0;
+  }
+  .flow-step .n {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--acc); color: #1c1206;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800;
+  }
+  .flow-step .body h4 {
+    margin: 3px 0 3px; font-size: 15px; color: #fff; font-weight: 600;
+  }
+  .flow-step .body p {
+    margin: 0; font-size: 13.5px; color: var(--t2); line-height: 1.5;
+  }
+
+  /* ── Callout box ─────────────────────────────────────────────── */
+  .callout {
+    background: var(--info-soft); border: 0.5px solid rgba(99,102,241,0.35);
+    border-left: 3px solid var(--info); border-radius: 8px;
+    padding: 16px 20px; margin: 24px 0;
+  }
+  .callout h4 {
+    margin: 0 0 6px; font-size: 14px; font-weight: 700;
+    color: #fff; letter-spacing: 0.01em;
+  }
+  .callout p { margin: 4px 0; font-size: 14.5px; color: var(--t1); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn {
+    background: rgba(250,204,21,0.10); border-color: rgba(250,204,21,0.30);
+    border-left-color: var(--warn);
+  }
+  .callout.warn h4 { color: var(--warn); }
+
+  /* ── Template-list (sektion 2) ───────────────────────────────── */
+  .tpl-list {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px; margin: 18px 0;
+  }
+  .tpl {
+    background: var(--bg-card); border: 0.5px solid var(--line);
+    border-radius: 8px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .tpl-nm {
+    font-family: Georgia, serif; font-size: 14px; color: #fff;
+    font-weight: 700; letter-spacing: -0.005em;
+  }
+  .tpl-sm { font-size: 12px; color: var(--t3); }
+  .tpl-when { font-size: 12.5px; color: var(--t2); margin-top: 6px; line-height: 1.5; }
+
+  /* ── Ordered process (sektion 3) ─────────────────────────────── */
+  .steps-list {
+    counter-reset: step; padding: 0; margin: 20px 0; list-style: none;
+  }
+  .steps-list > li {
+    position: relative; padding: 14px 0 14px 48px;
+    border-bottom: 0.5px solid var(--line);
+  }
+  .steps-list > li:last-child { border-bottom: none; }
+  .steps-list > li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: 14px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--acc-soft); color: var(--acc);
+    border: 1px solid rgba(219,105,35,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; font-family: -apple-system, sans-serif;
+  }
+  .steps-list h3 {
+    font-size: 16px; margin: 0 0 4px; font-weight: 600; color: #fff;
+  }
+  .steps-list p { margin: 4px 0 0; font-size: 14px; color: var(--t2); line-height: 1.55; }
+
+  /* ── CTA at the end ──────────────────────────────────────────── */
+  .cta {
+    background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-row) 100%);
+    border: 1px solid rgba(219,105,35,0.35);
+    border-radius: 14px;
+    padding: 32px 32px;
+    margin-top: 40px;
+    display: flex; flex-direction: column; gap: 14px;
+    align-items: flex-start;
+  }
+  .cta h3 {
+    font-family: Georgia, serif; font-size: 22px; font-weight: 700;
+    color: #fff; margin: 0; letter-spacing: -0.01em;
+  }
+  .cta p { color: var(--t2); font-size: 15px; margin: 0; max-width: 520px; }
+  .cta a {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; background: var(--acc); color: #1c1206;
+    text-decoration: none; font-weight: 700; font-size: 14px;
+    border-radius: 8px; transition: background 0.15s;
+  }
+  .cta a:hover { background: var(--acc-strong); }
+
+  /* ── Kicker (small terms glossary) ───────────────────────────── */
+  .glossary {
+    background: rgba(0,0,0,0.20); border: 0.5px solid var(--line);
+    border-radius: 10px; padding: 18px 20px; margin-top: 20px;
+  }
+  .glossary h4 {
+    margin: 0 0 12px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--t3); font-weight: 700;
+  }
+  .glossary dl { margin: 0; display: grid;
+    grid-template-columns: 140px 1fr; gap: 8px 18px; }
+  @media (max-width: 560px) { .glossary dl { grid-template-columns: 1fr; gap: 6px; } }
+  .glossary dt {
+    font-family: Georgia, serif; font-size: 14px; color: var(--acc);
+    font-weight: 700;
+  }
+  .glossary dd {
+    margin: 0; font-size: 13.5px; color: var(--t2); line-height: 1.5;
+  }
+  @media (max-width: 560px) { .glossary dd { margin-bottom: 10px; } }
+</style>
+
+<div class="doc">
+
+  <div class="hero">
+    <div class="eyebrow">Internt · Carotte</div>
+    <h1>Så här fungerar avtal i Mira — idag och snart</h1>
+    <p class="lede">
+      Mira är vårt interna system för att sköta relationen med kunden — från att de aktiverar en tjänst till att avtalet är signerat och tjänsten körs. Här får du en kort översikt över hur det fungerar idag, vad som blir nytt med avtalsmodulen, och hur mallarna byggs bakom kulisserna.
+    </p>
+  </div>
+
+  <!-- ═══════════════ SEKTION 1: IDAG ═══════════════ -->
+  <section class="doc-sect">
+    <h2><span class="num">Idag</span> Så här går det till nu</h2>
+    <p class="sub">Från att kunden vill ha en tjänst till att den är aktiv.</p>
+
+    <div class="timeline">
+      <div class="tl-step">
+        <div class="tl-dot">1</div>
+        <div class="tl-t">Kunden ser tjänster på sin dashboard</div>
+        <div class="tl-b">På Mira ser kunden en översikt av alla tjänster vi erbjuder — städning, reception, food &amp; event, m.m. — som klickbara kort per kontor.</div>
+      </div>
+
+      <div class="tl-step">
+        <div class="tl-dot">2</div>
+        <div class="tl-t">Kunden klickar "Aktivera" på en tjänst</div>
+        <div class="tl-b">En förfrågan (Comission) skickas till Carotte. Vi ser den direkt i vår admin-vy och kan börja jobba med den.</div>
+      </div>
+
+      <div class="tl-step">
+        <div class="tl-dot">3</div>
+        <div class="tl-t">Vi förbereder ett avtal</div>
+        <div class="tl-b">Idag har vi två sätt: skriva ett helt nytt manuellt, eller ladda upp ett befintligt PDF-avtal som Mira läser åt oss med AI. <em>Snart tillkommer ett tredje sätt — se nästa sektion.</em></div>
+      </div>
+
+      <div class="tl-step">
+        <div class="tl-dot">4</div>
+        <div class="tl-t">Vi skickar avtalet till kunden för signering</div>
+        <div class="tl-b">Kunden får ett mail med en säker länk. De signerar med en engångskod (som skickas till deras mail). Vi kan även lägga till interna granskare om det behövs.</div>
+      </div>
+
+      <div class="tl-step">
+        <div class="tl-dot">5</div>
+        <div class="tl-t">Avtalet blir aktivt automatiskt</div>
+        <div class="tl-b">När kunden signerat skapas ett Contract i systemet, tjänsten dyker upp som "Aktiv" på deras dashboard, och alla inblandade får en bekräftelse via mail.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ SEKTION 2: NYA MODULEN ═══════════════ -->
+  <section class="doc-sect">
+    <h2><span class="num">Snart</span> Nya avtalsmodulen</h2>
+    <p class="sub">Ett tredje sätt att skapa avtal — snabbare, tydligare, och med möjlighet till intern granskning innan kunden ser något.</p>
+
+    <p>Kundkortet i Mira kommer att ha <strong>tre knappar</strong> för att skapa avtal:</p>
+
+    <div class="choice-3">
+      <div class="choice">
+        <span class="choice-badge">Finns idag</span>
+        <div class="choice-t">+ Nytt abonnemang</div>
+        <div class="choice-b">Skriv från början. Fyll i alla fält manuellt.</div>
+      </div>
+      <div class="choice">
+        <span class="choice-badge">Finns idag</span>
+        <div class="choice-t">+ Importera avtal</div>
+        <div class="choice-b">Ladda upp ett befintligt PDF-avtal. Mira läser fälten med AI.</div>
+      </div>
+      <div class="choice new">
+        <span class="choice-badge">Nytt</span>
+        <div class="choice-t">+ Avtal från mall</div>
+        <div class="choice-b">Välj en färdig mall och fyll bara i kundens uppgifter.</div>
+      </div>
+    </div>
+
+    <h3 style="font-family:Georgia,serif;font-size:19px;color:#fff;margin:36px 0 6px;letter-spacing:-0.01em;">Hur "Avtal från mall" fungerar</h3>
+    <p class="note">En guidad process i fem steg — du blir aldrig lämnad att gissa vad du ska göra.</p>
+
+    <div class="flow">
+      <div class="flow-h">Från start till skickat på ca 3–5 minuter</div>
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="n">1</div>
+          <div class="body">
+            <h4>Välj mall</h4>
+            <p>Kortlista över alla mallar med tydlig "Passar när:"-förklaring. Klicka på den som stämmer med kunden.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="n">2</div>
+          <div class="body">
+            <h4>Fyll i om kunden</h4>
+            <p>Företagsnamn, organisationsnummer, adress. Klicka på ? bredvid varje fält om du är osäker.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="n">3</div>
+          <div class="body">
+            <h4>Fyll i om avtalet</h4>
+            <p>Startdatum, slutdatum, bindningstid, priser. Standardvärden finns på varje ?-förklaring.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="n">4</div>
+          <div class="body">
+            <h4>Bilagor + granska</h4>
+            <p>Bifoga extra dokument om det behövs. Klicka "Skapa förhandsgranskning" och se hela avtalet innan du skickar det.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="n">5</div>
+          <div class="body">
+            <h4>Skicka</h4>
+            <p>Välj mellan att skicka direkt till kunden — eller dela internt med en kollega först för granskning.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <h4>💬 Ny funktion: Dela internt först</h4>
+      <p>Om du är osäker på något — nya kundtyp, avvikande priser, viktig kund — kan du välja att <strong>dela avtalet med en Carotte-kollega för granskning innan kunden får se det.</strong></p>
+      <p>Kollegan får ett mail med en länk till PDF:en och kan godkänna eller kommentera. När hen sagt OK kommer du tillbaka in i Mira och skickar avtalet vidare till kunden. Kunden får ingenting förrän du bestämmer.</p>
+    </div>
+
+    <h3 style="font-family:Georgia,serif;font-size:19px;color:#fff;margin:36px 0 6px;letter-spacing:-0.01em;">Vilka mallar finns från start?</h3>
+    <p class="note">Fem mallar täcker de flesta typer av avtal vi skriver:</p>
+
+    <div class="tpl-list">
+      <div class="tpl">
+        <div class="tpl-nm">HK Timpris</div>
+        <div class="tpl-sm">Housekeeping · Svenska</div>
+        <div class="tpl-when">Mindre kunder, debitering per faktisk timme med OB-tillägg.</div>
+      </div>
+      <div class="tpl">
+        <div class="tpl-nm">HK Månadsavgift</div>
+        <div class="tpl-sm">Housekeeping · Engelska</div>
+        <div class="tpl-when">Större kunder som vill ha fast månadskostnad.</div>
+      </div>
+      <div class="tpl">
+        <div class="tpl-nm">Staff Bemanning</div>
+        <div class="tpl-sm">Staff · Svenska</div>
+        <div class="tpl-when">Kunden hyr in personal på timme (reception, konsult).</div>
+      </div>
+      <div class="tpl">
+        <div class="tpl-nm">Rekrytering</div>
+        <div class="tpl-sm">Staff · Svenska</div>
+        <div class="tpl-when">Vi hittar en permanent anställning åt kunden. Arvode: 2,3 × månadslön.</div>
+      </div>
+      <div class="tpl">
+        <div class="tpl-nm">Food &amp; Event ramavtal</div>
+        <div class="tpl-sm">F&amp;E · Svenska</div>
+        <div class="tpl-when">Återkommande catering och event-personal. Ramavtal med Carottes prislista.</div>
+      </div>
+    </div>
+
+    <p class="note">När det uppstår behov av en ny mall (t.ex. för en ny tjänstetyp) tar det oss några dagar att bygga och testa den. Säg till om du märker att en mall saknas.</p>
+  </section>
+
+  <!-- ═══════════════ SEKTION 3: SÅ BYGGS MALLARNA ═══════════════ -->
+  <section class="doc-sect">
+    <h2><span class="num">Under huven</span> Så byggs en mall</h2>
+    <p class="sub">Du behöver inte göra detta själv — men det är bra att förstå processen så du vet vad du kan påverka.</p>
+
+    <p>En mall består av <strong>två delar</strong>: själva avtalstexten (som är samma för alla kunder) och en lista på vilka fält som ska variera (t.ex. kundens namn, priser, datum).</p>
+
+    <ol class="steps-list">
+      <li>
+        <h3>Vi utgår från ett befintligt avtal</h3>
+        <p>Vi tar ett riktigt avtal vi redan använder (t.ex. Carotte Catering's leveransvillkor för F&amp;E-mallen) och kopierar hela texten.</p>
+      </li>
+      <li>
+        <h3>Vi markerar vad som ska variera</h3>
+        <p>På ställen där kundnamnet, org.nummer, priser, datum osv. står, sätter vi in "platshållare" — t.ex. skriver vi <em>{{client.name}}</em> istället för "Electronic Arts". När mallen sen används skriver Mira in kundens riktiga uppgifter där.</p>
+      </li>
+      <li>
+        <h3>Vi lägger till mallens metadata</h3>
+        <p>Ett namn ("HK Timpris"), en kategori (Housekeeping / Staff / F&amp;E), ett språk (SV / EN), och en kort "Passar när:"-förklaring. Detta blir det du ser i mallistan.</p>
+      </li>
+      <li>
+        <h3>Vi lägger in mallen i systemet</h3>
+        <p>Mallen laddas upp till Mira via en teknisk anslutning. Så snart det är klart syns den i listan nästa gång du öppnar wizarden.</p>
+      </li>
+      <li>
+        <h3>Vi versionshanterar</h3>
+        <p>Om vi förbättrar en mall (t.ex. nya OB-tider, ändrad formulering) skapas alltid en <strong>ny version</strong> — den gamla arkiveras men förblir läsbar. Avtal som redan är påbörjade fastnar mot sin version så inget ändras "under fötterna" på dig. I mallistan ser du bara aktuella versioner.</p>
+      </li>
+    </ol>
+
+    <div class="callout warn">
+      <h4>⚠ Vad kan gå fel?</h4>
+      <p>Det främsta att tänka på: <strong>Mira gör ingen tolkning av vad du fyller i.</strong> Om du skriver fel timpris eller fel org.nummer, kommer det stå fel i avtalet. Använd förhandsgranskningen i Steg 4 för att kolla noga innan du skickar. Klicka på ?-cirklarna om du är osäker — de innehåller standardvärden och exempel.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════════ CTA ═══════════════ -->
+  <div class="cta">
+    <h3>Vill du testa själv?</h3>
+    <p>Klicka på länken nedan för att öppna en klickbar prototyp av wizarden. Inga riktiga avtal skickas — du kan trycka och klicka fritt.</p>
+    <a href="https://claude.ai/code/artifact/0ef2b6b9-39b6-45a4-b7bf-5060eb3cd716" target="_blank" rel="noopener">Öppna prototypen →</a>
+  </div>
+
+  <!-- ═══════════════ ORDLISTA ═══════════════ -->
+  <div class="glossary">
+    <h4>Ord som förekommer</h4>
+    <dl>
+      <dt>Mira</dt>
+      <dd>Vårt interna system för att sköta kundrelationer, tjänster, avtal och signeringar.</dd>
+
+      <dt>Comission</dt>
+      <dd>En förfrågan från en kund om att aktivera en tjänst — skapas när kunden klickar "Aktivera" på sin dashboard.</dd>
+
+      <dt>Contract</dt>
+      <dd>Ett signerat avtal i systemet. Skapas automatiskt när kunden signerat, och gör att tjänsten dyker upp som "Aktiv".</dd>
+
+      <dt>Mall</dt>
+      <dd>Ett förskrivet standardavtal med platshållare för kundens uppgifter. Grunden i den nya avtalsmodulen.</dd>
+
+      <dt>Wizard</dt>
+      <dd>En guidad process där du fyller i saker steg för steg istället för att se ett gigantiskt formulär.</dd>
+
+      <dt>Förhandsgranskning</dt>
+      <dd>En bild av hur det färdiga avtalet kommer se ut — du ser exakt det som kunden får, innan det skickas.</dd>
+    </dl>
+  </div>
+
+</div>
