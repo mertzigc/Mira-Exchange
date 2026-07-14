@@ -926,7 +926,7 @@
           </div>
         </div>
         <footer class="wt-foot">
-          <button class="wt-btn plain" onclick="alert('I riktig version: stänger modalen och går tillbaka till kundkortet.')">Avbryt</button>
+          <button class="wt-btn plain" onclick="wtCloseModal()">Avbryt</button>
           <div style="display:flex;gap:10px;align-items:center">
             <span class="wt-foot-note" id="tplHint">Välj en mall för att fortsätta</span>
             <button class="wt-btn primary" id="btnNext1" disabled onclick="goNext(1)">Nästa →</button>
@@ -943,12 +943,22 @@
         </div>
         <div class="wt-body">
           <div class="wt-fset">
-            <div class="wt-f">
-              <label class="wt-f-l">Företagsnamn <span class="req">*</span>
+            <div class="wt-f" style="position:relative">
+              <label class="wt-f-l">Kund (företag) <span class="req">*</span>
                 <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
               </label>
-              <div class="wt-hb">Kundens <strong>registrerade bolagsnamn</strong>, precis som det står på deras registreringsbevis. T.ex. "Electronic Arts Sverige AB" (inte "EA").</div>
-              <input type="text" placeholder="t.ex. Electronic Arts Sverige AB">
+              <div class="wt-hb">Börja skriv företagets namn — matchande kunder visas i en lista. Klicka för att välja. Om kunden inte finns i systemet: skapa upp den först i CRM-vyn.</div>
+              <input type="text" id="wt-clientSearch" placeholder="Skriv företagsnamn..." autocomplete="off">
+              <div id="wt-clientResults" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg);border:0.5px solid var(--line-strong);border-radius:7px;max-height:220px;overflow-y:auto;z-index:100;margin-top:2px;box-shadow:0 8px 20px rgba(0,0,0,0.4)"></div>
+              <div id="wt-clientChosen" style="display:none;margin-top:6px;padding:8px 12px;background:var(--acc-soft);border:0.5px solid rgba(219,105,35,0.35);border-radius:7px;font-size:13px;color:var(--t1)"></div>
+            </div>
+
+            <div class="wt-f">
+              <label class="wt-f-l">Företagsnamn — så det skrivs i avtalet <span class="req">*</span>
+                <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
+              </label>
+              <div class="wt-hb">Fylls in automatiskt från vald kund. Kan justeras — kundens <strong>registrerade bolagsnamn</strong> (t.ex. "Electronic Arts Sverige AB", inte "EA") ska stå i avtalstexten.</div>
+              <input type="text" id="wt-clientName" placeholder="Väljs i sökrutan ovan">
             </div>
 
             <div class="wt-f">
@@ -956,7 +966,7 @@
                 <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
               </label>
               <div class="wt-hb">10 siffror med bindestreck efter de 6 första, t.ex. <strong>556123-4567</strong>. Osäker? Slå upp företaget på <strong>allabolag.se</strong>.</div>
-              <input type="text" placeholder="556123-4567">
+              <input type="text" id="wt-clientOrg" placeholder="556123-4567">
             </div>
 
             <div class="wt-f">
@@ -964,7 +974,7 @@
                 <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
               </label>
               <div class="wt-hb">Kundens leveransadress — gatuadress, postnummer, ort. Om avtalet gäller flera adresser: skriv huvudkontoret här och lista de andra i en bilaga.</div>
-              <textarea rows="2" placeholder="t.ex. Södermalmsallén 36, 118 28 Stockholm"></textarea>
+              <textarea id="wt-clientAddress" rows="2" placeholder="t.ex. Södermalmsallén 36, 118 28 Stockholm"></textarea>
             </div>
           </div>
         </div>
@@ -990,14 +1000,14 @@
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">När börjar Carotte städa hos kunden? Vanligt är <strong>1–2 månader efter signering</strong> så vi hinner planera personal.</div>
-                <input type="date">
+                <input type="date" id="wt-startdatum">
               </div>
               <div class="wt-f">
                 <label class="wt-f-l">Slutdatum <span class="req">*</span>
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">När löper avtalet ut? Räknas oftast som <strong>Startdatum + Bindningstid</strong>.</div>
-                <input type="date">
+                <input type="date" id="wt-slutdatum">
               </div>
             </div>
 
@@ -1007,21 +1017,21 @@
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Antal månader kunden är låst. <strong>Standard: 24 månader.</strong></div>
-                <input type="number" placeholder="24">
+                <input type="number" id="wt-binding" placeholder="24">
               </div>
               <div class="wt-f">
                 <label class="wt-f-l">Uppsägning (mån) <span class="req">*</span>
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Efter bindningstiden — hur lång tid krävs för att säga upp? <strong>Standard: 3 månader.</strong></div>
-                <input type="number" placeholder="3">
+                <input type="number" id="wt-notice"  placeholder="3">
               </div>
               <div class="wt-f">
                 <label class="wt-f-l">Betalning (dagar) <span class="req">*</span>
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Antal dagar från fakturadatum. <strong>Standard: 20 dagar netto.</strong></div>
-                <input type="number" placeholder="20">
+                <input type="number" id="wt-payment" placeholder="20">
               </div>
             </div>
           </div>
@@ -1034,14 +1044,14 @@
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Priset per faktisk arbetad timme, exkl. moms. Normalintervall HK: <strong>310–360 kr/tim</strong>.</div>
-                <input type="number" placeholder="330">
+                <input type="number" id="wt-hourly"  placeholder="330">
               </div>
               <div class="wt-f">
                 <label class="wt-f-l">Uppstart (kr, engång) <span class="req">*</span>
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Engångskostnad för inköp av städmaterial. <strong>Standard: 5 500 kr.</strong> Faktureras vid första leverans.</div>
-                <input type="number" placeholder="5500">
+                <input type="number" id="wt-setup"   placeholder="5500">
               </div>
             </div>
 
@@ -1051,14 +1061,14 @@
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Extra ersättning per timme kvällstid. Standard: <strong>40 kr</strong>.</div>
-                <input type="number" placeholder="40">
+                <input type="number" id="wt-obEveRate" placeholder="40">
               </div>
               <div class="wt-f">
                 <label class="wt-f-l">OB kväll — vilka timmar?
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Skriv precis som exemplet — texten hamnar direkt i avtalet.</div>
-                <input type="text" placeholder="kl 19.00 till kl 22.00">
+                <input type="text" id="wt-obEveWin" placeholder="kl 19.00 till kl 22.00">
               </div>
             </div>
 
@@ -1068,14 +1078,14 @@
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Extra ersättning per timme nattetid. Standard: <strong>75 kr</strong>.</div>
-                <input type="number" placeholder="75">
+                <input type="number" id="wt-obNightRate" placeholder="75">
               </div>
               <div class="wt-f">
                 <label class="wt-f-l">OB natt — vilka timmar?
                   <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Skriv precis som exemplet.</div>
-                <input type="text" placeholder="kl 22.00 till kl 24.00 måndag till torsdag">
+                <input type="text" id="wt-obNightWin" placeholder="kl 22.00 till kl 24.00 måndag till torsdag">
               </div>
             </div>
           </div>
@@ -1306,7 +1316,7 @@
           </div>
           <div class="wt-done-actions">
             <button class="wt-btn ghost" onclick="resetWizard()">Skapa ett till avtal</button>
-            <button class="wt-btn primary" onclick="alert('I riktig version: stänger modalen.')">Tillbaka till kundkortet</button>
+            <button class="wt-btn primary" onclick="wtCloseModal()">Klar — stäng</button>
           </div>
         </div>
       </div>
@@ -1327,8 +1337,8 @@
             </ul>
           </div>
           <div class="wt-done-actions">
-            <button class="wt-btn ghost" onclick="alert('I riktig version: öppnar admin-vyn ”Pågående intern granskning” där du kan följa status och skicka vidare till kund när det är godkänt.')">Se pågående granskningar</button>
-            <button class="wt-btn primary" onclick="alert('I riktig version: stänger modalen.')">Tillbaka till kundkortet</button>
+            <button class="wt-btn ghost" onclick="alert('Pågående interngranskningar visas snart under Avtal → filter Status → \'Pågår granskning\'. Kommer i nästa uppdatering.')">Se pågående granskningar</button>
+            <button class="wt-btn primary" onclick="wtCloseModal()">Klar — stäng</button>
           </div>
         </div>
       </div>
@@ -1916,21 +1926,42 @@
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
 
-  // Steg A: hardkodad kund+spec tills Steg B (kund-picker) + C (spec-form)
-  // kopplar formulär till payload. Räcker för end-to-end pipe-test.
-  const A_MOCK = {
-    spec: {
-      client:   { name: "Testkund AB", org_nr: "556123-4567", address: "Storgatan 1, 111 22 Stockholm" },
-      contract: { startdatum: "2026-08-01", slutdatum: "2028-07-31", binding_months: 24, notice_months: 3, payment_terms_days: 20 },
-      pricing:  { hourly_rate: "330", ob_evening_rate: "40", ob_evening_window: "kl 19.00 till kl 22.00",
-                  ob_night_rate: "75", ob_night_window: "kl 22.00 till kl 24.00 måndag till torsdag", setup_cost: "5 500" }
-    },
-    contract_specs: [{
-      service_slug: "housekeeping", contract_type: "Hybrid", category: "Housekeeping",
-      startdatum: "2026-08-01", slutdatum: "2028-07-31",
-      binding_months: 24, notice_months: 3
-    }]
-  };
+  // Client-picker state (Steg B) — vald kund från autocomplete i Steg 2
+  const CLIENT = { id: null, name: null };
+
+  // Bygg spec + contract_specs från formulär (Steg C — läser Steg 2 + 3 inputs)
+  function readForm() {
+    const v = (id) => { const el = document.getElementById(id); return el ? (el.value || null) : null; };
+    const n = (id) => { const x = v(id); const num = Number(x); return (x != null && x !== '' && !isNaN(num)) ? num : null; };
+    return {
+      spec: {
+        client:   { name: v('wt-clientName'), org_nr: v('wt-clientOrg'), address: v('wt-clientAddress') },
+        contract: {
+          startdatum: v('wt-startdatum'), slutdatum: v('wt-slutdatum'),
+          binding_months: n('wt-binding'), notice_months: n('wt-notice'),
+          payment_terms_days: n('wt-payment'),
+        },
+        pricing: {
+          hourly_rate:       v('wt-hourly'),
+          ob_evening_rate:   v('wt-obEveRate'),
+          ob_evening_window: v('wt-obEveWin'),
+          ob_night_rate:     v('wt-obNightRate'),
+          ob_night_window:   v('wt-obNightWin'),
+          setup_cost:        v('wt-setup'),
+        },
+      },
+      contract_specs: [{
+        service_slug: 'housekeeping',
+        contract_type: 'Hybrid',
+        category: 'Housekeeping',
+        startdatum:     v('wt-startdatum'),
+        slutdatum:      v('wt-slutdatum'),
+        binding_months: n('wt-binding'),
+        notice_months:  n('wt-notice'),
+        monthly_cost:   0,
+      }],
+    };
+  }
 
   async function apiGet(path) {
     const r = await fetch(API_HOST + path, { headers: { 'x-admin-token': API_TOKEN } });
@@ -1991,6 +2022,9 @@ const state = {
   }
 
   // Template selection — bindas dynamiskt (efter LIVE-fetch OCH för mock-korten)
+  // Cache av hela mall-objekten så vi kan pre-fylla från default_spec_json
+  const _tplCache = {};
+
   function bindTemplateCards() {
     $$(".wt-card[data-tpl]").forEach(card => {
       // undvik dubbel-binding om vi re-renderar
@@ -2007,10 +2041,129 @@ const state = {
         $("#sumTplInt").textContent = name;
         $("#doneTplClient").textContent = name;
         $("#doneTplInt").textContent = name;
+        // Pre-fyll Steg 3 från default_spec_json om vi har full mall-data
+        if (_tplCache[state.tpl]) prefillFromTemplate(_tplCache[state.tpl]);
       });
     });
   }
   bindTemplateCards();
+
+  // ── Kund-picker (Steg B) ────────────────────────────────────────
+  let _companies = null;      // cache — hämtas första gången admin öppnar Steg 2
+  let _companiesFetch = null; // in-flight-promise (undvik dubbel-fetch)
+
+  async function ensureCompanies() {
+    if (!IS_LIVE) return [];
+    if (_companies) return _companies;
+    if (_companiesFetch) return _companiesFetch;
+    _companiesFetch = apiGet('/admin/planning/companies')
+      .then(res => { _companies = (res.results || []); return _companies; })
+      .catch(e => { console.warn('[wiz] companies fetch:', e.message); _companies = []; return _companies; });
+    return _companiesFetch;
+  }
+
+  function setClient(id, name) {
+    CLIENT.id = id; CLIENT.name = name;
+    const chosen = document.getElementById('wt-clientChosen');
+    const results = document.getElementById('wt-clientResults');
+    const search = document.getElementById('wt-clientSearch');
+    if (chosen) {
+      chosen.style.display = name ? 'block' : 'none';
+      chosen.innerHTML = name
+        ? '<strong style="color:#fff">✓ ' + escHtml(name) + '</strong> — vald från kundregistret. ' +
+          '<button class="wt-btn plain tiny" style="margin-left:8px" onclick="wtClearClient()">Byt kund</button>'
+        : '';
+    }
+    if (results) results.style.display = 'none';
+    if (search)  search.value = name || '';
+    // Pre-fyll namn-fältet (admin kan redigera för formell version)
+    const nameField = document.getElementById('wt-clientName');
+    if (nameField && !nameField.value) nameField.value = name || '';
+  }
+  window.wtClearClient = function(){ setClient(null, null); document.getElementById('wt-clientSearch').focus(); };
+
+  function bindClientPicker() {
+    const search = document.getElementById('wt-clientSearch');
+    const results = document.getElementById('wt-clientResults');
+    if (!search || !results) return;
+    if (search.dataset.wtBound) return;
+    search.dataset.wtBound = "1";
+
+    let timer = null;
+    search.addEventListener('input', async () => {
+      const q = search.value.trim().toLowerCase();
+      if (!q) { results.style.display = 'none'; return; }
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const list = await ensureCompanies();
+        const matches = list
+          .filter(c => (c.name || '').toLowerCase().includes(q))
+          .slice(0, 20);
+        if (!matches.length) {
+          results.innerHTML = '<div style="padding:12px 14px;color:var(--t3);font-size:13px">Inga kunder matchar. Skapa upp kunden i CRM först.</div>';
+          results.style.display = 'block';
+          return;
+        }
+        results.innerHTML = matches.map(c =>
+          '<div class="wt-client-hit" data-id="' + escHtml(c.id) + '" data-name="' + escHtml(c.name) + '" ' +
+          'style="padding:10px 14px;cursor:pointer;border-bottom:0.5px solid var(--line);color:var(--t1);font-size:13.5px">' +
+          escHtml(c.name) + '</div>'
+        ).join('');
+        results.style.display = 'block';
+        results.querySelectorAll('.wt-client-hit').forEach(hit => {
+          hit.addEventListener('mouseenter', () => hit.style.background = 'rgba(255,255,255,0.05)');
+          hit.addEventListener('mouseleave', () => hit.style.background = '');
+          hit.addEventListener('click', () => setClient(hit.dataset.id, hit.dataset.name));
+        });
+      }, 150);
+    });
+
+    // Klick utanför → stäng dropdown
+    document.addEventListener('click', (e) => {
+      if (!search.contains(e.target) && !results.contains(e.target)) {
+        results.style.display = 'none';
+      }
+    });
+  }
+  bindClientPicker();
+  if (IS_LIVE) ensureCompanies(); // förladda i bakgrund
+
+  // ── Stäng wizard-modalen (för done-knappar + Avbryt) ────────────
+  window.wtCloseModal = function() {
+    const mask = document.querySelector('[data-aa="wiz-mask"]');
+    if (mask) { mask.classList.remove('on'); document.body.style.overflow = ''; }
+    if (typeof window.resetWizard === 'function') { try { window.resetWizard(); } catch(_){} }
+  };
+
+  // ── Pre-fyll formulär från default_spec_json vid mallval (Steg C) ─
+  function prefillFromTemplate(tpl) {
+    if (!tpl || !tpl.default_spec_json) return;
+    let data;
+    try { data = JSON.parse(tpl.default_spec_json); }
+    catch { return; }
+    const spec = (data && data.spec) || {};
+    const contract = spec.contract || {};
+    const pricing = spec.pricing || {};
+    const fields = {
+      'wt-startdatum':  contract.startdatum,
+      'wt-slutdatum':   contract.slutdatum,
+      'wt-binding':     contract.binding_months,
+      'wt-notice':      contract.notice_months,
+      'wt-payment':     contract.payment_terms_days,
+      'wt-hourly':      pricing.hourly_rate,
+      'wt-setup':       pricing.setup_cost,
+      'wt-obEveRate':   pricing.ob_evening_rate,
+      'wt-obEveWin':    pricing.ob_evening_window,
+      'wt-obNightRate': pricing.ob_night_rate,
+      'wt-obNightWin':  pricing.ob_night_window,
+    };
+    let filled = 0;
+    for (const [id, val] of Object.entries(fields)) {
+      const el = document.getElementById(id);
+      if (el && val != null && !el.value) { el.value = val; filled++; }
+    }
+    if (filled) console.log('[wiz] pre-fyllde', filled, 'fält från default_spec_json');
+  }
 
   // LIVE-mode: fetch aktiva mallar och re-rendera Steg 1-grid:et
   async function loadTemplatesLive() {
@@ -2027,6 +2180,7 @@ const state = {
       state.tplNames = {};
       grid.innerHTML = templates.map(t => {
         state.tplNames[t._id] = t.name;
+        _tplCache[t._id] = t;   // cache hela objektet för prefill
         const lang = (t.language === 'en' ? 'Engelska' : 'Svenska');
         const cat  = t.category || 'Övrigt';
         const sub  = t.subtitle || '';
@@ -2156,9 +2310,10 @@ const state = {
     if (IS_LIVE && state.tpl && /^\d/.test(state.tpl)) {
       box.innerHTML = '<div style="padding:40px;text-align:center;color:var(--t2);font-size:13px">⏳ Genererar förhandsgranskning...</div>';
       try {
+        const form = readForm();
         const res = await apiPost('/admin/contracts/render-preview', {
           template_id: state.tpl,
-          spec: A_MOCK.spec,
+          spec: form.spec,
         });
         const url = res.preview && res.preview.file_url;
         if (!url) throw new Error('inget file_url i svaret');
@@ -2247,15 +2402,19 @@ const state = {
       // Kund-signering → "yes" (Contract auto-skapas när kunden signerat)
       const autoCreate = state.mode === "internal" ? "no" : "yes";
 
+      // Bygg spec + contract_specs från formulär (Steg B+C)
+      const form = readForm();
+      if (!form.spec.client.name) { alert('Fyll i kundens företagsnamn (Steg 2).'); return; }
+
       const payload = {
         template_id:            state.tpl,
-        spec:                   A_MOCK.spec,
-        contract_specs:         A_MOCK.contract_specs,
-        rubrik:                 "Avtal — " + A_MOCK.spec.client.name,
+        spec:                   form.spec,
+        contract_specs:         form.contract_specs,
+        rubrik:                 "Avtal — " + form.spec.client.name,
         meddelande,
         sender_email:           senderEmail,
         sender_name:            senderName,
-        clientcompany:          null,   // fylls i Steg B (kund-picker)
+        clientcompany:          CLIENT.id || null,   // Bubble ClientCompany-ref (valfri)
         auto_create_contract:   autoCreate,
         recipients:             rcps,
       };
