@@ -1906,6 +1906,49 @@
 <script>
 (function(){
   // Wizard-scope: IIFE så $, $$, state osv. inte överskriver Bubbles jQuery ($.ajax)
+
+  // ── Live API config (Fas 5 Steg A, 2026-07-14) ───────────────────
+  // Läser api_host + planning_token från admin-blockets hidden inputs.
+  // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
+  // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
+  const API_HOST  = (document.querySelector('[data-mira="api_host"]')       || {}).value || '';
+  const API_TOKEN = (document.querySelector('[data-mira="planning_token"]') || {}).value || '';
+  const IS_LIVE = !!(API_HOST && API_TOKEN);
+  console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
+
+  // Steg A: hardkodad kund+spec tills Steg B (kund-picker) + C (spec-form)
+  // kopplar formulär till payload. Räcker för end-to-end pipe-test.
+  const A_MOCK = {
+    spec: {
+      client:   { name: "Testkund AB", org_nr: "556123-4567", address: "Storgatan 1, 111 22 Stockholm" },
+      contract: { startdatum: "2026-08-01", slutdatum: "2028-07-31", binding_months: 24, notice_months: 3, payment_terms_days: 20 },
+      pricing:  { hourly_rate: "330", ob_evening_rate: "40", ob_evening_window: "kl 19.00 till kl 22.00",
+                  ob_night_rate: "75", ob_night_window: "kl 22.00 till kl 24.00 måndag till torsdag", setup_cost: "5 500" }
+    },
+    contract_specs: [{
+      service_slug: "housekeeping", contract_type: "Hybrid", category: "Housekeeping",
+      startdatum: "2026-08-01", slutdatum: "2028-07-31",
+      binding_months: 24, notice_months: 3
+    }]
+  };
+
+  async function apiGet(path) {
+    const r = await fetch(API_HOST + path, { headers: { 'x-admin-token': API_TOKEN } });
+    if (!r.ok) throw new Error('GET ' + path + ' → HTTP ' + r.status);
+    return r.json();
+  }
+  async function apiPost(path, body) {
+    const r = await fetch(API_HOST + path, {
+      method: 'POST',
+      headers: { 'x-admin-token': API_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok || json.ok === false) throw new Error(json.error || ('POST ' + path + ' → HTTP ' + r.status));
+    return json;
+  }
+  function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
 const state = {
     step: 1,
     tpl: null,
@@ -1947,20 +1990,65 @@ const state = {
     if (from <= 1) return; showStep(from - 1);
   }
 
-  // Template selection
-  $$(".wt-card[data-tpl]").forEach(card => {
-    card.addEventListener("click", () => {
-      $$(".wt-card[data-tpl]").forEach(c => c.classList.remove("on"));
-      card.classList.add("on");
-      state.tpl = card.dataset.tpl;
-      $("#btnNext1").disabled = false;
-      $("#tplHint").textContent = "Vald: " + state.tplNames[state.tpl];
-      $("#sumTpl").textContent = state.tplNames[state.tpl];
-      $("#sumTplInt").textContent = state.tplNames[state.tpl];
-      $("#doneTplClient").textContent = state.tplNames[state.tpl];
-      $("#doneTplInt").textContent = state.tplNames[state.tpl];
+  // Template selection — bindas dynamiskt (efter LIVE-fetch OCH för mock-korten)
+  function bindTemplateCards() {
+    $$(".wt-card[data-tpl]").forEach(card => {
+      // undvik dubbel-binding om vi re-renderar
+      if (card.dataset.wtBound) return;
+      card.dataset.wtBound = "1";
+      card.addEventListener("click", () => {
+        $$(".wt-card[data-tpl]").forEach(c => c.classList.remove("on"));
+        card.classList.add("on");
+        state.tpl = card.dataset.tpl;
+        const name = state.tplNames[state.tpl] || "mall";
+        $("#btnNext1").disabled = false;
+        $("#tplHint").textContent = "Vald: " + name;
+        $("#sumTpl").textContent = name;
+        $("#sumTplInt").textContent = name;
+        $("#doneTplClient").textContent = name;
+        $("#doneTplInt").textContent = name;
+      });
     });
-  });
+  }
+  bindTemplateCards();
+
+  // LIVE-mode: fetch aktiva mallar och re-rendera Steg 1-grid:et
+  async function loadTemplatesLive() {
+    if (!IS_LIVE) return;
+    try {
+      const res = await apiGet('/admin/contract-templates');
+      const templates = (res.templates || []).filter(t => t.is_active !== false);
+      if (!templates.length) {
+        console.warn('[wiz] inga aktiva mallar — behåller mock-korten');
+        return;
+      }
+      const grid = document.getElementById('tplGrid');
+      if (!grid) return;
+      state.tplNames = {};
+      grid.innerHTML = templates.map(t => {
+        state.tplNames[t._id] = t.name;
+        const lang = (t.language === 'en' ? 'Engelska' : 'Svenska');
+        const cat  = t.category || 'Övrigt';
+        const sub  = t.subtitle || '';
+        const desc = t.description || '';
+        return `
+          <button class="wt-card" data-tpl="${escHtml(t._id)}" type="button">
+            <div class="wt-card-name">${escHtml(t.name)}</div>
+            <div class="wt-card-sub">${escHtml(sub)}</div>
+            <div class="wt-pills">
+              <span class="wt-pill brand">${escHtml(cat)}</span>
+              <span class="wt-pill">${escHtml(lang)}</span>
+            </div>
+            ${desc ? `<div class="wt-card-when">${escHtml(desc)}</div>` : ''}
+          </button>`;
+      }).join('');
+      bindTemplateCards();
+      console.log('[wiz] laddade', templates.length, 'aktiva mallar från API');
+    } catch (e) {
+      console.warn('[wiz] mall-fetch failed, behåller mock-korten:', e.message);
+    }
+  }
+  loadTemplatesLive();
 
   // Mode selection (steg 5)
   $$(".wt-card[data-mode]").forEach(card => {
@@ -2059,9 +2147,30 @@ const state = {
       </div>`,
   };
 
-  function showPreview() {
+  async function showPreview() {
     const box = $("#prevBox");
     box.classList.add("on");
+
+    // LIVE-mode: rendera riktig PDF via backend, ladda i iframe
+    // (Bubble-mall-id:er börjar med "17..." — mock-ids är "hk-hybrid-sv" etc)
+    if (IS_LIVE && state.tpl && /^\d/.test(state.tpl)) {
+      box.innerHTML = '<div style="padding:40px;text-align:center;color:var(--t2);font-size:13px">⏳ Genererar förhandsgranskning...</div>';
+      try {
+        const res = await apiPost('/admin/contracts/render-preview', {
+          template_id: state.tpl,
+          spec: A_MOCK.spec,
+        });
+        const url = res.preview && res.preview.file_url;
+        if (!url) throw new Error('inget file_url i svaret');
+        box.innerHTML = `<iframe src="${escHtml(url)}" style="width:100%;height:540px;border:none;border-radius:10px;background:white" title="Förhandsgranskning"></iframe>`;
+        console.log('[wiz] preview:', res.preview);
+      } catch (e) {
+        box.innerHTML = `<div style="padding:20px;color:var(--err);font-size:13px">⚠ Kunde inte generera förhandsgranskning: ${escHtml(e.message)}</div>`;
+      }
+      return;
+    }
+
+    // MOCK-mode: hardkodad HTML-preview
     const html = previewByTpl[state.tpl]
               || previewByTpl["_placeholder"](state.tplNames[state.tpl] || "vald mall");
     box.innerHTML = html;
@@ -2093,9 +2202,71 @@ const state = {
     $("#doneRcpsInt").textContent    = nI + (nI === 1 ? " kollega" : " kollegor");
   }
 
-  function submitFinal() {
-    if (state.mode === "internal") showStep("done-internal");
-    else showStep("done-client");
+  async function submitFinal() {
+    const btn = $("#btnSend");
+    const origText = btn ? btn.textContent : '';
+
+    // MOCK-mode: hoppa direkt till done-vy
+    if (!IS_LIVE || !state.tpl || !/^\d/.test(state.tpl)) {
+      showStep(state.mode === "internal" ? "done-internal" : "done-client");
+      return;
+    }
+
+    // LIVE-mode: bygg payload från formulär + Steg A-mock (kund/spec)
+    if (btn) { btn.textContent = "Skickar..."; btn.disabled = true; }
+
+    try {
+      const containerId = state.mode === "internal" ? "internalRcps" : "clientRcps";
+      const container = document.getElementById(containerId);
+      const rcps = Array.from(container.querySelectorAll('.wt-rcp-row')).map(row => {
+        const email = row.querySelector('input[type="email"]').value.trim();
+        const name  = row.querySelector('input[type="text"]').value.trim();
+        // Client: dropdown "Signerar"/"Granskar" → Signer/Reviewer
+        // Internal: alla är Reviewer (kollegor granskar)
+        let role;
+        if (state.mode === "internal") { role = "Reviewer"; }
+        else {
+          const sel = row.querySelector('select');
+          role = (sel && sel.selectedIndex === 1) ? "Reviewer" : "Signer";
+        }
+        return { email, name, role };
+      }).filter(r => r.email);
+
+      if (!rcps.length) { alert("Fyll i minst en mailadress för mottagaren."); return; }
+
+      const panel = state.mode === "internal" ? "#internalPanel" : "#clientPanel";
+      const messageEl = document.querySelector(panel + " textarea");
+      const meddelande = messageEl ? messageEl.value.trim() : '';
+
+      const senderEmail = (document.querySelector('[data-mira="sender_email"]') || {}).value
+                       || 'christian@carotte.se';
+      const senderName  = (document.querySelector('[data-mira="sender_name"]') || {}).value
+                       || 'Carotte';
+
+      // Intern granskning → auto_create_contract="no" (kollegans OK skapar inget Contract)
+      // Kund-signering → "yes" (Contract auto-skapas när kunden signerat)
+      const autoCreate = state.mode === "internal" ? "no" : "yes";
+
+      const payload = {
+        template_id:            state.tpl,
+        spec:                   A_MOCK.spec,
+        contract_specs:         A_MOCK.contract_specs,
+        rubrik:                 "Avtal — " + A_MOCK.spec.client.name,
+        meddelande,
+        sender_email:           senderEmail,
+        sender_name:            senderName,
+        clientcompany:          null,   // fylls i Steg B (kund-picker)
+        auto_create_contract:   autoCreate,
+        recipients:             rcps,
+      };
+
+      const res = await apiPost('/admin/contracts/render-and-send', payload);
+      console.log('[wiz] skickat:', res);
+      showStep(state.mode === "internal" ? "done-internal" : "done-client");
+    } catch (e) {
+      alert('Kunde inte skicka avtalet:\n' + e.message);
+      if (btn) { btn.textContent = origText; btn.disabled = false; }
+    }
   }
 
   function resetWizard() {
