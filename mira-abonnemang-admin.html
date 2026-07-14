@@ -2134,27 +2134,40 @@ const state = {
 })();
 </script>
 <script>
+// Wizard öppna/stäng — event-delegation på document så vi inte förlitar oss på
+// att .aa-wrap-scope har rendered när scripten körs (Bubbles injektion är
+// ibland async). Selectors matchar data-aa-attributen i HTML-blocken.
 (function(){
-  var root = document.querySelector('.aa-wrap');
-  if (!root) return;
-  var mask = root.querySelector('[data-aa="wiz-mask"]');
-  var btn  = root.querySelector('[data-aa="wiz-btn"]');
-  var close= root.querySelector('[data-aa="wiz-close"]');
-  if (!mask || !btn) return;
-
-  function openWiz(){ mask.classList.add('on'); document.body.style.overflow='hidden'; }
-  function closeWiz(){
-    if (!confirm('Stänga wizarden? Alla ifyllda uppgifter försvinner.')) return;
-    mask.classList.remove('on'); document.body.style.overflow='';
-    if (typeof resetWizard === 'function') resetWizard();
+  function findMask(){ return document.querySelector('[data-aa="wiz-mask"]'); }
+  function openWiz(){
+    var m = findMask(); if (!m) { console.warn('[wiz] mask saknas'); return; }
+    m.classList.add('on'); document.body.style.overflow = 'hidden';
+  }
+  function closeWiz(force){
+    var m = findMask(); if (!m) return;
+    if (!force && !confirm('Stänga wizarden? Alla ifyllda uppgifter försvinner.')) return;
+    m.classList.remove('on'); document.body.style.overflow = '';
+    if (typeof window.resetWizard === 'function') { try { window.resetWizard(); } catch(_){} }
   }
 
-  btn.addEventListener('click', openWiz);
-  close.addEventListener('click', closeWiz);
-  mask.addEventListener('click', function(e){ if (e.target === mask) closeWiz(); });
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest && e.target.closest('[data-aa="wiz-btn"]');
+    if (btn) { e.preventDefault(); openWiz(); return; }
+    var closeBtn = e.target.closest && e.target.closest('[data-aa="wiz-close"]');
+    if (closeBtn) { e.preventDefault(); closeWiz(); return; }
+    // Backdrop-click: bara stäng om klick direkt på mask (inte på modal-innehåll)
+    var mask = findMask();
+    if (mask && mask.classList.contains('on') && e.target === mask) { closeWiz(); }
+  }, false);
+
   document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape' && mask.classList.contains('on')) closeWiz();
+    if (e.key === 'Escape') {
+      var m = findMask();
+      if (m && m.classList.contains('on')) closeWiz(true);
+    }
   });
+
+  console.log('[wiz] öppna/stäng-handler klar');
 })();
 </script>
 
