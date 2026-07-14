@@ -1,0 +1,217 @@
+{
+  "name": "Staff Bemanning (SV)",
+  "subtitle": "Inhyrning av personal på timme för längre uppdrag",
+  "description": "Standardmall för konsult- eller receptionsuppdrag på timme. Baserad på Carottes standardavtal Inhyrning längre uppdrag. RateCard-baserad — priset varierar per roll och timmarnas förläggning (OB-tillägg). Inkluderar villkor för övertagande och rätt till kandidater. Bilaga: ABPU-10 (Bemanningsföretagens allmänna bestämmelser).",
+  "category": "Staff",
+  "contract_type": "RateCard",
+  "language": "sv",
+  "default_attachments": [],
+  "default_spec_json": {
+    "spec": {
+      "client": {
+        "name": null,
+        "org_nr": null,
+        "address": null
+      },
+      "contract": {
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "payment_terms_days": null
+      },
+      "assignment": {
+        "role": null,
+        "consultant_name": null,
+        "workload_hours_per_month": null
+      },
+      "pricing": {
+        "hourly_rate": null,
+        "ob_evening_rate": null,
+        "ob_evening_window": null,
+        "ob_night_rate": null,
+        "ob_night_window": null,
+        "recruitment_fee_sek": null,
+        "takeover_threshold_hours": null
+      },
+      "contact": {
+        "client_name": null,
+        "client_email": null,
+        "supplier_name": null,
+        "supplier_email": null
+      }
+    },
+    "contract_specs": [
+      {
+        "service_slug": "staff",
+        "contract_type": "RateCard",
+        "category": "Staff",
+        "offer_id": null,
+        "office_id": null,
+        "monthly_cost": 0,
+        "qty": 1,
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "price_regulation_type": null,
+        "volume_json": null,
+        "rate_card_json": null
+      }
+    ],
+    "form_schema": {
+      "sections": [
+        {
+          "title": "Uppdraget",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.assignment.role",
+              "type": "text",
+              "label": "Roll",
+              "required": true,
+              "placeholder": "Receptionist",
+              "help": "Rollen konsulten ska tillsätta — receptionist, konsultkoordinator, etc."
+            },
+            {
+              "path": "spec.assignment.consultant_name",
+              "type": "text",
+              "label": "Konsultens namn",
+              "placeholder": "För- och efternamn",
+              "help": "Personen som ska utföra uppdraget. Kan lämnas tomt vid signering och fyllas i senare."
+            },
+            {
+              "path": "spec.assignment.workload_hours_per_month",
+              "type": "number",
+              "label": "Timmar per månad (ca)",
+              "placeholder": "167",
+              "help": "Ungefärlig omfattning. 167 h ≈ heltid, 80 h ≈ halvtid."
+            }
+          ]
+        },
+        {
+          "title": "Datum och uppsägning",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contract.startdatum",
+              "type": "date",
+              "label": "Startdatum",
+              "required": true
+            },
+            {
+              "path": "spec.contract.slutdatum",
+              "type": "date",
+              "label": "Slutdatum (option till förlängning)"
+            },
+            {
+              "path": "spec.contract.notice_months",
+              "type": "number",
+              "label": "Uppsägningstid (mån)",
+              "placeholder": "1",
+              "help": "Standard för längre uppdrag: 1 månad. Kortare uppdrag: 14 dagar (skriv 0.5)."
+            },
+            {
+              "path": "spec.contract.payment_terms_days",
+              "type": "number",
+              "label": "Betalning (dagar)",
+              "required": true,
+              "placeholder": "20"
+            }
+          ]
+        },
+        {
+          "title": "Prislista",
+          "layout": "grid-2",
+          "help": "Grundtimpris och OB-tillägg. Faktisk debitering enligt arbetad tid.",
+          "fields": [
+            {
+              "path": "spec.pricing.hourly_rate",
+              "type": "number",
+              "label": "Timpris (kr/tim exkl. moms)",
+              "required": true,
+              "placeholder": "350",
+              "help": "Normalintervall reception: 310–360 kr/tim beroende på erfarenhet."
+            },
+            {
+              "path": "spec.pricing.ob_evening_rate",
+              "type": "number",
+              "label": "OB kväll — kr/tim",
+              "placeholder": "50"
+            },
+            {
+              "path": "spec.pricing.ob_evening_window",
+              "type": "text",
+              "label": "OB kväll — vilka timmar?",
+              "placeholder": "vardagar mellan 20.00 och 01.00 samt lördagar 16.00–01.00"
+            },
+            {
+              "path": "spec.pricing.ob_night_rate",
+              "type": "number",
+              "label": "OB natt — kr/tim",
+              "placeholder": "50"
+            },
+            {
+              "path": "spec.pricing.ob_night_window",
+              "type": "text",
+              "label": "OB natt — vilka timmar?",
+              "placeholder": "alla dagar 01.00–06.00 samt söndagar och helgdagar"
+            }
+          ]
+        },
+        {
+          "title": "Rekryteringsskydd & övertagande",
+          "layout": "grid-2",
+          "help": "Standardvillkor som skyddar Carotte om kunden vill anställa konsulten direkt.",
+          "fields": [
+            {
+              "path": "spec.pricing.recruitment_fee_sek",
+              "type": "number",
+              "label": "Rekryteringsarvode (kr)",
+              "placeholder": "50000",
+              "help": "Arvode om kunden anställer konsulten inom 18 månader. Standard: 50 000 kr."
+            },
+            {
+              "path": "spec.pricing.takeover_threshold_hours",
+              "type": "number",
+              "label": "Övertagandegräns (timmar)",
+              "placeholder": "1000",
+              "help": "Efter så många debiterade timmar kan kunden överta konsulten kostnadsfritt. Standard: 1000 h."
+            }
+          ]
+        },
+        {
+          "title": "Kontaktpersoner",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contact.client_name",
+              "type": "text",
+              "label": "Kund — kontakt",
+              "placeholder": "För- och efternamn"
+            },
+            {
+              "path": "spec.contact.client_email",
+              "type": "text",
+              "label": "Kund — mail",
+              "placeholder": "namn@kund.se"
+            },
+            {
+              "path": "spec.contact.supplier_name",
+              "type": "text",
+              "label": "Carotte — kontakt",
+              "placeholder": "För- och efternamn"
+            },
+            {
+              "path": "spec.contact.supplier_email",
+              "type": "text",
+              "label": "Carotte — mail",
+              "placeholder": "namn@carotte.se"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "template_html": "<!doctype html><html lang=\"sv\"><head><meta charset=\"utf-8\"><title>Avtal Bemanning</title><style>:root{--ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--brand:#df6f39}*{box-sizing:border-box}html,body{margin:0;padding:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;font-size:10.5pt;line-height:1.5;background:#fff}header.top{border-bottom:3px solid var(--brand);padding-bottom:14px;margin-bottom:26px}.brand{font-weight:700;font-size:14pt;letter-spacing:0.5px;color:var(--brand)}.brand .sub{display:block;font-weight:400;color:var(--soft);font-size:9pt;letter-spacing:0;margin-top:2px}h1{font-size:15pt;margin:0 0 4px;letter-spacing:0.3px}.doc-meta{color:var(--soft);font-size:9pt}section.paragraph{margin:14px 0;page-break-inside:avoid}section.paragraph h2{font-size:10.5pt;text-transform:uppercase;letter-spacing:0.6px;color:var(--brand);margin:0 0 6px;font-weight:700}p{margin:6px 0}.parties{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:0 0 20px;background:#fafafa}.parties .row{display:flex;gap:32px;margin:4px 0}.parties .k{color:var(--soft);width:120px;font-size:9pt;text-transform:uppercase;letter-spacing:0.5px}.parties .v{color:var(--ink);flex:1}footer.sign{margin-top:32px;padding-top:16px;border-top:1px solid var(--line);color:var(--soft);font-size:9pt}</style></head><body><header class=\"top\"><div class=\"brand\">CAROTTE STAFF<span class=\"sub\">Bemanning &amp; inhyrning</span></div><h1>Avtal Bemanning</h1><div class=\"doc-meta\">Inhyrning konsult · Timprisbaserat</div></header><section class=\"parties\"><div class=\"row\"><div class=\"k\">Leverantör</div><div class=\"v\">Carotte Staff AB (556858-0392)</div></div><div class=\"row\"><div class=\"k\">Kund</div><div class=\"v\">{{client.name}} ({{client.org_nr}})</div></div><div class=\"row\"><div class=\"k\">Adress</div><div class=\"v\">{{client.address}}</div></div><div class=\"row\"><div class=\"k\">Kontakt kund</div><div class=\"v\">{{contact.client_name}} · {{contact.client_email}}</div></div><div class=\"row\"><div class=\"k\">Kontakt Carotte</div><div class=\"v\">{{contact.supplier_name}} · {{contact.supplier_email}}</div></div></section><section class=\"paragraph\"><h2>1. Typ av tjänst och period</h2><p>Inhyrning av <strong>{{assignment.role}}</strong> — {{assignment.consultant_name}}. Uppdraget avser cirka {{assignment.workload_hours_per_month}} timmar per månad.</p><p>Avtalet gäller från <strong>{{contract.startdatum}}</strong> till <strong>{{contract.slutdatum}}</strong> med option till förlängning.</p></section><section class=\"paragraph\"><h2>2. Pris</h2><p>Vid heltidsbemanning (167 h per månad) debiteras Uppdragsgivaren <strong>{{pricing.hourly_rate}} kr/h exklusive moms</strong>. Debitering sker per faktisk arbetad timme.</p></section><section class=\"paragraph\"><h2>3. OB-ersättning</h2><p>OB-ersättning utfaller med <strong>{{pricing.ob_evening_rate}} kr/timme</strong> exklusive moms för tid förlagd till {{pricing.ob_evening_window}}.</p><p>OB-ersättning utfaller med ytterligare <strong>{{pricing.ob_night_rate}} kr/timme</strong> exklusive moms för tid förlagd till {{pricing.ob_night_window}}.</p></section><section class=\"paragraph\"><h2>4. Fakturering och betalningsvillkor</h2><p>Fakturering sker två gånger per månad, en gång i början och en gång i mitten av månaden. Betalningsvillkor är <strong>{{contract.payment_terms_days}} dagar netto</strong>. Vid betalning efter förfallodagen utgår ränta enligt räntelagen (1975:635).</p></section><section class=\"paragraph\"><h2>5. Rätt till kandidater</h2><p>Samtlig personal som presenteras av Leverantören till Uppdragsgivaren och som rekryteras direkt eller i senare skede, till denna tjänst eller någon annan tjänst hos Uppdragsgivaren under de närmaste <strong>18 månaderna</strong>, är Uppdragsgivaren skyldig att betala ett arvode om <strong>{{pricing.recruitment_fee_sek}} kronor</strong> (exkl. moms) till Leverantören.</p></section><section class=\"paragraph\"><h2>6. Övertagande av konsult</h2><p>Önskar Uppdragsgivaren att överta en konsult från Leverantören krävs att konsulten arbetat under <strong>{{pricing.takeover_threshold_hours}} timmar</strong> hos Uppdragsgivaren. Då tillkommer ingen kostnad för övertagandet.</p></section><section class=\"paragraph\"><h2>7. Uppsägningstid</h2><p>Uppdragsgivaren har <strong>{{contract.notice_months}} månaders</strong> uppsägningstid gentemot Leverantören. Vill Uppdragsgivaren byta ut en konsult letar Leverantören efter en ersättare med högsta prioritet; Leverantörens målsättning är att ha en ny konsult på plats snarast möjligt.</p></section><section class=\"paragraph\"><h2>8. Sekretess</h2><p>Vardera parten förbinder sig att inte utan den andra partens skriftliga medgivande till tredje man utlämna information om den andra partens verksamhet som kan vara att betrakta som affärs- eller yrkeshemlighet, eller annars använda sådan information för annat ändamål än parts fullgörande av sina åtaganden enligt avtalet.</p></section><section class=\"paragraph\"><h2>9. Force majeure</h2><p>Förhållanden eller händelser som arbetsinställelse, blockad, krig, upplopp, eldsvåda, explosionsfara, ingripande av myndighet eller annan omständighet utanför Leverantörens kontroll som medför att Leverantören inte kan fullgöra åtagande enligt detta avtal fritar Leverantören från fullgörande av dess avtalade åtaganden under den tid förhållandet råder.</p></section><section class=\"paragraph\"><h2>10. Tvist</h2><p>Tvister som ej kan avgöras vid förhandlingar parterna emellan rörande tillämpningen av detta avtal skall avgöras av allmän domstol med tillämpning av svensk rätt, varvid Stockholms tingsrätt ska vara första instans.</p></section><section class=\"paragraph\"><h2>11. Allmänna bestämmelser</h2><p>I övrigt gäller Bemanningsföretagens allmänna bestämmelser för personaluthyrning (<strong>ABPU-10</strong>) bifogade till detta avtal.</p></section><section class=\"paragraph\"><h2>Signaturer</h2><p>Signaturer registreras elektroniskt via Mira. Se bifogat Signeringsbevis.</p></section><footer class=\"sign\"><p>Carotte Staff AB · Tegeluddsvägen 92 · 115 28 Stockholm · info@carotte.se</p></footer></body></html>"
+}

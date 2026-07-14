@@ -1,0 +1,196 @@
+{
+  "name": "Rekrytering (SV)",
+  "subtitle": "Sökuppdrag med engångsarvode vid tillsättning",
+  "description": "Standardmall för rekryteringsuppdrag. Baserad på Carottes standardavtal Rekrytering. Uppdragsgivaren betalar arvode först när en av Leverantören presenterad och av Uppdragsgivaren godkänd kandidat tackat ja till tjänsten. Arvode = multiplikator × månadslön. Inkluderar exklusivitet, garanti och skydd mot direktrekrytering. Bilaga: ABRE-10.",
+  "category": "Staff",
+  "contract_type": "RateCard",
+  "language": "sv",
+  "default_attachments": [],
+  "default_spec_json": {
+    "spec": {
+      "client": {
+        "name": null,
+        "org_nr": null,
+        "address": null
+      },
+      "contract": {
+        "startdatum": null,
+        "payment_terms_days": null
+      },
+      "position": {
+        "title": null,
+        "salary_low_sek": null,
+        "salary_high_sek": null
+      },
+      "fee": {
+        "multiplier": null,
+        "protection_months": null,
+        "protection_fee_sek": null
+      },
+      "warranty": {
+        "months": null,
+        "exclusivity_days": null
+      },
+      "contact": {
+        "client_name": null,
+        "client_email": null,
+        "supplier_name": null,
+        "supplier_email": null
+      }
+    },
+    "contract_specs": [
+      {
+        "service_slug": "recruitment",
+        "contract_type": "RateCard",
+        "category": "Staff",
+        "offer_id": null,
+        "office_id": null,
+        "monthly_cost": 0,
+        "qty": 1,
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "price_regulation_type": null,
+        "volume_json": null,
+        "rate_card_json": null
+      }
+    ],
+    "form_schema": {
+      "sections": [
+        {
+          "title": "Tjänsten",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.position.title",
+              "type": "text",
+              "label": "Tjänstetitel",
+              "required": true,
+              "placeholder": "Receptionist",
+              "help": "Rollen som ska tillsättas."
+            },
+            {
+              "path": "spec.position.salary_low_sek",
+              "type": "number",
+              "label": "Lönespann — låg (SEK/mån)",
+              "required": true,
+              "placeholder": "28000"
+            },
+            {
+              "path": "spec.position.salary_high_sek",
+              "type": "number",
+              "label": "Lönespann — hög (SEK/mån)",
+              "required": true,
+              "placeholder": "30000",
+              "help": "Uppskattat lönespann. Kan variera beroende på kompetens."
+            }
+          ]
+        },
+        {
+          "title": "Arvode & betalning",
+          "layout": "grid-2",
+          "help": "Arvodet debiteras först när kunden anställer en Carotte-presenterad kandidat.",
+          "fields": [
+            {
+              "path": "spec.fee.multiplier",
+              "type": "number",
+              "label": "Arvodesfaktor (× månadslön)",
+              "required": true,
+              "placeholder": "2.3",
+              "help": "Standard: 2,3 × månadslön. Multiplikatorn justeras endast vid ovanliga uppdrag."
+            },
+            {
+              "path": "spec.contract.payment_terms_days",
+              "type": "number",
+              "label": "Betalning (dagar)",
+              "required": true,
+              "placeholder": "20"
+            },
+            {
+              "path": "spec.contract.startdatum",
+              "type": "date",
+              "label": "Startdatum (avtal skrivs)",
+              "required": true
+            }
+          ]
+        },
+        {
+          "title": "Exklusivitet & garanti",
+          "layout": "grid-2",
+          "help": "Skyddar båda parter från oklara situationer under och efter tillsättning.",
+          "fields": [
+            {
+              "path": "spec.warranty.exclusivity_days",
+              "type": "number",
+              "label": "Exklusivitet (dagar)",
+              "required": true,
+              "placeholder": "30",
+              "help": "Kunden får endast använda Carotte för denna rekrytering under denna period."
+            },
+            {
+              "path": "spec.warranty.months",
+              "type": "number",
+              "label": "Garanti (mån)",
+              "required": true,
+              "placeholder": "2",
+              "help": "Om kandidaten inte är lämplig inom X månader → ny rekrytering utan kostnad."
+            }
+          ]
+        },
+        {
+          "title": "Kandidatskydd",
+          "layout": "grid-2",
+          "help": "Om kunden anställer en Carotte-presenterad kandidat i framtiden (även till annan tjänst).",
+          "fields": [
+            {
+              "path": "spec.fee.protection_months",
+              "type": "number",
+              "label": "Skyddstid (mån)",
+              "placeholder": "12",
+              "help": "Månader efter presentation då fee gäller vid direktanställning. Standard: 12."
+            },
+            {
+              "path": "spec.fee.protection_fee_sek",
+              "type": "number",
+              "label": "Skyddsavgift (kr)",
+              "placeholder": "70000",
+              "help": "Fast belopp om skyddstid överträds. Standard: 70 000 kr."
+            }
+          ]
+        },
+        {
+          "title": "Kontaktpersoner",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contact.client_name",
+              "type": "text",
+              "label": "Kund — kontakt",
+              "placeholder": "För- och efternamn"
+            },
+            {
+              "path": "spec.contact.client_email",
+              "type": "text",
+              "label": "Kund — mail",
+              "placeholder": "namn@kund.se"
+            },
+            {
+              "path": "spec.contact.supplier_name",
+              "type": "text",
+              "label": "Carotte — kontakt",
+              "placeholder": "För- och efternamn"
+            },
+            {
+              "path": "spec.contact.supplier_email",
+              "type": "text",
+              "label": "Carotte — mail",
+              "placeholder": "namn@carotte.se"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "template_html": "<!doctype html><html lang=\"sv\"><head><meta charset=\"utf-8\"><title>Avtal Rekrytering</title><style>:root{--ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--brand:#df6f39}*{box-sizing:border-box}html,body{margin:0;padding:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;font-size:10.5pt;line-height:1.5;background:#fff}header.top{border-bottom:3px solid var(--brand);padding-bottom:14px;margin-bottom:26px}.brand{font-weight:700;font-size:14pt;letter-spacing:0.5px;color:var(--brand)}.brand .sub{display:block;font-weight:400;color:var(--soft);font-size:9pt;letter-spacing:0;margin-top:2px}h1{font-size:15pt;margin:0 0 4px;letter-spacing:0.3px}.doc-meta{color:var(--soft);font-size:9pt}section.paragraph{margin:14px 0;page-break-inside:avoid}section.paragraph h2{font-size:10.5pt;text-transform:uppercase;letter-spacing:0.6px;color:var(--brand);margin:0 0 6px;font-weight:700}p{margin:6px 0}.parties{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:0 0 20px;background:#fafafa}.parties .row{display:flex;gap:32px;margin:4px 0}.parties .k{color:var(--soft);width:120px;font-size:9pt;text-transform:uppercase;letter-spacing:0.5px}.parties .v{color:var(--ink);flex:1}footer.sign{margin-top:32px;padding-top:16px;border-top:1px solid var(--line);color:var(--soft);font-size:9pt}</style></head><body><header class=\"top\"><div class=\"brand\">CAROTTE STAFF<span class=\"sub\">Rekrytering &amp; search</span></div><h1>Avtal Rekrytering</h1><div class=\"doc-meta\">Sökuppdrag · Arvode vid tillsättning</div></header><section class=\"parties\"><div class=\"row\"><div class=\"k\">Leverantör</div><div class=\"v\">Carotte Staff AB (556858-0392)</div></div><div class=\"row\"><div class=\"k\">Kund</div><div class=\"v\">{{client.name}} ({{client.org_nr}})</div></div><div class=\"row\"><div class=\"k\">Adress</div><div class=\"v\">{{client.address}}</div></div><div class=\"row\"><div class=\"k\">Kontakt kund</div><div class=\"v\">{{contact.client_name}} · {{contact.client_email}}</div></div><div class=\"row\"><div class=\"k\">Kontakt Carotte</div><div class=\"v\">{{contact.supplier_name}} · {{contact.supplier_email}}</div></div></section><section class=\"paragraph\"><h2>1. Typ av tjänst</h2><p>Heltidstjänst av <strong>{{position.title}}</strong> med startdatum enligt överenskommelse och eventuella uppsägningstider.</p></section><section class=\"paragraph\"><h2>2. Lön för tjänsten</h2><p>Lön är kompetensbaserad med ett uppskattat estimat mellan <strong>{{position.salary_low_sek}} – {{position.salary_high_sek}} SEK</strong> (kan variera upp eller ner beroende på kompetens).</p></section><section class=\"paragraph\"><h2>3. Uppdraget</h2><p>Leverantören ska bistå Uppdragsgivaren med rekrytering av tjänsten till Uppdragsgivarens gruppering. Leverantören kommer att söka kandidater till en tjänst som ska ingå i Uppdragsgivarens organisation.</p></section><section class=\"paragraph\"><h2>4. Specifikation av tjänst</h2><p>Framtagande av strukturerad kravspecifikation samt tidsplan tillsammans med Leverantörens rekryterare. Framtagande av platsannons samt annonsering och uppdatering av annons på relevanta annonseringskanaler. Search i följande databaser: monster.se och linkedin.com samt egna nätverk. All administration av kandidater, inbokning på intervjuer hos Uppdragsgivare, samt övrig administration tillhörande Uppdraget. Sammanfattande kandidatpresentationer. Kvalificerade referenser samt sammanställningar av dessa i text för kandidater som går vidare till slutintervju hos Uppdragsgivaren.</p></section><section class=\"paragraph\"><h2>5. Pris</h2><p>Arvodet för detta uppdrag är en faktor om <strong>{{fee.multiplier}} × månadslön</strong>. Leverantören tar endast betalt när Uppdragsgivaren väljer att anställa en av Leverantören rekommenderad och av Uppdragsgivaren godkänd kandidat.</p></section><section class=\"paragraph\"><h2>6. Fakturering och betalningsvillkor</h2><p>Fakturering sker efter avslutad rekrytering och när kandidaten skrivit anställningsavtal. Betalningsvillkor är <strong>{{contract.payment_terms_days}} dagar netto</strong>. Vid betalning efter förfallodagen utgår ränta enligt räntelagen (1975:635).</p></section><section class=\"paragraph\"><h2>7. Exklusivitet</h2><p>Uppdragsgivaren förbinder sig att under <strong>{{warranty.exclusivity_days}} dagar</strong> från och med att detta avtal har godkänts att endast använda Leverantören för rekryterings- och bemanningstjänster av ovan nämnd profil.</p></section><section class=\"paragraph\"><h2>8. Garanti</h2><p>Om det inom <strong>{{warranty.months}} månader</strong> efter det att kandidaten tillträtt sin tjänst framförs att kandidaten ej är lämplig för tjänsten, och att dessa sidor/egenskaper/kunskaper ej framgick vid anställningstillfället, erbjuder Leverantören ny rekryteringsprocess utan extra kostnad.</p></section><section class=\"paragraph\"><h2>9. Rätt till kandidater</h2><p>Samtliga kandidater som presenteras av Leverantören till Uppdragsgivaren och som i senare skede anställs av Uppdragsgivaren, till denna tjänst eller någon annan tjänst hos Uppdragsgivaren under de närmaste <strong>{{fee.protection_months}} månaderna</strong>, är Uppdragsgivaren skyldig att betala ett arvode om <strong>{{fee.protection_fee_sek}} kr</strong> (exkl. moms) till Leverantören.</p></section><section class=\"paragraph\"><h2>10. Sekretess</h2><p>Vardera parten förbinder sig att inte utan den andra partens skriftliga medgivande till tredje man utlämna information om den andra partens verksamhet som kan vara att betrakta som affärs- eller yrkeshemlighet.</p></section><section class=\"paragraph\"><h2>11. Tvist</h2><p>Tvister som ej kan avgöras vid förhandlingar parterna emellan skall avgöras av allmän domstol med tillämpning av svensk rätt, varvid Stockholms tingsrätt ska vara första instans.</p></section><section class=\"paragraph\"><h2>12. Allmänna bestämmelser</h2><p>I övrigt gäller Bemanningsföretagens allmänna bestämmelser för personaluthyrning (<strong>ABRE-10</strong>) bifogade till detta avtal.</p></section><section class=\"paragraph\"><h2>Signaturer</h2><p>Signaturer registreras elektroniskt via Mira. Se bifogat Signeringsbevis.</p></section><footer class=\"sign\"><p>Carotte Staff AB · Tegeluddsvägen 92 · 115 28 Stockholm · info@carotte.se</p></footer></body></html>"
+}

@@ -1,0 +1,305 @@
+{
+  "name": "HK Månadsavgift (EN)",
+  "subtitle": "Fixed monthly fee cleaning contract with Cleaning Index",
+  "description": "Standard template for larger clients (EA, DICE, Spotify-tier) who want a predictable monthly fee for housekeeping. Based on the signed Carotte HK × EA DICE contract (September 2025). Includes annual Cleaning Index adjustment via Statistics Sweden (SCB), key management, KPI/SLA appendix references, and structured appendix list. Contract type: Subscription — auto-Contract triggers at signing.",
+  "category": "Housekeeping",
+  "contract_type": "Subscription",
+  "language": "en",
+  "default_attachments": [],
+  "default_spec_json": {
+    "spec": {
+      "client": {
+        "name": null,
+        "org_nr": null,
+        "street_address": null,
+        "zip_city": null,
+        "short_name": null
+      },
+      "property": {
+        "address": null,
+        "sqm": null
+      },
+      "contract": {
+        "start_date": null,
+        "end_date": null,
+        "binding_months": null,
+        "notice_months": null,
+        "payment_terms_days": null,
+        "convenience_notice_days": null,
+        "cure_period_days": null
+      },
+      "pricing": {
+        "monthly_fee_sek": null,
+        "extra_hour_sek": null,
+        "ob_evening": null,
+        "ob_night": null,
+        "ob_sunday_holiday": null,
+        "ob_major_holiday": null,
+        "glass_full_sek": null,
+        "window_inside_sek": null,
+        "timber_floor_per_sqm": null
+      },
+      "invoicing": {
+        "client_email": null,
+        "client_address": null,
+        "submit_days": null
+      },
+      "insurance": {
+        "liability_cap_sek": null
+      },
+      "keys": {
+        "required_sets": null
+      },
+      "contact": {
+        "client_contract_manager": null,
+        "client_contract_email": null,
+        "supplier_contract_manager": null,
+        "supplier_contract_email": null
+      }
+    },
+    "contract_specs": [
+      {
+        "service_slug": "housekeeping",
+        "contract_type": "Subscription",
+        "category": "Housekeeping",
+        "offer_id": null,
+        "office_id": null,
+        "monthly_cost": null,
+        "qty": 1,
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "price_regulation_type": "index_cleaning",
+        "volume_json": null,
+        "rate_card_json": null
+      }
+    ],
+    "form_schema": {
+      "sections": [
+        {
+          "title": "Property",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.property.address",
+              "type": "text",
+              "label": "Property address",
+              "required": true,
+              "placeholder": "Södermalmsallén 36, 118 28 Stockholm",
+              "help": "The address where cleaning services are performed. Add secondary addresses in an appendix."
+            },
+            {
+              "path": "spec.property.sqm",
+              "type": "number",
+              "label": "Area (sq m)",
+              "required": true,
+              "placeholder": "12600",
+              "help": "Total cleaned area in square meters. Used in Section 4 of the contract."
+            },
+            {
+              "path": "spec.client.short_name",
+              "type": "text",
+              "label": "Client short name",
+              "placeholder": "EA",
+              "help": "Short version of the client name used in Section 10 (Cleaning Index clause). E.g. 'EA' for Electronic Arts Sverige AB."
+            }
+          ]
+        },
+        {
+          "title": "Contract dates",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contract.start_date",
+              "type": "date",
+              "label": "Start date",
+              "required": true,
+              "help": "When Carotte begins delivering services."
+            },
+            {
+              "path": "spec.contract.end_date",
+              "type": "date",
+              "label": "End date",
+              "required": true,
+              "help": "Contract expiration date (typically start + binding period)."
+            },
+            {
+              "path": "spec.contract.binding_months",
+              "type": "number",
+              "label": "Binding period (months)",
+              "required": true,
+              "placeholder": "36",
+              "help": "Initial fixed period. Common for larger clients: 36 months."
+            },
+            {
+              "path": "spec.contract.notice_months",
+              "type": "number",
+              "label": "Notice period (months)",
+              "required": true,
+              "placeholder": "3",
+              "help": "Mutual notice after binding period."
+            }
+          ]
+        },
+        {
+          "title": "Termination & payment",
+          "layout": "grid-3",
+          "fields": [
+            {
+              "path": "spec.contract.convenience_notice_days",
+              "type": "number",
+              "label": "Convenience notice (days)",
+              "placeholder": "90",
+              "help": "Days notice required for termination for convenience."
+            },
+            {
+              "path": "spec.contract.cure_period_days",
+              "type": "number",
+              "label": "Cure period (days)",
+              "placeholder": "14",
+              "help": "Days a party has to remedy a material breach before termination."
+            },
+            {
+              "path": "spec.contract.payment_terms_days",
+              "type": "number",
+              "label": "Payment terms (days)",
+              "required": true,
+              "placeholder": "45",
+              "help": "Net days from invoice date."
+            }
+          ]
+        },
+        {
+          "title": "Monthly fee & additional hours",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.pricing.monthly_fee_sek",
+              "type": "number",
+              "label": "Monthly fee (SEK, excl. VAT)",
+              "required": true,
+              "placeholder": "188282",
+              "help": "Fixed monthly fee for the agreed scope. EA-tier: 100k–200k."
+            },
+            {
+              "path": "spec.pricing.extra_hour_sek",
+              "type": "number",
+              "label": "Extra hour rate (SEK)",
+              "placeholder": "360",
+              "help": "Hourly rate for additional cleaning beyond agreed scope."
+            }
+          ]
+        },
+        {
+          "title": "OB supplements (SEK/hour)",
+          "layout": "grid-2",
+          "help": "Time-based supplements for work outside regular hours (Mon–Fri 07.00–19.00).",
+          "fields": [
+            {
+              "path": "spec.pricing.ob_evening",
+              "type": "number",
+              "label": "Evening (weekdays)",
+              "placeholder": "45"
+            },
+            {
+              "path": "spec.pricing.ob_night",
+              "type": "number",
+              "label": "Night",
+              "placeholder": "60"
+            },
+            {
+              "path": "spec.pricing.ob_sunday_holiday",
+              "type": "number",
+              "label": "Sunday & public holidays",
+              "placeholder": "85"
+            },
+            {
+              "path": "spec.pricing.ob_major_holiday",
+              "type": "number",
+              "label": "Major holidays",
+              "placeholder": "180"
+            }
+          ]
+        },
+        {
+          "title": "Insurance & keys",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.insurance.liability_cap_sek",
+              "type": "number",
+              "label": "Liability insurance cap (SEK)",
+              "placeholder": "10000000",
+              "help": "Maximum coverage per occurrence. Standard: 10 000 000 SEK."
+            },
+            {
+              "path": "spec.keys.required_sets",
+              "type": "number",
+              "label": "Sets of keys required",
+              "placeholder": "11",
+              "help": "Number of key sets Carotte needs to deliver the assignment."
+            }
+          ]
+        },
+        {
+          "title": "Invoicing",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.invoicing.client_email",
+              "type": "text",
+              "label": "Invoice email",
+              "placeholder": "invoices@client.com"
+            },
+            {
+              "path": "spec.invoicing.submit_days",
+              "type": "number",
+              "label": "Submit within (business days)",
+              "placeholder": "5",
+              "help": "Business days after month-end for Carotte to submit invoice."
+            },
+            {
+              "path": "spec.invoicing.client_address",
+              "type": "text",
+              "label": "Postal invoice address (if applicable)",
+              "placeholder": "Full postal address"
+            }
+          ]
+        },
+        {
+          "title": "Contract manager contacts",
+          "layout": "grid-2",
+          "help": "Named contact persons at each party. Shown in the parties block of the contract.",
+          "fields": [
+            {
+              "path": "spec.contact.client_contract_manager",
+              "type": "text",
+              "label": "Client — contract manager",
+              "placeholder": "Full name"
+            },
+            {
+              "path": "spec.contact.client_contract_email",
+              "type": "text",
+              "label": "Client — email",
+              "placeholder": "name@client.com"
+            },
+            {
+              "path": "spec.contact.supplier_contract_manager",
+              "type": "text",
+              "label": "Carotte — contract manager",
+              "placeholder": "Full name"
+            },
+            {
+              "path": "spec.contact.supplier_contract_email",
+              "type": "text",
+              "label": "Carotte — email",
+              "placeholder": "name@carotte.se"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "template_html": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Housekeeping Service Contract</title><style>:root{--ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--brand:#df6f39}*{box-sizing:border-box}html,body{margin:0;padding:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;font-size:10.5pt;line-height:1.5;background:#fff}header.top{border-bottom:3px solid var(--brand);padding-bottom:14px;margin-bottom:26px}.brand{font-weight:700;font-size:14pt;letter-spacing:0.5px;color:var(--brand)}.brand .sub{display:block;font-weight:400;color:var(--soft);font-size:9pt;letter-spacing:0;margin-top:2px}h1{font-size:15pt;margin:0 0 4px;letter-spacing:0.3px}.doc-meta{color:var(--soft);font-size:9pt}section.paragraph{margin:14px 0;page-break-inside:avoid}section.paragraph h2{font-size:10.5pt;text-transform:uppercase;letter-spacing:0.6px;color:var(--brand);margin:0 0 6px;font-weight:700}p{margin:6px 0}.parties{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:0 0 20px;background:#fafafa}.parties .row{display:flex;gap:32px;margin:4px 0}.parties .k{color:var(--soft);width:130px;font-size:9pt;text-transform:uppercase;letter-spacing:0.5px}.parties .v{color:var(--ink);flex:1}.appendix-list{list-style:none;padding:0;margin:6px 0 0}.appendix-list li{padding:2px 0;color:var(--ink)}footer.sign{margin-top:32px;padding-top:16px;border-top:1px solid var(--line);color:var(--soft);font-size:9pt}</style></head><body><header class=\"top\"><div class=\"brand\">CAROTTE HOUSEKEEPING<span class=\"sub\">Office cleaning services · Sweden</span></div><h1>Housekeeping Service Contract</h1><div class=\"doc-meta\">Fixed monthly fee · Cleaning Index regulated</div></header><section style=\"margin-bottom:18px\"><p><strong>BACKGROUND.</strong> Carotte Housekeeping AB (\"Carotte\") is a Swedish provider of professional office housekeeping services, certified under ISO 9001, ISO 14001 and 45001. This contract sets the terms under which Carotte delivers housekeeping services to {{client.name}} at the premises specified below.</p></section><section class=\"parties\"><div class=\"row\"><div class=\"k\">Supplier</div><div class=\"v\">Carotte Housekeeping AB (556858-0392)<br>Tegeluddsvägen 92, 115 28 Stockholm</div></div><div class=\"row\"><div class=\"k\">Client</div><div class=\"v\">{{client.name}} ({{client.org_nr}})<br>{{client.street_address}}, {{client.zip_city}}</div></div><div class=\"row\"><div class=\"k\">Contract Manager (Client)</div><div class=\"v\">{{contact.client_contract_manager}} · {{contact.client_contract_email}}</div></div><div class=\"row\"><div class=\"k\">Contract Manager (Carotte)</div><div class=\"v\">{{contact.supplier_contract_manager}} · {{contact.supplier_contract_email}}</div></div></section><section class=\"paragraph\"><h2>1. Contract documents including attachments</h2><p>This Contract applies together with the following appendices:</p><ul class=\"appendix-list\"><li>Appendix 1 — Proposal</li><li>Appendix 2 — Floor Plan</li><li>Appendix 3 — Cleaning Instructions</li><li>Appendix 4 — Price List</li><li>Appendix 5 — KPI and SLA</li><li>Appendix 6 — Onboarding</li><li>Appendix 7 — Price List, Consumables</li></ul></section><section class=\"paragraph\"><h2>2. Scope of the contract</h2><p>Carotte will provide office housekeeping services at the Client's premises as specified in Appendix 3 (Cleaning Instructions). Services are performed on weekdays and Sundays, excluding public holidays, according to the mutually established cleaning routine.</p></section><section class=\"paragraph\"><h2>3. Execution of the assignment</h2><p>Cleaning is performed according to the mutually established cleaning routine (see Appendix 3). Carotte's personnel work under Carotte's control and management. The Client shall inform Carotte in writing of any Client rules or regulations that affect Carotte's execution of the agreed services.</p></section><section class=\"paragraph\"><h2>4. Premises</h2><p>The services are performed at <strong>{{property.address}}</strong>, comprising approximately <strong>{{property.sqm}} sq m</strong> of cleaned area.</p></section><section class=\"paragraph\"><h2>5. Contract period</h2><p>This Contract enters into force on <strong>{{contract.start_date}}</strong> and remains in effect until <strong>{{contract.end_date}}</strong>. The initial fixed period is <strong>{{contract.binding_months}} months</strong> with a mutual notice period of <strong>{{contract.notice_months}} months</strong> thereafter.</p></section><section class=\"paragraph\"><h2>6. Early termination of the contract</h2><p>Either party may terminate this Contract for material breach with <strong>{{contract.cure_period_days}} days</strong> written notice, provided the breach has not been cured within said period. Termination for convenience requires <strong>{{contract.convenience_notice_days}} days</strong> written notice.</p></section><section class=\"paragraph\"><h2>7. Notifications</h2><p>All notices under this Contract shall be sent in writing (email suffices) to the Contract Manager designated by each party in the parties block above.</p></section><section class=\"paragraph\"><h2>8. Prices (excl. VAT)</h2><p>The fixed monthly fee for the agreed housekeeping services is <strong>{{pricing.monthly_fee_sek}} SEK per month</strong> (excl. VAT). This covers all cleaning and consumable materials required to deliver the scope in Appendix 3.</p><p>Additional services beyond the agreed scope are invoiced separately. See Appendix 4 for the full price list.</p></section><section class=\"paragraph\"><h2>9. Hourly rate for additional cleaning services</h2><p>Additional cleaning hours beyond the agreed scope are invoiced at <strong>{{pricing.extra_hour_sek}} SEK per hour</strong> (excl. VAT). OB supplements apply for hours outside regular working hours (Mon–Fri 07.00–19.00) as follows: evening surcharge <strong>{{pricing.ob_evening}} SEK/h</strong>, night surcharge <strong>{{pricing.ob_night}} SEK/h</strong>, Sunday and public holiday surcharge <strong>{{pricing.ob_sunday_holiday}} SEK/h</strong>, and major holiday surcharge <strong>{{pricing.ob_major_holiday}} SEK/h</strong>.</p></section><section class=\"paragraph\"><h2>10. Price adjustments (Cleaning Index)</h2><p>Prices are reviewed annually in a meeting with {{client.short_name}} as Carotte adheres to the Cleaning Index. The Cleaning Index tracks price changes for various costs in the cleaning industry. It was developed by Statistics Sweden (SCB) at the request of Almega Service Contractors. The base month is May, with new values calculated annually (June 1). Carotte reserves the right to adjust prices for cleaning services according to the Cleaning Index. The Client will be informed of such adjustments in writing at least one (1) month in advance.</p></section><section class=\"paragraph\"><h2>11. Complaints</h2><p>The Client shall notify Carotte in writing of any complaints regarding the cleaning services no later than 48 hours after the Client noticed or should have noticed the defect. Later complaints will not be considered.</p></section><section class=\"paragraph\"><h2>12. Damages</h2><p>Damage caused by negligence of Carotte's personnel shall be remedied primarily through repair, secondarily through compensation corresponding to the damage. The Client shall notify Carotte in writing within 24 hours of noticing damage.</p></section><section class=\"paragraph\"><h2>13. Liability insurance</h2><p>Carotte maintains liability insurance covering personal injury and property damage caused by Carotte's personnel, up to <strong>{{insurance.liability_cap_sek}} SEK</strong> per occurrence.</p></section><section class=\"paragraph\"><h2>14. Illness / absence of cleaners</h2><p>In case of illness of the regular cleaner, Carotte will replace with a substitute within 48 hours on ordinary weekdays, excluding weekends and public holidays, unless otherwise agreed.</p></section><section class=\"paragraph\"><h2>15. Changes to existing schedule</h2><p>Changes to the agreed cleaning schedule must be notified to Carotte at least 48 hours in advance. Late rescheduling may be invoiced according to the terms in Appendix 4.</p></section><section class=\"paragraph\"><h2>16. Changes to premises / assignment</h2><p>Any changes to the premises (renovation, expansion, reduction) or to the assigned scope must be notified to Carotte at least two (2) months before the change takes effect. Such changes may result in adjusted pricing or cleaning routines.</p></section><section class=\"paragraph\"><h2>17. Force majeure</h2><p>Neither party is liable for failure to perform obligations under this Contract if such failure is due to circumstances beyond that party's reasonable control, including but not limited to war, terrorism, sabotage, government intervention, restrictions, labor disputes, weather conditions and fire.</p></section><section class=\"paragraph\"><h2>18. Keys / security alarms / door codes</h2><p>Carotte requires <strong>{{keys.required_sets}} sets of keys</strong> to perform the assignment. The Client is responsible for providing access and notifying Carotte of any changes to codes, alarms, or access credentials.</p></section><section class=\"paragraph\"><h2>19. Invoicing and payment terms</h2><p>Carotte invoices the Client monthly. Invoices shall be submitted no later than <strong>{{invoicing.submit_days}} business days</strong> after the end of the invoiced month. Payment terms are <strong>{{contract.payment_terms_days}} days net</strong>. Invoices are sent by e-mail to <strong>{{invoicing.client_email}}</strong> or, if physical delivery is required, to <strong>{{invoicing.client_address}}</strong>. Late payment interest applies according to the Swedish Interest Act (1975:635).</p></section><section class=\"paragraph\"><h2>20. Personal data &amp; GDPR</h2><p>The parties are responsible for complying with the applicable data protection legislation. Each party independently determines the purposes and means for its processing of personal data related to this Contract.</p></section><section class=\"paragraph\"><h2>21. Transfer of rights &amp; obligations</h2><p>Neither party may transfer rights or obligations under this Contract to a third party without the written consent of the other party. Transfer within the same corporate group is permitted with written notification.</p></section><section class=\"paragraph\"><h2>22. Confidentiality</h2><p>Each party undertakes not to disclose to any third party, without the other party's written consent, any information about the other party's business that may be regarded as a trade or business secret, nor to use such information for any purpose other than the fulfillment of its obligations under this Contract.</p></section><section class=\"paragraph\"><h2>23. Applicable law and disputes</h2><p>This Contract shall be interpreted and applied in accordance with Swedish law. Disputes arising in connection with this Contract shall be finally settled in a general court with Stockholm District Court as the first instance.</p></section><section class=\"paragraph\"><h2>24. Amendments and additions</h2><p>Amendments and additions to this Contract must be made in writing and signed by authorized representatives of both parties to be valid.</p></section><section class=\"paragraph\"><h2>Signatures</h2><p>Signatures will be captured electronically. See attached Signing Certificate.</p></section><footer class=\"sign\"><p>Carotte Housekeeping AB · Tegeluddsvägen 92 · 115 28 Stockholm · info@carotte.se</p></footer></body></html>"
+}

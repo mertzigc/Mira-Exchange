@@ -1,0 +1,219 @@
+{
+  "name": "Food & Event ramavtal (SV)",
+  "subtitle": "Ramavtal för återkommande catering och event-tjänster",
+  "description": "Standardramavtal med Carotte Cateringens allmänna leveransvillkor. Baserat på ALLMÄNNA VILLKOR CATERING från Carotte Catering AB (559172-3258). Ramavtalet sätter juridiska principer, avbokningstrappa, betalningsvillkor och OB-tider. Varje uppdrag bokas separat vid behov enligt prislista.",
+  "category": "Food & Event",
+  "contract_type": "RateCard",
+  "language": "sv",
+  "default_attachments": [],
+  "default_spec_json": {
+    "spec": {
+      "client": {
+        "name": null,
+        "org_nr": null,
+        "address": null
+      },
+      "contract": {
+        "startdatum": null,
+        "payment_terms_days": null,
+        "prepayment_threshold_sek": null
+      },
+      "pricing": {
+        "ob_evening_rate": null,
+        "ob_evening_window": null,
+        "ob_night_rate": null,
+        "ob_night_window": null,
+        "min_shift_hours": null,
+        "late_loading_fee_per_15min": null,
+        "special_diet_fee_per_person": null
+      },
+      "cancellation": {
+        "small_order_threshold_sek": null,
+        "small_order_notice_days": null,
+        "medium_order_threshold_sek": null,
+        "medium_order_notice_days": null,
+        "large_order_full_charge_days": null
+      },
+      "contact": {
+        "client_name": null,
+        "client_email": null,
+        "supplier_name": null,
+        "supplier_email": null
+      }
+    },
+    "contract_specs": [
+      {
+        "service_slug": "food_event",
+        "contract_type": "RateCard",
+        "category": "Food & Event",
+        "offer_id": null,
+        "office_id": null,
+        "monthly_cost": 0,
+        "qty": 1,
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "price_regulation_type": null,
+        "volume_json": null,
+        "rate_card_json": null
+      }
+    ],
+    "form_schema": {
+      "sections": [
+        {
+          "title": "Betalningsvillkor",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contract.startdatum",
+              "type": "date",
+              "label": "Avtalet gäller från",
+              "required": true
+            },
+            {
+              "path": "spec.contract.payment_terms_days",
+              "type": "number",
+              "label": "Betalning (dagar från fakturadatum)",
+              "required": true,
+              "placeholder": "10",
+              "help": "Standard för catering: 10 dagar netto."
+            },
+            {
+              "path": "spec.contract.prepayment_threshold_sek",
+              "type": "number",
+              "label": "Förskott krävs över (kr exkl. moms)",
+              "placeholder": "30000",
+              "help": "Vid arrangemang över detta belopp kräver Carotte 50 % förskottsbetalning. Standard: 30 000 kr."
+            }
+          ]
+        },
+        {
+          "title": "OB-ersättning (personal)",
+          "layout": "grid-2",
+          "help": "Tilläggsersättning per timme utöver ordinarie timpris för uthyrd personal.",
+          "fields": [
+            {
+              "path": "spec.pricing.min_shift_hours",
+              "type": "number",
+              "label": "Minimidebitering per arbetspass (timmar)",
+              "placeholder": "4",
+              "help": "Standard: 4 timmar per medarbetare per arbetspass."
+            },
+            {
+              "path": "spec.pricing.ob_evening_rate",
+              "type": "number",
+              "label": "OB kväll — kr/tim",
+              "placeholder": "50"
+            },
+            {
+              "path": "spec.pricing.ob_evening_window",
+              "type": "text",
+              "label": "OB kväll — vilka timmar?",
+              "placeholder": "vardagar kl 20.00–24.00 samt lördagar 16.00–24.00"
+            },
+            {
+              "path": "spec.pricing.ob_night_rate",
+              "type": "number",
+              "label": "OB natt — kr/tim",
+              "placeholder": "100"
+            },
+            {
+              "path": "spec.pricing.ob_night_window",
+              "type": "text",
+              "label": "OB natt — vilka timmar?",
+              "placeholder": "alla dagar 24.00–07.00 samt söndagar och helgdagar"
+            }
+          ]
+        },
+        {
+          "title": "Extra avgifter",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.pricing.late_loading_fee_per_15min",
+              "type": "number",
+              "label": "Sen last/lossning (kr per 15 min)",
+              "placeholder": "500",
+              "help": "Debiteras utöver 15 min ingående last/lossning-tid. Standard: 500 kr."
+            },
+            {
+              "path": "spec.pricing.special_diet_fee_per_person",
+              "type": "number",
+              "label": "Specialkost — extra avgift (kr/person)",
+              "placeholder": "50",
+              "help": "För specialkost som inte listas på Livsmedelsverkets hemsida. Standard: 50 kr."
+            }
+          ]
+        },
+        {
+          "title": "Avbokningstrappa",
+          "help": "Tre nivåer baserat på ordervärde. Avbokning utanför fönstret debiteras 100 %.",
+          "fields": [
+            {
+              "path": "spec.cancellation.small_order_threshold_sek",
+              "type": "number",
+              "label": "Liten order — under (kr exkl. moms)",
+              "placeholder": "5000"
+            },
+            {
+              "path": "spec.cancellation.small_order_notice_days",
+              "type": "number",
+              "label": "Liten order — avboka senast (vardagar före)",
+              "placeholder": "5"
+            },
+            {
+              "path": "spec.cancellation.medium_order_threshold_sek",
+              "type": "number",
+              "label": "Mellanstor order — under (kr exkl. moms)",
+              "placeholder": "50000"
+            },
+            {
+              "path": "spec.cancellation.medium_order_notice_days",
+              "type": "number",
+              "label": "Mellanstor order — avboka senast (vardagar före)",
+              "placeholder": "10"
+            },
+            {
+              "path": "spec.cancellation.large_order_full_charge_days",
+              "type": "number",
+              "label": "Stor order — 100% debitering vid avbokning inom (dagar)",
+              "placeholder": "10"
+            }
+          ]
+        },
+        {
+          "title": "Kontaktpersoner",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contact.client_name",
+              "type": "text",
+              "label": "Kund — kontakt",
+              "placeholder": "För- och efternamn"
+            },
+            {
+              "path": "spec.contact.client_email",
+              "type": "text",
+              "label": "Kund — mail",
+              "placeholder": "namn@kund.se"
+            },
+            {
+              "path": "spec.contact.supplier_name",
+              "type": "text",
+              "label": "Carotte — kontakt",
+              "placeholder": "För- och efternamn"
+            },
+            {
+              "path": "spec.contact.supplier_email",
+              "type": "text",
+              "label": "Carotte — mail",
+              "placeholder": "namn@carotte.se"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "template_html": "<!doctype html><html lang=\"sv\"><head><meta charset=\"utf-8\"><title>Carotte Catering — Allmänna leveransvillkor</title><style>:root{--ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--brand:#df6f39}*{box-sizing:border-box}html,body{margin:0;padding:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;font-size:10.5pt;line-height:1.5;background:#fff}header.top{border-bottom:3px solid var(--brand);padding-bottom:14px;margin-bottom:26px}.brand{font-weight:700;font-size:14pt;letter-spacing:0.5px;color:var(--brand)}.brand .sub{display:block;font-weight:400;color:var(--soft);font-size:9pt;letter-spacing:0;margin-top:2px}h1{font-size:15pt;margin:0 0 4px;letter-spacing:0.3px}.doc-meta{color:var(--soft);font-size:9pt}section.paragraph{margin:14px 0;page-break-inside:avoid}section.paragraph h2{font-size:10.5pt;text-transform:uppercase;letter-spacing:0.6px;color:var(--brand);margin:0 0 6px;font-weight:700}p{margin:6px 0}.parties{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:0 0 20px;background:#fafafa}.parties .row{display:flex;gap:32px;margin:4px 0}.parties .k{color:var(--soft);width:120px;font-size:9pt;text-transform:uppercase;letter-spacing:0.5px}.parties .v{color:var(--ink);flex:1}.preamble{font-style:italic;color:var(--muted);margin:8px 0 18px}footer.sign{margin-top:32px;padding-top:16px;border-top:1px solid var(--line);color:var(--soft);font-size:9pt}</style></head><body><header class=\"top\"><div class=\"brand\">CAROTTE CATERING<span class=\"sub\">Allmänna leveransvillkor</span></div><h1>Food &amp; Event ramavtal</h1><div class=\"doc-meta\">Ramavtal · Cateringtjänster</div></header><section class=\"parties\"><div class=\"row\"><div class=\"k\">Leverantör</div><div class=\"v\">Carotte Catering AB (559172-3258)</div></div><div class=\"row\"><div class=\"k\">Kund</div><div class=\"v\">{{client.name}} ({{client.org_nr}})</div></div><div class=\"row\"><div class=\"k\">Adress</div><div class=\"v\">{{client.address}}</div></div><div class=\"row\"><div class=\"k\">Kontakt kund</div><div class=\"v\">{{contact.client_name}} · {{contact.client_email}}</div></div><div class=\"row\"><div class=\"k\">Kontakt Carotte</div><div class=\"v\">{{contact.supplier_name}} · {{contact.supplier_email}}</div></div></section><p class=\"preamble\">Dessa allmänna leveransvillkor gäller då Carotte Catering AB (org.nr. 559172-3258) tillhandahåller cateringtjänster och utgör bilaga till av parterna träffat avtal.</p><section class=\"paragraph\"><h2>1. Allmänt</h2><p>1.1 Dessa allmänna leveransvillkor (\"Villkoren\") gäller mellan Kunden och Carotte Catering AB (org.nr. 559172-3258) (\"Carotte\") och tillämpas på köp av Carottes vid var tid erbjudna cateringtjänster (\"Tjänster\"). För det fall Kunden och Carotte i ett enskilt fall avtalat skriftligen om villkor som avviker från Villkoren, ska sådana villkor gälla utan hinder av dessa Villkor.</p></section><section class=\"paragraph\"><h2>2. Beställning och leverans</h2><p>2.1 Kunden kan lägga beställningar på Carotte.se eller genom direkt kontakt med Carottes personal. Vid mottagen order skickar Carotte en orderbekräftelse via e-post med information gällande Kundens beställning. Kunden anses ha accepterat Villkoren när Kunden lägger sin beställning alternativt när Kunden skriftligen bekräftar offert från Carotte.</p><p>2.2 Carotte erbjuder leverans genom bud eller avhämtning på Tegeluddsvägen 92, 115 28 Stockholm. Carottes normala transporttider är vardagar kl. 07.30–17.00 och lördagar kl. 07.30–16.00. I transportpriset ingår 15 min last och lossning. För tillkommande tid, som beror på omständighet hänförlig till Kunden, debiteras <strong>{{pricing.late_loading_fee_per_15min}} kronor</strong> för varje påbörjade 15 minuter.</p></section><section class=\"paragraph\"><h2>3. Pris och betalning</h2><p>3.1 Samtliga prisuppgifter på Carotte.se eller som i övrigt lämnas av Carotte är angivna i svenska kronor, exklusive vid var tid gällande momssatser (för det fall Kunden är en näringsidkare).</p><p>3.2 Ersättning för av Carotte uthyrd personal debiteras enligt särskild överenskommelse mellan Kunden och Carotte. Minimidebitering per arbetspass är <strong>{{pricing.min_shift_hours}} timmar</strong> per medarbetare som hyrs ut. OB-ersättning utfaller med <strong>{{pricing.ob_evening_rate}} kronor/timme</strong> för tid {{pricing.ob_evening_window}} samt <strong>{{pricing.ob_night_rate}} kronor/timme</strong> för tid {{pricing.ob_night_window}}.</p><p>3.3 Betalning kan ske med kort eller faktura. Faktura ska vara Carotte tillhanda <strong>{{contract.payment_terms_days}} dagar</strong> från fakturadatum. Vid arrangemang med en totalsumma överstigande <strong>{{contract.prepayment_threshold_sek}} kronor exkl. moms</strong> kräver Carotte 50 % i förskottsbetalning.</p></section><section class=\"paragraph\"><h2>4. Avbokning och ändring</h2><p>4.1 Carottes försäljning av Tjänster omfattas inte av reglerna om ångerrätt i Lag (2005:59) om distansavtal och avtal utanför affärslokaler.</p><p>4.2 Avbokning av beställning med ett ordervärde (exkl. moms) uppgående till mindre än <strong>{{cancellation.small_order_threshold_sek}} kronor</strong> ska ske senast <strong>{{cancellation.small_order_notice_days}} vardagar</strong> före avtalat leveransdatum.</p><p>4.3 Avbokning av beställning med ett ordervärde uppgående till mellan {{cancellation.small_order_threshold_sek}} kronor – <strong>{{cancellation.medium_order_threshold_sek}} kronor</strong> ska ske senast <strong>{{cancellation.medium_order_notice_days}} vardagar</strong> före avtalat leveransdatum. Vid för sen avbokning utgår debitering med 100 % av ordervärdet.</p><p>4.4 Vid avbokning av beställning med ett ordervärde uppgående till mer än {{cancellation.medium_order_threshold_sek}} kronor gäller: 9–30 dagar före avtalat leveransdatum debiteras 50 % av ordervärdet; mindre än <strong>{{cancellation.large_order_full_charge_days}} dagar</strong> före avtalat leveransdatum debiteras 100 % av ordervärdet.</p><p>4.5 Ändring av en beställning, som inte medför att ordervärdet väsentligen ändras, får ske senast 5 vardagar före avtalat leveransdatum.</p></section><section class=\"paragraph\"><h2>5. Ansvar för fel, reklamation m.m.</h2><p>5.1 Carottes försäljning och leverans av Tjänster omfattas av tillämpliga lagar och regler för köp av varor och tjänster, såsom bland annat Konsumentköplagen (1990:932), Konsumenttjänstlagen (1985:716) och Köplagen (1990:931).</p><p>5.2 För det fall Kunden är en näringsidkare omfattar eventuell rätt till ersättning inte indirekt förlust, följdskador (innefattande bland annat produktions- och inkomstbortfall) eller skada som inte skäligen kunnat förutses av Carotte.</p><p>5.3 Carotte försöker alltid tillmötesgå Kundens önskemål om specialkost. Carotte kan dock aldrig garantera att maten inte innehåller spår av nötter och andra allergiframkallande ämnen. En extra avgift om <strong>{{pricing.special_diet_fee_per_person}} kr</strong> exkl. moms per person tas ut för specialkost som inte listas på Livsmedelsverkets hemsida.</p></section><section class=\"paragraph\"><h2>6. Ansvar för Carottes egendom</h2><p>6.1 Kunden ansvarar för emballage, burar, vagnar, möbler, porslin och annan egendom tillhörande Carotte som hyrs av Kunden eller av annan anledning medföljer vid leverans av Tjänsten (\"Egendom\") under tiden Kunden har Egendomen i sin besittning. Kunden är skyldig att vårda Egendomen väl och ersätta alla skador och svinn avseende Egendomen till fulla varuvärdet.</p><p>6.2 Egendom som varit i Kundens besittning ska återlämnas till Carotte, i samma skick som vid utlämnande, enligt särskild överenskommelse eller utan dröjsmål. Porslin och glas ska vara grovrengjort från matrester respektive tömda på vätska och nedpackade i samma back som vid leverans.</p></section><section class=\"paragraph\"><h2>7. Force majeure</h2><p>7.1 Carotte är befriad från skyldigheten att fullgöra viss förpliktelse enligt avtal mellan Carotte och Kund om underlåtenheten har sin grund i omständighet utanför Carottes kontroll (\"Befriande Omständighet\") som förhindrar eller försvårar fullgörande av förpliktelsen.</p><p>7.2 Såsom Befriande Omständighet anses bland annat krig, terrorism, sabotage, myndighetsingripande, förbud, restriktioner, arbetsmarknadsstörningar, väderleksförhållanden och brand.</p></section><section class=\"paragraph\"><h2>8. Personuppgifter</h2><p>8.1 Med anledning av avtal mellan Carotte och Kunden kommer Carotte att lägga upp uppdragsgivaren i sitt kundregister. I kundregistret antecknas vanligtvis följande uppgifter om Kunden eller Kundens företrädare: namn, adress, telefonnummer och e-postadress. Carotte använder uppgifterna för att fullgöra sina förpliktelser enligt avtal med Kunden och eventuellt i marknadsföringssyfte.</p></section><section class=\"paragraph\"><h2>9. Övrigt</h2><p>9.1 Carotte har rätt att anlita underleverantörer för att fullgöra sina åtaganden enligt avtal med Kund. Carotte svarar för underleverantörens arbete såsom för eget arbete.</p></section><section class=\"paragraph\"><h2>10. Tillämplig lag och tvister</h2><p>10.1 Avtal mellan Carotte och Kunden, inkl. dessa Villkor, ska tolkas och tillämpas i enlighet med svensk rätt.</p><p>10.2 Tvist i anledning av avtal mellan Carotte och Kunden, inkl. dessa Villkor, skall slutligt avgöras i allmän domstol med Stockholms tingsrätt som första instans.</p></section><section class=\"paragraph\"><h2>Signaturer</h2><p>Signaturer registreras elektroniskt via Mira. Se bifogat Signeringsbevis.</p></section><footer class=\"sign\"><p>Carotte Catering AB · Tegeluddsvägen 92 · 115 28 Stockholm · info@carotte.se</p></footer></body></html>"
+}
