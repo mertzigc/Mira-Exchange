@@ -439,6 +439,7 @@ function requireApiKey(req, res, next) {
     "/admin/clientcompany/",       // ClientCompany-autocomplete + /all för Carotte-UI
     "/admin/contracts/",           // Contract admin-modul (Fas 2, 0g), x-admin-token-grindad
     "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
+    "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
     "/approval/request-otp/",
@@ -21541,6 +21542,28 @@ app.post("/admin/contracts/render-and-send", async (req, res) => {
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROTOTYP-ROUTES (Fas 5, 2026-07-14)
+// Serverar statiska HTML-filer från ./prototypes/ under /prototyp/*-prefix.
+// Ingen auth, ingen data — bara UI-mockups för Carotte-testare utan Bubble-
+// eller Claude-inlogg. När wizarden bäddas in i mira-abonnemang-kund.html
+// för produktion kan dessa routes plockas bort.
+// ═══════════════════════════════════════════════════════════════════════════
+async function _servePrototyp(res, filename) {
+  try {
+    const filepath = path.join(process.cwd(), "prototypes", filename);
+    const html = await fs.promises.readFile(filepath, "utf8");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.send(html);
+  } catch (e) {
+    res.status(404).send("Prototyp saknas: " + filename);
+  }
+}
+app.get("/prototyp/avtal-wizard",   (req, res) => _servePrototyp(res, "avtal-wizard.html"));
+app.get("/prototyp/avtal-oversikt", (req, res) => _servePrototyp(res, "avtal-oversikt.html"));
+app.get("/prototyp/",               (req, res) => res.redirect(302, "/prototyp/avtal-oversikt"));
 
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
