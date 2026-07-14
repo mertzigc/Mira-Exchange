@@ -21565,5 +21565,46 @@ app.get("/prototyp/avtal-wizard",   (req, res) => _servePrototyp(res, "avtal-wiz
 app.get("/prototyp/avtal-oversikt", (req, res) => _servePrototyp(res, "avtal-oversikt.html"));
 app.get("/prototyp/",               (req, res) => res.redirect(302, "/prototyp/avtal-oversikt"));
 
+// ── GET /admin/clientcompany/:id/details ──────────────────────────
+// Fas 5 Steg B: wizarden hämtar kundens org.nr + adress efter autocomplete-val
+// för att pre-fylla Steg 2. Returnerar { id, name, org_nr, address }.
+// Grindas av x-admin-token (samma som övriga wizard-endpoints).
+app.options("/admin/clientcompany/:id/details", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/clientcompany/:id/details", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  try {
+    const cc = await bubbleGet("ClientCompany", req.params.id);
+    if (!cc) return res.status(404).json({ ok: false, error: "not_found" });
+    // Orgnr-fältet varierar mellan installationer — försök detektera dynamiskt
+    let orgNo = null;
+    try {
+      const orgKey = await detectClientCompanyOrgKey();
+      if (orgKey && cc[orgKey]) orgNo = String(cc[orgKey]).trim();
+    } catch (_) { /* orgnr saknas → null */ }
+    // Adress: prova vanliga fältnamn i ordning
+    const addr = cc.Adress || cc.address || cc.Address
+              || cc.adress || cc.Besöksadress || cc.besoksadress || null;
+    return res.json({
+      ok: true,
+      details: {
+        id:      cc._id,
+        name:    cc.Name_company || cc.name || cc.Name || cc.company_name || null,
+        org_nr:  orgNo,
+        address: addr,
+      },
+    });
+  } catch (e) {
+    console.error("[/admin/clientcompany/:id/details]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });

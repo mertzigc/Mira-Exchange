@@ -2062,7 +2062,7 @@ const state = {
     return _companiesFetch;
   }
 
-  function setClient(id, name) {
+  async function setClient(id, name) {
     CLIENT.id = id; CLIENT.name = name;
     const chosen = document.getElementById('wt-clientChosen');
     const results = document.getElementById('wt-clientResults');
@@ -2079,6 +2079,22 @@ const state = {
     // Pre-fyll namn-fältet (admin kan redigera för formell version)
     const nameField = document.getElementById('wt-clientName');
     if (nameField && !nameField.value) nameField.value = name || '';
+
+    // LIVE: hämta org.nr + adress om de finns i kundregistret
+    if (!id || !IS_LIVE) return;
+    try {
+      const res = await apiGet('/admin/clientcompany/' + encodeURIComponent(id) + '/details');
+      const d = res.details || {};
+      const orgField  = document.getElementById('wt-clientOrg');
+      const addrField = document.getElementById('wt-clientAddress');
+      // Fyll bara tomma fält — bevara admin's input
+      if (orgField  && !orgField.value  && d.org_nr)  orgField.value  = d.org_nr;
+      if (addrField && !addrField.value && d.address) addrField.value = d.address;
+      if (nameField && d.name && nameField.value === name) nameField.value = d.name;
+      console.log('[wiz] kund-detaljer:', d);
+    } catch (e) {
+      console.warn('[wiz] kund-detaljer failed:', e.message);
+    }
   }
   window.wtClearClient = function(){ setClient(null, null); document.getElementById('wt-clientSearch').focus(); };
 

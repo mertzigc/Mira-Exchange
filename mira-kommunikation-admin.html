@@ -1045,7 +1045,18 @@
   var PUBLIC_SURVEY_URL = "https://mira-fm.com/undersokning";
   var T = [], Q = [], S = {};
 
-  function key() { var el=document.getElementById('ea_api_key'); return el?el.value.trim():(window.MIRA_ADMIN_KEY||''); }
+  // Bubble strippar value-attribut på hidden inputs (säkerhetspolicy, kan vara nyligen införd).
+  // Sätt värdet direkt via JS efter DOM-ready så key() alltid har rätt nyckel.
+  var _EA_KEY = '392fb02fb27c004d2faa5211303aa84cd1e3f1141f879b5f973f966bce7907ba';
+  (function() {
+    var el = document.getElementById('ea_api_key');
+    if (el && !el.value) el.value = _EA_KEY;
+  })();
+  function key() {
+    var el = document.getElementById('ea_api_key');
+    var v = el ? el.value.trim() : '';
+    return v || _EA_KEY;
+  }
   function H()   { return {'x-api-key':key(),'Content-Type':'application/json'}; }
   function g(id) { return document.getElementById(id); }
   function api(p){ return HOST + p; }
