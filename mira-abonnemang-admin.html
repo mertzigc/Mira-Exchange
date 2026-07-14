@@ -1904,8 +1904,9 @@
 </script>
 <!-- Wizard-JS + öppna/stäng-koppling (Fas 5) -->
 <script>
-
-  const state = {
+(function(){
+  // Wizard-scope: IIFE så $, $$, state osv. inte överskriver Bubbles jQuery ($.ajax)
+const state = {
     step: 1,
     tpl: null,
     mode: "client",
@@ -2121,6 +2122,16 @@
     showStep(1);
   }
 
+  // Exponera onclick-targets på window (attributen behöver globala funktioner)
+  window.goNext = goNext;
+  window.goBack = goBack;
+  window.toggleHelp = toggleHelp;
+  window.showPreview = showPreview;
+  window.addRcp = addRcp;
+  window.removeRcp = removeRcp;
+  window.submitFinal = submitFinal;
+  window.resetWizard = resetWizard;
+})();
 </script>
 <script>
 (function(){
