@@ -2,7 +2,7 @@
   "name": "Rekrytering (SV)",
   "subtitle": "Sökuppdrag med engångsarvode vid tillsättning",
   "description": "Standardmall för rekryteringsuppdrag. Baserad på Carottes standardavtal Rekrytering. Uppdragsgivaren betalar arvode först när en av Leverantören presenterad och av Uppdragsgivaren godkänd kandidat tackat ja till tjänsten. Arvode = multiplikator × månadslön. Inkluderar exklusivitet, garanti och skydd mot direktrekrytering. Bilaga: ABRE-10.",
-  "category": "Staff",
+  "category": "Service & People",
   "contract_type": "RateCard",
   "language": "sv",
   "default_attachments": [],
@@ -42,7 +42,7 @@
       {
         "service_slug": "recruitment",
         "contract_type": "RateCard",
-        "category": "Staff",
+        "category": "Service & People",
         "offer_id": null,
         "office_id": null,
         "monthly_cost": 0,

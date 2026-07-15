@@ -2,7 +2,7 @@
   "name": "Staff Bemanning (SV)",
   "subtitle": "Inhyrning av personal på timme för längre uppdrag",
   "description": "Standardmall för konsult- eller receptionsuppdrag på timme. Baserad på Carottes standardavtal Inhyrning längre uppdrag. RateCard-baserad — priset varierar per roll och timmarnas förläggning (OB-tillägg). Inkluderar villkor för övertagande och rätt till kandidater. Bilaga: ABPU-10 (Bemanningsföretagens allmänna bestämmelser).",
-  "category": "Staff",
+  "category": "Service & People",
   "contract_type": "RateCard",
   "language": "sv",
   "default_attachments": [],
@@ -45,7 +45,7 @@
       {
         "service_slug": "staff",
         "contract_type": "RateCard",
-        "category": "Staff",
+        "category": "Service & People",
         "offer_id": null,
         "office_id": null,
         "monthly_cost": 0,
