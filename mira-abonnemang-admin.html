@@ -86,12 +86,16 @@
   .aa-search::placeholder { color:var(--t3); }
 
   .aa-chip-row { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
-  /* align-self:center + inline-flex → chipet kan ALDRIG stretchas vertikalt av
-     en förälder med align-items:stretch (Bubbles flex-lager gjorde STATUS-chipsen höga) */
+  /* align-self:center → chipet kan inte stretchas vertikalt av en förälder med
+     align-items:stretch (Bubbles flex-lager gjorde STATUS-chipsen höga).
+     flex-shrink:0 → chipet kläms ALDRIG under sin textbredd, så texten
+     ("Utgår snart") radbryter aldrig; hela chipet wrappar istället.
+     OBS: INTE display:inline-flex — det gjorde texten till ett flex-item som
+     Bubble kunde krympa/bryta. Vanlig block-flex-item + padding centrerar texten. */
   .aa-chip { font-size:11px; padding:5px 13px; border-radius:20px;
     background:rgba(255,255,255,0.03); border:0.5px solid var(--line); color:var(--t2);
     cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3; white-space:nowrap; word-break:normal;
-    display:inline-flex; align-items:center; justify-content:center; align-self:center; }
+    align-self:center; flex-shrink:0; }
   .aa-chip:hover { border-color:var(--line-strong); color:var(--t1); }
   .aa-chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); font-weight:600; }
   .aa-chip.on.ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
