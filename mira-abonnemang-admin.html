@@ -94,8 +94,9 @@
      Bubble kunde krympa/bryta. Vanlig block-flex-item + padding centrerar texten. */
   .aa-chip { font-size:11px; padding:5px 13px; border-radius:20px;
     background:rgba(255,255,255,0.03); border:0.5px solid var(--line); color:var(--t2);
-    cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3; white-space:nowrap; word-break:normal;
-    align-self:center; flex-shrink:0; }
+    cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3;
+    white-space:nowrap !important; word-break:keep-all !important; overflow-wrap:normal !important;
+    align-self:center; flex:0 0 auto; width:max-content; max-width:none; }
   .aa-chip:hover { border-color:var(--line-strong); color:var(--t1); }
   .aa-chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); font-weight:600; }
   .aa-chip.on.ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
