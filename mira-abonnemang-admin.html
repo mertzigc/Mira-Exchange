@@ -56,7 +56,7 @@
   .aa-kpi-v.warn { color:var(--warn); }
 
   .aa-btn { padding:10px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
-    font-family:inherit; transition:all 0.15s; border:none; line-height:1; white-space:nowrap; }
+    font-family:inherit; transition:all 0.15s; border:none; line-height:1; white-space:nowrap; word-break:normal; }
   .aa-btn.primary { background:var(--acc); color:#1c1206; font-weight:700; }
   .aa-btn.primary:hover { background:#ff8c45; }
   .aa-btn.ghost { background:transparent; border:0.5px solid var(--line-strong); color:var(--t1); }
@@ -81,7 +81,7 @@
   .aa-chip-row { display:flex; gap:5px; flex-wrap:wrap; }
   .aa-chip { font-size:11px; padding:5px 10px; border-radius:20px;
     background:rgba(255,255,255,0.03); border:0.5px solid var(--line); color:var(--t2);
-    cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3; white-space:nowrap; }
+    cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3; white-space:nowrap; word-break:normal; }
   .aa-chip:hover { border-color:var(--line-strong); color:var(--t1); }
   .aa-chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); font-weight:600; }
   .aa-chip.on.ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
@@ -91,7 +91,7 @@
   .aa-viewbar { display:flex; gap:6px; margin:0 0 12px; }
   .aa-viewtab { font-size:12px; font-weight:600; padding:7px 14px; border-radius:8px;
     border:0.5px solid var(--line); background:var(--bg); color:var(--t2); cursor:pointer;
-    display:flex; align-items:center; gap:7px; font-family:inherit; white-space:nowrap; }
+    display:flex; align-items:center; gap:7px; font-family:inherit; white-space:nowrap; word-break:normal; }
   .aa-viewtab:hover { border-color:var(--line-strong); color:var(--t1); }
   .aa-viewtab.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); }
   .aa-viewtab-n { font-size:11px; min-width:18px; height:18px; padding:0 5px; border-radius:9px;
@@ -167,13 +167,13 @@
   /* Pill (samma som kund-blocket) */
   .aa-pill { font-size:10px; padding:3px 8px; border-radius:20px;
     text-transform:uppercase; letter-spacing:0.06em; font-weight:600; line-height:1.3;
-    display:inline-block; white-space:nowrap; }
+    display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; word-break:normal; }
   .aa-pill.t-sub { background:rgba(219,105,35,0.18); color:var(--acc); border:0.5px solid rgba(219,105,35,0.35); }
   .aa-pill.t-rate { background:rgba(99,102,241,0.18); color:#a5a8f0; border:0.5px solid rgba(99,102,241,0.35); }
   .aa-pill.t-hyb { background:rgba(168,85,247,0.18); color:#c4a4f5; border:0.5px solid rgba(168,85,247,0.35); }
 
   .aa-st { font-size:10px; padding:3px 8px; border-radius:20px;
-    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; display:inline-block; line-height:1.3; white-space:nowrap; }
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; display:inline-flex; align-items:center; justify-content:center; line-height:1.3; white-space:nowrap; word-break:normal; }
   .aa-st.s-aktiv { background:rgba(16,185,129,0.15); color:var(--ok); border:0.5px solid rgba(16,185,129,0.35); }
   .aa-st.s-utgar_snart { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
   .aa-st.s-avslutad { background:rgba(255,255,255,0.05); color:var(--t3); border:0.5px solid var(--line); }
