@@ -88,7 +88,7 @@
   .aa-chip-row { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
   /* align-self:center + inline-flex → chipet kan ALDRIG stretchas vertikalt av
      en förälder med align-items:stretch (Bubbles flex-lager gjorde STATUS-chipsen höga) */
-  .aa-chip { font-size:11px; padding:5px 10px; border-radius:20px;
+  .aa-chip { font-size:11px; padding:5px 13px; border-radius:20px;
     background:rgba(255,255,255,0.03); border:0.5px solid var(--line); color:var(--t2);
     cursor:pointer; transition:all 0.15s; user-select:none; line-height:1.3; white-space:nowrap; word-break:normal;
     display:inline-flex; align-items:center; justify-content:center; align-self:center; }
@@ -778,14 +778,14 @@
         <input type="text" class="aa-search" data-aa="search" placeholder="Sök kund eller tjänst...">
       </div>
 
-      <div class="aa-fgroup aa-fgroup-right">
+      <div class="aa-fgroup">
         <span class="aa-fl">Slutdatum</span>
         <input type="date" class="aa-date" data-aa="fil-from">
         <span class="aa-date-sep">→</span>
         <input type="date" class="aa-date" data-aa="fil-to">
       </div>
 
-      <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
+      <span class="aa-filters-clear aa-fgroup-right" data-aa="fil-clear">Rensa filter</span>
     </div>
 
     <!-- Rad 2: Status + Typ -->
