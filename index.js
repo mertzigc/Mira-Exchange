@@ -16527,6 +16527,12 @@ async function _createContractsFromApprovalRequest(parent) {
     const rateCardJson = spec.rate_card_json
       ? (typeof spec.rate_card_json === "string" ? spec.rate_card_json : JSON.stringify(spec.rate_card_json))
       : null;
+    // Fas 5b: interngransknings-trail som injicerades i spec:en av
+    // /admin/approval/:id/send-to-customer. Denormaliseras hit så avtalets
+    // expand-detalj kan visa "granskad av X" utan att följa OAR-kedjan.
+    const internalReviewJson = spec.internal_review_json
+      ? (typeof spec.internal_review_json === "string" ? spec.internal_review_json : JSON.stringify(spec.internal_review_json))
+      : null;
 
     // Använd SERVICES.CT_*-konstanter konsekvent (case-sensitivt mot Bubble)
     const payload = {
@@ -16549,6 +16555,7 @@ async function _createContractsFromApprovalRequest(parent) {
       [SERVICES.CT_SIGNED_AT]:         nowIso,
       [SERVICES.CT_OFFER_APPROVAL]:    parent._id,
       [SERVICES.CT_COMMISSION]:        spec.commission_id || null,
+      [SERVICES.CT_INTERNAL_REVIEW]:   internalReviewJson,
     };
 
     // Droppa null-fält så Bubble behåller defaults för obetalda fält
@@ -19660,11 +19667,13 @@ const SERVICES = {
   CT_MASTER:                "master_contract",          // → Contract
   CT_STATUS_OVERRIDE:       "status_override",          // option set
   CT_PARSED_CONFIDENCE:     "parsed_confidence_json",
+  CT_INTERNAL_REVIEW:       "internal_review_json",     // Fas 5b: interngransknings-trail (denormaliserad)
 
   // OfferApprovalRequest-fält Fas 1 (utöver de befintliga som dokumenterats i 0e).
   OAR_TYPE:                 "OfferApprovalRequest",
   OAR_CONTRACT_TEMPLATE:    "contract_template_json",
   OAR_AUTO_CREATE:          "auto_create_contract",     // yes/no, default yes
+  OAR_FORWARDED_AT:         "forwarded_at",             // Fas 5b: stämplas när review-OAR skickats vidare till kund
 
   // ContractTemplate-fält Fas 5 (2026-07-11). Verifierat mot Bubble-editor.
   // UI-filter för "aktiva mallar i Välj mall-dialogen" = is_active=yes AND
@@ -21539,6 +21548,185 @@ app.post("/admin/contracts/render-and-send", async (req, res) => {
     });
   } catch (e) {
     console.error("[/admin/contracts/render-and-send] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FAS 5b — Spår 1: interngranskning → skicka vidare till kund
+// ═══════════════════════════════════════════════════════════════════════════
+// En OAR "väntar på utskick" = skapades via wizardens "Dela internt först"
+// (auto_create_contract="no", reviewers_count>0), granskarna har godkänt
+// (status="Approved") men ingen kund-signering har startats (forwarded_at tom).
+//
+// GET  /admin/approval/pending-customer-send   — listar dessa OAR:er
+// POST /admin/approval/:id/send-to-customer     — klonar till en kund-signer-OAR
+//                                                 (återanvänder samma PDF, renderar
+//                                                 INTE om), stämplar forwarded_at.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _oarNormUrl = (u) => (u ? String(u).replace(/^\/\//, "https://") : null);
+
+// Bygger interngransknings-sammanfattningen från OAR:ens Reviewer-barn.
+// Returnerar { source_request, reviewed_by:[{email, reviewed_at}], reviewed_count }.
+async function _buildInternalReviewSummary(requestId) {
+  const children = await bubbleFindAll("OfferApproval", {
+    constraints: [{ key: "request", constraint_type: "equals", value: requestId }],
+  }).catch(() => []);
+  const reviewers = (children || [])
+    .filter((c) => String(c.role || "Signer") === "Reviewer")
+    .map((c) => ({ email: c.recipient_email || null, reviewed_at: c.reviewed_at || null }));
+  return { source_request: requestId, reviewed_count: reviewers.length, reviewed_by: reviewers };
+}
+
+app.options("/admin/approval/pending-customer-send", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.get("/admin/approval/pending-customer-send", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const rows = await bubbleFindAll(SERVICES.OAR_TYPE, {
+      constraints: [
+        { key: SERVICES.OAR_AUTO_CREATE,  constraint_type: "equals",   value: "no" },
+        { key: "status",                  constraint_type: "equals",   value: "Approved" },
+        { key: SERVICES.OAR_FORWARDED_AT, constraint_type: "is_empty" },
+      ],
+      sort_field: "Modified Date",
+      descending: true,
+    }).catch(() => []);
+
+    // Belt-and-suspenders: kräv faktiska granskare (skydd mot udda auto=no-rader).
+    const pending = (rows || []).filter((r) => Number(r.reviewers_count || 0) > 0);
+
+    const items = [];
+    for (const r of pending) {
+      // Företagsnamn (valfritt — clientcompany kan saknas)
+      let companyName = null;
+      if (r.clientcompany) {
+        const cc = await bubbleGet("ClientCompany", r.clientcompany).catch(() => null);
+        companyName = cc ? (cc.Name_company || null) : null;
+      }
+      // Förhandsgransknings-länk = första Dokumentets file-url
+      const dokIds = Array.isArray(r.dokument) ? r.dokument : (r.dokument ? [r.dokument] : []);
+      let documentUrl = null;
+      if (dokIds.length) {
+        const dok = await bubbleGet("Dokument", dokIds[0]).catch(() => null);
+        documentUrl = dok ? _oarNormUrl(dok.file) : null;
+      }
+      const review = await _buildInternalReviewSummary(r._id);
+
+      items.push({
+        request_id:         r._id,
+        rubrik:             r.rubrik || "Avtal",
+        clientcompany_id:   r.clientcompany || null,
+        clientcompany_name: companyName,
+        reviewers_count:    Number(r.reviewers_count || 0),
+        reviewed:           review.reviewed_by,
+        dokument_ids:       dokIds,
+        document_url:       documentUrl,
+        created_date:       r["Created Date"] || null,
+        modified_date:      r["Modified Date"] || null,
+      });
+    }
+
+    return res.json({ ok: true, count: items.length, items });
+  } catch (e) {
+    console.error("[/admin/approval/pending-customer-send] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+app.options("/admin/approval/:id/send-to-customer", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/approval/:id/send-to-customer", async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  try {
+    const sourceId = String(req.params.id || "").trim();
+    if (!sourceId) return res.status(400).json({ ok: false, error: "request_id_required" });
+
+    const b = req.body || {};
+    const recipients = Array.isArray(b.recipients) ? b.recipients : [];
+    if (!recipients.length) return res.status(400).json({ ok: false, error: "recipients_required" });
+
+    // 1) Hämta original-OAR:en + validera att den verkligen väntar på utskick
+    const src = await bubbleGet(SERVICES.OAR_TYPE, sourceId).catch(() => null);
+    if (!src) return res.status(404).json({ ok: false, error: "request_not_found" });
+
+    const autoFlag = src[SERVICES.OAR_AUTO_CREATE];
+    const isInternalReview = autoFlag === false || String(autoFlag).toLowerCase() === "no";
+    if (!isInternalReview) {
+      return res.status(409).json({ ok: false, error: "not_an_internal_review", detail: "auto_create_contract != no" });
+    }
+    if (String(src.status || "").toLowerCase() !== "approved") {
+      return res.status(409).json({ ok: false, error: "review_not_complete", detail: `status=${src.status}` });
+    }
+    if (src[SERVICES.OAR_FORWARDED_AT]) {
+      return res.status(409).json({ ok: false, error: "already_forwarded", detail: src[SERVICES.OAR_FORWARDED_AT] });
+    }
+
+    // 2) Återanvänd samma renderade Dokument — rendera INTE om
+    const dokIds = Array.isArray(src.dokument) ? src.dokument : (src.dokument ? [src.dokument] : []);
+    if (!dokIds.length) return res.status(422).json({ ok: false, error: "source_has_no_document" });
+
+    // 3) Läs contract_template_json + injicera interngransknings-trail i varje spec
+    let pinnedSpecs = [];
+    const rawTpl = src[SERVICES.OAR_CONTRACT_TEMPLATE];
+    if (rawTpl && String(rawTpl).trim()) {
+      try {
+        const parsed = JSON.parse(rawTpl);
+        if (Array.isArray(parsed)) pinnedSpecs = parsed;
+      } catch { return res.status(422).json({ ok: false, error: "invalid_source_contract_template_json" }); }
+    }
+    const reviewSummary = await _buildInternalReviewSummary(sourceId);
+    const specsWithReview = pinnedSpecs.map((s) => ({ ...s, internal_review_json: reviewSummary }));
+
+    // 4) Tvinga alla mottagare till Signer + bygg payload
+    const signerRecipients = recipients.map((r) => ({
+      email: String(r?.email || "").trim(),
+      name:  String(r?.name  || "").trim(),
+      role:  "Signer",
+    })).filter((r) => r.email);
+    if (!signerRecipients.length) return res.status(400).json({ ok: false, error: "recipients_required" });
+
+    const payload = {
+      rubrik:                 src.rubrik || "Avtal",
+      meddelande:             b.meddelande != null ? String(b.meddelande) : (src.meddelande || ""),
+      sender_email:           src.sender_email || "",
+      sender_name:            src.sender_name  || "Carotte",
+      clientcompany:          src.clientcompany || null,
+      deal:                   src.deal || null,
+      expires_at:             b.expires_at || null,
+      recipients:             signerRecipients,
+      contract_template_json: specsWithReview.length ? JSON.stringify(specsWithReview) : null,
+      auto_create_contract:   "yes",
+    };
+
+    const result = await _createApprovalRequestInternal({
+      req,
+      dokumentIds: dokIds,
+      payload,
+    });
+
+    // 5) Stämpla original-OAR:en så den faller ur "väntar på utskick"-filtret
+    const nowIso = new Date().toISOString();
+    await bubblePatch(SERVICES.OAR_TYPE, sourceId, { [SERVICES.OAR_FORWARDED_AT]: nowIso })
+      .catch((e) => console.warn(`[send-to-customer] kunde inte stämpla forwarded_at på ${sourceId}`, e?.message));
+
+    return res.json({
+      ok:               true,
+      source_request:   sourceId,
+      forwarded_at:     nowIso,
+      new_request_id:   result.request_id,
+      signers_count:    result.signers_count,
+      approval:         result,
+    });
+  } catch (e) {
+    console.error("[/admin/approval/:id/send-to-customer] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });

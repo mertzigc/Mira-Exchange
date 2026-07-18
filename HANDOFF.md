@@ -5,7 +5,7 @@
 
 ---
 
-## 0h. Fas 1-4 LIVE + verifierat 2026-07-02, Fas 5 PLANERAD
+## 0h. Fas 1-5 LIVE + verifierat 2026-07-14, Fas 5 delvis skarp
 
 **Status per fas (kolla mot 0g för full plan):**
 
@@ -20,7 +20,8 @@
 | 3a. RateCard-builder + Hybrid-toggle i modal | ✅ LIVE | 2026-07-01 |
 | 3b. F&E-tile soft-active (senaste FortnoxOrder ≤6 mån från F&E-connection) | ✅ LIVE | 2026-07-01 |
 | 4. PDF-import + LLM-parsning (Anthropic Haiku 4.5 structured tool-use) | ✅ LIVE + verifierat | 2026-07-02 · EA HK-avtal 8/8 fält korrekt, Exeger multi-location 9/9 fält |
-| 5. Template + PDF-generering (ContractTemplate + puppeteer + `/approval/create`) | ⏳ NÄSTA SPÅR | — |
+| 5. Template + PDF-generering (ContractTemplate + puppeteer + `/approval/create`) | ✅ LIVE (admin-block) + 5 mallar seedade | 2026-07-14 · end-to-end signering testad |
+| 5b. Wizard på kundkortet, bilage-upload, wording-polish, "pågående interngranskningar"-vy | ⏳ NÄSTA SPÅR | — |
 
 ### Refaktoreringar under vägen (viktigt att komma ihåg)
 
@@ -44,28 +45,120 @@
 - Nytt `setup_cost`-fält i schemat för engångskostnader (uppstartskostnader typ 15 000 kr för utrustning)
 - Prompt uppdaterad: föreslå **Hybrid** när avtalet har både fast månadsavgift OCH pris-per-tillfälle/timme (t.ex. HK med månadsstädning 20 000/tillfälle, höjdstädning, extra städ med OB-tillägg). Tilläggstjänster i `rate_card` med `unit`-fält: `"per timme"`, `"per tillfälle"`, `"engång"`.
 
-### Fas 5 — nästa spår (ContractTemplate + PDF-generering + auto-skicka till /approval/create)
+### Fas 5 — LIVE i admin-blocket 2026-07-14 (delvis skarpt)
 
-Enligt HANDOFF §0g / ARKITEKTUR §10.8. Kort summary:
-- Ny Bubble-typ `ContractTemplate` med `template_html`, `category`, `contract_type`, `version`, `superseded_by`, `default_spec_json`
-- 3 default-mallar från befintliga avtal i `Avtal från Carotte/`:
-  - HK Subscription (från EA-avtalet — 99% färdigt som template)
-  - Reception Subscription
-  - Staff RateCard (från Scandic Bemanning)
-- Backend-endpoints: `GET/POST /admin/contract-templates`, `POST /admin/contracts/render-preview` (returnerar PDF-buffer), `POST /admin/contracts/render-and-send` (renderar + skickar in i `/approval/create`)
-- Handlebars-substitution med `{{client_name}}`, `{{monthly_cost}}`, etc.
-- Puppeteer-core + pdf-lib redan installerade (från approval-cert)
-- Frontend i kund-blocket: ny knapp "+ Avtal från mall" bredvid "+ Nytt abonnemang" och "+ Importera avtal"
+**Vad som är byggt och verifierat end-to-end:**
 
-Uppskattad tid: 5-7 kod-dagar + 1 dag Bubble-schema + 2-3 dagar Carotte-test.
+**Backend (`index.js`):**
+- `pdf_utils.js` (ny modul) — delad puppeteer-browser-singleton + `renderHtmlToPdf` + `mergePdfs` + `detectKind` + `imageToPdfBuffer` + `normalizeFileUrl` + `fetchBinary` + `sha256`. Både `offer_approval_doc.js` och `contract_render.js` importerar från denna → EN Chromium-process per Render-instans.
+- `contract_render.js` (ny modul, DI-mönster) — `renderPreview({templateId, spec, attachmentDokumentIds})` skapar temp-Dokument med `deletable_after=now+2h`. `renderAndPersist(...)` skapar permanent Dokument. Använder samma `{{a.b.c}}`-substitution som approval-cert. Bilagor mergas via `pdf-lib`.
+- `_createApprovalRequestInternal({req, files, dokumentIds, payload})` — extraherad helper från `/approval/create` (rad 16755). Accepterar `contract_template_json` + `auto_create_contract` i payload → auto-Contract-hooken (§0g Fas 1) picks up.
+- `SERVICES.CTPL_*` + `DOK_DELETABLE_AFTER` — nya konstanter (rad ~19653).
+- `contractRenderEngine` init:eras efter SERVICES-blocket (TDZ-safe).
+- **Nya endpoints:**
+  - `POST /admin/contracts/render-preview` — iframe-preview i 2h (temp-Dokument)
+  - `GET /admin/contract-templates` (?category=&contract_type=&language=&include_superseded=)
+  - `GET /admin/contract-templates/:id`
+  - `POST /admin/contract-templates` — skapar v1, is_active=yes
+  - `PATCH /admin/contract-templates/:id` — skapar NY rad med `version++`, sätter `superseded_by=new_id` på gamla (delta-patch: bara skickade fält ändras, resten kopieras)
+  - `POST /admin/contracts/render-and-send` — full pipeline: hämtar mall → render → permanent Dokument → in i `_createApprovalRequestInternal`. Pinnar `template_id + template_version` i varje `contract_spec` för audit.
+  - `GET /admin/clientcompany/:id/details` — org.nr + adress pre-fyll i kund-picker (använder `detectClientCompanyOrgKey` för dynamiskt fält-namn)
+  - `GET /prototyp/avtal-wizard` + `/prototyp/avtal-oversikt` (public, ingen auth) — serverar statisk HTML från `./prototypes/` för externa testare
+- `openPrefixes`-tillägg i `requireApiKey`-middleware: `/admin/contract-templates`, `/prototyp/`.
 
-### Aktiva filer
+**Bubble-schema (Christian byggt 2026-07-14):**
+- Ny typ `ContractTemplate` — 11 fält: `name` (text), `subtitle` (text), `description` (text), `category` (option set Category), `contract_type` (option set contract_type), `language` (option set language), `template_html` (text long), `default_spec_json` (text long), `default_attachments` (List of Dokument), `version` (number), `superseded_by` (ContractTemplate self-ref), `is_active` (yes/no).
+- Nytt Option Set `language` med värden `sv` + `en` (ISO 639-1, lowercase).
+- `Dokument` fick ett nytt fält: `deletable_after` (date) för TTL-städ av temp-preview-Dokument.
 
-- `index.js` (~20 000 rader) — SERVICES-konstanter (rad ~19306), `_createContractsFromApprovalRequest` + `_deriveContractStatus` (rad ~16340), `_enrichContract` + admin/contracts-endpoints (rad ~19960), Fas 4 CONTRACT_EXTRACT_TOOL + parse/commit (nära slutet)
-- `mira-abonnemang-kund.html` (~1350 rader) — kundkort-flik inbäddad i Företag-popupen, `data-mira` hidden inputs: `api_host`, `planning_token`, `clientcompany`, `clientcompany_nm`
-- `mira-abonnemang-admin.html` (~890 rader) — global "Alla abonnemang"-sida, `data-mira` hidden inputs: `api_host`, `planning_token`
+**Frontend (`mira-abonnemang-admin.html`, ~2200 rader):**
+- Wizard inbäddad som modal-overlay (`.aa-wiz-mask` + `.aa-wiz-modal`). `.wt-*`-prefix isolerat från `.aa-*`-namespace.
+- Ny knapp **"+ Avtal från mall"** bredvid `+ Nytt abonnemang` i header (`data-aa="wiz-btn"`).
+- Öppna/stäng via event-delegation på `document` (INTE `.aa-wrap`-scope — Bubble injicerar HTML async).
+- Wizardens JS **IIFE-wrappad** med explicit `window`-exports (`goNext`, `goBack`, `toggleHelp`, `showPreview`, `addRcp`, `removeRcp`, `submitFinal`, `resetWizard`, `wtCloseModal`, `wtClearClient`). Kritiskt: ORAN IIFE bryter Bubbles jQuery (`$.ajax`) → hela sidan låstes. Se punkt 6 i "gotchas" nedan.
+- 5-stegs wizard med intern granskning-läge (Signer/Reviewer-workflow byggd på befintlig OAR-motor).
+- **LIVE-mode** (om `[data-mira="api_host"]` + `[data-mira="planning_token"]` finns): fetch mallar från API, POST preview + skicka. **MOCK-mode** fallback (hardkodade mallar + alert) för prototypen på `/prototyp/*`.
+- **Steg 1 — mall-lista:** `GET /admin/contract-templates` → dynamisk rendering. Kategori + språk-pills.
+- **Steg 2 — kund-picker:** autocomplete på `GET /admin/planning/companies` → vid val fetchas `GET /admin/clientcompany/:id/details` → auto-fyller org.nr + adress. `CLIENT.id` sparas i state → skickas som `clientcompany`-ref i submit.
+- **Steg 3 — schema-driven formulär:** renderas från mallens `default_spec_json.form_schema`. Sektioner + fält med `path` (dot-notation) som mappas direkt till spec-strukturen. Stödjer `text`/`number`/`date`/`textarea`/`select`-typer. Layouts: `stack`/`grid-2`/`grid-3`. Sektions-nivå `help` visas som 💡-callout. Fältnivå `help` = klickbar (?)-cirkel. Validering av `required`-fält vid `goNext(3)` — röd border + auto-scroll till första fel. Fallback-schema om mall saknar `form_schema`.
+- **Steg 4 — preview:** `POST /admin/contracts/render-preview` → iframe med riktig PDF. Bilagor mockade (checkboxes utan riktig upload).
+- **Steg 5 — skicka:** `POST /admin/contracts/render-and-send`. Två val-kort: "Skicka till kunden" (auto_create_contract=yes) vs "Dela internt först" (auto_create_contract=no). Sammanfattnings-panel innan skicka.
+- **Done-vy:** grön ✓ för kund-signering, blå 👥 för intern granskning. Knappar stänger modalen (INTE alert som tidigare).
+
+**5 mallar seedade och LIVE (2026-07-14):**
+
+| Mall | Kategori | Typ | Språk | Källa | Bubble-ID |
+|---|---|---|---|---|---|
+| HK Hybrid Timpris (SV) | Housekeeping | Hybrid | sv | Carotte Housekeeping x KUNDNAMN.docx | v3+ |
+| HK Månadsavgift (EN) | Housekeeping | Subscription | en | EA/DICE HK-avtalet (Sept 2025) | v1 |
+| Staff Bemanning (SV) | Service & People | RateCard | sv | Inhyrning längre uppdrag.docx | v1 |
+| Rekrytering (SV) | Service & People | RateCard | sv | Rekrytering.docx | v1 |
+| Food & Event ramavtal (SV) | Food & Event | RateCard | sv | ALLMÄNNA VILLKOR CATERING.pdf | v1 |
+
+Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_templates/seed.sh` (idempotent — PATCH:ar existerande, POST:ar nya). Varje seed-fil har `template_html` med `{{}}`-slots + `default_spec_json.spec` + `default_spec_json.contract_specs` (för auto-Contract-hook) + `default_spec_json.form_schema` (för wizarden).
+
+**Verifierat end-to-end 2026-07-14:**
+- Wizarden i Bubble-preview: klicka mall → fyll kund + spec → generera förhandsgranskning → skicka till egen mail → signera → **Contract skapades auto med rätt värden** (för HK Månadsavgift-testet, Subscription-typ).
+- 5 mallar synliga i wizarden-listan.
+- Intern granskning-mail landar och kan klickas godkänna — men "skicka vidare till kund"-flöde är INTE byggt än (nästa spår).
+
+**Prototyp för test utan Bubble-inloggning:**
+- `/prototyp/avtal-oversikt` — översikt-dokument för alla Carotte-kollegor (även utan Claude-konto)
+- `/prototyp/avtal-wizard` — klickbar wizard (MOCK-mode, inga riktiga avtal)
+- PDF `mira-avtalsmodulen-oversikt.pdf` (5 sidor, 692 KB) i repo-root för Teams-delning
+
+**Fas 5b — kvarstår att bygga (i prio-ordning):**
+1. **"Pågående interngranskningar"-vy i admin-blocket** — filter på Avtal-fliken där granskaren har godkänt men inget skickat till kund än. Med "Skicka nu till kund"-knapp som triggar en NY OAR med Signer-recipient.
+2. **Bilage-upload i Steg 4** — idag är listan mockad. Behöver koppling till multer-baserad `POST /admin/dokument/upload` (kanske finns redan; annars bygga).
+3. **Wizarden på kundkortet** (`mira-abonnemang-kund.html`) — kopiera samma modal-mönster men skippa Steg 2 (kund-picker) eftersom kunden är känd från `data-mira="clientcompany"`.
+4. **Wording-polish** efter testfeedback från Fatih/Shahbaz/Anette och andra kollegor.
+5. **TTL-städ av temp-preview-Dokument** — lazy-cron eller vid varje `/render-preview`-anrop: `bubbleFindAll("Dokument", {deletable_after<now}) → bubbleDelete` max 20 rader.
+6. **Multi-Office signering** (§10.12 öppen fråga) — en signering kan ge N Contracts (Scandic ramavtals-mönster).
+7. **Långsiktig: flytta API-nycklar till Bubbles Site properties** istället för hardcoded HTML — undviker hidden-input-strip-buggen (se gotcha 5).
+
+**Filer som är NYA denna omgång:**
+- `pdf_utils.js` — delade PDF/HTML/binär-helpers
+- `contract_render.js` — DI-motor för Contract-mall-rendering
+- `contract_templates/hk-hybrid-timpris-sv.json`
+- `contract_templates/hk-manadsavgift-en.json`
+- `contract_templates/staff-bemanning-sv.json`
+- `contract_templates/staff-rekrytering-sv.json`
+- `contract_templates/fe-ramavtal-sv.json`
+- `contract_templates/seed.sh` — idempotent POST/PATCH-script
+- `prototypes/avtal-wizard.html` — public prototyp för externa testare
+- `prototypes/avtal-oversikt.html` — översikt-dokument
+- `mira-avtalsmodulen-oversikt.pdf` — 5-sidig PDF genererad från översikten (för Teams)
+
+**Filer MODIFIERADE denna omgång:**
+- `index.js` — nya endpoints, `_createApprovalRequestInternal`, `contractRenderEngine`, `openPrefixes`-tillägg
+- `offer_approval_doc.js` — importar från `pdf_utils.js` istället för inline (bakåt-kompatibelt)
+- `mira-abonnemang-admin.html` — wizard inbäddad + IIFE-fix + JS-fix + schema-renderer + kund-picker
+- `mira-kommunikation-admin.html` — API-nyckel via JS + hardcoded fallback (fix på Bubble hidden-input-strip-bugg)
+
+**Gotchas som biter (dokumenterade):**
+1. **CT_*-konstanter LOWERCASE + diakritik** (från Fas 1) — oförändrat.
+2. **Bubble Option Set-värden är case-sensitive** — `Category` har fyra värden: `Food & Event`, `Housekeeping`, `Service & People`, `Other facility services`. **INTE `Staff`** (vanligt fel — kastar `bubbleCreate failed` utan tydligt felmeddelande). Se `memory/reference-bubble-option-sets.md`.
+3. **HTML-block följer approval-mönstret** — oförändrat.
+4. **`_deriveContractStatus` returnerar `okand`** — oförändrat.
+5. **Bubble strippar `value`-attribut på hidden inputs UTAN `data-*`-attribut** (bekräftat 2026-07-14 — bröt hela kommunikations-modulen). Fix: sätt värdet via JS efter DOM-ready + fallback i getter-funktionen. Se `memory/reference-bubble-hidden-input-strip.md`. Ex fix i `mira-kommunikation-admin.html` rad ~1048.
+6. **Wizardens JS MÅSTE vara IIFE-wrappad** eftersom den deklarerar `$` och `$$` som lokala helpers. Om de läcker globalt överskriver de Bubbles jQuery `$` → `$.ajax` failar → hela sidan låstes när vi först deployade wizarden. Explicit `window.<fnname>` exponerar bara onclick-targets. Se `mira-abonnemang-admin.html` script-block 2.
+7. **Wizard-modalens click-handler MÅSTE vara event-delegation på `document`** — INTE `.aa-wrap.querySelector(...)`. Bubble kan injicera HTML async efter script-körning, då finns inte elementet vid tidpunkten som IIFE:n kör.
+8. **PATCH på `ContractTemplate` skapar ny rad** — inte in-place-mutation. Bakåt-referens via `superseded_by`. Filter "aktiva mallar" = `is_active=yes AND superseded_by is empty`.
+
+### Aktiva filer (uppdaterat 2026-07-14)
+
+- `index.js` (~21 500 rader) — SERVICES-konstanter (rad ~19653, inkl. CTPL_*+DOK_DELETABLE_AFTER), `_createContractsFromApprovalRequest` + `_deriveContractStatus` (rad ~16460), `_createApprovalRequestInternal` (rad ~16770), `_enrichContract` + admin/contracts-endpoints (rad ~19960+), Fas 4 CONTRACT_EXTRACT_TOOL + parse/commit (rad ~20974), Fas 5 CRUD + render-preview + render-and-send + clientcompany/:id/details + prototyp-routes (rad ~21200-slutet)
+- `pdf_utils.js` (NY, ~150 rader) — delade PDF/HTML-helpers (Fas 5)
+- `contract_render.js` (NY, ~230 rader) — DI-motor för mall-rendering (Fas 5)
+- `offer_approval_doc.js` — refaktorerad att importera från pdf_utils
+- `mira-abonnemang-kund.html` (~1350 rader) — kundkort-flik inbäddad i Företag-popupen. Wizarden **inte flyttad hit än** (Fas 5b spår 3).
+- `mira-abonnemang-admin.html` (~2200 rader efter Fas 5) — global "Alla abonnemang"-sida MED inbäddad wizard-modal
+- `mira-kommunikation-admin.html` — API-nyckel fixad via JS (Bubble hidden-input-strip-bugg)
+- `contract_templates/*.json` (NY mapp) — 5 seedade mallar + seed.sh
+- `prototypes/*.html` (NY mapp) — public prototyper på /prototyp/*
+- `mira-avtalsmodulen-oversikt.pdf` (NY, 692 KB, 5 sidor) — översikt för Teams-delning
 - `ARKITEKTUR_OCH_OMTAG.md` §10 — djupdesign för hela tjänste-grid-spåret
-- `package.json` — dependencies `@anthropic-ai/sdk@^0.88.0` + `pdf-parse@^1.1.1` för Fas 4
+- `package.json` — dependencies `@anthropic-ai/sdk@^0.88.0` + `pdf-parse@^1.1.1` + `puppeteer-core@^23` + `@sparticuz/chromium@^131` + `pdf-lib@^1.17`
 
 ### Env vars på Render (bekräftat)
 
