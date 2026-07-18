@@ -87,6 +87,34 @@
   .aa-chip.on.ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
   .aa-chip.on.warn { background:rgba(250,204,21,0.18); border-color:var(--warn); color:var(--warn); }
 
+  /* Fas 5b Spår 1 — vy-toggle + väntar-på-utskick-kort */
+  .aa-viewbar { display:flex; gap:6px; margin:0 0 12px; }
+  .aa-viewtab { font-size:12px; font-weight:600; padding:7px 14px; border-radius:8px;
+    border:0.5px solid var(--line); background:var(--bg); color:var(--t2); cursor:pointer;
+    display:flex; align-items:center; gap:7px; font-family:inherit; }
+  .aa-viewtab:hover { border-color:var(--line-strong); color:var(--t1); }
+  .aa-viewtab.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); }
+  .aa-viewtab-n { font-size:11px; min-width:18px; height:18px; padding:0 5px; border-radius:9px;
+    background:var(--warn); color:#1a1205; display:inline-flex; align-items:center; justify-content:center; font-weight:700; }
+  .aa-viewtab-n.zero { background:var(--line-strong); color:var(--t3); }
+  .aa-pend-card { display:flex; align-items:center; gap:16px; padding:2px 0; }
+  .aa-pend-main { flex:1; min-width:0; }
+  .aa-pend-rubrik { font-size:14px; font-weight:600; color:var(--t1); }
+  .aa-pend-sub { font-size:12px; color:var(--t3); margin-top:2px; }
+  .aa-pend-badge { font-size:11px; padding:4px 9px; border-radius:20px; background:rgba(250,204,21,0.18);
+    border:0.5px solid var(--warn); color:var(--warn); font-weight:600; white-space:nowrap; }
+  .aa-pend-revlist { font-size:12px; color:var(--t2); line-height:1.7; }
+  .aa-pend-revlist .ok { color:var(--ok); }
+  .aa-pend-revlist .pending { color:var(--t3); }
+  .aa-pend-send-h { font-size:12px; font-weight:600; color:var(--t1); margin:16px 0 9px; }
+  .aa-pend-rcp-row { display:flex; gap:8px; margin-bottom:8px; }
+  .aa-pend-rcp-row input { flex:1; padding:8px 10px; border-radius:7px; border:0.5px solid var(--line-strong);
+    background:var(--bg-deep); color:var(--t1); font-size:13px; font-family:inherit; }
+  .aa-pend-rcp-row input::placeholder { color:var(--t3); }
+  .aa-pend-rcp-rm { border:none; background:none; color:var(--t3); cursor:pointer; font-size:15px; padding:0 6px; }
+  .aa-pend-rcp-rm:hover { color:var(--err); }
+  .aa-pend-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+
   .aa-date { padding:6px 9px; background:rgba(255,255,255,0.03);
     border:0.5px solid var(--line-strong); border-radius:6px; color:var(--t1);
     font-size:11px; font-family:inherit; outline:none; }
@@ -772,6 +800,12 @@
     <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
   </div>
 
+  <!-- Fas 5b Spår 1: vy-toggle Avtal / Väntar på utskick -->
+  <div class="aa-viewbar" data-aa="viewbar">
+    <button class="aa-viewtab on" data-view="contracts">Avtal</button>
+    <button class="aa-viewtab" data-view="pending">⏳ Väntar på utskick <span class="aa-viewtab-n zero" data-aa="pending-count">0</span></button>
+  </div>
+
   <div class="aa-tablewrap">
     <div class="aa-tablecount">
       Visar <b data-aa="shown-count">12</b> av <b data-aa="total-count">12</b> abonnemang
@@ -1422,6 +1456,19 @@
     if(isNaN(d)) return null;
     return Math.round((d - Date.now()) / 86400000);
   }
+  // Fas 5b Spår 1: formatera interngransknings-trail (denormaliserad på Contract)
+  function internalReviewText(raw){
+    if (!raw) return null;
+    var obj;
+    try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; }
+    catch (e) { return null; }
+    var list = (obj && obj.reviewed_by) || [];
+    if (!list.length) return null;
+    return list.map(function(rv){
+      var who = rv.email || 'Granskare';
+      return rv.reviewed_at ? who + ' (' + fmtDate(rv.reviewed_at) + ')' : who;
+    }).join(', ');
+  }
 
   // State
   var STATE = {
@@ -1433,8 +1480,20 @@
     filter_search: '',
     filter_from: '',
     filter_to: '',
-    open_id: null
+    open_id: null,
+    // Fas 5b Spår 1: vy-läge + interngranskningar som väntar på kund-utskick
+    view: 'contracts',        // 'contracts' | 'pending'
+    pending: [],              // items från /admin/approval/pending-customer-send
+    pending_open_id: null     // öppen expand i pending-vyn (request_id)
   };
+
+  // Demo-fallback för pending-vyn när planning_token saknas (ren preview utan Bubble)
+  var DEMO_PENDING = [
+    { request_id:'demo-oar-1', rubrik:'Avtal — Klarna Bank AB', clientcompany_name:'Klarna Bank AB',
+      reviewers_count:2, document_url:null, created_date:'2026-07-16T09:12:00Z',
+      reviewed:[{ email:'jurist@carotte.se', reviewed_at:'2026-07-17T08:40:00Z' },
+                { email:'anette@carotte.se', reviewed_at:'2026-07-17T10:05:00Z' }] }
+  ];
 
   function applyFilters(){
     var rows = SAMPLE.slice();
@@ -1532,6 +1591,9 @@
       +         '<div><div class="aa-fld-l">Prisreglering</div><div class="aa-fld-v">'+esc(r.price_regulation_type||'—')+'</div></div>'
       +         '<div><div class="aa-fld-l">Nästa prisrev.</div><div class="aa-fld-v '+(r.price_regulation_next?'':'muted')+'">'+(r.price_regulation_next?fmtDate(r.price_regulation_next):'—')+'</div></div>'
       +         '<div><div class="aa-fld-l">Signerat</div><div class="aa-fld-v">'+fmtDate(r.signed_at)+(r.signed_pdf?' · <a href="#">'+esc(r.signed_pdf)+'</a>':'')+'</div></div>'
+      +         (internalReviewText(r.internal_review_json)
+                  ? '<div style="grid-column:span 2;"><div class="aa-fld-l">Interngranskat före utskick</div><div class="aa-fld-v">'+esc(internalReviewText(r.internal_review_json))+'</div></div>'
+                  : '')
       +       '</div>'
       +       '<div class="aa-att">'
       +         '<div class="aa-att-h">'
@@ -1568,7 +1630,247 @@
     return main + expand;
   }
 
+  // ── Fas 5b Spår 1: pending-vy (interngranskningar som väntar på kund-utskick) ──
+  function fmtDateTime(s){
+    if(!s) return '—';
+    var d = new Date(s);
+    if(isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('sv-SE',{year:'numeric',month:'short',day:'numeric'})
+         + ' ' + d.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'});
+  }
+
+  function updatePendingChip(){
+    var el = $('pending-count');
+    if (!el) return;
+    var n = STATE.pending.length;
+    el.textContent = n;
+    if (n > 0) el.classList.remove('zero'); else el.classList.add('zero');
+  }
+
+  function reviewerLine(rv){
+    var who = esc(rv.email || 'Granskare');
+    return rv.reviewed_at
+      ? '<div><span class="ok">✓</span> ' + who + ' · granskade ' + esc(fmtDateTime(rv.reviewed_at)) + '</div>'
+      : '<div><span class="pending">○</span> ' + who + ' · ej granskat</div>';
+  }
+
+  function pendingRowHtml(p){
+    var open = STATE.pending_open_id === p.request_id;
+    var reviewers = Array.isArray(p.reviewed) ? p.reviewed : [];
+    var company = p.clientcompany_name || '— ingen kund kopplad —';
+    var subBits = [];
+    subBits.push(esc(company));
+    subBits.push((p.reviewers_count || reviewers.length) + ' granskare');
+    if (p.created_date) subBits.push('skapad ' + esc(fmtDate(p.created_date)));
+
+    var main = ''
+      + '<tr class="aa-mainrow aa-pending-row ' + (open ? 'open' : '') + '" data-pid="' + esc(p.request_id) + '">'
+      +   '<td colspan="7">'
+      +     '<div class="aa-pend-card">'
+      +       '<div class="aa-pend-main">'
+      +         '<div class="aa-pend-rubrik">' + esc(p.rubrik || 'Avtal') + '</div>'
+      +         '<div class="aa-pend-sub">' + subBits.join(' · ') + '</div>'
+      +       '</div>'
+      +       '<span class="aa-pend-badge">Interngranskat</span>'
+      +     '</div>'
+      +   '</td>'
+      + '</tr>';
+
+    if (!open) return main;
+
+    var revHtml = reviewers.length
+      ? '<div class="aa-pend-revlist">' + reviewers.map(reviewerLine).join('') + '</div>'
+      : '<div class="aa-pend-revlist pending">Inga granskardetaljer.</div>';
+
+    var pdfHtml = p.document_url
+      ? '<a href="' + esc(p.document_url) + '" target="_blank" rel="noopener">Öppna granskat avtal (PDF) →</a>'
+      : '<span class="muted">Ingen PDF-länk</span>';
+
+    var expand = ''
+      + '<tr class="aa-expand-tr on">'
+      +   '<td class="aa-expand-cell" colspan="7">'
+      +     '<div class="aa-expand-inner">'
+      +       '<div class="aa-expand-grid" style="grid-template-columns:1fr 1fr;">'
+      +         '<div><div class="aa-fld-l">Interngranskning</div>' + revHtml + '</div>'
+      +         '<div><div class="aa-fld-l">Underlag</div><div class="aa-fld-v">' + pdfHtml + '</div></div>'
+      +       '</div>'
+      +       '<div class="aa-pend-send-h">Skicka nu till kund (mottagaren signerar)</div>'
+      +       '<div class="aa-pend-rcps" data-pend-rcps="' + esc(p.request_id) + '">'
+      +         pendRcpRowHtml()
+      +       '</div>'
+      +       '<button class="aa-btn ghost tiny" data-pend-add="' + esc(p.request_id) + '" style="margin-top:2px;">+ Lägg till mottagare</button>'
+      +       '<div class="aa-pend-foot">'
+      +         '<button class="aa-btn primary tiny" data-pend-send="' + esc(p.request_id) + '">Skicka till kund ✉️</button>'
+      +       '</div>'
+      +     '</div>'
+      +   '</td>'
+      + '</tr>';
+
+    return main + expand;
+  }
+
+  function pendRcpRowHtml(){
+    return ''
+      + '<div class="aa-pend-rcp-row">'
+      +   '<input type="text" placeholder="Namn (t.ex. Anna Andersson)">'
+      +   '<input type="email" placeholder="E-post">'
+      +   '<button class="aa-pend-rcp-rm" data-pend-rm title="Ta bort">✕</button>'
+      + '</div>';
+  }
+
+  function renderPending(){
+    var items = STATE.pending;
+    $('tbody').innerHTML = items.length
+      ? items.map(pendingRowHtml).join('')
+      : '<tr><td colspan="7"><div class="aa-empty"><div class="aa-empty-t">Inga interngranskningar väntar på utskick</div>Avtal som delats internt och blivit godkända dyker upp här.</div></td></tr>';
+    $('shown-count').textContent = items.length;
+    $('total-count').textContent = items.length;
+    bindPendingActions();
+  }
+
+  function bindPendingActions(){
+    // Öppna/stäng rad
+    var rows = root.querySelectorAll('.aa-pending-row');
+    for (var i = 0; i < rows.length; i++) {
+      (function(tr){
+        tr.addEventListener('click', function(){
+          var pid = tr.getAttribute('data-pid');
+          STATE.pending_open_id = STATE.pending_open_id === pid ? null : pid;
+          renderPending();
+        });
+      })(rows[i]);
+    }
+    // Lägg till mottagare
+    var addBtns = root.querySelectorAll('[data-pend-add]');
+    for (var a = 0; a < addBtns.length; a++) {
+      (function(btn){
+        btn.addEventListener('click', function(ev){
+          ev.stopPropagation();
+          var pid = btn.getAttribute('data-pend-add');
+          var box = root.querySelector('[data-pend-rcps="' + pid + '"]');
+          if (!box) return;
+          var tmp = document.createElement('div');
+          tmp.innerHTML = pendRcpRowHtml();
+          var rowEl = tmp.firstChild;
+          box.appendChild(rowEl);
+          bindPendRcpRemove(rowEl);
+        });
+      })(addBtns[a]);
+    }
+    // Ta bort mottagar-rad
+    var rmBtns = root.querySelectorAll('[data-pend-rm]');
+    for (var m = 0; m < rmBtns.length; m++) bindPendRcpRemove(rmBtns[m]);
+    // Skicka till kund
+    var sendBtns = root.querySelectorAll('[data-pend-send]');
+    for (var s = 0; s < sendBtns.length; s++) {
+      (function(btn){
+        btn.addEventListener('click', function(ev){
+          ev.stopPropagation();
+          submitPendingSend(btn);
+        });
+      })(sendBtns[s]);
+    }
+  }
+
+  function bindPendRcpRemove(el){
+    var btn = el.hasAttribute('data-pend-rm') ? el : el.querySelector('[data-pend-rm]');
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      var row = btn.closest('.aa-pend-rcp-row');
+      var box = row ? row.parentNode : null;
+      if (box && box.querySelectorAll('.aa-pend-rcp-row').length > 1) row.parentNode.removeChild(row);
+    });
+  }
+
+  function submitPendingSend(btn){
+    var pid = btn.getAttribute('data-pend-send');
+    var box = root.querySelector('[data-pend-rcps="' + pid + '"]');
+    if (!box) return;
+    var recipients = [];
+    var rcpRows = box.querySelectorAll('.aa-pend-rcp-row');
+    for (var i = 0; i < rcpRows.length; i++) {
+      var name  = rcpRows[i].querySelector('input[type="text"]').value.trim();
+      var email = rcpRows[i].querySelector('input[type="email"]').value.trim();
+      if (email) recipients.push({ email: email, name: name });
+    }
+    if (!recipients.length) { alert('Fyll i minst en mottagares e-post.'); return; }
+
+    var original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Skickar...';
+    apiSend('/admin/approval/' + encodeURIComponent(pid) + '/send-to-customer', 'POST', { recipients: recipients })
+      .then(function(result){
+        if (result && result.ok) {
+          // Ta bort raden ur pending-listan lokalt + uppdatera chip
+          STATE.pending = STATE.pending.filter(function(p){ return p.request_id !== pid; });
+          if (STATE.pending_open_id === pid) STATE.pending_open_id = null;
+          updatePendingChip();
+          renderPending();
+          alert('Skickat till kund. ' + (result.signers_count || recipients.length) + ' mottagare fick signerings-mail.');
+        } else {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      });
+  }
+
+  // Generisk auktoriserad fetch (GET/POST/PATCH) mot Render
+  function apiSend(path, method, body){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    var token   = cfg('planning_token');
+    if (!token) {
+      alert('Demo-läge: inget skickas (planning_token saknas i Bubble-bindningen).');
+      return Promise.resolve(null);
+    }
+    return fetch(apiHost + path, {
+      method: method,
+      headers: { 'x-admin-token': token, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function(r){
+      return r.json().then(function(data){ return { r: r, data: data }; });
+    }).then(function(res){
+      var data = res.data;
+      if (!data || !data.ok) {
+        alert('Fel: ' + ((data && data.error) || ('HTTP ' + res.r.status)));
+        return null;
+      }
+      return data;
+    }).catch(function(e){
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+      return null;
+    });
+  }
+
+  // Hämta interngranskningar som väntar på kund-utskick
+  function loadPending(){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    var token   = cfg('planning_token');
+    if (!token) {
+      // Demo-läge: visa exempeldata så vyn går att titta på i preview
+      STATE.pending = DEMO_PENDING.slice();
+      updatePendingChip();
+      if (STATE.view === 'pending') renderPending();
+      return Promise.resolve();
+    }
+    return fetch(apiHost + '/admin/approval/pending-customer-send', {
+      headers: { 'x-admin-token': token }
+    }).then(function(r){
+      return r.ok ? r.json() : null;
+    }).then(function(data){
+      if (!data || !data.ok) { console.warn('[aa] pending api', data && data.error); return; }
+      STATE.pending = data.items || [];
+      updatePendingChip();
+      if (STATE.view === 'pending') renderPending();
+      console.log('[aa] pending laddad: ' + STATE.pending.length + ' väntar på utskick');
+    }).catch(function(e){
+      console.warn('[aa] pending-fetch fail', e && e.message);
+    });
+  }
+
   function renderTable(){
+    if (STATE.view === 'pending') { renderPending(); return; }
     var rows = applyFilters();
     $('tbody').innerHTML = rows.map(rowHtml).join('') || '<tr><td colspan="7"><div class="aa-empty"><div class="aa-empty-t">Inga abonnemang matchar filtren</div>Justera filter eller skapa nytt.</div></td></tr>';
     $('shown-count').textContent = rows.length;
@@ -1728,7 +2030,8 @@
           signed_at:               c.signed_at,
           signed_pdf:              c.signed_pdf,
           attachments_count:       Number(c.attachments_count || 0),
-          offer_approval_id:       c.offer_approval_id
+          offer_approval_id:       c.offer_approval_id,
+          internal_review_json:    c.internal_review_json || null
         });
       });
 
@@ -1815,8 +2118,37 @@
     }
   }
 
+  // ── Vy-toggle: Avtal ↔ Väntar på utskick ────────────────────────────────
+  function applyViewChrome(){
+    var filters = root.querySelector('.aa-filters');
+    var thead   = root.querySelector('.aa-table thead');
+    var hint    = root.querySelector('.aa-tablecount span');
+    var isPending = STATE.view === 'pending';
+    if (filters) filters.style.display = isPending ? 'none' : '';
+    if (thead)   thead.style.display   = isPending ? 'none' : '';
+    if (hint)    hint.textContent = isPending ? 'Klicka rad → skicka till kund' : 'Klicka rad för detaljer';
+  }
+  var viewbar = $('viewbar');
+  if (viewbar) {
+    var tabs = viewbar.querySelectorAll('.aa-viewtab');
+    for (var v = 0; v < tabs.length; v++) {
+      (function(tab){
+        tab.addEventListener('click', function(){
+          var view = tab.getAttribute('data-view');
+          if (view === STATE.view) return;
+          STATE.view = view;
+          for (var k = 0; k < tabs.length; k++) tabs[k].classList.remove('on');
+          tab.classList.add('on');
+          applyViewChrome();
+          renderTable();
+        });
+      })(tabs[v]);
+    }
+  }
+
   renderTable();
   loadLive();
+  loadPending();
 })();
 </script>
 <!-- Wizard-JS + öppna/stäng-koppling (Fas 5) -->

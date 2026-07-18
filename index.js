@@ -20295,6 +20295,7 @@ function _enrichContract(ct, ctx) {
     master_contract_id:         ct[SERVICES.CT_MASTER] || null,
     status_override:            ct[SERVICES.CT_STATUS_OVERRIDE] || null,
     parsed_confidence_json:     ct[SERVICES.CT_PARSED_CONFIDENCE] || null,
+    internal_review_json:       ct[SERVICES.CT_INTERNAL_REVIEW] || null,
     // Härlett
     status:             _deriveContractStatus(ct, Date.now()),
     created_date:       ct["Created Date"] || null,
