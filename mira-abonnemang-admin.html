@@ -72,8 +72,11 @@
   .aa-filters-row { display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center; }
   /* grupperna wrappar som hela enheter (flex-shrink:0) istället för att krympa/bryta */
   .aa-fgroup { display:flex; align-items:center; gap:6px; flex-shrink:0; }
-  .aa-fgroup-grow { flex:1 1 240px; min-width:0; }
-  .aa-fgroup-grow .aa-search { width:100%; }
+  /* söket får en rimlig bredd (växer inte ut hela raden) */
+  .aa-fgroup-grow { flex:0 1 340px; min-width:180px; }
+  .aa-fgroup-grow .aa-search { width:100%; min-width:0; }
+  /* datum + rensa skjuts till högerkanten */
+  .aa-fgroup-right { margin-left:auto; }
   .aa-fl { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
 
   .aa-search { padding:8px 12px; background:rgba(255,255,255,0.03);
@@ -772,7 +775,7 @@
         <input type="text" class="aa-search" data-aa="search" placeholder="Sök kund eller tjänst...">
       </div>
 
-      <div class="aa-fgroup">
+      <div class="aa-fgroup aa-fgroup-right">
         <span class="aa-fl">Slutdatum</span>
         <input type="date" class="aa-date" data-aa="fil-from">
         <span class="aa-date-sep">→</span>
@@ -782,7 +785,7 @@
       <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
     </div>
 
-    <!-- Rad 2: chip-grupperna (status / typ / kategori) med plats att andas -->
+    <!-- Rad 2: Status + Typ -->
     <div class="aa-filters-row">
       <div class="aa-fgroup">
         <span class="aa-fl">Status</span>
@@ -803,7 +806,10 @@
           <div class="aa-chip on" data-val="Hybrid">Hybrid</div>
         </div>
       </div>
+    </div>
 
+    <!-- Rad 3: Kategori (bredaste gruppen, egen rad) -->
+    <div class="aa-filters-row">
       <div class="aa-fgroup">
         <span class="aa-fl">Kategori</span>
         <div class="aa-chip-row" data-aa="fil-cat">
