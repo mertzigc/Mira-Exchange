@@ -53,7 +53,7 @@
   .aa-kpi-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
   .aa-kpi-v { font-size:20px; font-weight:800; color:#fff; letter-spacing:-0.01em; margin-top:2px; }
   .aa-kpi-v.acc { color:var(--acc); }
-  .aa-kpi-v.warn { color:var(--warn); }
+  .aa-kpi-v.aa-warn { color:var(--warn); }
 
   .aa-btn { padding:10px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
     font-family:inherit; transition:all 0.15s; border:none; line-height:1; white-space:nowrap; word-break:normal; }
@@ -99,8 +99,10 @@
     align-self:center; flex:0 0 auto; width:max-content; max-width:none; }
   .aa-chip:hover { border-color:var(--line-strong); color:var(--t1); }
   .aa-chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); font-weight:600; }
-  .aa-chip.on.ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
-  .aa-chip.on.warn { background:rgba(250,204,21,0.18); border-color:var(--warn); color:var(--warn); }
+  /* aa-ok/aa-warn (INTE bara ok/warn) — generiska .warn krockar med en global
+     Bubble-regel .warn{padding-top:12px} och gör chipet för högt. Namnrymdat. */
+  .aa-chip.on.aa-ok { background:rgba(16,185,129,0.18); border-color:var(--ok); color:var(--ok); }
+  .aa-chip.on.aa-warn { background:rgba(250,204,21,0.18); border-color:var(--warn); color:var(--warn); }
 
   /* Fas 5b Spår 1 — vy-toggle + väntar-på-utskick-kort */
   .aa-viewbar { display:flex; gap:6px; margin:0 0 12px; }
@@ -177,7 +179,7 @@
   .aa-c-cost.rate { font-size:11px; font-weight:500; color:var(--t2); font-style:italic; }
   .aa-c-end { font-size:12px; color:var(--t1); }
   .aa-c-end-sub { font-size:10px; color:var(--t3); margin-top:1px; }
-  .aa-c-end-sub.warn { color:var(--warn); }
+  .aa-c-end-sub.aa-warn { color:var(--warn); }
 
   /* Pill (samma som kund-blocket) */
   .aa-pill { font-size:10px; padding:3px 8px; border-radius:20px;
@@ -759,7 +761,7 @@
         </div>
         <div class="aa-kpi">
           <div class="aa-kpi-l">Utgår &lt;30 d</div>
-          <div class="aa-kpi-v warn" data-aa="kpi-utgar">3</div>
+          <div class="aa-kpi-v aa-warn" data-aa="kpi-utgar">3</div>
         </div>
       </div>
       <div style="display:flex;gap:8px">
@@ -798,8 +800,8 @@
       <div class="aa-fgroup">
         <span class="aa-fl">Status</span>
         <div class="aa-chip-row" data-aa="fil-status">
-          <div class="aa-chip on ok" data-val="aktiv">Aktiv</div>
-          <div class="aa-chip on warn" data-val="utgar_snart">Utgår snart</div>
+          <div class="aa-chip on aa-ok" data-val="aktiv">Aktiv</div>
+          <div class="aa-chip on aa-warn" data-val="utgar_snart">Utgår snart</div>
           <div class="aa-chip" data-val="avslutad">Avslutad</div>
           <div class="aa-chip" data-val="pausat">Pausat</div>
           <div class="aa-chip" data-val="okand">Okänd</div>
@@ -1575,7 +1577,7 @@
       : '<div class="aa-c-cost">'+fmtKr(r.monthly_cost)+'<small>/mån</small></div>';
 
     var endDays = daysUntil(r.slutdatum);
-    var endSubCls = (endDays != null && endDays <= 30 && endDays >= 0) ? 'aa-c-end-sub warn' : 'aa-c-end-sub';
+    var endSubCls = (endDays != null && endDays <= 30 && endDays >= 0) ? 'aa-c-end-sub aa-warn' : 'aa-c-end-sub';
     var endSubText = endDays == null ? ''
       : endDays < 0 ? Math.abs(endDays) + ' d sedan'
       : endDays + ' d kvar';
