@@ -65,11 +65,15 @@
   .aa-btn.danger { background:rgba(248,113,113,0.10); border:0.5px solid rgba(248,113,113,0.35); color:var(--err); }
   .aa-btn.danger:hover { background:rgba(248,113,113,0.18); }
 
-  /* Filter-rad */
+  /* Filter-rad — vertikal stack av rader så grupperna inte kläms ihop */
   .aa-filters { background:var(--bg); border:1px solid var(--line); border-radius:10px;
     padding:14px 16px; margin-bottom:14px;
-    display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
-  .aa-fgroup { display:flex; align-items:center; gap:6px; min-width:0; }
+    display:flex; flex-direction:column; align-items:stretch; gap:12px; }
+  .aa-filters-row { display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center; }
+  /* grupperna wrappar som hela enheter (flex-shrink:0) istället för att krympa/bryta */
+  .aa-fgroup { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .aa-fgroup-grow { flex:1 1 240px; min-width:0; }
+  .aa-fgroup-grow .aa-search { width:100%; }
   .aa-fl { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
 
   .aa-search { padding:8px 12px; background:rgba(255,255,255,0.03);
@@ -762,49 +766,55 @@
   </div>
 
   <div class="aa-filters">
-    <div class="aa-fgroup">
-      <input type="text" class="aa-search" data-aa="search" placeholder="Sök kund eller tjänst...">
+    <!-- Rad 1: sök (växer) + slutdatum-range + rensa -->
+    <div class="aa-filters-row">
+      <div class="aa-fgroup aa-fgroup-grow">
+        <input type="text" class="aa-search" data-aa="search" placeholder="Sök kund eller tjänst...">
+      </div>
+
+      <div class="aa-fgroup">
+        <span class="aa-fl">Slutdatum</span>
+        <input type="date" class="aa-date" data-aa="fil-from">
+        <span class="aa-date-sep">→</span>
+        <input type="date" class="aa-date" data-aa="fil-to">
+      </div>
+
+      <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
     </div>
 
-    <div class="aa-fgroup">
-      <span class="aa-fl">Status</span>
-      <div class="aa-chip-row" data-aa="fil-status">
-        <div class="aa-chip on ok" data-val="aktiv">Aktiv</div>
-        <div class="aa-chip on warn" data-val="utgar_snart">Utgår snart</div>
-        <div class="aa-chip" data-val="avslutad">Avslutad</div>
-        <div class="aa-chip" data-val="pausat">Pausat</div>
-        <div class="aa-chip" data-val="okand">Okänd</div>
+    <!-- Rad 2: chip-grupperna (status / typ / kategori) med plats att andas -->
+    <div class="aa-filters-row">
+      <div class="aa-fgroup">
+        <span class="aa-fl">Status</span>
+        <div class="aa-chip-row" data-aa="fil-status">
+          <div class="aa-chip on ok" data-val="aktiv">Aktiv</div>
+          <div class="aa-chip on warn" data-val="utgar_snart">Utgår snart</div>
+          <div class="aa-chip" data-val="avslutad">Avslutad</div>
+          <div class="aa-chip" data-val="pausat">Pausat</div>
+          <div class="aa-chip" data-val="okand">Okänd</div>
+        </div>
+      </div>
+
+      <div class="aa-fgroup">
+        <span class="aa-fl">Typ</span>
+        <div class="aa-chip-row" data-aa="fil-type">
+          <div class="aa-chip on" data-val="Subscription">Subscription</div>
+          <div class="aa-chip on" data-val="RateCard">RateCard</div>
+          <div class="aa-chip on" data-val="Hybrid">Hybrid</div>
+        </div>
+      </div>
+
+      <div class="aa-fgroup">
+        <span class="aa-fl">Kategori</span>
+        <div class="aa-chip-row" data-aa="fil-cat">
+          <div class="aa-chip on" data-val="Housekeeping">Housekeeping</div>
+          <div class="aa-chip on" data-val="Staff">Staff</div>
+          <div class="aa-chip on" data-val="Food &amp; Event">Food &amp; Event</div>
+          <div class="aa-chip on" data-val="Other facility services">Other facility</div>
+          <div class="aa-chip on" data-val="platform">Mira</div>
+        </div>
       </div>
     </div>
-
-    <div class="aa-fgroup">
-      <span class="aa-fl">Typ</span>
-      <div class="aa-chip-row" data-aa="fil-type">
-        <div class="aa-chip on" data-val="Subscription">Subscription</div>
-        <div class="aa-chip on" data-val="RateCard">RateCard</div>
-        <div class="aa-chip on" data-val="Hybrid">Hybrid</div>
-      </div>
-    </div>
-
-    <div class="aa-fgroup">
-      <span class="aa-fl">Kategori</span>
-      <div class="aa-chip-row" data-aa="fil-cat">
-        <div class="aa-chip on" data-val="Housekeeping">Housekeeping</div>
-        <div class="aa-chip on" data-val="Staff">Staff</div>
-        <div class="aa-chip on" data-val="Food &amp; Event">Food &amp; Event</div>
-        <div class="aa-chip on" data-val="Other facility services">Other facility</div>
-        <div class="aa-chip on" data-val="platform">Mira</div>
-      </div>
-    </div>
-
-    <div class="aa-fgroup">
-      <span class="aa-fl">Slutdatum</span>
-      <input type="date" class="aa-date" data-aa="fil-from">
-      <span class="aa-date-sep">→</span>
-      <input type="date" class="aa-date" data-aa="fil-to">
-    </div>
-
-    <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
   </div>
 
   <div class="aa-tablewrap">
