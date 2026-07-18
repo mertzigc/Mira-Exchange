@@ -754,6 +754,13 @@
     </div>
   </div>
 
+  <!-- Fas 5b Spår 1: vy-toggle Avtal / Väntar på utskick — ovanför filtren så
+       baren ligger stilla när filter-blocket döljs/visas vid vy-byte -->
+  <div class="aa-viewbar" data-aa="viewbar">
+    <button class="aa-viewtab on" data-view="contracts">Avtal</button>
+    <button class="aa-viewtab" data-view="pending">⏳ Väntar på utskick <span class="aa-viewtab-n zero" data-aa="pending-count">0</span></button>
+  </div>
+
   <div class="aa-filters">
     <div class="aa-fgroup">
       <input type="text" class="aa-search" data-aa="search" placeholder="Sök kund eller tjänst...">
@@ -798,12 +805,6 @@
     </div>
 
     <span class="aa-filters-clear" data-aa="fil-clear">Rensa filter</span>
-  </div>
-
-  <!-- Fas 5b Spår 1: vy-toggle Avtal / Väntar på utskick -->
-  <div class="aa-viewbar" data-aa="viewbar">
-    <button class="aa-viewtab on" data-view="contracts">Avtal</button>
-    <button class="aa-viewtab" data-view="pending">⏳ Väntar på utskick <span class="aa-viewtab-n zero" data-aa="pending-count">0</span></button>
   </div>
 
   <div class="aa-tablewrap">
