@@ -822,8 +822,8 @@
       <div class="aa-fgroup">
         <span class="aa-fl">Typ</span>
         <div class="aa-chip-row" data-aa="fil-type">
-          <div class="aa-chip on" data-val="Subscription">Subscription</div>
-          <div class="aa-chip on" data-val="RateCard">RateCard</div>
+          <div class="aa-chip on" data-val="Subscription">Abonnemang</div>
+          <div class="aa-chip on" data-val="RateCard">Prislista</div>
           <div class="aa-chip on" data-val="Hybrid">Hybrid</div>
         </div>
       </div>
@@ -1189,7 +1189,7 @@
                 <li><span class="k">Avtalslängd:</span> <span class="v">Enligt steg 3</span></li>
                 <li><span class="k">Bilagor:</span> <span class="v" id="sumAtt">1 vald</span></li>
                 <li><span class="k">Skickas till:</span> <span class="v" id="sumRcpsClient">1 person hos kunden</span></li>
-                <li><span class="k">Contract skapas automatiskt när signerat:</span> <span class="v" style="color:var(--ok)">Ja</span></li>
+                <li><span class="k">Avtalet skapas automatiskt när signerat:</span> <span class="v" style="color:var(--ok)">Ja</span></li>
               </ul>
             </div>
           </div>
@@ -1357,7 +1357,7 @@
       signed_at:'2025-04-15', signed_pdf:'staff-ea-bemanning.pdf', attachments_count:1, offer_approval_id:'oar-staff-1' },
 
     { id:'c-mira-1', customer:'Electronic Arts AB', customer_id:'ea',
-      office_id:'-', office_name:'Account',
+      office_id:'-', office_name:'Konto',
       service_name:'Mira-abonnemang', service_variant:'Pro · obegränsat',
       contract_type:'Subscription', category:'platform',
       monthly_cost:0, status:'aktiv',
@@ -1378,7 +1378,7 @@
       signed_at:'2025-05-10', signed_pdf:'staff-scandic.pdf', attachments_count:2, offer_approval_id:'oar-staff-2' },
 
     { id:'c-mira-sca', customer:'Scandic Hotels AB', customer_id:'scandic',
-      office_id:'-', office_name:'Account',
+      office_id:'-', office_name:'Konto',
       service_name:'Mira-abonnemang', service_variant:'Pro',
       contract_type:'Subscription', category:'platform',
       monthly_cost:0, status:'aktiv',
@@ -1463,6 +1463,13 @@
     var d = new Date(s);
     if(isNaN(d.getTime())) return s;
     return d.toLocaleDateString('sv-SE',{year:'numeric',month:'short',day:'numeric'});
+  }
+  // Svensk etikett för avtalstyp (data-värdet mot Bubble är kvar på engelska)
+  function typeLabel(t){
+    return t === 'Subscription' ? 'Abonnemang'
+         : t === 'RateCard'     ? 'Prislista'
+         : t === 'Hybrid'       ? 'Hybrid'
+         : (t || '—');
   }
   function daysUntil(s){
     if(!s) return null;
@@ -1580,7 +1587,7 @@
       +   '<td><div class="aa-c-cust">'+esc(r.customer)+'</div></td>'
       +   '<td><div class="aa-c-office">'+officeCell+'</div></td>'
       +   '<td><div class="aa-c-svc">'+esc(r.service_name)+'</div><div class="aa-c-svc-sub">'+esc(r.service_variant)+'</div></td>'
-      +   '<td><span class="aa-pill '+typeCls+'">'+esc(r.contract_type)+'</span><div class="aa-c-svc-sub" style="margin-top:4px;">'+r.category+'</div></td>'
+      +   '<td><span class="aa-pill '+typeCls+'">'+esc(typeLabel(r.contract_type))+'</span><div class="aa-c-svc-sub" style="margin-top:4px;">'+r.category+'</div></td>'
       +   '<td><span class="aa-st s-'+esc(r.status)+'">'+esc(stLabel)+'</span></td>'
       +   '<td class="right">'+costCell+'</td>'
       +   '<td class="right">'
@@ -2026,7 +2033,7 @@
           customer:                c.customer_name || '— okänd kund —',
           customer_id:             c.customer_id,
           office_id:               c.office_id ? (c.office_kontors_id || c.office_id) : '-',
-          office_name:             c.office_name || (c.office_id ? 'Kontor' : 'Account'),
+          office_name:             c.office_name || (c.office_id ? 'Kontor' : 'Konto'),
           office_addr:             c.office_address || '',
           service_name:            c.service_name || '— okänd tjänst —',
           service_variant:         c.service_variant || '',
@@ -2322,7 +2329,7 @@
       slutdatum:      _getPath(root, 'spec.contract.slutdatum')      || _getPath(root, 'spec.contract.end_date')   || base.slutdatum  || null,
       binding_months: _getPath(root, 'spec.contract.binding_months') || base.binding_months || null,
       notice_months:  _getPath(root, 'spec.contract.notice_months')  || base.notice_months  || null,
-      monthly_cost:   _getPath(root, 'spec.pricing.monthly_fee_sek') || base.monthly_cost   || 0,
+      monthly_cost:   _getPath(root, 'spec.pricing.monthly_fee_sek') || _getPath(root, 'spec.pricing.monthly_fee') || base.monthly_cost   || 0,
     }));
 
     return root;
@@ -2550,21 +2557,25 @@ const state = {
     }
     if (results) results.style.display = 'none';
     if (search)  search.value = name || '';
-    // Pre-fyll namn-fältet (admin kan redigera för formell version)
+    // Kundbyte: rensa de gamla kundfälten först så föregående kunds uppgifter
+    // inte fastnar. Fylls sedan med den nya kundens data (eller lämnas tomma
+    // om kunden saknar värdet). Ett manuellt val = ladda den kundens uppgifter.
     const nameField = document.getElementById('wt-clientName');
-    if (nameField && !nameField.value) nameField.value = name || '';
+    const orgField  = document.getElementById('wt-clientOrg');
+    const addrField = document.getElementById('wt-clientAddress');
+    if (nameField) nameField.value = name || '';
+    if (orgField)  orgField.value  = '';
+    if (addrField) addrField.value = '';
 
-    // LIVE: hämta org.nr + adress om de finns i kundregistret
+    // Rensa kund (id=null via "Byt kund") eller MOCK → inget att hämta
     if (!id || !IS_LIVE) return;
     try {
       const res = await apiGet('/admin/clientcompany/' + encodeURIComponent(id) + '/details');
       const d = res.details || {};
-      const orgField  = document.getElementById('wt-clientOrg');
-      const addrField = document.getElementById('wt-clientAddress');
-      // Fyll bara tomma fält — bevara admin's input
-      if (orgField  && !orgField.value  && d.org_nr)  orgField.value  = d.org_nr;
-      if (addrField && !addrField.value && d.address) addrField.value = d.address;
-      if (nameField && d.name && nameField.value === name) nameField.value = d.name;
+      // Skriv ÖVER med kundregistrets data (inte fyll-bara-tomma)
+      if (nameField && d.name)    nameField.value = d.name;
+      if (orgField  && d.org_nr)  orgField.value  = d.org_nr;
+      if (addrField && d.address) addrField.value = d.address;
       console.log('[wiz] kund-detaljer:', d);
     } catch (e) {
       console.warn('[wiz] kund-detaljer failed:', e.message);

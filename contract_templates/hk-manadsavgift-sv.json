@@ -1,0 +1,190 @@
+{
+  "name": "HK Månadsavgift (SV)",
+  "subtitle": "Fast månadsavgift för städtjänst med Städindex",
+  "description": "Svensk standardmall för HK-kunder med fast månadsavgift. Baserad på Carottes signerade Planhat-avtal (Regeringsgatan 30, 765 kvm, 5 ggr/vecka) och den svenska HK-avtalstexten. 18 paragrafer inkl. Städindex-reglering enligt SCB och referens till bifogad städinstruktion. Avtalstyp: Subscription — auto-Contract skapas vid signering. Svenskt alternativ till HK Månadsavgift (EN).",
+  "category": "Housekeeping",
+  "contract_type": "Subscription",
+  "language": "sv",
+  "default_attachments": [],
+  "default_spec_json": {
+    "spec": {
+      "client": {
+        "name": null,
+        "org_nr": null,
+        "address": null
+      },
+      "property": {
+        "address": null,
+        "sqm": null
+      },
+      "service": {
+        "frequency": null
+      },
+      "contract": {
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "payment_terms_days": null
+      },
+      "pricing": {
+        "monthly_fee_sek": null,
+        "extra_hour_rate": null,
+        "ob_evening_rate": null,
+        "ob_evening_window": null,
+        "ob_night_rate": null,
+        "ob_night_window": null
+      }
+    },
+    "contract_specs": [
+      {
+        "service_slug": "housekeeping",
+        "contract_type": "Subscription",
+        "category": "Housekeeping",
+        "offer_id": null,
+        "office_id": null,
+        "monthly_cost": null,
+        "qty": 1,
+        "startdatum": null,
+        "slutdatum": null,
+        "binding_months": null,
+        "notice_months": null,
+        "price_regulation_type": "index_cleaning",
+        "volume_json": null,
+        "rate_card_json": null
+      }
+    ],
+    "form_schema": {
+      "sections": [
+        {
+          "title": "Lokal och omfattning",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.property.address",
+              "type": "text",
+              "label": "Städadress",
+              "required": true,
+              "placeholder": "Regeringsgatan 30, 111 40 Stockholm",
+              "help": "Adressen där städningen utförs. Fler adresser? Lägg dem i en bilaga."
+            },
+            {
+              "path": "spec.property.sqm",
+              "type": "number",
+              "label": "Yta (kvm)",
+              "required": true,
+              "placeholder": "765",
+              "help": "Total städyta i kvadratmeter. Hamnar i avtalets objektsparagraf."
+            },
+            {
+              "path": "spec.service.frequency",
+              "type": "text",
+              "label": "Städfrekvens",
+              "required": true,
+              "placeholder": "5 gånger per vecka (mån–fre)",
+              "help": "Hur ofta lokalen städas. Detaljerna ligger i städinstruktionen (bilaga)."
+            }
+          ]
+        },
+        {
+          "title": "Datum och villkor",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.contract.startdatum",
+              "type": "date",
+              "label": "Startdatum",
+              "required": true,
+              "help": "När börjar Carotte städa hos kunden? Vanligt är 1–2 månader efter signering."
+            },
+            {
+              "path": "spec.contract.slutdatum",
+              "type": "date",
+              "label": "Slutdatum",
+              "required": true,
+              "help": "När löper avtalet ut? Räknas oftast som Startdatum + Bindningstid."
+            },
+            {
+              "path": "spec.contract.binding_months",
+              "type": "number",
+              "label": "Bindning (mån)",
+              "required": true,
+              "placeholder": "36",
+              "help": "Antal månader kunden är låst. Vanligt för större kunder: 36 månader."
+            },
+            {
+              "path": "spec.contract.notice_months",
+              "type": "number",
+              "label": "Uppsägning (mån)",
+              "required": true,
+              "placeholder": "3",
+              "help": "Efter bindningstiden — hur lång tid krävs för att säga upp? Standard: 3 månader."
+            },
+            {
+              "path": "spec.contract.payment_terms_days",
+              "type": "number",
+              "label": "Betalning (dagar)",
+              "required": true,
+              "placeholder": "30",
+              "help": "Antal dagar från fakturadatum. Standard: 30 dagar netto."
+            }
+          ]
+        },
+        {
+          "title": "Fast månadsavgift",
+          "layout": "grid-2",
+          "fields": [
+            {
+              "path": "spec.pricing.monthly_fee_sek",
+              "type": "number",
+              "label": "Månadsavgift (kr/mån, exkl. moms)",
+              "required": true,
+              "placeholder": "24000",
+              "help": "Fast månadskostnad för den överenskomna omfattningen enligt städinstruktionen."
+            },
+            {
+              "path": "spec.pricing.extra_hour_rate",
+              "type": "number",
+              "label": "Timpris tillägg (kr/tim)",
+              "placeholder": "360",
+              "help": "Timpris för tilläggsstädning utöver avtalad omfattning, exkl. moms."
+            }
+          ]
+        },
+        {
+          "title": "OB-tillägg",
+          "layout": "grid-2",
+          "help": "Tillägg per timme för arbete utanför ordinarie tid (mån–fre).",
+          "fields": [
+            {
+              "path": "spec.pricing.ob_evening_rate",
+              "type": "number",
+              "label": "OB kväll — kr/tim",
+              "placeholder": "40"
+            },
+            {
+              "path": "spec.pricing.ob_evening_window",
+              "type": "text",
+              "label": "OB kväll — vilka timmar?",
+              "placeholder": "kl 19.00 till kl 22.00",
+              "help": "Skrivs precis som exemplet — texten hamnar direkt i avtalet."
+            },
+            {
+              "path": "spec.pricing.ob_night_rate",
+              "type": "number",
+              "label": "OB natt — kr/tim",
+              "placeholder": "75"
+            },
+            {
+              "path": "spec.pricing.ob_night_window",
+              "type": "text",
+              "label": "OB natt — vilka timmar?",
+              "placeholder": "kl 22.00 till kl 24.00"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "template_html": "<!doctype html><html lang=\"sv\"><head><meta charset=\"utf-8\"><title>Avtal Städtjänst — Fast månadsavgift</title><style>:root{--ink:#0f172a;--muted:#475569;--soft:#64748b;--line:#e2e8f0;--brand:#df6f39}*{box-sizing:border-box}html,body{margin:0;padding:0;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;font-size:10.5pt;line-height:1.5;background:#fff}header.top{border-bottom:3px solid var(--brand);padding-bottom:14px;margin-bottom:26px}.brand{font-weight:700;font-size:14pt;letter-spacing:0.5px;color:var(--brand)}.brand .sub{display:block;font-weight:400;color:var(--soft);font-size:9pt;letter-spacing:0;margin-top:2px}h1{font-size:15pt;margin:0 0 4px;letter-spacing:0.3px}.doc-meta{color:var(--soft);font-size:9pt}section.paragraph{margin:14px 0;page-break-inside:avoid}section.paragraph h2{font-size:10.5pt;text-transform:uppercase;letter-spacing:0.6px;color:var(--brand);margin:0 0 6px;font-weight:700}p{margin:6px 0}.parties{border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:0 0 20px;background:#fafafa}.parties .row{display:flex;gap:32px;margin:4px 0}.parties .k{color:var(--soft);width:120px;font-size:9pt;text-transform:uppercase;letter-spacing:0.5px}.parties .v{color:var(--ink);flex:1}footer.sign{margin-top:32px;padding-top:16px;border-top:1px solid var(--line);color:var(--soft);font-size:9pt}</style></head><body><header class=\"top\"><div class=\"brand\">CAROTTE HOUSEKEEPING<span class=\"sub\">Städ- och kontorstjänster</span></div><h1>Avtal Städtjänst</h1><div class=\"doc-meta\">Fast månadsavgift · Städindex</div></header><section class=\"parties\"><div class=\"row\"><div class=\"k\">Leverantör</div><div class=\"v\">Carotte Housekeeping AB (556858-0392)</div></div><div class=\"row\"><div class=\"k\">Kund</div><div class=\"v\">{{client.name}} ({{client.org_nr}})</div></div><div class=\"row\"><div class=\"k\">Adress</div><div class=\"v\">{{client.address}}</div></div></section><section class=\"paragraph\"><h2>1. Allmänt</h2><p>Avtal mellan Carotte Housekeeping AB (556858-0392) nedan kallad \"Leverantören\" och {{client.name}} ({{client.org_nr}}) nedan kallad \"Kunden\".</p></section><section class=\"paragraph\"><h2>2. Avtalstid</h2><p>Avtalet löper inledningsvis under en fast period om {{contract.binding_months}} månader med en ömsesidig uppsägningstid om {{contract.notice_months}} månader.</p></section><section class=\"paragraph\"><h2>3. Objekt och omfattning</h2><p>Tjänsterna utförs vid <strong>{{property.address}}</strong>, omfattande cirka <strong>{{property.sqm}} kvm</strong> städyta. Städning sker <strong>{{service.frequency}}</strong> enligt den städinstruktion som utgör bilaga till detta avtal.</p></section><section class=\"paragraph\"><h2>4. Uppdragets utförande</h2><p>Utförande av kontorsstädning sker enligt överenskommelse mellan Kund och Leverantör samt enligt bifogad städinstruktion. I avsaknad av avtalade instruktioner utförs arbetet fackmannamässigt. Det åligger Kunden att skriftligen informera leverantör om Kundens regler och föreskrifter som berör leverantörs utförande av avtalade tjänster.</p></section><section class=\"paragraph\"><h2>5. Fakturering och betalningsvillkor</h2><p>Fakturering sker månadsvis. Betalningsvillkor är {{contract.payment_terms_days}} dagar netto. Vid betalning efter förfallodagen utgår ränta enligt räntelagen (1975:635). Leverantören har även rätt att debitera påminnelseavgift.</p></section><section class=\"paragraph\"><h2>6. Priser</h2><p>För den överenskomna städtjänsten faktureras Kunden en fast månadsavgift (\"Avgiften\") om {{pricing.monthly_fee_sek}} kr per månad exklusive moms. Avgiften omfattar all städning och det förbrukningsmaterial som krävs för att leverera den omfattning som anges i städinstruktionen (bilaga). Tilläggsstädning utöver överenskommen omfattning debiteras {{pricing.extra_hour_rate}} kr per faktiskt arbetad timme exklusive moms. För arbete förlagt till tid från {{pricing.ob_evening_window}} på vardag tillkommer ett Ob-tillägg om {{pricing.ob_evening_rate}} kr per timme. För arbete förlagt till tid från {{pricing.ob_night_window}} tillkommer ett Ob-tillägg om {{pricing.ob_night_rate}} kr per timme. Avgifter för tjänster eller varor som inte uttryckligen följer av Avtalet debiteras enligt Leverantörens vid var tid gällande priser.</p></section><section class=\"paragraph\"><h2>7. Prisjustering</h2><p>Priserna ses över årligen då Leverantören följer Städindex. Städindex mäter prisutvecklingen för städverksamhetens olika kostnader. Modellen har tagits fram av Statistiska centralbyrån (SCB) på uppdrag av Almega Serviceentreprenörerna. Syftet är att mäta förändringar i kostnaderna för städverksamhet. Städindex kan användas för justering av priser för städverksamhet i olika typer av avtal. Syftet är inte att skapa lönsamhet för endera parten indirekt på den andra partens bekostnad. Syftet är att skapa en fungerande marknad där index ska möjliggöra långvariga prisöverenskommelser. Städindex har som basmånad maj, och därefter räknas nya värden fram en gång per år (1 juni). Leverantören har rätt att när som helst höja priserna för Städtjänsterna. Om Leverantören höjer priserna (utöver Städindex) kommer Kunden meddelas om detta skriftligen senast en (1) månad i förväg.</p></section><section class=\"paragraph\"><h2>8. Reklamation</h2><p>P.g.a. att arbetet utförs i en föränderlig miljö skall reklamation ske senast 48 timmar (helg ej inräknat) från det att fel eller brist upptäckts eller borde ha upptäckts. Senare reklamation behandlas inte. Reklamation skall ske skriftligen, per mail till info@carotte.se eller per telefon till leverantör. Vid befogad reklamation åtgärdas fel eller brist av leverantör genom åtgärd av ordinarie städare. Om kund själv åtgärdar fel innan leverantör kontaktas eller ges möjlighet till kontroll utgår ingen ersättning till kund. Om felet eller bristen avhjälps inom skälig tid utgår ingen återbetalning, prisreduktion, eller annan ersättning från leverantör. Om avhjälpande inte sker inom skälig tid har kunden rätt till prisavdrag motsvarande felet eller bristen.</p></section><section class=\"paragraph\"><h2>9. Vid sjukdom/frånvaro av städare</h2><p>Vid sjukdom hos ordinarie städare ersätter leverantör med vikarie inom 48 timmar vanlig vardag, helger ej inräknat om ej annat är avtalat.</p></section><section class=\"paragraph\"><h2>10. Skador</h2><p>Kunden ansvarar för att hålla sin egendom försäkrad. Utöver Kundens försäkring åtar sig Leverantören att ha en ansvarsförsäkring som täcker person- och sakskada som orsakas av Leverantörens personal. Skada som orsakats av att medarbetare ifrån Leverantören som varit oaktsam åtgärdas i första hand genom reparation och i andra hand genom ersättning motsvarande skadan. Kunden är skyldig att informera skriftligen, per e-post till info@carotte.se eller muntligen per telefon om något är trasigt, obrukbart eller har nedsatt funktion och som kan leda till skada vid användning. Kunden är också skyldig att informera om interiören är speciellt känslig för vanligt förekommande städmoment eller rengöringsmedel. Anmälan av skada skall ske till Leverantören inom 48 timmar efter att kunden märkt eller borde ha märkt skadan. Leverantören ersätter inte skador som åstadkommits på grund av att inventarier inte är korrekt monterade eller placerade. Kräver lös eller fast egendom särskild aktsamhet skall detta meddelas Leverantören som sedan skriver in detta på kundkortet. Förslitningsskador på fasta inventarier som uppkommer vid ett normalt och ansvarsfullt städande ersätts ej. Ersättning för skada omfattar inte förlust i näringsverksamhet, indirekta skador eller följdskador. Leverantörens ersättningsansvar är begränsat till det belopp som gällande ansvarsförsäkring vid skadetillfället kan ersätta.</p></section><section class=\"paragraph\"><h2>11. Vid uppehåll/avbokning</h2><p>Om arbetet ej behöver utföras på Kundens kontor under en begränsad tidsperiod (högst fyra sammanhängande veckor) måste detta meddelas skriftligen till Leverantören två veckor i förväg.</p></section><section class=\"paragraph\"><h2>12. Avtalstid och uppsägning</h2><p>Dessa villkor gäller från och med att Kunden har godkänt dem och löper tills vidare så länge som avtalet är giltigt. Leverantören har rätt att om särskilda skäl föreligger, med omedelbar verkan, säga upp avtalet eller avstå från att utföra Städtjänster hos Kunden. Särskilda skäl kan exempelvis, men ej uteslutande, vara att: a) Arbetsmiljön för Leverantörens personal i Kundens lokaler är undermålig eller ohälsosam, b) samarbetet mellan Kunden och Leverantörens personal inte fungerar, eller c) Kunden inte betalar faktura trots påminnelse.</p><p>Efter fast avtalsperiod gäller en uppsägningstid på {{contract.notice_months}} månader och gäller för båda parter. Om kund inte fullföljer den fasta avtalsperioden kommer leverantör att debitera fullt pris för den återstående bindningstiden. Leverantören garanterar att utrustning så som städvagn och dammsugare som brukats under uppdraget hämtas tillbaka senast vid sista städtillfället.</p></section><section class=\"paragraph\"><h2>13. Förändring av objekt/uppdrag</h2><p>Alla förändringar av/inom objektet som t.ex. ombyggnation, renovering m.m. som kan inverka på städningen måste meddelas leverantör senast 2 månader innan förändringens start och kan innebära ändring av pris eller städrutin. Om kund ej meddelat leverantör så kan inte leverantör garantera den avtalade städnivån utan kommer att anpassa städmomentet efter rådande omständigheter. Alla städuppdrag utöver avtalat utförs endast efter godkännande ifrån kund. Beställning av extra/utökat uppdrag skall göras via kundservice per telefon eller skriftligen info@carotte.se och inte via städare.</p></section><section class=\"paragraph\"><h2>14. Nycklar/larm/portkod</h2><p>Om städuppdrag utförs under tid då kund inte är på plats måste kunden lämna ut nycklar och eventuell larmkod. Kund ansvarar för att ge Leverantör tillgång till lokal genom nycklar, larm, passerkort, portkod eller motsvarande. Leverantören säkerställer hantering av nycklar och larm genom att förvaring av nyckel- och larmuppgifter sker på betryggande sätt så att de inte kan komma i någon obehörigs händer. Formuläret \"Nyckel &amp; Larmkvittens\" är det som styr hanteringen och ska vara signerat av båda parter. Leverantören behöver två uppsättningar nycklar: en för den medarbetare som utför städningen och en för de kvalitetskontroller, påfyllnad av städmaterial samt vikarie vid sjukdom eller semester som Leverantören ansvarar för.</p></section><section class=\"paragraph\"><h2>15. Sekretess</h2><p>Vardera parten förbinder sig att inte utan den andra partens skriftliga medgivande till tredje man utlämna information om den andra partens verksamhet som kan vara att betrakta som affärs- eller yrkeshemlighet eller annars använda sådan information för något annat ändamål än parts fullgörande av sina åtaganden enligt avtalet. Som affärs- eller yrkeshemlighet ska alltid betraktas information som parten angivit vara konfidentiell. Sekretesskyldigheten gäller inte sådan information som part kan visa blivit känd för honom på annat sätt än genom avtalet eller som är allmänt känd, och inte heller när part enligt lag, annan författning eller myndighetsbeslut är skyldig att lämna ut uppgifter.</p></section><section class=\"paragraph\"><h2>16. Force majeure</h2><p>Förhållande eller händelser som arbetsinställelse, blockad, krig, upplopp, eldsvåda, explosionsfara, ingripande av myndighet eller annan omständighet utanför leverantörs kontroll som medför att leverantör inte kan fullgöra åtagande enligt detta avtal fritar leverantör från fullgörande av dess avtalade åtaganden under den tid förhållandet råder.</p></section><section class=\"paragraph\"><h2>17. Tvist</h2><p>Tvister som ej kan avgöras vid förhandlingar parterna emellan rörande tillämpningen av detta avtal skall avgöras av allmän domstol med tillämpning av svensk rätt varvid Stockholms tingsrätt ska vara första instans.</p></section><section class=\"paragraph\"><h2>18. Avtalets längd</h2><p>Avtalet sträcker sig från {{contract.startdatum}} och gäller till {{contract.slutdatum}}.</p></section><section class=\"paragraph\"><h2>Signaturer</h2><p>Signaturer registreras elektroniskt via Mira. Se bifogat Signeringsbevis.</p></section><footer class=\"sign\"><p>Carotte Housekeeping AB · Tegeluddsvägen 92 · 115 28 Stockholm · info@carotte.se</p></footer></body></html>"
+}
