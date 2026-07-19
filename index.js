@@ -439,6 +439,7 @@ function requireApiKey(req, res, next) {
     "/admin/clientcompany/",       // ClientCompany-autocomplete + /all för Carotte-UI
     "/admin/contracts/",           // Contract admin-modul (Fas 2, 0g), x-admin-token-grindad
     "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
+    "/admin/dokument/",            // Fristående Dokument-upload för wizardens bilagor (Fas 5b spår 2), x-admin-token-grindad
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
@@ -21549,6 +21550,70 @@ app.post("/admin/contracts/render-and-send", async (req, res) => {
     });
   } catch (e) {
     console.error("[/admin/contracts/render-and-send] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FAS 5b — Spår 2: fristående Dokument-upload för wizardens bilagor
+// ═══════════════════════════════════════════════════════════════════════════
+// Wizarden har inget Contract/OAR än när användaren laddar upp bilagor i Steg 4,
+// så vi behöver en fristående upload som bara skapar en Dokument-rad och
+// returnerar dess id. Id:na skickas sedan som attachment_dokument_ids till
+// render-preview + render-and-send, som mergar dem sist i PDF-paketet.
+//
+// Bara PDF + bilder tillåts — det är de enda som kan mergas in i det signerade
+// PDF-paketet (pdf_utils.detectKind/imageToPdfBuffer). Permanenta Dokument
+// (ingen deletable_after) — avbrutna wizards ger orphans, accepterat i v1.
+// ═══════════════════════════════════════════════════════════════════════════
+const _DOK_ATT_MAX_BYTES = 15 * 1024 * 1024; // 15 MB/bilaga
+app.options("/admin/dokument/upload", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/dokument/upload", _approvalUpload.single("file"), async (req, res) => {
+  _approvalCors(req, res);
+  if (!_ctplAuth(req, res)) return;
+
+  const file = req.file;
+  if (!file) return res.status(400).json({ ok: false, error: "fil_saknas (file-fält i multipart krävs)" });
+
+  const mime = String(file.mimetype || "").toLowerCase();
+  const isPdf = mime === "application/pdf";
+  const isImg = mime.indexOf("image/") === 0;
+  if (!isPdf && !isImg) {
+    return res.status(415).json({ ok: false, error: "unsupported_type", detail: `Bara PDF + bilder kan mergas i avtalspaketet (fick ${mime || "okänd typ"})` });
+  }
+  if (file.buffer && file.buffer.length > _DOK_ATT_MAX_BYTES) {
+    return res.status(413).json({ ok: false, error: "too_large", detail: "max 15 MB per bilaga" });
+  }
+
+  try {
+    const fileUrl = await bubbleUploadFile({
+      filename:    file.originalname || "bilaga",
+      contentType: file.mimetype || "application/octet-stream",
+      buffer:      file.buffer,
+    });
+
+    const titel = String((req.body && req.body.titel) || file.originalname || "Bilaga").slice(0, 250);
+    const beskrivning = String((req.body && req.body.beskrivning) || "Avtalsbilaga (wizard)").slice(0, 500);
+
+    const docId = await bubbleCreate("Dokument", {
+      titel,
+      beskrivning,
+      file: fileUrl,
+      latest_update: new Date().toISOString(),
+    });
+
+    console.log(`[admin/dokument/upload] skapade Dokument ${docId} (${titel}, ${mime}, ${file.buffer ? file.buffer.length : 0} bytes)`);
+    return res.json({
+      ok:       true,
+      doc_id:   docId,
+      titel,
+      file_url: String(fileUrl).replace(/^\/\//, "https://"),
+      mime,
+    });
+  } catch (e) {
+    console.error("[/admin/dokument/upload] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
