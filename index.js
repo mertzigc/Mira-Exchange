@@ -21842,9 +21842,14 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
       const orgKey = await detectClientCompanyOrgKey();
       if (orgKey && cc[orgKey]) orgNo = String(cc[orgKey]).trim();
     } catch (_) { /* orgnr saknas → null */ }
-    // Adress: prova vanliga fältnamn i ordning
-    const addr = cc.Adress || cc.address || cc.Address
-              || cc.adress || cc.Besöksadress || cc.besoksadress || null;
+    // Adress: fältet "Adress" på ClientCompany är en Bubble geografisk adress-typ
+    // → Data API returnerar ett OBJEKT {address, formatted, lat, lng}, inte en sträng.
+    // Plocka .address-strängen (samma mönster som office_address, rad ~19024).
+    // Robust för både objekt och ren text.
+    const _pickAddr = (raw) => raw == null ? null
+      : (typeof raw === "object" ? (raw.address || raw.formatted || null) : (String(raw).trim() || null));
+    const addr = _pickAddr(cc.Adress) || _pickAddr(cc.address) || _pickAddr(cc.Address)
+              || _pickAddr(cc.adress) || _pickAddr(cc.Besöksadress) || _pickAddr(cc.besoksadress) || null;
     return res.json({
       ok: true,
       details: {
