@@ -603,6 +603,17 @@
   .wt-att-upload:hover {
     border-color: var(--acc); color: var(--acc); background: var(--acc-soft);
   }
+  .wt-att-upload.busy { opacity: 0.6; pointer-events: none; }
+  /* Fas 5b spår 2: borttag-knapp + tomläge för uppladdade bilagor */
+  .wt-att-rm {
+    border: none; background: none; color: var(--t3); cursor: pointer;
+    font-size: 15px; padding: 0 4px; flex-shrink: 0; line-height: 1;
+  }
+  .wt-att-rm:hover { color: var(--err); }
+  .wt-att-empty {
+    font-size: 12px; color: var(--t3); padding: 12px 13px;
+    border: 0.5px dashed var(--line); border-radius: 8px; background: rgba(255,255,255,0.01);
+  }
 
   /* ── Preview box (steg 4) ─────────────────────────────────────── */
   .wt-prev {
@@ -1079,33 +1090,9 @@
             </h3>
             <div class="wt-hb">Extra dokument som ska följa med avtalet — t.ex. offert, planritning, prislista. Bilagor läggs sist i det signerade PDF-paketet.</div>
 
-            <div class="wt-att-list">
-              <label class="wt-att-row">
-                <input type="checkbox" checked>
-                <div class="wt-att-ic">PDF</div>
-                <div class="wt-att-info">
-                  <div class="wt-att-name">Offert.pdf</div>
-                  <div class="wt-att-meta">Uppladdad 2 juli · 240 kB</div>
-                </div>
-              </label>
-              <label class="wt-att-row">
-                <input type="checkbox">
-                <div class="wt-att-ic">PDF</div>
-                <div class="wt-att-info">
-                  <div class="wt-att-name">Planritning våning 3.pdf</div>
-                  <div class="wt-att-meta">Uppladdad 28 juni · 1.2 MB</div>
-                </div>
-              </label>
-              <label class="wt-att-row">
-                <input type="checkbox">
-                <div class="wt-att-ic">PDF</div>
-                <div class="wt-att-info">
-                  <div class="wt-att-name">Städinstruktion.pdf</div>
-                  <div class="wt-att-meta">Uppladdad 15 juni · 88 kB</div>
-                </div>
-              </label>
-            </div>
-            <div class="wt-att-upload" onclick="alert('I riktig version: filväljare öppnas.')">+ Ladda upp ny bilaga</div>
+            <div class="wt-att-list" id="wtAttList"></div>
+            <input type="file" id="wtAttFile" accept="application/pdf,image/*" multiple style="display:none" onchange="wtUploadAttachment(this)">
+            <div class="wt-att-upload" id="wtAttUploadBtn" onclick="wtTriggerUpload()">+ Ladda upp ny bilaga (PDF eller bild)</div>
           </div>
 
           <div class="wt-fset">
@@ -1253,7 +1240,7 @@
               <ul>
                 <li><span class="k">Mall:</span> <span class="v" id="sumTplInt">—</span></li>
                 <li><span class="k">Kund (som avtalet gäller):</span> <span class="v">Ifylld i steg 2</span></li>
-                <li><span class="k">Bilagor:</span> <span class="v">1 vald</span></li>
+                <li><span class="k">Bilagor:</span> <span class="v" id="sumAttInt">1 vald</span></li>
                 <li><span class="k">Skickas till:</span> <span class="v" id="sumRcpsInt">1 kollega för granskning</span></li>
                 <li><span class="k">Kunden får se det:</span> <span class="v" style="color:var(--info)">Först när du säger till</span></li>
               </ul>
@@ -2377,10 +2364,92 @@
   }
   function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
 
+  // ── Fas 5b spår 2: bilage-upload i Steg 4 ─────────────────────────
+  async function apiUpload(path, formData) {
+    // INGEN Content-Type-header — browsern sätter multipart-boundary själv
+    const r = await fetch(API_HOST + path, {
+      method: 'POST',
+      headers: { 'x-admin-token': API_TOKEN },
+      body: formData
+    });
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok || json.ok === false) throw new Error(json.error || ('UPLOAD ' + path + ' → HTTP ' + r.status));
+    return json;
+  }
+
+  function renderAttachments() {
+    const box = $('#wtAttList');
+    if (!box) return;
+    if (!state.attachments.length) {
+      box.innerHTML = '<div class="wt-att-empty">Inga egna bilagor tillagda. Mallens standardbilagor följer med automatiskt.</div>';
+    } else {
+      box.innerHTML = state.attachments.map(function(a, i) {
+        const ic = (a.mime && a.mime.indexOf('image/') === 0) ? 'BILD' : 'PDF';
+        return '<div class="wt-att-row">'
+          + '<div class="wt-att-ic">' + ic + '</div>'
+          + '<div class="wt-att-info"><div class="wt-att-name">' + escHtml(a.titel) + '</div>'
+          + '<div class="wt-att-meta">Bifogas sist i det signerade PDF-paketet</div></div>'
+          + '<button class="wt-att-rm" onclick="wtRemoveAttachment(' + i + ')" aria-label="Ta bort bilaga">&times;</button>'
+          + '</div>';
+      }).join('');
+    }
+    const n = state.attachments.length;
+    const label = n === 0 ? 'Inga (utöver mallens)' : n + (n === 1 ? ' bilaga' : ' bilagor');
+    ['#sumAtt', '#sumAttInt'].forEach(function(sel){ const el = $(sel); if (el) el.textContent = label; });
+  }
+
+  window.wtTriggerUpload = function() {
+    const f = $('#wtAttFile');
+    if (f) f.click();
+  };
+
+  window.wtRemoveAttachment = function(idx) {
+    // Tar bara bort ur listan — Dokument-raden behålls (orphan accepterat, v1)
+    state.attachments.splice(idx, 1);
+    renderAttachments();
+  };
+
+  window.wtUploadAttachment = async function(input) {
+    const files = Array.prototype.slice.call(input.files || []);
+    input.value = '';   // så samma fil kan väljas igen
+    if (!files.length) return;
+
+    const btn = $('#wtAttUploadBtn');
+    const origText = btn ? btn.textContent : '';
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const okType = f.type === 'application/pdf' || (f.type || '').indexOf('image/') === 0;
+      if (!okType) { alert('Bara PDF och bilder kan bifogas:\n' + f.name); continue; }
+      if (f.size > 15 * 1024 * 1024) { alert('Max 15 MB per bilaga:\n' + f.name); continue; }
+
+      // MOCK-läge (ingen token): lägg bara till lokalt så prototypen funkar
+      if (!IS_LIVE) {
+        state.attachments.push({ doc_id: 'mock-' + i + '-' + f.name, titel: f.name, mime: f.type });
+        renderAttachments();
+        continue;
+      }
+
+      if (btn) { btn.classList.add('busy'); btn.textContent = 'Laddar upp ' + f.name + '...'; }
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await apiUpload('/admin/dokument/upload', fd);
+        state.attachments.push({ doc_id: res.doc_id, titel: res.titel, mime: res.mime });
+        renderAttachments();
+      } catch (e) {
+        alert('Kunde inte ladda upp ' + f.name + ':\n' + e.message);
+      }
+    }
+    if (btn) { btn.classList.remove('busy'); btn.textContent = origText; }
+  };
+
 const state = {
     step: 1,
     tpl: null,
     mode: "client",
+    attachments: [],   // Fas 5b spår 2: [{doc_id, titel, mime}] uppladdade bilagor
+
     tplNames: {
       "hk-hybrid-sv":         "HK Timpris (SV)",
       "hk-subscription-en":   "HK Månadsavgift (EN)",
@@ -2407,6 +2476,9 @@ const state = {
       if (stepNum < n) s.classList.add("is-done");
       else if (stepNum === n) s.classList.add("is-active");
     });
+
+    // Fas 5b spår 2: rendera bilage-listan när Steg 4 visas
+    if (Number(n) === 4) renderAttachments();
 
     $$(".wt-body").forEach(b => b.scrollTop = 0);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -2737,6 +2809,7 @@ const state = {
         const res = await apiPost('/admin/contracts/render-preview', {
           template_id: state.tpl,
           spec: form.spec,
+          attachment_dokument_ids: state.attachments.map(function(a){ return a.doc_id; }),
         });
         const url = res.preview && res.preview.file_url;
         if (!url) throw new Error('inget file_url i svaret');
@@ -2840,6 +2913,7 @@ const state = {
         clientcompany:          CLIENT.id || null,   // Bubble ClientCompany-ref (valfri)
         auto_create_contract:   autoCreate,
         recipients:             rcps,
+        attachment_dokument_ids: state.attachments.map(function(a){ return a.doc_id; }),
       };
 
       const res = await apiPost('/admin/contracts/render-and-send', payload);
@@ -2854,6 +2928,8 @@ const state = {
   function resetWizard() {
     state.tpl = null;
     state.mode = "client";
+    state.attachments = [];   // Fas 5b spår 2: nollställ uppladdade bilagor
+
     $$(".wt-card").forEach(c => c.classList.remove("on"));
     $$(".wt-card[data-mode='client']")[0].classList.add("on");
     $("#btnNext1").disabled = true;
