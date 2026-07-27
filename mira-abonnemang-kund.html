@@ -754,7 +754,7 @@
         <div class="ab-sk-v" data-ab="sum-cost">258 412 kr</div>
       </div>
       <button class="ab-btn ghost" data-ab="import-btn" title="Importera befintligt avtal (PDF) — LLM parsar fälten">+ Importera avtal</button>
-      <button class="ab-btn ghost" data-aa="wiz-btn">+ Avtal från mall</button>
+      <button class="ab-btn ghost" data-aa="wiz-btn-k">+ Avtal från mall</button>
       <button class="ab-btn primary" data-ab="create-btn">+ Nytt abonnemang</button>
     </div>
   </div>
@@ -864,9 +864,9 @@
   <input type="file" data-ab="att-file" style="display:none;">
   <!-- Hidden file-input för PDF-import (Fas 4) -->
   <input type="file" data-ab="import-file" accept="application/pdf,.pdf" style="display:none;">
-  <div class="aa-wiz-mask" data-aa="wiz-mask">
+  <div class="aa-wiz-mask" data-aa="wiz-mask-k">
     <div class="aa-wiz-modal">
-      <button class="aa-wiz-close" data-aa="wiz-close" title="Stäng">&times;</button>
+      <button class="aa-wiz-close" data-aa="wiz-close-k" title="Stäng">&times;</button>
 <div class="wt-wrap">
   <div class="wt-proto">
     🧪 <strong>Prototyp</strong> — testklickbar, inga avtal skickas. Klicka igenom hela flödet, klicka på <strong>?</strong> bredvid fält.
@@ -987,10 +987,10 @@
           </div>
         </div>
         <footer class="wt-foot">
-          <button class="wt-btn plain" onclick="wtCloseModal()">Avbryt</button>
+          <button class="wt-btn plain" onclick="wtCloseModal_k()">Avbryt</button>
           <div style="display:flex;gap:10px;align-items:center">
             <span class="wt-foot-note" id="tplHint">Välj en mall för att fortsätta</span>
-            <button class="wt-btn primary" id="btnNext1" disabled onclick="goNext(1)">Nästa →</button>
+            <button class="wt-btn primary" id="btnNext1" disabled onclick="goNext_k(1)">Nästa →</button>
           </div>
         </footer>
       </div>
@@ -1011,7 +1011,7 @@
 
             <div class="wt-f">
               <label class="wt-f-l">Företagsnamn — så det skrivs i avtalet <span class="req">*</span>
-                <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
+                <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="Förklaring">?</button>
               </label>
               <div class="wt-hb">Fylls in automatiskt från vald kund. Kan justeras — kundens <strong>registrerade bolagsnamn</strong> (t.ex. "Electronic Arts Sverige AB", inte "EA") ska stå i avtalstexten.</div>
               <input type="text" id="wt-clientName" placeholder="Väljs i sökrutan ovan">
@@ -1019,7 +1019,7 @@
 
             <div class="wt-f">
               <label class="wt-f-l">Organisationsnummer <span class="req">*</span>
-                <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
+                <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="Förklaring">?</button>
               </label>
               <div class="wt-hb">10 siffror med bindestreck efter de 6 första, t.ex. <strong>556123-4567</strong>. Osäker? Slå upp företaget på <strong>allabolag.se</strong>.</div>
               <input type="text" id="wt-clientOrg" placeholder="556123-4567">
@@ -1027,7 +1027,7 @@
 
             <div class="wt-f">
               <label class="wt-f-l">Adress
-                <button class="wt-help" onclick="toggleHelp(this)" aria-label="Förklaring">?</button>
+                <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="Förklaring">?</button>
               </label>
               <div class="wt-hb">Kundens leveransadress — gatuadress, postnummer, ort. Om avtalet gäller flera adresser: skriv huvudkontoret här och lista de andra i en bilaga.</div>
               <textarea id="wt-clientAddress" rows="2" placeholder="t.ex. Södermalmsallén 36, 118 28 Stockholm"></textarea>
@@ -1035,8 +1035,8 @@
           </div>
         </div>
         <footer class="wt-foot">
-          <button class="wt-btn ghost" onclick="goBack(2)">← Tillbaka</button>
-          <button class="wt-btn primary" onclick="goNext(2)">Nästa →</button>
+          <button class="wt-btn ghost" onclick="goBack_k(2)">← Tillbaka</button>
+          <button class="wt-btn primary" onclick="goNext_k(2)">Nästa →</button>
         </footer>
       </div>
 
@@ -1054,8 +1054,8 @@
         
         </div>
         <footer class="wt-foot">
-          <button class="wt-btn ghost" onclick="goBack(3)">← Tillbaka</button>
-          <button class="wt-btn primary" onclick="goNext(3)">Nästa →</button>
+          <button class="wt-btn ghost" onclick="goBack_k(3)">← Tillbaka</button>
+          <button class="wt-btn primary" onclick="goNext_k(3)">Nästa →</button>
         </footer>
       </div>
 
@@ -1070,13 +1070,13 @@
 
           <div class="wt-fset">
             <h3 class="wt-fset-t">Bilagor
-              <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
+              <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
             </h3>
             <div class="wt-hb">Extra dokument som ska följa med avtalet — t.ex. offert, planritning, prislista. Bilagor läggs sist i det signerade PDF-paketet.</div>
 
             <div class="wt-att-list" id="wtAttList"></div>
-            <input type="file" id="wtAttFile" accept="application/pdf,image/*" multiple style="display:none" onchange="wtUploadAttachment(this)">
-            <div class="wt-att-upload" id="wtAttUploadBtn" onclick="wtTriggerUpload()">+ Ladda upp ny bilaga (PDF eller bild)</div>
+            <input type="file" id="wtAttFile" accept="application/pdf,image/*" multiple style="display:none" onchange="wtUploadAttachment_k(this)">
+            <div class="wt-att-upload" id="wtAttUploadBtn" onclick="wtTriggerUpload_k()">+ Ladda upp ny bilaga (PDF eller bild)</div>
           </div>
 
           <div class="wt-fset">
@@ -1085,15 +1085,15 @@
               💡 <strong>Kolla noga innan du skickar.</strong> Se att kundnamn, datum och priser stämmer. Något fel? Gå tillbaka och ändra.
             </div>
             <div id="prevBox" class="wt-prev">
-              <button class="wt-btn ghost" onclick="showPreview()">Skapa förhandsgranskning</button>
+              <button class="wt-btn ghost" onclick="showPreview_k()">Skapa förhandsgranskning</button>
               <div style="margin-top:8px;font-size:12px;color:var(--t3)">Klicka för att se hur avtalet blir i PDF.</div>
             </div>
           </div>
 
         </div>
         <footer class="wt-foot">
-          <button class="wt-btn ghost" onclick="goBack(4)">← Tillbaka</button>
-          <button class="wt-btn primary" onclick="goNext(4)">Nästa →</button>
+          <button class="wt-btn ghost" onclick="goBack_k(4)">← Tillbaka</button>
+          <button class="wt-btn primary" onclick="goNext_k(4)">Nästa →</button>
         </footer>
       </div>
 
@@ -1144,21 +1144,21 @@
                   </div>
                   <div class="wt-f">
                     <label class="wt-f-l">Roll
-                      <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
+                      <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
                     </label>
                     <div class="wt-hb"><strong>Signerar</strong> = skriver på avtalet juridiskt. <strong>Granskar</strong> = godkänner utan att bli juridiskt bunden (t.ex. jurist).</div>
                     <select><option>Signerar</option><option>Granskar</option></select>
                   </div>
-                  <button class="wt-rcp-rm" onclick="removeRcp(this)" aria-label="Ta bort">✕</button>
+                  <button class="wt-rcp-rm" onclick="removeRcp_k(this)" aria-label="Ta bort">✕</button>
                 </div>
               </div>
-              <button class="wt-btn ghost tiny" onclick="addRcp('clientRcps')" style="margin-top:10px">+ Lägg till en till person hos kunden</button>
+              <button class="wt-btn ghost tiny" onclick="addRcp_k('clientRcps')" style="margin-top:10px">+ Lägg till en till person hos kunden</button>
             </div>
 
             <div class="wt-fset">
               <div class="wt-f">
                 <label class="wt-f-l">Meddelande i mailet till kunden
-                  <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
+                  <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Kort personligt meddelande som visas i mailet. Håll det vänligt. Ingen text? Lämna tomt.</div>
                 <textarea rows="3" placeholder="Hej! Här kommer avtalet för städning. Vänligen granska och signera."></textarea>
@@ -1198,21 +1198,21 @@
                   </div>
                   <div class="wt-f">
                     <label class="wt-f-l">Ordning
-                      <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
+                      <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
                     </label>
                     <div class="wt-hb">Alla granskare får mailet samtidigt. Ordningen är bara för dig så du ser vem som är primär.</div>
                     <select><option>Primär</option><option>Sekundär</option></select>
                   </div>
-                  <button class="wt-rcp-rm" onclick="removeRcp(this)" aria-label="Ta bort">✕</button>
+                  <button class="wt-rcp-rm" onclick="removeRcp_k(this)" aria-label="Ta bort">✕</button>
                 </div>
               </div>
-              <button class="wt-btn ghost tiny" onclick="addRcp('internalRcps')" style="margin-top:10px">+ Lägg till en till kollega</button>
+              <button class="wt-btn ghost tiny" onclick="addRcp_k('internalRcps')" style="margin-top:10px">+ Lägg till en till kollega</button>
             </div>
 
             <div class="wt-fset">
               <div class="wt-f">
                 <label class="wt-f-l">Meddelande till kollegan
-                  <button class="wt-help" onclick="toggleHelp(this)" aria-label="?">?</button>
+                  <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
                 </label>
                 <div class="wt-hb">Vad ska hen kolla på? Skriv gärna om det finns särskilda punkter du är osäker på — t.ex. "Kolla priserna", "Är bindningen rätt?".</div>
                 <textarea rows="3" placeholder="Hej! Skulle uppskatta om du kunde ta en titt på detta avtal, framför allt priserna. Tack!"></textarea>
@@ -1233,8 +1233,8 @@
 
         </div>
         <footer class="wt-foot">
-          <button class="wt-btn ghost" onclick="goBack(5)">← Tillbaka</button>
-          <button class="wt-btn primary" id="btnSend" onclick="submitFinal()">Skicka till kunden ✉️</button>
+          <button class="wt-btn ghost" onclick="goBack_k(5)">← Tillbaka</button>
+          <button class="wt-btn primary" id="btnSend" onclick="submitFinal_k()">Skicka till kunden ✉️</button>
         </footer>
       </div>
 
@@ -1254,8 +1254,8 @@
             </ul>
           </div>
           <div class="wt-done-actions">
-            <button class="wt-btn ghost" onclick="resetWizard()">Skapa ett till avtal</button>
-            <button class="wt-btn primary" onclick="wtCloseModal()">Klar — stäng</button>
+            <button class="wt-btn ghost" onclick="resetWizard_k()">Skapa ett till avtal</button>
+            <button class="wt-btn primary" onclick="wtCloseModal_k()">Klar — stäng</button>
           </div>
         </div>
       </div>
@@ -1277,7 +1277,7 @@
           </div>
           <div class="wt-done-actions">
             <button class="wt-btn ghost" onclick="alert('Pågående interngranskningar visas snart under Avtal → filter Status → \'Pågår granskning\'. Kommer i nästa uppdatering.')">Se pågående granskningar</button>
-            <button class="wt-btn primary" onclick="wtCloseModal()">Klar — stäng</button>
+            <button class="wt-btn primary" onclick="wtCloseModal_k()">Klar — stäng</button>
           </div>
         </div>
       </div>
@@ -2313,21 +2313,25 @@
 </script>
 <script>
 (function(){
+  // Fas 5b spår 3: scopa ALL DOM-åtkomst till kundkortets block (.ab-wrap) så
+  // wizarden inte krockar med admin-blockets wizard på samma sida.
+  var BROOT = document.querySelector('.ab-wrap');
+  function byId(id){ return (BROOT||document).querySelector('#'+id); }
   // Wizard-scope: IIFE så $, $$, state osv. inte överskriver Bubbles jQuery ($.ajax)
 
   // ── Live API config (Fas 5 Steg A, 2026-07-14) ───────────────────
   // Läser api_host + planning_token från admin-blockets hidden inputs.
   // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
   // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
-  const API_HOST  = (document.querySelector('[data-mira="api_host"]')       || {}).value || '';
-  const API_TOKEN = (document.querySelector('[data-mira="planning_token"]') || {}).value || '';
+  const API_HOST  = ((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '';
+  const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
 
   // Fas 5b spår 3: på kundkortet är kunden FÖRVALD (data-mira="clientcompany").
   // Ingen kund-picker — Steg 2 visar bara kunden och förifyllda uppgifter.
-  const WIZ_CC_ID   = (document.querySelector('[data-mira="clientcompany"]')    || {}).value || '';
-  const WIZ_CC_NAME = (document.querySelector('[data-mira="clientcompany_nm"]') || {}).value || '';
+  const WIZ_CC_ID   = ((BROOT||document).querySelector('[data-mira="clientcompany"]')    || {}).value || '';
+  const WIZ_CC_NAME = ((BROOT||document).querySelector('[data-mira="clientcompany_nm"]') || {}).value || '';
 
   // Client-state — förvald kund (inte via autocomplete som i admin-vyn)
   const CLIENT = { id: WIZ_CC_ID || null, name: WIZ_CC_NAME || null };
@@ -2372,7 +2376,7 @@
   function _renderField(f) {
     const id = _fieldId(f.path);
     const req = f.required ? ' <span class="req">*</span>' : '';
-    const helpBtn = f.help ? '<button class="wt-help" onclick="toggleHelp(this)" aria-label="?" type="button">?</button>' : '';
+    const helpBtn = f.help ? '<button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?" type="button">?</button>' : '';
     const helpBox = f.help ? `<div class="wt-hb">${escHtml(f.help)}</div>` : '';
     const ph = escHtml(f.placeholder || '');
     let input;
@@ -2415,7 +2419,7 @@
 
   function renderStep3(schema) {
     CURRENT_SCHEMA = schema || FALLBACK_SCHEMA;
-    const body = document.getElementById('wt-step3-body');
+    const body = byId('wt-step3-body');
     if (!body) return;
     const sections = CURRENT_SCHEMA.sections || [];
     if (!sections.length) {
@@ -2430,14 +2434,14 @@
     const root = { spec: {}, contract_specs: [] };
 
     // Steg 2 kund-fält (alltid samma)
-    _setPath(root, 'spec.client.name',    (document.getElementById('wt-clientName')    || {}).value || null);
-    _setPath(root, 'spec.client.org_nr',  (document.getElementById('wt-clientOrg')     || {}).value || null);
-    _setPath(root, 'spec.client.address', (document.getElementById('wt-clientAddress') || {}).value || null);
+    _setPath(root, 'spec.client.name',    (byId('wt-clientName')    || {}).value || null);
+    _setPath(root, 'spec.client.org_nr',  (byId('wt-clientOrg')     || {}).value || null);
+    _setPath(root, 'spec.client.address', (byId('wt-clientAddress') || {}).value || null);
 
     // Steg 3 schema-baserade fält
     for (const sec of (schema.sections || [])) {
       for (const f of (sec.fields || [])) {
-        const el = document.getElementById(_fieldId(f.path));
+        const el = byId(_fieldId(f.path));
         if (!el) continue;
         let value = el.value;
         if (f.type === 'number') {
@@ -2479,7 +2483,7 @@
   }
 
   function validateStep3() {
-    const body = document.getElementById('wt-step3-body');
+    const body = byId('wt-step3-body');
     if (!body) return true;
     let firstErr = null;
     body.querySelectorAll('.wt-f').forEach(f => f.classList.remove('has-err'));
@@ -2539,7 +2543,7 @@
           + '<div class="wt-att-ic">' + ic + '</div>'
           + '<div class="wt-att-info"><div class="wt-att-name">' + escHtml(a.titel) + '</div>'
           + '<div class="wt-att-meta">Bifogas sist i det signerade PDF-paketet</div></div>'
-          + '<button class="wt-att-rm" onclick="wtRemoveAttachment(' + i + ')" aria-label="Ta bort bilaga">&times;</button>'
+          + '<button class="wt-att-rm" onclick="wtRemoveAttachment_k(' + i + ')" aria-label="Ta bort bilaga">&times;</button>'
           + '</div>';
       }).join('');
     }
@@ -2548,18 +2552,18 @@
     ['#sumAtt', '#sumAttInt'].forEach(function(sel){ const el = $(sel); if (el) el.textContent = label; });
   }
 
-  window.wtTriggerUpload = function() {
+  window.wtTriggerUpload_k = function() {
     const f = $('#wtAttFile');
     if (f) f.click();
   };
 
-  window.wtRemoveAttachment = function(idx) {
+  window.wtRemoveAttachment_k = function(idx) {
     // Tar bara bort ur listan — Dokument-raden behålls (orphan accepterat, v1)
     state.attachments.splice(idx, 1);
     renderAttachments();
   };
 
-  window.wtUploadAttachment = async function(input) {
+  window.wtUploadAttachment_k = async function(input) {
     const files = Array.prototype.slice.call(input.files || []);
     input.value = '';   // så samma fil kan väljas igen
     if (!files.length) return;
@@ -2609,14 +2613,14 @@ const state = {
     },
   };
 
-  function $(sel) { return document.querySelector(sel); }
-  function $$(sel) { return document.querySelectorAll(sel); }
+  function $(sel) { return (BROOT||document).querySelector(sel); }
+  function $$(sel) { return (BROOT||document).querySelectorAll(sel); }
 
   function showStep(n) {
     state.step = n;
     $$(".wt-view").forEach(v => v.classList.remove("on"));
     let selector = `.wt-view[data-view="${n}"]`;
-    const target = document.querySelector(selector);
+    const target = (BROOT||document).querySelector(selector);
     if (target) target.classList.add("on");
 
     $$(".wt-step").forEach(s => {
@@ -2688,14 +2692,14 @@ const state = {
 
   async function setClient(id, name) {
     CLIENT.id = id; CLIENT.name = name;
-    const chosen = document.getElementById('wt-clientChosen');
-    const results = document.getElementById('wt-clientResults');
-    const search = document.getElementById('wt-clientSearch');
+    const chosen = byId('wt-clientChosen');
+    const results = byId('wt-clientResults');
+    const search = byId('wt-clientSearch');
     if (chosen) {
       chosen.style.display = name ? 'block' : 'none';
       chosen.innerHTML = name
         ? '<strong style="color:#fff">✓ ' + escHtml(name) + '</strong> — vald från kundregistret. ' +
-          '<button class="wt-btn plain tiny" style="margin-left:8px" onclick="wtClearClient()">Byt kund</button>'
+          '<button class="wt-btn plain tiny" style="margin-left:8px" onclick="wtClearClient_k()">Byt kund</button>'
         : '';
     }
     if (results) results.style.display = 'none';
@@ -2703,9 +2707,9 @@ const state = {
     // Kundbyte: rensa de gamla kundfälten först så föregående kunds uppgifter
     // inte fastnar. Fylls sedan med den nya kundens data (eller lämnas tomma
     // om kunden saknar värdet). Ett manuellt val = ladda den kundens uppgifter.
-    const nameField = document.getElementById('wt-clientName');
-    const orgField  = document.getElementById('wt-clientOrg');
-    const addrField = document.getElementById('wt-clientAddress');
+    const nameField = byId('wt-clientName');
+    const orgField  = byId('wt-clientOrg');
+    const addrField = byId('wt-clientAddress');
     if (nameField) nameField.value = name || '';
     if (orgField)  orgField.value  = '';
     if (addrField) addrField.value = '';
@@ -2724,18 +2728,18 @@ const state = {
       console.warn('[wiz] kund-detaljer failed:', e.message);
     }
   }
-  window.wtClearClient = function(){ /* kundkortet: kunden är förvald, ingen "byt kund" */ };
+  window.wtClearClient_k = function(){ /* kundkortet: kunden är förvald, ingen "byt kund" */ };
 
   // Fas 5b spår 3: förvald kund — fyll lås-displayen + namn/org/adress-fälten.
   async function prefillFixedClient(){
-    var lock = document.querySelector('[data-wt="locked-name"]');
+    var lock = (BROOT||document).querySelector('[data-wt="locked-name"]');
     if (lock) lock.textContent = CLIENT.name || 'Kunden';
     if (CLIENT.id) { try { await setClient(CLIENT.id, CLIENT.name); } catch(_){} }
   }
 
   function bindClientPicker() {
-    const search = document.getElementById('wt-clientSearch');
-    const results = document.getElementById('wt-clientResults');
+    const search = byId('wt-clientSearch');
+    const results = byId('wt-clientResults');
     if (!search || !results) return;
     if (search.dataset.wtBound) return;
     search.dataset.wtBound = "1";
@@ -2779,10 +2783,10 @@ const state = {
   prefillFixedClient(); // förvald kund — fyll Steg 2 direkt vid init
 
   // ── Stäng wizard-modalen (för done-knappar + Avbryt) ────────────
-  window.wtCloseModal = function() {
-    const mask = document.querySelector('[data-aa="wiz-mask"]');
+  window.wtCloseModal_k = function() {
+    const mask = (BROOT||document).querySelector('[data-aa="wiz-mask-k"]');
     if (mask) { mask.classList.remove('on'); document.body.style.overflow = ''; }
-    if (typeof window.resetWizard === 'function') { try { window.resetWizard(); } catch(_){} }
+    if (typeof window.resetWizard_k === 'function') { try { window.resetWizard_k(); } catch(_){} }
   };
 
   // ── Pre-fyll + rendera Steg 3 från mallens default_spec_json ────
@@ -2807,7 +2811,7 @@ const state = {
     let filled = 0;
     for (const sec of (schema.sections || [])) {
       for (const f of (sec.fields || [])) {
-        const el = document.getElementById(_fieldId(f.path));
+        const el = byId(_fieldId(f.path));
         if (!el) continue;
         const val = _getPath(data, f.path);
         if (val != null && val !== '' && !el.value) {
@@ -2830,7 +2834,7 @@ const state = {
         console.warn('[wiz] inga aktiva mallar — behåller mock-korten');
         return;
       }
-      const grid = document.getElementById('tplGrid');
+      const grid = byId('tplGrid');
       if (!grid) return;
       state.tplNames = {};
       grid.innerHTML = templates.map(t => {
@@ -2989,7 +2993,7 @@ const state = {
 
   // Recipients
   function addRcp(containerId) {
-    const container = document.getElementById(containerId);
+    const container = byId(containerId);
     const clone = container.firstElementChild.cloneNode(true);
     clone.querySelectorAll("input").forEach(i => i.value = "");
     clone.querySelectorAll("select").forEach(s => s.selectedIndex = 0);
@@ -3005,8 +3009,8 @@ const state = {
     updateRcpSummary();
   }
   function updateRcpSummary() {
-    const nC = document.querySelectorAll("#clientRcps .wt-rcp-row").length;
-    const nI = document.querySelectorAll("#internalRcps .wt-rcp-row").length;
+    const nC = (BROOT||document).querySelectorAll("#clientRcps .wt-rcp-row").length;
+    const nI = (BROOT||document).querySelectorAll("#internalRcps .wt-rcp-row").length;
     $("#sumRcpsClient").textContent = nC + (nC === 1 ? " person hos kunden" : " personer hos kunden");
     $("#sumRcpsInt").textContent    = nI + (nI === 1 ? " kollega för granskning" : " kollegor för granskning");
     $("#doneRcpsClient").textContent = nC + (nC === 1 ? " person" : " personer");
@@ -3028,7 +3032,7 @@ const state = {
 
     try {
       const containerId = state.mode === "internal" ? "internalRcps" : "clientRcps";
-      const container = document.getElementById(containerId);
+      const container = byId(containerId);
       const rcps = Array.from(container.querySelectorAll('.wt-rcp-row')).map(row => {
         const email = row.querySelector('input[type="email"]').value.trim();
         const name  = row.querySelector('input[type="text"]').value.trim();
@@ -3046,12 +3050,12 @@ const state = {
       if (!rcps.length) { alert("Fyll i minst en mailadress för mottagaren."); return; }
 
       const panel = state.mode === "internal" ? "#internalPanel" : "#clientPanel";
-      const messageEl = document.querySelector(panel + " textarea");
+      const messageEl = (BROOT||document).querySelector(panel + " textarea");
       const meddelande = messageEl ? messageEl.value.trim() : '';
 
-      const senderEmail = (document.querySelector('[data-mira="sender_email"]') || {}).value
+      const senderEmail = ((BROOT||document).querySelector('[data-mira="sender_email"]') || {}).value
                        || 'christian@carotte.se';
-      const senderName  = (document.querySelector('[data-mira="sender_name"]') || {}).value
+      const senderName  = ((BROOT||document).querySelector('[data-mira="sender_name"]') || {}).value
                        || 'Carotte';
 
       // Intern granskning → auto_create_contract="no" (kollegans OK skapar inget Contract)
@@ -3102,9 +3106,9 @@ const state = {
     $$(".wt-help").forEach(h => h.classList.remove("on"));
     const pv = $("#prevBox");
     pv.classList.remove("on");
-    pv.innerHTML = `<button class="wt-btn ghost" onclick="showPreview()">Skapa förhandsgranskning</button><div style="margin-top:8px;font-size:12px;color:var(--t3)">Klicka för att se hur avtalet blir i PDF.</div>`;
+    pv.innerHTML = `<button class="wt-btn ghost" onclick="showPreview_k()">Skapa förhandsgranskning</button><div style="margin-top:8px;font-size:12px;color:var(--t3)">Klicka för att se hur avtalet blir i PDF.</div>`;
     ["clientRcps", "internalRcps"].forEach(id => {
-      const c = document.getElementById(id);
+      const c = byId(id);
       while (c.children.length > 1) c.lastElementChild.remove();
     });
     updateRcpSummary();
@@ -3113,14 +3117,14 @@ const state = {
   }
 
   // Exponera onclick-targets på window (attributen behöver globala funktioner)
-  window.goNext = goNext;
-  window.goBack = goBack;
-  window.toggleHelp = toggleHelp;
-  window.showPreview = showPreview;
-  window.addRcp = addRcp;
-  window.removeRcp = removeRcp;
-  window.submitFinal = submitFinal;
-  window.resetWizard = resetWizard;
+  window.goNext_k = goNext;
+  window.goBack_k = goBack;
+  window.toggleHelp_k = toggleHelp;
+  window.showPreview_k = showPreview;
+  window.addRcp_k = addRcp;
+  window.removeRcp_k = removeRcp;
+  window.submitFinal_k = submitFinal;
+  window.resetWizard_k = resetWizard;
 })();
 </script>
 <script>
@@ -3128,7 +3132,7 @@ const state = {
 // att .aa-wrap-scope har rendered när scripten körs (Bubbles injektion är
 // ibland async). Selectors matchar data-aa-attributen i HTML-blocken.
 (function(){
-  function findMask(){ return document.querySelector('[data-aa="wiz-mask"]'); }
+  function findMask(){ return document.querySelector('[data-aa="wiz-mask-k"]'); }
   function openWiz(){
     var m = findMask(); if (!m) { console.warn('[wiz] mask saknas'); return; }
     m.classList.add('on'); document.body.style.overflow = 'hidden';
@@ -3137,13 +3141,13 @@ const state = {
     var m = findMask(); if (!m) return;
     if (!force && !confirm('Stänga wizarden? Alla ifyllda uppgifter försvinner.')) return;
     m.classList.remove('on'); document.body.style.overflow = '';
-    if (typeof window.resetWizard === 'function') { try { window.resetWizard(); } catch(_){} }
+    if (typeof window.resetWizard_k === 'function') { try { window.resetWizard_k(); } catch(_){} }
   }
 
   document.addEventListener('click', function(e){
-    var btn = e.target.closest && e.target.closest('[data-aa="wiz-btn"]');
+    var btn = e.target.closest && e.target.closest('[data-aa="wiz-btn-k"]');
     if (btn) { e.preventDefault(); openWiz(); return; }
-    var closeBtn = e.target.closest && e.target.closest('[data-aa="wiz-close"]');
+    var closeBtn = e.target.closest && e.target.closest('[data-aa="wiz-close-k"]');
     if (closeBtn) { e.preventDefault(); closeWiz(); return; }
     // Backdrop-click: bara stäng om klick direkt på mask (inte på modal-innehåll)
     var mask = findMask();

@@ -2175,14 +2175,18 @@
 <!-- Wizard-JS + öppna/stäng-koppling (Fas 5) -->
 <script>
 (function(){
+  // Fas 5b spår 3: scopa DOM till admin-blocket (.aa-wrap) så admin-wizarden
+  // och kundkortets wizard (.ab-wrap) kan samexistera på samma sida utan ID-krock.
+  var BROOT = document.querySelector('.aa-wrap');
+  function byId(id){ return (BROOT||document).querySelector('#'+id); }
   // Wizard-scope: IIFE så $, $$, state osv. inte överskriver Bubbles jQuery ($.ajax)
 
   // ── Live API config (Fas 5 Steg A, 2026-07-14) ───────────────────
   // Läser api_host + planning_token från admin-blockets hidden inputs.
   // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
   // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
-  const API_HOST  = (document.querySelector('[data-mira="api_host"]')       || {}).value || '';
-  const API_TOKEN = (document.querySelector('[data-mira="planning_token"]') || {}).value || '';
+  const API_HOST  = ((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '';
+  const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
 
@@ -2272,7 +2276,7 @@
 
   function renderStep3(schema) {
     CURRENT_SCHEMA = schema || FALLBACK_SCHEMA;
-    const body = document.getElementById('wt-step3-body');
+    const body = byId('wt-step3-body');
     if (!body) return;
     const sections = CURRENT_SCHEMA.sections || [];
     if (!sections.length) {
@@ -2287,14 +2291,14 @@
     const root = { spec: {}, contract_specs: [] };
 
     // Steg 2 kund-fält (alltid samma)
-    _setPath(root, 'spec.client.name',    (document.getElementById('wt-clientName')    || {}).value || null);
-    _setPath(root, 'spec.client.org_nr',  (document.getElementById('wt-clientOrg')     || {}).value || null);
-    _setPath(root, 'spec.client.address', (document.getElementById('wt-clientAddress') || {}).value || null);
+    _setPath(root, 'spec.client.name',    (byId('wt-clientName')    || {}).value || null);
+    _setPath(root, 'spec.client.org_nr',  (byId('wt-clientOrg')     || {}).value || null);
+    _setPath(root, 'spec.client.address', (byId('wt-clientAddress') || {}).value || null);
 
     // Steg 3 schema-baserade fält
     for (const sec of (schema.sections || [])) {
       for (const f of (sec.fields || [])) {
-        const el = document.getElementById(_fieldId(f.path));
+        const el = byId(_fieldId(f.path));
         if (!el) continue;
         let value = el.value;
         if (f.type === 'number') {
@@ -2336,7 +2340,7 @@
   }
 
   function validateStep3() {
-    const body = document.getElementById('wt-step3-body');
+    const body = byId('wt-step3-body');
     if (!body) return true;
     let firstErr = null;
     body.querySelectorAll('.wt-f').forEach(f => f.classList.remove('has-err'));
@@ -2466,14 +2470,14 @@ const state = {
     },
   };
 
-  function $(sel) { return document.querySelector(sel); }
-  function $$(sel) { return document.querySelectorAll(sel); }
+  function $(sel) { return (BROOT||document).querySelector(sel); }
+  function $$(sel) { return (BROOT||document).querySelectorAll(sel); }
 
   function showStep(n) {
     state.step = n;
     $$(".wt-view").forEach(v => v.classList.remove("on"));
     let selector = `.wt-view[data-view="${n}"]`;
-    const target = document.querySelector(selector);
+    const target = (BROOT||document).querySelector(selector);
     if (target) target.classList.add("on");
 
     $$(".wt-step").forEach(s => {
@@ -2545,9 +2549,9 @@ const state = {
 
   async function setClient(id, name) {
     CLIENT.id = id; CLIENT.name = name;
-    const chosen = document.getElementById('wt-clientChosen');
-    const results = document.getElementById('wt-clientResults');
-    const search = document.getElementById('wt-clientSearch');
+    const chosen = byId('wt-clientChosen');
+    const results = byId('wt-clientResults');
+    const search = byId('wt-clientSearch');
     if (chosen) {
       chosen.style.display = name ? 'block' : 'none';
       chosen.innerHTML = name
@@ -2560,9 +2564,9 @@ const state = {
     // Kundbyte: rensa de gamla kundfälten först så föregående kunds uppgifter
     // inte fastnar. Fylls sedan med den nya kundens data (eller lämnas tomma
     // om kunden saknar värdet). Ett manuellt val = ladda den kundens uppgifter.
-    const nameField = document.getElementById('wt-clientName');
-    const orgField  = document.getElementById('wt-clientOrg');
-    const addrField = document.getElementById('wt-clientAddress');
+    const nameField = byId('wt-clientName');
+    const orgField  = byId('wt-clientOrg');
+    const addrField = byId('wt-clientAddress');
     if (nameField) nameField.value = name || '';
     if (orgField)  orgField.value  = '';
     if (addrField) addrField.value = '';
@@ -2581,11 +2585,11 @@ const state = {
       console.warn('[wiz] kund-detaljer failed:', e.message);
     }
   }
-  window.wtClearClient = function(){ setClient(null, null); document.getElementById('wt-clientSearch').focus(); };
+  window.wtClearClient = function(){ setClient(null, null); byId('wt-clientSearch').focus(); };
 
   function bindClientPicker() {
-    const search = document.getElementById('wt-clientSearch');
-    const results = document.getElementById('wt-clientResults');
+    const search = byId('wt-clientSearch');
+    const results = byId('wt-clientResults');
     if (!search || !results) return;
     if (search.dataset.wtBound) return;
     search.dataset.wtBound = "1";
@@ -2631,7 +2635,7 @@ const state = {
 
   // ── Stäng wizard-modalen (för done-knappar + Avbryt) ────────────
   window.wtCloseModal = function() {
-    const mask = document.querySelector('[data-aa="wiz-mask"]');
+    const mask = (BROOT||document).querySelector('[data-aa="wiz-mask"]');
     if (mask) { mask.classList.remove('on'); document.body.style.overflow = ''; }
     if (typeof window.resetWizard === 'function') { try { window.resetWizard(); } catch(_){} }
   };
@@ -2658,7 +2662,7 @@ const state = {
     let filled = 0;
     for (const sec of (schema.sections || [])) {
       for (const f of (sec.fields || [])) {
-        const el = document.getElementById(_fieldId(f.path));
+        const el = byId(_fieldId(f.path));
         if (!el) continue;
         const val = _getPath(data, f.path);
         if (val != null && val !== '' && !el.value) {
@@ -2681,7 +2685,7 @@ const state = {
         console.warn('[wiz] inga aktiva mallar — behåller mock-korten');
         return;
       }
-      const grid = document.getElementById('tplGrid');
+      const grid = byId('tplGrid');
       if (!grid) return;
       state.tplNames = {};
       grid.innerHTML = templates.map(t => {
@@ -2840,7 +2844,7 @@ const state = {
 
   // Recipients
   function addRcp(containerId) {
-    const container = document.getElementById(containerId);
+    const container = byId(containerId);
     const clone = container.firstElementChild.cloneNode(true);
     clone.querySelectorAll("input").forEach(i => i.value = "");
     clone.querySelectorAll("select").forEach(s => s.selectedIndex = 0);
@@ -2856,8 +2860,8 @@ const state = {
     updateRcpSummary();
   }
   function updateRcpSummary() {
-    const nC = document.querySelectorAll("#clientRcps .wt-rcp-row").length;
-    const nI = document.querySelectorAll("#internalRcps .wt-rcp-row").length;
+    const nC = (BROOT||document).querySelectorAll("#clientRcps .wt-rcp-row").length;
+    const nI = (BROOT||document).querySelectorAll("#internalRcps .wt-rcp-row").length;
     $("#sumRcpsClient").textContent = nC + (nC === 1 ? " person hos kunden" : " personer hos kunden");
     $("#sumRcpsInt").textContent    = nI + (nI === 1 ? " kollega för granskning" : " kollegor för granskning");
     $("#doneRcpsClient").textContent = nC + (nC === 1 ? " person" : " personer");
@@ -2879,7 +2883,7 @@ const state = {
 
     try {
       const containerId = state.mode === "internal" ? "internalRcps" : "clientRcps";
-      const container = document.getElementById(containerId);
+      const container = byId(containerId);
       const rcps = Array.from(container.querySelectorAll('.wt-rcp-row')).map(row => {
         const email = row.querySelector('input[type="email"]').value.trim();
         const name  = row.querySelector('input[type="text"]').value.trim();
@@ -2897,12 +2901,12 @@ const state = {
       if (!rcps.length) { alert("Fyll i minst en mailadress för mottagaren."); return; }
 
       const panel = state.mode === "internal" ? "#internalPanel" : "#clientPanel";
-      const messageEl = document.querySelector(panel + " textarea");
+      const messageEl = (BROOT||document).querySelector(panel + " textarea");
       const meddelande = messageEl ? messageEl.value.trim() : '';
 
-      const senderEmail = (document.querySelector('[data-mira="sender_email"]') || {}).value
+      const senderEmail = ((BROOT||document).querySelector('[data-mira="sender_email"]') || {}).value
                        || 'christian@carotte.se';
-      const senderName  = (document.querySelector('[data-mira="sender_name"]') || {}).value
+      const senderName  = ((BROOT||document).querySelector('[data-mira="sender_name"]') || {}).value
                        || 'Carotte';
 
       // Intern granskning → auto_create_contract="no" (kollegans OK skapar inget Contract)
@@ -2955,7 +2959,7 @@ const state = {
     pv.classList.remove("on");
     pv.innerHTML = `<button class="wt-btn ghost" onclick="showPreview()">Skapa förhandsgranskning</button><div style="margin-top:8px;font-size:12px;color:var(--t3)">Klicka för att se hur avtalet blir i PDF.</div>`;
     ["clientRcps", "internalRcps"].forEach(id => {
-      const c = document.getElementById(id);
+      const c = byId(id);
       while (c.children.length > 1) c.lastElementChild.remove();
     });
     updateRcpSummary();
