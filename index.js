@@ -21155,22 +21155,28 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
     const text = fullText.slice(0, 50000); // ~50k tecken räcker för avtal
 
     // 2) Extraktion: text-först, vision-fallback för skannade PDF:er.
-    const THIN_TEXT = 500;
-    const needVisionUpfront = fullText.length < THIN_TEXT; // inget/tunt textlager (Drift-fallet)
+    // Skannade avtal identifieras på LÅG TEXTTÄTHET (tecken/sida), inte total
+    // längd — signerade scans har ~2000 tecken signaturskräp men bara ~192
+    // tecken/sida, medan äkta text-avtal har ~2300 tecken/sida. En total-
+    // längdgräns ensam missar signerade scans (de passerar den). Bias mot
+    // vision: falsk-positiv (text→vision) är ofarlig (vision läser text också),
+    // falsk-negativ (scan→text) ger skräp via forcerad tool_choice.
+    const perPage = numPages > 0 ? (fullText.length / numPages) : fullText.length;
+    const looksScanned = fullText.length < 500 || perPage < 800;
 
     let parsed = null;
     let usage  = { input_tokens: 0, output_tokens: 0 };
     let method = "text";
 
-    if (!needVisionUpfront) {
+    if (!looksScanned) {
       const t = await _runContractTextExtraction(text);
       parsed = t.parsed;
       usage  = t.usage;
     }
 
-    // Fall tillbaka till vision om (a) textlagret är tunt, eller (b) text-passet
-    // gav degenererat resultat (signerad scan med bara signaturskräp i texten).
-    if (needVisionUpfront || _isDegenerateContractParse(parsed)) {
+    // Vision om (a) PDF:en ser skannad ut, eller (b) text-passet gav degenererat
+    // resultat (sekundärt skyddsnät för text-PDF:er som ändå ger inget).
+    if (looksScanned || _isDegenerateContractParse(parsed)) {
       if (numPages > 100) {
         return res.status(400).json({
           ok: false, error: "pdf_too_many_pages",
