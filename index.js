@@ -20607,7 +20607,7 @@ app.post("/admin/contracts/create", async (req, res) => {
     // Frontend kan skicka "platform"/"facility" från ServiceCatalog.category
     // (helt annat begrepp) eller ingenting. Härled från Erbjudande.Category
     // som är samma option-set som Contract.kategori.
-    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Staff", "Other facility services"];
+    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Service & People", "Other facility services"];
     let resolvedCategory = (b.category && VALID_CATEGORIES.includes(b.category)) ? b.category : null;
     if (!resolvedCategory && b.offer_id) {
       try {
@@ -20722,7 +20722,7 @@ app.patch("/admin/contracts/:id", async (req, res) => {
     if ("monthly_cost" in b)           patch[SERVICES.CT_MONTHLY]           = b.monthly_cost != null ? Number(b.monthly_cost) : null;
     if ("category" in b) {
       // Samma härledning som /create — kategori är option-set, mata bara giltiga värden.
-      const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Staff", "Other facility services"];
+      const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Service & People", "Other facility services"];
       let resolvedCategory = (b.category && VALID_CATEGORIES.includes(b.category)) ? b.category : null;
       if (!resolvedCategory && b.offer_id) {
         try {
@@ -20980,8 +20980,8 @@ const CONTRACT_EXTRACT_TOOL = {
       },
       category: {
         type: "string",
-        enum: ["Food & Event", "Housekeeping", "Staff", "Other facility services"],
-        description: "Avtalets kategori."
+        enum: ["Food & Event", "Housekeeping", "Service & People", "Other facility services"],
+        description: "Avtalets kategori. Service & People = bemanning/rekrytering."
       },
       monthly_cost: {
         type: "number",
@@ -21194,7 +21194,7 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
     };
 
     // Kategori-härledning som i /create
-    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Staff", "Other facility services"];
+    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Service & People", "Other facility services"];
     let resolvedCategory = (b.category && VALID_CATEGORIES.includes(b.category)) ? b.category : null;
     if (!resolvedCategory && b.offer_id) {
       try {

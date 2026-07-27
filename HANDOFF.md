@@ -112,7 +112,7 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 2. ✅ **KLART 2026-07-19** — bilage-upload i Steg 4 (`POST /admin/dokument/upload`).
 3. ✅ **KLART 2026-07-19** — wizarden på kundkortet + 2-blocks-samexistens (se nedan).
 4. ⏳ **Wording-polish** efter testfeedback från Fatih/Shahbaz/Anette. Kända trådar: pending-räknaren säger "…abonnemang" (borde "väntar på utskick"); kundkortets create-modal ("+ Nytt abonnemang") har kvar engelska typ-etiketter (Subscription/RateCard/Hybrid) — inkonsekvent med wizarden.
-5. ⏳ **NÄSTA SPÅR — TTL-städ av temp-preview-Dokument** — lazy-städ vid varje `/render-preview`-anrop: `bubbleFindAll("Dokument", {deletable_after<now}) → bubbleDelete` max ~20 rader/anrop. `deletable_after`-fältet finns redan. Ingen Bubble-schema-ändring. Backend-only i `index.js` (render-preview-endpointen ~rad 21227).
+5. ✅ **KLART + LIVE-verifierat 2026-07-27** — TTL-städ av temp-preview-Dokument (se detaljsektion nedan).
 6. ⏳ **Multi-Office signering** (§10.12 öppen fråga) — en signering kan ge N Contracts (Scandic ramavtals-mönster).
 7. ⏳ **Långsiktig: flytta API-nycklar till Bubbles Site properties** istället för hardcoded HTML — undviker hidden-input-strip-buggen (se gotcha 5).
 
@@ -170,7 +170,22 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 - Ny mall `contract_templates/hk-manadsavgift-sv.json` (svensk HK månadsavgift, grundad i Planhat-avtalet). **Kör `bash contract_templates/seed.sh` för att seeda.** OBS: `monthly_cost` läses från `spec.pricing.monthly_fee_sek` i readForm — mallens fält måste heta det.
 - Staff-kategorichippets `data-val` rättat till `Service & People` (matchar Option Set).
 
-**Kvarstår Fas 5b:** spår 4 (wording), 5 (TTL-städ ← nästa), 6 (multi-office), 7 (API-nycklar → Site properties).
+**Kvarstår Fas 5b:** spår 4 (wording), 6 (multi-office), 7 (API-nycklar → Site properties).
+
+### Fas 5b Spår 5 — KLART + LIVE-verifierat 2026-07-27
+
+**TTL-städ av temp-preview-Dokument (backend-only, `index.js`):**
+- Ny helper `_sweepExpiredPreviewDokument({cap=20})` (direkt efter `contractRenderEngine`-init, ~rad 19739): `bubbleFind("Dokument", {constraint: deletable_after "less than" nowIso, sort_field: deletable_after, descending:false, limit:20})` → **JS-refilter** (`Date.parse(row.deletable_after) < now`) → `bubbleDelete` per rad, non-fatal per rad.
+- Anropas **fire-and-forget + non-fatal** i `POST /admin/contracts/render-preview` (~rad 21257) EFTER att result finns, UTAN `await`, med `.catch` → fördröjer aldrig svaret, bryter aldrig previewen. (Render = långlivad Node-process → promisen körs klart efter `res.json`.)
+- **⚠️ Gotcha-skäl för JS-refiltret:** Bubbles date-constraint (`less than`/`greater than` på date-fält med string-värde) är opålitlig (se kommentar vid FortnoxInvoice-hämtningen ~rad 14731). Constraint:en används bara som grov-filter + sort; JS-refiltret garanterar att en preview vars `deletable_after` ligger i framtiden ALDRIG raderas (skydd mot att radera en preview som en admin tittar på just nu).
+- **Avvikelse från ursprungsförslaget:** `bubbleFind` (limit 20) INTE `bubbleFindAll` (som paginerar allt → motverkar cap:en).
+- **Ingen Bubble-schema-ändring.** Enda ändrade fil: `index.js`.
+- Verifierat: `node --check` OK · JS-refilter testat isolerat · skarpt curl mot `$HOST/admin/contracts/render-preview` → `{"ok":true,"preview":{…}}`, preview funkar som förut.
+
+**Sidofix 2026-07-27 — `Staff` → `Service & People` i avtals-import/create (blockerare för avtals-import):**
+- Fyra ställen använde det icke-existerande Option Set-värdet `"Staff"` istället för kanoniska `"Service & People"` (gotcha 2) → import/create av bemanning/rekrytering-avtal kraschade (`bubbleCreate failed`) ELLER tappade kategorin (null). Fixade: LLM extract-tool `category`-enum (`index.js` ~20983) + `VALID_CATEGORIES` i `/create` (~20610), `PATCH /:id` (~20725), `import/commit` (~21197). Plus mock-data i `mira-abonnemang-kund.html` (~1379).
+- Ingen Bubble-schema-ändring, ingen migration (inga Contracts kunde ha `Category="Staff"` sparad — Bubble hade avvisat). Deploya `index.js` (+ kund-HTML för mock-konsekvens).
+- **OBS medvetet EJ ändrat:** `"Staff"` finns kvar som intern JS-objektnyckel i förfrågan/leads-domänen (`SUPPLIER_BY_CATEGORY`, `SUBCAT_FIELDS`→`SubCategorySP`, leads-statistik ~10589/18749/18806/18840) — separat fungerande system, inte Contract.Category Option Set.
 
 ### Aktiva filer (uppdaterat 2026-07-14)
 
