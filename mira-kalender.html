@@ -1,15 +1,34 @@
 <!--
   MIRA – KALENDER / PLANERING
   ------------------------------------------------------------------
-  Klistras in i ett HTML-element i Bubble (kundens dashboard ELLER Carotte CRM).
-  Läser den enhetliga Activity-typen via Render-proxy (master-Bubble-nyckeln
-  stannar server-side). Allt redan materialiserat dit: Bokning/Ärende/Kom ihåg/Housekeeping.
+  Klistras in i ett HTML-element i Bubble. Läser Activity-typen via Render-proxy
+  (master-Bubble-nyckeln stannar server-side). Allt materialiserat dit:
+  Bokning/Ärende/Kom ihåg/Housekeeping.
 
-  KOPPLING I BUBBLE (value=""):
-    #mira_company_id      = Current User's Company's unique id   (kund-läge: lås till denna kund)
-    #mira_admin_crm       = Current User's admin_crm  ("yes" → CRM-läge, annars kund-läge)
-    #mira_api_host        = https://mira-exchange.onrender.com   (redan ifyllt)
-    #mira_planning_token  = (sätt = PLANNING_ADMIN_TOKEN, annars CASPECO_ADMIN_TOKEN)
+  TRE LÄGEN — bestäms av inputs nedan:
+
+  A) KUND-DASHBOARD (inloggad kund ser sin egen planering):
+       #mira_company_id   = Current User's Company's unique id
+       #mira_admin_crm    = (tom eller "no")
+     → låst till kundens företag, ingen sökruta.
+
+  B) CRM-FRI KUNDSÖK (Carotte-admin, egen CRM-vy — sök fram vilken kund som helst):
+       #mira_company_id   = (tom)
+       #mira_admin_crm    = "yes"
+     → sökruta uppe till höger, Carotte väljer kund att titta på.
+
+  C) CRM-PINNED KUNDKORT (Carotte-admin på specifikt kundkort — dokumenterat i
+     mira-kalender-kundkort.md):
+       #mira_company_id   = Parent group's ClientCompany's unique id
+       #mira_admin_crm    = "yes"
+     → låst till kundkortets kund, ingen sökruta (kunden är redan vald via kortet).
+     Backend får ändå crm=1 så CRM-todo-filtret gäller.
+
+  Gemensamt för alla:
+    #mira_company_name    = kundens Name_company (visas i titeln)
+    #mira_user_name       = Current User's First Name (för kommentar-stämpel)
+    #mira_api_host        = https://mira-exchange.onrender.com  (redan ifyllt)
+    #mira_planning_token  = PLANNING_ADMIN_TOKEN (annars CASPECO_ADMIN_TOKEN)
 
   Tomt company_id + ej admin → DEMO_DATA (preview).
 -->
@@ -241,9 +260,10 @@
   }
   function load(){
     if(!COMPANY && !ADMIN){ EVENTS=DEMO.map(function(d){return {id:d.id,sourceId:d.sourceId,type:d.type,title:d.title,start:dParse(d.start),end:dParse(d.end),color:d.color,status:d.status,category:d.category,company:d.company||'',desc:'',emp:'',region:'',project:'',supervisor:''};}); render(); setHint(true); return; }
-    // Alltid exakt ETT företag i taget (aldrig alla på en gång — för mastigt).
-    var comp = ADMIN ? st.activeCompany : COMPANY;
-    if(ADMIN && !comp){ EVENTS=[]; document.getElementById('mkView').innerHTML='<div class="mk-load">Sök fram en kund i rutan uppe till höger för att visa dess planering.</div>'; document.getElementById('mkCount').textContent=''; return; }
+    // Alltid exakt ETT företag i taget. Prioordning: pinned COMPANY (kund-läge ELLER
+    // CRM-pinned kundkort) → CRM-fri kundsök (st.activeCompany).
+    var comp = COMPANY || (ADMIN ? st.activeCompany : null);
+    if(ADMIN && !COMPANY && !comp){ EVENTS=[]; document.getElementById('mkView').innerHTML='<div class="mk-load">Sök fram en kund i rutan uppe till höger för att visa dess planering.</div>'; document.getElementById('mkCount').textContent=''; return; }
     var w=windowFor();
     var url=HOST+'/admin/planning/activities?from='+encodeURIComponent(w.from)+'&to='+encodeURIComponent(w.to)+(comp?'&company='+encodeURIComponent(comp):'')+(ADMIN?'&crm=1':'');
     document.getElementById('mkView').innerHTML='<div class="mk-load">Laddar planering…</div>';
@@ -448,10 +468,12 @@
   window.mkDrillM=function(m){st.anchor=new Date(st.anchor.getFullYear(),m,1);st.level='manad';render();};
   window.mkDrillD=function(y,m,d){st.anchor=new Date(y,m,d);st.level='dag';render();};
 
-  document.getElementById('mkSearch').classList.toggle('on',ADMIN);
+  // CRM-pinned (COMPANY förinställd via Parent group) = ingen sökruta, ingen kundlista.
+  var CRM_FREE_PICK = ADMIN && !COMPANY;
+  document.getElementById('mkSearch').classList.toggle('on', CRM_FREE_PICK);
   document.getElementById('mkSub').textContent = ADMIN ? 'Carotte CRM' : 'Mira · Carotte';
-  setTitle(ADMIN ? '' : COMPANY_NAME);   // kund-läge: kundens namn (#mira_company_name); CRM: fylls av loadCompanies
-  if(ADMIN) loadCompanies();
+  setTitle(COMPANY_NAME || '');   // kund/pinned: kundens namn; fri kundsök: fylls av loadCompanies
+  if(CRM_FREE_PICK) loadCompanies();
   load();
   // Förfrågan-wizarden (eller annat block) signalerar ny/ändrad Activity → läs om kalendern direkt.
   window.addEventListener('mira:activity-changed', function(){ load(); });
