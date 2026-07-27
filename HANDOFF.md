@@ -1,6 +1,6 @@
 # HANDOFF — Mira-Exchange sync-omtag
 
-> Senast uppdaterad 2026-06-28. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
+> Senast uppdaterad 2026-07-19. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
 
 ---
@@ -107,14 +107,14 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 - `/prototyp/avtal-wizard` — klickbar wizard (MOCK-mode, inga riktiga avtal)
 - PDF `mira-avtalsmodulen-oversikt.pdf` (5 sidor, 692 KB) i repo-root för Teams-delning
 
-**Fas 5b — kvarstår att bygga (i prio-ordning):**
-1. **"Pågående interngranskningar"-vy i admin-blocket** — filter på Avtal-fliken där granskaren har godkänt men inget skickat till kund än. Med "Skicka nu till kund"-knapp som triggar en NY OAR med Signer-recipient.
-2. **Bilage-upload i Steg 4** — idag är listan mockad. Behöver koppling till multer-baserad `POST /admin/dokument/upload` (kanske finns redan; annars bygga).
-3. **Wizarden på kundkortet** (`mira-abonnemang-kund.html`) — kopiera samma modal-mönster men skippa Steg 2 (kund-picker) eftersom kunden är känd från `data-mira="clientcompany"`.
-4. **Wording-polish** efter testfeedback från Fatih/Shahbaz/Anette och andra kollegor.
-5. **TTL-städ av temp-preview-Dokument** — lazy-cron eller vid varje `/render-preview`-anrop: `bubbleFindAll("Dokument", {deletable_after<now}) → bubbleDelete` max 20 rader.
-6. **Multi-Office signering** (§10.12 öppen fråga) — en signering kan ge N Contracts (Scandic ramavtals-mönster).
-7. **Långsiktig: flytta API-nycklar till Bubbles Site properties** istället för hardcoded HTML — undviker hidden-input-strip-buggen (se gotcha 5).
+**Fas 5b — status per spår:**
+1. ✅ **KLART 2026-07-18** — "Väntar på utskick"-vy + "Skicka nu till kund" (se detaljsektion nedan).
+2. ✅ **KLART 2026-07-19** — bilage-upload i Steg 4 (`POST /admin/dokument/upload`).
+3. ✅ **KLART 2026-07-19** — wizarden på kundkortet + 2-blocks-samexistens (se nedan).
+4. ⏳ **Wording-polish** efter testfeedback från Fatih/Shahbaz/Anette. Kända trådar: pending-räknaren säger "…abonnemang" (borde "väntar på utskick"); kundkortets create-modal ("+ Nytt abonnemang") har kvar engelska typ-etiketter (Subscription/RateCard/Hybrid) — inkonsekvent med wizarden.
+5. ⏳ **NÄSTA SPÅR — TTL-städ av temp-preview-Dokument** — lazy-städ vid varje `/render-preview`-anrop: `bubbleFindAll("Dokument", {deletable_after<now}) → bubbleDelete` max ~20 rader/anrop. `deletable_after`-fältet finns redan. Ingen Bubble-schema-ändring. Backend-only i `index.js` (render-preview-endpointen ~rad 21227).
+6. ⏳ **Multi-Office signering** (§10.12 öppen fråga) — en signering kan ge N Contracts (Scandic ramavtals-mönster).
+7. ⏳ **Långsiktig: flytta API-nycklar till Bubbles Site properties** istället för hardcoded HTML — undviker hidden-input-strip-buggen (se gotcha 5).
 
 **Filer som är NYA denna omgång:**
 - `pdf_utils.js` — delade PDF/HTML/binär-helpers
@@ -146,14 +146,31 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 8. **PATCH på `ContractTemplate` skapar ny rad** — inte in-place-mutation. Bakåt-referens via `superseded_by`. Filter "aktiva mallar" = `is_active=yes AND superseded_by is empty`.
 9. **⚠️ Generiska CSS-klassnamn krockar med Bubbles globala CSS** (grundorsak, bekräftat live 2026-07-18 — kostade en lång felsökning). Bubbles kompilerade `run.css` har globala regler på generiska klasser, konkret **`.warn { padding-top: 12px }`**. Ett element med `class="... warn"` ärver då 12px och ser fel ut (chip blev 33px istället för 25px) — och din egen `.aa-chip`-padding vinner INTE (samma specificitet, Bubbles regel senare i kaskaden). **Regel: namnrymda ALLA modifier-klasser i HTML-blocken** — aldrig bara `warn`/`ok`/`on`/`right`/`muted` etc., använd `aa-warn`/`aa-ok`. Fixat på chip + KPI + "dagar kvar"-text i `mira-abonnemang-admin.html` 2026-07-18. Diagnos: kör Claude-i-Chrome mot live-sidan, `getComputedStyle(el)` + enumerera `document.styleSheets` med `el.matches(rule.selectorText)` för att se vilken regel som vinner. Isolerad render (harness) visar INTE detta — bara live-Bubble har globalerna. Se `memory/reference-bubble-word-break.md`.
 10. **Bubbles flex-lager stretchar/bryter chips** (2026-07-18) — en förälder kan påtvinga `align-items:stretch`+höjd → chips med `height:auto` blir höga. Och `display:inline-flex` på ett flerords-chip gör texten till ett krympbart flex-item som Bubbles ärvda `word-break` kan bryta ("Utgår snart" på två rader). Fix: `align-self:center` + `flex-shrink:0` (ej inline-flex) + `white-space:nowrap` på chip-klassen. Se `memory/reference-bubble-word-break.md`.
+11. **⚠️ Två HTML-block på samma Bubble-sida krockar** (2026-07-19) — admin "Alla avtal" + kundkortet ligger på samma sida (kundkorts-popup ovanpå admin-vyn) → två wizardar med delade element-ID:n, `window`-funktioner och `data-aa`-attribut. Symptom: fel modal öppnas, scroll låses (`body.overflow=hidden` utan matchande close), mallval registreras inte (delad `$$('.wt-card')`-bindning). Fix: scopa ALL DOM-åtkomst till block-roten (`BROOT`+`byId()` överst i wizard-IIFE, `document.getElementById/querySelector`→scopade; BROOT MÅSTE definieras före data-mira-läsningen) + namnrymda det ena blockets `window`-fn/`data-aa`. Se `memory/reference-bubble-multiblock-collision.md`.
 
-### Fas 5b Spår 1 — KLART + LIVE-verifierat 2026-07-18
+### Fas 5b Spår 1–3 — KLART + verifierat 2026-07-18/19
 
-"Pågående interngranskningar"-vy + "Skicka nu till kund" byggt och testat.
-- **Backend (`index.js`):** nya konstanter `CT_INTERNAL_REVIEW`=`internal_review_json`, `OAR_FORWARDED_AT`=`forwarded_at`. `_createContractsFromApprovalRequest` skriver `spec.internal_review_json` → Contract. Nya endpoints: `GET /admin/approval/pending-customer-send` (filter: `auto_create_contract=no` AND `status=Approved` AND `forwarded_at` tom AND `reviewers_count>0`) och `POST /admin/approval/:id/send-to-customer` (klonar review-OAR till kund-signer-OAR, återanvänder samma renderade Dokument, injicerar gransknings-trail i specs, stämplar `forwarded_at`). `_enrichContract` returnerar `internal_review_json`.
+**Spår 1 — "Väntar på utskick" + "Skicka nu till kund" (LIVE-verifierat 2026-07-18):**
+- **Backend (`index.js`):** konstanter `CT_INTERNAL_REVIEW`=`internal_review_json`, `OAR_FORWARDED_AT`=`forwarded_at`. `_createContractsFromApprovalRequest` skriver `spec.internal_review_json` → Contract. Endpoints: `GET /admin/approval/pending-customer-send` (filter: `auto_create_contract=no` AND `status=Approved` AND `forwarded_at` tom AND `reviewers_count>0`) + `POST /admin/approval/:id/send-to-customer` (klonar review-OAR → kund-signer-OAR, återanvänder samma Dokument, injicerar gransknings-trail, stämplar `forwarded_at`). `_enrichContract` returnerar `internal_review_json`.
 - **Bubble-schema (Christian byggt):** `OfferApprovalRequest.forwarded_at` (date) + `Contract.internal_review_json` (text long).
-- **Frontend (`mira-abonnemang-admin.html`):** vy-toggle "Avtal / Väntar på utskick (N)" ovanför filtren, pending-vy med "Skicka nu till kund"-ruta (manuella mottagare), interngransknings-trail visas i contracts-expanden. Filter delat på 3 rader (Sök+datum / Status+Typ / Kategori).
-- **Kvarstår Fas 5b:** spår 2 (bilage-upload Steg 4), spår 3 (wizard på kundkortet), spår 4 (wording — bl.a. pending-räknaren säger fortfarande "...abonnemang"), spår 5-7.
+- **Frontend (`mira-abonnemang-admin.html`):** vy-toggle "Avtal / Väntar på utskick (N)" ovanför filtren, pending-vy med "Skicka nu till kund"-ruta, gransknings-trail i contracts-expanden. Filter delat på 3 rader.
+
+**Spår 2 — bilage-upload i Steg 4 (2026-07-19):**
+- **Backend:** `POST /admin/dokument/upload` (multer `file`, x-admin-token, CORS) — bara PDF+bild (415 annars), max 15 MB, skapar Dokument-rad → `doc_id`. `/admin/dokument/` tillagt i `openPrefixes`. `render-preview` + `render-and-send` tog redan `attachment_dokument_ids`.
+- **Frontend:** riktig filväljare i Steg 4 (dold `<input type=file>`), dynamisk lista med ✕-borttag, `attachment_dokument_ids` skickas till preview + send. Backend mergar bilagorna sist i PDF-paketet + mallens `default_attachments`.
+
+**Spår 3 — wizarden på kundkortet (`mira-abonnemang-kund.html`, 2026-07-19):**
+- Wizarden (CSS+modal+script) porterad. Val (b): Steg 2 är en **läsrad** "förvald kund" (ingen picker) — `CLIENT` init:eras från `data-mira="clientcompany"`/`clientcompany_nm`, `prefillFixedClient()` fyller namn/org/adress vid init + efter reset. "+ Avtal från mall" i headern.
+- **⚠️ Samexistens-krav:** admin-blocket + kundkortet ligger på SAMMA Bubble-sida → två wizardar. Löst genom att **scopa all DOM-åtkomst till block-roten** (kund→`.ab-wrap`, admin→`.aa-wrap`, via `BROOT` + `byId()` överst i varje wizard-IIFE) OCH **namnrymda kundkortets** `window`-fn→`*_k` + `data-aa`→`wiz-*-k`. Se gotcha 11 + `memory/reference-bubble-multiblock-collision.md`. **OBS: både admin- OCH kund-HTML:en ändrades** — deploya båda.
+
+**Övriga fixar denna omgång (2026-07-18/19):**
+- Adress-hämtning: `/admin/clientcompany/:id/details` plockar `.address` ur Bubble geografisk-adress-objekt (var buggigt — returnerade objektet).
+- Kundbyte i wizarden rensar+skriver över namn/org/adress (fastnade förut).
+- Avtalstyper översatta i UI: Subscription→Abonnemang, RateCard→Prislista (chips + `typeLabel()`; `data-val` kvar engelska). Kategorier kvar engelska (beslut).
+- Ny mall `contract_templates/hk-manadsavgift-sv.json` (svensk HK månadsavgift, grundad i Planhat-avtalet). **Kör `bash contract_templates/seed.sh` för att seeda.** OBS: `monthly_cost` läses från `spec.pricing.monthly_fee_sek` i readForm — mallens fält måste heta det.
+- Staff-kategorichippets `data-val` rättat till `Service & People` (matchar Option Set).
+
+**Kvarstår Fas 5b:** spår 4 (wording), 5 (TTL-städ ← nästa), 6 (multi-office), 7 (API-nycklar → Site properties).
 
 ### Aktiva filer (uppdaterat 2026-07-14)
 
@@ -161,7 +178,7 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 - `pdf_utils.js` (NY, ~150 rader) — delade PDF/HTML-helpers (Fas 5)
 - `contract_render.js` (NY, ~230 rader) — DI-motor för mall-rendering (Fas 5)
 - `offer_approval_doc.js` — refaktorerad att importera från pdf_utils
-- `mira-abonnemang-kund.html` (~1350 rader) — kundkort-flik inbäddad i Företag-popupen. Wizarden **inte flyttad hit än** (Fas 5b spår 3).
+- `mira-abonnemang-kund.html` (~3160 rader) — kundkort-flik i Företag-popupen. **Wizarden nu porterad hit (Fas 5b spår 3, 2026-07-19)** — namnrymd + BROOT-scopad för samexistens med admin-blocket. Se gotcha 11.
 - `mira-abonnemang-admin.html` (~2200 rader efter Fas 5) — global "Alla abonnemang"-sida MED inbäddad wizard-modal
 - `mira-kommunikation-admin.html` — API-nyckel fixad via JS (Bubble hidden-input-strip-bugg)
 - `contract_templates/*.json` (NY mapp) — 5 seedade mallar + seed.sh
