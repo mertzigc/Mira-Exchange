@@ -187,6 +187,22 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 - Ingen Bubble-schema-ändring, ingen migration (inga Contracts kunde ha `Category="Staff"` sparad — Bubble hade avvisat). Deploya `index.js` (+ kund-HTML för mock-konsekvens).
 - **OBS medvetet EJ ändrat:** `"Staff"` finns kvar som intern JS-objektnyckel i förfrågan/leads-domänen (`SUPPLIER_BY_CATEGORY`, `SUBCAT_FIELDS`→`SubCategorySP`, leads-statistik ~10589/18749/18806/18840) — separat fungerande system, inte Contract.Category Option Set.
 
+### Fas 4-utökning 2026-07-27 — Vision-OCR-fallback för skannade avtal (KODAT, ej deployat)
+
+**Problem:** Många befintliga signerade avtal (+ inskannade bilagor) är **bild-PDF:er utan textlager** — `pdf-parse` läser bara inbäddad text och får tomt (Drift: 41 tecken) eller bara signaturskräp (signerad: 2117 tecken "Transaktion…Signerat"). `/import/parse` skickade den skräpen till Haiku → tomt resultat utan felmeddelande.
+
+**Verifierat först (isolerat curl mot Anthropic-API, giltig nyckel):** native PDF **document-block** (base64) till `claude-haiku-4-5` OCR:ar de skannade OX2-avtalen perfekt — Drift 7 s/0,18 kr, signerad 28 sidor 10 s/0,26 kr, alla fält med confidence 0,85–0,99. **Streaming är obligatoriskt** — icke-streamad request 502:ar på gateway-timeout vid tung scan. Inline base64 räcker (ingen Files API); Haiku 4.5 = 100-sidorsgräns.
+
+**Lösning (`index.js`, `/import/parse`):**
+- Nya helpers efter `CONTRACT_EXTRACT_SYSTEM` (~rad 21064): `_isDegenerateContractParse()`, `_runContractTextExtraction()`, `_runContractVisionExtraction()` (streaming via `anthropic.messages.stream().finalMessage()`).
+- **Text-först, vision-fallback:** kör `pdfParse`. Om `fullText < 500` tecken → **direkt vision** (tunt/inget textlager). Annars text-passet som förr; om resultatet är **degenererat** (ingen `customer_name`/`monthly_cost`/`rate_card`/`contract_type`) → **vision-fallback** (fångar signerade scans med bara signaturskräp — en längdgräns ensam missar dem, de har 2117 tecken).
+- Ersatte gamla `fullText.length < 100 → "pdf_no_text"`-guarden (felaktig logik nu). Sid-guard: `numpages > 100 → 400`.
+- Svaret returnerar nytt fält `method: "text" | "vision"` så Carotte ser i UI:t hur avtalet lästes.
+- **Ändrad fil:** endast `index.js`. Ingen Bubble-schema-ändring. Kostnad: vision ~0,2–0,3 kr/avtal vs ~0,09 kr text (sidor blir bild-tokens); trivialt.
+- Verifierat: `node --check` OK · degenererings-logik testad isolerat (8 fall) · vision-mekaniken bevisad via fristående streamande curl.
+- **KVAR:** deploya `index.js`, sedan skarpt test av **båda** vägarna — dra in en scan (OX2 signerad → `method:"vision"`) OCH en text-PDF (Planhat → `method:"text"`) via kundkortets drag-drop, bekräfta rätt väg väljs + fälten stämmer.
+- Testskript i scratchpad: `ocr_test.mjs` (streamande vision-test mot valfri PDF+modell), `ping.mjs` (auth-sanity). Kräver `ANTHROPIC_API_KEY` i shell.
+
 ### Aktiva filer (uppdaterat 2026-07-14)
 
 - `index.js` (~21 500 rader) — SERVICES-konstanter (rad ~19653, inkl. CTPL_*+DOK_DELETABLE_AFTER), `_createContractsFromApprovalRequest` + `_deriveContractStatus` (rad ~16460), `_createApprovalRequestInternal` (rad ~16770), `_enrichContract` + admin/contracts-endpoints (rad ~19960+), Fas 4 CONTRACT_EXTRACT_TOOL + parse/commit (rad ~20974), Fas 5 CRUD + render-preview + render-and-send + clientcompany/:id/details + prototyp-routes (rad ~21200-slutet)

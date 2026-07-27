@@ -21062,6 +21062,66 @@ Datum ska vara YYYY-MM-DD. Saknat fält → lämna tomt. Var konservativ: sätt 
 
 Extrahera ALDRIG fält från headerns "Background"-text eller boilerplate. Endast aktiva bestämmelser i avtalets §-paragrafer.`;
 
+// ─────────────────────────────────────────────────────────────────────────
+// Contract-extraktion: text-först, vision-fallback för skannade PDF:er.
+// pdf-parse läser bara inbäddad text — skannade/bild-PDF:er (t.ex. gamla
+// signerade avtal) ger tomt eller bara signaturskräp. Då faller vi tillbaka
+// till att skicka PDF:en som native document-block till Claude (visuell OCR).
+// Vision-passet MÅSTE streama — tunga scans 502:ar annars på gateway-timeout.
+
+// Degenererat = text-passet fick i praktiken inget → trigga vision-fallback.
+// (Fångar signerade scans vars textlager bara har "Transaktion…Signerat"-skräp.)
+function _isDegenerateContractParse(p) {
+  if (!p || typeof p !== "object") return true;
+  const hasName = p.customer_name && String(p.customer_name).trim();
+  const hasMoney = p.monthly_cost != null && Number(p.monthly_cost) > 0;
+  const hasRate = Array.isArray(p.rate_card) && p.rate_card.length > 0;
+  const hasType = p.contract_type && String(p.contract_type).trim();
+  return !hasName && !hasMoney && !hasRate && !hasType;
+}
+
+async function _runContractTextExtraction(text) {
+  const msg = await anthropic.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 4096,
+    tools: [CONTRACT_EXTRACT_TOOL],
+    tool_choice: { type: "tool", name: "extract_contract_fields" },
+    system: CONTRACT_EXTRACT_SYSTEM,
+    messages: [{
+      role: "user",
+      content: `Extrahera fält ur följande Carotte-avtal. Returnera bara via tool-anropet.\n\n---\n\n${text}`,
+    }],
+  });
+  const toolUse = msg.content.find((c) => c.type === "tool_use");
+  return { parsed: toolUse?.input || null, usage: msg.usage };
+}
+
+async function _runContractVisionExtraction(buffer, mimetype, filename) {
+  const b64 = buffer.toString("base64");
+  const isPdf = /pdf/i.test(mimetype || "") || /\.pdf$/i.test(filename || "");
+  const mediaBlock = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
+    : { type: "image", source: { type: "base64", media_type: mimetype || "image/png", data: b64 } };
+  // Streaming: undviker gateway-timeout (502) på tung PDF-OCR.
+  const stream = anthropic.messages.stream({
+    model: "claude-haiku-4-5",
+    max_tokens: 4096,
+    tools: [CONTRACT_EXTRACT_TOOL],
+    tool_choice: { type: "tool", name: "extract_contract_fields" },
+    system: CONTRACT_EXTRACT_SYSTEM,
+    messages: [{
+      role: "user",
+      content: [
+        mediaBlock,
+        { type: "text", text: "Extrahera fält ur detta Carotte-avtal. Returnera bara via tool-anropet." },
+      ],
+    }],
+  });
+  const msg = await stream.finalMessage();
+  const toolUse = msg.content.find((c) => c.type === "tool_use");
+  return { parsed: toolUse?.input || null, usage: msg.usage };
+}
+
 // POST /admin/contracts/import/parse — multipart upload PDF → returnerar parsed
 app.options("/admin/contracts/import/parse", (req, res) => {
   _approvalCors(req, res); res.sendStatus(204);
@@ -21091,35 +21151,41 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
       return res.status(400).json({ ok: false, error: "pdf_parse_failed", detail: e?.message });
     }
     const fullText = String(pdfData.text || "").trim();
-    if (fullText.length < 100) {
-      return res.status(400).json({
-        ok: false,
-        error: "pdf_no_text",
-        detail: "PDF saknar extraherbar text (scannad bild?). Endast text-PDF stöds.",
-        chars: fullText.length,
-      });
+    const numPages = pdfData.numpages || 0;
+    const text = fullText.slice(0, 50000); // ~50k tecken räcker för avtal
+
+    // 2) Extraktion: text-först, vision-fallback för skannade PDF:er.
+    const THIN_TEXT = 500;
+    const needVisionUpfront = fullText.length < THIN_TEXT; // inget/tunt textlager (Drift-fallet)
+
+    let parsed = null;
+    let usage  = { input_tokens: 0, output_tokens: 0 };
+    let method = "text";
+
+    if (!needVisionUpfront) {
+      const t = await _runContractTextExtraction(text);
+      parsed = t.parsed;
+      usage  = t.usage;
     }
 
-    // Begränsa till ~50k tecken (Haiku-context räcker, men avtal sällan så långa).
-    const text = fullText.slice(0, 50000);
+    // Fall tillbaka till vision om (a) textlagret är tunt, eller (b) text-passet
+    // gav degenererat resultat (signerad scan med bara signaturskräp i texten).
+    if (needVisionUpfront || _isDegenerateContractParse(parsed)) {
+      if (numPages > 100) {
+        return res.status(400).json({
+          ok: false, error: "pdf_too_many_pages",
+          detail: `PDF har ${numPages} sidor; vision-OCR stödjer max 100.`, pages: numPages,
+        });
+      }
+      const v = await _runContractVisionExtraction(file.buffer, file.mimetype, file.originalname);
+      parsed = v.parsed;
+      usage  = v.usage;
+      method = "vision";
+    }
 
-    // 2) Anthropic structured extraction via tool-use
-    const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 4096,
-      tools: [CONTRACT_EXTRACT_TOOL],
-      tool_choice: { type: "tool", name: "extract_contract_fields" },
-      system: CONTRACT_EXTRACT_SYSTEM,
-      messages: [{
-        role: "user",
-        content: `Extrahera fält ur följande Carotte-avtal. Returnera bara via tool-anropet.\n\n---\n\n${text}`,
-      }],
-    });
-    const toolUse = msg.content.find((c) => c.type === "tool_use");
-    if (!toolUse || !toolUse.input) {
+    if (!parsed) {
       return res.status(500).json({ ok: false, error: "llm_no_tool_use", detail: "Claude returnerade inget tool-use-anrop" });
     }
-    const parsed = toolUse.input;
 
     // 3) Spara originalet i Bubble som Dokument (för signed_pdf-länkning vid commit)
     const fileUrl = await bubbleUploadFile({
@@ -21134,13 +21200,14 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
       latest_update: new Date().toISOString(),
     });
 
-    console.log(`[contracts/import/parse] PDF ${file.originalname} (${pdfData.numpages}s, ${fullText.length} chars) → doc ${docId} · ${msg.usage.input_tokens}+${msg.usage.output_tokens} tokens`);
+    console.log(`[contracts/import/parse] PDF ${file.originalname} (${numPages}s, ${fullText.length} chars, method=${method}) → doc ${docId} · ${usage.input_tokens}+${usage.output_tokens} tokens`);
 
     return res.json({
       ok: true,
       parsed,
+      method, // "text" | "vision" — hur avtalet lästes
       pdf: {
-        pages: pdfData.numpages || null,
+        pages: numPages || null,
         chars: fullText.length,
         truncated: fullText.length > text.length,
       },
@@ -21150,8 +21217,8 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
         filename: file.originalname || "importerat-avtal.pdf",
       },
       tokens: {
-        input:  msg.usage.input_tokens,
-        output: msg.usage.output_tokens,
+        input:  usage.input_tokens,
+        output: usage.output_tokens,
       },
     });
   } catch (e) {
