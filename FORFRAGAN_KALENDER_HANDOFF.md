@@ -1,5 +1,53 @@
 # Handoff – Förfrågan + Kalender (Mira)
 
+## BESLUT 2026-07-27 — KUNDKORT-EMBEDDING SKROTAS, NY MODUL UTANFÖR BUBBLE
+
+**Kontext:** Vi testade att embedda `mira-kalender.html` + wizard-popup på specifika
+CRM-kundkort i Bubble (per-ClientCompany-vy). Två lägen fanns redan i modulerna
+och funkar bra: (A) kund-portal med `Current User's Company` och (B) CRM-fri
+kundsök där Carotte-admin väljer kund via sökruta.
+
+**Problem vi stötte på med kundkort-embed:**
+- Parent group's ClientCompany-expression är asynkron. Bubble expanderar
+  HTML-elementets `value=[expression]` **enbart vid page-render** — inte reaktivt
+  när data landar senare. Följd: hidden input:s value är låst tom vid init även
+  om `Parent group` sen binds till rätt ClientCompany.
+- Villkorad synlighet (visa elementet först när ClientCompany finns) räckte inte
+  — Bubble re-renderar inte HTML-content vid visibility-flipp.
+- Fallback via Bubble-workflow (`Run JavaScript` som injicerar värdena +
+  dispatchar `mira:kundkort-ready`) + polling-loop i modulerna räckte tekniskt
+  men blev för fragilt: byte av kund utan page-reload (popup/state) krävde
+  extra logik, timing var vansklig, och underhållet växte snabbt.
+
+**Beslut (Christian, 2026-07-27):**
+Kalender+wizard-embed på Bubble-kundkort **skrotas helt**. Knappen och möjligheten
+döljs. Istället byggs en **ny HTML-baserad kundkortsmodul utanför Bubble** som
+led i förflyttningen bort från Bubble-plattformen. Denna modul ägs och drivs
+utanför Bubble men konsumerar samma Render-endpoints som befintliga moduler.
+
+**Åtgärder som genomförts vid rollback:**
+- `mira-kalender.html` — kundkort-lägen (C) borttagna, `applyMode()`/polling/
+  event-lyssnare rensade, tillbaka till original två-läges-init.
+- `mira-forfragan-skapa.html` — samma rensning. `setHeader()`-helpern behålls
+  då den används av CRM-fri kundsök som fortsatt fungerar.
+- README-filerna `mira-kalender-kundkort.md` + `mira-forfragan-kundkort.md`
+  borttagna (irrelevanta för nya vägen).
+- Toppkommentar i båda HTML-filerna noterar nu att kundkort-embed EJ stöds.
+
+**Vad som är kvar och fortfarande funkar:**
+- Kund-portal-läge (kunden ser sin egen data) — oförändrat.
+- CRM-fri kundsök på Carottes egen planeringsvy (admin väljer kund via sökruta) —
+  oförändrat.
+- Alla Render-endpoints (`/admin/forfragan/*`, `/admin/planning/*`,
+  `/admin/planning/companies`) — oförändrade och redo att konsumeras av
+  framtida modul utanför Bubble.
+
+**Nästa spår:** Ny kundkortsmodul (fristående HTML, ingen Bubble-koppling). Ej
+påbörjad. Design och arkitektur bestäms när vi tar upp spåret.
+
+---
+
+
 **Startad 2026-06-11.** Separat spår från sync-omtaget (se `HANDOFF.md` / `ARKITEKTUR_OCH_OMTAG.md`). Detta rör kund-facing UI: hur kunder skapar en bokningsförfrågan (commission → Lead → offert), kalender/planeringsmodulen, och kalkylator-leads.
 
 ---

@@ -19736,6 +19736,45 @@ const contractRenderEngine = createContractRenderEngine({
   SERVICES,
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Lazy TTL-städ av temp-preview-Dokument.
+// renderPreview() skapar Dokument med deletable_after = now + 2h (permanenta
+// Dokument saknar fältet). De städas aldrig annars → ackumuleras. Vi sopar
+// gamla rader vid varje /render-preview-anrop, cap ~20/anrop, non-fatal.
+//
+// OBS: Bubbles date-constraint ("less than" på date-fält med string-värde) är
+// opålitlig (se kommentar vid FortnoxInvoice-hämtningen). Vi använder den bara
+// som grov-filter + sort och VERIFIERAR varje rad i JS innan radering, så vi
+// aldrig råkar radera en preview vars deletable_after ligger i framtiden.
+async function _sweepExpiredPreviewDokument({ cap = 20 } = {}) {
+  const nowMs  = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const rows = await bubbleFind("Dokument", {
+    constraints: [
+      { key: SERVICES.DOK_DELETABLE_AFTER, constraint_type: "less than", value: nowIso },
+    ],
+    sort_field: SERVICES.DOK_DELETABLE_AFTER,
+    descending: false,   // äldst först
+    limit: cap,
+  });
+
+  // JS-refilter mot Bubbles opålitliga date-constraint: bara faktiskt utgångna.
+  const expired = (Array.isArray(rows) ? rows : []).filter((r) => {
+    const d = Date.parse(r?.[SERVICES.DOK_DELETABLE_AFTER]);
+    return Number.isFinite(d) && d < nowMs;
+  });
+
+  let deleted = 0;
+  for (const r of expired) {
+    const id = bubbleId(r);
+    if (!id) continue;
+    try { await bubbleDelete("Dokument", id); deleted++; }
+    catch (e) { console.error("[preview-sweep] delete failed", id, e?.message || e); }
+  }
+  return { scanned: Array.isArray(rows) ? rows.length : 0, expired: expired.length, deleted };
+}
+
 function _servicesUnitOf(offer, fallback) {
   const raw = offer && (offer.Unit || offer.unit);
   if (!raw) return fallback || "/mån";
@@ -21253,6 +21292,12 @@ app.post("/admin/contracts/render-preview", async (req, res) => {
       spec,
       attachmentDokumentIds: attachIds,
     });
+
+    // Lazy TTL-städ av gamla temp-preview-Dokument. Fire-and-forget + non-fatal
+    // så det ALDRIG bryter previewen och inte fördröjer svaret. (Render kör en
+    // långlivad Node-process → promisen körs klart efter res.json.)
+    _sweepExpiredPreviewDokument().catch((e) =>
+      console.error("[render-preview] sweep failed (non-fatal)", e?.message || e));
 
     return res.json({ ok: true, preview: result });
   } catch (e) {

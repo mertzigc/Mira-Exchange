@@ -1,35 +1,21 @@
 <!--
   MIRA – SKAPA FÖRFRÅGAN (wizard)
   ------------------------------------------------------------------
-  Klistras in i ett HTML-element i Bubble. Skapar bokningsförfrågan:
-  commission → (recurrence-serie) → Activity → notify → Lead per beställare →
-  Coworker.Bokningar. All intelligens i Render (/admin/forfragan/*),
-  master-Bubble-nyckeln stannar server-side.
+  Klistras in i ett HTML-element i Bubble (kundens portal). Kundens flöde för att
+  skapa en bokningsförfrågan: commission → (recurrence-serie) → Activity → notify →
+  Lead per beställare → Coworker.Bokningar. ALL intelligens i Render-endpoints
+  (/admin/forfragan/*). Master-Bubble-nyckeln stannar server-side.
 
-  TRE LÄGEN — bestäms av inputs nedan:
+  KOPPLING I BUBBLE (value=""):
+    #mira_company_id      = Current User's Company's unique id
+    #mira_company_name    = Current User's Company's Name_company
+    #mira_admin_crm       = Current User's admin_crm  ("yes" → CRM: kundsök, skapa åt kund)
+    #mira_api_host        = https://mira-exchange.onrender.com   (redan ifyllt)
+    #mira_planning_token  = (sätt = PLANNING_ADMIN_TOKEN, annars CASPECO_ADMIN_TOKEN)
 
-  A) KUND-PORTAL (inloggad kund skapar egen förfrågan):
-       #mira_company_id   = Current User's Company's unique id
-       #mira_admin_crm    = (tom eller "no")
-     → låst till kundens företag, ingen sökruta.
-
-  B) CRM-FRI KUNDSÖK (Carotte-admin i eget CRM — skapa åt vilken kund som helst):
-       #mira_company_id   = (tom)
-       #mira_admin_crm    = "yes"
-     → sökruta uppe till höger, admin väljer kund innan bokning.
-
-  C) CRM-PINNED KUNDKORT (Carotte-admin på specifikt kundkort — dokumenterat i
-     mira-forfragan-kundkort.md):
-       #mira_company_id   = Parent group's ClientCompany's unique id
-       #mira_admin_crm    = "yes"
-     → låst till kundkortets kund, ingen sökruta.
-
-  Gemensamt för alla:
-    #mira_company_name    = kundens Name_company (visas i titeln)
-    #mira_api_host        = https://mira-exchange.onrender.com  (redan ifyllt)
-    #mira_planning_token  = PLANNING_ADMIN_TOKEN (annars CASPECO_ADMIN_TOKEN)
-
-  Tomt company_id + ej admin → DEMO-läge (preview, skriver inget).
+  Tomt company_id → DEMO-läge (preview, skriver inget).
+  OBS: kundkort-embedding (per specifik ClientCompany) är EJ stödd — flyttad
+  till ny modul utanför Bubble. Se FORFRAGAN_KALENDER_HANDOFF.md.
 -->
 <input type="hidden" id="mira_company_id" value="">
 <input type="hidden" id="mira_company_name" value="">
@@ -803,8 +789,7 @@
   };
   document.addEventListener('click',function(e){ var s=document.getElementById('ffCSearch'); var dd=document.getElementById('ffCDD'); if(dd&&s&&!s.contains(e.target)) dd.classList.remove('on'); });
 
-  // CRM-pinned (COMPANY förinställd via Parent group) = ingen sökruta, ingen kundlista.
-  if(ADMIN && !COMPANY){ document.getElementById('ffCSearch').classList.add('on'); loadCompanies(); }
+  if(ADMIN){ document.getElementById('ffCSearch').classList.add('on'); loadCompanies(); }
   boot();
 })();
 </script>
