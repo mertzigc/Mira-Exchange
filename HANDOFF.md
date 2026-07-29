@@ -213,6 +213,24 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 - Verifierat: `node --check` OK.
 - **KVAR:** deploya + skarpt: `curl "$HOST/admin/contracts/all" -H "x-admin-token: $PLANNING_ADMIN_TOKEN" | grep -c '"slutdatum":null'` → ska bli > 0 (idag 0), och OX2-Hybriden ska synas i admin-listan.
 
+### Fas 5b — contract_title + leverantör + admin-edit-modal (2026-07-29, KODAT, ej deployat)
+
+**Två nya Contract-fält (Christian byggt i Bubble):** `contract_title` (text, gemener), `leverantör` (referens → typen `Leverantör - Supplier`, Data API-slug `leverantör-supplier`, namnfält `Företagsnamn`). Nycklarna verifierade via round-trip PATCH.
+
+**Backend (`index.js`):**
+- Konstanter `CT_TITLE`/`CT_SUPPLIER`. Namn-baserad kategori→leverantör-resolver (`_loadSuppliers`, `_supplierIdForCategory`, `SUPPLIER_NAME_BY_CATEGORY`): Housekeeping→Carotte Housekeeping AB, Service & People→Carotte Staff AB, Food & Event→Carotte Food & Event AB, Other facility services→Carotte Group AB. (Resolvar på namn, inte hårdkodat ID — men `SUPPLIER_BY_CATEGORY`-ID:na råkade redan matcha.)
+- `_enrichContract` exponerar `contract_title`, `leverantör` (ref-id), `leverantör_name`. `/all`+`/by-company`+patch/create-retur laddar `supplierById` i ctx.
+- `/create` + `/import/commit` skriver båda fälten med **kategoristyrd default-leverantör** (om tomt). `PATCH` som delta.
+- `CONTRACT_EXTRACT_TOOL` föreslår `contract_title` (LLM) vid PDF-import.
+- Ny endpoint `GET /admin/suppliers` (lista + `default_by_category`) + i `openPrefixes`. Skarpt verifierad.
+
+**Kundkort (`mira-abonnemang-kund.html`):** `Avtalstitel` + `Leverantör`-dropdown i create/edit/import-modalen (`f-title`/`f-supplier`). Leverantör förvald från kategori (överskrivbar), prefill i edit, LLM-titel + kategori-default vid import. **Bonusfix:** import skickar nu `category` (saknades → importerade avtal kunde bli utan kategori).
+
+**Admin (`mira-abonnemang-admin.html`) — #2 Redigera från stora listan:** admin hade INGEN contract-modal (bara stub-alerts). Byggde en **fokuserad edit-modal** (`aa-cm-*`-namnrymd, `data-aa="cm-*"`, egen CSS) porterad från kundkortet. Redigera-knappen → `openContractEdit(id)` (prefill från SAMPLE). Direkt **kategori-select** (admin har ingen katalog → inte via offer) + leverantör-dropdown (default från kategori). Rate-card/volym som JSON-textareas (admin power-user). PATCH-delta lämnar offer/office orörda. SAMPLE-mappningen utökad med `contract_title`/`leverantör`/`rate_card_json`/`volume_json`/`qty`. `+ Nytt avtal` i admin är fortf. stub (create kräver företagskontext — utanför scope).
+- Verifierat: `node --check` (index.js) + isolerad script-block-syntaxkontroll (båda HTML). Fältnycklar round-trip-verifierade.
+- **KVAR att deploya:** `index.js` + BÅDA HTML-filerna. Sedan skarpt: kundkort create/edit/import + admin Redigera på ett avtal, bekräfta title+leverantör persisterar och att admin-modalen inte krockar med kundkorts-modalen (gotcha 11).
+- **EJ byggt (nästa):** wizarden (Steg 3) — kräver att title/leverantör wire:as genom `_createContractsFromApprovalRequest` (auto-create-vid-signering), inte bara formuläret. `leverantör` kan auto-härledas från kategori där.
+
 ### Aktiva filer (uppdaterat 2026-07-14)
 
 - `index.js` (~21 500 rader) — SERVICES-konstanter (rad ~19653, inkl. CTPL_*+DOK_DELETABLE_AFTER), `_createContractsFromApprovalRequest` + `_deriveContractStatus` (rad ~16460), `_createApprovalRequestInternal` (rad ~16770), `_enrichContract` + admin/contracts-endpoints (rad ~19960+), Fas 4 CONTRACT_EXTRACT_TOOL + parse/commit (rad ~20974), Fas 5 CRUD + render-preview + render-and-send + clientcompany/:id/details + prototyp-routes (rad ~21200-slutet)

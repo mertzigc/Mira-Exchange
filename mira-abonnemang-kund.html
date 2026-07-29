@@ -787,6 +787,17 @@
 
         <div class="ab-form-2">
           <div class="ab-form-row">
+            <label>Avtalstitel</label>
+            <input type="text" placeholder="housekeeping ox2 ab" data-ab="f-title">
+          </div>
+          <div class="ab-form-row">
+            <label>Leverantör</label>
+            <select data-ab="f-supplier"><option value="">— välj (förvald från kategori) —</option></select>
+          </div>
+        </div>
+
+        <div class="ab-form-2">
+          <div class="ab-form-row">
             <label>Erbjudande</label>
             <select data-ab="f-offer"><option value="">Laddar erbjudanden...</option></select>
           </div>
@@ -1776,8 +1787,42 @@
   // ── 2c-2: Create + Edit-modal med live-dropdowns ─────────────────────────
   var CATALOG = [];        // [{id, label, category, price, unit}]
   var OFFICES_PICK = [];   // [{id, label}]
+  var SUPPLIERS = [];      // [{id, name}] — Leverantör - Supplier
+  var SUPPLIER_DEFAULTS = {}; // kategori → default-leverantör-id
   var MODAL_MODE = 'create';
   var EDITING_ID = null;
+
+  async function loadSuppliers() {
+    if (!TOKEN) return;
+    try {
+      var r = await fetch(HOST + '/admin/suppliers', { headers: { 'x-admin-token': TOKEN } });
+      if (!r.ok) { console.warn('[ab] suppliers fetch failed', r.status); return; }
+      var d = await r.json();
+      if (!d.ok) return;
+      SUPPLIERS = d.suppliers || [];
+      SUPPLIER_DEFAULTS = d.default_by_category || {};
+      populateSuppliers();
+    } catch (e) { console.warn('[ab] suppliers fetch fail', e && e.message); }
+  }
+  function populateSuppliers() {
+    var sel = $('f-supplier');
+    if (!sel) return;
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">— välj (förvald från kategori) —</option>' +
+      SUPPLIERS.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>';
+      }).join('');
+    if (cur) sel.value = cur;
+  }
+  // Sätt leverantör-default från kategori (bara om fältet är tomt eller matchar en default).
+  function setSupplierForCategory(cat) {
+    var sel = $('f-supplier');
+    if (!sel || !cat) return;
+    var def = SUPPLIER_DEFAULTS[cat];
+    if (!def) return;
+    var isDefaultVal = !sel.value || Object.values(SUPPLIER_DEFAULTS).indexOf(sel.value) >= 0;
+    if (isDefaultVal) sel.value = def;
+  }
 
   function findContractById(id) {
     var list = (SAMPLE.account_contracts || []).slice();
@@ -1933,6 +1978,8 @@
     setVal('f-autorenew', '');
     setVal('f-pricereg', '');
     setVal('f-volume', '');
+    setVal('f-title', '');
+    setVal('f-supplier', '');
     loadRateCardJson(null);
   }
 
@@ -1950,6 +1997,7 @@
     if (saveBtn) saveBtn.textContent = mode === 'edit' ? 'Spara ändringar' : 'Skapa abonnemang';
 
     resetForm();
+    populateSuppliers();
     if (mode === 'edit' && ct) {
       setActiveTypecard(ct.contract_type || 'Subscription');
       setVal('f-offer', ct.offer_id || '');
@@ -1964,6 +2012,8 @@
       setVal('f-pricereg', ct.price_regulation_type || '');
       setVal('f-volume', ct.volume_json || '');
       loadRateCardJson(ct.rate_card_json || null);
+      setVal('f-title', ct.contract_title || '');
+      setVal('f-supplier', ct['leverantör'] || '');
     }
 
     var mask = $('create-mask');
@@ -2005,7 +2055,9 @@
       price_regulation_type: readVal('f-pricereg') || null,
       rate_card_json: rateCardJson,
       volume_json: readVal('f-volume') || null,
-      category: readSelectedCategory()
+      category: readSelectedCategory(),
+      contract_title: readVal('f-title') || null,
+      "leverantör": readVal('f-supplier') || null
     };
 
     var url, method;
@@ -2017,6 +2069,8 @@
       payload.file_doc_id       = IMPORT_STATE.file_doc_id;
       payload.file_url          = IMPORT_STATE.file_url;
       payload.parsed_confidence = IMPORT_STATE.parsed_confidence;
+      // Import saknar offer → kategori kommer från LLM-parsen (annars null → ingen kategori/leverantör)
+      if (!payload.category && IMPORT_STATE.category) payload.category = IMPORT_STATE.category;
       url = HOST + '/admin/contracts/import/commit';
       method = 'POST';
     } else {
@@ -2064,6 +2118,9 @@
     });
     var rcAdd = $('ratecard-add');
     if (rcAdd) rcAdd.addEventListener('click', function () { addRateCardRow('', ''); });
+    // Byte av erbjudande → kategori kan ändras → förvälj leverantör (om ej manuellt satt)
+    var offerSel = $('f-offer');
+    if (offerSel) offerSel.addEventListener('change', function () { setSupplierForCategory(readSelectedCategory()); });
   }
 
   // ── 2d: Bilagor (upload/list/delete) ─────────────────────────────────────
@@ -2209,7 +2266,7 @@
   // Drag-drop befintligt avtal → POST /admin/contracts/import/parse →
   // Claude Haiku 4.5 returnerar strukturerade fält → modal öppnas i 'import'-
   // mode (samma som edit men commitar via /import/commit istället för create).
-  var IMPORT_STATE = { file_doc_id: null, file_url: null, parsed_confidence: null };
+  var IMPORT_STATE = { file_doc_id: null, file_url: null, parsed_confidence: null, category: null };
 
   function triggerImport() {
     if (!TOKEN) { alert('Demo-läge: import-knappen kräver planning_token.'); return; }
@@ -2261,10 +2318,15 @@
     if (saveBtn) saveBtn.textContent = 'Skapa Contract från import';
 
     resetForm();
+    populateSuppliers();
 
     // Pre-fyll från LLM-output. Sätter bara om värdet finns.
     var ctype = parsed.contract_type || 'Subscription';
     setActiveTypecard(ctype);
+    if (parsed.contract_title) setVal('f-title', parsed.contract_title);
+    // Leverantör: förvald från LLM-kategori (överskrivbar). Kategorin sparas via IMPORT_STATE.
+    IMPORT_STATE.category = parsed.category || null;
+    if (parsed.category) setSupplierForCategory(parsed.category);
     // offer_id + office_id kan inte gissas av LLM (kräver Bubble-id) → Carotte väljer manuellt
     if (parsed.monthly_cost != null) setVal('f-monthly', parsed.monthly_cost);
     if (parsed.qty != null)          setVal('f-qty', parsed.qty);
@@ -2309,6 +2371,7 @@
   renderAll();
   loadLive();
   loadCatalog();
+  loadSuppliers();
 })();
 </script>
 <script>

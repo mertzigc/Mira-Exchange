@@ -278,6 +278,20 @@
   .aa-wiz-close:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.28); }
   .aa-wiz-modal .wt-wrap { max-width: none !important; margin: 0 !important; padding: 0 !important; }
   .aa-wiz-modal .wt-proto { margin: 0; border-radius: 14px 14px 0 0; border-left: none; border-right: none; border-top: none; }
+
+  /* Contract edit-modal (Fas 5b — porterad från kundkortet, aa-scopad) */
+  .aa-cm-mask { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9998; padding:40px 16px; overflow:auto; }
+  .aa-cm-mask.on { display:flex; align-items:flex-start; justify-content:center; }
+  .aa-cm-modal { background:var(--bg2,#161821); border:0.5px solid var(--line-strong,#2a2d3a); border-radius:14px; width:100%; max-width:640px; box-shadow:0 20px 60px rgba(0,0,0,0.5); }
+  .aa-cm-h { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:0.5px solid var(--line,#242735); }
+  .aa-cm-h h3 { margin:0; font-size:15px; color:var(--t1,#e8e9ee); }
+  .aa-cm-close { background:none; border:0; color:var(--t3,#8b8f9e); font-size:22px; cursor:pointer; line-height:1; }
+  .aa-cm-b { padding:18px 20px; max-height:70vh; overflow:auto; }
+  .aa-cm-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .aa-cm-row { margin-bottom:12px; }
+  .aa-cm-row label { display:block; font-size:11px; color:var(--t3,#8b8f9e); margin-bottom:4px; }
+  .aa-cm-row input, .aa-cm-row select, .aa-cm-row textarea { width:100%; padding:9px 11px; background:var(--bg1,#0f1118); border:0.5px solid var(--line-strong,#2a2d3a); border-radius:8px; color:var(--t1,#e8e9ee); font-size:13px; }
+  .aa-cm-foot { display:flex; justify-content:flex-end; gap:8px; padding:14px 20px; border-top:0.5px solid var(--line,#242735); }
 </style>
 <style>
 
@@ -751,6 +765,98 @@
 
 
 <div class="aa-wrap">
+
+  <!-- Contract edit-modal (Fas 5b) -->
+  <div class="aa-cm-mask" data-aa="cm-mask">
+    <div class="aa-cm-modal" role="dialog" aria-modal="true">
+      <div class="aa-cm-h">
+        <h3 data-aa="cm-h">Redigera avtal</h3>
+        <button class="aa-cm-close" data-aa="cm-close" aria-label="Stäng">&times;</button>
+      </div>
+      <div class="aa-cm-b">
+        <div class="aa-cm-2">
+          <div class="aa-cm-row">
+            <label>Avtalstitel</label>
+            <input type="text" placeholder="housekeeping ox2 ab" data-aa="cm-title">
+          </div>
+          <div class="aa-cm-row">
+            <label>Kontraktstyp</label>
+            <select data-aa="cm-type">
+              <option value="Subscription">Abonnemang</option>
+              <option value="RateCard">Prislista</option>
+              <option value="Hybrid">Hybrid</option>
+            </select>
+          </div>
+          <div class="aa-cm-row">
+            <label>Kategori</label>
+            <select data-aa="cm-category">
+              <option value="">— välj —</option>
+              <option value="Housekeeping">Housekeeping</option>
+              <option value="Service &amp; People">Service &amp; People</option>
+              <option value="Food &amp; Event">Food &amp; Event</option>
+              <option value="Other facility services">Other facility services</option>
+            </select>
+          </div>
+          <div class="aa-cm-row">
+            <label>Leverantör</label>
+            <select data-aa="cm-supplier"><option value="">— välj (förvald från kategori) —</option></select>
+          </div>
+          <div class="aa-cm-row">
+            <label>Månadskostnad (SEK, exkl. moms)</label>
+            <input type="number" placeholder="0" data-aa="cm-monthly">
+          </div>
+          <div class="aa-cm-row">
+            <label>Antal</label>
+            <input type="number" value="1" data-aa="cm-qty">
+          </div>
+          <div class="aa-cm-row">
+            <label>Startdatum</label>
+            <input type="date" data-aa="cm-start">
+          </div>
+          <div class="aa-cm-row">
+            <label>Slutdatum</label>
+            <input type="date" data-aa="cm-end">
+          </div>
+          <div class="aa-cm-row">
+            <label>Bindning (mån)</label>
+            <input type="number" data-aa="cm-binding">
+          </div>
+          <div class="aa-cm-row">
+            <label>Uppsägningstid (mån)</label>
+            <input type="number" data-aa="cm-notice">
+          </div>
+          <div class="aa-cm-row">
+            <label>Auto-förlängning (mån)</label>
+            <input type="number" placeholder="0 = ingen" data-aa="cm-autorenew">
+          </div>
+          <div class="aa-cm-row">
+            <label>Prisreglering</label>
+            <select data-aa="cm-pricereg">
+              <option value="">— välj —</option>
+              <option value="index_cleaning">Cleaning Index (SCB/Almega)</option>
+              <option value="index_kpi">KPI</option>
+              <option value="lon_kollektiv">Lönekollektiv</option>
+              <option value="fast">Fast pris</option>
+              <option value="ingen">Ingen</option>
+            </select>
+          </div>
+        </div>
+        <div class="aa-cm-row">
+          <label>Rate-card (JSON — [{"role":"…","price_per_h":0,"unit":"per timme"}])</label>
+          <textarea rows="3" placeholder='[{"role":"Servering","price_per_h":365}]' data-aa="cm-ratecard"></textarea>
+        </div>
+        <div class="aa-cm-row">
+          <label>Volym (JSON — {"kvm":210})</label>
+          <textarea rows="2" placeholder='{"kvm": 210}' data-aa="cm-volume"></textarea>
+        </div>
+      </div>
+      <div class="aa-cm-foot">
+        <button class="aa-btn ghost" data-aa="cm-cancel">Avbryt</button>
+        <button class="aa-btn primary" data-aa="cm-save">Spara ändringar</button>
+      </div>
+    </div>
+  </div>
+
 
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="">
@@ -2052,7 +2158,13 @@
           signed_pdf:              c.signed_pdf,
           attachments_count:       Number(c.attachments_count || 0),
           offer_approval_id:       c.offer_approval_id,
-          internal_review_json:    c.internal_review_json || null
+          internal_review_json:    c.internal_review_json || null,
+          contract_title:          c.contract_title || '',
+          leverantor:              c['leverantör'] || '',
+          leverantor_name:         c['leverantör_name'] || '',
+          rate_card_json:          c.rate_card_json || null,
+          volume_json:             c.volume_json || null,
+          qty:                     c.qty != null ? c.qty : 1
         });
       });
 
@@ -2091,6 +2203,115 @@
     });
   }
 
+  // ── Contract edit-modal (Fas 5b — porterad, aa-scopad, cm-* namnrymd) ─────
+  var SUPPLIERS_A = [];
+  var SUPPLIER_DEFAULTS_A = {};
+  var CM_EDIT_ID = null;
+
+  function cmGet(k){ var el = $('cm-'+k); return el ? String(el.value || '').trim() : ''; }
+  function cmSet(k, v){ var el = $('cm-'+k); if (el) el.value = (v == null ? '' : v); }
+
+  function loadSuppliersAdmin(){
+    var token = cfg('planning_token');
+    if (!token) return;
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    fetch(apiHost + '/admin/suppliers', { headers: { 'x-admin-token': token } })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if (!d || !d.ok) return;
+        SUPPLIERS_A = d.suppliers || [];
+        SUPPLIER_DEFAULTS_A = d.default_by_category || {};
+        populateSuppliersAdmin();
+      })
+      .catch(function(e){ console.warn('[aa] suppliers fail', e && e.message); });
+  }
+  function populateSuppliersAdmin(){
+    var sel = $('cm-supplier');
+    if (!sel) return;
+    var cur = sel.value;
+    var html = '<option value="">— välj (förvald från kategori) —</option>';
+    for (var i = 0; i < SUPPLIERS_A.length; i++) {
+      html += '<option value="' + esc(SUPPLIERS_A[i].id) + '">' + esc(SUPPLIERS_A[i].name) + '</option>';
+    }
+    sel.innerHTML = html;
+    if (cur) sel.value = cur;
+  }
+  function setSupplierForCategoryAdmin(){
+    var sel = $('cm-supplier');
+    var cat = cmGet('category');
+    if (!sel || !cat) return;
+    var def = SUPPLIER_DEFAULTS_A[cat];
+    if (!def) return;
+    var vals = []; for (var k in SUPPLIER_DEFAULTS_A) { vals.push(SUPPLIER_DEFAULTS_A[k]); }
+    if (!sel.value || vals.indexOf(sel.value) >= 0) sel.value = def;
+  }
+
+  function findRowById(id){
+    for (var i = 0; i < SAMPLE.length; i++) { if (SAMPLE[i].id === id) return SAMPLE[i]; }
+    return null;
+  }
+
+  function openContractEdit(id){
+    var r = findRowById(id);
+    if (!r) { alert('Hittade inte avtalet i listan.'); return; }
+    CM_EDIT_ID = id;
+    populateSuppliersAdmin();
+    cmSet('title', r.contract_title || '');
+    cmSet('type', r.contract_type || 'Subscription');
+    cmSet('category', (r.category && r.category !== '—') ? r.category : '');
+    cmSet('supplier', r.leverantor || '');
+    cmSet('monthly', r.monthly_cost != null ? r.monthly_cost : '');
+    cmSet('qty', r.qty != null ? r.qty : 1);
+    cmSet('start', (r.startdatum || '').slice(0, 10));
+    cmSet('end', (r.slutdatum || '').slice(0, 10));
+    cmSet('binding', r.binding_months != null ? r.binding_months : '');
+    cmSet('notice', r.notice_months != null ? r.notice_months : '');
+    cmSet('autorenew', r.auto_renew_months != null ? r.auto_renew_months : '');
+    cmSet('pricereg', r.price_regulation_type || '');
+    cmSet('ratecard', r.rate_card_json || '');
+    cmSet('volume', r.volume_json || '');
+    setSupplierForCategoryAdmin(); // förvälj leverantör om tom + kategori satt
+    var mask = $('cm-mask'); if (mask) mask.classList.add('on');
+  }
+  function closeContractEdit(){ var m = $('cm-mask'); if (m) m.classList.remove('on'); CM_EDIT_ID = null; }
+
+  function submitContractEdit(){
+    if (!CM_EDIT_ID) return;
+    var rc = cmGet('ratecard'); var vol = cmGet('volume');
+    if (rc) { try { JSON.parse(rc); } catch(e){ alert('Rate-card är inte giltig JSON.'); return; } }
+    if (vol) { try { JSON.parse(vol); } catch(e){ alert('Volym är inte giltig JSON.'); return; } }
+    var type = cmGet('type') || 'Subscription';
+    var body = {
+      contract_type: type,
+      contract_title: cmGet('title') || null,
+      category: cmGet('category') || null,
+      "leverantör": cmGet('supplier') || null,
+      monthly_cost: type === 'RateCard' ? 0 : (cmGet('monthly') ? Number(cmGet('monthly')) : 0),
+      qty: cmGet('qty') ? Number(cmGet('qty')) : 1,
+      startdatum: cmGet('start') || null,
+      slutdatum: cmGet('end') || null,
+      binding_months: cmGet('binding') ? Number(cmGet('binding')) : null,
+      notice_months: cmGet('notice') ? Number(cmGet('notice')) : null,
+      auto_renew_months: cmGet('autorenew') ? Number(cmGet('autorenew')) : null,
+      price_regulation_type: cmGet('pricereg') || null,
+      rate_card_json: rc || null,
+      volume_json: vol || null
+    };
+    var saveBtn = $('cm-save');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Sparar...'; }
+    patchContractAction(CM_EDIT_ID, body).then(function(result){
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Spara ändringar'; }
+      if (result && result.ok) { closeContractEdit(); loadLive(); }
+    });
+  }
+
+  function bindContractModal(){
+    var save = $('cm-save'); if (save) save.addEventListener('click', submitContractEdit);
+    var cancel = $('cm-cancel'); if (cancel) cancel.addEventListener('click', closeContractEdit);
+    var close = $('cm-close'); if (close) close.addEventListener('click', closeContractEdit);
+    var cat = $('cm-category'); if (cat) cat.addEventListener('change', setSupplierForCategoryAdmin);
+  }
+
   function bindActions(){
     var actBtns = root.querySelectorAll('[data-act]');
     for (var i = 0; i < actBtns.length; i++) {
@@ -2119,7 +2340,7 @@
             body = { slutdatum: null };
           }
           else if (act === 'edit') {
-            alert('Redigera-modal kommer i steg 2c-2.');
+            openContractEdit(id);
             return;
           }
           if (!body) return;
@@ -2170,6 +2391,8 @@
   renderTable();
   loadLive();
   loadPending();
+  bindContractModal();
+  loadSuppliersAdmin();
 })();
 </script>
 <!-- Wizard-JS + öppna/stäng-koppling (Fas 5) -->
