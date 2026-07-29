@@ -20484,10 +20484,12 @@ app.get("/admin/contracts/all", async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
 
-    // 1) Alla Contracts
-    const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
-      sort_field: SERVICES.CT_END, descending: false,
-    }).catch(() => []);
+    // 1) Alla Contracts — hämta OSORTERAT. Sortering på CT_END (slutdatum) i
+    //    Bubble-hämtningen fäller poster som saknar slutdatum (t.ex. importerade
+    //    avtal utan slutdatum) → de försvann tyst ur admin-listan medan de syns
+    //    på kundkortet (/by-company hämtar osorterat). Frontenden sorterar ändå
+    //    om client-side (rows.sort), så backend-sorteringen fyllde ingen funktion.
+    const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {}).catch(() => []);
 
     // 2) Samla alla unika customer/office/offer-id:n och enrich i batchar
     const ccIds = new Set();

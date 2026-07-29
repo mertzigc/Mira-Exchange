@@ -203,6 +203,16 @@ Alla med `form_schema` för dynamisk Steg 3-rendering. Seed via `bash contract_t
 - **KVAR:** deploya `index.js`, sedan skarpt test av **båda** vägarna — dra in en scan (OX2 signerad → `method:"vision"`) OCH en text-PDF (Planhat → `method:"text"`) via kundkortets drag-drop, bekräfta rätt väg väljs + fälten stämmer.
 - Testskript i scratchpad: `ocr_test.mjs` (streamande vision-test mot valfri PDF+modell), `ping.mjs` (auth-sanity). Kräver `ANTHROPIC_API_KEY` i shell.
 
+### Bugfix 2026-07-29 — admin "Alla avtal" tappade slutdatum-lösa avtal (KODAT, ej deployat)
+
+**Symptom:** importerat OX2-avtal (Hybrid, utan slutdatum) syntes på kundkortet men INTE i admin "Alla avtal". Admin visade bara OX2:s gamla 0 kr-Subscription (som har slutdatum).
+
+**Rotorsak:** `/all` ([index.js:20488](Mira-Exchange/index.js:20488)) hämtade `bubbleFindAll(Contract, {sort_field: CT_END})`. **Bubble Data API fäller poster som saknar sort-fältets värde** — avtal utan slutdatum försvann tyst ur hämtningen. `/by-company` (kundkort) hämtar OSORTERAT (bara company-constraint) → fick med dem. Alltså inte ett renderingsproblem — de två blocken anropar olika endpoints med olika hämtning.
+
+**Fix:** tog bort `sort_field: CT_END` från `/all`s hämtning → `bubbleFindAll(Contract, {})`. Admin-frontenden sorterar redan om client-side (`rows.sort`, default `sort_by:'end'`), så backend-sorteringen fyllde ingen funktion. Endast `index.js`, ingen schema-/frontend-ändring. Se `memory/reference-bubble-sort-drops-empty`.
+- Verifierat: `node --check` OK.
+- **KVAR:** deploya + skarpt: `curl "$HOST/admin/contracts/all" -H "x-admin-token: $PLANNING_ADMIN_TOKEN" | grep -c '"slutdatum":null'` → ska bli > 0 (idag 0), och OX2-Hybriden ska synas i admin-listan.
+
 ### Aktiva filer (uppdaterat 2026-07-14)
 
 - `index.js` (~21 500 rader) — SERVICES-konstanter (rad ~19653, inkl. CTPL_*+DOK_DELETABLE_AFTER), `_createContractsFromApprovalRequest` + `_deriveContractStatus` (rad ~16460), `_createApprovalRequestInternal` (rad ~16770), `_enrichContract` + admin/contracts-endpoints (rad ~19960+), Fas 4 CONTRACT_EXTRACT_TOOL + parse/commit (rad ~20974), Fas 5 CRUD + render-preview + render-and-send + clientcompany/:id/details + prototyp-routes (rad ~21200-slutet)
