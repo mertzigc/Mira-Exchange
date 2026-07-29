@@ -16506,6 +16506,13 @@ async function _createContractsFromApprovalRequest(parent) {
   const companyId = parent.clientcompany;
   if (!companyId) return { created: 0, error: "no_clientcompany_on_parent" };
 
+  // Kundnamn för auto-titel (t.ex. "housekeeping ox2 ab") — hämtas en gång.
+  let custName = "";
+  try {
+    const cc = await bubbleGet("ClientCompany", companyId);
+    custName = cc ? (cc.Name_company || cc.name || cc.Name || cc.company_name || cc.namn || "") : "";
+  } catch (_) { /* titel faller tillbaka till bara kategori */ }
+
   const nowIso = new Date().toISOString();
   const created = [];
   const skipped = [];
@@ -16536,9 +16543,19 @@ async function _createContractsFromApprovalRequest(parent) {
       ? (typeof spec.internal_review_json === "string" ? spec.internal_review_json : JSON.stringify(spec.internal_review_json))
       : null;
 
+    // Fas 5b: auto-titel + kategoristyrd leverantör (spec kan överskriva).
+    const autoTitle = spec.contract_title
+      || (spec.category
+            ? (String(spec.category).toLowerCase() + (custName ? " " + custName.toLowerCase() : ""))
+            : null);
+    const supplierId = spec.leverantör || spec.leverantor
+      || (spec.category ? await _supplierIdForCategory(spec.category) : null);
+
     // Använd SERVICES.CT_*-konstanter konsekvent (case-sensitivt mot Bubble)
     const payload = {
       [SERVICES.CT_COMPANY]:           companyId,
+      [SERVICES.CT_TITLE]:             autoTitle,
+      [SERVICES.CT_SUPPLIER]:          supplierId,
       [SERVICES.CT_OFFER]:             spec.offer_id,
       [SERVICES.CT_OFFICE]:            spec.office_id || null,
       [SERVICES.CT_QTY]:               Number(spec.qty || 1),
