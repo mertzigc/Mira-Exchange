@@ -438,6 +438,7 @@ function requireApiKey(req, res, next) {
     "/admin/approval/",            // Carotte-CRM HTML-block, x-admin-token-grindad
     "/admin/clientcompany/",       // ClientCompany-autocomplete + /all för Carotte-UI
     "/admin/contracts/",           // Contract admin-modul (Fas 2, 0g), x-admin-token-grindad
+    "/admin/suppliers",            // Leverantör - Supplier-lista för avtalsformulär (Fas 5b), x-admin-token-grindad
     "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
     "/admin/dokument/",            // Fristående Dokument-upload för wizardens bilagor (Fas 5b spår 2), x-admin-token-grindad
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
@@ -19669,6 +19670,8 @@ const SERVICES = {
   CT_STATUS_OVERRIDE:       "status_override",          // option set
   CT_PARSED_CONFIDENCE:     "parsed_confidence_json",
   CT_INTERNAL_REVIEW:       "internal_review_json",     // Fas 5b: interngransknings-trail (denormaliserad)
+  CT_TITLE:                 "contract_title",           // Fas 5b: fritext-titel (gemener)
+  CT_SUPPLIER:              "leverantör",               // Fas 5b: referens → leverantör-supplier (kategoristyrd default)
 
   // OfferApprovalRequest-fält Fas 1 (utöver de befintliga som dokumenterats i 0e).
   OAR_TYPE:                 "OfferApprovalRequest",
@@ -20285,6 +20288,43 @@ app.options("/services/request-activation", (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Hjälpare: bygg "rikt" Contract-objekt med alla Fas 1-fält + härlett ─────
+// ─────────────────────────────────────────────────────────────────────────
+// Leverantör (Leverantör - Supplier) — kategoristyrd default på Contract.
+// Fältet CT_SUPPLIER refererar en leverantör-supplier-post. Default härleds
+// från kategori via NAMN (robustare än hårdkodade ID:n; matchar Christians
+// spec 2026-07-29). Överskrivbart i formulären.
+const SUPPLIER_TYPE_SLUG  = "leverantör-supplier";   // Bubble Data API-slug (ö bevarat)
+const SUPPLIER_NAME_FIELD = "Företagsnamn";          // bekräftat från API-logg (rad ~12348)
+const SUPPLIER_NAME_BY_CATEGORY = {
+  "Housekeeping":             "Carotte Housekeeping AB",
+  "Service & People":        "Carotte Staff AB",
+  "Food & Event":            "Carotte Food & Event AB",
+  "Other facility services": "Carotte Group AB",
+};
+
+let _supplierCache = null; // { rows, byId:Map(id→name), byName:Map(lowername→id) }
+async function _loadSuppliers() {
+  if (_supplierCache) return _supplierCache;
+  const rows = await bubbleFindAll(SUPPLIER_TYPE_SLUG, {}).catch(() => []);
+  const byId = new Map(), byName = new Map();
+  for (const r of rows) {
+    const id = bubbleId(r);
+    const name = (r?.[SUPPLIER_NAME_FIELD] || r?.supplier_name || "").trim();
+    if (!id) continue;
+    byId.set(id, name);
+    if (name) byName.set(name.toLowerCase(), id);
+  }
+  _supplierCache = { rows, byId, byName };
+  return _supplierCache;
+}
+// Härled default-leverantör-ID från kategori (null om okänd/ej hittad).
+async function _supplierIdForCategory(category) {
+  const name = SUPPLIER_NAME_BY_CATEGORY[category];
+  if (!name) return null;
+  const { byName } = await _loadSuppliers();
+  return byName.get(name.toLowerCase()) || null;
+}
+
 function _enrichContract(ct, ctx) {
   const offerId = _ffIdOf(ct[SERVICES.CT_OFFER]);
   const officeId = _ffIdOf(ct[SERVICES.CT_OFFICE]);
@@ -20336,6 +20376,11 @@ function _enrichContract(ct, ctx) {
     status_override:            ct[SERVICES.CT_STATUS_OVERRIDE] || null,
     parsed_confidence_json:     ct[SERVICES.CT_PARSED_CONFIDENCE] || null,
     internal_review_json:       ct[SERVICES.CT_INTERNAL_REVIEW] || null,
+    contract_title:             ct[SERVICES.CT_TITLE] || null,
+    leverantör:                 _ffIdOf(ct[SERVICES.CT_SUPPLIER]) || null,
+    leverantör_name:            (ctx.supplierById && _ffIdOf(ct[SERVICES.CT_SUPPLIER]))
+                                  ? (ctx.supplierById.get(_ffIdOf(ct[SERVICES.CT_SUPPLIER])) || null)
+                                  : null,
     // Härlett
     status:             _deriveContractStatus(ct, Date.now()),
     created_date:       ct["Created Date"] || null,
@@ -20410,7 +20455,8 @@ app.get("/admin/contracts/by-company", async (req, res) => {
       }
     }
 
-    const ctx = { customerName, officeById, offerById, offerToSlug, catalogBySlug };
+    const { byId: supplierById } = await _loadSuppliers();
+    const ctx = { customerName, officeById, offerById, offerToSlug, catalogBySlug, supplierById };
 
     // 6) Bygg account-scope + per-office-grupper
     const enriched = contracts.map((ct) => _enrichContract(ct, ctx));
@@ -20537,13 +20583,14 @@ app.get("/admin/contracts/all", async (req, res) => {
     }
 
     // 3) Enrich varje Contract
+    const { byId: supplierById } = await _loadSuppliers();
     const items = contracts.slice(0, limit).map((ct) => {
       const ccId = _ffIdOf(ct[SERVICES.CT_COMPANY]);
       const cc = ccId && ccById.get(ccId);
       const customerName = cc
         ? (cc.Name_company || cc.name || cc.Name || cc.company_name || cc.namn || null)
         : null;
-      const ctx = { customerName, officeById, offerById, offerToSlug, catalogBySlug };
+      const ctx = { customerName, officeById, offerById, offerToSlug, catalogBySlug, supplierById };
       return _enrichContract(ct, ctx);
     });
 
@@ -20558,6 +20605,32 @@ app.get("/admin/contracts/all", async (req, res) => {
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
+  }
+});
+
+// ── GET /admin/suppliers — lista Leverantör - Supplier-bolag för dropdown ────
+// Returnerar [{id, name}] + kategori→default-id-mappen, så formulären kan
+// förvälja leverantör från kategori och tillåta override.
+app.options("/admin/suppliers", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+app.get("/admin/suppliers", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  try {
+    const { byId, byName } = await _loadSuppliers();
+    const suppliers = [...byId.entries()].map(([id, name]) => ({ id, name }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
+    // kategori → default-leverantör-id (via kanoniskt namn)
+    const defaultByCategory = {};
+    for (const [cat, name] of Object.entries(SUPPLIER_NAME_BY_CATEGORY)) {
+      defaultByCategory[cat] = byName.get(name.toLowerCase()) || null;
+    }
+    return res.json({ ok: true, suppliers, default_by_category: defaultByCategory });
+  } catch (e) {
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
@@ -20620,9 +20693,16 @@ app.post("/admin/contracts/create", async (req, res) => {
       } catch (_) { /* faller tillbaka till null */ }
     }
 
+    // Leverantör: explicit val vinner; annars kategoristyrd default.
+    const supplierExplicit = b.leverantör || b.leverantor || b.supplier_id || null;
+    const supplierId = supplierExplicit
+      || (resolvedCategory ? await _supplierIdForCategory(resolvedCategory) : null);
+
     const payload = {
       [SERVICES.CT_COMPANY]:            companyId,
       [SERVICES.CT_TYPE]:               contractType,
+      [SERVICES.CT_TITLE]:              b.contract_title ? String(b.contract_title).trim() : null,
+      [SERVICES.CT_SUPPLIER]:           supplierId,
       [SERVICES.CT_OFFER]:              b.offer_id || null,
       [SERVICES.CT_OFFICE]:             b.office_id || null,
       [SERVICES.CT_QTY]:                b.qty != null ? Number(b.qty) : 1,
@@ -20669,9 +20749,10 @@ app.post("/admin/contracts/create", async (req, res) => {
         const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, b.offer_id).catch(() => null);
         if (o) offerById.set(b.offer_id, o);
       }
+      const { byId: supplierById } = await _loadSuppliers();
       enriched = _enrichContract(fresh, {
         customerName, officeById, offerById,
-        offerToSlug: new Map(), catalogBySlug: new Map(),
+        offerToSlug: new Map(), catalogBySlug: new Map(), supplierById,
       });
     }
 
@@ -20736,6 +20817,9 @@ app.patch("/admin/contracts/:id", async (req, res) => {
       }
       patch[SERVICES.CT_KATEGORI] = resolvedCategory;
     }
+    if ("contract_title" in b)         patch[SERVICES.CT_TITLE]             = b.contract_title ? String(b.contract_title).trim() : null;
+    if ("leverantör" in b || "leverantor" in b || "supplier_id" in b)
+                                       patch[SERVICES.CT_SUPPLIER]          = b.leverantör || b.leverantor || b.supplier_id || null;
     if ("startdatum" in b)             patch[SERVICES.CT_START]             = b.startdatum || null;
     if ("slutdatum" in b)              patch[SERVICES.CT_END]               = b.slutdatum || null;
     if ("binding_months" in b)         patch[SERVICES.CT_BINDING]           = b.binding_months != null ? Number(b.binding_months) : null;
@@ -20780,9 +20864,10 @@ app.patch("/admin/contracts/:id", async (req, res) => {
         const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, oId).catch(() => null);
         if (o) offerById.set(oId, o);
       }
+      const { byId: supplierById } = await _loadSuppliers();
       enriched = _enrichContract(fresh, {
         customerName, officeById, offerById,
-        offerToSlug: new Map(), catalogBySlug: new Map(),
+        offerToSlug: new Map(), catalogBySlug: new Map(), supplierById,
       });
     }
 
@@ -21027,6 +21112,10 @@ const CONTRACT_EXTRACT_TOOL = {
       volume: {
         type: "object",
         description: "Strukturerad volym, t.ex. {kvm: 12600, housekeepers: 7, hours_mf: 25, hours_sun: 4} för HK."
+      },
+      contract_title: {
+        type: "string",
+        description: "Kort beskrivande titel på avtalet, gemener, format 'Kategori Kundnamn' (t.ex. 'Housekeeping OX2 AB', 'Bemanning Klarna Bank AB'). Härled från avtalets kategori + kundens namn."
       },
       customer_name: {
         type: "string",
@@ -21284,9 +21373,16 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
     const fileUrl   = b.file_url || null;
     const signedAt  = b.signed_at || b.startdatum || new Date().toISOString();
 
+    // Leverantör: explicit val vinner; annars kategoristyrd default.
+    const supplierExplicit = b.leverantör || b.leverantor || b.supplier_id || null;
+    const supplierId = supplierExplicit
+      || (resolvedCategory ? await _supplierIdForCategory(resolvedCategory) : null);
+
     const payload = {
       [SERVICES.CT_COMPANY]:           companyId,
       [SERVICES.CT_TYPE]:              contractType,
+      [SERVICES.CT_TITLE]:             b.contract_title ? String(b.contract_title).trim() : null,
+      [SERVICES.CT_SUPPLIER]:          supplierId,
       [SERVICES.CT_OFFER]:             b.offer_id || null,
       [SERVICES.CT_OFFICE]:            b.office_id || null,
       [SERVICES.CT_QTY]:               b.qty != null ? Number(b.qty) : 1,
