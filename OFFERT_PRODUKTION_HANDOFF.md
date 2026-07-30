@@ -190,9 +190,18 @@ Ny fristående modul `offert_api.js` (DI-mönster som `contract_render.js`) → 
 - `POST /admin/offert/:id/render-pdf` — Mira-genererad kund-PDF via `contractRenderEngine.renderAndPersist` (full HTML byggs i modulen, obegränsad `beskrivning_long`), länkas in i `Offert.dokument`. **Kirurgisk ersättning:** matchar tidigare auto-renders på titel `Offert {offertnr}` → tar bort dem (+ Dokument-rad), **rör aldrig uppladdade bilagor**. Adress plockas ur geo-objekt (`_pickAddr`). Saknade fält renderas som röd `"saknas"`-markör (granskningssignal före utskick).
 - `POST /admin/offert/:id/convert-to-order` — ⚠️ **kräver MiraOrder-rename `ordernr`/`orderdatum`** (§2.1). Deep-copyar rader → `MiraOrderRad`, ärver `kok`+`prep_kategori` från Product, sätter `leverans_ts`, idempotent (skippar om order redan finns). Fas 3 kopplar denna till `offer_approval_status=Approved` auto; nu manuell/testbar.
 
-**Kvar i Fas 2:** curl-verifiering mot skarp Render (behöver deploy) + PDF-visuell koll. UI-block = separat (senare).
+**UI-block BYGGT 2026-07-30:** `mira-offert-admin.html` (ny fil) — ärver `mira-approval-create.html`:s designsystem (`.ao-`-namespace, DM Serif + orange #F47B30, data-mira-wiring, IIFE + BROOT-scoping, inga `?.`/`??`). Två lägen: `data-mira="clientcompany"` satt → förvald/ärvd kund (+ `comission` + source=deal); inget satt → CC-sökfält (`/admin/planning/companies` + `/admin/clientcompany/:id/details`-prefill). Radeditor med artikel-autocomplete (`/admin/offert/products`), live-totaler, spara (create/PATCH), förhandsgranska PDF (`render-pdf` → öppnar file_url), "Mina offerter"-lista (`/admin/offert/list` → öppna/redigera). Visuellt verifierat i browser-pane. **Ej i v1:** "Skicka för signering" (Fas 3 — hookar in i befintliga OfferApproval-blocket). Interaktivitet (autocomplete/totaler/spara) testas skarpt i Bubble med riktig token.
 
 ### 4.3 Offertnummer — ✅ `FE-{år}-{seq}` (t.ex. `FE-2026-0001`), best-effort löpnr (scannar source=mira_fe, max+1).
+
+### 4.4 Skapa kund + privatkund — ✅ BYGGT 2026-07-30
+**Beslut:** `ClientCompany` + `customer_type`-flagga (Option Set **Företag/Privat**), INGET personnummer (namn+adress räcker för F&E). Reuse `Adress`/`Telefon`; ny `faktura_email` (text).
+- **Bubble (Christian):** `ClientCompany` → `customer_type` (Option Set Företag/Privat), `faktura_email` (text), `faktura_referens` (text).
+- **Endpoint:** `POST /admin/offert/client/create` — skapar ClientCompany (Org_Number bara för Företag, digits) + ev. `Coworker` (beställare: Förnamn/Efternamn/Email/Kundföretag). Beställaren blir `Offert.recipient`.
+- **UI:** "+ Skapa ny kund"-form i offert-blocket (segment Företag/Privat, org.nr döljs för privat), verifierad interaktiv.
+- **PDF:** privatkund visar "Privatperson" i st.f. org.nr.
+- **⚠️ Skriv-varningar:** `Adress` är geo-fält → skriv-via-Data-API opålitligt (om create failar → byt till `faktura_adress` text; `buildOffertHtml` läser redan `faktura_adress` som fallback). `Telefon` = number → konverteras till siffror.
+- **Beskrivning-autofill:** `Product.Beskrivning` populerar radens `beskrivning_long` vid artikelval **om raden är tom** (redigerbart, skriver aldrig över).
 
 ---
 
@@ -249,7 +258,7 @@ NL-beskrivning → Anthropic structured tool-use → offert-utkast (rader ur F&E
 | Fas | Innehåll | Ägare |
 |---|---|---|
 | **1** | ✅ **KLART + DEPLOYAT 2026-07-30.** `Kok`, `MiraOrder`, `MiraOrderRad` skapade · `Offert` utökad (30 fält) · `OffertRad` definierad (14 fält) · dubblett raderad · `StatusMiraOrder` skapad · `offer_approval_status` återanvänd på `Offert.status`. **Kvar (små):** döp MiraOrder `offertnr`→`ordernr` (number→text) + `offertdatum`→`orderdatum`; sätt `Product.default_kok` + sätt om `Product category`-värden (löpande) | Christian (Bubble) |
-| **2** | ✅ **Backend BYGGT + smoke-testat 2026-07-30** (`offert_api.js`): products/create/patch/get/list/render-pdf/convert. Kvar: deploy + curl-verifiering mot skarp Render, PDF-visuell koll, UI-block (separat) | Claude (backend klar) + Christian (deploy/UI) |
+| **2** | ✅ **Backend KLART + VERIFIERAT MOT SKARP DATA 2026-07-30** (`offert_api.js`): products/create/patch/get/list/render-pdf/convert. Curl-testat live: create→totaler, render-pdf→snygg Fortnox-lik PDF (adress ur geo, saknas-markörer, kirurgisk dokument-städ). Kvar: UI-block (separat) + design-polish (logga) | Claude (backend klar) |
 | **3** | convert-to-order finns (manuell). Kvar: koppla auto-trigger på `offer_approval_status=Approved` + MiraOrder-rename `ordernr`/`orderdatum` | Claude |
 | **4** | Produktionsmodul: dagsvy + kök-fördelning + export (a)+(b) | Claude + Christian |
 | **5** | Fortnox order-push (`POST /3/orders`, OAuth-scope + idempotens + eko-hantering) | Claude |

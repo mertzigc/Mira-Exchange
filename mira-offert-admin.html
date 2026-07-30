@@ -1,0 +1,647 @@
+<!--
+  MIRA — OFFERT-BUILDER (Food & Event)  ·  Carotte admin-block
+  ------------------------------------------------------------------
+  Bygger F&E-offerter (Mira = system of record). Fortnox-inspirerad layout,
+  Mira-mörk UI (ärver mira-approval-create.html:s designspråk). Obegränsad
+  radbeskrivning (beskrivning_long). Sparar via Render → offert_api.js.
+
+  Klistras in i ett HTML-element i Bubble. Kan bäddas in fristående ELLER i
+  Deal-popup. MULTI-INSTANCE-SÄKERT: claimar egen .ao-wrap, scopar all DOM till
+  block-roten (BROOT) — inga ID-kollisioner (gotcha 11).
+
+  KOPPLING I BUBBLE (sätt value via Bubble-data — raw HTML-tokens):
+    data-mira="api_host"        = https://mira-exchange.onrender.com
+    data-mira="planning_token"  = PLANNING_ADMIN_TOKEN
+    data-mira="clientcompany"   = (optional) ClientCompany unique_id
+    data-mira="clientcompany_nm"= (optional) ClientCompany namn (visning)
+    data-mira="comission"       = (optional) Comission unique_id (ärvs till offert)
+    data-mira="deal"            = (optional) Deal unique_id
+
+  LÄGEN (auto-detekteras):
+    clientcompany satt → förvald kund (ärver CC + comission + source=deal)
+    inget satt         → standalone: CC-sökfält för att välja kund
+
+  All intelligens i Render. Master-Bubble-nyckeln stannar server-side.
+  OBS: INGEN ?. eller ?? (Bubbles script-parser kraschar — använd && / ||).
+-->
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .ao-wrap, .ao-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .ao-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e; --input:#2e3350;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --red:#E05A5A; --blue:#5B8DEF;
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
+    background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;width:100%;border-radius:14px;padding:0 20px 30px;
+  }
+  .ao-wrap input[type=hidden]{display:none}
+  .ao-wrap button{font-family:var(--fb);cursor:pointer}
+  .ao-wrap a{color:var(--orange);text-decoration:none}
+
+  .ao-head{display:flex;align-items:center;justify-content:space-between;padding:22px 0 16px}
+  .ao-h1{font-family:'DM Serif Display',Georgia,serif;font-size:24px;line-height:1.1;letter-spacing:-.01em}
+  .ao-h1 span{color:var(--orange)}
+  .ao-sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
+
+  .ao-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:14px}
+  .ao-panel h2{font-family:'DM Serif Display',Georgia,serif;font-size:17px;margin-bottom:14px}
+
+  .ao-grid{display:grid;gap:12px 16px}
+  .ao-g2{grid-template-columns:1fr 1fr}
+  .ao-g3{grid-template-columns:1fr 1fr 1fr}
+  .ao-g4{grid-template-columns:1fr 1fr 1fr 1fr}
+  .field label{display:block;font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .field input,.field select,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .field textarea{resize:vertical;min-height:60px}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .field input::placeholder,.field textarea::placeholder{color:var(--w40)}
+
+  /* kund-sök (standalone) */
+  .ao-search{position:relative}
+  .ao-results{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);background:var(--deep);
+    border:1px solid var(--border);border-radius:10px;max-height:260px;overflow:auto;box-shadow:0 12px 30px rgba(0,0,0,.4);display:none}
+  .ao-results.open{display:block}
+  .ao-res-item{padding:10px 13px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--w10)}
+  .ao-res-item:last-child{border-bottom:none}
+  .ao-res-item:hover,.ao-res-item.hi{background:var(--orange-dim);color:var(--orange)}
+  .ao-res-empty{padding:12px 13px;color:var(--w40);font-size:12px}
+
+  .ao-client-card{display:flex;align-items:center;justify-content:space-between;background:var(--deep);
+    border:1px solid var(--border);border-radius:10px;padding:12px 15px}
+  .ao-client-card .nm{font-weight:700}
+  .ao-client-card .meta{color:var(--w40);font-size:11px;margin-top:2px}
+  .ao-linkbtn{background:none;border:none;color:var(--orange);font-size:11px;font-weight:700}
+
+  /* rader */
+  .ao-row{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 15px;margin-bottom:10px}
+  .ao-row-top{display:grid;grid-template-columns:2.4fr .8fr .8fr 1fr .8fr .8fr;gap:10px;align-items:end}
+  .ao-row .field.rs{position:relative}
+  .ao-row textarea{width:100%;margin-top:10px;min-height:46px;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb);resize:vertical}
+  .ao-row textarea:focus{outline:none;border-color:var(--orange)}
+  .ao-row textarea::placeholder{color:var(--w40)}
+  .ao-row-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+  .ao-row-sum{font-size:13px}
+  .ao-row-sum b{font-size:15px}
+  .ao-row-rm{background:none;border:1px solid var(--border);color:var(--w70);border-radius:8px;padding:6px 11px;font-size:11px}
+  .ao-row-rm:hover{border-color:var(--red);color:var(--red)}
+  .ao-addrow{width:100%;background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    border-radius:10px;padding:11px;font-size:13px;font-weight:700}
+  .ao-addrow:hover{border-color:var(--orange);color:var(--orange)}
+
+  .ao-totals{margin-left:auto;width:300px;margin-top:8px}
+  .ao-totals .r{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}
+  .ao-totals .grand{border-top:1.5px solid var(--w10);margin-top:6px;padding-top:9px;font-weight:700;font-size:16px}
+
+  .ao-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;padding-top:6px}
+  .btn{border:none;border-radius:10px;padding:11px 18px;font-size:13px;font-weight:700}
+  .btn-primary{background:var(--orange);color:#1c1206}
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-ghost{background:var(--input);border:1px solid var(--border);color:var(--white)}
+  .btn-ghost:hover{border-color:var(--orange);color:var(--orange)}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .ao-seg{display:inline-flex;background:var(--input);border:1px solid var(--border);border-radius:9px;padding:3px}
+  .ao-seg-btn{background:none;border:none;color:var(--w70);padding:7px 18px;font-size:12px;font-weight:700;border-radius:7px}
+  .ao-seg-btn.on{background:var(--orange);color:#1c1206}
+
+  /* lista */
+  .ao-list-item{display:grid;grid-template-columns:120px 1fr auto auto auto;gap:14px;align-items:center;
+    background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 15px;margin-bottom:8px;cursor:pointer}
+  .ao-list-item:hover{border-color:var(--orange)}
+  .ao-list-item .nr{font-family:Menlo,Consolas,monospace;font-size:12px;color:var(--orange)}
+  .ao-list-item .t{font-weight:700}
+  .ao-list-item .tot{font-variant-numeric:tabular-nums}
+  .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
+  .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--w40)}
+  .pill.s-Draft{background:var(--w10);color:var(--w70)}
+  .pill.s-Sent,.pill.s-Viewed,.pill.s-OTP_Sent{background:var(--orange-dim);color:var(--orange)}
+  .pill.s-Sent .dot,.pill.s-Viewed .dot,.pill.s-OTP_Sent .dot{background:var(--orange)}
+  .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green)} .pill.s-Approved .dot{background:var(--green)}
+  .pill.s-Expired,.pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red)} .pill.s-Expired .dot,.pill.s-Revoked .dot{background:var(--red)}
+
+  .ao-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--deep);
+    border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:9999;display:none;box-shadow:0 12px 30px rgba(0,0,0,.5)}
+  .ao-toast.ok{border-color:var(--green)} .ao-toast.err{border-color:var(--red)}
+  .ao-muted{color:var(--w40)}
+  .ao-hide{display:none !important}
+</style>
+
+<div class="ao-wrap">
+  <input type="hidden" data-mira="api_host"        value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"  value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="clientcompany"    value="">
+  <input type="hidden" data-mira="clientcompany_nm" value="">
+  <input type="hidden" data-mira="comission"        value="">
+  <input type="hidden" data-mira="deal"             value="">
+
+  <div class="ao-head">
+    <div>
+      <div class="ao-h1">Offert <span data-ao="mode-tag"></span></div>
+      <div class="ao-sub" data-ao="sub">Food &amp; Event</div>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" data-ao="btn-list">Mina offerter</button>
+      <button class="btn btn-primary" data-ao="btn-new">+ Ny offert</button>
+    </div>
+  </div>
+
+  <!-- LISTA -->
+  <div data-ao="view-list" class="ao-hide">
+    <div class="ao-panel">
+      <h2>Offerter</h2>
+      <div data-ao="list-body"><div class="ao-muted">Laddar…</div></div>
+    </div>
+  </div>
+
+  <!-- FORM -->
+  <div data-ao="view-form">
+    <!-- Kund -->
+    <div class="ao-panel">
+      <h2>Kund</h2>
+      <!-- standalone: sök -->
+      <div data-ao="client-search" class="field ao-search ao-hide">
+        <label>Sök kundföretag</label>
+        <input type="text" data-ao="cc-input" placeholder="Skriv företagsnamn…" autocomplete="off">
+        <div class="ao-results" data-ao="cc-results"></div>
+      </div>
+      <!-- vald / ärvd kund -->
+      <div data-ao="client-card" class="ao-client-card ao-hide">
+        <div>
+          <div class="nm" data-ao="cc-name">—</div>
+          <div class="meta" data-ao="cc-meta"></div>
+        </div>
+        <button class="ao-linkbtn" data-ao="cc-change">Byt kund</button>
+      </div>
+
+      <!-- skapa ny kund -->
+      <div data-ao="newclient-toggle" style="margin-top:10px">
+        <button class="ao-linkbtn" data-ao="btn-newclient">+ Skapa ny kund</button>
+      </div>
+      <div data-ao="newclient-form" class="ao-hide" style="margin-top:12px;border-top:1px solid var(--w10);padding-top:16px">
+        <div class="ao-seg" style="margin-bottom:14px">
+          <button class="ao-seg-btn on" data-ao="nc-type" data-val="Företag">Företag</button>
+          <button class="ao-seg-btn" data-ao="nc-type" data-val="Privat">Privat</button>
+        </div>
+        <div class="ao-grid ao-g2">
+          <div class="field"><label data-ao="nc-name-label">Företagsnamn</label><input type="text" data-ao="nc-namn" placeholder="Namn"></div>
+          <div class="field" data-ao="nc-org-wrap"><label>Organisationsnummer</label><input type="text" data-ao="nc-org" placeholder="556xxxxxxx"></div>
+          <div class="field"><label>Faktura-e-post</label><input type="email" data-ao="nc-faktura_email" placeholder="faktura@…"></div>
+          <div class="field"><label>Telefon</label><input type="text" data-ao="nc-telefon" placeholder="+46…"></div>
+          <div class="field" style="grid-column:1 / -1"><label>Fakturaadress</label><input type="text" data-ao="nc-adress" placeholder="Gata, postnr ort"></div>
+          <div class="field" style="grid-column:1 / -1"><label>Referens / PO-nummer</label><input type="text" data-ao="nc-referens" placeholder="Er referens"></div>
+        </div>
+        <div style="margin-top:14px;font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em">Beställare (blir kontaktperson)</div>
+        <div class="ao-grid ao-g3" style="margin-top:6px">
+          <div class="field"><label>Förnamn</label><input type="text" data-ao="nc-be-fornamn"></div>
+          <div class="field"><label>Efternamn</label><input type="text" data-ao="nc-be-efternamn"></div>
+          <div class="field"><label>E-post</label><input type="email" data-ao="nc-be-email"></div>
+        </div>
+        <div class="ao-actions" style="margin-top:14px">
+          <button class="btn btn-ghost" data-ao="btn-cancelclient">Avbryt</button>
+          <button class="btn btn-primary" data-ao="btn-createclient">Skapa kund</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Offertuppgifter -->
+    <div class="ao-panel">
+      <h2>Offertuppgifter</h2>
+      <div class="ao-grid ao-g4">
+        <div class="field"><label>Offertdatum</label><input type="date" data-ao="f-offertdatum"></div>
+        <div class="field"><label>Giltig t.o.m.</label><input type="date" data-ao="f-giltig_till"></div>
+        <div class="field"><label>Leveransdatum</label><input type="date" data-ao="f-leveransdatum"></div>
+        <div class="field"><label>Leveranstid</label><input type="text" data-ao="f-leveranstid" placeholder="t.ex. 12:00"></div>
+        <div class="field"><label>Betalningsvillkor</label><input type="text" data-ao="f-betalningsvillkor" placeholder="10 dagar"></div>
+        <div class="field"><label>Momstyp</label><input type="text" data-ao="f-momstyp" placeholder="SEVAT"></div>
+        <div class="field"><label>Valuta</label><input type="text" data-ao="f-valuta" value="SEK"></div>
+        <div class="field"><label>Titel (internt)</label><input type="text" data-ao="f-titel" placeholder="t.ex. Sommarfest Acme"></div>
+      </div>
+      <div class="ao-grid" style="margin-top:12px">
+        <div class="field"><label>Leveransadress</label><input type="text" data-ao="f-leveransadress" placeholder="Gata, postnr ort"></div>
+      </div>
+      <div class="ao-grid" style="margin-top:12px">
+        <div class="field"><label>Inledande beskrivning (visas överst i offerten)</label><textarea data-ao="f-beskrivning" placeholder="Valfri introtext…"></textarea></div>
+      </div>
+    </div>
+
+    <!-- Rader -->
+    <div class="ao-panel">
+      <h2>Rader</h2>
+      <div data-ao="rows"></div>
+      <button class="ao-addrow" data-ao="add-row">+ Lägg till rad</button>
+
+      <div class="ao-totals">
+        <div class="r"><span class="ao-muted">Summa (ex. moms)</span><span data-ao="t-summa">0,00 SEK</span></div>
+        <div class="r"><span class="ao-muted">Moms</span><span data-ao="t-moms">0,00 SEK</span></div>
+        <div class="r grand"><span>Att betala</span><span data-ao="t-total">0,00 SEK</span></div>
+      </div>
+    </div>
+
+    <!-- Villkor -->
+    <div class="ao-panel">
+      <h2>Villkor</h2>
+      <div class="field"><textarea data-ao="f-villkor_text" placeholder="Fri villkorstext som visas i offertens fot…"></textarea></div>
+    </div>
+
+    <div class="ao-actions">
+      <span class="ao-muted" data-ao="save-hint"></span>
+      <button class="btn btn-ghost" data-ao="btn-preview" disabled>Förhandsgranska PDF</button>
+      <button class="btn btn-primary" data-ao="btn-save">Spara offert</button>
+    </div>
+  </div>
+
+  <div class="ao-toast" data-ao="toast"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ── claima en oclaimad .ao-wrap (multi-instance-säkert) ──────────
+  var all = document.querySelectorAll(".ao-wrap");
+  var root = null;
+  for (var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-ao-claimed")){ root=all[i]; break; } }
+  if(!root) return;
+  root.setAttribute("data-ao-claimed","1");
+
+  // ── scopade helpers (allt mot BROOT — gotcha 11) ─────────────────
+  var $  = function(k){ return root.querySelector('[data-ao="'+k+'"]'); };
+  var $$ = function(k){ return root.querySelectorAll('[data-ao="'+k+'"]'); };
+  var cfg= function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el && el.value) || ""; };
+
+  var HOST  = cfg("api_host").replace(/\/+$/,"");
+  var TOKEN = cfg("planning_token");
+  var CC_ID = cfg("clientcompany");
+  var CC_NM = cfg("clientcompany_nm");
+  var COMISSION = cfg("comission");
+  var DEAL  = cfg("deal");
+  var INHERITED = !!CC_ID;   // förvald kund via deal/CC-popup
+
+  // ── state ────────────────────────────────────────────────────────
+  var state = {
+    offertId: null,
+    client: { id: CC_ID || null, name: CC_NM || null, org: null, address: null },
+    rows: [],
+    recipient: [],          // Coworker-ids (beställare)
+    newClientType: "Företag"
+  };
+
+  // ── util ─────────────────────────────────────────────────────────
+  function num(v){ if(v==null||v==="") return 0; var n=(typeof v==="number")?v:parseFloat(String(v).replace(",",".")); return isFinite(n)?n:0; }
+  function round2(n){ return Math.round((num(n))*100)/100; }
+  function money(n){ return round2(n).toLocaleString("sv-SE",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function headers(json){ var h={"x-admin-token":TOKEN}; if(json) h["Content-Type"]="application/json"; return h; }
+  function toast(msg, kind){ var t=$("toast"); t.textContent=msg; t.className="ao-toast "+(kind||"")+" "; t.style.display="block"; setTimeout(function(){ t.style.display="none"; }, 3200); }
+  function isoDate(v){ if(!v) return ""; return String(v).slice(0,10); }
+  function debounce(fn,ms){ var t; return function(){ var a=arguments,c=this; clearTimeout(t); t=setTimeout(function(){ fn.apply(c,a); },ms); }; }
+
+  // ── rad-beräkning ────────────────────────────────────────────────
+  function rowSum(r){ return round2(num(r.antal)*num(r.apris)*(1-num(r.rabatt)/100)); }
+  function totals(){
+    var s=0,m=0;
+    state.rows.forEach(function(r){ var rs=rowSum(r); s+=rs; m+=rs*(num(r.moms)/100); });
+    return { summa:round2(s), moms:round2(m), total:round2(s+m) };
+  }
+  function paintTotals(){
+    var t=totals();
+    $("t-summa").textContent = money(t.summa)+" SEK";
+    $("t-moms").textContent  = money(t.moms)+" SEK";
+    $("t-total").textContent = money(t.total)+" SEK";
+  }
+
+  // ── rader: render ────────────────────────────────────────────────
+  function rowHtml(r, idx){
+    return ''+
+    '<div class="ao-row" data-ridx="'+idx+'">'+
+      '<div class="ao-row-top">'+
+        '<div class="field rs"><label>Artikel / benämning</label>'+
+          '<input type="text" data-rf="benamning" value="'+esc(r.benamning)+'" placeholder="Sök artikel eller skriv fritt…" autocomplete="off">'+
+          '<div class="ao-results" data-rf="ac"></div></div>'+
+        '<div class="field"><label>Antal</label><input type="number" step="any" data-rf="antal" value="'+esc(r.antal)+'"></div>'+
+        '<div class="field"><label>Enhet</label><input type="text" data-rf="enhet" value="'+esc(r.enhet)+'"></div>'+
+        '<div class="field"><label>À-pris</label><input type="number" step="any" data-rf="apris" value="'+esc(r.apris)+'"></div>'+
+        '<div class="field"><label>Rabatt %</label><input type="number" step="any" data-rf="rabatt" value="'+esc(r.rabatt)+'"></div>'+
+        '<div class="field"><label>Moms %</label><input type="number" step="any" data-rf="moms" value="'+esc(r.moms)+'"></div>'+
+      '</div>'+
+      '<textarea data-rf="beskrivning_long" placeholder="Fri beskrivning (obegränsad, flera rader)…">'+esc(r.beskrivning_long)+'</textarea>'+
+      '<div class="ao-row-foot">'+
+        '<div class="ao-row-sum">Radsumma: <b data-rf="sum">'+money(rowSum(r))+'</b> SEK <span class="ao-muted" data-rf="art"></span></div>'+
+        '<button class="ao-row-rm" data-rf="rm">Ta bort</button>'+
+      '</div>'+
+    '</div>';
+  }
+  function renderRows(){
+    var host=$("rows");
+    host.innerHTML = state.rows.map(rowHtml).join("");
+    // sätt artikelnr-etikett
+    state.rows.forEach(function(r,idx){
+      if(r.artikelnr){ var lbl=host.querySelector('.ao-row[data-ridx="'+idx+'"] [data-rf="art"]'); if(lbl) lbl.textContent="· art "+r.artikelnr; }
+    });
+    paintTotals();
+  }
+  function addRow(){ state.rows.push({product:null,artikelnr:"",benamning:"",beskrivning_long:"",antal:1,enhet:"",apris:0,rabatt:0,moms:12}); renderRows(); }
+
+  // ── artikel-autocomplete (per rad, delegerat) ────────────────────
+  var acReq = 0;
+  var doArticleSearch = debounce(function(input, idx, q){
+    var box = input.parentNode.querySelector('[data-rf="ac"]');
+    if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
+    var my = ++acReq;
+    fetch(HOST+"/admin/offert/products?q="+encodeURIComponent(q), {headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(my!==acReq) return;
+        var res = (j && j.results) || [];
+        if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga artiklar</div>'; return; }
+        box.innerHTML = res.map(function(p){
+          return '<div class="ao-res-item" data-pid="'+esc(p.id)+'">'+
+            '<div>'+esc(p.titel)+'</div>'+
+            '<div class="ao-muted" style="font-size:11px">art '+esc(p.artikelnr)+' · '+money(p.apris)+' kr/'+esc(p.enhet||"st")+' · moms '+esc(p.moms)+'%</div></div>';
+        }).join("");
+        box.className="ao-results open";
+        // spara resultat på boxen för pick
+        box._res = res;
+      })
+      .catch(function(){});
+  }, 220);
+
+  function pickArticle(idx, pid, box){
+    var p=null, res=(box && box._res)||[];
+    for(var i=0;i<res.length;i++){ if(String(res[i].id)===String(pid)){ p=res[i]; break; } }
+    if(!p) return;
+    var r=state.rows[idx];
+    r.product=p.id; r.artikelnr=p.artikelnr; r.benamning=p.titel;
+    if(!r.enhet) r.enhet=p.enhet||""; if(!num(r.apris)) r.apris=num(p.apris); r.moms=num(p.moms)||r.moms;
+    // populera fri beskrivning från artikelns Beskrivning — bara om raden är tom (skriv ej över)
+    if(!String(r.beskrivning_long||"").trim() && p.beskrivning){ r.beskrivning_long=p.beskrivning; }
+    renderRows();
+  }
+
+  // ── kund-sök (standalone) ────────────────────────────────────────
+  var ccReq=0;
+  var doCcSearch = debounce(function(q){
+    var box=$("cc-results");
+    if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
+    var my=++ccReq;
+    fetch(HOST+"/admin/planning/companies?q="+encodeURIComponent(q), {headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(my!==ccReq) return;
+        var res=(j && j.results)||[];
+        if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga företag</div>'; return; }
+        box.innerHTML=res.slice(0,40).map(function(c){ return '<div class="ao-res-item" data-ccid="'+esc(c.id)+'" data-ccnm="'+esc(c.name)+'">'+esc(c.name)+'</div>'; }).join("");
+        box.className="ao-results open";
+      }).catch(function(){});
+  }, 220);
+
+  function selectClient(id, name){
+    state.client={ id:id, name:name, org:null, address:null };
+    state.recipient=[];
+    $("cc-results").className="ao-results";
+    paintClient();
+    // hämta org + adress
+    fetch(HOST+"/admin/clientcompany/"+encodeURIComponent(id)+"/details", {headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.ok && j.details){ state.client.org=j.details.org_nr||null; state.client.address=j.details.address||null; paintClient(); }
+      }).catch(function(){});
+  }
+  function paintClient(){
+    var hasClient=!!state.client.id;
+    $("client-card").className = "ao-client-card "+(hasClient?"":"ao-hide");
+    $("client-search").className = "field ao-search "+((hasClient||INHERITED)?"ao-hide":"");
+    // "+ Skapa ny kund" bara i standalone utan vald kund
+    $("newclient-toggle").className = (hasClient||INHERITED) ? "ao-hide" : "";
+    if(hasClient){ $("newclient-form").className = "ao-hide"; }
+    if(hasClient){
+      $("cc-name").textContent = state.client.name||"(namnlöst)";
+      var meta=[]; if(state.client.org) meta.push("Org.nr "+state.client.org); if(state.client.address) meta.push(state.client.address);
+      $("cc-meta").textContent = meta.join(" · ");
+      // ärvd kund kan inte bytas
+      $("cc-change").style.display = INHERITED ? "none" : "";
+    }
+  }
+
+  // ── skapa ny kund (företag/privat) + beställare ──────────────────
+  function openNewClient(){ $("newclient-form").className=""; $("newclient-toggle").className="ao-hide"; setNcType(state.newClientType); }
+  function closeNewClient(){ $("newclient-form").className="ao-hide"; if(!state.client.id && !INHERITED){ $("newclient-toggle").className=""; } }
+  function setNcType(t){
+    state.newClientType=t;
+    root.querySelectorAll('[data-ao="nc-type"]').forEach(function(b){ b.className="ao-seg-btn"+(b.getAttribute("data-val")===t?" on":""); });
+    $("nc-org-wrap").className = "field "+(t==="Privat"?"ao-hide":"");
+    $("nc-name-label").textContent = (t==="Privat") ? "Namn" : "Företagsnamn";
+  }
+  function createClient(){
+    var namn=$("nc-namn").value.trim();
+    if(!namn){ toast("Ange namn","err"); return; }
+    var payload={
+      customer_type: state.newClientType, namn: namn,
+      org_nr: $("nc-org").value.trim(), faktura_email: $("nc-faktura_email").value.trim(),
+      adress: $("nc-adress").value.trim(), telefon: $("nc-telefon").value.trim(),
+      faktura_referens: $("nc-referens").value.trim(),
+      bestallare: { fornamn:$("nc-be-fornamn").value.trim(), efternamn:$("nc-be-efternamn").value.trim(), email:$("nc-be-email").value.trim() }
+    };
+    $("btn-createclient").disabled=true;
+    fetch(HOST+"/admin/offert/client/create",{method:"POST",headers:headers(true),body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-createclient").disabled=false;
+        if(!j || !j.ok){ toast("Kunde inte skapa kund: "+((j&&j.error)||"fel"),"err"); return; }
+        state.client={ id:j.clientcompany_id, name:namn, org:j.org_nr||null, address:j.address||null };
+        state.recipient = j.coworker_id ? [j.coworker_id] : [];
+        ["nc-namn","nc-org","nc-faktura_email","nc-telefon","nc-adress","nc-referens","nc-be-fornamn","nc-be-efternamn","nc-be-email"].forEach(function(k){ $(k).value=""; });
+        $("newclient-form").className="ao-hide";
+        paintClient();
+        toast("Kund skapad"+(j.coworker_id?" + beställare":""),"ok");
+      })
+      .catch(function(){ $("btn-createclient").disabled=false; toast("Nätverksfel","err"); });
+  }
+
+  // ── läs formuläret → payload ─────────────────────────────────────
+  function readForm(){
+    // synka rad-inputs till state (görs löpande via input-events, men säkra här)
+    return {
+      titel: $("f-titel").value.trim(),
+      kundforetag: state.client.id || null,
+      comission: COMISSION || null,
+      offertdatum: $("f-offertdatum").value || null,
+      giltig_till: $("f-giltig_till").value || null,
+      leveransdatum: $("f-leveransdatum").value || null,
+      leveranstid: $("f-leveranstid").value.trim(),
+      leveransadress: $("f-leveransadress").value.trim() || null,
+      betalningsvillkor: $("f-betalningsvillkor").value.trim(),
+      momstyp: $("f-momstyp").value.trim(),
+      valuta: $("f-valuta").value.trim() || "SEK",
+      recipient: state.recipient.length ? state.recipient : null,
+      beskrivning: $("f-beskrivning").value,
+      villkor_text: $("f-villkor_text").value,
+      rows: state.rows.map(function(r,i){ return {
+        radnr:i+1, product:r.product||null, artikelnr:r.artikelnr, benamning:r.benamning,
+        beskrivning_long:r.beskrivning_long, antal:num(r.antal), enhet:r.enhet,
+        apris:num(r.apris), rabatt:num(r.rabatt), moms:num(r.moms)
+      }; })
+    };
+  }
+
+  function save(){
+    if(!state.client.id){ toast("Välj en kund först","err"); return; }
+    if(!state.rows.length){ toast("Lägg till minst en rad","err"); return; }
+    var payload=readForm();
+    var url = state.offertId ? (HOST+"/admin/offert/"+encodeURIComponent(state.offertId)) : (HOST+"/admin/offert/create");
+    var method = state.offertId ? "PATCH" : "POST";
+    $("btn-save").disabled=true; $("save-hint").textContent="Sparar…";
+    fetch(url,{method:method,headers:headers(true),body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-save").disabled=false; $("save-hint").textContent="";
+        if(!j || !j.ok){ toast("Kunde inte spara: "+((j&&j.error)||"okänt fel"),"err"); return; }
+        if(!state.offertId){ state.offertId = j.offert_id; }
+        $("btn-preview").disabled=false;
+        toast("Sparad · "+(j.offertnr||"")+" · "+money((j.totals&&j.totals.total)||totals().total)+" SEK","ok");
+      })
+      .catch(function(e){ $("btn-save").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
+  }
+
+  function preview(){
+    if(!state.offertId){ toast("Spara offerten först","err"); return; }
+    $("btn-preview").disabled=true; $("save-hint").textContent="Renderar PDF…";
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/render-pdf",{method:"POST",headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-preview").disabled=false; $("save-hint").textContent="";
+        if(j && j.ok && j.file_url){ window.open(j.file_url,"_blank"); }
+        else { toast("Kunde inte rendera PDF","err"); }
+      })
+      .catch(function(){ $("btn-preview").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
+  }
+
+  // ── lista ────────────────────────────────────────────────────────
+  function showView(which){
+    $("view-list").className = which==="list" ? "" : "ao-hide";
+    $("view-form").className = which==="form" ? "" : "ao-hide";
+  }
+  function loadList(){
+    showView("list");
+    var body=$("list-body"); body.innerHTML='<div class="ao-muted">Laddar…</div>';
+    fetch(HOST+"/admin/offert/list",{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var res=(j && j.results)||[];
+        if(!res.length){ body.innerHTML='<div class="ao-muted">Inga offerter än.</div>'; return; }
+        body.innerHTML = res.map(function(o){
+          var st=esc(o.status||"Draft");
+          return '<div class="ao-list-item" data-oid="'+esc(o.id)+'">'+
+            '<span class="nr">'+esc(o.offertnr||"—")+'</span>'+
+            '<span class="t">'+esc(o.titel||"(namnlös)")+'</span>'+
+            '<span class="pill s-'+st+'"><span class="dot"></span>'+st+'</span>'+
+            '<span class="ao-muted">'+esc(isoDate(o.leveransdatum)||"")+'</span>'+
+            '<span class="tot">'+money(o.total)+' '+esc(o.valuta||"SEK")+'</span></div>';
+        }).join("");
+      }).catch(function(){ body.innerHTML='<div class="ao-muted">Kunde inte ladda.</div>'; });
+  }
+
+  function loadOffert(id){
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(id),{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(!j || !j.ok){ toast("Kunde inte öppna offert","err"); return; }
+        var o=j.offert;
+        state.offertId=id;
+        state.client={ id:o.kundforetag||null, name:null, org:null, address:null };
+        if(o.kundforetag){ selectClient(o.kundforetag, o.titel||"Kund"); } // hämtar namn/org/adress
+        state.rows=(j.rows||[]).map(function(r){ return {product:r.product||null,artikelnr:r.artikelnr||"",benamning:r.benamning||"",beskrivning_long:r.beskrivning_long||"",antal:num(r.antal),enhet:r.enhet||"",apris:num(r.apris),rabatt:num(r.rabatt),moms:num(r.moms)}; });
+        $("f-titel").value=o.titel||""; $("f-offertdatum").value=isoDate(o.offertdatum);
+        $("f-giltig_till").value=isoDate(o.giltig_till); $("f-leveransdatum").value=isoDate(o.leveransdatum);
+        $("f-leveranstid").value=o.leveranstid||""; $("f-betalningsvillkor").value=o.betalningsvillkor||"";
+        $("f-momstyp").value=o.momstyp||""; $("f-valuta").value=o.valuta||"SEK";
+        $("f-beskrivning").value=o.beskrivning||""; $("f-villkor_text").value=o.villkor_text||"";
+        $("f-leveransadress").value=(o.leveransadress && (o.leveransadress.address||o.leveransadress))||"";
+        renderRows(); paintClient(); $("btn-preview").disabled=false;
+        showView("form");
+      }).catch(function(){ toast("Nätverksfel","err"); });
+  }
+
+  function newOffert(){
+    state.offertId=null;
+    state.client={ id:CC_ID||null, name:CC_NM||null, org:null, address:null };
+    state.rows=[];
+    state.recipient=[];
+    state.newClientType="Företag";
+    $("newclient-form").className="ao-hide";
+    ["f-titel","f-leveranstid","f-betalningsvillkor","f-momstyp","f-leveransadress","f-beskrivning","f-villkor_text"].forEach(function(k){ $(k).value=""; });
+    ["f-offertdatum","f-giltig_till","f-leveransdatum"].forEach(function(k){ $(k).value=""; });
+    $("f-valuta").value="SEK";
+    // default offertdatum = idag, giltig_till = +30d
+    var today=new Date(); $("f-offertdatum").value=today.toISOString().slice(0,10);
+    var g=new Date(today.getTime()+30*86400000); $("f-giltig_till").value=g.toISOString().slice(0,10);
+    $("btn-preview").disabled=true;
+    addRow();
+    if(INHERITED && CC_ID){ selectClient(CC_ID, CC_NM||"Kund"); } else { paintClient(); }
+    showView("form");
+  }
+
+  // ── event-delegation (all DOM scopad till root) ──────────────────
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    // toolbar
+    if(t.closest('[data-ao="btn-list"]')){ loadList(); return; }
+    if(t.closest('[data-ao="btn-new"]')){ newOffert(); return; }
+    // lista → öppna
+    var li=t.closest(".ao-list-item"); if(li){ loadOffert(li.getAttribute("data-oid")); return; }
+    // rad ta bort
+    if(t.getAttribute && t.getAttribute("data-rf")==="rm"){ var rw=t.closest(".ao-row"); if(rw){ state.rows.splice(+rw.getAttribute("data-ridx"),1); renderRows(); } return; }
+    if(t.closest('[data-ao="add-row"]')){ addRow(); return; }
+    // artikel-pick
+    var ac=t.closest(".ao-res-item[data-pid]");
+    if(ac){ var rw2=t.closest(".ao-row"); var box=t.closest('[data-rf="ac"]'); if(rw2&&box){ pickArticle(+rw2.getAttribute("data-ridx"), ac.getAttribute("data-pid"), box); } return; }
+    // kund-pick
+    var cc=t.closest(".ao-res-item[data-ccid]");
+    if(cc){ selectClient(cc.getAttribute("data-ccid"), cc.getAttribute("data-ccnm")); return; }
+    // byt kund
+    if(t.closest('[data-ao="cc-change"]')){ state.client={id:null,name:null,org:null,address:null}; state.recipient=[]; paintClient(); $("cc-input").value=""; $("cc-input").focus(); return; }
+    // skapa ny kund
+    if(t.closest('[data-ao="btn-newclient"]')){ openNewClient(); return; }
+    if(t.closest('[data-ao="btn-cancelclient"]')){ closeNewClient(); return; }
+    if(t.closest('[data-ao="btn-createclient"]')){ createClient(); return; }
+    var seg=t.closest('[data-ao="nc-type"]'); if(seg){ setNcType(seg.getAttribute("data-val")); return; }
+    // actions
+    if(t.closest('[data-ao="btn-save"]')){ save(); return; }
+    if(t.closest('[data-ao="btn-preview"]')){ preview(); return; }
+  });
+
+  // input-events (rad-fält + sökningar) via delegation
+  root.addEventListener("input", function(e){
+    var t=e.target, rf=t.getAttribute && t.getAttribute("data-rf");
+    if(rf){
+      var rw=t.closest(".ao-row"); if(!rw) return; var idx=+rw.getAttribute("data-ridx"); var r=state.rows[idx]; if(!r) return;
+      if(rf==="benamning"){ r.benamning=t.value; doArticleSearch(t, idx, t.value.trim()); }
+      else if(rf==="beskrivning_long"){ r.beskrivning_long=t.value; }
+      else if(rf==="antal"||rf==="apris"||rf==="rabatt"||rf==="moms"){ r[rf]=t.value; var s=rw.querySelector('[data-rf="sum"]'); if(s) s.textContent=money(rowSum(r)); paintTotals(); }
+      else if(rf==="enhet"){ r.enhet=t.value; }
+      return;
+    }
+    if(t.getAttribute && t.getAttribute("data-ao")==="cc-input"){ doCcSearch(t.value.trim()); return; }
+  });
+
+  // stäng dropdowns vid klick utanför
+  document.addEventListener("click", function(e){
+    if(!root.contains(e.target)) return;
+    if(!e.target.closest(".ao-search") && !e.target.closest(".field.rs")){
+      var r1=$("cc-results"); if(r1) r1.className="ao-results";
+      root.querySelectorAll('[data-rf="ac"]').forEach(function(b){ b.className="ao-results"; });
+    }
+  });
+
+  // ── init ─────────────────────────────────────────────────────────
+  if(!HOST || !TOKEN){ $("save-hint").textContent="Saknar api_host/planning_token."; }
+  $("mode-tag").textContent = INHERITED ? "" : "";
+  $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
+  newOffert();  // starta i tomt formulär (list nås via knappen)
+
+  // exponera inget globalt (all interaktion via delegation) — undviker $-krock
+})();
+</script>

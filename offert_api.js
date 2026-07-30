@@ -187,7 +187,8 @@ export function registerOffertRoutes(app, deps) {
     const totals = computeTotals(rows);
     const custName = _esc(company?.Name_company || offert.titel || "");
     const custOrg = _esc(company?.Org_Number || "");
-    const custAddr = _esc(_pickAddr(company?.Adress) || _pickAddr(company?.address) || _pickAddr(company?.Address));
+    const isPrivat = _str(company?.customer_type) === "Privat";
+    const custAddr = _esc(_pickAddr(company?.Adress) || _pickAddr(company?.address) || _pickAddr(company?.Address) || _pickAddr(company?.faktura_adress));
     const officeName = _esc(office?.Office_title || "");
     const dOff = offert.offertdatum ? _esc(String(offert.offertdatum).slice(0, 10)) : "";
     const dValid = offert.giltig_till ? _esc(String(offert.giltig_till).slice(0, 10)) : "";
@@ -260,7 +261,7 @@ export function registerOffertRoutes(app, deps) {
   <div class="o-cols">
     <div class="o-box">
       <h3>Kund</h3>
-      <p>${custName || M("kundnamn saknas")}<br>${custOrg ? "Org.nr " + custOrg : M("org.nr saknas")}<br>${custAddr || M("adress saknas")}</p>
+      <p>${custName || M("kundnamn saknas")}<br>${isPrivat ? "Privatperson" : (custOrg ? "Org.nr " + custOrg : M("org.nr saknas"))}<br>${custAddr || M("adress saknas")}</p>
     </div>
     <div class="o-box">
       <h3>Leverans</h3>
@@ -325,6 +326,7 @@ export function registerOffertRoutes(app, deps) {
         apris: _num(p.ft_sales_price),
         enhet: p.ft_unit || "",
         moms: _num(p.ft_vat),
+        beskrivning: p.Beskrivning || "",
         prep_kategori: p[PROD_CATEGORY_FIELD] || "",
         default_kok: p.default_kok || null,
       }));
@@ -389,6 +391,54 @@ export function registerOffertRoutes(app, deps) {
       return res.json({ ok: true, offert_id: offertId, offertnr: payload.offertnr, rows_created: radIds.length, totals });
     } catch (e) {
       console.error("[/admin/offert/create]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // POST /admin/offert/client/create — skapa ClientCompany (företag/privat) + ev. Beställare (Coworker)
+  opt("/admin/offert/client/create");
+  app.post("/admin/offert/client/create", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const b = req.body || {};
+      const type = _str(b.customer_type).trim() || "Företag";     // "Företag" | "Privat"
+      const isForetag = type === "Företag";
+      const namn = _str(b.namn).trim();
+      if (!namn) return res.status(400).json({ ok: false, error: "namn_required" });
+
+      const digits = (v) => { const d = _str(v).replace(/[^\d]/g, ""); return d ? Number(d) : null; };
+      const orgDigits = _str(b.org_nr).replace(/[^\d]/g, "");
+
+      const ccPayload = _clean({
+        Name_company: namn,
+        customer_type: type,
+        Org_Number: (isForetag && orgDigits) ? orgDigits : null,   // privat → inget org.nr
+        faktura_email: _str(b.faktura_email).trim() || null,
+        faktura_referens: _str(b.faktura_referens).trim() || null,
+        Adress: _str(b.adress).trim() || null,                     // ⚠️ geo-write via Data API (se HANDOFF)
+        Telefon: digits(b.telefon),                                // Telefon = number-fält
+      });
+      const ccId = await bubbleCreate("ClientCompany", ccPayload);
+
+      // Beställare → Coworker kopplad till nya kundföretaget
+      let coworkerId = null;
+      const be = b.bestallare || {};
+      if (_str(be.email).trim() || _str(be.fornamn).trim() || _str(be.efternamn).trim()) {
+        coworkerId = await bubbleCreate("Coworker", _clean({
+          "Förnamn": _str(be.fornamn).trim() || null,
+          "Efternamn": _str(be.efternamn).trim() || null,
+          Email: _str(be.email).trim() || null,
+          "Kundföretag": ccId,
+        }));
+      }
+
+      return res.json({
+        ok: true, clientcompany_id: ccId, coworker_id: coworkerId,
+        name: namn, org_nr: (isForetag && orgDigits) ? orgDigits : null,
+        address: _str(b.adress).trim() || null, customer_type: type,
+      });
+    } catch (e) {
+      console.error("[/admin/offert/client/create]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });
