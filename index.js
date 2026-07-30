@@ -6,6 +6,7 @@ import { evalPricing as _evalPricing, validateFormula as _validateFormula, valid
 import { createClientGroupEngine } from "./clientgroup.js";
 import { createApprovalDocEngine } from "./offer_approval_doc.js";
 import { createContractRenderEngine } from "./contract_render.js";
+import { registerOffertRoutes } from "./offert_api.js";
 import multer from "multer";
 import express from "express";
 import cors from "cors";
@@ -441,6 +442,7 @@ function requireApiKey(req, res, next) {
     "/admin/suppliers",            // Leverantör - Supplier-lista för avtalsformulär (Fas 5b), x-admin-token-grindad
     "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
     "/admin/dokument/",            // Fristående Dokument-upload för wizardens bilagor (Fas 5b spår 2), x-admin-token-grindad
+    "/admin/offert",               // F&E offert-modul (Fas 2), x-admin-token-grindad (offert_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
@@ -10764,6 +10766,9 @@ const CONNECTION_NAMES = {
   "1771579485842x995491391876972200": "Group",          // exkluderas
   "1771579481117x119544302020443410": "Housekeeping"
 };
+// F&E-connection som modul-konstant (offert-modulen + F&E-artikelfilter).
+// Skuggas av en funktionslokal FE_CONNECTION_ID i _buildServicesDashboard — samma värde.
+const FE_CONNECTION_ID = "1771579463578x385222043661358460";
 
 let _salesCache = { data: null, ts: 0 };
 const SALES_TTL = 4 * 60 * 60 * 1000; // 4h
@@ -19754,6 +19759,17 @@ const contractRenderEngine = createContractRenderEngine({
   bubbleCreate,
   bubbleUploadFile,
   SERVICES,
+});
+
+// F&E offert-modul (Fas 2) — routes i offert_api.js, DI av helpers härifrån.
+registerOffertRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch, bubbleGet, bubbleDelete, bubbleId,
+  contractRenderEngine,
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
+  FE_CONNECTION_ID,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
 });
 
 // ─────────────────────────────────────────────────────────────────────────
