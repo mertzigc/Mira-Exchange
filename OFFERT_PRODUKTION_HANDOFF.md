@@ -187,7 +187,7 @@ Ny fristående modul `offert_api.js` (DI-mönster som `contract_render.js`) → 
 - `POST /admin/offert/create` — skapar `Offert` (source=mira_fe, status=Draft, genererar `offertnr` `FE-{år}-{seq}`) + `OffertRad`-rader, cachar summa/moms_belopp/total.
 - `PATCH /admin/offert/:id` — uppdaterar huvud; om `rows` skickas ERSÄTTS alla rader (delete+recreate) + totaler räknas om.
 - `GET  /admin/offert/:id` (offert + rader sorterade på radnr) · `GET /admin/offert/list` (source=mira_fe).
-- `POST /admin/offert/:id/render-pdf` — Mira-genererad kund-PDF via `contractRenderEngine.renderAndPersist` (full HTML byggs i modulen, obegränsad `beskrivning_long`), länkas in i `Offert.dokument`.
+- `POST /admin/offert/:id/render-pdf` — Mira-genererad kund-PDF via `contractRenderEngine.renderAndPersist` (full HTML byggs i modulen, obegränsad `beskrivning_long`), länkas in i `Offert.dokument`. **Kirurgisk ersättning:** matchar tidigare auto-renders på titel `Offert {offertnr}` → tar bort dem (+ Dokument-rad), **rör aldrig uppladdade bilagor**. Adress plockas ur geo-objekt (`_pickAddr`). Saknade fält renderas som röd `"saknas"`-markör (granskningssignal före utskick).
 - `POST /admin/offert/:id/convert-to-order` — ⚠️ **kräver MiraOrder-rename `ordernr`/`orderdatum`** (§2.1). Deep-copyar rader → `MiraOrderRad`, ärver `kok`+`prep_kategori` från Product, sätter `leverans_ts`, idempotent (skippar om order redan finns). Fas 3 kopplar denna till `offer_approval_status=Approved` auto; nu manuell/testbar.
 
 **Kvar i Fas 2:** curl-verifiering mot skarp Render (behöver deploy) + PDF-visuell koll. UI-block = separat (senare).

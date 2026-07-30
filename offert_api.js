@@ -19,7 +19,7 @@
 
 export function registerOffertRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch, bubbleGet, bubbleId,
+    bubbleFind, bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch, bubbleGet, bubbleDelete, bubbleId,
     contractRenderEngine, planningAuthed, planningCors, FE_CONNECTION_ID,
     publicRateLimited, clientIp,
   } = deps;
@@ -49,6 +49,9 @@ export function registerOffertRoutes(app, deps) {
   ));
   // användartext får aldrig innehålla {{token}} som renderTemplate skulle råka substituera
   const _noMustache = (s) => _str(s).replace(/\{\{/g, "{​{");
+  // Bubble geografisk adress → sträng. Data API ger {address, formatted, lat, lng}.
+  const _pickAddr = (raw) => raw == null ? ""
+    : (typeof raw === "object" ? _str(raw.address || raw.formatted || "") : _str(raw).trim());
   const _iso = (v) => {
     if (!v) return null;
     const d = new Date(v);
@@ -173,7 +176,7 @@ export function registerOffertRoutes(app, deps) {
     const rows = await loadRows(offertId);
     for (const r of rows) {
       const id = bubbleId(r);
-      if (id) { try { await deps.bubbleDelete?.(TYPE_OFFERTRAD, id); } catch (_) {} }
+      if (id) { try { await bubbleDelete(TYPE_OFFERTRAD, id); } catch (_) {} }
     }
     return rows.length;
   }
@@ -184,14 +187,12 @@ export function registerOffertRoutes(app, deps) {
     const totals = computeTotals(rows);
     const custName = _esc(company?.Name_company || offert.titel || "");
     const custOrg = _esc(company?.Org_Number || "");
-    const custAddr = _esc(company?.address || company?.Adress || "");
+    const custAddr = _esc(_pickAddr(company?.Adress) || _pickAddr(company?.address) || _pickAddr(company?.Address));
     const officeName = _esc(office?.Office_title || "");
     const dOff = offert.offertdatum ? _esc(String(offert.offertdatum).slice(0, 10)) : "";
     const dValid = offert.giltig_till ? _esc(String(offert.giltig_till).slice(0, 10)) : "";
     const dLev = offert.leveransdatum ? _esc(String(offert.leveransdatum).slice(0, 10)) : "";
-    const levAddr = _esc(
-      (offert.leveransadress && (offert.leveransadress.address || offert.leveransadress)) || ""
-    );
+    const levAddr = _esc(_pickAddr(offert.leveransadress));
 
     const rowsHtml = rows.map((r) => {
       const rs = computeRow(r);
@@ -211,6 +212,9 @@ export function registerOffertRoutes(app, deps) {
         <td class="o-num">${_esc(String(_num(r.moms)))}%</td>
       </tr>`;
     }).join("");
+
+    // markör för saknat värde (tydlig signal i granskning innan utskick)
+    const M = (t) => `<span class="o-missing">${_esc(t)}</span>`;
 
     return `<!doctype html><html lang="sv"><head><meta charset="utf-8">
 <style>
@@ -237,6 +241,7 @@ export function registerOffertRoutes(app, deps) {
   .o-totals div { display: flex; justify-content: space-between; padding: 3px 0; }
   .o-totals .o-grand { border-top: 1.5px solid #111; margin-top: 4px; padding-top: 6px; font-weight: 700; font-size: 13px; }
   .o-villkor { margin-top: 26px; padding-top: 12px; border-top: 1px solid #e5e7eb; color: #374151; line-height: 1.5; white-space: pre-wrap; }
+  .o-missing { color: #b91c1c; font-style: italic; font-weight: 400; }
 </style></head><body>
   <div class="o-head">
     <div>
@@ -244,22 +249,22 @@ export function registerOffertRoutes(app, deps) {
       <div class="o-sub">${_esc(offert.offertnr || "")}${officeName ? " · " + officeName : ""}</div>
     </div>
     <div class="o-meta">
-      <div><b>Offertnr</b> ${_esc(offert.offertnr || "")}</div>
-      <div><b>Offertdatum</b> ${dOff}</div>
-      <div><b>Giltig t.o.m.</b> ${dValid}</div>
-      <div><b>Leveransdatum</b> ${dLev}${offert.leveranstid ? " " + _esc(offert.leveranstid) : ""}</div>
-      <div><b>Betalningsvillkor</b> ${_esc(offert.betalningsvillkor || "")}</div>
+      <div><b>Offertnr</b> ${offert.offertnr ? _esc(offert.offertnr) : M("saknas")}</div>
+      <div><b>Offertdatum</b> ${dOff || M("saknas")}</div>
+      <div><b>Giltig t.o.m.</b> ${dValid || M("saknas")}</div>
+      <div><b>Leveransdatum</b> ${dLev ? dLev + (offert.leveranstid ? " " + _esc(offert.leveranstid) : "") : M("saknas")}</div>
+      <div><b>Betalningsvillkor</b> ${offert.betalningsvillkor ? _esc(offert.betalningsvillkor) : M("saknas")}</div>
     </div>
   </div>
 
   <div class="o-cols">
     <div class="o-box">
       <h3>Kund</h3>
-      <p>${custName}${custOrg ? "<br>Org.nr " + custOrg : ""}${custAddr ? "<br>" + custAddr : ""}</p>
+      <p>${custName || M("kundnamn saknas")}<br>${custOrg ? "Org.nr " + custOrg : M("org.nr saknas")}<br>${custAddr || M("adress saknas")}</p>
     </div>
     <div class="o-box">
       <h3>Leverans</h3>
-      <p>${levAddr || "—"}${dLev ? "<br>" + dLev + (offert.leveranstid ? " " + _esc(offert.leveranstid) : "") : ""}</p>
+      <p>${levAddr || M("leveransadress saknas")}<br>${dLev ? dLev + (offert.leveranstid ? " " + _esc(offert.leveranstid) : "") : M("leveransdatum saknas")}</p>
     </div>
   </div>
 
@@ -431,17 +436,28 @@ export function registerOffertRoutes(app, deps) {
       const company = offert.kundforetag ? await bubbleGet("ClientCompany", offert.kundforetag).catch(() => null) : null;
       const office = offert.office ? await bubbleGet("Office", offert.office).catch(() => null) : null;
 
+      const pdfTitel = `Offert ${offert.offertnr || id}`;
       const html = buildOffertHtml({ offert, rows, company, office });
       const rendered = await contractRenderEngine.renderAndPersist({
-        templateHtml: html, spec: {}, titel: `Offert ${offert.offertnr || id}`,
+        templateHtml: html, spec: {}, titel: pdfTitel,
       });
 
-      // länka in dokumentet i Offert.dokument (utan dubbletter)
+      // Kirurgisk städ: hitta TIDIGARE auto-genererade offert-PDF:er (titel === pdfTitel)
+      // i dokument-listan → ta bort dem. Uppladdade bilagor (annan titel) rörs ALDRIG.
       const cur = Array.isArray(offert.dokument) ? offert.dokument : [];
-      if (rendered.dokument_id && !cur.includes(rendered.dokument_id)) {
-        await bubblePatch(TYPE_OFFERT, id, { dokument: [...cur, rendered.dokument_id] });
+      const staleIds = [];
+      for (const dId of cur) {
+        if (!dId || dId === rendered.dokument_id) continue;
+        const d = await bubbleGet("Dokument", dId).catch(() => null);
+        if (d && _str(d.titel) === pdfTitel) staleIds.push(dId);
       }
-      return res.json({ ok: true, offert_id: id, dokument_id: rendered.dokument_id, file_url: rendered.file_url, bytes: rendered.bytes });
+      const nextList = cur.filter((d) => !staleIds.includes(d));
+      if (rendered.dokument_id && !nextList.includes(rendered.dokument_id)) nextList.push(rendered.dokument_id);
+      await bubblePatch(TYPE_OFFERT, id, { dokument: nextList });
+      // radera de gamla raderna (non-fatal per rad)
+      for (const sId of staleIds) { try { await bubbleDelete("Dokument", sId); } catch (_) {} }
+
+      return res.json({ ok: true, offert_id: id, dokument_id: rendered.dokument_id, file_url: rendered.file_url, bytes: rendered.bytes, replaced: staleIds.length });
     } catch (e) {
       console.error("[/admin/offert/:id/render-pdf]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
