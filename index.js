@@ -10769,6 +10769,9 @@ const CONNECTION_NAMES = {
 // F&E-connection som modul-konstant (offert-modulen + F&E-artikelfilter).
 // Skuggas av en funktionslokal FE_CONNECTION_ID i _buildServicesDashboard — samma värde.
 const FE_CONNECTION_ID = "1771579463578x385222043661358460";
+// F&E offert-motor — sätts vid registerOffertRoutes-anropet (efter contractRenderEngine).
+// _checkAndCompleteRequest använder den för auto-convert offert → MiraOrder vid Approved.
+let offertEngine = null;
 
 let _salesCache = { data: null, ts: 0 };
 const SALES_TTL = 4 * 60 * 60 * 1000; // 4h
@@ -16606,6 +16609,7 @@ async function _createContractsFromApprovalRequest(parent) {
 // reviewers). Idempotent: hoppar över om parent.status redan = Approved.
 async function _checkAndCompleteRequest(requestId) {
   if (!requestId) return { complete: false };
+  // (offertEngine sätts vid registerOffertRoutes längre ned — används i convert-hooken nedan)
   const parent = await bubbleGet("OfferApprovalRequest", requestId).catch(() => null);
   if (!parent) return { complete: false };
 
@@ -16637,6 +16641,19 @@ async function _checkAndCompleteRequest(requestId) {
     }
   } catch (autoErr) {
     console.warn(`[approval-complete] auto-contract failed (non-fatal) för request ${requestId}`, autoErr?.message);
+  }
+
+  // Auto-convert F&E-offert → MiraOrder (Fas 3). Om requesten är länkad till en
+  // Offert (parent.offert satt via send-for-signing). Mjuk-felar precis som Contract-hooken.
+  try {
+    const offertId = parent.offert || null;
+    if (offertId && offertEngine && typeof offertEngine.convertOffertToOrder === "function") {
+      const cv = await offertEngine.convertOffertToOrder(offertId);
+      if (cv?.created) console.log(`[approval-complete] auto-convert offert ${offertId} → MiraOrder ${cv.order_id} (request ${requestId})`);
+      else if (cv?.reason === "already_converted") console.log(`[approval-complete] offert ${offertId} redan konverterad`);
+    }
+  } catch (cvErr) {
+    console.warn(`[approval-complete] auto-convert offert failed (non-fatal) för request ${requestId}`, cvErr?.message);
   }
 
   const children = await bubbleFindAll("OfferApproval", {
@@ -16917,6 +16934,7 @@ async function _createApprovalRequestInternal({ req, files, dokumentIds, payload
   };
   if (contractTemplateJson !== null) oarPayload[SERVICES.OAR_CONTRACT_TEMPLATE] = contractTemplateJson;
   if (autoCreateContract   !== null) oarPayload[SERVICES.OAR_AUTO_CREATE]       = autoCreateContract;
+  if (payload?.offert)               oarPayload.offert = payload.offert;   // F&E offert → auto-convert vid Approved
   const requestId = await bubbleCreate("OfferApprovalRequest", oarPayload);
 
   // 3) Skapa OfferApproval per mottagare + invite-mail per role
@@ -19761,8 +19779,9 @@ const contractRenderEngine = createContractRenderEngine({
   SERVICES,
 });
 
-// F&E offert-modul (Fas 2) — routes i offert_api.js, DI av helpers härifrån.
-registerOffertRoutes(app, {
+// F&E offert-modul (Fas 2+3) — routes i offert_api.js, DI av helpers härifrån.
+// Fångar returen i offertEngine → _checkAndCompleteRequest auto-convertar vid Approved.
+offertEngine = registerOffertRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch, bubbleGet, bubbleDelete, bubbleId,
   contractRenderEngine,
   planningAuthed: _planningAuthed,
@@ -19770,6 +19789,7 @@ registerOffertRoutes(app, {
   FE_CONNECTION_ID,
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,
+  createApprovalRequest: _createApprovalRequestInternal,
 });
 
 // ─────────────────────────────────────────────────────────────────────────

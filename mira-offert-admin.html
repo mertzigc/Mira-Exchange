@@ -122,6 +122,14 @@
   .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green)} .pill.s-Approved .dot{background:var(--green)}
   .pill.s-Expired,.pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red)} .pill.s-Expired .dot,.pill.s-Revoked .dot{background:var(--red)}
 
+  .ao-modal{position:fixed;inset:0;background:rgba(10,12,20,.78);z-index:9998;display:flex;align-items:center;justify-content:center;padding:24px}
+  .ao-modal.ao-hide{display:none !important}
+  .ao-modal-inner{background:var(--panel);border:1px solid var(--border);border-radius:14px;width:min(920px,96vw);height:92vh;display:flex;flex-direction:column;overflow:hidden}
+  .ao-modal-bar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700}
+  .ao-modal-bar .r{display:flex;gap:16px;align-items:center;font-weight:400}
+  .ao-modal-close{background:var(--input);border:1px solid var(--border);color:var(--white);border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700}
+  .ao-modal-close:hover{border-color:var(--orange);color:var(--orange)}
+  .ao-modal iframe{flex:1;width:100%;border:none;background:#fff}
   .ao-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--deep);
     border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:9999;display:none;box-shadow:0 12px 30px rgba(0,0,0,.5)}
   .ao-toast.ok{border-color:var(--green)} .ao-toast.err{border-color:var(--red)}
@@ -249,7 +257,21 @@
     <div class="ao-actions">
       <span class="ao-muted" data-ao="save-hint"></span>
       <button class="btn btn-ghost" data-ao="btn-preview" disabled>Förhandsgranska PDF</button>
+      <button class="btn btn-ghost" data-ao="btn-signing" disabled>Skicka för signering</button>
       <button class="btn btn-primary" data-ao="btn-save">Spara offert</button>
+    </div>
+  </div>
+
+  <div class="ao-modal ao-hide" data-ao="pdf-modal">
+    <div class="ao-modal-inner">
+      <div class="ao-modal-bar">
+        <span>Förhandsgranskning</span>
+        <div class="r">
+          <a class="ao-linkbtn" data-ao="pdf-link" href="#" target="_blank" rel="noopener">Öppna i ny flik ↗</a>
+          <button class="ao-modal-close" data-ao="pdf-close">Stäng ✕</button>
+        </div>
+      </div>
+      <iframe data-ao="pdf-frame" src="about:blank" title="Offert-PDF"></iframe>
     </div>
   </div>
 
@@ -500,7 +522,7 @@
         $("btn-save").disabled=false; $("save-hint").textContent="";
         if(!j || !j.ok){ toast("Kunde inte spara: "+((j&&j.error)||"okänt fel"),"err"); return; }
         if(!state.offertId){ state.offertId = j.offert_id; }
-        $("btn-preview").disabled=false;
+        $("btn-preview").disabled=false; $("btn-signing").disabled=false;
         toast("Sparad · "+(j.offertnr||"")+" · "+money((j.totals&&j.totals.total)||totals().total)+" SEK","ok");
       })
       .catch(function(e){ $("btn-save").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
@@ -512,11 +534,33 @@
     fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/render-pdf",{method:"POST",headers:headers(false)})
       .then(function(r){ return r.json(); })
       .then(function(j){
-        $("btn-preview").disabled=false; $("save-hint").textContent="";
-        if(j && j.ok && j.file_url){ window.open(j.file_url,"_blank"); }
+        $("btn-preview").disabled=false; $("btn-signing").disabled=false; $("save-hint").textContent="";
+        if(j && j.ok && j.file_url){ openPdf(j.file_url); }
         else { toast("Kunde inte rendera PDF","err"); }
       })
       .catch(function(){ $("btn-preview").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
+  }
+
+  // ── PDF-förhandsvisning (inbäddad iframe — window.open blockeras i Bubbles sandbox) ──
+  function openPdf(url){ $("pdf-frame").src=url; $("pdf-link").href=url; $("pdf-modal").className="ao-modal"; }
+  function closePdf(){ $("pdf-modal").className="ao-modal ao-hide"; $("pdf-frame").src="about:blank"; }
+
+  // ── skicka för signering (befintliga OfferApproval-flödet) ──────
+  function sendForSigning(){
+    if(!state.offertId){ toast("Spara offerten först","err"); return; }
+    $("btn-signing").disabled=true; $("save-hint").textContent="Skickar för signering…";
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/send-for-signing",{method:"POST",headers:headers(true),body:JSON.stringify({})})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-signing").disabled=false; $("save-hint").textContent="";
+        if(!j || !j.ok){
+          if(j && j.error==="recipients_required"){ toast("Ingen mottagare — skapa kunden med en beställare (Skapa kund)","err"); }
+          else { toast("Kunde inte skicka: "+((j&&j.error)||"fel"),"err"); }
+          return;
+        }
+        toast("Skickad för signering till "+(j.recipients||0)+" mottagare","ok");
+      })
+      .catch(function(){ $("btn-signing").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
   }
 
   // ── lista ────────────────────────────────────────────────────────
@@ -578,7 +622,7 @@
     // default offertdatum = idag, giltig_till = +30d
     var today=new Date(); $("f-offertdatum").value=today.toISOString().slice(0,10);
     var g=new Date(today.getTime()+30*86400000); $("f-giltig_till").value=g.toISOString().slice(0,10);
-    $("btn-preview").disabled=true;
+    $("btn-preview").disabled=true; $("btn-signing").disabled=true;
     addRow();
     if(INHERITED && CC_ID){ selectClient(CC_ID, CC_NM||"Kund"); } else { paintClient(); }
     showView("form");
@@ -611,6 +655,10 @@
     // actions
     if(t.closest('[data-ao="btn-save"]')){ save(); return; }
     if(t.closest('[data-ao="btn-preview"]')){ preview(); return; }
+    if(t.closest('[data-ao="btn-signing"]')){ sendForSigning(); return; }
+    // pdf-modal stäng (knapp eller klick på mörk bakgrund)
+    if(t.closest('[data-ao="pdf-close"]')){ closePdf(); return; }
+    if(t.getAttribute && t.getAttribute("data-ao")==="pdf-modal"){ closePdf(); return; }
   });
 
   // input-events (rad-fält + sökningar) via delegation

@@ -21,7 +21,7 @@ export function registerOffertRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleFindOne, bubbleCreate, bubblePatch, bubbleGet, bubbleDelete, bubbleId,
     contractRenderEngine, planningAuthed, planningCors, FE_CONNECTION_ID,
-    publicRateLimited, clientIp,
+    publicRateLimited, clientIp, createApprovalRequest,
   } = deps;
 
   const req_ = (name, v) => { if (!v) throw new Error(`registerOffertRoutes: ${name} required`); };
@@ -289,6 +289,61 @@ export function registerOffertRoutes(app, deps) {
 </body></html>`;
   }
 
+  // ── convertOffertToOrder — accept → MiraOrder + rader (återanvänds av endpoint + signering) ──
+  // ⚠️ Kräver att MiraOrder har fälten `ordernr` (text) + `orderdatum` (date).
+  async function convertOffertToOrder(offertId) {
+    const offert = await bubbleGet(TYPE_OFFERT, offertId);
+    if (!offert) return { ok: false, error: "offert_not_found" };
+    // idempotens: finns redan en order för offerten?
+    const existing = await bubbleFindOne(TYPE_ORDER, [{ key: "offert", constraint_type: "equals", value: offertId }]);
+    if (existing) return { ok: true, order_id: bubbleId(existing), created: false, reason: "already_converted" };
+
+    const rows = await loadRows(offertId);
+    const leverans_ts = _ts(offert.leveransdatum);
+
+    const orderId = await bubbleCreate(TYPE_ORDER, _clean({
+      offert: offertId,
+      ordernr: offert.offertnr || null,
+      orderdatum: new Date().toISOString(),
+      orderstatus: "Bekräftad",
+      kundforetag: offert.kundforetag || null,
+      office: offert.office || null,
+      comission: offert.comission || null,
+      leveransdatum: offert.leveransdatum || null,
+      leveranstid: offert.leveranstid || null,
+      leveransadress: offert.leveransadress || null,
+      leverans_ts,
+      betalningsvillkor: offert.betalningsvillkor || null,
+      momstyp: offert.momstyp || null,
+      valuta: offert.valuta || null,
+      summa: _num(offert.summa),
+      moms_belopp: _num(offert.moms_belopp),
+      total: _num(offert.total),
+      villkor_text: offert.villkor_text || null,
+      source: SOURCE_MIRA_FE,
+    }));
+
+    let radCount = 0;
+    for (const r of rows) {
+      let default_kok = null, prep = "";
+      if (r.product) {
+        const prod = await bubbleGet("Product", r.product).catch(() => null);
+        if (prod) { default_kok = prod.default_kok || null; prep = prod[PROD_CATEGORY_FIELD] || ""; }
+      }
+      await bubbleCreate(TYPE_ORDERRAD, _clean({
+        order: orderId, offert: offertId, radnr: _num(r.radnr), product: r.product || null,
+        artikelnr: r.artikelnr || null, benamning: r.benamning || null, beskrivning_long: r.beskrivning_long || null,
+        antal: _num(r.antal), enhet: r.enhet || null, apris: _num(r.apris), rabatt: _num(r.rabatt),
+        moms: _num(r.moms), radsumma: _num(r.radsumma), konto: r.konto || null, ks: r.ks || null,
+        kok: default_kok, prep_kategori: prep || null, leverans_ts,
+      }));
+      radCount++;
+    }
+    // spegla accept på offerten
+    try { await bubblePatch(TYPE_OFFERT, offertId, { status: "Approved" }); } catch (_) {}
+    return { ok: true, order_id: orderId, created: true, rows_created: radCount };
+  }
+
   // ── auth-wrapper ───────────────────────────────────────────────────
   function guard(req, res) {
     planningCors && planningCors(req, res);
@@ -522,77 +577,84 @@ export function registerOffertRoutes(app, deps) {
   app.post("/admin/offert/:id/convert-to-order", async (req, res) => {
     if (!guard(req, res)) return;
     try {
-      const id = req.params.id;
-      const offert = await bubbleGet(TYPE_OFFERT, id);
-      if (!offert) return res.status(404).json({ ok: false, error: "offert_not_found" });
-
-      // idempotens: finns redan en order för offerten?
-      const existing = await bubbleFindOne(TYPE_ORDER, [{ key: "offert", constraint_type: "equals", value: id }]);
-      if (existing) return res.json({ ok: true, order_id: bubbleId(existing), created: false, reason: "already_converted" });
-
-      const rows = await loadRows(id);
-      const leverans_ts = _ts(offert.leveransdatum);
-
-      const orderPayload = _clean({
-        offert: id,
-        ordernr: offert.offertnr || null,           // lineage: samma nummer som offerten
-        orderdatum: new Date().toISOString(),        // = bekräftelse-datum
-        orderstatus: "Bekräftad",
-        kundforetag: offert.kundforetag || null,
-        office: offert.office || null,
-        comission: offert.comission || null,
-        leveransdatum: offert.leveransdatum || null,
-        leveranstid: offert.leveranstid || null,
-        leveransadress: offert.leveransadress || null,
-        leverans_ts,
-        betalningsvillkor: offert.betalningsvillkor || null,
-        momstyp: offert.momstyp || null,
-        valuta: offert.valuta || null,
-        summa: _num(offert.summa),
-        moms_belopp: _num(offert.moms_belopp),
-        total: _num(offert.total),
-        villkor_text: offert.villkor_text || null,
-        source: SOURCE_MIRA_FE,
-      });
-      const orderId = await bubbleCreate(TYPE_ORDER, orderPayload);
-
-      let radCount = 0;
-      for (const r of rows) {
-        // härled kök + prep-kategori från Product (default_kok, "Product category")
-        let default_kok = null, prep = "";
-        if (r.product) {
-          const prod = await bubbleGet("Product", r.product).catch(() => null);
-          if (prod) { default_kok = prod.default_kok || null; prep = prod[PROD_CATEGORY_FIELD] || ""; }
-        }
-        await bubbleCreate(TYPE_ORDERRAD, _clean({
-          order: orderId,
-          offert: id,
-          radnr: _num(r.radnr),
-          product: r.product || null,
-          artikelnr: r.artikelnr || null,
-          benamning: r.benamning || null,
-          beskrivning_long: r.beskrivning_long || null,
-          antal: _num(r.antal),
-          enhet: r.enhet || null,
-          apris: _num(r.apris),
-          rabatt: _num(r.rabatt),
-          moms: _num(r.moms),
-          radsumma: _num(r.radsumma),
-          konto: r.konto || null,
-          ks: r.ks || null,
-          kok: default_kok,
-          prep_kategori: prep || null,
-          leverans_ts,
-        }));
-        radCount++;
-      }
-
-      return res.json({ ok: true, order_id: orderId, created: true, rows_created: radCount });
+      const out = await convertOffertToOrder(req.params.id);
+      if (!out.ok) return res.status(out.error === "offert_not_found" ? 404 : 500).json(out);
+      return res.json(out);
     } catch (e) {
       console.error("[/admin/offert/:id/convert-to-order]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });
 
+  // POST /admin/offert/:id/send-for-signing — rendera PDF + skapa OfferApproval-signering
+  // Mottagare: body.recipients [{email,name,role}] ELLER Offert.recipient (Coworkers).
+  // OfferApprovalRequest.offert länkas → auto-convert till MiraOrder vid Approved (§ hook i index.js).
+  opt("/admin/offert/:id/send-for-signing");
+  app.post("/admin/offert/:id/send-for-signing", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!createApprovalRequest) return res.status(501).json({ ok: false, error: "signing_not_wired" });
+      const id = req.params.id;
+      const offert = await bubbleGet(TYPE_OFFERT, id);
+      if (!offert) return res.status(404).json({ ok: false, error: "offert_not_found" });
+      const body = req.body || {};
+
+      // 1) rendera aktuell PDF (så signeringsunderlaget alltid speglar senaste offert)
+      const rows = await loadRows(id);
+      const company = offert.kundforetag ? await bubbleGet("ClientCompany", offert.kundforetag).catch(() => null) : null;
+      const office = offert.office ? await bubbleGet("Office", offert.office).catch(() => null) : null;
+      const pdfTitel = `Offert ${offert.offertnr || id}`;
+      const html = buildOffertHtml({ offert, rows, company, office });
+      const rendered = await contractRenderEngine.renderAndPersist({ templateHtml: html, spec: {}, titel: pdfTitel });
+
+      // dokument-lista: nya PDF:en + ev. befintliga bilagor (ej gamla auto-renders)
+      const cur = Array.isArray(offert.dokument) ? offert.dokument : [];
+      const staleIds = [];
+      for (const dId of cur) {
+        if (!dId || dId === rendered.dokument_id) continue;
+        const d = await bubbleGet("Dokument", dId).catch(() => null);
+        if (d && _str(d.titel) === pdfTitel) staleIds.push(dId);
+      }
+      const dokumentIds = cur.filter((d) => !staleIds.includes(d));
+      if (rendered.dokument_id && !dokumentIds.includes(rendered.dokument_id)) dokumentIds.push(rendered.dokument_id);
+      await bubblePatch(TYPE_OFFERT, id, { dokument: dokumentIds });
+      for (const sId of staleIds) { try { await bubbleDelete("Dokument", sId); } catch (_) {} }
+
+      // 2) mottagare — från body ELLER Offert.recipient (Coworkers)
+      let recipients = Array.isArray(body.recipients) ? body.recipients.filter((r) => r && r.email) : [];
+      if (!recipients.length && Array.isArray(offert.recipient)) {
+        for (const cwId of offert.recipient) {
+          const cw = await bubbleGet("Coworker", cwId).catch(() => null);
+          if (cw && cw.Email) recipients.push({ email: cw.Email, name: [cw["Förnamn"], cw["Efternamn"]].filter(Boolean).join(" ").trim(), role: "Signer" });
+        }
+      }
+      if (!recipients.length) return res.status(400).json({ ok: false, error: "recipients_required", hint: "Ingen beställare/recipient på offerten — skicka recipients i body." });
+
+      // 3) skapa signeringsbegäran (länka offert → auto-convert vid Approved)
+      const result = await createApprovalRequest({
+        req,
+        dokumentIds,
+        payload: {
+          rubrik: `Offert ${offert.offertnr || ""} – ${offert.titel || "Food & Event"}`.trim(),
+          meddelande: _str(body.meddelande || offert.beskrivning || ""),
+          sender_email: _str(body.sender_email || ""),
+          sender_name: _str(body.sender_name || "Carotte"),
+          clientcompany: offert.kundforetag || null,
+          deal: offert.deal || null,
+          offert: id,
+          recipients,
+          expires_at: offert.giltig_till || null,
+        },
+      });
+
+      await bubblePatch(TYPE_OFFERT, id, { status: "Sent" });
+      return res.json({ ok: true, offert_id: id, request_id: result && (result.request_id || result.requestId || result.request), recipients: recipients.length, file_url: rendered.file_url });
+    } catch (e) {
+      console.error("[/admin/offert/:id/send-for-signing]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
   console.log("[offert_api] routes registered (/admin/offert/*)");
+  return { convertOffertToOrder };
 }
