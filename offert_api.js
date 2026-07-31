@@ -392,6 +392,29 @@ export function registerOffertRoutes(app, deps) {
     }
   });
 
+  // GET /admin/offert/coworkers?clientcompany= — kontaktpersoner (Coworker) på kunden (för mottagar-picker)
+  opt("/admin/offert/coworkers");
+  app.get("/admin/offert/coworkers", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const ccId = _str(req.query.clientcompany).trim();
+      if (!ccId) return res.json({ ok: true, count: 0, items: [] });
+      const rows = await bubbleFindAll("Coworker", {
+        constraints: [{ key: "Kundföretag", constraint_type: "equals", value: ccId }],
+      });
+      const items = (rows || []).map((c) => {
+        const email = _str(c.Email).trim();
+        const name = [c["Förnamn"], c["Efternamn"]].filter(Boolean).join(" ").trim() || email;
+        return email ? { id: bubbleId(c), name, email } : null;
+      }).filter(Boolean);
+      items.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+      return res.json({ ok: true, count: items.length, items });
+    } catch (e) {
+      console.error("[/admin/offert/coworkers]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
   // GET /admin/offert/list
   opt("/admin/offert/list");
   app.get("/admin/offert/list", async (req, res) => {
@@ -620,13 +643,14 @@ export function registerOffertRoutes(app, deps) {
       await bubblePatch(TYPE_OFFERT, id, { dokument: dokumentIds });
       for (const sId of staleIds) { try { await bubbleDelete("Dokument", sId); } catch (_) {} }
 
-      // 2) mottagare — från body ELLER Offert.recipient (Coworkers)
+      // 2) mottagare — prioritet: body.recipients [{email,name}] → body.recipient_ids (Coworker-ids från UI) → Offert.recipient
       let recipients = Array.isArray(body.recipients) ? body.recipients.filter((r) => r && r.email) : [];
-      if (!recipients.length && Array.isArray(offert.recipient)) {
-        for (const cwId of offert.recipient) {
-          const cw = await bubbleGet("Coworker", cwId).catch(() => null);
-          if (cw && cw.Email) recipients.push({ email: cw.Email, name: [cw["Förnamn"], cw["Efternamn"]].filter(Boolean).join(" ").trim(), role: "Signer" });
-        }
+      const idsToResolve = (!recipients.length && Array.isArray(body.recipient_ids) && body.recipient_ids.length)
+        ? body.recipient_ids
+        : ((!recipients.length && Array.isArray(offert.recipient)) ? offert.recipient : []);
+      for (const cwId of idsToResolve) {
+        const cw = await bubbleGet("Coworker", cwId).catch(() => null);
+        if (cw && cw.Email) recipients.push({ email: cw.Email, name: [cw["Förnamn"], cw["Efternamn"]].filter(Boolean).join(" ").trim(), role: "Signer" });
       }
       if (!recipients.length) return res.status(400).json({ ok: false, error: "recipients_required", hint: "Ingen beställare/recipient på offerten — skicka recipients i body." });
 

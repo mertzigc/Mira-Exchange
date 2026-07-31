@@ -106,6 +106,10 @@
   .ao-seg{display:inline-flex;background:var(--input);border:1px solid var(--border);border-radius:9px;padding:3px}
   .ao-seg-btn{background:none;border:none;color:var(--w70);padding:7px 18px;font-size:12px;font-weight:700;border-radius:7px}
   .ao-seg-btn.on{background:var(--orange);color:#1c1206}
+  .ao-recip{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:20px;padding:6px 13px;font-size:12px;margin:0 7px 7px 0;cursor:pointer}
+  .ao-recip.on{background:var(--orange-dim);border-color:var(--orange);color:var(--orange)}
+  .ao-recip .chk{opacity:.5;margin-right:5px}
+  .ao-recip.on .chk{opacity:1}
 
   /* lista */
   .ao-list-item{display:grid;grid-template-columns:120px 1fr auto auto auto;gap:14px;align-items:center;
@@ -182,6 +186,12 @@
           <div class="meta" data-ao="cc-meta"></div>
         </div>
         <button class="ao-linkbtn" data-ao="cc-change">Byt kund</button>
+      </div>
+
+      <!-- mottagare (kundens kontaktpersoner) -->
+      <div data-ao="recipients" class="ao-hide" style="margin-top:14px">
+        <div style="font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Mottagare (signerar offerten)</div>
+        <div data-ao="recip-list"></div>
       </div>
 
       <!-- skapa ny kund -->
@@ -307,7 +317,8 @@
     offertId: null,
     client: { id: CC_ID || null, name: CC_NM || null, org: null, address: null },
     rows: [],
-    recipient: [],          // Coworker-ids (beställare)
+    recipient: [],          // valda Coworker-ids (mottagare/beställare)
+    recipCache: [],         // kundens coworkers (för picker)
     newClientType: "Företag"
   };
 
@@ -404,32 +415,39 @@
   }
 
   // ── kund-sök (standalone) ────────────────────────────────────────
-  var ccReq=0;
-  var doCcSearch = debounce(function(q){
-    var box=$("cc-results");
-    if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
-    var my=++ccReq;
-    fetch(HOST+"/admin/planning/companies?q="+encodeURIComponent(q), {headers:headers(false)})
+  // snabb kund-sök: hämta ALLA företag EN gång, cacha, filtrera client-side (som övriga block)
+  var companiesCache=null, companiesPromise=null;
+  function loadCompanies(){
+    if(companiesPromise) return companiesPromise;
+    companiesPromise = fetch(HOST+"/admin/planning/companies",{headers:headers(false)})
       .then(function(r){ return r.json(); })
-      .then(function(j){
-        if(my!==ccReq) return;
-        var res=(j && j.results)||[];
-        if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga företag</div>'; return; }
-        box.innerHTML=res.slice(0,40).map(function(c){ return '<div class="ao-res-item" data-ccid="'+esc(c.id)+'" data-ccnm="'+esc(c.name)+'">'+esc(c.name)+'</div>'; }).join("");
-        box.className="ao-results open";
-      }).catch(function(){});
-  }, 220);
+      .then(function(j){ companiesCache=(j&&j.results)||[]; return companiesCache; })
+      .catch(function(){ companiesPromise=null; return []; });
+    return companiesPromise;
+  }
+  function doCcSearch(q){
+    var box=$("cc-results");
+    loadCompanies().then(function(list){
+      if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
+      var ql=q.toLowerCase();
+      var res=list.filter(function(c){ return String(c.name||"").toLowerCase().indexOf(ql)>=0; }).slice(0,40);
+      if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga företag</div>'; return; }
+      box.innerHTML=res.map(function(c){ return '<div class="ao-res-item" data-ccid="'+esc(c.id)+'" data-ccnm="'+esc(c.name)+'">'+esc(c.name)+'</div>'; }).join("");
+      box.className="ao-results open";
+    });
+  }
 
   function selectClient(id, name){
     state.client={ id:id, name:name, org:null, address:null };
     state.recipient=[];
     $("cc-results").className="ao-results";
     paintClient();
+    loadRecipients(id);
     // hämta org + adress
     fetch(HOST+"/admin/clientcompany/"+encodeURIComponent(id)+"/details", {headers:headers(false)})
       .then(function(r){ return r.json(); })
       .then(function(j){
-        if(j && j.ok && j.details){ state.client.org=j.details.org_nr||null; state.client.address=j.details.address||null; paintClient(); }
+        if(j && j.ok && j.details){ state.client.org=j.details.org_nr||null; state.client.address=j.details.address||null; if(j.details.name){ state.client.name=j.details.name; } paintClient(); }
       }).catch(function(){});
   }
   function paintClient(){
@@ -439,6 +457,7 @@
     // "+ Skapa ny kund" bara i standalone utan vald kund
     $("newclient-toggle").className = (hasClient||INHERITED) ? "ao-hide" : "";
     if(hasClient){ $("newclient-form").className = "ao-hide"; }
+    if(!hasClient){ $("recipients").className="ao-hide"; }
     if(hasClient){
       $("cc-name").textContent = state.client.name||"(namnlöst)";
       var meta=[]; if(state.client.org) meta.push("Org.nr "+state.client.org); if(state.client.address) meta.push(state.client.address);
@@ -446,6 +465,28 @@
       // ärvd kund kan inte bytas
       $("cc-change").style.display = INHERITED ? "none" : "";
     }
+  }
+
+  // ── mottagare (kundens Coworkers) ────────────────────────────────
+  function renderRecipients(items){
+    var host=$("recip-list");
+    if(!items || !items.length){
+      host.innerHTML='<div class="ao-muted" style="font-size:12px">Inga kontaktpersoner på kunden — lägg till en via "Skapa ny kund" (annars går signering ej).</div>';
+    } else {
+      host.innerHTML=items.map(function(c){
+        var on=state.recipient.indexOf(c.id)>=0;
+        return '<span class="ao-recip'+(on?' on':'')+'" data-recip="'+esc(c.id)+'"><span class="chk">'+(on?'✓':'○')+'</span>'+esc(c.name)+' · '+esc(c.email)+'</span>';
+      }).join("");
+    }
+    $("recipients").className = state.client.id ? "" : "ao-hide";
+  }
+  function loadRecipients(ccId){
+    state.recipCache=[];
+    if(!ccId){ renderRecipients([]); return; }
+    fetch(HOST+"/admin/offert/coworkers?clientcompany="+encodeURIComponent(ccId),{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ state.recipCache=(j&&j.items)||[]; renderRecipients(state.recipCache); })
+      .catch(function(){ renderRecipients([]); });
   }
 
   // ── skapa ny kund (företag/privat) + beställare ──────────────────
@@ -478,6 +519,8 @@
         ["nc-namn","nc-org","nc-faktura_email","nc-telefon","nc-adress","nc-referens","nc-be-fornamn","nc-be-efternamn","nc-be-email"].forEach(function(k){ $(k).value=""; });
         $("newclient-form").className="ao-hide";
         paintClient();
+        loadRecipients(j.clientcompany_id);
+        companiesPromise=null;  // ny kund → invalidera cache så den dyker upp i sök
         toast("Kund skapad"+(j.coworker_id?" + beställare":""),"ok");
       })
       .catch(function(){ $("btn-createclient").disabled=false; toast("Nätverksfel","err"); });
@@ -549,7 +592,7 @@
   function sendForSigning(){
     if(!state.offertId){ toast("Spara offerten först","err"); return; }
     $("btn-signing").disabled=true; $("save-hint").textContent="Skickar för signering…";
-    fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/send-for-signing",{method:"POST",headers:headers(true),body:JSON.stringify({})})
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/send-for-signing",{method:"POST",headers:headers(true),body:JSON.stringify({ recipient_ids: state.recipient })})
       .then(function(r){ return r.json(); })
       .then(function(j){
         $("btn-signing").disabled=false; $("save-hint").textContent="";
@@ -596,7 +639,8 @@
         var o=j.offert;
         state.offertId=id;
         state.client={ id:o.kundforetag||null, name:null, org:null, address:null };
-        if(o.kundforetag){ selectClient(o.kundforetag, o.titel||"Kund"); } // hämtar namn/org/adress
+        if(o.kundforetag){ selectClient(o.kundforetag, o.titel||"Kund"); } // hämtar namn/org/adress + coworkers
+        state.recipient = Array.isArray(o.recipient) ? o.recipient.slice() : [];  // förvälj sparade mottagare
         state.rows=(j.rows||[]).map(function(r){ return {product:r.product||null,artikelnr:r.artikelnr||"",benamning:r.benamning||"",beskrivning_long:r.beskrivning_long||"",antal:num(r.antal),enhet:r.enhet||"",apris:num(r.apris),rabatt:num(r.rabatt),moms:num(r.moms)}; });
         $("f-titel").value=o.titel||""; $("f-offertdatum").value=isoDate(o.offertdatum);
         $("f-giltig_till").value=isoDate(o.giltig_till); $("f-leveransdatum").value=isoDate(o.leveransdatum);
@@ -614,8 +658,10 @@
     state.client={ id:CC_ID||null, name:CC_NM||null, org:null, address:null };
     state.rows=[];
     state.recipient=[];
+    state.recipCache=[];
     state.newClientType="Företag";
     $("newclient-form").className="ao-hide";
+    $("recipients").className="ao-hide";
     ["f-titel","f-leveranstid","f-betalningsvillkor","f-momstyp","f-leveransadress","f-beskrivning","f-villkor_text"].forEach(function(k){ $(k).value=""; });
     ["f-offertdatum","f-giltig_till","f-leveransdatum"].forEach(function(k){ $(k).value=""; });
     $("f-valuta").value="SEK";
@@ -652,6 +698,9 @@
     if(t.closest('[data-ao="btn-cancelclient"]')){ closeNewClient(); return; }
     if(t.closest('[data-ao="btn-createclient"]')){ createClient(); return; }
     var seg=t.closest('[data-ao="nc-type"]'); if(seg){ setNcType(seg.getAttribute("data-val")); return; }
+    // mottagar-chip toggle
+    var rc=t.closest('[data-recip]');
+    if(rc){ var cid=rc.getAttribute("data-recip"); var ri=state.recipient.indexOf(cid); if(ri>=0){ state.recipient.splice(ri,1); } else { state.recipient.push(cid); } renderRecipients(state.recipCache); return; }
     // actions
     if(t.closest('[data-ao="btn-save"]')){ save(); return; }
     if(t.closest('[data-ao="btn-preview"]')){ preview(); return; }
@@ -688,6 +737,7 @@
   if(!HOST || !TOKEN){ $("save-hint").textContent="Saknar api_host/planning_token."; }
   $("mode-tag").textContent = INHERITED ? "" : "";
   $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
+  if(!INHERITED){ loadCompanies(); }   // förhämta företagslistan (snabb client-side-sök sen)
   newOffert();  // starta i tomt formulär (list nås via knappen)
 
   // exponera inget globalt (all interaktion via delegation) — undviker $-krock
