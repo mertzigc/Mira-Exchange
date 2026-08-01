@@ -1,0 +1,171 @@
+<!--
+  MIRA — Affär: samlad vy (P1, LIVE). Ersätter Bubble-native-flikarna.
+  Läser /admin/affar/feed → processtratt + samlad sökbar liggare. Client-side filter/sök.
+  Design: OFFERT_PRODUKTION_HANDOFF.md §4.5. Fristående HTML-block.
+
+  KOPPLING I BUBBLE:
+    data-mira="api_host"        = https://mira-exchange.onrender.com
+    data-mira="planning_token"  = PLANNING_ADMIN_TOKEN
+  OBS: INGEN ?. eller ?? (Bubbles script-parser). Namespace .af-, IIFE, BROOT-scopat.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .af, .af *{box-sizing:border-box;margin:0;padding:0}
+  .af{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;padding:22px 26px 40px;border-radius:14px}
+  .af input[type=hidden]{display:none}
+  .af h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}.af h1 span{color:var(--orange)}
+  .af .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 20px}
+  .funnel{display:flex;gap:6px;margin-bottom:20px}
+  .fstep{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:13px 15px;position:relative;cursor:pointer}
+  .fstep.on{border-color:var(--orange);background:var(--orange-dim)}
+  .fstep .lbl{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
+  .fstep .num{font-size:22px;font-weight:700;margin-top:3px}
+  .fstep .arw{position:absolute;right:-11px;top:50%;transform:translateY(-50%);z-index:2;color:var(--w40);font-size:14px}
+  .fstep:last-child .arw{display:none}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .search{flex:1;min-width:220px;background:var(--input);border:1px solid var(--border);border-radius:9px;padding:10px 13px;color:var(--white);font-family:var(--fb);font-size:13px}
+  .search:focus{outline:none;border-color:var(--orange)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .chip{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 13px;font-size:12px;color:var(--w70);cursor:pointer}
+  .chip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .src{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:6px;padding:3px 8px;text-transform:uppercase;letter-spacing:.03em}
+  .src .d{width:6px;height:6px;border-radius:50%}
+  .src.mira{background:rgba(244,123,48,.14);color:var(--orange)}.src.mira .d{background:var(--orange)}
+  .src.fortnox{background:rgba(91,141,239,.14);color:var(--blue)}.src.fortnox .d{background:var(--blue)}
+  .src.tengella{background:rgba(155,125,239,.14);color:var(--purple)}.src.tengella .d{background:var(--purple)}
+  .grid{width:100%;border-collapse:collapse}
+  .grid th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);padding:8px 12px;border-bottom:1.5px solid var(--w10)}
+  .grid td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .grid tr:hover td{background:var(--card)}
+  .typ{display:inline-flex;align-items:center;gap:7px;font-weight:700;white-space:nowrap}
+  .typ .ic{width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;background:var(--deep)}
+  .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mono{font-family:Menlo,Consolas,monospace;font-size:11px;color:var(--w70)}
+  .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+  .pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40)}
+  .p-open{background:var(--orange-dim);color:var(--orange)}.p-open .d{background:var(--orange)}
+  .p-ok{background:rgba(76,175,125,.13);color:var(--green)}.p-ok .d{background:var(--green)}
+  .p-wait{background:var(--w10);color:var(--w70)}
+  .p-red{background:rgba(224,90,90,.13);color:var(--red)}.p-red .d{background:var(--red)}
+  .muted{color:var(--w40)}
+  .af-note{margin-top:16px;font-size:11px;color:var(--w40)}
+</style>
+
+<div class="af">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+
+  <h1>Affär <span>·</span> samlad vy</h1>
+  <div class="sub">Sälj → faktura · Mira · Fortnox · Tengella i en yta</div>
+
+  <div class="funnel" data-af="funnel"></div>
+
+  <div class="bar">
+    <input class="search" data-af="search" placeholder="🔍 Sök företag eller nummer…">
+  </div>
+  <div class="bar">
+    <div class="chips" data-af="typechips">
+      <span class="chip on" data-t="">Alla</span><span class="chip" data-t="Lead">Lead</span><span class="chip" data-t="Aktivitet">Aktivitet</span>
+      <span class="chip" data-t="Affär">Affär</span><span class="chip" data-t="Offert">Offert</span><span class="chip" data-t="Order">Order</span><span class="chip" data-t="Faktura">Faktura</span>
+    </div>
+    <div style="flex:1"></div>
+    <div class="chips" data-af="srcchips">
+      <span class="muted" style="font-size:11px;margin-right:2px">Källa:</span>
+      <span class="chip on" data-s="">Alla</span><span class="chip" data-s="mira">Mira</span><span class="chip" data-s="fortnox">Fortnox</span><span class="chip" data-s="tengella">Tengella</span>
+    </div>
+  </div>
+
+  <table class="grid">
+    <thead><tr><th>Typ</th><th>Källa</th><th>Företag</th><th>Nummer</th><th class="num">Belopp</th><th>Datum</th><th>Status</th></tr></thead>
+    <tbody data-af="rows"><tr><td colspan="7" class="muted" style="padding:20px">Laddar…</td></tr></tbody>
+  </table>
+
+  <div class="af-note" data-af="note"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".af"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-af-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-af-claimed","1");
+  var $=function(k){ return root.querySelector('[data-af="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+
+  var STATE={ rows:[], funnel:null, type:"", src:"", q:"" };
+  var ICON={ Lead:"✨", Aktivitet:"💬", "Affär":"🤝", Offert:"📄", Order:"🧾", Faktura:"💳" };
+  var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Order","order"],["Faktura","faktura"]];
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function money(n){ if(n==null) return ""; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
+
+  function renderFunnel(){
+    var f=STATE.funnel||{}, h="";
+    for(var i=0;i<STEPS.length;i++){
+      var lbl=STEPS[i][0], key=STEPS[i][1], on=(STATE.type===lbl)?" on":"";
+      h+='<div class="fstep'+on+'" data-step="'+esc(lbl)+'"><div class="lbl">'+esc(lbl)+'</div><div class="num">'+(f[key]!=null?f[key]:"–")+'</div><span class="arw">›</span></div>';
+    }
+    $("funnel").innerHTML=h;
+  }
+  function visible(){
+    return STATE.rows.filter(function(r){
+      if(STATE.type && r.type!==STATE.type) return false;
+      if(STATE.src && r.source!==STATE.src) return false;
+      if(STATE.q){ var q=STATE.q.toLowerCase(); if(String(r.company||"").toLowerCase().indexOf(q)<0 && String(r.number||"").toLowerCase().indexOf(q)<0) return false; }
+      return true;
+    });
+  }
+  function renderRows(){
+    var rows=visible(), host=$("rows");
+    if(!rows.length){ host.innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Inga poster.</td></tr>'; return; }
+    host.innerHTML=rows.map(function(r){
+      var ic=ICON[r.type]||"•";
+      return '<tr>'+
+        '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+'</span></td>'+
+        '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
+        '<td>'+(r.company?esc(r.company):'<span class="muted">—</span>')+'</td>'+
+        '<td class="mono">'+(r.number?esc(r.number):'<span class="muted">—</span>')+'</td>'+
+        '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
+        '<td class="muted">'+esc(r.date||"")+'</td>'+
+        '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
+      '</tr>';
+    }).join("");
+  }
+  function render(){ renderFunnel(); renderRows(); }
+
+  function setChips(box, attr, val){
+    root.querySelectorAll('[data-af="'+box+'"] .chip').forEach(function(c){ c.className="chip"+((c.getAttribute(attr)||"")===val?" on":""); });
+  }
+
+  function load(){
+    if(!HOST||!TOKEN){ $("rows").innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Saknar api_host/planning_token.</td></tr>'; return; }
+    fetch(HOST+"/admin/affar/feed",{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(!j||!j.ok){ $("rows").innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</td></tr>'; return; }
+        STATE.rows=j.rows||[]; STATE.funnel=j.funnel||{};
+        if(j.note){ $("note").textContent=j.note; }
+        render();
+      })
+      .catch(function(){ $("rows").innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Nätverksfel.</td></tr>'; });
+  }
+
+  root.addEventListener("click",function(e){
+    var t=e.target;
+    var step=t.closest("[data-step]");
+    if(step){ var lbl=step.getAttribute("data-step"); STATE.type=(STATE.type===lbl)?"":lbl; setChips("typechips","data-t",STATE.type); render(); return; }
+    var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; setChips("typechips","data-t",STATE.type); render(); return; }
+    var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); renderRows(); return; }
+  });
+  root.addEventListener("input",function(e){ if(e.target.getAttribute("data-af")==="search"){ STATE.q=e.target.value.trim(); renderRows(); } });
+
+  load();
+})();
+</script>

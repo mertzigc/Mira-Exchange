@@ -222,7 +222,7 @@ Ny fristående modul `offert_api.js` (DI-mönster som `contract_render.js`) → 
 - Adoption (% nya F&E-offerter i Mira) driver takten, inte ett datum. Faktura-hämtning oförändrad oavsett offert/order-migreringens läge.
 
 **Fasad byggordning:**
-- **P1** — read-only samlad liggare + tratt över befintlig data (bevisar värdet, noll risk).
+- **P1** — ✅ **BYGGT + smoke-testat 2026-08-01.** Ny modul `affar_api.js` (`GET /admin/affar/feed` → tratt-counts + normaliserad liggare över Lead/activitet_crm/deal/Offert(mira)/FortnoxOffer/MiraOrder/FortnoxOrder/FortnoxInvoice). Fortnox via `ft_customer_name`, CRM/Mira via ClientCompany-namncache (`CC_FIELD_OVERRIDES`: deal.kundföretag, Lead.Company, activitet_crm.clientcompany). Status→pill-mappning + källbadge (HK-connection-faktura→tengella). Modul-`bubbleCount` tillagd i index.js. UI: `mira-affar-samlad.html` (live, client-side filter/sök, funnel-klick=typfilter). 18 smoke-tester gröna. **Kända P1-luckor:** TengellaWorkorder i order-count men EJ i liggaren (fältmappning ej bekräftad); ägare/deal-namn best-effort; sortering på Created Date (sync-tid för Fortnox). read-only samlad liggare + tratt över befintlig data (bevisar värdet, noll risk).
 - **P2** — affärskort/kedja per Deal (normaliserad statusmodell per steg).
 - **P3** — manuell koppling av legacy Fortnox-dokument till Deal.
 - **P4** — live-actions (skapa offert från Deal, pusha order, faktura-länkning) + fasa ut F&E Fortnox offert/order-synk.

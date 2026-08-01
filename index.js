@@ -7,6 +7,7 @@ import { createClientGroupEngine } from "./clientgroup.js";
 import { createApprovalDocEngine } from "./offer_approval_doc.js";
 import { createContractRenderEngine } from "./contract_render.js";
 import { registerOffertRoutes } from "./offert_api.js";
+import { registerAffarRoutes } from "./affar_api.js";
 import multer from "multer";
 import express from "express";
 import cors from "cors";
@@ -443,6 +444,7 @@ function requireApiKey(req, res, next) {
     "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
     "/admin/dokument/",            // Fristående Dokument-upload för wizardens bilagor (Fas 5b spår 2), x-admin-token-grindad
     "/admin/offert",               // F&E offert-modul (Fas 2), x-admin-token-grindad (offert_api.js)
+    "/admin/affar",                // Affär samlad vy (P1), x-admin-token-grindad (affar_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
@@ -1200,6 +1202,24 @@ async function bubbleFindAll(typeName, { constraints = [], sort_field = null, de
 }
 function bubbleId(obj) {
   return obj?._id || obj?.id || obj?.response?._id || obj?.response?.id || null;
+}
+// Totalt antal av en typ (Bubble: limit 1 → results + remaining). Billigt.
+async function bubbleCount(typeName, constraints = []) {
+  const qs = new URLSearchParams({ limit: "1" });
+  if (constraints.length) qs.set("constraints", JSON.stringify(constraints));
+  for (const base of BUBBLE_BASES) {
+    try {
+      const r = await fetch(`${base}/api/1.1/obj/${typeName}?${qs}`, {
+        headers: { Authorization: "Bearer " + BUBBLE_API_KEY },
+      });
+      if (!r.ok) continue;
+      const j = await r.json().catch(() => ({}));
+      const results = Array.isArray(j?.response?.results) ? j.response.results.length : 0;
+      const remaining = Number(j?.response?.remaining ?? 0);
+      return results + remaining;
+    } catch (_) {}
+  }
+  return 0;
 }
 async function bubbleFindOne(type, constraints) {
   const arr = await bubbleFind(type, {
@@ -19805,6 +19825,17 @@ offertEngine = registerOffertRoutes(app, {
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,
   createApprovalRequest: _createApprovalRequestInternal,
+});
+
+// Affär samlad vy (P1) — routes i affar_api.js.
+registerAffarRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleId, bubbleCount,
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
+  FE_CONNECTION_ID,
+  CONNECTION_NAMES,
 });
 
 // ─────────────────────────────────────────────────────────────────────────
