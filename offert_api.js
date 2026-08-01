@@ -348,7 +348,10 @@ export function registerOffertRoutes(app, deps) {
   function guard(req, res) {
     planningCors && planningCors(req, res);
     if (!planningAuthed(req)) { res.status(401).json({ ok: false, error: "unauthorized" }); return false; }
-    if (publicRateLimited && clientIp && publicRateLimited(clientIp(req), 120)) {
+    // ⚠️ Egen rate-limit-hink ("offert:"-prefix). _publicRateLimited nycklar på strängen,
+    // och delas annars per RÅ IP med bl.a. OTP-endpointen (lägre gräns) → admin-aktivitet
+    // (autocomplete per tangenttryck m.m.) skulle annars äta OTP:ns budget. Isolerat här.
+    if (publicRateLimited && clientIp && publicRateLimited("offert:" + clientIp(req), 240)) {
       res.status(429).json({ ok: false, error: "rate_limited" }); return false;
     }
     return true;

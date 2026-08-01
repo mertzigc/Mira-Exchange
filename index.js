@@ -16935,7 +16935,22 @@ async function _createApprovalRequestInternal({ req, files, dokumentIds, payload
   if (contractTemplateJson !== null) oarPayload[SERVICES.OAR_CONTRACT_TEMPLATE] = contractTemplateJson;
   if (autoCreateContract   !== null) oarPayload[SERVICES.OAR_AUTO_CREATE]       = autoCreateContract;
   if (payload?.offert)               oarPayload.offert = payload.offert;   // F&E offert → auto-convert vid Approved
-  const requestId = await bubbleCreate("OfferApprovalRequest", oarPayload);
+  let requestId;
+  try {
+    requestId = await bubbleCreate("OfferApprovalRequest", oarPayload);
+  } catch (createErr) {
+    // Resiliens: om `offert`-fältet inte finns i Bubble än (Unrecognized field)
+    // → skapa utan det. Signeringen funkar; auto-convert kräver att fältet skapas
+    // + deployas till live (annars sker convert manuellt via /convert-to-order).
+    const probe = JSON.stringify(createErr?.detail || "") + " " + String(createErr?.message || "");
+    if (oarPayload.offert && /unrecognized field:\s*offert/i.test(probe)) {
+      console.warn("[approval] OfferApprovalRequest.offert saknas i live-Bubble — skapar utan (auto-convert inaktiv tills fältet finns + deployats)");
+      delete oarPayload.offert;
+      requestId = await bubbleCreate("OfferApprovalRequest", oarPayload);
+    } else {
+      throw createErr;
+    }
+  }
 
   // 3) Skapa OfferApproval per mottagare + invite-mail per role
   const created = [];
