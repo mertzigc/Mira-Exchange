@@ -205,6 +205,30 @@ Ny fristående modul `offert_api.js` (DI-mönster som `contract_render.js`) → 
 
 ---
 
+## 4.5 Affär — samlad CRM-vy + Fortnox→Mira-brygga (NYTT SPÅR, design låst 2026-08-01)
+
+**Kontext:** CRM:ets "Affär"-flik har idag 6 Bubble-native-tabeller (Aktivitet, Leads, Affär/Deal, Offerter, Ordrar, Fakturor) från blandade källor. Process: `Lead/Aktivitet → Affär(Deal) → Offert → Order → Faktura`. Skiss: `mira-affar-samlad-skiss.html`.
+
+**Beslut låsta 2026-08-01:**
+1. **Lämna Bubble-native** → bygg EN samlad fristående HTML-sida (utanför Bubble): processtratt + samlad sökbar liggare + affärskort som visar kedjan. Källbadges Mira/Fortnox/Tengella.
+2. **Alla F&E-offerter/ordrar SKA skapas i Mira** → Fortnox offert/order-synk för F&E kan **fasas ut** när adoption=100% (Fortnox = renodlat faktura-lager för F&E). Tengella (HK) + faktura-synk oförändrade.
+3. **Legacy Fortnox-dokument utan deal-koppling** → visas okopplade + **manuell koppla-knapp** (nytt: fält för att fästa FortnoxOffer/Order på Deal).
+
+**Bryggan = samexistens med proveniens, INGEN cutover:**
+- Migrera aldrig historik — gamla Fortnox-offerter/ordrar förblir läskopior, badge:ade.
+- `source`-fält på varje post driver badge + dedup.
+- ⚠️ **Eko-dedup MÅSTE lösas före order-push i skala:** Mira→Fortnox-order läses tillbaka som FortnoxOrder → dubbelräkning om ej länkad. Nyckel: spara Fortnox-docno på MiraOrder; synken känner igen Mira-födda ordrar (hoppa/länka spegeln).
+- Faktura-avstämning: pushad Fortnox-order bär referens (ordernr) → följer till faktura → faktura-synk länkar FortnoxInvoice→MiraOrder→Deal.
+- Adoption (% nya F&E-offerter i Mira) driver takten, inte ett datum. Faktura-hämtning oförändrad oavsett offert/order-migreringens läge.
+
+**Fasad byggordning:**
+- **P1** — read-only samlad liggare + tratt över befintlig data (bevisar värdet, noll risk).
+- **P2** — affärskort/kedja per Deal (normaliserad statusmodell per steg).
+- **P3** — manuell koppling av legacy Fortnox-dokument till Deal.
+- **P4** — live-actions (skapa offert från Deal, pusha order, faktura-länkning) + fasa ut F&E Fortnox offert/order-synk.
+
+**Öppet:** normaliserad statusmodell per steg (varje källa har eget statusspråk). Faktura→order-referens: bär Fortnox-fakturan orderreferensen? (verifiera i Fortnox-API vid P4).
+
 ## 5. Produktionsmodul
 
 ### 5.1 Vad den läser
