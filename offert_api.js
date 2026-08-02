@@ -125,6 +125,7 @@ export function registerOffertRoutes(app, deps) {
       beskrivning: body.beskrivning != null ? _str(body.beskrivning) : undefined,
       villkor_text: body.villkor_text != null ? _str(body.villkor_text) : undefined,
       comission: body.comission || undefined,
+      deal: body.deal || undefined,                 // affärs-koppling → syns i affärskortets kedja
       recipient: Array.isArray(body.recipient) ? body.recipient : undefined,
       sender: Array.isArray(body.sender) ? body.sender : undefined,
     };

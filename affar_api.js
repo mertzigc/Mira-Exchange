@@ -143,13 +143,18 @@ export function registerAffarRoutes(app, deps) {
         return rows.filter(Boolean);
       };
 
-      const [leadRow, akts, offRows, ordRows, invRows] = await Promise.all([
+      const [leadRow, akts, offList, offRev, ordRows, invRows] = await Promise.all([
         deal.lead ? bubbleGet("Lead", _ref(deal.lead)).catch(() => null) : null,
         getList("activitet_crm", deal.historik),
-        getList("Offert", deal.offert),
+        getList("Offert", deal.offert),                                                                  // legacy: Deal.offert-lista
+        bubbleFind("Offert", { constraints: [{ key: "deal", constraint_type: "equals", value: req.params.id }], limit: 20 }).catch(() => []),  // Mira: Offert.deal reverse-lookup
         getList("FortnoxOrder", deal.order),
         getList("FortnoxInvoice", deal.invoice),
       ]);
+      // dedupa offerter (legacy-lista + reverse-lookup)
+      const _offMap = new Map();
+      [...offList, ...(offRev || [])].forEach((o) => { const id = bubbleId(o); if (id && !_offMap.has(id)) _offMap.set(id, o); });
+      const offRows = [..._offMap.values()];
 
       // Mira-ordrar: reverse-lookup per Mira-offert (Deal.order håller bara FortnoxOrders)
       const miraOrders = [];
