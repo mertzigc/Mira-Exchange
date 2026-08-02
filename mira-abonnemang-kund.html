@@ -17,6 +17,7 @@
     data-mira="planning_token"    = PLANNING_ADMIN_TOKEN
     data-mira="clientcompany"     = Current Company's unique id
     data-mira="clientcompany_nm"  = Current Company's Name_company
+    data-mira="deal"              = Parent group's Deal's unique id (ENDAST i affärs-popup; tom på Företag-kortet)
 
   Om planning_token eller clientcompany saknas körs demo-SAMPLE.
 -->
@@ -738,6 +739,9 @@
   <input type="hidden" data-mira="planning_token"   value="">
   <input type="hidden" data-mira="clientcompany"    value="">
   <input type="hidden" data-mira="clientcompany_nm" value="">
+  <!-- Affär-ryggrad: sätt ENDAST när blocket bäddas i affärs-popupens Avtal-flik.
+       Bubble dynamic: Parent group's Deal's unique id. Tom på Företag-kortet. -->
+  <input type="hidden" data-mira="deal"             value="">
 
   <div class="ab-head">
     <div class="ab-head-l">
