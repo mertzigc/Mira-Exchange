@@ -2409,6 +2409,9 @@
   const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
+  // Dölj prototyp-banderollen i skarpt läge — den är kvar från /prototyp-previewen
+  // och är vilseledande ("inga avtal skickas") när blocket kör LIVE i Bubble.
+  if (IS_LIVE) { var _pb = (BROOT||document).querySelector('.wt-proto'); if (_pb) { _pb.style.display = 'none'; } }
 
   // Fas 5b spår 3: på kundkortet är kunden FÖRVALD (data-mira="clientcompany").
   // Ingen kund-picker — Steg 2 visar bara kunden och förifyllda uppgifter.
