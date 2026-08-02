@@ -16603,6 +16603,10 @@ async function _createContractsFromApprovalRequest(parent) {
       [SERVICES.CT_OFFER_APPROVAL]:    parent._id,
       [SERVICES.CT_COMMISSION]:        spec.commission_id || null,
       [SERVICES.CT_INTERNAL_REVIEW]:   internalReviewJson,
+      // Affär-ryggrad (2026-08-02): koppla avtalet till affären som signeringen kom ur.
+      // spec kan överskriva (multi-deal-signering); annars ärvs OAR.deal.
+      // OAR.deal/clientcompany lagras som råa id-strängar (samma mönster som ovan).
+      [SERVICES.CT_DEAL]:              spec.deal_id || parent.deal || null,
     };
 
     // Droppa null-fält så Bubble behåller defaults för obetalda fält
@@ -19747,6 +19751,7 @@ const SERVICES = {
   CT_INTERNAL_REVIEW:       "internal_review_json",     // Fas 5b: interngransknings-trail (denormaliserad)
   CT_TITLE:                 "contract_title",           // Fas 5b: fritext-titel (gemener)
   CT_SUPPLIER:              "leverantör",               // Fas 5b: referens → leverantör-supplier (kategoristyrd default)
+  CT_DEAL:                  "deal",                     // 2026-08-02: → Deal (Affär-ryggrad); sätts från OAR.deal vid auto-create
 
   // OfferApprovalRequest-fält Fas 1 (utöver de befintliga som dokumenterats i 0e).
   OAR_TYPE:                 "OfferApprovalRequest",

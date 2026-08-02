@@ -2395,6 +2395,9 @@
   // Ingen kund-picker — Steg 2 visar bara kunden och förifyllda uppgifter.
   const WIZ_CC_ID   = ((BROOT||document).querySelector('[data-mira="clientcompany"]')    || {}).value || '';
   const WIZ_CC_NAME = ((BROOT||document).querySelector('[data-mira="clientcompany_nm"]') || {}).value || '';
+  // Affär-ryggrad (2026-08-02): om wizarden bäddas i affärs-popupen sätts data-mira="deal"
+  // → skickas till render-and-send → OAR.deal → auto-create sätter Contract.deal.
+  const WIZ_DEAL_ID = ((BROOT||document).querySelector('[data-mira="deal"]') || {}).value || '';
 
   // Client-state — förvald kund (inte via autocomplete som i admin-vyn)
   const CLIENT = { id: WIZ_CC_ID || null, name: WIZ_CC_NAME || null };
@@ -3138,6 +3141,7 @@ const state = {
         sender_email:           senderEmail,
         sender_name:            senderName,
         clientcompany:          CLIENT.id || null,   // Bubble ClientCompany-ref (valfri)
+        deal:                   WIZ_DEAL_ID || null, // Affär-ryggrad: kopplar avtalet till affären
         auto_create_contract:   autoCreate,
         recipients:             rcps,
         attachment_dokument_ids: state.attachments.map(function(a){ return a.doc_id; }),

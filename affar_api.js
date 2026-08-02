@@ -66,6 +66,14 @@ export function registerAffarRoutes(app, deps) {
   function nOffertM(r, m) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
   function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
   function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
+  // Avtal (Contract) i affärskedjan. Status härleds enkelt (affar_api saknar _deriveContractStatus):
+  // status_override först, annars slutdatum-passerat → Avslutad, annars Aktiv. Belopp = månadskostnad.
+  function nAvtal(r, m) {
+    var ov = _str(r.status_override);
+    var slutTs = _ts(r.slutdatum);
+    var st = ov ? [ov, "wait"] : (slutTs && slutTs < Date.now() ? ["Avslutad", "red"] : ["Aktiv", "ok"]);
+    return { type: "Avtal", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.contract_title) || _str(r.kategori) || "Avtal", amount: _num(r["månadskostnad"]) || null, date: _day(r.startdatum || r.signed_at || r["Created Date"]), contract_type: _str(r.contract_type) || null, status: st[0], status_cls: st[1], id: bubbleId(r) };
+  }
   function nOrderF(r) { const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", id: bubbleId(r) }; }
   function nInvoice(r) { const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: connSource(r.connection), company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
 
@@ -143,13 +151,14 @@ export function registerAffarRoutes(app, deps) {
         return rows.filter(Boolean);
       };
 
-      const [leadRow, akts, offList, offRev, ordRows, invRows] = await Promise.all([
+      const [leadRow, akts, offList, offRev, ordRows, invRows, avtalRows] = await Promise.all([
         deal.lead ? bubbleGet("Lead", _ref(deal.lead)).catch(() => null) : null,
         getList("activitet_crm", deal.historik),
         getList("Offert", deal.offert),                                                                  // legacy: Deal.offert-lista
         bubbleFind("Offert", { constraints: [{ key: "deal", constraint_type: "equals", value: req.params.id }], limit: 20 }).catch(() => []),  // Mira: Offert.deal reverse-lookup
         getList("FortnoxOrder", deal.order),
         getList("FortnoxInvoice", deal.invoice),
+        bubbleFind("Contract", { constraints: [{ key: "deal", constraint_type: "equals", value: req.params.id }], limit: 20 }).catch(() => []),  // Avtal: Contract.deal reverse-lookup (Affär-ryggrad)
       ]);
       // dedupa offerter (legacy-lista + reverse-lookup)
       const _offMap = new Map();
@@ -165,6 +174,7 @@ export function registerAffarRoutes(app, deps) {
 
       const akItems = akts.map((r) => nAkt(r, m)).sort((a, b) => _ts(b.date) - _ts(a.date));
       const offItems = offRows.map((r) => nOffertM(r, m));
+      const avtalItems = (avtalRows || []).map((r) => nAvtal(r, m));
       const ordItems = [...ordRows.map(nOrderF), ...miraOrders.map((r) => nOrderM(r, m))];
       const invItems = invRows.map(nInvoice);
 
@@ -178,6 +188,7 @@ export function registerAffarRoutes(app, deps) {
           lead: leadRow ? { name: (_str(leadRow.Name) || _str(leadRow.titel) || cname(m, leadRow.Company)), date: _day(leadRow["Created Date"]) } : null,
           aktivitet: { count: akItems.length, latest: akItems.length ? akItems[0].status : null, date: akItems.length ? akItems[0].date : null },
           offert: { count: offItems.length, items: offItems },
+          avtal: { count: avtalItems.length, items: avtalItems },
           order: { count: ordItems.length, items: ordItems },
           faktura: { count: invItems.length, items: invItems },
         },

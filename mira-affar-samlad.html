@@ -165,10 +165,13 @@
   function renderChainHtml(j){
     var c=j.chain, D=j.deal;
     var it;
+    // avtal kan saknas om HTML deployas fore affar_api — guarda med ||-fallback (ej optional chaining)
+    var av=c.avtal||{count:0,items:[]};
     var stages=[
       { has:!!c.lead, label:"Lead", val: c.lead?esc(c.lead.name||"Lead"):'<span class="muted">—</span>', meta: c.lead?esc(c.lead.date||""):"" },
       { has:c.aktivitet.count>0, label:"Aktivitet", val: c.aktivitet.count?(esc(c.aktivitet.count)+" st"):'<span class="muted">—</span>', meta: c.aktivitet.latest?esc(c.aktivitet.latest):"" },
       (it=first(c.offert.items),{ has:c.offert.count>0, label:"Offert", val: c.offert.count?esc((it&&it.number)||(c.offert.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" }),
+      (it=first(av.items),{ has:av.count>0, label:"Avtal", val: av.count?esc((it&&it.number)||(av.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" }),
       (it=first(c.order.items),{ has:c.order.count>0, label:"Order", val: c.order.count?esc((it&&it.number)||(c.order.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" }),
       (it=first(c.faktura.items),{ has:c.faktura.count>0, label:"Faktura", val: c.faktura.count?esc((it&&it.number)||(c.faktura.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" })
     ];
