@@ -7,6 +7,33 @@
 
 ---
 
+## ⭐ STATUS 2026-08-02 — läget nu (LÄS FÖRST)
+
+**Byggt, verifierat skarpt, i drift:**
+- **Fas 2 — Offert-modul (F&E):** `offert_api.js` + `mira-offert-admin.html`. Skapa/redigera offert (Fortnox-lik, obegränsad radtext), Mira-genererad kund-PDF, Skapa kund (företag/privat + beställare→Coworker), artikel-autocomplete (F&E-filter på FortnoxConnection), inbäddad PDF-preview. **Skarpt verifierat** (FE-2026-0001..0005 skapade).
+- **Fas 3 — Signering + auto-convert:** `send-for-signing` → OfferApproval-flödet, `OfferApprovalRequest.offert`-länk, auto-convert till `MiraOrder` vid Approved (hook i `_checkAndCompleteRequest`). **Skarpt verifierat** (signering + MiraOrder skapades).
+- **Affär samlad vy P1+P2:** `affar_api.js` + `mira-affar-samlad.html`. Processtratt + samlad liggare (9 typer/3 källor, källbadges, status-pills) + affärskort med kedjan (klick på Affär-rad → Lead→Aktivitet→Offert→Order→Faktura). **Skarpt verifierat** (feed + deal-endpoint).
+- **Länkning offert↔affär:** `Offert.deal` + kedjan reverse-lookup:ar. Nya offerter från affärs-kontext (`data-mira="deal"`) auto-länkas.
+- **Samlad offert-modul (kind):** Offert = ETT objekt, Option Set `kind_offer` (strukturerad/uppladdad/fortnox). Offert-buildern har läges-väljare [Strukturerad]/[Ladda upp dokument]. Upload-läge → `Offert(kind=uppladdad, dokument=[PDF])`.
+
+**Bubble-typer byggda av Christian:** Offert (utökad, +kind), OffertRad, Kok, MiraOrder (ordernr=TEXT!, orderdatum), MiraOrderRad, ClientCompany (+customer_type OS Företag/Privat, faktura_email, faktura_referens), OfferApprovalRequest (+offert), Product (+default_kok, Product category=prep). Deal(list-fält offert/order/invoice/lead/historik finns).
+
+**⚠️ ÖPPNA PUNKTER / NÄSTA (prioordning):**
+1. **Deploya senaste** — `index.js`, `offert_api.js`, `affar_api.js`, `mira-offert-admin.html`, `mira-affar-samlad.html`. (Uppladdad-signering-fixen 2026-08-02 måste ut.)
+2. **BUGG FIXAD 2026-08-02 (behöver deploy+test):** `send-for-signing` renderade ALLTID strukturerad PDF (tom för uppladdad offert). Nu grenat på `kind`: uppladdad → använder det UPPLADDADE dokumentet direkt (ingen render); strukturerad → renderar. render-pdf/förhandsgranska likaså (uppladdad → visar uppladdat dokument). **Christians instruktion: återanvänd det befintliga fungerande upload-flödet** — verifiera att uppladdad offert nu signeras med rätt dokument.
+3. **Modul-samling fas 2:** väva in **Offert/Avtal-typväljare** i offert-modulen (Christian valde typ-väljare; Avtal → befintliga Contract-flödet i `mira-approval-create.html`). Överväg att låta upload-offert helt återanvända `mira-approval-create`:s beprövade pipeline.
+4. **"Mina offerter"-lista** i offert-modulen — Christian osäker på om den ska ligga i deal-inbäddningen. Ta i steg 2.
+5. **Tengella-beloppsfält** — bekräfta rätt fält (nu fallback ft_totalvat/total_price/ft_net/total_cost; HK-ordrar visade null → troligen annat fält).
+6. **P3 (Affär-vy):** manuell koppla-knapp för legacy Fortnox-dok → affär. **P4:** live-actions + fasa ut F&E Fortnox-offert/order-synk. Ev **periodväljare** till tratten (visar livstidstotaler nu).
+7. **Uppladdad offert saknar strukturerat belopp** (total=0) — ev manuellt belopp-fält.
+8. **🔴 SÄKERHET:** Christian har exponerat sin `ANTHROPIC_API_KEY` (klartext, flera ggr) + `PLANNING_ADMIN_TOKEN` — ej roterad. Påminn om rotering.
+
+**Nyckelfiler:** `offert_api.js` (offert+signering+convert), `affar_api.js` (samlad vy feed+kedja), `contract_render.js`/`pdf_utils.js` (PDF), `index.js` (bubble-helpers, `_createApprovalRequestInternal`, `_checkAndCompleteRequest`, registreringar ~rad 19770). HTML-block: `mira-offert-admin.html`, `mira-affar-samlad.html`, `mira-approval-create.html` (befintlig upload/signering, avtal). Skiss: `mira-affar-samlad-skiss.html`. Smoke-tester i scratchpad (offert_smoke/affar_smoke/affar_deal_smoke).
+
+**Arbetssätt:** Christian bygger Bubble-typer + deployar (Render + Bubble version-test→live). Claude bygger backend/HTML. Gissa ALDRIG fältnamn/Option Set-värden (be om skärmdump). Inga `?.`/`??` i Bubble-HTML-block (parser-krasch). Smoke-testa moduler isolerat med mockad Bubble före deploy.
+
+---
+
 ## 0. Kontext & avgränsning
 
 ### 0.1 Varför Food & Event först

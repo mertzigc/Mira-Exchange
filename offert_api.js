@@ -565,8 +565,17 @@ export function registerOffertRoutes(app, deps) {
       const id = req.params.id;
       const offert = await bubbleGet(TYPE_OFFERT, id);
       if (!offert) return res.status(404).json({ ok: false, error: "offert_not_found" });
-      const rows = await loadRows(id);
 
+      // Uppladdad offert: förhandsgranska det UPPLADDADE dokumentet, rendera INTE strukturerat (skulle bli tomt).
+      if (_str(offert.kind) === "uppladdad") {
+        const first = (Array.isArray(offert.dokument) ? offert.dokument : [])[0];
+        const doc = first ? await bubbleGet("Dokument", _ref(first)).catch(() => null) : null;
+        const url = doc && (doc.file || doc.File);
+        if (!url) return res.status(400).json({ ok: false, error: "inget_dokument" });
+        return res.json({ ok: true, offert_id: id, kind: "uppladdad", file_url: String(url).replace(/^\/\//, "https://") });
+      }
+
+      const rows = await loadRows(id);
       const company = offert.kundforetag ? await bubbleGet("ClientCompany", offert.kundforetag).catch(() => null) : null;
       const office = offert.office ? await bubbleGet("Office", offert.office).catch(() => null) : null;
 
@@ -628,26 +637,34 @@ export function registerOffertRoutes(app, deps) {
       if (!offert) return res.status(404).json({ ok: false, error: "offert_not_found" });
       const body = req.body || {};
 
-      // 1) rendera aktuell PDF (så signeringsunderlaget alltid speglar senaste offert)
-      const rows = await loadRows(id);
-      const company = offert.kundforetag ? await bubbleGet("ClientCompany", offert.kundforetag).catch(() => null) : null;
-      const office = offert.office ? await bubbleGet("Office", offert.office).catch(() => null) : null;
-      const pdfTitel = `Offert ${offert.offertnr || id}`;
-      const html = buildOffertHtml({ offert, rows, company, office });
-      const rendered = await contractRenderEngine.renderAndPersist({ templateHtml: html, spec: {}, titel: pdfTitel });
-
-      // dokument-lista: nya PDF:en + ev. befintliga bilagor (ej gamla auto-renders)
-      const cur = Array.isArray(offert.dokument) ? offert.dokument : [];
-      const staleIds = [];
-      for (const dId of cur) {
-        if (!dId || dId === rendered.dokument_id) continue;
-        const d = await bubbleGet("Dokument", dId).catch(() => null);
-        if (d && _str(d.titel) === pdfTitel) staleIds.push(dId);
+      // 1) signeringsunderlag — grenat på kind:
+      //    uppladdad → använd det UPPLADDADE dokumentet direkt (ingen strukturerad render)
+      //    strukturerad → rendera aktuell PDF (speglar senaste offert)
+      let dokumentIds = [];
+      let fileUrl = null;
+      if (_str(offert.kind) === "uppladdad") {
+        dokumentIds = Array.isArray(offert.dokument) ? offert.dokument.slice() : [];
+        if (!dokumentIds.length) return res.status(400).json({ ok: false, error: "inget_dokument", hint: "Uppladdad offert saknar dokument att signera." });
+      } else {
+        const rows = await loadRows(id);
+        const company = offert.kundforetag ? await bubbleGet("ClientCompany", offert.kundforetag).catch(() => null) : null;
+        const office = offert.office ? await bubbleGet("Office", offert.office).catch(() => null) : null;
+        const pdfTitel = `Offert ${offert.offertnr || id}`;
+        const html = buildOffertHtml({ offert, rows, company, office });
+        const rendered = await contractRenderEngine.renderAndPersist({ templateHtml: html, spec: {}, titel: pdfTitel });
+        fileUrl = rendered.file_url;
+        const cur = Array.isArray(offert.dokument) ? offert.dokument : [];
+        const staleIds = [];
+        for (const dId of cur) {
+          if (!dId || dId === rendered.dokument_id) continue;
+          const d = await bubbleGet("Dokument", dId).catch(() => null);
+          if (d && _str(d.titel) === pdfTitel) staleIds.push(dId);
+        }
+        dokumentIds = cur.filter((d) => !staleIds.includes(d));
+        if (rendered.dokument_id && !dokumentIds.includes(rendered.dokument_id)) dokumentIds.push(rendered.dokument_id);
+        await bubblePatch(TYPE_OFFERT, id, { dokument: dokumentIds });
+        for (const sId of staleIds) { try { await bubbleDelete("Dokument", sId); } catch (_) {} }
       }
-      const dokumentIds = cur.filter((d) => !staleIds.includes(d));
-      if (rendered.dokument_id && !dokumentIds.includes(rendered.dokument_id)) dokumentIds.push(rendered.dokument_id);
-      await bubblePatch(TYPE_OFFERT, id, { dokument: dokumentIds });
-      for (const sId of staleIds) { try { await bubbleDelete("Dokument", sId); } catch (_) {} }
 
       // 2) mottagare — prioritet: body.recipients [{email,name}] → body.recipient_ids (Coworker-ids från UI) → Offert.recipient
       let recipients = Array.isArray(body.recipients) ? body.recipients.filter((r) => r && r.email) : [];
@@ -678,7 +695,7 @@ export function registerOffertRoutes(app, deps) {
       });
 
       await bubblePatch(TYPE_OFFERT, id, { status: "Sent" });
-      return res.json({ ok: true, offert_id: id, request_id: result && (result.request_id || result.requestId || result.request), recipients: recipients.length, file_url: rendered.file_url });
+      return res.json({ ok: true, offert_id: id, kind: _str(offert.kind) || "strukturerad", request_id: result && (result.request_id || result.requestId || result.request), recipients: recipients.length, file_url: fileUrl });
     } catch (e) {
       console.error("[/admin/offert/:id/send-for-signing]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
