@@ -15,7 +15,7 @@
 
 export function registerAffarRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleId, bubbleCount,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount,
     planningAuthed, planningCors, publicRateLimited, clientIp,
     FE_CONNECTION_ID, CONNECTION_NAMES,
   } = deps;
@@ -61,7 +61,8 @@ export function registerAffarRoutes(app, deps) {
   function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: "Ny", status_cls: "wait", id: bubbleId(r) }; }
   function nAkt(r, m)  { const [lbl] = pick({}, _str(r.kundm_te_option_kundm_te), ["Aktivitet", "wait"]); return { type: "Aktivitet", source: "mira", company: cname(m, r.clientcompany), number: "", amount: null, date: _day(r.datum_bokning_date || r["Created Date"]), status: lbl || "Aktivitet", status_cls: "wait", id: bubbleId(r) }; }
   function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
-  function nWorkorder(r, m) { return { type: "Order", source: "tengella", company: cname(m, r.company), number: _str(r.workorder_no), amount: (_num(r.ft_totalvat) || _num(r.total_price)) || null, date: _day(r.order_date || r["Created Date"]), status: _str(r.status) || "Order", status_cls: "wait", id: bubbleId(r) }; }
+  // ⚠️ Tengella-belopp: ft_totalvat/total_price ofta tomma → fallback ft_net/total_cost. Bekräfta rätt fält.
+  function nWorkorder(r, m) { return { type: "Order", source: "tengella", company: cname(m, r.company), number: _str(r.workorder_no), amount: (_num(r.ft_totalvat) || _num(r.total_price) || _num(r.ft_net) || _num(r.total_cost)) || null, date: _day(r.order_date || r["Created Date"]), status: _str(r.status) || "Order", status_cls: "wait", id: bubbleId(r) }; }
   function nOffertM(r, m) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); return { type: "Offert", source: "mira", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
   function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
   function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
@@ -124,6 +125,60 @@ export function registerAffarRoutes(app, deps) {
       });
     } catch (e) {
       console.error("[/admin/affar/feed]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/affar/deal/:id — kedjan (P2). Läser Deals list-fält direkt. ──
+  opt("/admin/affar/deal/:id");
+  app.get("/admin/affar/deal/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const deal = await bubbleGet("deal", req.params.id).catch(() => null);
+      if (!deal) return res.status(404).json({ ok: false, error: "deal_not_found" });
+      const m = await companyMap();
+      const getList = async (type, ids) => {
+        const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+        const rows = await Promise.all(list.map((id) => bubbleGet(type, _ref(id)).catch(() => null)));
+        return rows.filter(Boolean);
+      };
+
+      const [leadRow, akts, offRows, ordRows, invRows] = await Promise.all([
+        deal.lead ? bubbleGet("Lead", _ref(deal.lead)).catch(() => null) : null,
+        getList("activitet_crm", deal.historik),
+        getList("Offert", deal.offert),
+        getList("FortnoxOrder", deal.order),
+        getList("FortnoxInvoice", deal.invoice),
+      ]);
+
+      // Mira-ordrar: reverse-lookup per Mira-offert (Deal.order håller bara FortnoxOrders)
+      const miraOrders = [];
+      for (const off of offRows) {
+        const mo = await bubbleFind("MiraOrder", { constraints: [{ key: "offert", constraint_type: "equals", value: bubbleId(off) }], limit: 5 }).catch(() => []);
+        miraOrders.push(...(mo || []));
+      }
+
+      const akItems = akts.map((r) => nAkt(r, m)).sort((a, b) => _ts(b.date) - _ts(a.date));
+      const offItems = offRows.map((r) => nOffertM(r, m));
+      const ordItems = [...ordRows.map(nOrderF), ...miraOrders.map((r) => nOrderM(r, m))];
+      const invItems = invRows.map(nInvoice);
+
+      return res.json({
+        ok: true,
+        deal: {
+          id: bubbleId(deal), titel: _str(deal.titel), company: cname(m, deal["kundföretag"]),
+          status: _str(deal.Status), value: _num(deal.value_brutto) || null, sannolikhet: _num(deal.sannolikhet) || null,
+        },
+        chain: {
+          lead: leadRow ? { name: (cname(m, leadRow.Company) || _str(leadRow.Name)), date: _day(leadRow["Created Date"]) } : null,
+          aktivitet: { count: akItems.length, latest: akItems.length ? akItems[0].status : null, date: akItems.length ? akItems[0].date : null },
+          offert: { count: offItems.length, items: offItems },
+          order: { count: ordItems.length, items: ordItems },
+          faktura: { count: invItems.length, items: invItems },
+        },
+      });
+    } catch (e) {
+      console.error("[/admin/affar/deal/:id]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

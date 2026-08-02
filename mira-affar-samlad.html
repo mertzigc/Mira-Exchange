@@ -55,6 +55,23 @@
   .p-red{background:rgba(224,90,90,.13);color:var(--red)}.p-red .d{background:var(--red)}
   .muted{color:var(--w40)}
   .af-note{margin-top:16px;font-size:11px;color:var(--w40)}
+  tr.affar{cursor:pointer}
+  tr.affar.open td{background:var(--card)}
+  .deal-cell{padding:0 !important;background:var(--card)}
+  .deal{border-left:2px solid var(--orange);margin:0}
+  .deal-h{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;font-size:12px;color:var(--w70)}
+  .chain{display:flex;gap:0;padding:6px 18px 20px;overflow-x:auto}
+  .cstep{flex:1;min-width:140px;position:relative;padding:0 8px}
+  .cstep .line{position:absolute;top:13px;left:50%;right:-50%;height:2px;background:var(--w10)}
+  .cstep.done .line{background:var(--green)}
+  .cstep:last-child .line{display:none}
+  .cstep .dot{width:26px;height:26px;border-radius:50%;background:var(--deep);border:2px solid var(--w10);display:flex;align-items:center;justify-content:center;font-size:12px;position:relative;z-index:2;margin-bottom:9px}
+  .cstep.done .dot{background:var(--green);border-color:var(--green);color:#0d1a12}
+  .cstep.active .dot{border-color:var(--orange);color:var(--orange)}
+  .cstep .ct{font-size:10px;color:var(--w40);text-transform:uppercase;letter-spacing:.04em}
+  .cstep .cv{font-weight:700;margin-top:3px;font-size:12px}
+  .cstep .cm{font-size:11px;color:var(--w70);margin-top:2px}
+  .cstep .cm .b{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-top:3px}
 </style>
 
 <div class="af">
@@ -127,8 +144,9 @@
     if(!rows.length){ host.innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Inga poster.</td></tr>'; return; }
     host.innerHTML=rows.map(function(r){
       var ic=ICON[r.type]||"•";
-      return '<tr>'+
-        '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+'</span></td>'+
+      var af=(r.type==="Affär")?' class="affar" data-affar-id="'+esc(r.id)+'"':'';
+      return '<tr'+af+'>'+
+        '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+(r.type==="Affär"?' <span class="muted" style="font-weight:400">▸</span>':'')+'</span></td>'+
         '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
         '<td>'+(r.company?esc(r.company):'<span class="muted">—</span>')+'</td>'+
         '<td class="mono">'+(r.number?esc(r.number):'<span class="muted">—</span>')+'</td>'+
@@ -139,6 +157,44 @@
     }).join("");
   }
   function render(){ renderFunnel(); renderRows(); }
+
+  // ── affärskort / kedja (P2) ──
+  function pillMini(txt, cls){ return '<span class="pill p-'+esc(cls||"wait")+'" style="font-size:10px;padding:2px 7px"><span class="d"></span>'+esc(txt)+'</span>'; }
+  function first(items){ return (items && items.length) ? items[0] : null; }
+  function renderChainHtml(j){
+    var c=j.chain, D=j.deal;
+    var it;
+    var stages=[
+      { has:!!c.lead, label:"Lead", val: c.lead?esc(c.lead.name||"Lead"):'<span class="muted">—</span>', meta: c.lead?esc(c.lead.date||""):"" },
+      { has:c.aktivitet.count>0, label:"Aktivitet", val: c.aktivitet.count?(esc(c.aktivitet.count)+" st"):'<span class="muted">—</span>', meta: c.aktivitet.latest?esc(c.aktivitet.latest):"" },
+      (it=first(c.offert.items),{ has:c.offert.count>0, label:"Offert", val: c.offert.count?esc((it&&it.number)||(c.offert.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" }),
+      (it=first(c.order.items),{ has:c.order.count>0, label:"Order", val: c.order.count?esc((it&&it.number)||(c.order.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" }),
+      (it=first(c.faktura.items),{ has:c.faktura.count>0, label:"Faktura", val: c.faktura.count?esc((it&&it.number)||(c.faktura.count+" st")):'<span class="muted">—</span>', meta: it?pillMini(it.status,it.status_cls):"" })
+    ];
+    var lastIdx=-1,i; for(i=0;i<stages.length;i++){ if(stages[i].has) lastIdx=i; }
+    var steps=stages.map(function(s,idx){
+      var cls=s.has?(idx===lastIdx?"active":"done"):"";
+      var icon=s.has?(idx===lastIdx?"◷":"✓"):"○";
+      return '<div class="cstep '+cls+'"><div class="line"></div><div class="dot">'+icon+'</div><div class="ct">'+esc(s.label)+'</div><div class="cv">'+s.val+'</div>'+(s.meta?'<div class="cm">'+s.meta+'</div>':'')+'</div>';
+    }).join("");
+    var head='<div class="deal-h"><div>'+esc(D.company||"")+(D.value?' · '+esc(money(D.value)):'')+(D.sannolikhet!=null?' · '+esc(D.sannolikhet)+'%':'')+'</div><div>'+esc(D.status||"")+'</div></div>';
+    return '<div class="deal">'+head+'<div class="chain">'+steps+'</div></div>';
+  }
+  function toggleDeal(tr){
+    var next=tr.nextElementSibling;
+    if(next && next.getAttribute && next.getAttribute("data-detail")==="1"){ next.parentNode.removeChild(next); tr.className="affar"; return; }
+    root.querySelectorAll('tr[data-detail="1"]').forEach(function(x){ x.parentNode.removeChild(x); });
+    root.querySelectorAll("tr.affar.open").forEach(function(x){ x.className="affar"; });
+    tr.className="affar open";
+    var det=document.createElement("tr"); det.setAttribute("data-detail","1");
+    det.innerHTML='<td colspan="7" class="deal-cell"><div class="deal"><div class="deal-h muted">Laddar kedjan…</div></div></td>';
+    tr.parentNode.insertBefore(det, tr.nextSibling);
+    var cell=det.querySelector(".deal-cell");
+    fetch(HOST+"/admin/affar/deal/"+encodeURIComponent(tr.getAttribute("data-affar-id")),{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ cell.innerHTML=(j&&j.ok)?renderChainHtml(j):'<div class="deal"><div class="deal-h muted">Kunde inte ladda kedjan.</div></div>'; })
+      .catch(function(){ cell.innerHTML='<div class="deal"><div class="deal-h muted">Nätverksfel.</div></div>'; });
+  }
 
   function setChips(box, attr, val){
     root.querySelectorAll('[data-af="'+box+'"] .chip').forEach(function(c){ c.className="chip"+((c.getAttribute(attr)||"")===val?" on":""); });
@@ -163,6 +219,7 @@
     if(step){ var lbl=step.getAttribute("data-step"); STATE.type=(STATE.type===lbl)?"":lbl; setChips("typechips","data-t",STATE.type); render(); return; }
     var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; setChips("typechips","data-t",STATE.type); render(); return; }
     var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); renderRows(); return; }
+    var ar=t.closest("tr.affar"); if(ar){ toggleDeal(ar); return; }
   });
   root.addEventListener("input",function(e){ if(e.target.getAttribute("data-af")==="search"){ STATE.q=e.target.value.trim(); renderRows(); } });
 

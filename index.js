@@ -19827,9 +19827,9 @@ offertEngine = registerOffertRoutes(app, {
   createApprovalRequest: _createApprovalRequestInternal,
 });
 
-// Affär samlad vy (P1) — routes i affar_api.js.
+// Affär samlad vy (P1+P2) — routes i affar_api.js.
 registerAffarRoutes(app, {
-  bubbleFind, bubbleFindAll, bubbleId, bubbleCount,
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount,
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
