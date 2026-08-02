@@ -1333,6 +1333,9 @@
   var TOKEN         = cfg('planning_token');
   var CLIENTCOMPANY = cfg('clientcompany');
   var CC_NAME       = cfg('clientcompany_nm');
+  // Affär-ryggrad: satt ENDAST i affärs-popupen → då visas BARA avtal knutna till
+  // denna deal (Contract.deal). Tom på Företag-kortet → hela kundens avtal visas.
+  var DEAL_ID       = cfg('deal');
 
   // ── Demo-data ─────────────────────────────────────────────────────────────
   // Strukturen speglar /services/dashboard:s active_account + active_by_office
@@ -1586,6 +1589,9 @@
     // Office-scope
     SAMPLE.offices.forEach(function (of) {
       var list = (SAMPLE.contracts_by_office[of.id] || []);
+      // Affär-ryggrad: i deal-läge döljs kontor utan avtal knutna till affären (annars
+      // vräks kundens alla tomma kontor in). På Företag-kortet visas tomma som förr.
+      if (DEAL_ID && list.length === 0) { return; }
       if (list.length === 0) {
         sections.push('<div class="ab-sect">'
           + '<div class="ab-sect-h"><div class="ab-sect-l"><div class="ab-sect-name">' + esc(of.name) + '</div><span class="ab-sect-id">' + esc(of.kontors_id) + '</span></div><div class="ab-sect-addr">' + esc(of.address) + '</div></div>'
@@ -1595,6 +1601,11 @@
         sections.push(sectionHtml(of.name, of.kontors_id, of.address, list, false));
       }
     });
+
+    // Affär-ryggrad: tom-vy när affären ännu saknar avtal (skapa via "+ Avtal från mall").
+    if (DEAL_ID && sections.length === 0) {
+      sections.push('<div class="ab-sect"><div class="ab-empty"><div class="ab-empty-t">Inga avtal för denna affär än</div>Klicka "+ Avtal från mall" för att skapa ett avtal kopplat till affären.</div></div>');
+    }
 
     $('sections').innerHTML = sections.join('');
 
@@ -1681,13 +1692,17 @@
         // Backend ger service_name/service_variant; SAMPLE använder samma → ingen ompackning
         return c;
       }
-      SAMPLE.account_contracts = (data.account_contracts || []).map(mapCt);
+      // Affär-ryggrad: om DEAL_ID är satt (blocket bäddat i affärs-popupen) visa
+      // BARA avtal knutna till denna deal. Tom → hela kundens avtal (Företag-kortet).
+      function keepDeal(c) { return !DEAL_ID || String(c.deal_id || '') === String(DEAL_ID); }
+      SAMPLE.account_contracts = (data.account_contracts || []).map(mapCt).filter(keepDeal);
       SAMPLE.contracts_by_office = {};
       Object.keys(data.contracts_by_office || {}).forEach(function (oid) {
-        SAMPLE.contracts_by_office[oid] = (data.contracts_by_office[oid] || []).map(mapCt);
+        var kept = (data.contracts_by_office[oid] || []).map(mapCt).filter(keepDeal);
+        if (kept.length) SAMPLE.contracts_by_office[oid] = kept;   // dölj tomma kontor i deal-läge
       });
 
-      console.log('[ab] live-data laddad: ' + (data.total_contracts || 0) + ' contracts');
+      console.log('[ab] live-data laddad' + (DEAL_ID ? ' (deal-scopad: ' + DEAL_ID + ')' : '') + ': ' + (data.total_contracts || 0) + ' contracts (visar ' + (SAMPLE.account_contracts.length + Object.keys(SAMPLE.contracts_by_office).reduce(function(n,k){return n+SAMPLE.contracts_by_office[k].length;},0)) + ')');
       renderAll();
     } catch (e) {
       console.warn('[ab] live-fetch fail', e && e.message);

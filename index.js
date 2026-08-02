@@ -20476,6 +20476,7 @@ function _enrichContract(ct, ctx) {
     signed_at:                  ct[SERVICES.CT_SIGNED_AT] || null,
     offer_approval_id:          ct[SERVICES.CT_OFFER_APPROVAL] || null,
     commission_id:              ct[SERVICES.CT_COMMISSION] || null,
+    deal_id:                    _ffIdOf(ct[SERVICES.CT_DEAL]) || null,   // Affär-ryggrad: för deal-scopad filtrering i affärs-popupen
     master_contract_id:         ct[SERVICES.CT_MASTER] || null,
     status_override:            ct[SERVICES.CT_STATUS_OVERRIDE] || null,
     parsed_confidence_json:     ct[SERVICES.CT_PARSED_CONFIDENCE] || null,
