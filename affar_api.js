@@ -58,9 +58,10 @@ export function registerAffarRoutes(app, deps) {
   }
 
   // ── normalisering per typ → unified row ───────────────────────────
-  function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: r.Source ? _str(r.Source) : "Ny", status_cls: "wait", id: bubbleId(r) }; }
+  function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: "Ny", status_cls: "wait", id: bubbleId(r) }; }
   function nAkt(r, m)  { const [lbl] = pick({}, _str(r.kundm_te_option_kundm_te), ["Aktivitet", "wait"]); return { type: "Aktivitet", source: "mira", company: cname(m, r.clientcompany), number: "", amount: null, date: _day(r.datum_bokning_date || r["Created Date"]), status: lbl || "Aktivitet", status_cls: "wait", id: bubbleId(r) }; }
-  function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.Namn || r.name || r.titel || ""), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
+  function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
+  function nWorkorder(r, m) { return { type: "Order", source: "tengella", company: cname(m, r.company), number: _str(r.workorder_no), amount: (_num(r.ft_totalvat) || _num(r.total_price)) || null, date: _day(r.order_date || r["Created Date"]), status: _str(r.status) || "Order", status_cls: "wait", id: bubbleId(r) }; }
   function nOffertM(r, m) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); return { type: "Offert", source: "mira", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
   function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
   function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
@@ -85,7 +86,7 @@ export function registerAffarRoutes(app, deps) {
 
       const [
         cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cWO, cInv,
-        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, invs,
+        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, invs, tengWos,
       ] = await Promise.all([
         bubbleCount("Lead"), bubbleCount("activitet_crm"), bubbleCount("deal"),
         bubbleCount("Offert", feMira), bubbleCount("FortnoxOffer"),
@@ -95,6 +96,7 @@ export function registerAffarRoutes(app, deps) {
         recent("Lead", limit), recent("activitet_crm", limit), recent("deal", limit),
         recent("Offert", limit, feMira), recent("FortnoxOffer", limit),
         recent("MiraOrder", limit), recent("FortnoxOrder", limit), recent("FortnoxInvoice", limit),
+        recent("TengellaWorkorder", limit),
       ]);
 
       const rows = [
@@ -105,6 +107,7 @@ export function registerAffarRoutes(app, deps) {
         ...offFs.map(nOffertF),
         ...ordMs.map((r) => nOrderM(r, m)),
         ...ordFs.map(nOrderF),
+        ...tengWos.filter((r) => !r.is_deleted).map((r) => nWorkorder(r, m)),
         ...invs.map(nInvoice),
       ].filter((r) => r.id);
       rows.sort((a, b) => (_ts(b.date) - _ts(a.date)));
@@ -117,7 +120,7 @@ export function registerAffarRoutes(app, deps) {
         },
         counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, order_mira: cOrdM, order_fortnox: cOrdF, order_tengella: cWO },
         rows,
-        note: "P1 read-only. TengellaWorkorder ingår i order-count men ej i liggaren än (fältmappning ej bekräftad). Ägare/deal-namn best-effort.",
+        note: "P1 read-only. Alla typer i liggaren (inkl TengellaWorkorder). Sortering på visnings-datum. Ägare (deal_owner) visas ej i P1-liggaren.",
       });
     } catch (e) {
       console.error("[/admin/affar/feed]", e?.message, e?.detail);
