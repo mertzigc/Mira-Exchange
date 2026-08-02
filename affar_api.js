@@ -130,7 +130,7 @@ export function registerAffarRoutes(app, deps) {
   });
 
   // ── GET /admin/affar/deal/:id — kedjan (P2). Läser Deals list-fält direkt. ──
-  opt("/admin/affar/deal/:id");
+  app.options("/admin/affar/deal/:id", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
   app.get("/admin/affar/deal/:id", async (req, res) => {
     if (!guard(req, res)) return;
     try {
@@ -170,7 +170,7 @@ export function registerAffarRoutes(app, deps) {
           status: _str(deal.Status), value: _num(deal.value_brutto) || null, sannolikhet: _num(deal.sannolikhet) || null,
         },
         chain: {
-          lead: leadRow ? { name: (cname(m, leadRow.Company) || _str(leadRow.Name)), date: _day(leadRow["Created Date"]) } : null,
+          lead: leadRow ? { name: (_str(leadRow.Name) || _str(leadRow.titel) || cname(m, leadRow.Company)), date: _day(leadRow["Created Date"]) } : null,
           aktivitet: { count: akItems.length, latest: akItems.length ? akItems[0].status : null, date: akItems.length ? akItems[0].date : null },
           offert: { count: offItems.length, items: offItems },
           order: { count: ordItems.length, items: ordItems },
