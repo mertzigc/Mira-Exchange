@@ -54,6 +54,7 @@
   .p-wait{background:var(--w10);color:var(--w70)}
   .p-red{background:rgba(224,90,90,.13);color:var(--red)}.p-red .d{background:var(--red)}
   .muted{color:var(--w40)}
+  .kindtag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--w40);background:var(--w10);border-radius:4px;padding:1px 5px;margin-left:4px;vertical-align:middle}
   .af-note{margin-top:16px;font-size:11px;color:var(--w40)}
   tr.affar{cursor:pointer}
   tr.affar.open td{background:var(--card)}
@@ -146,7 +147,7 @@
       var ic=ICON[r.type]||"•";
       var af=(r.type==="Affär")?' class="affar" data-affar-id="'+esc(r.id)+'"':'';
       return '<tr'+af+'>'+
-        '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+(r.type==="Affär"?' <span class="muted" style="font-weight:400">▸</span>':'')+'</span></td>'+
+        '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+(r.type==="Affär"?' <span class="muted" style="font-weight:400">▸</span>':'')+(r.type==="Offert"&&r.kind?' <span class="kindtag">'+esc(r.kind)+'</span>':'')+'</span></td>'+
         '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
         '<td>'+(r.company?esc(r.company):'<span class="muted">—</span>')+'</td>'+
         '<td class="mono">'+(r.number?esc(r.number):'<span class="muted">—</span>')+'</td>'+

@@ -126,6 +126,8 @@ export function registerOffertRoutes(app, deps) {
       villkor_text: body.villkor_text != null ? _str(body.villkor_text) : undefined,
       comission: body.comission || undefined,
       deal: body.deal || undefined,                 // affärs-koppling → syns i affärskortets kedja
+      kind: body.kind ? _str(body.kind) : (isCreate ? "strukturerad" : undefined),  // strukturerad|uppladdad|fortnox
+      dokument: (Array.isArray(body.dokument_ids) && body.dokument_ids.length) ? body.dokument_ids : undefined,  // uppladdad offert: PDF:en
       recipient: Array.isArray(body.recipient) ? body.recipient : undefined,
       sender: Array.isArray(body.sender) ? body.sender : undefined,
     };

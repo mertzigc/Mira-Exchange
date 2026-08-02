@@ -110,6 +110,9 @@
   .ao-recip.on{background:var(--orange-dim);border-color:var(--orange);color:var(--orange)}
   .ao-recip .chk{opacity:.5;margin-right:5px}
   .ao-recip.on .chk{opacity:1}
+  .ao-drop{border:1px dashed rgba(255,255,255,.20);border-radius:10px;padding:28px;text-align:center;color:var(--w70);cursor:pointer;font-size:13px}
+  .ao-drop:hover,.ao-drop.drag{border-color:var(--orange);background:var(--orange-dim);color:var(--orange)}
+  .ao-drop.has{border-style:solid;border-color:var(--green);color:var(--green)}
 
   /* lista */
   .ao-list-item{display:grid;grid-template-columns:120px 1fr auto auto auto;gap:14px;align-items:center;
@@ -170,6 +173,15 @@
 
   <!-- FORM -->
   <div data-ao="view-form">
+    <!-- Läge: strukturerad vs uppladdad -->
+    <div class="ao-panel" style="display:flex;align-items:center;gap:14px">
+      <span class="ao-muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Skapa som</span>
+      <div class="ao-seg">
+        <button class="ao-seg-btn on" data-ao="mode-btn" data-m="strukturerad">Strukturerad offert</button>
+        <button class="ao-seg-btn" data-ao="mode-btn" data-m="uppladdad">Ladda upp dokument</button>
+      </div>
+    </div>
+
     <!-- Kund -->
     <div class="ao-panel">
       <h2>Kund</h2>
@@ -245,8 +257,8 @@
       </div>
     </div>
 
-    <!-- Rader -->
-    <div class="ao-panel">
+    <!-- Rader (strukturerat läge) -->
+    <div class="ao-panel" data-ao="rows-panel">
       <h2>Rader</h2>
       <div data-ao="rows"></div>
       <button class="ao-addrow" data-ao="add-row">+ Lägg till rad</button>
@@ -256,6 +268,14 @@
         <div class="r"><span class="ao-muted">Moms</span><span data-ao="t-moms">0,00 SEK</span></div>
         <div class="r grand"><span>Att betala</span><span data-ao="t-total">0,00 SEK</span></div>
       </div>
+    </div>
+
+    <!-- Dokument (uppladdat läge) -->
+    <div class="ao-panel ao-hide" data-ao="upload-panel">
+      <h2>Dokument</h2>
+      <div class="ao-drop" data-ao="drop">Dra hit en PDF eller klicka för att välja<div class="ao-muted" style="font-size:11px;margin-top:4px">PDF eller bild · max 15 MB</div></div>
+      <input type="file" data-ao="file" accept="application/pdf,image/*" style="display:none">
+      <div data-ao="file-name" class="ao-muted" style="margin-top:10px"></div>
     </div>
 
     <!-- Villkor -->
@@ -319,7 +339,9 @@
     rows: [],
     recipient: [],          // valda Coworker-ids (mottagare/beställare)
     recipCache: [],         // kundens coworkers (för picker)
-    newClientType: "Företag"
+    newClientType: "Företag",
+    kind: "strukturerad",   // strukturerad | uppladdad
+    uploadDoc: null         // {id, name} för uppladdat läge
   };
 
   // ── util ─────────────────────────────────────────────────────────
@@ -526,6 +548,26 @@
       .catch(function(){ $("btn-createclient").disabled=false; toast("Nätverksfel","err"); });
   }
 
+  // ── läge: strukturerad vs uppladdad ──────────────────────────────
+  function setMode(kind){
+    state.kind=kind;
+    root.querySelectorAll('[data-ao="mode-btn"]').forEach(function(b){ b.className="ao-seg-btn"+(b.getAttribute("data-m")===kind?" on":""); });
+    $("rows-panel").className="ao-panel"+(kind==="uppladdad"?" ao-hide":"");
+    $("upload-panel").className="ao-panel"+(kind==="strukturerad"?" ao-hide":"");
+  }
+  function uploadFile(file){
+    if(!file) return;
+    $("file-name").textContent="Laddar upp "+file.name+"…";
+    var fd=new FormData(); fd.append("file",file); fd.append("titel",file.name);
+    fetch(HOST+"/admin/dokument/upload",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.ok && j.doc_id){ state.uploadDoc={id:j.doc_id,name:file.name}; $("drop").className="ao-drop has"; $("file-name").textContent="✓ "+file.name+" uppladdad"; }
+        else { $("file-name").textContent="Kunde inte ladda upp: "+((j&&j.error)||"fel"); }
+      })
+      .catch(function(){ $("file-name").textContent="Nätverksfel vid uppladdning."; });
+  }
+
   // ── läs formuläret → payload ─────────────────────────────────────
   function readForm(){
     // synka rad-inputs till state (görs löpande via input-events, men säkra här)
@@ -555,8 +597,11 @@
 
   function save(){
     if(!state.client.id){ toast("Välj en kund först","err"); return; }
-    if(!state.rows.length){ toast("Lägg till minst en rad","err"); return; }
+    if(state.kind==="uppladdad"){ if(!state.offertId && !state.uploadDoc){ toast("Ladda upp ett dokument först","err"); return; } }
+    else { if(!state.rows.length){ toast("Lägg till minst en rad","err"); return; } }
     var payload=readForm();
+    payload.kind=state.kind;
+    if(state.kind==="uppladdad"){ payload.rows=[]; if(state.uploadDoc){ payload.dokument_ids=[state.uploadDoc.id]; } }
     var url = state.offertId ? (HOST+"/admin/offert/"+encodeURIComponent(state.offertId)) : (HOST+"/admin/offert/create");
     var method = state.offertId ? "PATCH" : "POST";
     $("btn-save").disabled=true; $("save-hint").textContent="Sparar…";
@@ -649,6 +694,8 @@
         $("f-momstyp").value=o.momstyp||""; $("f-valuta").value=o.valuta||"SEK";
         $("f-beskrivning").value=o.beskrivning||""; $("f-villkor_text").value=o.villkor_text||"";
         $("f-leveransadress").value=(o.leveransadress && (o.leveransadress.address||o.leveransadress))||"";
+        state.kind=o.kind||"strukturerad"; state.uploadDoc=null; setMode(state.kind);
+        $("file").value=""; $("file-name").textContent=(state.kind==="uppladdad")?"Dokument bifogat (ladda upp nytt för att ersätta)":""; $("drop").className="ao-drop";
         renderRows(); paintClient(); $("btn-preview").disabled=false;
         showView("form");
       }).catch(function(){ toast("Nätverksfel","err"); });
@@ -661,6 +708,9 @@
     state.recipient=[];
     state.recipCache=[];
     state.newClientType="Företag";
+    state.kind="strukturerad"; state.uploadDoc=null;
+    setMode("strukturerad");
+    $("file").value=""; $("file-name").textContent=""; $("drop").className="ao-drop";
     $("newclient-form").className="ao-hide";
     $("recipients").className="ao-hide";
     ["f-titel","f-leveranstid","f-betalningsvillkor","f-momstyp","f-leveransadress","f-beskrivning","f-villkor_text"].forEach(function(k){ $(k).value=""; });
@@ -699,6 +749,9 @@
     if(t.closest('[data-ao="btn-cancelclient"]')){ closeNewClient(); return; }
     if(t.closest('[data-ao="btn-createclient"]')){ createClient(); return; }
     var seg=t.closest('[data-ao="nc-type"]'); if(seg){ setNcType(seg.getAttribute("data-val")); return; }
+    // läge (strukturerad/uppladdad) + dropzone
+    var mb=t.closest('[data-ao="mode-btn"]'); if(mb){ setMode(mb.getAttribute("data-m")); return; }
+    if(t.closest('[data-ao="drop"]')){ $("file").click(); return; }
     // mottagar-chip toggle
     var rc=t.closest('[data-recip]');
     if(rc){ var cid=rc.getAttribute("data-recip"); var ri=state.recipient.indexOf(cid); if(ri>=0){ state.recipient.splice(ri,1); } else { state.recipient.push(cid); } renderRecipients(state.recipCache); return; }
@@ -724,6 +777,8 @@
     }
     if(t.getAttribute && t.getAttribute("data-ao")==="cc-input"){ doCcSearch(t.value.trim()); return; }
   });
+  // filuppladdning (change-event på file-input)
+  (function(){ var fe=$("file"); if(fe){ fe.addEventListener("change", function(e){ uploadFile(e.target.files && e.target.files[0]); }); } })();
 
   // stäng dropdowns vid klick utanför
   document.addEventListener("click", function(e){
