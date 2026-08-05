@@ -733,15 +733,16 @@
 
 <div class="ab-wrap">
 
-  <!-- Bubble-config: sätt value="" via dynamic data. Hidden inputs lever
-       inuti .ab-wrap så de scopas tillsammans med resten. -->
-  <input type="hidden" data-mira="api_host"         value="https://mira-exchange.onrender.com">
-  <input type="hidden" data-mira="planning_token"   value="">
-  <input type="hidden" data-mira="clientcompany"    value="">
-  <input type="hidden" data-mira="clientcompany_nm" value="">
+  <!-- ⚠️ Bubble STRIPPAR value på hidden inputs (även literaler) → bär värdet i
+       data-val och bootstrap:a till .value i script #1. Sätt data-val="" via
+       Bubble dynamic data (INTE value). Se reference-bubble-hidden-input-strip. -->
+  <input type="hidden" data-mira="api_host"         data-val="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"   data-val="">
+  <input type="hidden" data-mira="clientcompany"    data-val="">
+  <input type="hidden" data-mira="clientcompany_nm" data-val="">
   <!-- Affär-ryggrad: sätt ENDAST när blocket bäddas i affärs-popupens Avtal-flik.
        Bubble dynamic: Parent group's Deal's unique id. Tom på Företag-kortet. -->
-  <input type="hidden" data-mira="deal"             value="">
+  <input type="hidden" data-mira="deal"             data-val="">
 
   <div class="ab-head">
     <div class="ab-head-l">
@@ -1307,6 +1308,16 @@
 
 <script>
 (function () {
+  // ── Bubble value-strip bootstrap (2026-08-05) ───────────────────
+  // Bubble strippar value på hidden inputs → värdet bärs i data-val och
+  // kopieras till .value här, INNAN någon config läses. Global + idempotent.
+  (function(){
+    var ins = document.querySelectorAll('[data-mira][data-val]');
+    for (var k = 0; k < ins.length; k++) {
+      if (!ins[k].value) { ins[k].value = ins[k].getAttribute('data-val') || ''; }
+    }
+  })();
+
   // ── Multi-instance support ──────────────────────────────────────
   // Claim första oclaim:ade .ab-wrap. Varje IIFE-instans (en per HTML-block)
   // tar sin egen root. Detta gör att flera block kan samsas i samma DOM
@@ -2405,7 +2416,7 @@
   // Läser api_host + planning_token från admin-blockets hidden inputs.
   // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
   // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
-  const API_HOST  = ((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '';
+  const API_HOST  = (((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '') || 'https://mira-exchange.onrender.com';
   const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');

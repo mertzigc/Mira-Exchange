@@ -16546,16 +16546,13 @@ async function _createContractsFromApprovalRequest(parent) {
   const skipped = [];
 
   for (const spec of specs) {
-    // Fas 1: bara Subscription auto-skapas. RateCard + Hybrid kräver manuell granskning.
+    // Affär-ryggrad (2026-08-05, Christian): auto-skapa ALLA typer (Subscription/
+    // RateCard/Hybrid). Tidigare skippades RateCard/Hybrid + krävdes offer_id — men
+    // wizardens Steg 3 fångar full prissättning (rate_card_json/volume) och F&E/Staff-
+    // avtal ÄR RateCard/Hybrid, så varje signerat avtal ska bli ett Contract kopplat
+    // till affären. offer_id valfritt (Contract behöver inget erbjudande; null filtreras
+    // bort ur payloaden). Opt-out per signering finns kvar via auto_create_contract=no.
     const ctype = String(spec.contract_type || SERVICES.TYPE_SUBSCRIPTION);
-    if (ctype !== SERVICES.TYPE_SUBSCRIPTION) {
-      skipped.push({ service_slug: spec.service_slug, reason: `type_${ctype}_not_auto` });
-      continue;
-    }
-    if (!spec.offer_id) {
-      skipped.push({ service_slug: spec.service_slug, reason: "missing_offer_id" });
-      continue;
-    }
 
     // Volume_json kan vara objekt ELLER sträng — Bubble vill ha sträng
     const volumeJson = spec.volume_json

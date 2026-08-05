@@ -858,8 +858,10 @@
   </div>
 
 
-  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
-  <input type="hidden" data-mira="planning_token" value="">
+  <!-- ⚠️ Bubble STRIPPAR value på hidden inputs → bär värdet i data-val +
+       bootstrap till .value i script #1. Sätt data-val="" via dynamic data. -->
+  <input type="hidden" data-mira="api_host"       data-val="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" data-val="">
 
   <div class="aa-head">
     <div>
@@ -1414,6 +1416,16 @@
 
 <script>
 (function () {
+  // ── Bubble value-strip bootstrap (2026-08-05) ───────────────────
+  // Bubble strippar value på hidden inputs → värdet bärs i data-val och
+  // kopieras till .value här, INNAN någon config läses. Global + idempotent.
+  (function(){
+    var ins = document.querySelectorAll('[data-mira][data-val]');
+    for (var k = 0; k < ins.length; k++) {
+      if (!ins[k].value) { ins[k].value = ins[k].getAttribute('data-val') || ''; }
+    }
+  })();
+
   // ── Multi-instance support ──────────────────────────────────────
   var root = (function () {
     var all = document.querySelectorAll('.aa-wrap');
@@ -2408,10 +2420,12 @@
   // Läser api_host + planning_token från admin-blockets hidden inputs.
   // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
   // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
-  const API_HOST  = ((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '';
+  const API_HOST  = (((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '') || 'https://mira-exchange.onrender.com';
   const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
+  // Dölj prototyp-banderollen i skarpt läge (vilseledande "inga avtal skickas").
+  if (IS_LIVE) { var _pb = (BROOT||document).querySelector('.wt-proto'); if (_pb) { _pb.style.display = 'none'; } }
 
   // Client-picker state (Steg B) — vald kund från autocomplete i Steg 2
   const CLIENT = { id: null, name: null };
