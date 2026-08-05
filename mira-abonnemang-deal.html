@@ -18,12 +18,13 @@
     - Scoped helpers $ / cfg arbetar mot root, inga document.getElementById
     - Hidden inputs binds via data-mira="..." (Bubble-kopplingen)
 
-  KOPPLING I BUBBLE (sätt value="" via dynamic data — raw HTML-tokens):
-    data-mira="api_host"          = https://mira-exchange.onrender.com
-    data-mira="planning_token"    = PLANNING_ADMIN_TOKEN
-    data-mira="clientcompany"     = Current Company's unique id
-    data-mira="clientcompany_nm"  = Current Company's Name_company
-    data-mira="deal"              = Parent group's Deal's unique id (ENDAST i affärs-popup; tom på Företag-kortet)
+  KOPPLING I BUBBLE (⚠️ sätt data-val="" via dynamic data — INTE value.
+  Bubble strippar value på hidden inputs; bootstrap kopierar data-val→.value):
+    data-mira="api_host"      data-val= https://mira-exchange.onrender.com
+    data-mira="planning_token" data-val= PLANNING_ADMIN_TOKEN
+    data-mira="clientcompany"  data-val= Current Company's unique id
+    data-mira="clientcompany_nm" data-val= Current Company's Name_company
+    data-mira="deal"           data-val= Parent group's Deal's unique id (ENDAST i affärs-popup; tom på Företag-kortet)
 
   Om planning_token eller clientcompany saknas körs demo-SAMPLE.
 -->
@@ -739,15 +740,17 @@
 
 <div class="ad-wrap">
 
-  <!-- Bubble-config: sätt value="" via dynamic data. Hidden inputs lever
-       inuti .ad-wrap så de scopas tillsammans med resten. -->
-  <input type="hidden" data-mira="api_host"         value="https://mira-exchange.onrender.com">
-  <input type="hidden" data-mira="planning_token"   value="">
-  <input type="hidden" data-mira="clientcompany"    value="">
-  <input type="hidden" data-mira="clientcompany_nm" value="">
+  <!-- ⚠️ Bubble STRIPPAR value-attributet på hidden inputs (bekräftat 2026-08-05:
+       även hårdkodade literaler blev tomma i DOM). data-* överlever däremot →
+       bär värdet i data-val och kopiera till .value via bootstrap i script #1.
+       Sätt data-val="" via Bubble dynamic data (INTE value). -->
+  <input type="hidden" data-mira="api_host"         data-val="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"   data-val="">
+  <input type="hidden" data-mira="clientcompany"    data-val="">
+  <input type="hidden" data-mira="clientcompany_nm" data-val="">
   <!-- Affär-ryggrad: sätt ENDAST när blocket bäddas i affärs-popupens Avtal-flik.
        Bubble dynamic: Parent group's Deal's unique id. Tom på Företag-kortet. -->
-  <input type="hidden" data-mira="deal"             value="">
+  <input type="hidden" data-mira="deal"             data-val="">
 
   <div class="ab-head">
     <div class="ab-head-l">
@@ -1313,6 +1316,17 @@
 
 <script>
 (function () {
+  // ── Bubble value-strip bootstrap (2026-08-05) ───────────────────
+  // Bubble strippar value på hidden inputs → vi bär värdet i data-val och
+  // kopierar tillbaka till .value här, INNAN någon config läses. Global +
+  // idempotent (rör bara inputs som har data-val, dvs deal-blocket).
+  (function(){
+    var ins = document.querySelectorAll('[data-mira][data-val]');
+    for (var k = 0; k < ins.length; k++) {
+      if (!ins[k].value) { ins[k].value = ins[k].getAttribute('data-val') || ''; }
+    }
+  })();
+
   // ── Multi-instance support ──────────────────────────────────────
   // Claim första oclaim:ade .ad-wrap. Varje IIFE-instans (en per HTML-block)
   // tar sin egen root. Detta gör att flera block kan samsas i samma DOM
@@ -2411,7 +2425,7 @@
   // Läser api_host + planning_token från admin-blockets hidden inputs.
   // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
   // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
-  const API_HOST  = ((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '';
+  const API_HOST  = (((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '') || 'https://mira-exchange.onrender.com';
   const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
   const IS_LIVE = !!(API_HOST && API_TOKEN);
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
