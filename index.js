@@ -19840,6 +19840,44 @@ registerAffarRoutes(app, {
   CONNECTION_NAMES,
 });
 
+// ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──
+// Fortnox order/offert/faktura: returnerar ft_pdf om den finns, annars hämtar PDF:en
+// från Fortnox on-demand (via befintliga fetchAndStore*Pdf) och returnerar URL:en.
+// Lever i index.js (behöver Fortnox-token + fetch-funktionerna). /admin/affar öppet.
+app.options("/admin/affar/doc-url", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+app.get("/admin/affar/doc-url", async (req, res) => {
+  _approvalCors(req, res);
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) return res.status(401).json({ ok: false, error: "unauthorized" });
+  try {
+    const type = String(req.query.type || "").toLowerCase();
+    const id = String(req.query.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id_required" });
+    const CFG = {
+      order:   { t: "FortnoxOrder",   conn: "connection",    run: (row, at) => fetchAndStoreOrderPdf({ connection_id: row.connection, order_docno: row.ft_document_number, bubble_order_id: row._id, access_token: at }) },
+      offert:  { t: "FortnoxOffer",   conn: "connection",    run: (row, at) => fetchAndStoreOfferPdf({ connection_id: row.connection, offer_docno: row.ft_document_number, bubble_offer_id: row._id, access_token: at }) },
+      faktura: { t: "FortnoxInvoice", conn: "connection_id", run: (row, at) => fetchAndStoreInvoicePdf({ connection_id: row.connection_id, invoice_docno: row.ft_document_number, bubble_invoice_id: row._id, access_token: at }) },
+    };
+    const c = CFG[type];
+    if (!c) return res.status(400).json({ ok: false, error: "bad_type" });
+    const row = await bubbleGet(c.t, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+    // Redan hämtad (ft_pdf) eller temp-länk (ft_url, Tengella) → returnera direkt.
+    const existing = String(row.ft_pdf || "").trim() || String(row.ft_url || "").trim();
+    if (existing) return res.json({ ok: true, url: existing.replace(/^\/\//, "https://"), cached: true });
+    const connId = row[c.conn];
+    if (!connId) return res.status(400).json({ ok: false, error: "no_connection" });
+    const tok = await ensureFortnoxAccessToken(connId);
+    if (!tok || !tok.ok || !tok.access_token) return res.status(502).json({ ok: false, error: "token_error" });
+    const r = await c.run(row, tok.access_token);
+    if (!r || !r.ok || !r.ft_pdf) return res.status(502).json({ ok: false, error: "pdf_fetch_failed", detail: (r && r.error) || null });
+    return res.json({ ok: true, url: String(r.ft_pdf).replace(/^\/\//, "https://"), cached: false });
+  } catch (e) {
+    console.error("[/admin/affar/doc-url]", e?.message, e?.detail);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Lazy TTL-städ av temp-preview-Dokument.
 // renderPreview() skapar Dokument med deletable_after = now + 2h (permanenta

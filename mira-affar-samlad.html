@@ -145,6 +145,7 @@
   var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Status",""];
   var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Meddelande","Region","Källa","Formulär","Kundansvarig","Tilldela"];
   var AKT_HEADS=["Skapad","Leverantör","Typ","Fas","Mötesdatum","Företag","Affär","Meddelande","Vår användare"];
+  var TYPE2DOC={ "Order":"order", "Offert":"offert", "Faktura":"faktura" };
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function money(n){ if(n==null) return ""; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
@@ -177,8 +178,14 @@
       '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
       '<td class="muted">'+esc(r.date||"")+'</td>'+
       '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
-      '<td>'+(r.url?'<a class="viewbtn" href="'+esc(r.url)+'" target="_blank" rel="noopener">Visa ↗</a>':'')+'</td>'+
+      '<td>'+viewCell(r)+'</td>'+
     '</tr>';
+  }
+  function viewCell(r){
+    if(r.url) return '<a class="viewbtn" href="'+esc(r.url)+'" target="_blank" rel="noopener">Visa ↗</a>';
+    var dt=TYPE2DOC[r.type];
+    if(dt && r.source==="fortnox") return '<button class="viewbtn" data-doc-type="'+esc(dt)+'" data-doc-id="'+esc(r.id)+'">Visa ↗</button>';
+    return "";
   }
   function assignSel(r){
     if(!USERS.length) return cm((r.tilldelad&&r.tilldelad.name)||"");
@@ -326,6 +333,17 @@
   root.addEventListener("click",function(e){
     var t=e.target;
     if(t.closest && t.closest(".assign")) return;   // låt tilldela-selecten vara
+    var vb=t.closest && t.closest('.viewbtn[data-doc-id]');
+    if(vb){
+      var w=window.open("","_blank");   // förladda flik i klick-gesten (undviker popup-blockare)
+      var dt=vb.getAttribute("data-doc-type"), did=vb.getAttribute("data-doc-id"), orig=vb.textContent;
+      vb.textContent="…";
+      fetch(HOST+"/admin/affar/doc-url?type="+encodeURIComponent(dt)+"&id="+encodeURIComponent(did),{headers:{"x-admin-token":TOKEN}})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ vb.textContent=orig; if(j&&j.ok&&j.url){ if(w){ w.location.href=j.url; } } else { if(w){ w.close(); } alert("Ingen PDF kunde hämtas."); } })
+        .catch(function(){ vb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-hämtning."); });
+      return;
+    }
     var pnav=t.closest('[data-af="prev"],[data-af="next"]');
     if(pnav){ var isNext=(pnav.getAttribute("data-af")==="next"); if(isNext&&STATE.hasMore){ STATE.page++; loadList(); } else if(!isNext&&STATE.page>0){ STATE.page--; loadList(); } return; }
     var step=t.closest("[data-step]");
