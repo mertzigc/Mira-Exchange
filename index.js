@@ -19862,8 +19862,10 @@ app.get("/admin/affar/doc-url", async (req, res) => {
     if (!c) return res.status(400).json({ ok: false, error: "bad_type" });
     const row = await bubbleGet(c.t, id);
     if (!row) return res.status(404).json({ ok: false, error: "not_found" });
-    // Redan hämtad (ft_pdf) eller temp-länk (ft_url, Tengella) → returnera direkt.
-    const existing = String(row.ft_pdf || "").trim() || String(row.ft_url || "").trim();
+    // Redan hämtad PDF? OBS: ft_url är Fortnox API-URL (JSON, EJ PDF) på order/offert/
+    // Fortnox-faktura → använd ALDRIG som PDF-länk. Bara riktig ft_pdf räknas som cached;
+    // saknas den hämtar vi PDF:en on-demand via /preview nedan.
+    const existing = String(row.ft_pdf || "").trim();
     if (existing) return res.json({ ok: true, url: existing.replace(/^\/\//, "https://"), cached: true });
     const connId = row[c.conn];
     if (!connId) return res.status(400).json({ ok: false, error: "no_connection" });
