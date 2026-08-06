@@ -81,6 +81,8 @@
   .pager button{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--white);font-size:12px;cursor:pointer}
   .pager button:disabled{opacity:.4;cursor:default}
   .pager .pinfo{font-size:11px;color:var(--w40)}
+  .viewbtn{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:7px;padding:5px 11px;font-size:11px;font-weight:700;color:var(--w70);text-decoration:none;white-space:nowrap}
+  .viewbtn:hover{border-color:var(--orange);color:var(--orange)}
 </style>
 
 <div class="af">
@@ -140,7 +142,7 @@
   var ICON={ Lead:"✨", Aktivitet:"💬", "Affär":"🤝", Offert:"📄", Avtal:"📘", Order:"🧾", Faktura:"💳" };
   var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Avtal","avtal"],["Order","order"],["Faktura","faktura"]];
   var LABEL2TYPE={ "":"", "Lead":"lead", "Aktivitet":"aktivitet", "Affär":"affar", "Offert":"offert", "Avtal":"avtal", "Order":"order", "Faktura":"faktura" };
-  var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Status"];
+  var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Status",""];
   var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Meddelande","Region","Källa","Formulär","Kundansvarig","Tilldela"];
   var AKT_HEADS=["Skapad","Leverantör","Typ","Fas","Mötesdatum","Företag","Affär","Meddelande","Vår användare"];
 
@@ -175,6 +177,7 @@
       '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
       '<td class="muted">'+esc(r.date||"")+'</td>'+
       '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
+      '<td>'+(r.url?'<a class="viewbtn" href="'+esc(r.url)+'" target="_blank" rel="noopener">Visa ↗</a>':'')+'</td>'+
     '</tr>';
   }
   function assignSel(r){

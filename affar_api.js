@@ -26,6 +26,7 @@ export function registerAffarRoutes(app, deps) {
   const _ref = (v) => (v == null ? null : (typeof v === "string" ? v : bubbleId(v)));
   const _ts = (v) => { if (!v) return 0; const t = Date.parse(v); return Number.isNaN(t) ? 0 : t; };
   const _day = (v) => (v ? _str(v).slice(0, 10) : "");
+  const _httpsUrl = (v) => { const s = _str(v); return s ? s.replace(/^\/\//, "https://") : ""; };
 
   // ── ClientCompany-cache (id → namn + kundansvarig) ────────────────
   let _ccCache = { name: null, owner: null, ts: 0 };
@@ -108,8 +109,8 @@ export function registerAffarRoutes(app, deps) {
   function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
   // ⚠️ Tengella-belopp: ft_totalvat/total_price ofta tomma → fallback ft_net/total_cost. Bekräfta rätt fält.
   function nWorkorder(r, m) { return { type: "Order", source: "tengella", company: cname(m, r.company), number: _str(r.workorder_no), amount: (_num(r.ft_totalvat) || _num(r.total_price) || _num(r.ft_net) || _num(r.total_cost)) || null, date: _day(r.order_date || r["Created Date"]), status: _str(r.status) || "Order", status_cls: "wait", id: bubbleId(r) }; }
-  function nOffertM(r, m) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
-  function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
+  function nOffertM(r, m, durl) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); const d0 = (Array.isArray(r.dokument) ? r.dokument[0] : null); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, url: (durl && d0) ? (durl.get(_ref(d0)) || "") : "", id: bubbleId(r) }; }
+  function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
   function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
   // Avtal (Contract) i affärskedjan. Status härleds enkelt (affar_api saknar _deriveContractStatus):
   // status_override först, annars slutdatum-passerat → Avslutad, annars Aktiv. Belopp = månadskostnad.
@@ -119,8 +120,8 @@ export function registerAffarRoutes(app, deps) {
     var st = ov ? [ov, "wait"] : (slutTs && slutTs < Date.now() ? ["Avslutad", "red"] : ["Aktiv", "ok"]);
     return { type: "Avtal", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.contract_title) || _str(r.kategori) || "Avtal", amount: _num(r["månadskostnad"]) || null, date: _day(r.startdatum || r.signed_at || r["Created Date"]), contract_type: _str(r.contract_type) || null, status: st[0], status_cls: st[1], id: bubbleId(r) };
   }
-  function nOrderF(r) { const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", id: bubbleId(r) }; }
-  function nInvoice(r) { const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: connSource(r.connection), company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
+  function nOrderF(r) { const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
+  function nInvoice(r) { const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: connSource(r.connection), company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
 
   // ── Rika per-typ-rader för native-ersättande liggaren ─────────────
   // Lead-kolumner: skapad/namn/email/telefon/företag/meddelande/region/källa/formulär/kundansvarig/tilldelad.
@@ -163,6 +164,17 @@ export function registerAffarRoutes(app, deps) {
     const ql = String(q || "").toLowerCase(); const ids = [];
     for (const [id, nm] of m) { if (nm && String(nm).toLowerCase().indexOf(ql) !== -1) ids.push(id); }
     return ids;
+  }
+  // Mira-offert: resolve första Dokumentets fil-URL (för Visa-knappen). Batchat per sida.
+  async function dokUrlMap(offRows) {
+    const ids = [];
+    for (const r of offRows) { const d0 = Array.isArray(r.dokument) ? r.dokument[0] : null; if (d0) ids.push(_ref(d0)); }
+    const uniq = [];
+    for (const id of ids) { if (id && uniq.indexOf(id) === -1) uniq.push(id); }
+    const docs = await Promise.all(uniq.map((id) => bubbleGet("Dokument", id).catch(() => null)));
+    const map = new Map();
+    uniq.forEach((id, i) => { const d = docs[i]; if (d) map.set(id, _httpsUrl(d.file || d.File)); });
+    return map;
   }
 
   // ── auth ──────────────────────────────────────────────────────────
@@ -385,7 +397,8 @@ export function registerAffarRoutes(app, deps) {
             [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
           ]);
         } else { miras = await pageOf("Offert", feMira); forts = await pageOf("FortnoxOffer"); }
-        rows = [...miras.map((r) => nOffertM(r, m)), ...forts.map(nOffertF)].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
+        const durl = await dokUrlMap(miras);
+        rows = [...miras.map((r) => nOffertM(r, m, durl)), ...forts.map(nOffertF)].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
         total = q ? rows.length : ((await bubbleCount("Offert", feMira)) + (await bubbleCount("FortnoxOffer")));
       }
       else if (type === "order") {
