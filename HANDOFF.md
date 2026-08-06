@@ -2,6 +2,8 @@
 
 > Senast uppdaterad 2026-07-19. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
+>
+> ⚠️ **AKTIVT SPÅR (2026-08-06): Offert/Affär/Avtal-modulen** lever i `OFFERT_PRODUKTION_HANDOFF.md` (⭐ STATUS överst) + minnet `project-offert-produktion-fe.md`. Denna sync-doc är fortsatt referens för faktura/order/workorder-synken (som offert/affär-vyn läser). Relevant härifrån för det spåret: §9d workorder→FortnoxOrder(connection=TENGELLA), §4 connection-IDs, Fortnox-auth (`fortnoxGetBinary` global client_secret), Bubble-gotchas.
 
 ---
 
