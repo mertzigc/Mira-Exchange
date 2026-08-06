@@ -39,6 +39,7 @@
   .src.mira{background:rgba(244,123,48,.14);color:var(--orange)}.src.mira .d{background:var(--orange)}
   .src.fortnox{background:rgba(91,141,239,.14);color:var(--blue)}.src.fortnox .d{background:var(--blue)}
   .src.tengella{background:rgba(155,125,239,.14);color:var(--purple)}.src.tengella .d{background:var(--purple)}
+  .tablewrap{width:100%;overflow-x:auto}
   .grid{width:100%;border-collapse:collapse}
   .grid th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);padding:8px 12px;border-bottom:1.5px solid var(--w10)}
   .grid td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -73,11 +74,19 @@
   .cstep .cv{font-weight:700;margin-top:3px;font-size:12px}
   .cstep .cm{font-size:11px;color:var(--w70);margin-top:2px}
   .cstep .cm .b{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-top:3px}
+  .msg{max-width:280px;color:var(--w70);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .assign{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 8px;color:var(--white);font-family:var(--fb);font-size:12px;max-width:170px}
+  .assign:focus{outline:none;border-color:var(--orange)}
+  .pager{display:flex;gap:10px;align-items:center;margin-top:14px}
+  .pager button{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--white);font-size:12px;cursor:pointer}
+  .pager button:disabled{opacity:.4;cursor:default}
+  .pager .pinfo{font-size:11px;color:var(--w40)}
 </style>
 
 <div class="af">
-  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
-  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="api_host"            value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"      value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="current_user_company" value="">
 
   <h1>Affär <span>·</span> samlad vy</h1>
   <div class="sub">Sälj → faktura · Mira · Fortnox · Tengella i en yta</div>
@@ -90,7 +99,7 @@
   <div class="bar">
     <div class="chips" data-af="typechips">
       <span class="chip on" data-t="">Alla</span><span class="chip" data-t="Lead">Lead</span><span class="chip" data-t="Aktivitet">Aktivitet</span>
-      <span class="chip" data-t="Affär">Affär</span><span class="chip" data-t="Offert">Offert</span><span class="chip" data-t="Order">Order</span><span class="chip" data-t="Faktura">Faktura</span>
+      <span class="chip" data-t="Affär">Affär</span><span class="chip" data-t="Offert">Offert</span><span class="chip" data-t="Avtal">Avtal</span><span class="chip" data-t="Order">Order</span><span class="chip" data-t="Faktura">Faktura</span>
     </div>
     <div style="flex:1"></div>
     <div class="chips" data-af="srcchips">
@@ -99,10 +108,18 @@
     </div>
   </div>
 
-  <table class="grid">
-    <thead><tr><th>Typ</th><th>Källa</th><th>Företag</th><th>Nummer</th><th class="num">Belopp</th><th>Datum</th><th>Status</th></tr></thead>
-    <tbody data-af="rows"><tr><td colspan="7" class="muted" style="padding:20px">Laddar…</td></tr></tbody>
-  </table>
+  <div class="tablewrap">
+    <table class="grid">
+      <thead data-af="thead"></thead>
+      <tbody data-af="rows"><tr><td class="muted" style="padding:20px">Laddar…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="pager" data-af="pager" style="display:none">
+    <button data-af="prev">‹ Föregående</button>
+    <button data-af="next">Nästa ›</button>
+    <span class="pinfo" data-af="pinfo"></span>
+  </div>
 
   <div class="af-note" data-af="note"></div>
 </div>
@@ -115,14 +132,22 @@
   if(!root) return; root.setAttribute("data-af-claimed","1");
   var $=function(k){ return root.querySelector('[data-af="'+k+'"]'); };
   var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
-  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), CUC=cfg("current_user_company");
 
-  var STATE={ rows:[], funnel:null, type:"", src:"", q:"" };
-  var ICON={ Lead:"✨", Aktivitet:"💬", "Affär":"🤝", Offert:"📄", Order:"🧾", Faktura:"💳" };
-  var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Order","order"],["Faktura","faktura"]];
+  // type="" => feed-läge (samlad översikt); annars list-läge (server-paginerad per typ)
+  var STATE={ feedRows:[], listRows:[], funnel:null, type:"", src:"", q:"", page:0, total:null, hasMore:false, loading:false };
+  var USERS=[];   // kollegor (för tilldela-dropdown)
+  var ICON={ Lead:"✨", Aktivitet:"💬", "Affär":"🤝", Offert:"📄", Avtal:"📘", Order:"🧾", Faktura:"💳" };
+  var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Avtal","avtal"],["Order","order"],["Faktura","faktura"]];
+  var LABEL2TYPE={ "":"", "Lead":"lead", "Aktivitet":"aktivitet", "Affär":"affar", "Offert":"offert", "Avtal":"avtal", "Order":"order", "Faktura":"faktura" };
+  var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Status"];
+  var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Meddelande","Region","Källa","Formulär","Kundansvarig","Tilldela"];
+  var AKT_HEADS=["Skapad","Leverantör","Typ","Fas","Mötesdatum","Företag","Affär","Meddelande","Vår användare"];
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function money(n){ if(n==null) return ""; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
+  function clip(s,n){ s=String(s==null?"":s); return s.length>n?s.slice(0,n-1)+"…":s; }
+  function cm(v){ return v?esc(v):'<span class="muted">—</span>'; }
 
   function renderFunnel(){
     var f=STATE.funnel||{}, h="";
@@ -132,32 +157,87 @@
     }
     $("funnel").innerHTML=h;
   }
-  function visible(){
-    return STATE.rows.filter(function(r){
-      if(STATE.type && r.type!==STATE.type) return false;
+  function setHead(heads){
+    $("thead").innerHTML='<tr>'+heads.map(function(h){ return '<th'+(h==="Belopp"?' class="num"':'')+'>'+esc(h)+'</th>'; }).join("")+'</tr>';
+  }
+  function colCount(){ return root.querySelectorAll('[data-af="thead"] th').length||7; }
+  function emptyRow(msg){ return '<tr><td colspan="'+colCount()+'" class="muted" style="padding:20px">'+esc(msg)+'</td></tr>'; }
+
+  // ── rad-renderers per typ ──
+  function docRowHtml(r){
+    var ic=ICON[r.type]||"•";
+    var af=(r.type==="Affär")?' class="affar" data-affar-id="'+esc(r.id)+'"':'';
+    return '<tr'+af+'>'+
+      '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+(r.type==="Affär"?' <span class="muted" style="font-weight:400">▸</span>':'')+(r.type==="Offert"&&r.kind?' <span class="kindtag">'+esc(r.kind)+'</span>':'')+'</span></td>'+
+      '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
+      '<td>'+cm(r.company)+'</td>'+
+      '<td class="mono">'+cm(r.number)+'</td>'+
+      '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
+      '<td class="muted">'+esc(r.date||"")+'</td>'+
+      '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
+    '</tr>';
+  }
+  function assignSel(r){
+    if(!USERS.length) return cm((r.tilldelad&&r.tilldelad.name)||"");
+    var cur=(r.tilldelad&&r.tilldelad.id)||"";
+    var o='<option value="">— tilldela —</option>';
+    for(var i=0;i<USERS.length;i++){ o+='<option value="'+esc(USERS[i].id)+'"'+(USERS[i].id===cur?" selected":"")+'>'+esc(USERS[i].name)+'</option>'; }
+    return '<select class="assign" data-lead-id="'+esc(r.id)+'">'+o+'</select>';
+  }
+  function leadRowHtml(r){
+    return '<tr>'+
+      '<td class="muted">'+esc(r.date||"")+'</td>'+
+      '<td>'+cm(r.name)+'</td>'+
+      '<td class="mono">'+cm(r.email)+'</td>'+
+      '<td class="mono">'+cm(r.phone)+'</td>'+
+      '<td>'+cm(r.company)+'</td>'+
+      '<td><div class="msg" title="'+esc(r.message||"")+'">'+cm(clip(r.message,90))+'</div></td>'+
+      '<td>'+cm(r.region)+'</td>'+
+      '<td>'+cm(r.kalla)+'</td>'+
+      '<td>'+(r.formular?"✓":'<span class="muted">—</span>')+'</td>'+
+      '<td>'+cm(r.kundansvarig)+'</td>'+
+      '<td>'+assignSel(r)+'</td>'+
+    '</tr>';
+  }
+  function aktRowHtml(r){
+    return '<tr>'+
+      '<td class="muted">'+esc(r.created||r.date||"")+'</td>'+
+      '<td>'+cm(r.leverantor)+'</td>'+
+      '<td>'+cm(r.typ)+'</td>'+
+      '<td>'+cm(r.fas)+'</td>'+
+      '<td class="muted">'+cm(r.motesdatum)+'</td>'+
+      '<td>'+cm(r.company)+'</td>'+
+      '<td>'+cm(r.affar)+'</td>'+
+      '<td><div class="msg" title="'+esc(r.meddelande||"")+'">'+cm(clip(r.meddelande,90))+'</div></td>'+
+      '<td>'+cm(r.var_anvandare)+'</td>'+
+    '</tr>';
+  }
+
+  function renderFeed(){
+    setHead(DOC_HEADS);
+    var rows=STATE.feedRows.filter(function(r){
       if(STATE.src && r.source!==STATE.src) return false;
       if(STATE.q){ var q=STATE.q.toLowerCase(); if(String(r.company||"").toLowerCase().indexOf(q)<0 && String(r.number||"").toLowerCase().indexOf(q)<0) return false; }
       return true;
     });
+    $("rows").innerHTML=rows.length?rows.map(docRowHtml).join(""):emptyRow("Inga poster.");
+    $("pager").style.display="none";
   }
-  function renderRows(){
-    var rows=visible(), host=$("rows");
-    if(!rows.length){ host.innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Inga poster.</td></tr>'; return; }
-    host.innerHTML=rows.map(function(r){
-      var ic=ICON[r.type]||"•";
-      var af=(r.type==="Affär")?' class="affar" data-affar-id="'+esc(r.id)+'"':'';
-      return '<tr'+af+'>'+
-        '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+(r.type==="Affär"?' <span class="muted" style="font-weight:400">▸</span>':'')+(r.type==="Offert"&&r.kind?' <span class="kindtag">'+esc(r.kind)+'</span>':'')+'</span></td>'+
-        '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
-        '<td>'+(r.company?esc(r.company):'<span class="muted">—</span>')+'</td>'+
-        '<td class="mono">'+(r.number?esc(r.number):'<span class="muted">—</span>')+'</td>'+
-        '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
-        '<td class="muted">'+esc(r.date||"")+'</td>'+
-        '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
-      '</tr>';
-    }).join("");
+  function renderList(){
+    var t=LABEL2TYPE[STATE.type]||"";
+    var heads = t==="lead"?LEAD_HEADS : t==="aktivitet"?AKT_HEADS : DOC_HEADS;
+    setHead(heads);
+    var rows=STATE.listRows;
+    if(STATE.src) rows=rows.filter(function(r){ return (r.source||"")===STATE.src; });
+    var fn = t==="lead"?leadRowHtml : t==="aktivitet"?aktRowHtml : docRowHtml;
+    $("rows").innerHTML=rows.length?rows.map(fn).join(""):emptyRow(STATE.loading?"Laddar…":"Inga poster.");
+    // pager
+    var pg=$("pager"); pg.style.display="flex";
+    $("prev").disabled=(STATE.page<=0);
+    $("next").disabled=(!STATE.hasMore);
+    $("pinfo").textContent="Sida "+(STATE.page+1)+(STATE.total!=null?(" · "+STATE.total+" poster totalt"):"");
   }
-  function render(){ renderFunnel(); renderRows(); }
+  function render(){ renderFunnel(); if(STATE.type){ renderList(); } else { renderFeed(); } }
 
   // ── affärskort / kedja (P2) ──
   function pillMini(txt, cls){ return '<span class="pill p-'+esc(cls||"wait")+'" style="font-size:10px;padding:2px 7px"><span class="d"></span>'+esc(txt)+'</span>'; }
@@ -191,7 +271,7 @@
     root.querySelectorAll("tr.affar.open").forEach(function(x){ x.className="affar"; });
     tr.className="affar open";
     var det=document.createElement("tr"); det.setAttribute("data-detail","1");
-    det.innerHTML='<td colspan="7" class="deal-cell"><div class="deal"><div class="deal-h muted">Laddar kedjan…</div></div></td>';
+    det.innerHTML='<td colspan="'+colCount()+'" class="deal-cell"><div class="deal"><div class="deal-h muted">Laddar kedjan…</div></div></td>';
     tr.parentNode.insertBefore(det, tr.nextSibling);
     var cell=det.querySelector(".deal-cell");
     fetch(HOST+"/admin/affar/deal/"+encodeURIComponent(tr.getAttribute("data-affar-id")),{headers:{"x-admin-token":TOKEN}})
@@ -204,29 +284,78 @@
     root.querySelectorAll('[data-af="'+box+'"] .chip').forEach(function(c){ c.className="chip"+((c.getAttribute(attr)||"")===val?" on":""); });
   }
 
-  function load(){
-    if(!HOST||!TOKEN){ $("rows").innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Saknar api_host/planning_token.</td></tr>'; return; }
+  // ── data-hämtning ──────────────────────────────────────────────────
+  function loadFeed(){
     fetch(HOST+"/admin/affar/feed",{headers:{"x-admin-token":TOKEN}})
       .then(function(r){ return r.json(); })
       .then(function(j){
-        if(!j||!j.ok){ $("rows").innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</td></tr>'; return; }
-        STATE.rows=j.rows||[]; STATE.funnel=j.funnel||{};
-        if(j.note){ $("note").textContent=j.note; }
+        if(!j||!j.ok){ if(!STATE.type) $("rows").innerHTML=emptyRow("Kunde inte ladda ("+esc((j&&j.error)||"fel")+")."); return; }
+        STATE.feedRows=j.rows||[]; STATE.funnel=j.funnel||{};
+        if(!STATE.type){ render(); } else { renderFunnel(); }
+      })
+      .catch(function(){ if(!STATE.type) $("rows").innerHTML=emptyRow("Nätverksfel."); });
+  }
+  function loadList(){
+    var t=LABEL2TYPE[STATE.type]||"";
+    if(!t){ render(); return; }
+    STATE.loading=true; render();
+    var url=HOST+"/admin/affar/list?type="+encodeURIComponent(t)+"&page="+STATE.page+"&limit=30"+(STATE.q?("&q="+encodeURIComponent(STATE.q)):"");
+    fetch(url,{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        STATE.loading=false;
+        if(!j||!j.ok){ STATE.listRows=[]; render(); $("rows").innerHTML=emptyRow("Kunde inte ladda ("+esc((j&&j.error)||"fel")+")."); return; }
+        STATE.listRows=j.rows||[]; STATE.total=(j.total!=null?j.total:null); STATE.hasMore=!!j.has_more;
         render();
       })
-      .catch(function(){ $("rows").innerHTML='<tr><td colspan="7" class="muted" style="padding:20px">Nätverksfel.</td></tr>'; });
+      .catch(function(){ STATE.loading=false; STATE.listRows=[]; render(); $("rows").innerHTML=emptyRow("Nätverksfel."); });
+  }
+  function loadUsers(){
+    if(!CUC) return;
+    fetch(HOST+"/admin/approval/users-by-company?clientcompany="+encodeURIComponent(CUC),{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if(j&&j.ok){ USERS=j.items||[]; if(STATE.type==="Lead") render(); } })
+      .catch(function(){});
   }
 
+  // ── events ─────────────────────────────────────────────────────────
+  var searchTimer=null;
   root.addEventListener("click",function(e){
     var t=e.target;
+    if(t.closest && t.closest(".assign")) return;   // låt tilldela-selecten vara
+    var pnav=t.closest('[data-af="prev"],[data-af="next"]');
+    if(pnav){ var isNext=(pnav.getAttribute("data-af")==="next"); if(isNext&&STATE.hasMore){ STATE.page++; loadList(); } else if(!isNext&&STATE.page>0){ STATE.page--; loadList(); } return; }
     var step=t.closest("[data-step]");
-    if(step){ var lbl=step.getAttribute("data-step"); STATE.type=(STATE.type===lbl)?"":lbl; setChips("typechips","data-t",STATE.type); render(); return; }
-    var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; setChips("typechips","data-t",STATE.type); render(); return; }
-    var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); renderRows(); return; }
+    if(step){ var slbl=step.getAttribute("data-step"); STATE.type=(STATE.type===slbl)?"":slbl; STATE.page=0; setChips("typechips","data-t",STATE.type); if(STATE.type) loadList(); else render(); return; }
+    var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; STATE.page=0; setChips("typechips","data-t",STATE.type); if(STATE.type) loadList(); else render(); return; }
+    var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); render(); return; }
     var ar=t.closest("tr.affar"); if(ar){ toggleDeal(ar); return; }
   });
-  root.addEventListener("input",function(e){ if(e.target.getAttribute("data-af")==="search"){ STATE.q=e.target.value.trim(); renderRows(); } });
+  root.addEventListener("input",function(e){
+    if(e.target.getAttribute("data-af")!=="search") return;
+    STATE.q=e.target.value.trim();
+    if(searchTimer){ clearTimeout(searchTimer); }
+    if(STATE.type){ searchTimer=setTimeout(function(){ STATE.page=0; loadList(); },350); }
+    else { render(); }
+  });
+  root.addEventListener("change",function(e){
+    var sel=e.target;
+    if(!sel.classList || !sel.classList.contains("assign")) return;
+    var leadId=sel.getAttribute("data-lead-id"), uid=sel.value;
+    sel.disabled=true;
+    fetch(HOST+"/admin/affar/lead/"+encodeURIComponent(leadId)+"/assign",{
+      method:"POST", headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"}, body:JSON.stringify({user_id:uid})
+    }).then(function(r){ return r.json(); })
+      .then(function(j){
+        sel.disabled=false;
+        if(!j||!j.ok){ alert("Tilldelning misslyckades."); return; }
+        for(var i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===leadId){ STATE.listRows[i].tilldelad=j.tilldelad; break; } }
+      })
+      .catch(function(){ sel.disabled=false; alert("Nätverksfel vid tilldelning."); });
+  });
 
-  load();
+  if(!HOST||!TOKEN){ setHead(DOC_HEADS); $("rows").innerHTML=emptyRow("Saknar api_host/planning_token."); return; }
+  loadUsers();
+  loadFeed();
 })();
 </script>

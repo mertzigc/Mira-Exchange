@@ -15,7 +15,7 @@
 
 export function registerAffarRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleCount, bubblePatch, bubbleId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
     FE_CONNECTION_ID, CONNECTION_NAMES,
   } = deps;
@@ -27,18 +27,63 @@ export function registerAffarRoutes(app, deps) {
   const _ts = (v) => { if (!v) return 0; const t = Date.parse(v); return Number.isNaN(t) ? 0 : t; };
   const _day = (v) => (v ? _str(v).slice(0, 10) : "");
 
-  // ── ClientCompany namn-cache (id → Name_company) ──────────────────
-  let _ccCache = { map: null, ts: 0 };
+  // ── ClientCompany-cache (id → namn + kundansvarig) ────────────────
+  let _ccCache = { name: null, owner: null, ts: 0 };
   const CC_TTL = 5 * 60 * 1000;
-  async function companyMap() {
-    if (_ccCache.map && (Date.now() - _ccCache.ts) < CC_TTL) return _ccCache.map;
+  async function _loadCC() {
+    if (_ccCache.name && (Date.now() - _ccCache.ts) < CC_TTL) return _ccCache;
     const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
+    const name = new Map(), owner = new Map();
+    for (const c of all) {
+      const id = bubbleId(c); if (!id) continue;
+      name.set(id, c.Name_company || c.name || "");
+      const ka = _ref(c.Kundansvarig); if (ka) owner.set(id, ka);
+    }
+    _ccCache = { name, owner, ts: Date.now() };
+    return _ccCache;
+  }
+  async function companyMap() { return (await _loadCC()).name; }
+  async function companyOwnerMap() { return (await _loadCC()).owner; }
+  const cname = (m, ref) => { const id = _ref(ref); return id ? (m.get(id) || "") : ""; };
+
+  // ── User-cache (id → visningsnamn) ────────────────────────────────
+  let _uCache = { map: null, ts: 0 };
+  async function userMap() {
+    if (_uCache.map && (Date.now() - _uCache.ts) < CC_TTL) return _uCache.map;
+    const all = await bubbleFindAll("User", {}).catch(() => []);
     const m = new Map();
-    for (const c of all) { const id = bubbleId(c); if (id) m.set(id, c.Name_company || c.name || ""); }
-    _ccCache = { map: m, ts: Date.now() };
+    for (const u of all) {
+      const id = bubbleId(u); if (!id) continue;
+      const first = _str(u["First Name"] || u["Förnamn"]);
+      const last  = _str(u["Last Name"]  || u["Efternamn"]);
+      const nm = (first + " " + last).trim() || _str(u.email || u.Email);
+      m.set(id, nm);
+    }
+    _uCache = { map: m, ts: Date.now() };
     return m;
   }
-  const cname = (m, ref) => { const id = _ref(ref); return id ? (m.get(id) || "") : ""; };
+
+  // ── Deal-cache (id → titel) ───────────────────────────────────────
+  let _dCache = { map: null, ts: 0 };
+  async function dealMap() {
+    if (_dCache.map && (Date.now() - _dCache.ts) < CC_TTL) return _dCache.map;
+    const all = await bubbleFindAll("deal", {}).catch(() => []);
+    const m = new Map();
+    for (const d of all) { const id = bubbleId(d); if (id) m.set(id, _str(d.titel) || _str(d.Namn) || _str(d.name)); }
+    _dCache = { map: m, ts: Date.now() };
+    return m;
+  }
+
+  // ── Leverantör-cache (id → Företagsnamn) ──────────────────────────
+  let _sCache = { map: null, ts: 0 };
+  async function supplierMap() {
+    if (_sCache.map && (Date.now() - _sCache.ts) < CC_TTL) return _sCache.map;
+    const all = await bubbleFindAll("leverantör-supplier", {}).catch(() => []);
+    const m = new Map();
+    for (const s of all) { const id = bubbleId(s); if (id) m.set(id, _str(s["Företagsnamn"])); }
+    _sCache = { map: m, ts: Date.now() };
+    return m;
+  }
 
   // ── status → {label, cls} ─────────────────────────────────────────
   // cls: ok(grön) | open(orange) | wait(grå) | red
@@ -77,6 +122,49 @@ export function registerAffarRoutes(app, deps) {
   function nOrderF(r) { const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", id: bubbleId(r) }; }
   function nInvoice(r) { const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: connSource(r.connection), company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], id: bubbleId(r) }; }
 
+  // ── Rika per-typ-rader för native-ersättande liggaren ─────────────
+  // Lead-kolumner: skapad/namn/email/telefon/företag/meddelande/region/källa/formulär/kundansvarig/tilldelad.
+  function nLeadFull(r, m, um, ownerMap) {
+    const ccId = _ref(r.client_company);
+    const kaId = _ref(r.Kundansvarig) || (ccId ? ownerMap.get(ccId) : null);   // lead-ägare, annars företagets kundansvarig
+    const tId  = _ref(r.tilldelad);
+    const [lbl, cls] = pick(DEAL_STATUS, _str(r.status), [_str(r.status) || "Ny", "wait"]);
+    return {
+      type: "Lead", source: "mira", id: bubbleId(r), date: _day(r["Created Date"]),
+      name: _str(r.Name), email: _str(r.Email), phone: _str(r.Phone),
+      company: (ccId ? (m.get(ccId) || "") : "") || _str(r.Company), company_id: ccId || null,
+      message: _str(r.prospect_message) || _str(r.Description),
+      region: _str(r.Region), kalla: _str(r.Source),
+      formular: _ref(r["Formulär"]) ? "Ja" : "",
+      status: lbl, status_cls: cls,
+      kundansvarig: kaId ? (um.get(kaId) || "") : "",
+      tilldelad: tId ? { id: tId, name: um.get(tId) || "" } : null,
+    };
+  }
+  // Aktivitet-kolumner: skapad/leverantör/typ/fas/mötesdatum/företag/affär/meddelande/vår användare.
+  function nAktFull(r, m, um, sm, dm) {
+    const levs = Array.isArray(r["Leverantör"]) ? r["Leverantör"] : (r["Leverantör"] ? [r["Leverantör"]] : []);
+    const dId = _ref(r.deal);
+    const wId = _ref(r.writer) || _ref(r["Created By"]);
+    return {
+      type: "Aktivitet", source: "mira", id: bubbleId(r), date: _day(r.datum_bokning_date || r["Created Date"]),
+      created: _day(r["Created Date"]),
+      leverantor: levs.map((x) => sm.get(_ref(x)) || "").filter(Boolean).join(", "),
+      typ: _str(r.activity_type), fas: _str(r.kundm_te_option_kundm_te),
+      motesdatum: _day(r.datum_bokning_date),
+      company: cname(m, r.company), company_id: _ref(r.company) || null,
+      affar: dId ? (dm.get(dId) || "") : "", affar_id: dId || null,
+      meddelande: _str(r.beskrivning) || _str(r["mötesantecking"]),
+      var_anvandare: wId ? (um.get(wId) || "") : "",
+    };
+  }
+  // Företags-id:n vars namn matchar q (för ref-företags-sök som Bubble ej klarar direkt)
+  function ccIdsMatching(m, q) {
+    const ql = String(q || "").toLowerCase(); const ids = [];
+    for (const [id, nm] of m) { if (nm && String(nm).toLowerCase().indexOf(ql) !== -1) ids.push(id); }
+    return ids;
+  }
+
   // ── auth ──────────────────────────────────────────────────────────
   function guard(req, res) {
     planningCors && planningCors(req, res);
@@ -94,18 +182,18 @@ export function registerAffarRoutes(app, deps) {
       const feMira = [{ key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE }];
 
       const [
-        cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cWO, cInv,
-        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, invs, tengWos,
+        cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cWO, cInv, cAvtal,
+        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, invs, tengWos, avtals,
       ] = await Promise.all([
         bubbleCount("Lead"), bubbleCount("activitet_crm"), bubbleCount("deal"),
         bubbleCount("Offert", feMira), bubbleCount("FortnoxOffer"),
         bubbleCount("MiraOrder"), bubbleCount("FortnoxOrder"), bubbleCount("TengellaWorkorder"),
-        bubbleCount("FortnoxInvoice"),
+        bubbleCount("FortnoxInvoice"), bubbleCount("Contract"),
         companyMap(),
         recent("Lead", limit), recent("activitet_crm", limit), recent("deal", limit),
         recent("Offert", limit, feMira), recent("FortnoxOffer", limit),
         recent("MiraOrder", limit), recent("FortnoxOrder", limit), recent("FortnoxInvoice", limit),
-        recent("TengellaWorkorder", limit),
+        recent("TengellaWorkorder", limit), recent("Contract", limit),
       ]);
 
       const rows = [
@@ -114,6 +202,7 @@ export function registerAffarRoutes(app, deps) {
         ...deals.map((r) => nDeal(r, m)),
         ...offMs.map((r) => nOffertM(r, m)),
         ...offFs.map(nOffertF),
+        ...avtals.map((r) => nAvtal(r, m)),
         ...ordMs.map((r) => nOrderM(r, m)),
         ...ordFs.map(nOrderF),
         ...tengWos.filter((r) => !r.is_deleted).map((r) => nWorkorder(r, m)),
@@ -125,9 +214,9 @@ export function registerAffarRoutes(app, deps) {
         ok: true,
         funnel: {
           lead: cLead, aktivitet: cAkt, affar: cDeal,
-          offert: cOffM + cOffF, order: cOrdM + cOrdF + cWO, faktura: cInv,
+          offert: cOffM + cOffF, avtal: cAvtal, order: cOrdM + cOrdF + cWO, faktura: cInv,
         },
-        counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, order_mira: cOrdM, order_fortnox: cOrdF, order_tengella: cWO },
+        counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, avtal: cAvtal, order_mira: cOrdM, order_fortnox: cOrdF, order_tengella: cWO },
         rows,
         note: "P1 read-only. Alla typer i liggaren (inkl TengellaWorkorder). Sortering på visnings-datum. Ägare (deal_owner) visas ej i P1-liggaren.",
       });
@@ -196,6 +285,160 @@ export function registerAffarRoutes(app, deps) {
     } catch (e) {
       console.error("[/admin/affar/deal/:id]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/affar/list — komplett sökbar/paginerad liggare per typ ──
+  // ?type=lead|aktivitet|offert|order|faktura|avtal|affar  &q=  &page=  &limit=
+  // Ersätter Bubble-native-flikarna: server-side paginering + sök (inkl ref-företag).
+  app.options("/admin/affar/list", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/list", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const type  = _str(req.query.type).toLowerCase();
+      const q     = _str(req.query.q).trim();
+      const limit = Math.min(50, Math.max(10, parseInt(req.query.limit, 10) || 30));
+      const page  = Math.max(0, parseInt(req.query.page, 10) || 0);
+      const cursor = page * limit;
+      const feMira = [{ key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE }];
+
+      const pageOf = (t, extra = []) => bubbleFind(t, { constraints: extra, limit, cursor, sort_field: "Created Date", descending: true }).catch(() => []);
+      async function searchUnion(t, sets) {
+        const all = await Promise.all(sets.map((cs) => bubbleFindAll(t, { constraints: cs }).catch(() => [])));
+        const seen = new Map();
+        for (const arr of all) for (const r of arr) { const id = bubbleId(r); if (id && !seen.has(id)) seen.set(id, r); }
+        return [...seen.values()];
+      }
+      const byCreated = (a, b) => _ts(b["Created Date"]) - _ts(a["Created Date"]);
+
+      let rows = [], total = null;
+
+      if (type === "lead") {
+        const m = await companyMap(), um = await userMap(), ownerMap = await companyOwnerMap();
+        let recs;
+        if (q) {
+          const ccIds = ccIdsMatching(m, q);
+          const sets = [
+            [{ key: "Name",  constraint_type: "text contains", value: q }],
+            [{ key: "Email", constraint_type: "text contains", value: q }],
+            [{ key: "Phone", constraint_type: "text contains", value: q }],
+            [{ key: "Company", constraint_type: "text contains", value: q }],
+          ];
+          if (ccIds.length) sets.push([{ key: "client_company", constraint_type: "in", value: ccIds }]);
+          recs = (await searchUnion("Lead", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
+        } else { recs = await pageOf("Lead"); total = await bubbleCount("Lead"); }
+        rows = recs.map((r) => nLeadFull(r, m, um, ownerMap));
+      }
+      else if (type === "aktivitet") {
+        const m = await companyMap(), um = await userMap(), sm = await supplierMap(), dm = await dealMap();
+        let recs;
+        if (q) {
+          const ccIds = ccIdsMatching(m, q);
+          const sets = [[{ key: "beskrivning", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) sets.push([{ key: "company", constraint_type: "in", value: ccIds }]);
+          recs = (await searchUnion("activitet_crm", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
+        } else { recs = await pageOf("activitet_crm"); total = await bubbleCount("activitet_crm"); }
+        rows = recs.map((r) => nAktFull(r, m, um, sm, dm));
+      }
+      else if (type === "faktura") {
+        let recs;
+        if (q) {
+          recs = (await searchUnion("FortnoxInvoice", [
+            [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
+          ])).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
+        } else { recs = await pageOf("FortnoxInvoice"); total = await bubbleCount("FortnoxInvoice"); }
+        rows = recs.map(nInvoice);
+      }
+      else if (type === "avtal") {
+        const m = await companyMap();
+        let recs;
+        if (q) {
+          const ccIds = ccIdsMatching(m, q);
+          const sets = [[{ key: "contract_title", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) sets.push([{ key: "kundföretag", constraint_type: "in", value: ccIds }]);
+          recs = (await searchUnion("Contract", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
+        } else { recs = await pageOf("Contract"); total = await bubbleCount("Contract"); }
+        rows = recs.map((r) => nAvtal(r, m));
+      }
+      else if (type === "affar") {
+        const m = await companyMap();
+        let recs;
+        if (q) {
+          const ccIds = ccIdsMatching(m, q);
+          const sets = [[{ key: "titel", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) sets.push([{ key: "kundföretag", constraint_type: "in", value: ccIds }]);
+          recs = (await searchUnion("deal", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
+        } else { recs = await pageOf("deal"); total = await bubbleCount("deal"); }
+        rows = recs.map((r) => nDeal(r, m));
+      }
+      else if (type === "offert") {
+        const m = await companyMap();
+        let miras, forts;
+        if (q) {
+          const ccIds = ccIdsMatching(m, q);
+          const mSets = [[...feMira, { key: "offertnr", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) mSets.push([...feMira, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
+          miras = await searchUnion("Offert", mSets);
+          forts = await searchUnion("FortnoxOffer", [
+            [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
+          ]);
+        } else { miras = await pageOf("Offert", feMira); forts = await pageOf("FortnoxOffer"); }
+        rows = [...miras.map((r) => nOffertM(r, m)), ...forts.map(nOffertF)].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
+        total = q ? rows.length : ((await bubbleCount("Offert", feMira)) + (await bubbleCount("FortnoxOffer")));
+      }
+      else if (type === "order") {
+        const m = await companyMap();
+        let miras, forts, tengs;
+        if (q) {
+          const ccIds = ccIdsMatching(m, q);
+          const mSets = [[{ key: "ordernr", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) mSets.push([{ key: "kundforetag", constraint_type: "in", value: ccIds }]);
+          miras = await searchUnion("MiraOrder", mSets);
+          forts = await searchUnion("FortnoxOrder", [
+            [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
+          ]);
+          const tSets = [[{ key: "workorder_no", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) tSets.push([{ key: "company", constraint_type: "in", value: ccIds }]);
+          tengs = await searchUnion("TengellaWorkorder", tSets);
+        } else { miras = await pageOf("MiraOrder"); forts = await pageOf("FortnoxOrder"); tengs = await pageOf("TengellaWorkorder"); }
+        rows = [
+          ...miras.map((r) => nOrderM(r, m)),
+          ...forts.map(nOrderF),
+          ...tengs.filter((r) => !r.is_deleted).map((r) => nWorkorder(r, m)),
+        ].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
+        total = q ? rows.length : ((await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder")) + (await bubbleCount("TengellaWorkorder")));
+      }
+      else {
+        return res.status(400).json({ ok: false, error: "okänd_typ", hint: "type=lead|aktivitet|offert|order|faktura|avtal|affar" });
+      }
+
+      return res.json({ ok: true, type, page, limit, q, total, count: rows.length, has_more: rows.length >= limit, rows });
+    } catch (e) {
+      console.error("[/admin/affar/list]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/affar/lead/:id/assign — tilldela lead till kollega (User) ──
+  // body {user_id}. Kollegor hämtas via befintliga /admin/approval/users-by-company
+  // (Users där Associated_company contains current users company).
+  app.options("/admin/affar/lead/:id/assign", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/lead/:id/assign", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const id = req.params.id;
+      const userId = _str((req.body || {}).user_id).trim();
+      await bubblePatch("Lead", id, { tilldelad: userId || null });
+      let name = "";
+      if (userId) { const um = await userMap(); name = um.get(userId) || ""; }
+      return res.json({ ok: true, lead_id: id, tilldelad: userId ? { id: userId, name } : null });
+    } catch (e) {
+      console.error("[/admin/affar/lead/:id/assign]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 

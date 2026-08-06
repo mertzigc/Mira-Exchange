@@ -19831,7 +19831,7 @@ offertEngine = registerOffertRoutes(app, {
 
 // Affär samlad vy (P1+P2) — routes i affar_api.js.
 registerAffarRoutes(app, {
-  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount,
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount, bubblePatch,
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
