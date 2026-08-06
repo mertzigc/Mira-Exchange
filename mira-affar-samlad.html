@@ -340,7 +340,7 @@
       vb.textContent="…";
       fetch(HOST+"/admin/affar/doc-url?type="+encodeURIComponent(dt)+"&id="+encodeURIComponent(did),{headers:{"x-admin-token":TOKEN}})
         .then(function(r){ return r.json(); })
-        .then(function(j){ vb.textContent=orig; if(j&&j.ok&&j.url){ if(w){ w.location.href=j.url; } } else { if(w){ w.close(); } alert("Ingen PDF kunde hämtas."); } })
+        .then(function(j){ vb.textContent=orig; if(j&&j.ok&&j.url){ if(w){ w.location.href=j.url; } } else { if(w){ w.close(); } alert("Kunde inte hämta PDF: "+((j&&j.error)||"okänt fel")+((j&&j.detail)?(" ("+(j.detail.status||JSON.stringify(j.detail))+")"):"")); } })
         .catch(function(){ vb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-hämtning."); });
       return;
     }

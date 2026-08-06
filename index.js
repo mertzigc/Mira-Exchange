@@ -19870,7 +19870,15 @@ app.get("/admin/affar/doc-url", async (req, res) => {
     const tok = await ensureFortnoxAccessToken(connId);
     if (!tok || !tok.ok || !tok.access_token) return res.status(502).json({ ok: false, error: "token_error" });
     const r = await c.run(row, tok.access_token);
-    if (!r || !r.ok || !r.ft_pdf) return res.status(502).json({ ok: false, error: "pdf_fetch_failed", detail: (r && r.error) || null });
+    if (!r || !r.ok || !r.ft_pdf) {
+      const fx = (r && r.detail) || {};   // fetchAndStore*Pdf → { detail: fortnoxGetBinary-resultat }
+      return res.status(502).json({
+        ok: false, error: "pdf_fetch_failed",
+        fortnox_status: fx.status || (r && r.status) || null,
+        fortnox_body: (typeof fx.detail === "string" ? fx.detail.slice(0, 400) : fx.detail) || (r && r.error) || null,
+        connection: connId, docno: row.ft_document_number || null,
+      });
+    }
     return res.json({ ok: true, url: String(r.ft_pdf).replace(/^\/\//, "https://"), cached: false });
   } catch (e) {
     console.error("[/admin/affar/doc-url]", e?.message, e?.detail);
