@@ -774,6 +774,12 @@
         <button class="aa-cm-close" data-aa="cm-close" aria-label="Stäng">&times;</button>
       </div>
       <div class="aa-cm-b">
+        <!-- Kund-väljare — visas ENDAST i skapa-läge (admin har ingen förvald kund). -->
+        <div class="aa-cm-row" data-aa="cm-company-row" style="display:none; position:relative;">
+          <label>Kund (företag) *</label>
+          <input type="text" placeholder="Sök företagsnamn…" data-aa="cm-company-search" autocomplete="off">
+          <div data-aa="cm-company-results" style="display:none; position:absolute; left:0; right:0; top:100%; z-index:5; background:var(--bg1,#0f1118); border:0.5px solid var(--line-strong,#2a2d3a); border-radius:8px; max-height:220px; overflow:auto; margin-top:2px; box-shadow:0 12px 32px rgba(0,0,0,0.4);"></div>
+        </div>
         <div class="aa-cm-2">
           <div class="aa-cm-row">
             <label>Avtalstitel</label>
@@ -2121,9 +2127,7 @@
   }
 
   // Create-knappen (placeholder)
-  $('create-btn').addEventListener('click', function(){
-    alert('Create-modal (samma som kundkort-fliken) öppnas här. För skissen: se mira-abonnemang-kund.html.');
-  });
+  $('create-btn').addEventListener('click', function(){ openContractCreate(); });
 
   // ── Live data-fetch (Fas 2a) ────────────────────────────────────────────
   // Om hidden input planning_token är satt av Bubble: hämta verklig data
@@ -2223,6 +2227,49 @@
   function cmGet(k){ var el = $('cm-'+k); return el ? String(el.value || '').trim() : ''; }
   function cmSet(k, v){ var el = $('cm-'+k); if (el) el.value = (v == null ? '' : v); }
 
+  // ── Kund-väljare (endast SKAPA-läge; admin har ingen förvald kund) ─────────
+  var CM_CREATE_COMPANY = null;              // {id, name} när vi skapar nytt avtal
+  var _cmCompanies = null, _cmCompaniesFetch = null;
+  function cmEnsureCompanies(){
+    if (_cmCompanies) return Promise.resolve(_cmCompanies);
+    if (_cmCompaniesFetch) return _cmCompaniesFetch;
+    var token = cfg('planning_token');
+    if (!token) { _cmCompanies = []; return Promise.resolve(_cmCompanies); }
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    _cmCompaniesFetch = fetch(apiHost + '/admin/planning/companies', { headers: { 'x-admin-token': token } })
+      .then(function(r){ return r.ok ? r.json() : { results: [] }; })
+      .then(function(d){ _cmCompanies = (d && d.results) || []; return _cmCompanies; })
+      .catch(function(e){ console.warn('[aa] companies fail', e && e.message); _cmCompanies = []; return _cmCompanies; });
+    return _cmCompaniesFetch;
+  }
+  function cmRenderCompanyResults(q){
+    var box = $('cm-company-results'); if (!box) return;
+    var ql = String(q || '').trim().toLowerCase();
+    if (!ql) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    var list = (_cmCompanies || []).filter(function(c){ return String(c.name || '').toLowerCase().indexOf(ql) !== -1; }).slice(0, 20);
+    if (!list.length) { box.innerHTML = '<div style="padding:9px 11px; color:var(--t3,#8b8f9e); font-size:12px;">Inga träffar</div>'; box.style.display = 'block'; return; }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+      html += '<div data-cm-cid="' + esc(list[i].id) + '" data-cm-cnm="' + esc(list[i].name) + '" style="padding:9px 11px; cursor:pointer; font-size:13px; color:var(--t1,#e8e9ee); border-bottom:0.5px solid var(--line,#242735);">' + esc(list[i].name) + '</div>';
+    }
+    box.innerHTML = html; box.style.display = 'block';
+  }
+  function createContractAction(body){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    var token   = cfg('planning_token');
+    if (!token) { alert('Demo-läge: ingen POST skickas (planning_token saknas i Bubble-bindningen).'); return Promise.resolve(null); }
+    return fetch(apiHost + '/admin/contracts/create', {
+      method: 'POST',
+      headers: { 'x-admin-token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json().then(function(data){ return { r: r, data: data }; }); })
+      .then(function(res){
+        var data = res.data;
+        if (!data || !data.ok) { alert('Fel: ' + ((data && data.error) || ('HTTP ' + res.r.status))); return null; }
+        return data;
+      }).catch(function(e){ alert('Anropet misslyckades: ' + (e && e.message ? e.message : e)); return null; });
+  }
+
   function loadSuppliersAdmin(){
     var token = cfg('planning_token');
     if (!token) return;
@@ -2267,6 +2314,10 @@
     var r = findRowById(id);
     if (!r) { alert('Hittade inte avtalet i listan.'); return; }
     CM_EDIT_ID = id;
+    CM_CREATE_COMPANY = null;
+    var _cr = $('cm-company-row'); if (_cr) _cr.style.display = 'none';   // ingen kundbyte i edit
+    var _ch = $('cm-h'); if (_ch) _ch.textContent = 'Redigera avtal';
+    var _cs = $('cm-save'); if (_cs) _cs.textContent = 'Spara ändringar';
     populateSuppliersAdmin();
     cmSet('title', r.contract_title || '');
     cmSet('type', r.contract_type || 'Subscription');
@@ -2285,10 +2336,30 @@
     setSupplierForCategoryAdmin(); // förvälj leverantör om tom + kategori satt
     var mask = $('cm-mask'); if (mask) mask.classList.add('on');
   }
-  function closeContractEdit(){ var m = $('cm-mask'); if (m) m.classList.remove('on'); CM_EDIT_ID = null; }
+  function openContractCreate(){
+    CM_EDIT_ID = null;
+    CM_CREATE_COMPANY = null;
+    populateSuppliersAdmin();
+    // Rensa alla fält till skapa-defaults
+    var blank = ['title','monthly','start','end','binding','notice','autorenew','ratecard','volume'];
+    for (var i = 0; i < blank.length; i++) { cmSet(blank[i], ''); }
+    cmSet('qty', 1);
+    cmSet('type', 'Subscription');
+    cmSet('category', '');
+    cmSet('supplier', '');
+    cmSet('pricereg', '');
+    // Kund-väljare på
+    var row = $('cm-company-row'); if (row) row.style.display = '';
+    var srch = $('cm-company-search'); if (srch) srch.value = '';
+    var res = $('cm-company-results'); if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+    cmEnsureCompanies();
+    var h = $('cm-h'); if (h) h.textContent = 'Nytt avtal';
+    var save = $('cm-save'); if (save) save.textContent = 'Skapa avtal';
+    var mask = $('cm-mask'); if (mask) mask.classList.add('on');
+  }
+  function closeContractEdit(){ var m = $('cm-mask'); if (m) m.classList.remove('on'); CM_EDIT_ID = null; CM_CREATE_COMPANY = null; }
 
   function submitContractEdit(){
-    if (!CM_EDIT_ID) return;
     var rc = cmGet('ratecard'); var vol = cmGet('volume');
     if (rc) { try { JSON.parse(rc); } catch(e){ alert('Rate-card är inte giltig JSON.'); return; } }
     if (vol) { try { JSON.parse(vol); } catch(e){ alert('Volym är inte giltig JSON.'); return; } }
@@ -2310,11 +2381,23 @@
       volume_json: vol || null
     };
     var saveBtn = $('cm-save');
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Sparar...'; }
-    patchContractAction(CM_EDIT_ID, body).then(function(result){
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Spara ändringar'; }
-      if (result && result.ok) { closeContractEdit(); loadLive(); }
-    });
+    if (CM_EDIT_ID) {
+      // Redigera → PATCH
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Sparar...'; }
+      patchContractAction(CM_EDIT_ID, body).then(function(result){
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Spara ändringar'; }
+        if (result && result.ok) { closeContractEdit(); loadLive(); }
+      });
+    } else {
+      // Skapa → POST (kräver vald kund; admin har ingen förvald)
+      if (!CM_CREATE_COMPANY || !CM_CREATE_COMPANY.id) { alert('Välj en kund (företag) först.'); return; }
+      body.company_id = CM_CREATE_COMPANY.id;
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Skapar...'; }
+      createContractAction(body).then(function(result){
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Skapa avtal'; }
+        if (result && result.ok) { closeContractEdit(); loadLive(); }
+      });
+    }
   }
 
   function bindContractModal(){
@@ -2322,6 +2405,17 @@
     var cancel = $('cm-cancel'); if (cancel) cancel.addEventListener('click', closeContractEdit);
     var close = $('cm-close'); if (close) close.addEventListener('click', closeContractEdit);
     var cat = $('cm-category'); if (cat) cat.addEventListener('change', setSupplierForCategoryAdmin);
+    // Kund-väljare (skapa-läge): sök + välj ur /admin/planning/companies
+    var srch = $('cm-company-search');
+    if (srch) srch.addEventListener('input', function(){ cmEnsureCompanies().then(function(){ cmRenderCompanyResults(srch.value); }); });
+    var resBox = $('cm-company-results');
+    if (resBox) resBox.addEventListener('click', function(ev){
+      var t = ev.target && ev.target.closest ? ev.target.closest('[data-cm-cid]') : null;
+      if (!t) return;
+      CM_CREATE_COMPANY = { id: t.getAttribute('data-cm-cid'), name: t.getAttribute('data-cm-cnm') };
+      if (srch) srch.value = CM_CREATE_COMPANY.name;
+      resBox.style.display = 'none';
+    });
   }
 
   function bindActions(){
