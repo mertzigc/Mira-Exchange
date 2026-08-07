@@ -83,6 +83,31 @@
   .pager .pinfo{font-size:11px;color:var(--w40)}
   .viewbtn{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:7px;padding:5px 11px;font-size:11px;font-weight:700;color:var(--w70);text-decoration:none;white-space:nowrap}
   .viewbtn:hover{border-color:var(--orange);color:var(--orange)}
+  /* inline edit (lead + aktivitet) */
+  .af tr.lead,.af tr.akt{cursor:pointer}
+  .af tr.lead.open>td,.af tr.akt.open>td{background:var(--card)}
+  .af .exp{color:var(--w40);font-weight:400;margin-right:6px;display:inline-block;transition:transform .12s}
+  .af tr.open .exp{color:var(--orange);transform:rotate(90deg)}
+  .af .edit-cell{padding:0 !important;background:var(--card)}
+  .af .edit{border-left:2px solid var(--orange);padding:16px 20px;display:flex;flex-direction:column;gap:13px}
+  .af .erow{display:flex;gap:14px;flex-wrap:wrap}
+  .af .erow>div{flex:1;min-width:190px}
+  .af .egrow{position:relative}
+  .af .el{display:block;font-size:10px;color:var(--w40);margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .af .ein{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--white);font-family:var(--fb);font-size:13px}
+  .af .ein:focus{outline:none;border-color:var(--orange)}
+  .af textarea.ein{resize:vertical}
+  .af .chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--white);cursor:pointer;padding:8px 0}
+  .af .eact{display:flex;align-items:center;justify-content:flex-end;gap:12px}
+  .af .ebtn{background:var(--orange);border:none;border-radius:8px;padding:9px 18px;color:#1c1206;font-weight:800;font-size:13px;cursor:pointer;font-family:var(--fb)}
+  .af .ebtn:disabled{opacity:.5;cursor:default}
+  .af .ecur{font-size:11px;color:var(--w40);margin-top:5px}
+  .af .sugg{position:absolute;left:0;right:0;top:100%;z-index:30;background:var(--deep);border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;overflow:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+  .af .sugg.on{display:block}
+  .af .si{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)}
+  .af .si:last-child{border-bottom:none}
+  .af .si:hover{background:var(--input)}
+  .af .si .sc{color:var(--w40);font-size:11px;margin-left:6px}
 </style>
 
 <div class="af">
@@ -195,8 +220,8 @@
     return '<select class="assign" data-lead-id="'+esc(r.id)+'">'+o+'</select>';
   }
   function leadRowHtml(r){
-    return '<tr>'+
-      '<td class="muted">'+esc(r.date||"")+'</td>'+
+    return '<tr class="lead" data-lead-id="'+esc(r.id)+'">'+
+      '<td class="muted"><span class="exp">▸</span>'+esc(r.date||"")+'</td>'+
       '<td>'+cm(r.name)+'</td>'+
       '<td class="mono">'+cm(r.email)+'</td>'+
       '<td class="mono">'+cm(r.phone)+'</td>'+
@@ -210,8 +235,8 @@
     '</tr>';
   }
   function aktRowHtml(r){
-    return '<tr>'+
-      '<td class="muted">'+esc(r.created||r.date||"")+'</td>'+
+    return '<tr class="akt" data-akt-id="'+esc(r.id)+'">'+
+      '<td class="muted"><span class="exp">▸</span>'+esc(r.created||r.date||"")+'</td>'+
       '<td>'+cm(r.leverantor)+'</td>'+
       '<td>'+cm(r.typ)+'</td>'+
       '<td>'+cm(r.fas)+'</td>'+
@@ -221,6 +246,145 @@
       '<td><div class="msg" title="'+esc(r.meddelande||"")+'">'+cm(clip(r.meddelande,90))+'</div></td>'+
       '<td>'+cm(r.var_anvandare)+'</td>'+
     '</tr>';
+  }
+
+  // ── inline edit: lead + aktivitet ──────────────────────────────────
+  var AKT_TYPES=["Säljsamtal","Kommentar","Kundmöte","Pratat med","Skickat e-post","Fått e-post","Sökt, ej på plats","Mötesanteckningar"];
+  var AKT_FASER=["Fas 1","Fas 2","Fas 3","Fas 4","Övrigt"];
+  function opt(v,cur){ return '<option value="'+esc(v)+'"'+(v===cur?" selected":"")+'>'+esc(v)+'</option>'; }
+  function findRow(id){ for(var i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id) return STATE.listRows[i]; } return null; }
+
+  function aktEditHtml(r){
+    var isK=(r.typ==="Kundmöte"), done=!!r.genomfort, kStyle=isK?"":"display:none";
+    var typeOpts=""; for(var i=0;i<AKT_TYPES.length;i++){ typeOpts+=opt(AKT_TYPES[i], r.typ||""); }
+    var fasOpts='<option value="">— fas —</option>'; for(var j=0;j<AKT_FASER.length;j++){ fasOpts+=opt(AKT_FASER[j], r.fas||""); }
+    return '<div class="edit">'+
+      '<div><label class="el">Beskrivning</label><textarea class="ein af-a-besk" rows="2">'+esc(r.beskrivning||"")+'</textarea></div>'+
+      '<div class="erow">'+
+        '<div><label class="el">Typ</label><select class="ein af-a-type">'+typeOpts+'</select></div>'+
+        '<div class="af-k-only" style="'+kStyle+'"><label class="el">Fas</label><select class="ein af-a-fas">'+fasOpts+'</select></div>'+
+        '<div class="af-k-only" style="'+kStyle+'"><label class="el">Mötesdatum</label><input type="date" class="ein af-a-date" value="'+esc(r.motesdatum_iso||"")+'"></div>'+
+        '<div class="af-k-only" style="'+kStyle+'"><label class="el">Status</label><label class="chk"><input type="checkbox" class="af-a-done"'+(done?" checked":"")+'> Genomfört</label></div>'+
+      '</div>'+
+      '<div class="af-note-wrap" style="'+((isK&&done)?"":"display:none")+'"><label class="el">Mötesanteckning</label><textarea class="ein af-a-note" rows="4">'+esc(r.motesanteckning||"")+'</textarea></div>'+
+      '<div class="eact"><span class="af-a-msg ecur"></span><button class="ebtn af-a-save" data-akt-id="'+esc(r.id)+'">Spara</button></div>'+
+    '</div>';
+  }
+  function leadEditHtml(r){
+    var uaOpts='<option value="">— kundansvarig —</option>';
+    for(var i=0;i<USERS.length;i++){ uaOpts+='<option value="'+esc(USERS[i].id)+'"'+(USERS[i].id===(r.kundansvarig_id||"")?" selected":"")+'>'+esc(USERS[i].name)+'</option>'; }
+    var coCur=r.company?("Kopplad: "+esc(r.company)):"Ingen koppling";
+    var tdCur=r.todo_title?("Kopplad: "+esc(r.todo_title)):(r.todo_id?"Kopplad todo":"Ingen koppling");
+    return '<div class="edit">'+
+      '<div class="erow">'+
+        '<div class="egrow"><label class="el">Kundföretag</label>'+
+          '<input class="ein af-co-search" placeholder="Sök företag…" autocomplete="off">'+
+          '<input type="hidden" class="af-co-id" value="'+esc(r.company_id||"")+'">'+
+          '<div class="ecur af-co-cur">'+coCur+'</div><div class="sugg af-co-sugg"></div></div>'+
+        '<div class="egrow"><label class="el">Kundansvarig</label><select class="ein af-ua">'+uaOpts+'</select>'+
+          (USERS.length?'':'<div class="ecur">Sätt data-mira="current_user_company" för att lista kollegor.</div>')+'</div>'+
+        '<div class="egrow"><label class="el">Todo</label>'+
+          '<input class="ein af-td-search" placeholder="Sök todo (titel)…" autocomplete="off">'+
+          '<input type="hidden" class="af-td-id" value="'+esc(r.todo_id||"")+'">'+
+          '<div class="ecur af-td-cur">'+tdCur+'</div><div class="sugg af-td-sugg"></div></div>'+
+      '</div>'+
+      '<div class="eact"><span class="af-l-msg ecur"></span><button class="ebtn af-l-save" data-lead-id="'+esc(r.id)+'">Spara koppling</button></div>'+
+    '</div>';
+  }
+  function closeEdits(){
+    root.querySelectorAll('tr[data-edit="1"]').forEach(function(x){ x.parentNode.removeChild(x); });
+    root.querySelectorAll("tr.lead.open,tr.akt.open").forEach(function(x){ x.classList.remove("open"); });
+  }
+  function toggleEdit(tr, kind){
+    var next=tr.nextElementSibling;
+    var wasOpen=(next&&next.getAttribute&&next.getAttribute("data-edit")==="1");
+    closeEdits();
+    if(wasOpen) return;
+    var r=findRow(tr.getAttribute(kind==="lead"?"data-lead-id":"data-akt-id"));
+    if(!r) return;
+    tr.classList.add("open");
+    var det=document.createElement("tr"); det.setAttribute("data-edit","1");
+    det.innerHTML='<td colspan="'+colCount()+'" class="edit-cell">'+(kind==="lead"?leadEditHtml(r):aktEditHtml(r))+'</td>';
+    tr.parentNode.insertBefore(det, tr.nextSibling);
+  }
+  function toggleAktCond(sel){
+    var box=sel.closest(".edit"); if(!box) return; var isK=(sel.value==="Kundmöte");
+    box.querySelectorAll(".af-k-only").forEach(function(x){ x.style.display=isK?"":"none"; });
+    var nw=box.querySelector(".af-note-wrap");
+    if(nw){ var done=box.querySelector(".af-a-done"); nw.style.display=(isK&&done&&done.checked)?"":"none"; }
+  }
+  function toggleNote(chk){ var box=chk.closest(".edit"); if(!box) return; var nw=box.querySelector(".af-note-wrap"); if(nw){ nw.style.display=chk.checked?"":"none"; } }
+
+  function renderSugg(box, items){
+    if(!items.length){ box.className="sugg"; box.innerHTML=""; return; }
+    box.innerHTML=items.map(function(it){
+      var sub=it.company?('<span class="sc">'+esc(it.company)+'</span>'):'';
+      return '<div class="si" data-id="'+esc(it.id)+'" data-label="'+esc(it.label)+'">'+esc(it.label)+sub+'</div>';
+    }).join("");
+    box.className="sugg on";
+  }
+  var coTimer=null, tdTimer=null;
+  function searchCompanies(inp){
+    var box=inp.parentNode.querySelector(".af-co-sugg"), q=inp.value.trim();
+    if(coTimer){ clearTimeout(coTimer); }
+    if(q.length<2){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    coTimer=setTimeout(function(){
+      fetch(HOST+"/admin/planning/companies?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ var rs=(j&&j.results)||[]; renderSugg(box, rs.slice(0,20).map(function(x){ return {id:x.id,label:x.name,company:""}; })); })
+        .catch(function(){});
+    },300);
+  }
+  function searchTodos(inp){
+    var box=inp.parentNode.querySelector(".af-td-sugg"), q=inp.value.trim();
+    if(tdTimer){ clearTimeout(tdTimer); }
+    if(q.length<2){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    tdTimer=setTimeout(function(){
+      fetch(HOST+"/admin/affar/todos?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.title,company:x.company}; })); })
+        .catch(function(){});
+    },300);
+  }
+  function pickSugg(si){
+    var sg=si.closest(".sugg"); if(!sg) return; var wrap=sg.parentNode;
+    var idIn=wrap.querySelector('input[type="hidden"]'), curEl=wrap.querySelector(".ecur"), srch=wrap.querySelector("input.ein");
+    if(idIn){ idIn.value=si.getAttribute("data-id"); }
+    if(curEl){ curEl.textContent="Vald: "+si.getAttribute("data-label"); }
+    if(srch){ srch.value=""; }
+    sg.className="sugg"; sg.innerHTML="";
+  }
+  function replaceRow(id, row){ if(!row) return; for(var i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id){ STATE.listRows[i]=row; break; } } render(); }
+  function saveAkt(btn){
+    var box=btn.closest(".edit"); if(!box) return; var id=btn.getAttribute("data-akt-id");
+    var type=box.querySelector(".af-a-type").value;
+    var payload={ activity_type:type, beskrivning:box.querySelector(".af-a-besk").value };
+    if(type==="Kundmöte"){
+      payload.fas=box.querySelector(".af-a-fas").value;
+      payload.motesdatum=box.querySelector(".af-a-date").value;
+      var done=box.querySelector(".af-a-done").checked; payload.genomfort=done;
+      if(done){ payload.motesanteckning=box.querySelector(".af-a-note").value; }
+    }
+    var msg=box.querySelector(".af-a-msg"); btn.disabled=true; msg.textContent="Sparar…";
+    fetch(HOST+"/admin/affar/aktivitet/"+encodeURIComponent(id)+"/patch",{
+      method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(j){
+      btn.disabled=false;
+      if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
+      replaceRow(id, j.row);
+    }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
+  }
+  function saveLead(btn){
+    var box=btn.closest(".edit"); if(!box) return; var id=btn.getAttribute("data-lead-id");
+    var payload={ company_id:box.querySelector(".af-co-id").value, kundansvarig_id:box.querySelector(".af-ua").value, todo_id:box.querySelector(".af-td-id").value };
+    var msg=box.querySelector(".af-l-msg"); btn.disabled=true; msg.textContent="Sparar…";
+    fetch(HOST+"/admin/affar/lead/"+encodeURIComponent(id)+"/link",{
+      method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(j){
+      btn.disabled=false;
+      if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
+      replaceRow(id, j.row);
+    }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
 
   function renderFeed(){
@@ -333,6 +497,10 @@
   root.addEventListener("click",function(e){
     var t=e.target;
     if(t.closest && t.closest(".assign")) return;   // låt tilldela-selecten vara
+    var si=t.closest && t.closest(".si"); if(si){ pickSugg(si); return; }
+    var sa=t.closest && t.closest(".af-a-save"); if(sa){ saveAkt(sa); return; }
+    var sl=t.closest && t.closest(".af-l-save"); if(sl){ saveLead(sl); return; }
+    if(t.closest && t.closest(".edit")) return;     // klick i redigeringsformuläret ska ej toggla raden
     var vb=t.closest && t.closest('.viewbtn[data-doc-id]');
     if(vb){
       var w=window.open("","_blank");   // förladda flik i klick-gesten (undviker popup-blockare)
@@ -351,8 +519,12 @@
     var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; STATE.page=0; setChips("typechips","data-t",STATE.type); if(STATE.type) loadList(); else render(); return; }
     var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); render(); return; }
     var ar=t.closest("tr.affar"); if(ar){ toggleDeal(ar); return; }
+    var lr=t.closest("tr.lead"); if(lr){ toggleEdit(lr,"lead"); return; }
+    var akr=t.closest("tr.akt"); if(akr){ toggleEdit(akr,"akt"); return; }
   });
   root.addEventListener("input",function(e){
+    if(e.target.classList && e.target.classList.contains("af-co-search")){ searchCompanies(e.target); return; }
+    if(e.target.classList && e.target.classList.contains("af-td-search")){ searchTodos(e.target); return; }
     if(e.target.getAttribute("data-af")!=="search") return;
     STATE.q=e.target.value.trim();
     if(searchTimer){ clearTimeout(searchTimer); }
@@ -361,6 +533,8 @@
   });
   root.addEventListener("change",function(e){
     var sel=e.target;
+    if(sel.classList && sel.classList.contains("af-a-type")){ toggleAktCond(sel); return; }
+    if(sel.classList && sel.classList.contains("af-a-done")){ toggleNote(sel); return; }
     if(!sel.classList || !sel.classList.contains("assign")) return;
     var leadId=sel.getAttribute("data-lead-id"), uid=sel.value;
     sel.disabled=true;

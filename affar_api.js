@@ -145,6 +145,10 @@ export function registerAffarRoutes(app, deps) {
       status: lbl, status_cls: cls,
       kundansvarig: kaId ? (um.get(kaId) || "") : "",
       tilldelad: tId ? { id: tId, name: um.get(tId) || "" } : null,
+      // edit-prefill (koppla-fält): leadets EGNA Kundansvarig (ej företags-fallback) + todo
+      kundansvarig_id: _ref(r.Kundansvarig) || null,
+      todo_id: _ref(r.todo) || null,
+      todo_title: "",
     };
   }
   // Aktivitet-kolumner: skapad/leverantör/typ/fas/mötesdatum/företag/affär/meddelande/vår användare.
@@ -153,15 +157,22 @@ export function registerAffarRoutes(app, deps) {
     const dId = _ref(r.deal);
     const wId = _ref(r.writer) || _ref(r["Created By"]);
     return {
-      type: "Aktivitet", source: "mira", id: bubbleId(r), date: _day(r.datum_bokning_date || r["Created Date"]),
+      // ⚠️ LÄSNYCKLAR = display-namn (skarpt bekräftat 2026-08-07): Datum_bokning/Kundmöte,
+      // EJ slug-formerna datum_bokning_date/kundm_te_option_kundm_te (slug = bara för constraints).
+      type: "Aktivitet", source: "mira", id: bubbleId(r), date: _day(r["Datum_bokning"] || r["Created Date"]),
       created: _day(r["Created Date"]),
       leverantor: levs.map((x) => sm.get(_ref(x)) || "").filter(Boolean).join(", "),
-      typ: _str(r.activity_type), fas: _str(r.kundm_te_option_kundm_te),
-      motesdatum: _day(r.datum_bokning_date),
+      typ: _str(r.activity_type), fas: _str(r["Kundmöte"]),
+      motesdatum: _day(r["Datum_bokning"]),
       company: cname(m, r.company), company_id: _ref(r.company) || null,
       affar: dId ? (dm.get(dId) || "") : "", affar_id: dId || null,
       meddelande: _str(r.beskrivning) || _str(r["mötesantecking"]),
       var_anvandare: wId ? (um.get(wId) || "") : "",
+      // edit-prefill: råvärden för inline-redigering (skrivnycklar = dessa läsnycklar)
+      beskrivning: _str(r.beskrivning),
+      motesanteckning: _str(r["mötesantecking"]),
+      motesdatum_iso: _day(r["Datum_bokning"]),
+      genomfort: r["genomfört"] === true,
     };
   }
   // Företags-id:n vars namn matchar q (för ref-företags-sök som Bubble ej klarar direkt)
@@ -169,6 +180,16 @@ export function registerAffarRoutes(app, deps) {
     const ql = String(q || "").toLowerCase(); const ids = [];
     for (const [id, nm] of m) { if (nm && String(nm).toLowerCase().indexOf(ql) !== -1) ids.push(id); }
     return ids;
+  }
+  // Batch-resolve Todo-titlar för lead-rader (koppla-fältets förifyllning). Få leads har todo.
+  async function todoTitleMap(leadRecs) {
+    const ids = [];
+    for (const r of leadRecs) { const t = _ref(r.todo); if (t && ids.indexOf(t) === -1) ids.push(t); }
+    if (!ids.length) return new Map();
+    const got = await Promise.all(ids.map((id) => bubbleGet("Todo", id).catch(() => null)));
+    const map = new Map();
+    for (let i = 0; i < ids.length; i++) { if (got[i]) map.set(ids[i], _str(got[i].Titel)); }
+    return map;
   }
   // Mira-offert: resolve första Dokumentets fil-URL (för Visa-knappen). Batchat per sida.
   async function dokUrlMap(offRows) {
@@ -347,6 +368,8 @@ export function registerAffarRoutes(app, deps) {
           recs = (await searchUnion("Lead", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
         } else { recs = await pageOf("Lead"); total = await bubbleCount("Lead"); }
         rows = recs.map((r) => nLeadFull(r, m, um, ownerMap));
+        const tmap = await todoTitleMap(recs);
+        for (let i = 0; i < rows.length; i++) { const tid = rows[i].todo_id; rows[i].todo_title = tid ? (tmap.get(tid) || "") : ""; }
       }
       else if (type === "aktivitet") {
         const m = await companyMap(), um = await userMap(), sm = await supplierMap(), dm = await dealMap();
@@ -456,6 +479,84 @@ export function registerAffarRoutes(app, deps) {
     } catch (e) {
       console.error("[/admin/affar/lead/:id/assign]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/affar/aktivitet/:id/patch — redigera aktivitet inline ──
+  // body {activity_type?, fas?, motesdatum?(YYYY-MM-DD), genomfort?(bool), motesanteckning?, beskrivning?}
+  // Skrivnycklar = display-namn (skarpt bekräftat via round-trip 2026-08-07). Patchar bara skickade fält.
+  app.options("/admin/affar/aktivitet/:id/patch", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/aktivitet/:id/patch", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const id = req.params.id;
+      const b = req.body || {};
+      const p = {};
+      if (b.activity_type   !== undefined) p["activity_type"]  = _str(b.activity_type) || null;
+      if (b.beskrivning     !== undefined) p["beskrivning"]    = _str(b.beskrivning);
+      if (b.fas             !== undefined) p["Kundmöte"]       = _str(b.fas) || null;
+      if (b.motesdatum      !== undefined) p["Datum_bokning"]  = b.motesdatum ? new Date(_str(b.motesdatum) + "T00:00:00.000Z").toISOString() : null;
+      if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
+      if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
+      if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
+      await bubblePatch("activitet_crm", id, p);
+      const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
+      const row = fresh ? nAktFull(fresh, await companyMap(), await userMap(), await supplierMap(), await dealMap()) : null;
+      return res.json({ ok: true, id, patched: p, row });
+    } catch (e) {
+      console.error("[/admin/affar/aktivitet/:id/patch]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/affar/lead/:id/link — koppla kundföretag / kundansvarig / todo ──
+  // body {company_id?, kundansvarig_id?, todo_id?} — tom sträng nollställer fältet.
+  app.options("/admin/affar/lead/:id/link", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/lead/:id/link", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const id = req.params.id;
+      const b = req.body || {};
+      const p = {};
+      if (b.company_id      !== undefined) p["client_company"] = _str(b.company_id) || null;
+      if (b.kundansvarig_id !== undefined) p["Kundansvarig"]   = _str(b.kundansvarig_id) || null;
+      if (b.todo_id         !== undefined) p["todo"]           = _str(b.todo_id) || null;
+      if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
+      await bubblePatch("Lead", id, p);
+      const fresh = await bubbleGet("Lead", id).catch(() => null);
+      let row = null;
+      if (fresh) {
+        row = nLeadFull(fresh, await companyMap(), await userMap(), await companyOwnerMap());
+        const tid = row.todo_id;
+        if (tid) { const td = await bubbleGet("Todo", tid).catch(() => null); row.todo_title = td ? _str(td.Titel) : ""; }
+      }
+      return res.json({ ok: true, id, patched: p, row });
+    } catch (e) {
+      console.error("[/admin/affar/lead/:id/link]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/affar/todos?q= — sök Todo på titel (koppla till lead) ──
+  // Constraint-nyckel: "Titel" (fallback "titel" om Bubble slug:ar). Read-nyckel Titel.
+  app.options("/admin/affar/todos", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/todos", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const q = _str(req.query.q).trim();
+      if (q.length < 2) return res.json({ ok: true, rows: [] });
+      const findBy = (key) => bubbleFind("Todo", { constraints: [{ key, constraint_type: "text contains", value: q }], limit: 20, sort_field: "Created Date", descending: true });
+      let recs = [];
+      try { recs = await findBy("Titel"); }
+      catch (e1) { try { recs = await findBy("titel"); } catch (e2) { recs = []; } }
+      const m = await companyMap();
+      const rows = (recs || []).map((r) => ({ id: bubbleId(r), title: _str(r.Titel) || "(namnlös todo)", company: cname(m, r["Företag"]) }));
+      return res.json({ ok: true, rows });
+    } catch (e) {
+      console.error("[/admin/affar/todos]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 
