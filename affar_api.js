@@ -86,6 +86,17 @@ export function registerAffarRoutes(app, deps) {
     return m;
   }
 
+  // ── Todo-cache (id → {title, company-ref}) — för koppla-sök + prefill ──
+  let _tCache = { map: null, ts: 0 };
+  async function todoMap() {
+    if (_tCache.map && (Date.now() - _tCache.ts) < CC_TTL) return _tCache.map;
+    const all = await bubbleFindAll("Todo", {}).catch(() => []);
+    const m = new Map();
+    for (const t of all) { const id = bubbleId(t); if (id) m.set(id, { title: _str(t.Titel), company: _ref(t["Företag"]) }); }
+    _tCache = { map: m, ts: Date.now() };
+    return m;
+  }
+
   // ── status → {label, cls} ─────────────────────────────────────────
   // cls: ok(grön) | open(orange) | wait(grå) | red
   const OFFER_STATUS = { Draft: ["Utkast", "wait"], Sent: ["Skickad", "open"], Viewed: ["Öppnad", "open"], OTP_Sent: ["Kod skickad", "open"], Approved: ["Accepterad", "ok"], Expired: ["Utgången", "red"], Revoked: ["Återkallad", "red"] };
@@ -181,14 +192,13 @@ export function registerAffarRoutes(app, deps) {
     for (const [id, nm] of m) { if (nm && String(nm).toLowerCase().indexOf(ql) !== -1) ids.push(id); }
     return ids;
   }
-  // Batch-resolve Todo-titlar för lead-rader (koppla-fältets förifyllning). Få leads har todo.
+  // Todo-titlar för lead-rader (koppla-fältets förifyllning) via todoMap-cache.
   async function todoTitleMap(leadRecs) {
-    const ids = [];
-    for (const r of leadRecs) { const t = _ref(r.todo); if (t && ids.indexOf(t) === -1) ids.push(t); }
-    if (!ids.length) return new Map();
-    const got = await Promise.all(ids.map((id) => bubbleGet("Todo", id).catch(() => null)));
+    const need = leadRecs.some((r) => _ref(r.todo));
+    if (!need) return new Map();
+    const tm = await todoMap();
     const map = new Map();
-    for (let i = 0; i < ids.length; i++) { if (got[i]) map.set(ids[i], _str(got[i].Titel)); }
+    for (const r of leadRecs) { const t = _ref(r.todo); if (t && tm.has(t)) map.set(t, tm.get(t).title); }
     return map;
   }
   // Mira-offert: resolve första Dokumentets fil-URL (för Visa-knappen). Batchat per sida.
@@ -307,11 +317,32 @@ export function registerAffarRoutes(app, deps) {
       const ordItems = [...ordRows.map(nOrderF), ...miraOrders.map((r) => nOrderM(r, m))];
       const invItems = invRows.map(nInvoice);
 
+      // ── redigerbara deal-fält (förifyllning) ──
+      const cwName = (c) => ((_str(c["Förnamn"] || c["First Name"]) + " " + _str(c["Efternamn"] || c["Last Name"])).trim() || _str(c.Email || c.email));
+      const kpRows = await getList("Coworker", deal.kontaktpersoner);
+      const kontaktpersoner = kpRows.map((c) => ({ id: bubbleId(c), name: cwName(c) }));
+      const tmap = await todoMap();
+      const todoIdsD = Array.isArray(deal.todo) ? deal.todo : (deal.todo ? [deal.todo] : []);
+      const todos = todoIdsD.map((t) => { const id = _ref(t); return { id, title: (tmap.get(id) ? tmap.get(id).title : "") }; }).filter((x) => x.id);
+      const kategori = Array.isArray(deal.Kategori) ? deal.Kategori.map(_str) : (deal.Kategori ? [_str(deal.Kategori)] : []);
+
       return res.json({
         ok: true,
         deal: {
           id: bubbleId(deal), titel: _str(deal.titel), company: cname(m, deal["kundföretag"]),
           status: _str(deal.Status), value: _num(deal.value_brutto) || null, sannolikhet: _num(deal.sannolikhet) || null,
+        },
+        edit: {
+          titel: _str(deal.titel), beskrivning: _str(deal.beskrivning),
+          status: _str(deal.Status), region: _str(deal.Region),
+          sannolikhet: (deal.sannolikhet == null || deal.sannolikhet === "") ? "" : _str(deal.sannolikhet),
+          kategori: kategori,
+          value_brutto: (deal.value_brutto == null || deal.value_brutto === "") ? null : _num(deal.value_brutto),
+          value_netto: (deal.value_netto == null || deal.value_netto === "") ? null : _num(deal.value_netto),
+          kundforetag_id: _ref(deal["kundföretag"]) || null,
+          kundforetag_name: cname(m, deal["kundföretag"]),
+          kontaktpersoner: kontaktpersoner,
+          todo: todos,
         },
         chain: {
           lead: leadRow ? { name: (_str(leadRow.Name) || _str(leadRow.titel) || cname(m, leadRow.Company)), date: _day(leadRow["Created Date"]) } : null,
@@ -539,23 +570,97 @@ export function registerAffarRoutes(app, deps) {
     }
   });
 
-  // ── GET /admin/affar/todos?q= — sök Todo på titel (koppla till lead) ──
-  // Constraint-nyckel: "Titel" (fallback "titel" om Bubble slug:ar). Read-nyckel Titel.
+  // ── GET /admin/affar/companies?q= — företagssök via companyMap-cache (koppla) ──
+  // Egen route (ej /admin/planning/companies) → samma auth/CORS/cache som feed = pålitligt.
+  app.options("/admin/affar/companies", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/companies", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const q = _str(req.query.q).trim().toLowerCase();
+      if (q.length < 2) return res.json({ ok: true, rows: [] });
+      const m = await companyMap();
+      const rows = [];
+      for (const [id, nm] of m) { if (nm && String(nm).toLowerCase().indexOf(q) !== -1) rows.push({ id, name: nm }); }
+      rows.sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
+      return res.json({ ok: true, rows: rows.slice(0, 20) });
+    } catch (e) {
+      console.error("[/admin/affar/companies]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/affar/todos?q= — Todo-titelsök via todoMap-cache (koppla till lead) ──
+  // Cache + client-side-filter → ingen constraint-nyckel-gissning (Titel-slug osäker).
   app.options("/admin/affar/todos", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
   app.get("/admin/affar/todos", async (req, res) => {
     if (!guard(req, res)) return;
     try {
-      const q = _str(req.query.q).trim();
+      const q = _str(req.query.q).trim().toLowerCase();
       if (q.length < 2) return res.json({ ok: true, rows: [] });
-      const findBy = (key) => bubbleFind("Todo", { constraints: [{ key, constraint_type: "text contains", value: q }], limit: 20, sort_field: "Created Date", descending: true });
-      let recs = [];
-      try { recs = await findBy("Titel"); }
-      catch (e1) { try { recs = await findBy("titel"); } catch (e2) { recs = []; } }
-      const m = await companyMap();
-      const rows = (recs || []).map((r) => ({ id: bubbleId(r), title: _str(r.Titel) || "(namnlös todo)", company: cname(m, r["Företag"]) }));
-      return res.json({ ok: true, rows });
+      const tm = await todoMap(), cm = await companyMap();
+      const rows = [];
+      for (const [id, t] of tm) { if (t.title && t.title.toLowerCase().indexOf(q) !== -1) rows.push({ id, title: t.title, company: t.company ? (cm.get(t.company) || "") : "" }); }
+      rows.sort((a, b) => String(a.title).localeCompare(String(b.title), "sv"));
+      return res.json({ ok: true, rows: rows.slice(0, 20) });
     } catch (e) {
       console.error("[/admin/affar/todos]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/affar/deal/:id/patch — redigera affär (deal) inline ──
+  // Scalars + OS(single/list) + refs. Skrivnycklar = display-namn (deal-round-trip 2026-08-07).
+  // OS-list Kategori = array av display-strängar; ref-listor kontaktpersoner/todo = array av id.
+  app.options("/admin/affar/deal/:id/patch", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/deal/:id/patch", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const id = req.params.id;
+      const b = req.body || {};
+      const asList = (v) => (Array.isArray(v) ? v.map(_str).filter(Boolean) : (v ? [_str(v)] : []));
+      const asNum = (v) => ((v === "" || v == null) ? null : _num(v));
+      const p = {};
+      if (b.titel        !== undefined) p["titel"]        = _str(b.titel);
+      if (b.beskrivning  !== undefined) p["beskrivning"]  = _str(b.beskrivning);
+      if (b.status       !== undefined) p["Status"]       = _str(b.status) || null;
+      if (b.region       !== undefined) p["Region"]       = _str(b.region) || null;
+      if (b.sannolikhet  !== undefined) p["sannolikhet"]  = _str(b.sannolikhet) || null;
+      if (b.kategori     !== undefined) p["Kategori"]     = asList(b.kategori);
+      if (b.value_brutto !== undefined) p["value_brutto"] = asNum(b.value_brutto);
+      if (b.value_netto  !== undefined) p["value_netto"]  = asNum(b.value_netto);
+      if (b.kundforetag_id  !== undefined) p["kundföretag"]     = _str(b.kundforetag_id) || null;
+      if (b.kontaktpersoner !== undefined) p["kontaktpersoner"] = asList(b.kontaktpersoner);
+      if (b.todo            !== undefined) p["todo"]            = asList(b.todo);
+      if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
+      await bubblePatch("deal", id, p);
+      return res.json({ ok: true, id, patched: p });
+    } catch (e) {
+      console.error("[/admin/affar/deal/:id/patch]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/affar/coworkers?company=&q= — kontaktpersoner på ett kundföretag ──
+  // Scope:at till affärens kundföretag (Coworker.Kundföretag equals) → snabbt, ingen jättecache.
+  app.options("/admin/affar/coworkers", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/coworkers", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const cc = _str(req.query.company).trim();
+      const q = _str(req.query.q).trim().toLowerCase();
+      if (!cc) return res.json({ ok: true, rows: [], hint: "kräver company-id (koppla kundföretag först)" });
+      const recs = await bubbleFind("Coworker", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: cc }], limit: 200 }).catch(() => []);
+      let rows = (recs || []).map((c) => ({
+        id: bubbleId(c),
+        name: ((_str(c["Förnamn"] || c["First Name"]) + " " + _str(c["Efternamn"] || c["Last Name"])).trim() || _str(c.Email || c.email)),
+        email: _str(c.Email || c.email),
+      }));
+      if (q) rows = rows.filter((r) => r.name.toLowerCase().indexOf(q) !== -1 || r.email.toLowerCase().indexOf(q) !== -1);
+      rows.sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
+      return res.json({ ok: true, rows: rows.slice(0, 30) });
+    } catch (e) {
+      console.error("[/admin/affar/coworkers]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
