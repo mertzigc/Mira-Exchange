@@ -2515,11 +2515,28 @@
   // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
   // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
   const API_HOST  = (((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '') || 'https://mira-exchange.onrender.com';
-  const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
-  const IS_LIVE = !!(API_HOST && API_TOKEN);
+  // ⚠️ Bubble injicerar data-val (token) ASYNKRONT — vid parse kan den vara tom.
+  // Frys därför INTE IS_LIVE/API_TOKEN som const; läs färskt + poll:a in token.
+  function _readToken(){ return ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || ''; }
+  let API_TOKEN = _readToken();
+  let IS_LIVE = !!(API_HOST && API_TOKEN);
+  function _syncLive(){
+    API_TOKEN = _readToken();
+    IS_LIVE = !!(API_HOST && API_TOKEN);
+    var _pb = (BROOT||document).querySelector('.wt-proto');
+    if (_pb) { _pb.style.display = IS_LIVE ? 'none' : ''; }   // dölj vilseledande "inga avtal skickas" i skarpt läge
+    return IS_LIVE;
+  }
+  _syncLive();
   console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
-  // Dölj prototyp-banderollen i skarpt läge (vilseledande "inga avtal skickas").
-  if (IS_LIVE) { var _pb = (BROOT||document).querySelector('.wt-proto'); if (_pb) { _pb.style.display = 'none'; } }
+  if (!IS_LIVE) {
+    var _liveTries = 0;
+    var _liveIv = setInterval(function(){
+      _liveTries++;
+      if (_syncLive()) { console.log('[wiz] token injicerad async → LIVE'); clearInterval(_liveIv); }
+      else if (_liveTries > 60) { clearInterval(_liveIv); }   // ge upp efter ~15s
+    }, 250);
+  }
 
   // Client-picker state (Steg B) — vald kund från autocomplete i Steg 2
   const CLIENT = { id: null, name: null };
