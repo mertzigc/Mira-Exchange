@@ -181,6 +181,10 @@
   /* Account-scope rad-variant (för Mira-abonnemang) */
   .ab-row.account { background:linear-gradient(180deg,var(--bg) 0%,var(--bg-row) 100%); }
 
+  /* Affär-blockets open-hook: data-mira="as_modal"=1 → JS lägger .ad-modal på roten,
+     som döljer list-kroppen men behåller wizard-masken (fixed overlay, egen visning). */
+  .ad-wrap.ad-modal > *:not([data-aa="wiz-mask-d"]){ display:none !important; }
+
   /* Create-modal */
   .ab-mask { display:none; position:fixed; inset:0; background:rgba(10,12,22,0.78);
     z-index:9000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto; }
@@ -751,6 +755,8 @@
   <!-- Affär-ryggrad: sätt ENDAST när blocket bäddas i affärs-popupens Avtal-flik.
        Bubble dynamic: Parent group's Deal's unique id. Tom på Företag-kortet. -->
   <input type="hidden" data-mira="deal"             data-val="">
+  <!-- Affär-blockets open-hook: sätt data-val="1" i affär-sidans instans (dölj list-kropp, öppna via window.miraAvtalModal). Tom = standalone som förr. -->
+  <input type="hidden" data-mira="as_modal"         data-val="">
 
   <div class="ab-head">
     <div class="ab-head-l">
@@ -2440,6 +2446,10 @@
   // Affär-ryggrad (2026-08-02): om wizarden bäddas i affärs-popupen sätts data-mira="deal"
   // → skickas till render-and-send → OAR.deal → auto-create sätter Contract.deal.
   const WIZ_DEAL_ID = ((BROOT||document).querySelector('[data-mira="deal"]') || {}).value || '';
+  // Affär-blockets open-hook återanvänder EN instans över olika affärer → deal måste vara
+  // muterbar (WIZ_DEAL_ID är const/fryst). DEAL_LIVE uppdateras i window.miraAvtalModal.open.
+  var DEAL_LIVE = WIZ_DEAL_ID;
+  var AS_MODAL_D = ((((BROOT||document).querySelector('[data-mira="as_modal"]')) || {}).value) === '1';
 
   // Client-state — förvald kund (inte via autocomplete som i admin-vyn)
   const CLIENT = { id: WIZ_CC_ID || null, name: WIZ_CC_NAME || null };
@@ -3183,7 +3193,7 @@ const state = {
         sender_email:           senderEmail,
         sender_name:            senderName,
         clientcompany:          CLIENT.id || null,   // Bubble ClientCompany-ref (valfri)
-        deal:                   WIZ_DEAL_ID || null, // Affär-ryggrad: kopplar avtalet till affären
+        deal:                   DEAL_LIVE || null,   // Affär-ryggrad: kopplar avtalet till affären (DEAL_LIVE = muterbar, sätts av open-hook)
         auto_create_contract:   autoCreate,
         recipients:             rcps,
         attachment_dokument_ids: state.attachments.map(function(a){ return a.doc_id; }),
@@ -3234,6 +3244,25 @@ const state = {
   window.removeRcp_d = removeRcp;
   window.submitFinal_d = submitFinal;
   window.resetWizard_d = resetWizard;
+
+  // ── open-hook för affär-blocket (Tier 2). Unikt global-namn → ingen krock med .af/.ao. ──
+  // .ad-modal döljer list-kroppen (behåller wizard-masken). open() sätter deal+kund (muterbara),
+  // återfyller wizarden (resetWizard→prefillFixedClient→setClient) och öppnar masken (miraAvtalWiz).
+  if (AS_MODAL_D && BROOT) { BROOT.classList.add('ad-modal'); }
+  window.miraAvtalModal = {
+    open: function (pref) {
+      pref = pref || {};
+      DEAL_LIVE = pref.deal || '';
+      CLIENT.id = pref.clientcompany || null;
+      CLIENT.name = pref.clientcompany_nm || null;
+      var di = (BROOT || document).querySelector('[data-mira="deal"]'); if (di) { di.value = DEAL_LIVE; }
+      var ci = (BROOT || document).querySelector('[data-mira="clientcompany"]'); if (ci) { ci.value = CLIENT.id || ''; }
+      var cn = (BROOT || document).querySelector('[data-mira="clientcompany_nm"]'); if (cn) { cn.value = CLIENT.name || ''; }
+      try { resetWizard(); } catch (_) {}
+      if (window.miraAvtalWiz && window.miraAvtalWiz.open) { window.miraAvtalWiz.open(); }
+    },
+    close: function () { if (window.miraAvtalWiz && window.miraAvtalWiz.close) { window.miraAvtalWiz.close(); } }
+  };
 })();
 </script>
 <script>
@@ -3285,6 +3314,10 @@ const state = {
       if (m && m.classList.contains('on')) closeWiz(true);
     }
   });
+
+  // Exponera för affär-blockets open-hook (window.miraAvtalModal.open → miraAvtalWiz.open).
+  // close(true) förbigår "vill du stänga?"-confirm (programmatisk stängning).
+  window.miraAvtalWiz = { open: openWiz, close: function(){ closeWiz(true); } };
 
   console.log('[wiz] öppna/stäng-handler klar');
 })();

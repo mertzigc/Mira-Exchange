@@ -58,6 +58,15 @@
   .field input,.field select,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
   .field textarea{resize:vertical;min-height:60px}
   .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  /* modal-host (open-hook för affär-blocket). Default = display:contents (ingen effekt, standalone-läge).
+     Vid data-mira="as_modal"=1 → JS lägger .as-modal → fixed overlay. Literal-färger (utanför .ao-wrap). */
+  .ao-mh{display:contents}
+  .ao-mh.as-modal{display:none;position:fixed;inset:0;background:rgba(10,12,22,.8);z-index:2147483000;overflow-y:auto;padding:28px 14px;align-items:flex-start;justify-content:center}
+  .ao-mh.as-modal.on{display:flex}
+  .ao-mh.as-modal .ao-mh-panel{position:relative;width:100%;max-width:1120px;margin:auto;background:#1e2235;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  .ao-mh-x{display:none}
+  .ao-mh.as-modal .ao-mh-x{display:block;position:absolute;top:14px;right:16px;z-index:10;background:#2e3350;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;font-size:20px;line-height:1;padding:3px 12px;cursor:pointer;font-family:Arial,sans-serif}
+  .ao-mh.as-modal .ao-mh-x:hover{border-color:#F47B30;color:#F47B30}
   .field input::placeholder,.field textarea::placeholder{color:var(--w40)}
 
   /* kund-sök (standalone) */
@@ -144,6 +153,7 @@
   .ao-hide{display:none !important}
 </style>
 
+<div class="ao-mh" data-ao-mh><div class="ao-mh-panel"><button class="ao-mh-x" data-ao="mh-close" title="Stäng">×</button>
 <div class="ao-wrap">
   <input type="hidden" data-mira="api_host"        value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token"  value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
@@ -151,6 +161,7 @@
   <input type="hidden" data-mira="clientcompany_nm" value="">
   <input type="hidden" data-mira="comission"        value="">
   <input type="hidden" data-mira="deal"             value="">
+  <input type="hidden" data-mira="as_modal"         value="">
 
   <div class="ao-head">
     <div>
@@ -307,6 +318,7 @@
 
   <div class="ao-toast" data-ao="toast"></div>
 </div>
+</div></div>
 
 <script>
 (function(){
@@ -330,6 +342,7 @@
   var CC_NM = cfg("clientcompany_nm");
   var COMISSION = cfg("comission");
   var DEAL  = cfg("deal");
+  var AS_MODAL = cfg("as_modal") === "1";   // affär-blocket öppnar via window.miraOffertModal
   var INHERITED = !!CC_ID;   // förvald kund via deal/CC-popup
 
   // ── state ────────────────────────────────────────────────────────
@@ -789,13 +802,39 @@
     }
   });
 
+  // ── modal-host (open-hook för affär-blocket) ─────────────────────
+  // Återanvänder EN instans över olika affärer: open() uppdaterar config-vars +
+  // kör newOffert() (som läser CC_ID/CC_NM/INHERITED vid anrop) → färskt formulär.
+  // save() läser DEAL/COMISSION som modul-vars → uppdateras här. Unik global-namn
+  // (window.miraOffertModal) → ingen krock med .af/.ad. Parent-lift som avtal-wizarden.
+  var MH = root.closest ? root.closest(".ao-mh") : null;
+  function _raiseAnc(el){ el._raised=[]; var a=el.parentElement; while(a && a!==document.body && a!==document.documentElement){ var cs=getComputedStyle(a); if(cs.position!=="static"){ el._raised.push([a, a.style.zIndex]); a.style.zIndex="2147483000"; } a=a.parentElement; } }
+  function _restoreAnc(el){ if(!el || !el._raised) return; for(var i=0;i<el._raised.length;i++){ el._raised[i][0].style.zIndex=el._raised[i][1]; } el._raised=null; }
+  function _mhClose(){ if(MH){ MH.classList.remove("on"); _restoreAnc(MH); } document.body.style.overflow=""; }
+  function _mhOpen(pref){
+    pref=pref||{};
+    CC_ID=pref.clientcompany||""; CC_NM=pref.clientcompany_nm||""; DEAL=pref.deal||""; COMISSION=pref.comission||"";
+    INHERITED=!!CC_ID;
+    $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
+    if(!INHERITED){ loadCompanies(); }
+    newOffert();
+    if(MH){ MH.classList.add("on"); _raiseAnc(MH); document.body.style.overflow="hidden"; }
+  }
+  window.miraOffertModal = { open:_mhOpen, close:_mhClose };
+  if(AS_MODAL && MH){
+    MH.classList.add("as-modal");
+    MH.addEventListener("click", function(e){ if(e.target===MH || (e.target.closest && e.target.closest('[data-ao="mh-close"]'))){ _mhClose(); } });
+    document.addEventListener("keydown", function(e){ if(e.key==="Escape" && MH.classList.contains("on")){ _mhClose(); } });
+  }
+
   // ── init ─────────────────────────────────────────────────────────
   if(!HOST || !TOKEN){ $("save-hint").textContent="Saknar api_host/planning_token."; }
   $("mode-tag").textContent = INHERITED ? "" : "";
   $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
-  if(!INHERITED){ loadCompanies(); }   // förhämta företagslistan (snabb client-side-sök sen)
-  newOffert();  // starta i tomt formulär (list nås via knappen)
-
-  // exponera inget globalt (all interaktion via delegation) — undviker $-krock
+  // Som modal: init sker vid open() (start dold). Standalone: init direkt som förr.
+  if(!AS_MODAL){
+    if(!INHERITED){ loadCompanies(); }   // förhämta företagslistan (snabb client-side-sök sen)
+    newOffert();  // starta i tomt formulär (list nås via knappen)
+  }
 })();
 </script>
