@@ -1435,11 +1435,16 @@
   // ── Multi-instance support ──────────────────────────────────────
   var root = (function () {
     var all = document.querySelectorAll('.aa-wrap');
-    for (var i = 0; i < all.length; i++) {
-      var r = all[i];
+    // ⚠️ mira-approval-archive.html delar rot-klassen .aa-wrap → föredra ADMIN-blockets
+    // .aa-wrap (det enda som innehåller wizard-masken) så vi inte scopar mot fel block.
+    var pool = [];
+    for (var i = 0; i < all.length; i++) { if (all[i].querySelector('[data-aa="wiz-mask"]')) pool.push(all[i]); }
+    if (!pool.length) pool = [].slice.call(all);
+    for (var j = 0; j < pool.length; j++) {
+      var r = pool[j];
       if (!r.dataset.aaInit) { r.dataset.aaInit = '1'; return r; }
     }
-    return null;
+    return pool[0] || null;
   })();
   if (!root) return;
 
@@ -2506,7 +2511,12 @@
 (function(){
   // Fas 5b spår 3: scopa DOM till admin-blocket (.aa-wrap) så admin-wizarden
   // och kundkortets wizard (.ab-wrap) kan samexistera på samma sida utan ID-krock.
-  var BROOT = document.querySelector('.aa-wrap');
+  var BROOT = (function(){
+    // approval-archive delar .aa-wrap → välj admin-blockets (det med wizard-masken).
+    var all = document.querySelectorAll('.aa-wrap');
+    for (var i = 0; i < all.length; i++) { if (all[i].querySelector('[data-aa="wiz-mask"]')) return all[i]; }
+    return document.querySelector('.aa-wrap');
+  })();
   function byId(id){ return (BROOT||document).querySelector('#'+id); }
   // Wizard-scope: IIFE så $, $$, state osv. inte överskriver Bubbles jQuery ($.ajax)
 
