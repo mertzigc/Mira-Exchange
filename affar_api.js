@@ -115,29 +115,59 @@ export function registerAffarRoutes(app, deps) {
   }
 
   // ── normalisering per typ → unified row ───────────────────────────
-  function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: "Ny", status_cls: "wait", id: bubbleId(r) }; }
-  function nAkt(r, m)  { const [lbl] = pick({}, _str(r.kundm_te_option_kundm_te), ["Aktivitet", "wait"]); return { type: "Aktivitet", source: "mira", company: cname(m, r.clientcompany), number: "", amount: null, date: _day(r.datum_bokning_date || r["Created Date"]), status: lbl || "Aktivitet", status_cls: "wait", id: bubbleId(r) }; }
-  function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
-  // (nWorkorder borttagen 2026-08-06: HK-order kommer nu via FortnoxOrder(TENGELLA)/nOrderF,
-  //  ej raw TengellaWorkorder — undviker dubbelvisning/dubbelräkning. Se §9.6.1 + dedup-not.)
-  function nOffertM(r, m, durl) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); const d0 = (Array.isArray(r.dokument) ? r.dokument[0] : null); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, url: (durl && d0) ? (durl.get(_ref(d0)) || "") : "", id: bubbleId(r) }; }
-  function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
-  function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, id: bubbleId(r) }; }
+  function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: "Ny", status_cls: "wait", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nAkt(r, m)  { const [lbl] = pick({}, _str(r.kundm_te_option_kundm_te), ["Aktivitet", "wait"]); return { type: "Aktivitet", source: "mira", company: cname(m, r.clientcompany), number: "", amount: null, date: _day(r.datum_bokning_date || r["Created Date"]), status: lbl || "Aktivitet", status_cls: "wait", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  // HK/Tengella-order = raw TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07 — färsk sync,
+  // syns oavsett affär). FortnoxOrder(connection=TENGELLA) exkluderas i display (connSource→
+  // "tengella") för att undvika dubbel mot ev. sync_v2-spegel. Belopp: total_price||ft_totalvat
+  // (ofta tomt → summeras från rader i Fas 2). is_deleted filtreras client-side.
+  // Rader parsas ur workorder_rows_json (finns på workordern → ingen N+1). Fält (Tengella):
+  // ItemName/ItemNo/Quantity/Price/Note. Belopp = Σ(Quantity×Price). Inget total_price-fält finns.
+  function _woRows(r) {
+    const raw = _str(r.workorder_rows_json); if (!raw) return [];
+    try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function nWorkorder(r, m) {
+    const raw = _woRows(r);
+    let amount = 0;
+    const rows = raw.map((x) => {
+      const qty = _num(x.Quantity), price = _num(x.Price), sum = qty * price;
+      amount += sum;
+      return { name: _str(x.ItemName), art: _str(x.ItemNo), qty, price, sum, note: _str(x.Note) };
+    });
+    return {
+      type: "Order", source: "tengella",
+      company: cname(m, r.company) || _str(r.description),
+      number: _str(r.workorder_no),
+      amount: amount || null,
+      date: _day(r.order_date || r["Created Date"]),
+      status: "Workorder", status_cls: "wait",
+      note: _str(r.note),
+      deal_id: _ref(r.deal) || null,
+      rows, wo: 1,
+      id: bubbleId(r),
+    };
+  }
+  const _liveWO = (arr) => (arr || []).filter((r) => r && r.is_deleted !== true);
+  function nOffertM(r, m, durl) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); const d0 = (Array.isArray(r.dokument) ? r.dokument[0] : null); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, url: (durl && d0) ? (durl.get(_ref(d0)) || "") : "", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   // Avtal (Contract) i affärskedjan. Status härleds enkelt (affar_api saknar _deriveContractStatus):
   // status_override först, annars slutdatum-passerat → Avslutad, annars Aktiv. Belopp = månadskostnad.
   function nAvtal(r, m) {
     var ov = _str(r.status_override);
     var slutTs = _ts(r.slutdatum);
     var st = ov ? [ov, "wait"] : (slutTs && slutTs < Date.now() ? ["Avslutad", "red"] : ["Aktiv", "ok"]);
-    return { type: "Avtal", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.contract_title) || _str(r.kategori) || "Avtal", amount: _num(r["månadskostnad"]) || null, date: _day(r.startdatum || r.signed_at || r["Created Date"]), contract_type: _str(r.contract_type) || null, status: st[0], status_cls: st[1], id: bubbleId(r) };
+    return { type: "Avtal", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.contract_title) || _str(r.kategori) || "Avtal", amount: _num(r["månadskostnad"]) || null, date: _day(r.startdatum || r.signed_at || r["Created Date"]), contract_type: _str(r.contract_type) || null, status: st[0], status_cls: st[1], deal_id: _ref(r.deal) || null, id: bubbleId(r) };
   }
   // OBS: FortnoxOrder kan ha connection=TENGELLA (§9d mappar workorders hit) → tagga
   // källa efter anslutning (som nInvoice), annars märks HK-order fel som "fortnox" och
   // Visa-knappen försöker (fåfängt) hämta Fortnox-order-PDF från Tengella-anslutningen.
-  function nOrderF(r) { const src = connSource(r.connection); const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
+  function nOrderF(r) { const src = connSource(r.connection); const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   // ⚠️ ft_url är Fortnox API-URL (JSON, EJ PDF) på order/Fortnox-faktura → aldrig som Visa-länk.
   // Bara Tengella-fakturans ft_url är en riktig (temporär) PDF-länk. Order utan ft_pdf → lazy-knapp.
-  function nInvoice(r) { const src = connSource(r.connection); const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || (src === "tengella" ? _httpsUrl(r.ft_url) : ""), id: bubbleId(r) }; }
+  function nInvoice(r) { const src = connSource(r.connection); const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || (src === "tengella" ? _httpsUrl(r.ft_url) : ""), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
 
   // ── Rika per-typ-rader för native-ersättande liggaren ─────────────
   // Lead-kolumner: skapad/namn/email/telefon/företag/meddelande/region/källa/formulär/kundansvarig/tilldelad.
@@ -160,6 +190,7 @@ export function registerAffarRoutes(app, deps) {
       kundansvarig_id: _ref(r.Kundansvarig) || null,
       todo_id: _ref(r.todo) || null,
       todo_title: "",
+      deal_id: _ref(r.deal) || null,
     };
   }
   // Aktivitet-kolumner: skapad/leverantör/typ/fas/mötesdatum/företag/affär/meddelande/vår användare.
@@ -229,22 +260,22 @@ export function registerAffarRoutes(app, deps) {
       const limit = Math.min(80, Math.max(10, parseInt(req.query.limit, 10) || 40));
       const feMira = [{ key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE }];
 
-      // HK-order kommer via sammanslagna FortnoxOrder(connection=TENGELLA) — INTE via
-      // raw TengellaWorkorder (gammalt flöde, avstängt vid 9e-cutover 2026-06-08). Att
-      // hämta båda dubbelvisade/dubbelräknade HK-order (beslut §9.6.1: en ordermodell).
+      // HK/Tengella-order = raw TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07). FortnoxOrder
+      // med connection=TENGELLA exkluderas i display (nOrderF→source "tengella") för att undvika
+      // dubbel mot ev. sync_v2-spegel. Se nWorkorder + dedup-not.
       const [
-        cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cInv, cAvtal,
-        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, invs, avtals,
+        cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cWO, cInv, cAvtal,
+        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, wos, invs, avtals,
       ] = await Promise.all([
         bubbleCount("Lead"), bubbleCount("activitet_crm"), bubbleCount("deal"),
         bubbleCount("Offert", feMira), bubbleCount("FortnoxOffer"),
-        bubbleCount("MiraOrder"), bubbleCount("FortnoxOrder"),
+        bubbleCount("MiraOrder"), bubbleCount("FortnoxOrder"), bubbleCount("TengellaWorkorder"),
         bubbleCount("FortnoxInvoice"), bubbleCount("Contract"),
         companyMap(),
         recent("Lead", limit), recent("activitet_crm", limit), recent("deal", limit),
         recent("Offert", limit, feMira), recent("FortnoxOffer", limit),
-        recent("MiraOrder", limit), recent("FortnoxOrder", limit), recent("FortnoxInvoice", limit),
-        recent("Contract", limit),
+        recent("MiraOrder", limit), recent("FortnoxOrder", limit), recent("TengellaWorkorder", limit),
+        recent("FortnoxInvoice", limit), recent("Contract", limit),
       ]);
 
       const rows = [
@@ -255,7 +286,8 @@ export function registerAffarRoutes(app, deps) {
         ...offFs.map(nOffertF),
         ...avtals.map((r) => nAvtal(r, m)),
         ...ordMs.map((r) => nOrderM(r, m)),
-        ...ordFs.map(nOrderF),   // inkl HK-order (connection=TENGELLA), taggas "tengella"
+        ...ordFs.map(nOrderF).filter((r) => r.source !== "tengella"),  // exkludera HK-fortnox → dedup mot workorders
+        ..._liveWO(wos).map((r) => nWorkorder(r, m)),                   // raw Tengella-workorders (kanonisk)
         ...invs.map(nInvoice),
       ].filter((r) => r.id);
       rows.sort((a, b) => (_ts(b.date) - _ts(a.date)));
@@ -264,11 +296,11 @@ export function registerAffarRoutes(app, deps) {
         ok: true,
         funnel: {
           lead: cLead, aktivitet: cAkt, affar: cDeal,
-          offert: cOffM + cOffF, avtal: cAvtal, order: cOrdM + cOrdF, faktura: cInv,
+          offert: cOffM + cOffF, avtal: cAvtal, order: cOrdM + cOrdF + cWO, faktura: cInv,
         },
-        counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, avtal: cAvtal, order_mira: cOrdM, order_fortnox: cOrdF },
+        counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, avtal: cAvtal, order_mira: cOrdM, order_fortnox: cOrdF, order_tengella: cWO },
         rows,
-        note: "HK-order via sammanslagna FortnoxOrder(TENGELLA); raw TengellaWorkorder ej med (dedup §9.6.1). Sortering på visnings-datum.",
+        note: "Order = MiraOrder + FortnoxOrder(ej HK) + raw TengellaWorkorder (kanonisk för HK, Fas 1 2026-08-07). Sortering på visnings-datum.",
       });
     } catch (e) {
       console.error("[/admin/affar/feed]", e?.message, e?.detail);
@@ -290,32 +322,51 @@ export function registerAffarRoutes(app, deps) {
         return rows.filter(Boolean);
       };
 
-      const [leadRow, akts, offList, offRev, ordRows, invRows, avtalRows] = await Promise.all([
+      // Kedjan läser BÅDE Deals list-fält (legacy) OCH reverse-lookup på varje typs `deal`-fält
+      // (P3 manuell koppling) — deduped på id. Så manuellt kopplade dok tänds i affärskortet.
+      const did = req.params.id;
+      const rev = (type) => bubbleFind(type, { constraints: [{ key: "deal", constraint_type: "equals", value: did }], limit: 25 }).catch(() => []);
+      const dedup = (arr) => { const mp = new Map(); (arr || []).forEach((o) => { const id = bubbleId(o); if (id && !mp.has(id)) mp.set(id, o); }); return [...mp.values()]; };
+
+      const [leadRow, akts, aktRev, offList, offRev, offFRev, ordList, ordFRev, woRev, invList, invRev, avtalRows, leadRev] = await Promise.all([
         deal.lead ? bubbleGet("Lead", _ref(deal.lead)).catch(() => null) : null,
         getList("activitet_crm", deal.historik),
-        getList("Offert", deal.offert),                                                                  // legacy: Deal.offert-lista
-        bubbleFind("Offert", { constraints: [{ key: "deal", constraint_type: "equals", value: req.params.id }], limit: 20 }).catch(() => []),  // Mira: Offert.deal reverse-lookup
+        rev("activitet_crm"),
+        getList("Offert", deal.offert),
+        rev("Offert"),
+        rev("FortnoxOffer"),
         getList("FortnoxOrder", deal.order),
+        rev("FortnoxOrder"),
+        rev("TengellaWorkorder"),
         getList("FortnoxInvoice", deal.invoice),
-        bubbleFind("Contract", { constraints: [{ key: "deal", constraint_type: "equals", value: req.params.id }], limit: 20 }).catch(() => []),  // Avtal: Contract.deal reverse-lookup (Affär-ryggrad)
+        rev("FortnoxInvoice"),
+        rev("Contract"),
+        rev("Lead"),
       ]);
-      // dedupa offerter (legacy-lista + reverse-lookup)
-      const _offMap = new Map();
-      [...offList, ...(offRev || [])].forEach((o) => { const id = bubbleId(o); if (id && !_offMap.has(id)) _offMap.set(id, o); });
-      const offRows = [..._offMap.values()];
 
-      // Mira-ordrar: reverse-lookup per Mira-offert (Deal.order håller bara FortnoxOrders)
+      const offRows = dedup([...offList, ...(offRev || [])]);       // Mira-offert (lista + reverse)
       const miraOrders = [];
       for (const off of offRows) {
         const mo = await bubbleFind("MiraOrder", { constraints: [{ key: "offert", constraint_type: "equals", value: bubbleId(off) }], limit: 5 }).catch(() => []);
         miraOrders.push(...(mo || []));
       }
+      const aktRows   = dedup([...(akts || []), ...(aktRev || [])]);
+      const offFRows  = dedup(offFRev);                             // FortnoxOffer via deal
+      const fortOrders = dedup([...(ordList || []), ...(ordFRev || [])]);
+      const woRows    = _liveWO(dedup(woRev));                      // TengellaWorkorder via deal
+      const invRowsAll = dedup([...(invList || []), ...(invRev || [])]);
+      const leadUnion = dedup([...(leadRow ? [leadRow] : []), ...(leadRev || [])]);
+      const leadPrimary = leadUnion[0] || null;
 
-      const akItems = akts.map((r) => nAkt(r, m)).sort((a, b) => _ts(b.date) - _ts(a.date));
-      const offItems = offRows.map((r) => nOffertM(r, m));
+      const akItems = aktRows.map((r) => nAkt(r, m)).sort((a, b) => _ts(b.date) - _ts(a.date));
+      const offItems = [...offRows.map((r) => nOffertM(r, m)), ...offFRows.map(nOffertF)];
       const avtalItems = (avtalRows || []).map((r) => nAvtal(r, m));
-      const ordItems = [...ordRows.map(nOrderF), ...miraOrders.map((r) => nOrderM(r, m))];
-      const invItems = invRows.map(nInvoice);
+      const ordItems = [
+        ...fortOrders.map(nOrderF).filter((r) => r.source !== "tengella"),
+        ...miraOrders.map((r) => nOrderM(r, m)),
+        ...woRows.map((r) => nWorkorder(r, m)),
+      ];
+      const invItems = invRowsAll.map(nInvoice);
 
       // ── redigerbara deal-fält (förifyllning) ──
       const cwName = (c) => ((_str(c["Förnamn"] || c["First Name"]) + " " + _str(c["Efternamn"] || c["Last Name"])).trim() || _str(c.Email || c.email));
@@ -345,7 +396,7 @@ export function registerAffarRoutes(app, deps) {
           todo: todos,
         },
         chain: {
-          lead: leadRow ? { name: (_str(leadRow.Name) || _str(leadRow.titel) || cname(m, leadRow.Company)), date: _day(leadRow["Created Date"]) } : null,
+          lead: leadPrimary ? { name: (_str(leadPrimary.Name) || _str(leadPrimary.titel) || cname(m, leadPrimary.Company)), date: _day(leadPrimary["Created Date"]) } : null,
           aktivitet: { count: akItems.length, latest: akItems.length ? akItems[0].status : null, date: akItems.length ? akItems[0].date : null },
           offert: { count: offItems.length, items: offItems },
           avtal: { count: avtalItems.length, items: avtalItems },
@@ -463,9 +514,9 @@ export function registerAffarRoutes(app, deps) {
         total = q ? rows.length : ((await bubbleCount("Offert", feMira)) + (await bubbleCount("FortnoxOffer")));
       }
       else if (type === "order") {
-        // HK-order via FortnoxOrder(connection=TENGELLA), ej raw TengellaWorkorder (dedup, §9.6.1).
+        // Order = MiraOrder + FortnoxOrder(ej HK) + raw TengellaWorkorder (kanonisk HK, Fas 1 2026-08-07).
         const m = await companyMap();
-        let miras, forts;
+        let miras, forts, wos;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
           const mSets = [[{ key: "ordernr", constraint_type: "text contains", value: q }]];
@@ -475,12 +526,16 @@ export function registerAffarRoutes(app, deps) {
             [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
             [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
           ]);
-        } else { miras = await pageOf("MiraOrder"); forts = await pageOf("FortnoxOrder"); }
+          const woSets = [[{ key: "workorder_no", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) woSets.push([{ key: "company", constraint_type: "in", value: ccIds }]);
+          wos = await searchUnion("TengellaWorkorder", woSets);
+        } else { miras = await pageOf("MiraOrder"); forts = await pageOf("FortnoxOrder"); wos = await pageOf("TengellaWorkorder"); }
         rows = [
           ...miras.map((r) => nOrderM(r, m)),
-          ...forts.map(nOrderF),
+          ...forts.map(nOrderF).filter((r) => r.source !== "tengella"),
+          ..._liveWO(wos).map((r) => nWorkorder(r, m)),
         ].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
-        total = q ? rows.length : ((await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder")));
+        total = q ? rows.length : ((await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder")) + (await bubbleCount("TengellaWorkorder")));
       }
       else {
         return res.status(400).json({ ok: false, error: "okänd_typ", hint: "type=lead|aktivitet|offert|order|faktura|avtal|affar" });
@@ -662,6 +717,68 @@ export function registerAffarRoutes(app, deps) {
     } catch (e) {
       console.error("[/admin/affar/coworkers]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/affar/deals?q= — affärssök för manuell koppling (P3) ──
+  app.options("/admin/affar/deals", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/deals", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const q = _str(req.query.q).trim();
+      if (q.length < 2) return res.json({ ok: true, rows: [] });
+      const m = await companyMap();
+      const ccIds = ccIdsMatching(m, q);
+      const sets = [[{ key: "titel", constraint_type: "text contains", value: q }]];
+      if (ccIds.length) sets.push([{ key: "kundföretag", constraint_type: "in", value: ccIds }]);
+      const all = await Promise.all(sets.map((cs) => bubbleFind("deal", { constraints: cs, limit: 20 }).catch(() => [])));
+      const seen = new Map();
+      for (const arr of all) for (const d of (arr || [])) { const id = bubbleId(d); if (id && !seen.has(id)) seen.set(id, d); }
+      const rows = [...seen.values()].slice(0, 20).map((d) => ({
+        id: bubbleId(d),
+        title: _str(d.titel) || _str(d.Namn) || _str(d.name) || "(namnlös affär)",
+        company: cname(m, d["kundföretag"]),
+      }));
+      return res.json({ ok: true, rows });
+    } catch (e) {
+      console.error("[/admin/affar/deals]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/affar/link — manuell koppling av dok → affär (P3) ──
+  // body {row_type, source, id, deal_id}. Sätter dok:ens `deal`-fält (enhetlig modell).
+  // tom deal_id = koppla bort. MiraOrder kopplas via sin offert (inget eget deal-fält).
+  const LINK_MAP = {
+    lead: () => "Lead",
+    aktivitet: () => "activitet_crm",
+    avtal: () => "Contract",
+    faktura: () => "FortnoxInvoice",
+    offert: (src) => (src === "fortnox" ? "FortnoxOffer" : "Offert"),
+    order: (src) => (src === "tengella" ? "TengellaWorkorder" : (src === "mira" ? null : "FortnoxOrder")),
+  };
+  app.options("/admin/affar/link", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/link", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const b = req.body || {};
+      const rowType = _str(b.row_type).toLowerCase();
+      const source = _str(b.source).toLowerCase();
+      const id = _str(b.id).trim();
+      const dealId = _str(b.deal_id).trim();
+      if (!id) return res.status(400).json({ ok: false, error: "saknar_id" });
+      const mapper = LINK_MAP[rowType];
+      if (!mapper) return res.status(400).json({ ok: false, error: "okänd_typ", hint: "row_type=lead|aktivitet|offert|avtal|order|faktura" });
+      const bubbleType = mapper(source);
+      if (!bubbleType) return res.status(400).json({ ok: false, error: "mira_order_via_offert", hint: "Koppla Mira-orderns offert istället." });
+      await bubblePatch(bubbleType, id, { deal: dealId || null });
+      let deal_name = "";
+      if (dealId) { const dm = await dealMap(); deal_name = dm.get(dealId) || ""; }
+      return res.json({ ok: true, row_type: rowType, bubble_type: bubbleType, id, deal_id: dealId || null, deal_name });
+    } catch (e) {
+      console.error("[/admin/affar/link]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 

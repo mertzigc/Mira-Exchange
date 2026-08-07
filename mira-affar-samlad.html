@@ -117,6 +117,15 @@
   .af .dchip{display:inline-flex;align-items:center;gap:5px;background:var(--input);border:1px solid var(--border);border-radius:16px;padding:4px 6px 4px 11px;font-size:12px;color:var(--white)}
   .af .dx{cursor:pointer;color:var(--w40);font-weight:700;font-size:15px;line-height:1;padding:0 3px}
   .af .dx:hover{color:var(--red)}
+  /* workorder radexpandering + koppla-rad */
+  .af tr.worow,.af tr.kopplarow{cursor:pointer}
+  .af tr.worow.open>td,.af tr.kopplarow.open>td{background:var(--card)}
+  .af .worows{width:100%;border-collapse:collapse}
+  .af .worows th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:6px 10px;border-bottom:1px solid var(--w10)}
+  .af .worows td{padding:7px 10px;border-bottom:1px solid var(--border);font-size:12.5px;vertical-align:top}
+  .af .worows .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .af .worowlink{color:var(--w70);font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer}
+  .af .worowlink:hover{color:var(--orange)}
 </style>
 
 <div class="af">
@@ -203,16 +212,25 @@
   // ── rad-renderers per typ ──
   function docRowHtml(r){
     var ic=ICON[r.type]||"•";
-    var af=(r.type==="Affär")?' class="affar" data-affar-id="'+esc(r.id)+'"':'';
+    var isWo=!!(r.wo && r.rows && r.rows.length);
+    var kt=kType(r.type);
+    var isKopp=(!isWo && !!kt);   // offert/order/faktura/avtal (workorder har egen expander)
+    var af="";
+    if(r.type==="Affär") af=' class="affar" data-affar-id="'+esc(r.id)+'"';
+    else if(isWo) af=' class="worow" data-wo-id="'+esc(r.id)+'"';
+    else if(isKopp) af=' class="kopplarow" data-kid="'+esc(r.id)+'" data-ktype="'+kt+'" data-ksrc="'+esc(r.source)+'" data-kdeal="'+(r.deal_id?"1":"")+'"';
+    var chev=(r.type==="Affär"||isWo||isKopp)?' <span class="muted" style="font-weight:400">▸</span>':'';
+    var koppTag=(isKopp&&r.deal_id)?' <span class="kindtag" style="color:var(--green)">kopplad</span>':'';
+    var lastCell=isWo?('<span class="worowlink">'+r.rows.length+' rader ▸</span>'):viewCell(r);
     return '<tr'+af+'>'+
-      '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+(r.type==="Affär"?' <span class="muted" style="font-weight:400">▸</span>':'')+(r.type==="Offert"&&r.kind?' <span class="kindtag">'+esc(r.kind)+'</span>':'')+'</span></td>'+
+      '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+chev+(r.type==="Offert"&&r.kind?' <span class="kindtag">'+esc(r.kind)+'</span>':'')+koppTag+'</span></td>'+
       '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
       '<td>'+cm(r.company)+'</td>'+
       '<td class="mono">'+cm(r.number)+'</td>'+
       '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
       '<td class="muted">'+esc(r.date||"")+'</td>'+
       '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
-      '<td>'+viewCell(r)+'</td>'+
+      '<td>'+lastCell+'</td>'+
     '</tr>';
   }
   function viewCell(r){
@@ -277,6 +295,7 @@
       '</div>'+
       '<div class="af-note-wrap" style="'+((isK&&done)?"":"display:none")+'"><label class="el">Mötesanteckning</label><textarea class="ein af-a-note" rows="4">'+esc(r.motesanteckning||"")+'</textarea></div>'+
       '<div class="eact"><button class="ebtn af-a-save" data-akt-id="'+esc(r.id)+'">Spara</button><span class="af-a-msg ecur"></span></div>'+
+      '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("aktivitet","",r.id,r.affar_id)+'</div>'+
     '</div>';
   }
   function leadEditHtml(r){
@@ -298,6 +317,7 @@
           '<div class="ecur af-td-cur">'+tdCur+'</div><div class="sugg af-td-sugg"></div></div>'+
       '</div>'+
       '<div class="eact"><button class="ebtn af-l-save" data-lead-id="'+esc(r.id)+'">Spara koppling</button><span class="af-l-msg ecur"></span></div>'+
+      '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("lead","",r.id,r.deal_id)+'</div>'+
     '</div>';
   }
   function closeEdits(){
@@ -581,6 +601,86 @@
       .catch(function(){ cell.innerHTML='<div class="deal"><div class="deal-h muted">Nätverksfel.</div></div>'; });
   }
 
+  // ── workorder radexpandering (Tengella-order) ──
+  function findAnyRow(id){
+    var i;
+    for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id) return STATE.listRows[i]; }
+    for(i=0;i<STATE.feedRows.length;i++){ if(STATE.feedRows[i].id===id) return STATE.feedRows[i]; }
+    return null;
+  }
+  function woRowsHtml(r){
+    var head='<div class="deal-h"><div>'+esc(r.company||"")+' · '+esc(r.number||"")+(r.note?(' · '+esc(r.note)):'')+'</div><div>'+(r.amount!=null?esc(money(r.amount)):'')+'</div></div>';
+    var trs=(r.rows||[]).map(function(x){
+      return '<tr>'+
+        '<td class="mono">'+cm(x.art)+'</td>'+
+        '<td>'+cm(x.name)+(x.note?(' <span class="muted" style="font-size:11px">'+esc(x.note)+'</span>'):'')+'</td>'+
+        '<td class="num">'+esc(x.qty)+'</td>'+
+        '<td class="num">'+(x.price!=null?esc(money(x.price)):'')+'</td>'+
+        '<td class="num">'+(x.sum!=null?esc(money(x.sum)):'')+'</td>'+
+      '</tr>';
+    }).join("");
+    return '<div class="deal"><div style="border-left:2px solid var(--purple)">'+head+'<div style="padding:4px 18px 16px"><table class="worows"><thead><tr><th>Art.nr</th><th>Benämning</th><th class="num">Antal</th><th class="num">Á-pris</th><th class="num">Summa</th></tr></thead><tbody>'+trs+'</tbody></table></div><div style="padding:0 18px 16px">'+kopplaWidgetHtml("order","tengella",r.id,r.deal_id)+'</div></div></div>';
+  }
+  function toggleWo(tr){
+    var next=tr.nextElementSibling;
+    if(next && next.getAttribute && next.getAttribute("data-detail")==="1"){ next.parentNode.removeChild(next); tr.classList.remove("open"); return; }
+    root.querySelectorAll('tr[data-detail="1"]').forEach(function(x){ x.parentNode.removeChild(x); });
+    root.querySelectorAll("tr.worow.open,tr.affar.open").forEach(function(x){ x.classList.remove("open"); });
+    var r=findAnyRow(tr.getAttribute("data-wo-id")); if(!r) return;
+    tr.classList.add("open");
+    var det=document.createElement("tr"); det.setAttribute("data-detail","1");
+    det.innerHTML='<td colspan="'+colCount()+'" class="deal-cell">'+woRowsHtml(r)+'</td>';
+    tr.parentNode.insertBefore(det, tr.nextSibling);
+  }
+
+  // ── manuell koppling till affär (P3) ──
+  function kType(t){ return t==="Offert"?"offert":t==="Order"?"order":t==="Faktura"?"faktura":t==="Avtal"?"avtal":""; }
+  function kopplaWidgetHtml(rowType, source, id, hasDeal){
+    var cur=hasDeal?"Redan kopplad — sök för att byta affär":"Ingen affär kopplad";
+    return '<div class="egrow af-koppla" data-ktype="'+esc(rowType)+'" data-ksrc="'+esc(source||"")+'" data-kid="'+esc(id)+'" style="max-width:440px">'+
+      '<label class="el">Koppla till affär</label>'+
+      '<input class="ein af-deal-search" placeholder="Sök affär (titel/företag)…" autocomplete="off">'+
+      '<input type="hidden" class="af-deal-id" value="">'+
+      '<div class="ecur af-deal-cur">'+esc(cur)+'</div><div class="sugg af-deal-sugg"></div>'+
+      '<div class="eact" style="justify-content:flex-start;border:none;padding-top:8px;margin-top:0"><button class="ebtn af-koppla-save">Koppla</button><span class="af-koppla-msg ecur"></span></div>'+
+    '</div>';
+  }
+  var dealTimer=null;
+  function searchDeals(inp){
+    var box=inp.parentNode.querySelector(".af-deal-sugg"), q=inp.value.trim();
+    if(dealTimer){ clearTimeout(dealTimer); }
+    if(q.length<2){ if(box){ box.classList.remove("on"); box.innerHTML=""; } return; }
+    dealTimer=setTimeout(function(){
+      fetch(HOST+"/admin/affar/deals?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.title,company:x.company}; }), inp); })
+        .catch(function(){});
+    },300);
+  }
+  function saveKoppla(btn){
+    var box=btn.closest(".af-koppla"); if(!box) return;
+    var id=box.getAttribute("data-kid");
+    var payload={ row_type:box.getAttribute("data-ktype"), source:box.getAttribute("data-ksrc"), id:id, deal_id:box.querySelector(".af-deal-id").value };
+    var msg=box.querySelector(".af-koppla-msg"); btn.disabled=true; msg.textContent="Kopplar…";
+    fetch(HOST+"/admin/affar/link",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); }).then(function(j){
+        btn.disabled=false;
+        if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
+        msg.textContent=j.deal_id?("Kopplad: "+esc(j.deal_name||"affär")+" ✓"):"Bortkopplad ✓";
+        var i; for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id){ STATE.listRows[i].deal_id=j.deal_id; break; } }
+      }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
+  }
+  function toggleKoppla(tr){
+    var next=tr.nextElementSibling;
+    if(next && next.getAttribute && next.getAttribute("data-detail")==="1"){ next.parentNode.removeChild(next); tr.classList.remove("open"); return; }
+    root.querySelectorAll('tr[data-detail="1"]').forEach(function(x){ x.parentNode.removeChild(x); });
+    root.querySelectorAll("tr.kopplarow.open,tr.worow.open,tr.affar.open").forEach(function(x){ x.classList.remove("open"); });
+    tr.classList.add("open");
+    var det=document.createElement("tr"); det.setAttribute("data-detail","1");
+    det.innerHTML='<td colspan="'+colCount()+'" class="edit-cell"><div class="edit">'+kopplaWidgetHtml(tr.getAttribute("data-ktype"),tr.getAttribute("data-ksrc"),tr.getAttribute("data-kid"),tr.getAttribute("data-kdeal")==="1")+'</div></td>';
+    tr.parentNode.insertBefore(det, tr.nextSibling);
+  }
+
   function setChips(box, attr, val){
     root.querySelectorAll('[data-af="'+box+'"] .chip').forEach(function(c){ c.className="chip"+((c.getAttribute(attr)||"")===val?" on":""); });
   }
@@ -629,6 +729,7 @@
     var sa=t.closest && t.closest(".af-a-save"); if(sa){ saveAkt(sa); return; }
     var sl=t.closest && t.closest(".af-l-save"); if(sl){ saveLead(sl); return; }
     var sd=t.closest && t.closest(".af-d-save"); if(sd){ saveDeal(sd); return; }
+    var sk=t.closest && t.closest(".af-koppla-save"); if(sk){ saveKoppla(sk); return; }
     if(t.closest && t.closest(".edit")) return;     // klick i redigeringsformuläret ska ej toggla raden
     var vb=t.closest && t.closest('.viewbtn[data-doc-id]');
     if(vb){
@@ -648,6 +749,8 @@
     var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; STATE.page=0; setChips("typechips","data-t",STATE.type); if(STATE.type) loadList(); else render(); return; }
     var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); render(); return; }
     var ar=t.closest("tr.affar"); if(ar){ toggleDeal(ar); return; }
+    var wr=t.closest("tr.worow"); if(wr){ toggleWo(wr); return; }
+    var kr=t.closest("tr.kopplarow"); if(kr && !(t.closest && t.closest(".viewbtn"))){ toggleKoppla(kr); return; }
     var lr=t.closest("tr.lead"); if(lr){ toggleEdit(lr,"lead"); return; }
     var akr=t.closest("tr.akt"); if(akr){ toggleEdit(akr,"akt"); return; }
   });
@@ -657,6 +760,7 @@
     if(e.target.classList && e.target.classList.contains("af-d-co-search")){ searchDealCompanies(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-d-kp-search")){ searchDealCoworkers(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-d-td-search")){ searchDealTodos(e.target); return; }
+    if(e.target.classList && e.target.classList.contains("af-deal-search")){ searchDeals(e.target); return; }
     if(e.target.getAttribute("data-af")!=="search") return;
     STATE.q=e.target.value.trim();
     if(searchTimer){ clearTimeout(searchTimer); }
