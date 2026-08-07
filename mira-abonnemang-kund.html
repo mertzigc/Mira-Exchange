@@ -3233,14 +3233,30 @@ const state = {
 // ibland async). Selectors matchar data-aa-attributen i HTML-blocken.
 (function(){
   function findMask(){ return document.querySelector('[data-aa="wiz-mask-k"]'); }
+  function raiseAncestors(m){
+    m._raised = [];
+    var a = m.parentElement;
+    while (a && a !== document.body && a !== document.documentElement){
+      var cs = getComputedStyle(a);
+      if (cs.position !== 'static'){ m._raised.push([a, a.style.zIndex]); a.style.zIndex = '2147483000'; }
+      a = a.parentElement;
+    }
+  }
+  function restoreAncestors(m){
+    if (!m._raised) return;
+    for (var i = 0; i < m._raised.length; i++){ m._raised[i][0].style.zIndex = m._raised[i][1]; }
+    m._raised = null;
+  }
   function openWiz(){
     var m = findMask(); if (!m) { console.warn('[wiz] mask saknas'); return; }
+    raiseAncestors(m);
     m.classList.add('on'); document.body.style.overflow = 'hidden';
   }
   function closeWiz(force){
     var m = findMask(); if (!m) return;
     if (!force && !confirm('Stänga wizarden? Alla ifyllda uppgifter försvinner.')) return;
     m.classList.remove('on'); document.body.style.overflow = '';
+    restoreAncestors(m);
     if (typeof window.resetWizard_k === 'function') { try { window.resetWizard_k(); } catch(_){} }
   }
 
