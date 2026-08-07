@@ -324,34 +324,40 @@
   }
   function toggleNote(chk){ var box=chk.closest(".edit"); if(!box) return; var nw=box.querySelector(".af-note-wrap"); if(nw){ nw.style.display=chk.checked?"":"none"; } }
 
-  function renderSugg(box, items){
-    if(!items.length){ box.className="sugg"; box.innerHTML=""; return; }
+  function positionSugg(box, anchor){
+    if(!anchor||!box) return;
+    var r=anchor.getBoundingClientRect();
+    box.style.position="fixed"; box.style.left=r.left+"px"; box.style.right="auto"; box.style.top=(r.bottom+3)+"px"; box.style.width=r.width+"px"; box.style.zIndex="99999";
+  }
+  function renderSugg(box, items, anchor){
+    if(!items.length){ box.classList.remove("on"); box.innerHTML=""; return; }
     box.innerHTML=items.map(function(it){
       var sub=it.company?('<span class="sc">'+esc(it.company)+'</span>'):'';
       return '<div class="si" data-id="'+esc(it.id)+'" data-label="'+esc(it.label)+'">'+esc(it.label)+sub+'</div>';
     }).join("");
-    box.className="sugg on";
+    positionSugg(box, anchor);
+    box.classList.add("on");
   }
   var coTimer=null, tdTimer=null;
   function searchCompanies(inp){
     var box=inp.parentNode.querySelector(".af-co-sugg"), q=inp.value.trim();
     if(coTimer){ clearTimeout(coTimer); }
-    if(q.length<2){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    if(q.length<2){ if(box){ box.classList.remove("on"); box.innerHTML=""; } return; }
     coTimer=setTimeout(function(){
       fetch(HOST+"/admin/affar/companies?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
         .then(function(r){ return r.json(); })
-        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.name,company:""}; })); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.name,company:""}; }), inp); })
         .catch(function(){});
     },300);
   }
   function searchTodos(inp){
     var box=inp.parentNode.querySelector(".af-td-sugg"), q=inp.value.trim();
     if(tdTimer){ clearTimeout(tdTimer); }
-    if(q.length<2){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    if(q.length<2){ if(box){ box.classList.remove("on"); box.innerHTML=""; } return; }
     tdTimer=setTimeout(function(){
       fetch(HOST+"/admin/affar/todos?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
         .then(function(r){ return r.json(); })
-        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.title,company:x.company}; })); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.title,company:x.company}; }), inp); })
         .catch(function(){});
     },300);
   }
@@ -365,23 +371,23 @@
       for(var i=0;i<cs.length;i++){ if(cs[i].getAttribute("data-id")===pid){ exists=true; break; } }
       if(!exists){ var tmp=document.createElement("div"); tmp.innerHTML=dchip(pid,plabel,kind); chips.appendChild(tmp.firstChild); }
       var s1=wrap.querySelector("input.ein"); if(s1){ s1.value=""; }
-      sg.className="sugg"; sg.innerHTML=""; return;
+      sg.classList.remove("on"); sg.innerHTML=""; return;
     }
     var idIn=wrap.querySelector('input[type="hidden"]'), curEl=wrap.querySelector(".ecur"), srch=wrap.querySelector("input.ein");
     if(idIn){ idIn.value=si.getAttribute("data-id"); }
     if(curEl){ curEl.textContent="Vald: "+si.getAttribute("data-label"); }
     if(srch){ srch.value=""; }
-    sg.className="sugg"; sg.innerHTML="";
+    sg.classList.remove("on"); sg.innerHTML="";
   }
   var dcoTimer=null,dkpTimer=null,dtdTimer=null;
   function searchDealCompanies(inp){
     var box=inp.parentNode.querySelector(".af-d-co-sugg"), q=inp.value.trim();
     if(dcoTimer){ clearTimeout(dcoTimer); }
-    if(q.length<2){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    if(q.length<2){ if(box){ box.classList.remove("on"); box.innerHTML=""; } return; }
     dcoTimer=setTimeout(function(){
       fetch(HOST+"/admin/affar/companies?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
         .then(function(r){ return r.json(); })
-        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.name,company:""}; })); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.name,company:""}; }), inp); })
         .catch(function(){});
     },300);
   }
@@ -389,23 +395,23 @@
     var box=inp.parentNode.querySelector(".af-d-kp-sugg"), q=inp.value.trim();
     var editBox=inp.closest(".deal-edit"), cc=editBox?editBox.querySelector(".af-d-co-id").value:"";
     if(dkpTimer){ clearTimeout(dkpTimer); }
-    if(!cc){ if(box){ renderSugg(box,[]); box.innerHTML='<div class="si muted">Koppla kundföretag först</div>'; box.className="sugg on"; } return; }
-    if(q.length<1){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    if(!cc){ if(box){ box.innerHTML='<div class="si muted">Koppla kundföretag först</div>'; box.classList.add("on"); positionSugg(box, inp); } return; }
+    if(q.length<1){ if(box){ box.classList.remove("on"); box.innerHTML=""; } return; }
     dkpTimer=setTimeout(function(){
       fetch(HOST+"/admin/affar/coworkers?company="+encodeURIComponent(cc)+"&q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
         .then(function(r){ return r.json(); })
-        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.name,company:x.email}; })); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.name,company:x.email}; }), inp); })
         .catch(function(){});
     },300);
   }
   function searchDealTodos(inp){
     var box=inp.parentNode.querySelector(".af-d-td-sugg"), q=inp.value.trim();
     if(dtdTimer){ clearTimeout(dtdTimer); }
-    if(q.length<2){ if(box){ box.className="sugg"; box.innerHTML=""; } return; }
+    if(q.length<2){ if(box){ box.classList.remove("on"); box.innerHTML=""; } return; }
     dtdTimer=setTimeout(function(){
       fetch(HOST+"/admin/affar/todos?q="+encodeURIComponent(q),{headers:{"x-admin-token":TOKEN}})
         .then(function(r){ return r.json(); })
-        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.title,company:x.company}; })); })
+        .then(function(j){ var rs=(j&&j.rows)||[]; renderSugg(box, rs.map(function(x){ return {id:x.id,label:x.title,company:x.company}; }), inp); })
         .catch(function(){});
     },300);
   }
