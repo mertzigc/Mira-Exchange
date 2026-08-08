@@ -818,7 +818,13 @@
     $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
     if(!INHERITED){ loadCompanies(); }
     newOffert();
-    if(MH){ MH.classList.add("on"); _raiseAnc(MH); document.body.style.overflow="hidden"; }
+    if(MH){
+      // Bubble lägger blocket i en grupp/popup som ofta är display:none (inaktiv flik) → en
+      // fixed-overlay inuti renderas ej. Flytta modal-host till body vid öppning (root=.ao-wrap
+      // följer med, all delegation/cfg intakt). _raiseAnc onödig på body.
+      if(MH.parentNode !== document.body){ document.body.appendChild(MH); }
+      MH.classList.add("on"); document.body.style.overflow="hidden";
+    }
   }
   // MULTI-INSTANS: Bubble lägger ALLA offert-embeddings (affär, kundkort, deal-popup) i DOM:en
   // samtidigt → flera .ao-wrap. BARA as_modal-instansen registrerar globalen, annars skriver sista

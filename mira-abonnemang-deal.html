@@ -3265,6 +3265,9 @@ const state = {
       var ci = (BROOT || document).querySelector('[data-mira="clientcompany"]'); if (ci) { ci.value = CLIENT.id || ''; }
       var cn = (BROOT || document).querySelector('[data-mira="clientcompany_nm"]'); if (cn) { cn.value = CLIENT.name || ''; }
       try { resetWizard(); } catch (_) {}
+      // Bubble lägger blocket i en grupp/popup som ofta är display:none → wizard-masken (fixed)
+      // renderas ej. Flytta hela .ad-wrap (BROOT) till body → mask + fält + BROOT-scope följer med.
+      if (BROOT && BROOT.parentNode !== document.body) { document.body.appendChild(BROOT); }
       if (window.miraAvtalWiz && window.miraAvtalWiz.open) { window.miraAvtalWiz.open(); }
     },
     close: function () { if (window.miraAvtalWiz && window.miraAvtalWiz.close) { window.miraAvtalWiz.close(); } }
