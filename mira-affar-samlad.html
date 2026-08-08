@@ -166,8 +166,6 @@
     <span class="muted" style="font-size:11px;margin-right:2px">Skapa nytt:</span>
     <button class="af-newbtn" data-new="aktivitet">＋ Aktivitet</button>
     <button class="af-newbtn" data-new="todo">＋ Todo</button>
-    <button class="af-newbtn" data-new="offert">＋ Offert</button>
-    <button class="af-newbtn" data-new="avtal">＋ Avtal</button>
   </div>
   <div data-af="createpanel"></div>
 
@@ -856,7 +854,8 @@
   }
 
   // ── SKAPA NYTT: aktivitet + todo (inline-paneler i .af-, ej fixed-overlay) ──
-  // Offert + Avtal öppnas via open-hook på befintliga block (window.miraOffertModal/miraAvtalModal).
+  // Offert + Avtal skapas EJ härifrån (cross-block-modalen skrotad 2026-08-08 pga Bubble multi-
+  // instans/dolda-grupp-krångel) — separat lösning planeras (se handoff/minne).
   function aktCreatePanelHtml(pref){
     pref=pref||{};
     var typeOpts='<option value="">— typ —</option>'; for(var i=0;i<AKT_TYPES.length;i++){ typeOpts+='<option value="'+esc(AKT_TYPES[i])+'">'+esc(AKT_TYPES[i])+'</option>'; }
@@ -911,8 +910,6 @@
   function cardActionsHtml(did){
     return '<div class="card-actions"><span class="ca-lbl">Skapa i affären:</span>'+
       '<button class="af-cardnew" data-cnew="aktivitet" data-cdeal="'+esc(did)+'">＋ Aktivitet</button>'+
-      '<button class="af-cardnew" data-cnew="offert" data-cdeal="'+esc(did)+'">＋ Offert</button>'+
-      '<button class="af-cardnew" data-cnew="avtal" data-cdeal="'+esc(did)+'">＋ Avtal</button>'+
       '<button class="af-cardnew" data-cnew="todo" data-cdeal="'+esc(did)+'">＋ Todo</button>'+
     '</div><div class="card-actions-panel"></div>';
   }
@@ -988,14 +985,7 @@
         msg.textContent="Skapad ✓"+(j.deal_linked?" (kopplad till affär)":""); afterCreate(box, payload.deal_id, "Todo");
       }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
-  function openOffertAvtal(kind, prefill){
-    var mod=(kind==="offert")?window.miraOffertModal:window.miraAvtalModal;
-    if(mod && mod.open){ mod.open(prefill||{}); return true; }
-    alert((kind==="offert"?"Offert":"Avtal")+"-modulen är inte inbäddad på affär-sidan ännu.\nLägg "+(kind==="offert"?"mira-offert-admin.html":"mira-abonnemang-deal.html")+" som ett HTML-element på sidan — open-hooken kopplas i nästa steg.");
-    return false;
-  }
   function openCreate(kind){
-    if(kind==="offert"||kind==="avtal"){ openOffertAvtal(kind, {}); return; }
     var host=$("createpanel"); var open=(host.getAttribute("data-open")===kind);
     host.innerHTML=""; host.removeAttribute("data-open");
     if(open) return;
@@ -1006,7 +996,6 @@
     var kind=btn.getAttribute("data-cnew"), did=btn.getAttribute("data-cdeal");
     var j=chainCache[did], ccId="", ccNm="", dealNm="";
     if(j){ ccId=(j.edit&&j.edit.kundforetag_id)||""; ccNm=(j.edit&&j.edit.kundforetag_name)||(j.deal&&j.deal.company)||""; dealNm=(j.deal&&j.deal.titel)||""; }
-    if(kind==="offert"||kind==="avtal"){ openOffertAvtal(kind, {deal:did, clientcompany:ccId, clientcompany_nm:ccNm}); return; }
     var dealBox=btn.closest(".deal"); if(!dealBox) return;
     var host=dealBox.querySelector(".card-actions-panel"); if(!host) return;
     var open=(host.getAttribute("data-open")===kind);
