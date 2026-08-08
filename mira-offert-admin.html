@@ -820,9 +820,12 @@
     newOffert();
     if(MH){ MH.classList.add("on"); _raiseAnc(MH); document.body.style.overflow="hidden"; }
   }
-  window.miraOffertModal = { open:_mhOpen, close:_mhClose };
+  // MULTI-INSTANS: Bubble lägger ALLA offert-embeddings (affär, kundkort, deal-popup) i DOM:en
+  // samtidigt → flera .ao-wrap. BARA as_modal-instansen registrerar globalen, annars skriver sista
+  // (icke-modal) instansen över den → affär-knappen pratar med fel block. Varje instans claimar egen root.
   if(AS_MODAL && MH){
     MH.classList.add("as-modal");
+    window.miraOffertModal = { open:_mhOpen, close:_mhClose };
     MH.addEventListener("click", function(e){ if(e.target===MH || (e.target.closest && e.target.closest('[data-ao="mh-close"]'))){ _mhClose(); } });
     document.addEventListener("keydown", function(e){ if(e.key==="Escape" && MH.classList.contains("on")){ _mhClose(); } });
   }

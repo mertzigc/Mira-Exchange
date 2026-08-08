@@ -2449,7 +2449,10 @@
   // Affär-blockets open-hook återanvänder EN instans över olika affärer → deal måste vara
   // muterbar (WIZ_DEAL_ID är const/fryst). DEAL_LIVE uppdateras i window.miraAvtalModal.open.
   var DEAL_LIVE = WIZ_DEAL_ID;
-  var AS_MODAL_D = ((((BROOT||document).querySelector('[data-mira="as_modal"]')) || {}).value) === '1';
+  // Läs BÅDE value och data-val: bootstrapen (script #1) kopierar inte alltid as_modal→value,
+  // och detta block bär config i data-val (strip-gotchan). data-val="1" i affär-sidans instans.
+  var _amElD = (BROOT||document).querySelector('[data-mira="as_modal"]');
+  var AS_MODAL_D = !!_amElD && (_amElD.value === '1' || _amElD.getAttribute('data-val') === '1');
 
   // Client-state — förvald kund (inte via autocomplete som i admin-vyn)
   const CLIENT = { id: WIZ_CC_ID || null, name: WIZ_CC_NAME || null };
@@ -3248,8 +3251,11 @@ const state = {
   // ── open-hook för affär-blocket (Tier 2). Unikt global-namn → ingen krock med .af/.ao. ──
   // .ad-modal döljer list-kroppen (behåller wizard-masken). open() sätter deal+kund (muterbara),
   // återfyller wizarden (resetWizard→prefillFixedClient→setClient) och öppnar masken (miraAvtalWiz).
-  if (AS_MODAL_D && BROOT) { BROOT.classList.add('ad-modal'); }
-  window.miraAvtalModal = {
+  // MULTI-INSTANS: bara as_modal-instansen döljer list-kroppen OCH äger globalen (annars skriver
+  // en icke-modal .ad-wrap över window.miraAvtalModal). BROOT=första .ad-wrap; as_modal-blocket ligger först.
+  if (AS_MODAL_D && BROOT) {
+    BROOT.classList.add('ad-modal');
+    window.miraAvtalModal = {
     open: function (pref) {
       pref = pref || {};
       DEAL_LIVE = pref.deal || '';
@@ -3262,7 +3268,8 @@ const state = {
       if (window.miraAvtalWiz && window.miraAvtalWiz.open) { window.miraAvtalWiz.open(); }
     },
     close: function () { if (window.miraAvtalWiz && window.miraAvtalWiz.close) { window.miraAvtalWiz.close(); } }
-  };
+    };
+  }
 })();
 </script>
 <script>
