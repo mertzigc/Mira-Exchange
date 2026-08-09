@@ -87,27 +87,41 @@
   .af-conv:hover{filter:brightness(1.07)}
   .af-conv:disabled{opacity:.5;cursor:default}
   .af .ordertag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--green);background:rgba(76,175,125,.13);border-radius:5px;padding:3px 8px;white-space:nowrap}
-  /* order-editor (inline i affär-vyn) */
+  /* order-editor (inline, dokument-läsvy + penn-ikon) */
   .af tr.orderrow{cursor:pointer}
   .af tr.orderrow.open>td{background:var(--card)}
-  .af .af-ord .af-o-head-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:2px}
-  .af .af-o-rowshead{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700;margin:10px 0 2px}
-  .af .af-o-rows{display:flex;flex-direction:column;gap:8px}
-  .af .af-o-row{background:var(--deep);border:1px solid var(--border);border-radius:9px;padding:9px 10px}
-  .af .af-or-top{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-  .af .af-or-top .ein{padding:6px 8px;font-size:12px}
-  .af .af-or-benamning{flex:2;min-width:140px}
-  .af .af-or-antal,.af .af-or-rabatt,.af .af-or-moms{width:64px}
-  .af .af-or-enhet{width:60px}
-  .af .af-or-apris{width:82px}
-  .af .af-or-kok{flex:1;min-width:130px}
-  .af .af-or-prep{width:104px}
-  .af .af-or-bot{display:flex;gap:10px;align-items:center;margin-top:7px;flex-wrap:wrap}
-  .af .af-or-besk{flex:1;min-width:160px;resize:vertical;padding:6px 8px;font-size:12px}
-  .af .af-or-suml{font-size:11px;color:var(--w70);white-space:nowrap}
-  .af .af-or-save{padding:6px 12px;font-size:11px}
-  .af .af-or-del{background:none;border:1px solid var(--border);border-radius:7px;color:var(--w40);cursor:pointer;padding:5px 9px;font-size:12px;font-family:var(--fb)}
+  .af .af-ord .af-o-head-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .af .af-o-pdfbtns{display:flex;gap:8px}
+  .af .af-pdfbtn{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb)}
+  .af .af-pdfbtn:hover{border-color:var(--orange);color:var(--orange)}
+  .af .af-icobtn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;border:1px solid var(--border);color:var(--w40);cursor:pointer;font-size:12px;background:var(--input);flex:0 0 auto}
+  .af .af-icobtn:hover{border-color:var(--orange);color:var(--orange)}
   .af .af-or-del:hover{border-color:var(--red);color:var(--red)}
+  .af .af-lnk{background:none;border:none;color:var(--w40);cursor:pointer;font-size:12px;font-family:var(--fb);text-decoration:underline;padding:8px 4px}
+  .af .af-lnk:hover{color:var(--white)}
+  /* huvud-läsvy */
+  .af .af-o-headview{position:relative;background:var(--deep);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .af .af-ohv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px 18px;padding-right:30px}
+  .af .af-ohv-f{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .af .af-ohv-l{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700}
+  .af .af-ohv-v{font-size:13px;color:var(--white);word-break:normal;overflow-wrap:anywhere}
+  .af .af-o-headpencil{position:absolute;top:10px;right:10px}
+  .af .af-o-headedit{background:var(--deep);border:1px solid var(--border);border-radius:10px;padding:14px}
+  /* rad-läsvy */
+  .af .af-o-rowshead{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700;margin:12px 0 4px}
+  .af .af-o-rows{display:flex;flex-direction:column;gap:7px}
+  .af .af-o-row{background:var(--deep);border:1px solid var(--border);border-radius:9px}
+  .af .af-or-view{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:10px 12px}
+  .af .af-or-l{min-width:0;flex:1}
+  .af .af-orv-namn{font-weight:700;font-size:13px}
+  .af .af-orv-qty{font-size:11.5px;margin-top:1px}
+  .af .af-orv-besk{font-size:11.5px;margin-top:3px;overflow-wrap:anywhere}
+  .af .af-or-r{display:flex;align-items:center;gap:9px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
+  .af .af-orv-sum{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .af .kokpill{font-size:10px;font-weight:700;color:var(--blue);background:rgba(91,141,239,.13);border-radius:6px;padding:3px 9px;white-space:nowrap}
+  .af .kokpill.nokok{color:var(--w40);background:var(--w10)}
+  .af .af-or-edit{padding:12px;border-top:1px solid var(--border)}
+  .af .af-or-save{padding:7px 16px;font-size:12px}
   .af .af-o-totals{font-size:12px;color:var(--w70)}
   .af .af-o-totals b{color:var(--white)}
   /* inline edit (lead + aktivitet) */
@@ -321,35 +335,56 @@
   // ── order-editor (inline, Mira-order redigerbar utan cutoff) ──
   var orderCache={};
   function kokOptions(koks, cur){ var o='<option value="">— kök —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
+  // Läsvy för en rad (dokument-utseende). Penna → redigering.
+  function rowViewInner(r){
+    var qty=esc(r.antal)+(r.enhet?(' '+esc(r.enhet)):'')+' · '+esc(money(r.apris))+'/'+(r.enhet?esc(r.enhet):'st');
+    var kok=r.kok_namn?('<span class="kokpill">'+esc(r.kok_namn)+'</span>'):'<span class="kokpill nokok">Kök ej satt</span>';
+    var prep=r.prep_kategori?(' <span class="af-orv-prep muted">'+esc(r.prep_kategori)+'</span>'):'';
+    return '<div class="af-orv-l">'+
+        '<div class="af-orv-namn">'+cm(r.benamning)+'</div>'+
+        '<div class="af-orv-qty muted">'+qty+'</div>'+
+        (r.beskrivning_long?('<div class="af-orv-besk muted">'+esc(r.beskrivning_long)+'</div>'):'')+
+      '</div>'+
+      '<div class="af-orv-r">'+kok+prep+'<b class="af-orv-sum">'+esc(money(r.radsumma))+'</b>'+
+        '<span class="af-icobtn af-or-pencil" title="Redigera rad">✎</span>'+
+        '<span class="af-icobtn af-or-del" title="Ta bort rad">✕</span>'+
+      '</div>';
+  }
+  function rowEditFormInner(r, koks){
+    return '<div class="erow">'+
+        '<div style="flex:2"><label class="el">Benämning</label><input class="ein af-or-benamning" value="'+esc(r.benamning)+'"></div>'+
+        '<div style="max-width:90px"><label class="el">Antal</label><input class="ein af-or-antal" type="number" step="any" value="'+esc(r.antal)+'"></div>'+
+        '<div style="max-width:90px"><label class="el">Enhet</label><input class="ein af-or-enhet" value="'+esc(r.enhet)+'"></div>'+
+        '<div style="max-width:110px"><label class="el">Á-pris</label><input class="ein af-or-apris" type="number" step="any" value="'+esc(r.apris)+'"></div>'+
+      '</div>'+
+      '<div class="erow">'+
+        '<div style="max-width:90px"><label class="el">Rabatt %</label><input class="ein af-or-rabatt" type="number" step="any" value="'+esc(r.rabatt)+'"></div>'+
+        '<div style="max-width:90px"><label class="el">Moms %</label><input class="ein af-or-moms" type="number" step="any" value="'+esc(r.moms)+'"></div>'+
+        '<div><label class="el">Kök (produktionsenhet)</label><select class="ein af-or-kok">'+kokOptions(koks, r.kok_id)+'</select></div>'+
+        '<div><label class="el">Prep-kategori</label><input class="ein af-or-prep" value="'+esc(r.prep_kategori)+'"></div>'+
+      '</div>'+
+      '<div><label class="el">Beskrivning (visas i produktion)</label><textarea class="ein af-or-besk" rows="2">'+esc(r.beskrivning_long)+'</textarea></div>'+
+      '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-or-save">Spara rad</button><button class="af-lnk af-or-cancel">Avbryt</button><span class="af-or-msg ecur"></span></div>';
+  }
   function orderRowHtml(r, koks){
     return '<div class="af-o-row" data-row-id="'+esc(r.id)+'">'+
-      '<div class="af-or-top">'+
-        '<input class="ein af-or-benamning" value="'+esc(r.benamning)+'" placeholder="Benämning">'+
-        '<input class="ein af-or-antal" type="number" step="any" value="'+esc(r.antal)+'" title="Antal">'+
-        '<input class="ein af-or-enhet" value="'+esc(r.enhet)+'" placeholder="enh" title="Enhet">'+
-        '<input class="ein af-or-apris" type="number" step="any" value="'+esc(r.apris)+'" title="Á-pris">'+
-        '<input class="ein af-or-rabatt" type="number" step="any" value="'+esc(r.rabatt)+'" title="Rabatt %">'+
-        '<input class="ein af-or-moms" type="number" step="any" value="'+esc(r.moms)+'" title="Moms %">'+
-        '<select class="ein af-or-kok" title="Kök">'+kokOptions(koks, r.kok_id)+'</select>'+
-        '<input class="ein af-or-prep" value="'+esc(r.prep_kategori)+'" placeholder="prep" title="Prep-kategori">'+
-      '</div>'+
-      '<div class="af-or-bot">'+
-        '<textarea class="ein af-or-besk" rows="1" placeholder="Fri beskrivning (visas i produktion)">'+esc(r.beskrivning_long)+'</textarea>'+
-        '<span class="af-or-suml">Radsumma: <b class="af-or-sum">'+esc(money(r.radsumma))+'</b></span>'+
-        '<button class="ebtn af-or-save">Spara rad</button>'+
-        '<button class="af-or-del" title="Ta bort rad">✕</button>'+
-      '</div>'+
+      '<div class="af-or-view">'+rowViewInner(r)+'</div>'+
+      '<div class="af-or-edit" style="display:none">'+rowEditFormInner(r, koks)+'</div>'+
     '</div>';
   }
-  function orderEditorHtml(j){
-    var o=j.order, koks=j.koks||[]; orderCache[o.id]=j;
-    var statusOpts='', so=j.status_options||[];
-    for(var i=0;i<so.length;i++){ statusOpts+='<option value="'+esc(so[i])+'"'+(so[i]===o.orderstatus?" selected":"")+'>'+esc(so[i])+'</option>'; }
-    var rowsHtml=(j.rows||[]).map(function(r){ return orderRowHtml(r, koks); }).join("");
-    return '<div class="edit af-ord" data-order-id="'+esc(o.id)+'">'+
-      '<div class="af-o-head-row"><div style="font-weight:800;color:var(--orange)">Order '+esc(o.ordernr||"")+' · '+esc(o.company||"")+'</div>'+
-        '<div class="muted" style="font-size:11px">Leveransadress: '+(o.leveransadress?esc(o.leveransadress):'—')+' (redigeras ej här)</div></div>'+
-      '<div class="erow">'+
+  function headViewInner(o){
+    function f(lbl, val){ return '<div class="af-ohv-f"><span class="af-ohv-l">'+esc(lbl)+'</span><span class="af-ohv-v">'+(val?esc(val):'<span class="muted">—</span>')+'</span></div>'; }
+    return '<div class="af-ohv-grid">'+
+        f("Leveransdatum", o.leveransdatum)+f("Leveranstid", o.leveranstid)+f("Status", o.orderstatus)+
+        f("Betalningsvillkor", o.betalningsvillkor)+f("Momstyp", o.momstyp)+f("Valuta", o.valuta)+
+        f("Leveransadress", o.leveransadress)+
+        (o.villkor_text?f("Villkorstext", o.villkor_text):'')+
+      '</div>'+
+      '<span class="af-icobtn af-o-headpencil" title="Redigera orderuppgifter">✎</span>';
+  }
+  function headEditInner(o, so){
+    var statusOpts=''; for(var i=0;i<so.length;i++){ statusOpts+='<option value="'+esc(so[i])+'"'+(so[i]===o.orderstatus?" selected":"")+'>'+esc(so[i])+'</option>'; }
+    return '<div class="erow">'+
         '<div><label class="el">Leveransdatum</label><input type="date" class="ein af-o-levdatum" value="'+esc(o.leveransdatum)+'"></div>'+
         '<div><label class="el">Leveranstid</label><input class="ein af-o-levtid" value="'+esc(o.leveranstid)+'" placeholder="t.ex. 12:00"></div>'+
         '<div><label class="el">Status</label><select class="ein af-o-status">'+statusOpts+'</select></div>'+
@@ -360,7 +395,17 @@
         '<div><label class="el">Momstyp</label><input class="ein af-o-momstyp" value="'+esc(o.momstyp)+'"></div>'+
         '<div style="flex:2"><label class="el">Villkorstext</label><input class="ein af-o-villkor" value="'+esc(o.villkor_text)+'"></div>'+
       '</div>'+
-      '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-o-savehead">Spara huvud</button><span class="af-o-headmsg ecur"></span></div>'+
+      '<div class="muted" style="font-size:11px;margin-bottom:6px">Leveransadress redigeras ej här (geo-fält).</div>'+
+      '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-o-savehead">Spara</button><button class="af-lnk af-o-headcancel">Avbryt</button><span class="af-o-headmsg ecur"></span></div>';
+  }
+  function orderEditorHtml(j){
+    var o=j.order, koks=j.koks||[], so=j.status_options||[]; orderCache[o.id]=j;
+    var rowsHtml=(j.rows||[]).map(function(r){ return orderRowHtml(r, koks); }).join("");
+    return '<div class="edit af-ord" data-order-id="'+esc(o.id)+'">'+
+      '<div class="af-o-head-row"><div style="font-weight:800;color:var(--orange)">Order '+esc(o.ordernr||"")+' · '+esc(o.company||"")+'</div>'+
+        '<div class="af-o-pdfbtns"><button class="af-pdfbtn af-o-pdf-order">Order-PDF ↗</button><button class="af-pdfbtn af-o-pdf-pm">Kök-PM ↗</button></div></div>'+
+      '<div class="af-o-headview">'+headViewInner(o)+'</div>'+
+      '<div class="af-o-headedit" style="display:none">'+headEditInner(o, so)+'</div>'+
       '<div class="af-o-rowshead">Rader · kök-tilldelning styr produktionen</div>'+
       '<div class="af-o-rows">'+rowsHtml+'</div>'+
       '<div class="eact" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:11px">'+
@@ -387,24 +432,43 @@
       .then(function(j){ cell.innerHTML=(j&&j.ok)?orderEditorHtml(j):'<div class="edit"><div class="muted">Kunde inte ladda order'+((j&&j.error)?" ("+esc(j.error)+")":"")+'.</div></div>'; })
       .catch(function(){ cell.innerHTML='<div class="edit"><div class="muted">Nätverksfel.</div></div>'; });
   }
+  // penn-toggles: växla läsvy ↔ redigering
+  function toggleHeadEdit(box, on){ box.querySelector(".af-o-headview").style.display=on?"none":""; box.querySelector(".af-o-headedit").style.display=on?"":"none"; }
+  function toggleRowEdit(row, on){ row.querySelector(".af-or-view").style.display=on?"none":""; row.querySelector(".af-or-edit").style.display=on?"":"none"; }
   function saveOrderHead(btn){
     var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id");
-    var payload={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value };
+    var vals={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value };
     var msg=box.querySelector(".af-o-headmsg"); btn.disabled=true; msg.textContent="Sparar…";
-    fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
-      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; } msg.textContent="Sparat ✓"+(j.rows_touched?(" ("+j.rows_touched+" rader omdaterade)"):""); }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
+    fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(vals)})
+      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
+        var cached=orderCache[id]; var o=(cached&&cached.order)||{}; var leveransadress=o.leveransadress||"";
+        var no={ leveransdatum:vals.leveransdatum, leveranstid:vals.leveranstid, orderstatus:vals.orderstatus, betalningsvillkor:vals.betalningsvillkor, momstyp:vals.momstyp, valuta:vals.valuta, villkor_text:vals.villkor_text, leveransadress:leveransadress };
+        if(cached&&cached.order){ for(var k in no){ cached.order[k]=no[k]; } }
+        box.querySelector(".af-o-headview").innerHTML=headViewInner(no);
+        toggleHeadEdit(box, false);
+      }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
   function saveOrderRow(btn){
     var row=btn.closest(".af-o-row"); if(!row) return; var rowId=row.getAttribute("data-row-id"); var box=btn.closest(".af-ord");
     var payload={ benamning:row.querySelector(".af-or-benamning").value, antal:row.querySelector(".af-or-antal").value, enhet:row.querySelector(".af-or-enhet").value, apris:row.querySelector(".af-or-apris").value, rabatt:row.querySelector(".af-or-rabatt").value, moms:row.querySelector(".af-or-moms").value, kok_id:row.querySelector(".af-or-kok").value, prep_kategori:row.querySelector(".af-or-prep").value, beskrivning_long:row.querySelector(".af-or-besk").value };
-    var orig=btn.textContent; btn.disabled=true; btn.textContent="…";
+    var msg=row.querySelector(".af-or-msg"); var orig=btn.textContent; btn.disabled=true; btn.textContent="…";
     fetch(HOST+"/admin/affar/order/row/"+encodeURIComponent(rowId)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
-      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; btn.textContent=orig; if(!j||!j.ok){ alert("Kunde inte spara rad: "+esc((j&&j.error)||"okänt")); return; } row.querySelector(".af-or-sum").textContent=money(j.radsumma); setOrderTotals(box, j.totals); }).catch(function(){ btn.disabled=false; btn.textContent=orig; alert("Nätverksfel."); });
+      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; btn.textContent=orig; if(!j||!j.ok){ if(msg) msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
+        var kokSel=row.querySelector(".af-or-kok"); var kokNamn=j.kok_namn || (kokSel&&kokSel.value?kokSel.options[kokSel.selectedIndex].text:"");
+        var nr={ benamning:payload.benamning, antal:payload.antal, enhet:payload.enhet, apris:_pnum(payload.apris), moms:payload.moms, prep_kategori:payload.prep_kategori, beskrivning_long:payload.beskrivning_long, kok_namn:(kokNamn==="— kök —"?"":kokNamn), radsumma:j.radsumma };
+        row.querySelector(".af-or-view").innerHTML=rowViewInner(nr);
+        toggleRowEdit(row, false); setOrderTotals(box, j.totals);
+      }).catch(function(){ btn.disabled=false; btn.textContent=orig; if(msg) msg.textContent="Nätverksfel."; });
   }
+  function _pnum(v){ if(v==null||v==="") return 0; var n=(typeof v==="number")?v:parseFloat(String(v).replace(/\s/g,"").replace(",",".")); return isFinite(n)?n:0; }
   function addOrderRow(btn){
     var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id"); btn.disabled=true;
     fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/row/add",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({})})
       .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ alert("Kunde inte lägga till rad."); return; } reloadOrderEditor(id); }).catch(function(){ btn.disabled=false; alert("Nätverksfel."); });
+  }
+  function orderPdf(btn, kind){
+    // Byggs härnäst: order-render-endpoints. Placeholder tills dess.
+    alert((kind==="pm"?"Kök-PM":"Order-PDF")+" byggs härnäst (render-endpoint kopplas in).");
   }
   function deleteOrderRow(btn){
     var row=btn.closest(".af-o-row"); if(!row) return; var rowId=row.getAttribute("data-row-id"); var box=btn.closest(".af-ord"); var id=box.getAttribute("data-order-id");
@@ -1201,10 +1265,16 @@
     var cks=t.closest && t.closest(".ck-save"); if(cks){ saveCardKoppla(cks); return; }
     var csx=t.closest && t.closest(".cstep-x"); if(csx){ toggleStepDetail(csx); return; }
     var cv=t.closest && t.closest(".af-conv"); if(cv){ doConvert(cv); return; }
+    var ohp=t.closest && t.closest(".af-o-headpencil"); if(ohp){ toggleHeadEdit(ohp.closest(".af-ord"), true); return; }
+    var ohc=t.closest && t.closest(".af-o-headcancel"); if(ohc){ toggleHeadEdit(ohc.closest(".af-ord"), false); return; }
     var ohs=t.closest && t.closest(".af-o-savehead"); if(ohs){ saveOrderHead(ohs); return; }
+    var orp=t.closest && t.closest(".af-or-pencil"); if(orp){ toggleRowEdit(orp.closest(".af-o-row"), true); return; }
+    var orc=t.closest && t.closest(".af-or-cancel"); if(orc){ toggleRowEdit(orc.closest(".af-o-row"), false); return; }
     var ors=t.closest && t.closest(".af-or-save"); if(ors){ saveOrderRow(ors); return; }
     var oad=t.closest && t.closest(".af-o-addrow"); if(oad){ addOrderRow(oad); return; }
     var odl=t.closest && t.closest(".af-or-del"); if(odl){ deleteOrderRow(odl); return; }
+    var opo=t.closest && t.closest(".af-o-pdf-order"); if(opo){ orderPdf(opo,"order"); return; }
+    var opm=t.closest && t.closest(".af-o-pdf-pm"); if(opm){ orderPdf(opm,"pm"); return; }
     var nas=t.closest && t.closest(".af-na-save"); if(nas){ saveNewAkt(nas); return; }
     var nts=t.closest && t.closest(".af-nt-save"); if(nts){ saveNewTodo(nts); return; }
     var nnb=t.closest && t.closest(".af-newbtn"); if(nnb){ openCreate(nnb.getAttribute("data-new")); return; }
