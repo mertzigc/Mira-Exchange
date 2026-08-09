@@ -15,7 +15,7 @@
 
 export function registerAffarRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleGet, bubbleCount, bubblePatch, bubbleCreate, bubbleId,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleCount, bubblePatch, bubbleCreate, bubbleDelete, bubbleId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
     FE_CONNECTION_ID, CONNECTION_NAMES, offertConvert,
   } = deps;
@@ -1000,6 +1000,183 @@ export function registerAffarRoutes(app, deps) {
       console.error("[/admin/affar/offert/:id/convert]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
+  });
+
+  // ── ORDER-REDIGERING (Fas 1 produktionsmodul) ────────────────────────────────
+  // MiraOrder är redigerbar utan cutoff (beslut #5). Bara source=mira_fe (Fortnox/Tengella=läskopior).
+  // Radberäkning speglar offert_api: radsumma = antal*apris*(1-rabatt/100) ex moms; moms = procent.
+  const _round2 = (n) => Math.round(_num(n) * 100) / 100;
+  const _radsumma = (antal, apris, rabatt) => _round2(_num(antal) * _num(apris) * (1 - _num(rabatt) / 100));
+  const STATUS_MIRA_ORDER = ["Bekräftad", "I produktion", "Levererad", "Fakturerad"];
+  const _pickAddr = (raw) => { if (raw == null) return ""; if (typeof raw === "string") return raw; return _str(raw.address || raw.Address || raw.formatted_address || raw.name || ""); };
+
+  // Kök-register (id→namn) för kök-väljaren + rad-visning. Cachas som övriga.
+  let _kokCache = { rows: null, ts: 0 };
+  async function kokList() {
+    if (_kokCache.rows && (Date.now() - _kokCache.ts) < CC_TTL) return _kokCache.rows;
+    const all = await bubbleFindAll("Kok", {}).catch(() => []);
+    const rows = all.map((k) => ({ id: bubbleId(k), namn: _str(k.namn) || _str(k.Namn) || _str(k.name) || "(kök)", aktiv: k.aktiv !== false })).filter((k) => k.id);
+    rows.sort((a, b) => String(a.namn).localeCompare(String(b.namn), "sv"));
+    _kokCache = { rows, ts: Date.now() };
+    return rows;
+  }
+  async function kokNameMap() { const m = new Map(); for (const k of await kokList()) m.set(k.id, k.namn); return m; }
+
+  // Räkna om orderns totaler ur dess rader (litar aldrig på klienten).
+  async function recomputeOrderTotals(orderId) {
+    const rows = await bubbleFind("MiraOrderRad", { constraints: [{ key: "order", constraint_type: "equals", value: orderId }], limit: 300 }).catch(() => []);
+    let summa = 0, moms = 0;
+    for (const r of rows) { const rs = _num(r.radsumma) || _radsumma(r.antal, r.apris, r.rabatt); summa += rs; moms += rs * (_num(r.moms) / 100); }
+    summa = _round2(summa); moms = _round2(moms); const total = _round2(summa + moms);
+    if (bubblePatch) await bubblePatch("MiraOrder", orderId, { summa, moms_belopp: moms, total }).catch(() => {});
+    return { summa, moms_belopp: moms, total };
+  }
+  async function ensureMiraOrder(id, res) {
+    const o = await bubbleGet("MiraOrder", id).catch(() => null);
+    if (!o) { res.status(404).json({ ok: false, error: "order_not_found" }); return null; }
+    if (_str(o.source) !== SOURCE_MIRA_FE) { res.status(400).json({ ok: false, error: "ej_mira_order", hint: "Bara Mira-ordrar kan redigeras; Fortnox/Tengella är läskopior." }); return null; }
+    return o;
+  }
+
+  // GET /admin/affar/koks — aktiva kök för kök-väljaren
+  app.options("/admin/affar/koks", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/koks", async (req, res) => {
+    if (!guard(req, res)) return;
+    try { return res.json({ ok: true, rows: await kokList() }); }
+    catch (e) { console.error("[/admin/affar/koks]", e?.message); return res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // GET /admin/affar/order/:id — order (redigerbart huvud) + rader + kök-lista + status-val
+  app.options("/admin/affar/order/:id", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/affar/order/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const o = await ensureMiraOrder(req.params.id, res); if (!o) return;
+      const rows = await bubbleFind("MiraOrderRad", { constraints: [{ key: "order", constraint_type: "equals", value: req.params.id }], limit: 300 }).catch(() => []);
+      rows.sort((a, b) => _num(a.radnr) - _num(b.radnr));
+      const m = await companyMap(); const km = await kokNameMap();
+      return res.json({
+        ok: true,
+        order: {
+          id: bubbleId(o), ordernr: _str(o.ordernr), orderdatum: _day(o.orderdatum),
+          orderstatus: _str(o.orderstatus) || "Bekräftad", company: cname(m, o.kundforetag),
+          leveransdatum: _day(o.leveransdatum), leveranstid: _str(o.leveranstid),
+          leveransadress: _pickAddr(o.leveransadress),   // read-only (geo-skriv via API opålitligt)
+          betalningsvillkor: _str(o.betalningsvillkor), momstyp: _str(o.momstyp), valuta: _str(o.valuta) || "SEK",
+          villkor_text: _str(o.villkor_text),
+          summa: _num(o.summa), moms_belopp: _num(o.moms_belopp), total: _num(o.total),
+        },
+        rows: rows.map((r) => ({
+          id: bubbleId(r), radnr: _num(r.radnr), artikelnr: _str(r.artikelnr), benamning: _str(r.benamning),
+          beskrivning_long: _str(r.beskrivning_long), antal: _num(r.antal), enhet: _str(r.enhet),
+          apris: _num(r.apris), rabatt: _num(r.rabatt), moms: _num(r.moms), radsumma: _num(r.radsumma),
+          kok_id: _ref(r.kok) || "", kok_namn: (_ref(r.kok) ? (km.get(_ref(r.kok)) || "") : ""), prep_kategori: _str(r.prep_kategori),
+        })),
+        status_options: STATUS_MIRA_ORDER, koks: await kokList(),
+      });
+    } catch (e) { console.error("[/admin/affar/order/:id]", e?.message, e?.detail); return res.status(500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // POST /admin/affar/order/:id/patch — huvudfält. Ändrat leveransdatum → uppdatera radernas leverans_ts.
+  app.options("/admin/affar/order/:id/patch", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/order/:id/patch", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const id = req.params.id; const b = req.body || {};
+      const o = await ensureMiraOrder(id, res); if (!o) return;
+      const p = {}; let levChanged = false, newTs = null;
+      if (b.leveransdatum !== undefined) {
+        if (_str(b.leveransdatum)) { const iso = new Date(_str(b.leveransdatum) + "T00:00:00.000Z").toISOString(); p["leveransdatum"] = iso; newTs = Date.parse(iso); p["leverans_ts"] = newTs; }
+        else { p["leveransdatum"] = null; p["leverans_ts"] = null; }
+        levChanged = true;
+      }
+      if (b.leveranstid !== undefined)      p["leveranstid"]      = _str(b.leveranstid);
+      if (b.orderstatus !== undefined)      p["orderstatus"]      = _str(b.orderstatus) || null;
+      if (b.betalningsvillkor !== undefined) p["betalningsvillkor"] = _str(b.betalningsvillkor);
+      if (b.momstyp !== undefined)          p["momstyp"]          = _str(b.momstyp);
+      if (b.valuta !== undefined)           p["valuta"]           = _str(b.valuta);
+      if (b.villkor_text !== undefined)     p["villkor_text"]     = _str(b.villkor_text);
+      if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
+      await bubblePatch("MiraOrder", id, p);
+      let rows_touched = 0;
+      if (levChanged) {
+        const rows = await bubbleFind("MiraOrderRad", { constraints: [{ key: "order", constraint_type: "equals", value: id }], limit: 300 }).catch(() => []);
+        for (const r of rows) { await bubblePatch("MiraOrderRad", bubbleId(r), { leverans_ts: newTs }).catch(() => {}); rows_touched++; }
+      }
+      return res.json({ ok: true, patched: p, rows_touched });
+    } catch (e) { console.error("[/admin/affar/order/:id/patch]", e?.message, e?.detail); return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // POST /admin/affar/order/row/:rowId/patch — redigera rad (inkl kök + prep). Räknar om rad + totaler.
+  app.options("/admin/affar/order/row/:rowId/patch", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/order/row/:rowId/patch", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const rowId = req.params.rowId; const b = req.body || {};
+      const rad = await bubbleGet("MiraOrderRad", rowId).catch(() => null);
+      if (!rad) return res.status(404).json({ ok: false, error: "rad_not_found" });
+      const orderId = _ref(rad.order);
+      const p = {};
+      if (b.benamning !== undefined)        p["benamning"]        = _str(b.benamning);
+      if (b.beskrivning_long !== undefined) p["beskrivning_long"] = _str(b.beskrivning_long);
+      if (b.enhet !== undefined)            p["enhet"]            = _str(b.enhet);
+      if (b.antal !== undefined)            p["antal"]            = _num(b.antal);
+      if (b.apris !== undefined)            p["apris"]            = _num(b.apris);
+      if (b.rabatt !== undefined)           p["rabatt"]           = _num(b.rabatt);
+      if (b.moms !== undefined)             p["moms"]             = _num(b.moms);
+      if (b.kok_id !== undefined)           p["kok"]              = _str(b.kok_id) || null;
+      if (b.prep_kategori !== undefined)    p["prep_kategori"]    = _str(b.prep_kategori) || null;
+      const antal = b.antal !== undefined ? _num(b.antal) : _num(rad.antal);
+      const apris = b.apris !== undefined ? _num(b.apris) : _num(rad.apris);
+      const rabatt = b.rabatt !== undefined ? _num(b.rabatt) : _num(rad.rabatt);
+      p["radsumma"] = _radsumma(antal, apris, rabatt);
+      await bubblePatch("MiraOrderRad", rowId, p);
+      const totals = orderId ? await recomputeOrderTotals(orderId) : null;
+      const km = await kokNameMap();
+      return res.json({ ok: true, radsumma: p.radsumma, kok_namn: (p.kok ? (km.get(p.kok) || "") : ""), totals });
+    } catch (e) { console.error("[/admin/affar/order/row/:rowId/patch]", e?.message, e?.detail); return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // POST /admin/affar/order/:id/row/add — lägg till rad (valfri product/benämning). Räknar om totaler.
+  app.options("/admin/affar/order/:id/row/add", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/order/:id/row/add", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubbleCreate) return res.status(501).json({ ok: false, error: "create_not_wired" });
+      const id = req.params.id; const b = req.body || {};
+      const o = await ensureMiraOrder(id, res); if (!o) return;
+      const existing = await bubbleFind("MiraOrderRad", { constraints: [{ key: "order", constraint_type: "equals", value: id }], limit: 300 }).catch(() => []);
+      const maxRad = existing.reduce((mx, r) => Math.max(mx, _num(r.radnr)), 0);
+      const antal = _num(b.antal) || 1, apris = _num(b.apris), rabatt = 0;
+      const p = {
+        order: id, offert: _ref(o.offert) || null, radnr: maxRad + 1, product: _str(b.product_id) || null,
+        artikelnr: _str(b.artikelnr), benamning: _str(b.benamning), beskrivning_long: _str(b.beskrivning_long),
+        antal, enhet: _str(b.enhet), apris, rabatt, moms: (b.moms !== undefined ? _num(b.moms) : 12),
+        radsumma: _radsumma(antal, apris, rabatt), konto: null, ks: null,
+        kok: _str(b.kok_id) || null, prep_kategori: _str(b.prep_kategori) || null, leverans_ts: _num(o.leverans_ts) || null,
+      };
+      const rowId = await bubbleCreate("MiraOrderRad", p);
+      const totals = await recomputeOrderTotals(id);
+      return res.json({ ok: true, row_id: rowId, radnr: maxRad + 1, radsumma: p.radsumma, totals });
+    } catch (e) { console.error("[/admin/affar/order/:id/row/add]", e?.message, e?.detail); return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // POST /admin/affar/order/row/:rowId/delete — ta bort rad + räkna om totaler
+  app.options("/admin/affar/order/row/:rowId/delete", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/order/row/:rowId/delete", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubbleDelete) return res.status(501).json({ ok: false, error: "delete_not_wired" });
+      const rowId = req.params.rowId;
+      const rad = await bubbleGet("MiraOrderRad", rowId).catch(() => null);
+      if (!rad) return res.status(404).json({ ok: false, error: "rad_not_found" });
+      const orderId = _ref(rad.order);
+      await bubbleDelete("MiraOrderRad", rowId);
+      const totals = orderId ? await recomputeOrderTotals(orderId) : null;
+      return res.json({ ok: true, totals });
+    } catch (e) { console.error("[/admin/affar/order/row/:rowId/delete]", e?.message, e?.detail); return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) }); }
   });
 
   console.log("[affar_api] routes registered (/admin/affar/*)");

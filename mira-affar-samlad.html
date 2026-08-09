@@ -87,6 +87,29 @@
   .af-conv:hover{filter:brightness(1.07)}
   .af-conv:disabled{opacity:.5;cursor:default}
   .af .ordertag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--green);background:rgba(76,175,125,.13);border-radius:5px;padding:3px 8px;white-space:nowrap}
+  /* order-editor (inline i affär-vyn) */
+  .af tr.orderrow{cursor:pointer}
+  .af tr.orderrow.open>td{background:var(--card)}
+  .af .af-ord .af-o-head-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:2px}
+  .af .af-o-rowshead{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700;margin:10px 0 2px}
+  .af .af-o-rows{display:flex;flex-direction:column;gap:8px}
+  .af .af-o-row{background:var(--deep);border:1px solid var(--border);border-radius:9px;padding:9px 10px}
+  .af .af-or-top{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .af .af-or-top .ein{padding:6px 8px;font-size:12px}
+  .af .af-or-benamning{flex:2;min-width:140px}
+  .af .af-or-antal,.af .af-or-rabatt,.af .af-or-moms{width:64px}
+  .af .af-or-enhet{width:60px}
+  .af .af-or-apris{width:82px}
+  .af .af-or-kok{flex:1;min-width:130px}
+  .af .af-or-prep{width:104px}
+  .af .af-or-bot{display:flex;gap:10px;align-items:center;margin-top:7px;flex-wrap:wrap}
+  .af .af-or-besk{flex:1;min-width:160px;resize:vertical;padding:6px 8px;font-size:12px}
+  .af .af-or-suml{font-size:11px;color:var(--w70);white-space:nowrap}
+  .af .af-or-save{padding:6px 12px;font-size:11px}
+  .af .af-or-del{background:none;border:1px solid var(--border);border-radius:7px;color:var(--w40);cursor:pointer;padding:5px 9px;font-size:12px;font-family:var(--fb)}
+  .af .af-or-del:hover{border-color:var(--red);color:var(--red)}
+  .af .af-o-totals{font-size:12px;color:var(--w70)}
+  .af .af-o-totals b{color:var(--white)}
   /* inline edit (lead + aktivitet) */
   .af tr.lead,.af tr.akt{cursor:pointer}
   .af tr.lead.open>td,.af tr.akt.open>td{background:var(--card)}
@@ -248,13 +271,15 @@
   function docRowHtml(r){
     var ic=ICON[r.type]||"•";
     var isWo=!!(r.wo && r.rows && r.rows.length);
+    var isMiraOrder=(r.type==="Order" && r.source==="mira");   // redigerbar order-editor
     var kt=kType(r.type);
-    var isKopp=(!isWo && !!kt);   // offert/order/faktura/avtal (workorder har egen expander)
+    var isKopp=(!isWo && !isMiraOrder && !!kt);   // offert/order(fortnox)/faktura/avtal (workorder+mira-order har egna expanders)
     var af="";
     if(r.type==="Affär") af=' class="affar" data-affar-id="'+esc(r.id)+'"';
     else if(isWo) af=' class="worow" data-wo-id="'+esc(r.id)+'"';
+    else if(isMiraOrder) af=' class="orderrow" data-order-id="'+esc(r.id)+'"';
     else if(isKopp) af=' class="kopplarow" data-kid="'+esc(r.id)+'" data-ktype="'+kt+'" data-ksrc="'+esc(r.source)+'" data-kdeal="'+(r.deal_id?"1":"")+'"';
-    var chev=(r.type==="Affär"||isWo||isKopp)?' <span class="muted" style="font-weight:400">▸</span>':'';
+    var chev=(r.type==="Affär"||isWo||isKopp||isMiraOrder)?' <span class="muted" style="font-weight:400">▸</span>':'';
     var koppTag=(isKopp&&r.deal_id)?' <span class="kindtag" style="color:var(--green)">kopplad</span>':'';
     var lastCell=isWo?('<span class="worowlink">'+r.rows.length+' rader ▸</span>'):(viewCell(r)+convertCell(r));
     return '<tr'+af+'>'+
@@ -291,6 +316,101 @@
         var i; for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id){ STATE.listRows[i].order_id=j.order_id; STATE.listRows[i].order_nr=j.order_nr; break; } }
         for(i=0;i<STATE.feedRows.length;i++){ if(STATE.feedRows[i].id===id){ STATE.feedRows[i].order_id=j.order_id; STATE.feedRows[i].order_nr=j.order_nr; break; } }
       }).catch(function(){ btn.disabled=false; btn.textContent=orig; alert("Nätverksfel vid konvertering."); });
+  }
+
+  // ── order-editor (inline, Mira-order redigerbar utan cutoff) ──
+  var orderCache={};
+  function kokOptions(koks, cur){ var o='<option value="">— kök —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
+  function orderRowHtml(r, koks){
+    return '<div class="af-o-row" data-row-id="'+esc(r.id)+'">'+
+      '<div class="af-or-top">'+
+        '<input class="ein af-or-benamning" value="'+esc(r.benamning)+'" placeholder="Benämning">'+
+        '<input class="ein af-or-antal" type="number" step="any" value="'+esc(r.antal)+'" title="Antal">'+
+        '<input class="ein af-or-enhet" value="'+esc(r.enhet)+'" placeholder="enh" title="Enhet">'+
+        '<input class="ein af-or-apris" type="number" step="any" value="'+esc(r.apris)+'" title="Á-pris">'+
+        '<input class="ein af-or-rabatt" type="number" step="any" value="'+esc(r.rabatt)+'" title="Rabatt %">'+
+        '<input class="ein af-or-moms" type="number" step="any" value="'+esc(r.moms)+'" title="Moms %">'+
+        '<select class="ein af-or-kok" title="Kök">'+kokOptions(koks, r.kok_id)+'</select>'+
+        '<input class="ein af-or-prep" value="'+esc(r.prep_kategori)+'" placeholder="prep" title="Prep-kategori">'+
+      '</div>'+
+      '<div class="af-or-bot">'+
+        '<textarea class="ein af-or-besk" rows="1" placeholder="Fri beskrivning (visas i produktion)">'+esc(r.beskrivning_long)+'</textarea>'+
+        '<span class="af-or-suml">Radsumma: <b class="af-or-sum">'+esc(money(r.radsumma))+'</b></span>'+
+        '<button class="ebtn af-or-save">Spara rad</button>'+
+        '<button class="af-or-del" title="Ta bort rad">✕</button>'+
+      '</div>'+
+    '</div>';
+  }
+  function orderEditorHtml(j){
+    var o=j.order, koks=j.koks||[]; orderCache[o.id]=j;
+    var statusOpts='', so=j.status_options||[];
+    for(var i=0;i<so.length;i++){ statusOpts+='<option value="'+esc(so[i])+'"'+(so[i]===o.orderstatus?" selected":"")+'>'+esc(so[i])+'</option>'; }
+    var rowsHtml=(j.rows||[]).map(function(r){ return orderRowHtml(r, koks); }).join("");
+    return '<div class="edit af-ord" data-order-id="'+esc(o.id)+'">'+
+      '<div class="af-o-head-row"><div style="font-weight:800;color:var(--orange)">Order '+esc(o.ordernr||"")+' · '+esc(o.company||"")+'</div>'+
+        '<div class="muted" style="font-size:11px">Leveransadress: '+(o.leveransadress?esc(o.leveransadress):'—')+' (redigeras ej här)</div></div>'+
+      '<div class="erow">'+
+        '<div><label class="el">Leveransdatum</label><input type="date" class="ein af-o-levdatum" value="'+esc(o.leveransdatum)+'"></div>'+
+        '<div><label class="el">Leveranstid</label><input class="ein af-o-levtid" value="'+esc(o.leveranstid)+'" placeholder="t.ex. 12:00"></div>'+
+        '<div><label class="el">Status</label><select class="ein af-o-status">'+statusOpts+'</select></div>'+
+        '<div><label class="el">Valuta</label><input class="ein af-o-valuta" value="'+esc(o.valuta)+'"></div>'+
+      '</div>'+
+      '<div class="erow">'+
+        '<div><label class="el">Betalningsvillkor</label><input class="ein af-o-betalning" value="'+esc(o.betalningsvillkor)+'"></div>'+
+        '<div><label class="el">Momstyp</label><input class="ein af-o-momstyp" value="'+esc(o.momstyp)+'"></div>'+
+        '<div style="flex:2"><label class="el">Villkorstext</label><input class="ein af-o-villkor" value="'+esc(o.villkor_text)+'"></div>'+
+      '</div>'+
+      '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-o-savehead">Spara huvud</button><span class="af-o-headmsg ecur"></span></div>'+
+      '<div class="af-o-rowshead">Rader · kök-tilldelning styr produktionen</div>'+
+      '<div class="af-o-rows">'+rowsHtml+'</div>'+
+      '<div class="eact" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:11px">'+
+        '<button class="ebtn af-o-addrow" style="background:var(--input);color:var(--w70)">＋ Lägg till rad</button>'+
+        '<span class="af-o-totals">Summa <b class="af-o-tot-summa">'+esc(money(o.summa))+'</b> · Moms <b class="af-o-tot-moms">'+esc(money(o.moms_belopp))+'</b> · Total <b class="af-o-tot-total">'+esc(money(o.total))+'</b></span>'+
+      '</div>'+
+    '</div>';
+  }
+  function setOrderTotals(box, t){ if(!t) return; box.querySelector(".af-o-tot-summa").textContent=money(t.summa); box.querySelector(".af-o-tot-moms").textContent=money(t.moms_belopp); box.querySelector(".af-o-tot-total").textContent=money(t.total); }
+  function orderEditorCell(orderId){ var host=null; root.querySelectorAll('tr[data-detail="1"] .edit-cell').forEach(function(cell){ var ed=cell.querySelector(".af-ord"); if(ed && ed.getAttribute("data-order-id")===orderId) host=cell; }); return host; }
+  function reloadOrderEditor(orderId){ var host=orderEditorCell(orderId); if(!host) return; fetch(HOST+"/admin/affar/order/"+encodeURIComponent(orderId),{headers:{"x-admin-token":TOKEN}}).then(function(r){return r.json();}).then(function(j){ if(j&&j.ok) host.innerHTML=orderEditorHtml(j); }).catch(function(){}); }
+  function toggleOrder(tr){
+    var next=tr.nextElementSibling;
+    if(next && next.getAttribute && next.getAttribute("data-detail")==="1"){ next.parentNode.removeChild(next); tr.classList.remove("open"); return; }
+    root.querySelectorAll('tr[data-detail="1"]').forEach(function(x){ x.parentNode.removeChild(x); });
+    root.querySelectorAll("tr.orderrow.open,tr.kopplarow.open,tr.worow.open,tr.affar.open").forEach(function(x){ x.classList.remove("open"); });
+    tr.classList.add("open");
+    var det=document.createElement("tr"); det.setAttribute("data-detail","1");
+    det.innerHTML='<td colspan="'+colCount()+'" class="edit-cell"><div class="edit"><div class="muted">Laddar order…</div></div></td>';
+    tr.parentNode.insertBefore(det, tr.nextSibling);
+    var cell=det.querySelector(".edit-cell");
+    fetch(HOST+"/admin/affar/order/"+encodeURIComponent(tr.getAttribute("data-order-id")),{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ cell.innerHTML=(j&&j.ok)?orderEditorHtml(j):'<div class="edit"><div class="muted">Kunde inte ladda order'+((j&&j.error)?" ("+esc(j.error)+")":"")+'.</div></div>'; })
+      .catch(function(){ cell.innerHTML='<div class="edit"><div class="muted">Nätverksfel.</div></div>'; });
+  }
+  function saveOrderHead(btn){
+    var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id");
+    var payload={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value };
+    var msg=box.querySelector(".af-o-headmsg"); btn.disabled=true; msg.textContent="Sparar…";
+    fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; } msg.textContent="Sparat ✓"+(j.rows_touched?(" ("+j.rows_touched+" rader omdaterade)"):""); }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
+  }
+  function saveOrderRow(btn){
+    var row=btn.closest(".af-o-row"); if(!row) return; var rowId=row.getAttribute("data-row-id"); var box=btn.closest(".af-ord");
+    var payload={ benamning:row.querySelector(".af-or-benamning").value, antal:row.querySelector(".af-or-antal").value, enhet:row.querySelector(".af-or-enhet").value, apris:row.querySelector(".af-or-apris").value, rabatt:row.querySelector(".af-or-rabatt").value, moms:row.querySelector(".af-or-moms").value, kok_id:row.querySelector(".af-or-kok").value, prep_kategori:row.querySelector(".af-or-prep").value, beskrivning_long:row.querySelector(".af-or-besk").value };
+    var orig=btn.textContent; btn.disabled=true; btn.textContent="…";
+    fetch(HOST+"/admin/affar/order/row/"+encodeURIComponent(rowId)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; btn.textContent=orig; if(!j||!j.ok){ alert("Kunde inte spara rad: "+esc((j&&j.error)||"okänt")); return; } row.querySelector(".af-or-sum").textContent=money(j.radsumma); setOrderTotals(box, j.totals); }).catch(function(){ btn.disabled=false; btn.textContent=orig; alert("Nätverksfel."); });
+  }
+  function addOrderRow(btn){
+    var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id"); btn.disabled=true;
+    fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/row/add",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({})})
+      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ alert("Kunde inte lägga till rad."); return; } reloadOrderEditor(id); }).catch(function(){ btn.disabled=false; alert("Nätverksfel."); });
+  }
+  function deleteOrderRow(btn){
+    var row=btn.closest(".af-o-row"); if(!row) return; var rowId=row.getAttribute("data-row-id"); var box=btn.closest(".af-ord"); var id=box.getAttribute("data-order-id");
+    if(!window.confirm("Ta bort raden?")) return;
+    fetch(HOST+"/admin/affar/order/row/"+encodeURIComponent(rowId)+"/delete",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"}})
+      .then(function(r){ return r.json(); }).then(function(j){ if(!j||!j.ok){ alert("Kunde inte ta bort raden."); return; } reloadOrderEditor(id); }).catch(function(){ alert("Nätverksfel."); });
   }
   function assignSel(r){
     if(!USERS.length) return cm((r.tilldelad&&r.tilldelad.name)||"");
@@ -1081,6 +1201,10 @@
     var cks=t.closest && t.closest(".ck-save"); if(cks){ saveCardKoppla(cks); return; }
     var csx=t.closest && t.closest(".cstep-x"); if(csx){ toggleStepDetail(csx); return; }
     var cv=t.closest && t.closest(".af-conv"); if(cv){ doConvert(cv); return; }
+    var ohs=t.closest && t.closest(".af-o-savehead"); if(ohs){ saveOrderHead(ohs); return; }
+    var ors=t.closest && t.closest(".af-or-save"); if(ors){ saveOrderRow(ors); return; }
+    var oad=t.closest && t.closest(".af-o-addrow"); if(oad){ addOrderRow(oad); return; }
+    var odl=t.closest && t.closest(".af-or-del"); if(odl){ deleteOrderRow(odl); return; }
     var nas=t.closest && t.closest(".af-na-save"); if(nas){ saveNewAkt(nas); return; }
     var nts=t.closest && t.closest(".af-nt-save"); if(nts){ saveNewTodo(nts); return; }
     var nnb=t.closest && t.closest(".af-newbtn"); if(nnb){ openCreate(nnb.getAttribute("data-new")); return; }
@@ -1104,6 +1228,7 @@
     var tc=t.closest('[data-af="typechips"] .chip'); if(tc){ STATE.type=tc.getAttribute("data-t")||""; STATE.page=0; setChips("typechips","data-t",STATE.type); if(STATE.type) loadList(); else render(); return; }
     var sc=t.closest('[data-af="srcchips"] .chip'); if(sc){ STATE.src=sc.getAttribute("data-s")||""; setChips("srcchips","data-s",STATE.src); render(); return; }
     var ar=t.closest("tr.affar"); if(ar){ toggleDeal(ar); return; }
+    var orr=t.closest("tr.orderrow"); if(orr){ toggleOrder(orr); return; }
     var wr=t.closest("tr.worow"); if(wr){ toggleWo(wr); return; }
     var kr=t.closest("tr.kopplarow"); if(kr && !(t.closest && t.closest(".viewbtn"))){ toggleKoppla(kr); return; }
     var lr=t.closest("tr.lead"); if(lr){ toggleEdit(lr,"lead"); return; }
