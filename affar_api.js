@@ -56,7 +56,7 @@ export function registerAffarRoutes(app, deps) {
     for (const u of all) {
       const id = bubbleId(u); if (!id) continue;
       const first = _str(u["First Name"] || u["Förnamn"]);
-      const last  = _str(u["Last Name"]  || u["Efternamn"]);
+      const last  = _str(u["Last Name"]  || u["Efternamn"] || u["Surname"]);   // User-efternamn = Surname
       const nm = (first + " " + last).trim() || _str(u.email || u.Email);
       m.set(id, nm);
     }

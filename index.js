@@ -18122,7 +18122,7 @@ app.get("/admin/approval/users-by-company", async (req, res) => {
         || ""
       ).trim().toLowerCase();
       const first = String(u["First Name"] || u.Förnamn || "").trim();
-      const last  = String(u["Last Name"]  || u.Efternamn || "").trim();
+      const last  = String(u["Last Name"]  || u.Efternamn || u.Surname || "").trim();   // User-efternamn = Surname
       const name  = (first + " " + last).trim() || email;
       return email ? { id: u._id, email, name } : null;
     }).filter(Boolean);
