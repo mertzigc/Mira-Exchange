@@ -106,6 +106,8 @@
   .af .af-ohv-l{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700}
   .af .af-ohv-v{font-size:13px;color:var(--white);word-break:normal;overflow-wrap:anywhere}
   .af .af-o-headpencil{position:absolute;top:10px;right:10px}
+  .af .af-ohv-instr{margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
+  .af .af-ohv-instr .af-ohv-v{font-size:12.5px;color:var(--orange);white-space:pre-wrap;margin-top:2px}
   .af .af-o-headedit{background:var(--deep);border:1px solid var(--border);border-radius:10px;padding:14px}
   /* rad-läsvy */
   .af .af-o-rowshead{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700;margin:12px 0 4px}
@@ -380,6 +382,7 @@
         f("Leveransadress", o.leveransadress)+
         (o.villkor_text?f("Villkorstext", o.villkor_text):'')+
       '</div>'+
+      (o.intern_instruktion?('<div class="af-ohv-instr"><span class="af-ohv-l">Intern instruktion (skrivs på kök-PM)</span><div class="af-ohv-v">'+esc(o.intern_instruktion)+'</div></div>'):'')+
       '<span class="af-icobtn af-o-headpencil" title="Redigera orderuppgifter">✎</span>';
   }
   function headEditInner(o, so){
@@ -395,7 +398,8 @@
         '<div><label class="el">Momstyp</label><input class="ein af-o-momstyp" value="'+esc(o.momstyp)+'"></div>'+
         '<div style="flex:2"><label class="el">Villkorstext</label><input class="ein af-o-villkor" value="'+esc(o.villkor_text)+'"></div>'+
       '</div>'+
-      '<div class="muted" style="font-size:11px;margin-bottom:6px">Leveransadress redigeras ej här (geo-fält).</div>'+
+      '<div><label class="el">Intern instruktion (skrivs tydligt på kök-PM)</label><textarea class="ein af-o-instr" rows="2" placeholder="T.ex. viktigt att vara på plats 11:30 för uppdukning">'+esc(o.intern_instruktion||"")+'</textarea></div>'+
+      '<div class="muted" style="font-size:11px;margin:6px 0">Leveransadress redigeras ej här (geo-fält).</div>'+
       '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-o-savehead">Spara</button><button class="af-lnk af-o-headcancel">Avbryt</button><span class="af-o-headmsg ecur"></span></div>';
   }
   function orderEditorHtml(j){
@@ -437,12 +441,12 @@
   function toggleRowEdit(row, on){ row.querySelector(".af-or-view").style.display=on?"none":""; row.querySelector(".af-or-edit").style.display=on?"":"none"; }
   function saveOrderHead(btn){
     var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id");
-    var vals={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value };
+    var vals={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value, intern_instruktion:box.querySelector(".af-o-instr").value };
     var msg=box.querySelector(".af-o-headmsg"); btn.disabled=true; msg.textContent="Sparar…";
     fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(vals)})
       .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
         var cached=orderCache[id]; var o=(cached&&cached.order)||{}; var leveransadress=o.leveransadress||"";
-        var no={ leveransdatum:vals.leveransdatum, leveranstid:vals.leveranstid, orderstatus:vals.orderstatus, betalningsvillkor:vals.betalningsvillkor, momstyp:vals.momstyp, valuta:vals.valuta, villkor_text:vals.villkor_text, leveransadress:leveransadress };
+        var no={ leveransdatum:vals.leveransdatum, leveranstid:vals.leveranstid, orderstatus:vals.orderstatus, betalningsvillkor:vals.betalningsvillkor, momstyp:vals.momstyp, valuta:vals.valuta, villkor_text:vals.villkor_text, intern_instruktion:vals.intern_instruktion, leveransadress:leveransadress };
         if(cached&&cached.order){ for(var k in no){ cached.order[k]=no[k]; } }
         box.querySelector(".af-o-headview").innerHTML=headViewInner(no);
         toggleHeadEdit(box, false);
@@ -467,8 +471,11 @@
       .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ alert("Kunde inte lägga till rad."); return; } reloadOrderEditor(id); }).catch(function(){ btn.disabled=false; alert("Nätverksfel."); });
   }
   function orderPdf(btn, kind){
-    // Byggs härnäst: order-render-endpoints. Placeholder tills dess.
-    alert((kind==="pm"?"Kök-PM":"Order-PDF")+" byggs härnäst (render-endpoint kopplas in).");
+    var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id");
+    var w=window.open("","_blank");   // förladda flik i klick-gesten (undviker popup-blockare)
+    var orig=btn.textContent; btn.disabled=true; btn.textContent="…";
+    fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/render-pdf?kind="+encodeURIComponent(kind),{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({})})
+      .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; btn.textContent=orig; if(j&&j.ok&&j.file_url){ if(w){ w.location.href=j.file_url; } } else { if(w){ w.close(); } alert("Kunde inte skapa PDF: "+esc((j&&(j.hint||j.error))||"okänt fel")); } }).catch(function(){ btn.disabled=false; btn.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-generering."); });
   }
   function deleteOrderRow(btn){
     var row=btn.closest(".af-o-row"); if(!row) return; var rowId=row.getAttribute("data-row-id"); var box=btn.closest(".af-ord"); var id=box.getAttribute("data-order-id");

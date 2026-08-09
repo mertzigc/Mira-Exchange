@@ -17,7 +17,7 @@ export function registerAffarRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleCount, bubblePatch, bubbleCreate, bubbleDelete, bubbleId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
-    FE_CONNECTION_ID, CONNECTION_NAMES, offertConvert,
+    FE_CONNECTION_ID, CONNECTION_NAMES, offertConvert, renderOrderPdf,
   } = deps;
 
   const SOURCE_MIRA_FE = "mira_fe";
@@ -1063,7 +1063,7 @@ export function registerAffarRoutes(app, deps) {
           leveransdatum: _day(o.leveransdatum), leveranstid: _str(o.leveranstid),
           leveransadress: _pickAddr(o.leveransadress),   // read-only (geo-skriv via API opålitligt)
           betalningsvillkor: _str(o.betalningsvillkor), momstyp: _str(o.momstyp), valuta: _str(o.valuta) || "SEK",
-          villkor_text: _str(o.villkor_text),
+          villkor_text: _str(o.villkor_text), intern_instruktion: _str(o.intern_instruktion),
           summa: _num(o.summa), moms_belopp: _num(o.moms_belopp), total: _num(o.total),
         },
         rows: rows.map((r) => ({
@@ -1097,6 +1097,7 @@ export function registerAffarRoutes(app, deps) {
       if (b.momstyp !== undefined)          p["momstyp"]          = _str(b.momstyp);
       if (b.valuta !== undefined)           p["valuta"]           = _str(b.valuta);
       if (b.villkor_text !== undefined)     p["villkor_text"]     = _str(b.villkor_text);
+      if (b.intern_instruktion !== undefined) p["intern_instruktion"] = _str(b.intern_instruktion);   // Bubble-fält: MiraOrder.intern_instruktion (text)
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
       await bubblePatch("MiraOrder", id, p);
       let rows_touched = 0;
@@ -1177,6 +1178,23 @@ export function registerAffarRoutes(app, deps) {
       const totals = orderId ? await recomputeOrderTotals(orderId) : null;
       return res.json({ ok: true, totals });
     } catch (e) { console.error("[/admin/affar/order/row/:rowId/delete]", e?.message, e?.detail); return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) }); }
+  });
+
+  // POST /admin/affar/order/:id/render-pdf?kind=order|pm — kund-order-PDF resp. kök-PM.
+  app.options("/admin/affar/order/:id/render-pdf", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/order/:id/render-pdf", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!renderOrderPdf) return res.status(501).json({ ok: false, error: "render_not_wired" });
+      const kind = (_str(req.query.kind) || _str((req.body || {}).kind) || "order").toLowerCase() === "pm" ? "pm" : "order";
+      const o = await ensureMiraOrder(req.params.id, res); if (!o) return;
+      const result = await renderOrderPdf(req.params.id, kind);
+      if (!result || !result.ok) return res.status(500).json({ ok: false, error: (result && result.error) || "render_failed" });
+      return res.json({ ok: true, kind, file_url: String(result.file_url || "").replace(/^\/\//, "https://") });
+    } catch (e) {
+      console.error("[/admin/affar/order/:id/render-pdf]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
   });
 
   console.log("[affar_api] routes registered (/admin/affar/*)");

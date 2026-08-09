@@ -702,6 +702,107 @@ export function registerOffertRoutes(app, deps) {
     }
   });
 
+  // ── ORDER-PDF (kund) + KÖK-PM — återanvänder render-motorn. Exponeras via offertEngine. ──
+  const _pmMoney = (n) => _round2(n).toLocaleString("sv-SE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const _ordDay = (v) => (v ? _esc(String(v).slice(0, 10)) : "");
+  const _ref = (v) => (v == null ? null : (typeof v === "string" ? v : (v._id || bubbleId(v) || null)));
+
+  // Kund-order: som offert-PDF men med tydlig leverans-banner överst + "Orderbekräftelse".
+  function buildOrderHtml({ order, rows, company }) {
+    const totals = computeTotals(rows);
+    const custName = _esc((company && company.Name_company) || "");
+    const custOrg = _esc((company && company.Org_Number) || "");
+    const isPrivat = _str(company && company.customer_type) === "Privat";
+    const custAddr = _esc(_pickAddr(company && (company.Adress || company.address || company.Address)) || _pickAddr(company && company.faktura_adress));
+    const dLev = _ordDay(order.leveransdatum), levTid = _esc(order.leveranstid || ""), levAddr = _esc(_pickAddr(order.leveransadress));
+    const M = (t) => `<span class="o-missing">${_esc(t)}</span>`;
+    const rowsHtml = rows.map((r) => {
+      const rs = computeRow(r); const beskr = _noMustache(r.beskrivning_long || "");
+      return `<tr><td class="o-artnr">${_esc(r.artikelnr || "")}</td><td class="o-ben"><div class="o-ben-titel">${_esc(_noMustache(r.benamning))}</div>${beskr ? `<div class="o-rad-beskr">${_esc(beskr).replace(/\n/g, "<br>")}</div>` : ""}</td><td class="o-num">${_esc(_pmMoney(_num(r.antal)))}</td><td class="o-enh">${_esc(r.enhet || "")}</td><td class="o-num">${_esc(_pmMoney(_num(r.apris)))}</td><td class="o-num">${_num(r.rabatt) ? _esc(_pmMoney(_num(r.rabatt))) + "%" : ""}</td><td class="o-num">${_esc(_pmMoney(rs))}</td><td class="o-num">${_esc(String(_num(r.moms)))}%</td></tr>`;
+    }).join("");
+    return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><style>
+      @page{size:A4;margin:18mm 16mm}*{box-sizing:border-box}
+      body{font-family:-apple-system,"Helvetica Neue",Arial,sans-serif;color:#1a1a1a;font-size:11px;margin:0}
+      h1{font-size:22px;margin:0 0 2px;letter-spacing:.5px}.o-sub{color:#6b7280;font-size:11px;margin-bottom:16px}
+      .o-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+      .o-meta{text-align:right;font-size:11px;line-height:1.6}.o-meta b{display:inline-block;min-width:92px;text-align:left;color:#6b7280;font-weight:500}
+      .o-lev{border:1.5px solid #111;border-radius:8px;padding:11px 14px;margin:6px 0 18px;background:#f6f7f9;display:flex;gap:26px;flex-wrap:wrap}
+      .o-lev h3{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#6b7280;margin:0 0 3px}
+      .o-lev .o-lev-v{font-size:14px;font-weight:700}
+      .o-cols{display:flex;gap:24px;margin-bottom:14px}.o-box{flex:1}.o-box h3{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#6b7280;margin:0 0 4px}.o-box p{margin:0;line-height:1.5}
+      table.o-rows{width:100%;border-collapse:collapse;margin-top:6px}table.o-rows th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;border-bottom:1.5px solid #111;padding:6px}
+      table.o-rows td{padding:8px 6px;border-bottom:1px solid #e5e7eb;vertical-align:top}.o-num{text-align:right;white-space:nowrap}.o-ben-titel{font-weight:600}.o-rad-beskr{color:#374151;margin-top:3px;font-size:10.5px;line-height:1.45}
+      .o-totals{margin-top:14px;margin-left:auto;width:260px;font-size:11.5px}.o-totals div{display:flex;justify-content:space-between;padding:3px 0}.o-totals .o-grand{border-top:1.5px solid #111;margin-top:4px;padding-top:6px;font-weight:700;font-size:13px}
+      .o-villkor{margin-top:26px;padding-top:12px;border-top:1px solid #e5e7eb;color:#374151;line-height:1.5;white-space:pre-wrap}.o-missing{color:#b91c1c;font-style:italic}
+      </style></head><body>
+      <div class="o-head"><div><h1>Orderbekräftelse</h1><div class="o-sub">${_esc(order.ordernr || "")}</div></div>
+        <div class="o-meta"><div><b>Ordernr</b> ${order.ordernr ? _esc(order.ordernr) : M("saknas")}</div><div><b>Orderdatum</b> ${_ordDay(order.orderdatum) || M("saknas")}</div><div><b>Betalningsvillkor</b> ${order.betalningsvillkor ? _esc(order.betalningsvillkor) : M("saknas")}</div><div><b>Status</b> ${_esc(order.orderstatus || "Bekräftad")}</div></div></div>
+      <div class="o-lev"><div><h3>Leveransdatum</h3><div class="o-lev-v">${dLev ? dLev + (levTid ? " · " + levTid : "") : M("saknas")}</div></div><div style="flex:1"><h3>Leveransadress</h3><div class="o-lev-v" style="font-size:12px">${levAddr || M("saknas")}</div></div></div>
+      <div class="o-cols"><div class="o-box"><h3>Kund</h3><p>${custName || M("kundnamn saknas")}<br>${isPrivat ? "Privatperson" : (custOrg ? "Org.nr " + custOrg : "")}<br>${custAddr || ""}</p></div></div>
+      <table class="o-rows"><thead><tr><th>Artikelnr</th><th>Benämning</th><th class="o-num">Antal</th><th>Enhet</th><th class="o-num">À-pris</th><th class="o-num">Rabatt</th><th class="o-num">Summa</th><th class="o-num">Moms</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+      <div class="o-totals"><div><span>Summa (ex. moms)</span><span>${_esc(_pmMoney(totals.summa))} ${_esc(order.valuta || "SEK")}</span></div><div><span>Moms</span><span>${_esc(_pmMoney(totals.moms_belopp))} ${_esc(order.valuta || "SEK")}</span></div><div class="o-grand"><span>Att betala</span><span>${_esc(_pmMoney(totals.total))} ${_esc(order.valuta || "SEK")}</span></div></div>
+      ${order.villkor_text ? `<div class="o-villkor">${_esc(_noMustache(order.villkor_text))}</div>` : ""}
+      </body></html>`;
+  }
+
+  // Kök-PM: leveransinfo + intern instruktion highlightade, rader GRUPPERADE per kök (produktionsenhet).
+  function buildOrderPmHtml({ order, rows, company, kokById }) {
+    const custName = _esc((company && company.Name_company) || "");
+    const dLev = _ordDay(order.leveransdatum), levTid = _esc(order.leveranstid || ""), levAddr = _esc(_pickAddr(order.leveransadress));
+    const intern = _noMustache(_str(order.intern_instruktion || ""));
+    const groups = new Map();
+    for (const r of rows) { const kn = (_ref(r.kok) ? (kokById.get(_ref(r.kok)) || "Okänt kök") : "Ej tilldelat kök"); if (!groups.has(kn)) groups.set(kn, []); groups.get(kn).push(r); }
+    const groupHtml = [...groups.entries()].map(([kn, rs]) => {
+      const rrows = rs.map((r) => `<tr><td class="pm-antal">${_esc(String(_num(r.antal)))} ${_esc(r.enhet || "")}</td><td><div class="pm-ben">${_esc(_noMustache(r.benamning))}</div>${r.beskrivning_long ? `<div class="pm-beskr">${_esc(_noMustache(r.beskrivning_long)).replace(/\n/g, "<br>")}</div>` : ""}</td><td class="pm-prep">${_esc(r.prep_kategori || "")}</td></tr>`).join("");
+      return `<div class="pm-group"><h2>${_esc(kn)} <span class="pm-count">${rs.length} rader</span></h2><table class="pm-rows"><thead><tr><th>Antal</th><th>Maträtt / produkt</th><th>Prep</th></tr></thead><tbody>${rrows}</tbody></table></div>`;
+    }).join("");
+    return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><style>
+      @page{size:A4;margin:16mm 15mm}*{box-sizing:border-box}
+      body{font-family:-apple-system,"Helvetica Neue",Arial,sans-serif;color:#1a1a1a;font-size:12px;margin:0}
+      h1{font-size:20px;margin:0 0 2px}.pm-sub{color:#6b7280;font-size:11px;margin-bottom:14px}
+      .pm-lev{border:2px solid #111;border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;gap:30px;flex-wrap:wrap;background:#fff7ed}
+      .pm-lev h3{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#9a3412;margin:0 0 3px}.pm-lev .v{font-size:17px;font-weight:800}
+      .pm-instr{border-left:5px solid #F47B30;background:#fff7ed;padding:11px 15px;margin-bottom:16px;border-radius:0 8px 8px 0}
+      .pm-instr h3{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#9a3412;margin:0 0 4px}.pm-instr p{margin:0;font-size:13px;font-weight:600;line-height:1.5;white-space:pre-wrap}
+      .pm-group{margin-bottom:18px;break-inside:avoid}
+      .pm-group h2{font-size:15px;margin:0 0 6px;padding:6px 10px;background:#111;color:#fff;border-radius:6px;display:flex;justify-content:space-between;align-items:center}
+      .pm-count{font-size:10px;font-weight:500;opacity:.8}
+      table.pm-rows{width:100%;border-collapse:collapse}
+      table.pm-rows th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;border-bottom:1.5px solid #111;padding:5px 6px}
+      table.pm-rows td{padding:9px 6px;border-bottom:1px solid #e5e7eb;vertical-align:top}
+      .pm-antal{font-weight:800;font-size:15px;white-space:nowrap;width:76px}.pm-ben{font-weight:700;font-size:13.5px}.pm-beskr{color:#374151;margin-top:3px;font-size:11px;line-height:1.45}.pm-prep{color:#6b7280;white-space:nowrap;width:110px}
+      </style></head><body>
+      <h1>Produktions-PM</h1><div class="pm-sub">${_esc(order.ordernr || "")}${custName ? " · " + custName : ""}</div>
+      <div class="pm-lev"><div><h3>Leverans</h3><div class="v">${dLev || "—"}${levTid ? " · " + levTid : ""}</div></div><div style="flex:1"><h3>Plats</h3><div class="v" style="font-size:14px">${levAddr || "—"}</div></div></div>
+      ${intern ? `<div class="pm-instr"><h3>Intern instruktion</h3><p>${_esc(intern).replace(/\n/g, "<br>")}</p></div>` : ""}
+      ${groupHtml || '<p style="color:#6b7280">Inga rader.</p>'}
+      </body></html>`;
+  }
+
+  // renderOrderPdf(orderId, kind) — kind: "order" (kund) | "pm" (kök). Renderar + persisterar → file_url.
+  async function renderOrderPdf(orderId, kind) {
+    const order = await bubbleGet(TYPE_ORDER, orderId);
+    if (!order) return { ok: false, error: "order_not_found" };
+    if (_str(order.source) !== SOURCE_MIRA_FE) return { ok: false, error: "ej_mira_order" };
+    const rows = await loadOrderRows(orderId);
+    const company = order.kundforetag ? await bubbleGet("ClientCompany", _ref(order.kundforetag)).catch(() => null) : null;
+    let html, titel;
+    if (kind === "pm") {
+      const koks = await bubbleFindAll("Kok", {}).catch(() => []);
+      const kokById = new Map(); for (const k of koks) { const id = bubbleId(k); if (id) kokById.set(id, _str(k.namn) || _str(k.Namn) || _str(k.name) || ""); }
+      html = buildOrderPmHtml({ order, rows, company, kokById }); titel = `PM ${order.ordernr || orderId}`;
+    } else {
+      html = buildOrderHtml({ order, rows, company }); titel = `Order ${order.ordernr || orderId}`;
+    }
+    const rendered = await contractRenderEngine.renderAndPersist({ templateHtml: html, spec: {}, titel });
+    return { ok: true, kind: kind === "pm" ? "pm" : "order", file_url: rendered.file_url, dokument_id: rendered.dokument_id, bytes: rendered.bytes };
+  }
+  async function loadOrderRows(orderId) {
+    const rows = await bubbleFind(TYPE_ORDERRAD, { constraints: [{ key: "order", constraint_type: "equals", value: orderId }], limit: 300 }).catch(() => []);
+    rows.sort((a, b) => _num(a.radnr) - _num(b.radnr));
+    return rows;
+  }
+
   console.log("[offert_api] routes registered (/admin/offert/*)");
-  return { convertOffertToOrder };
+  return { convertOffertToOrder, renderOrderPdf };
 }

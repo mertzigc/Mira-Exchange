@@ -19842,6 +19842,10 @@ registerAffarRoutes(app, {
   offertConvert: (id) => (offertEngine && offertEngine.convertOffertToOrder)
     ? offertEngine.convertOffertToOrder(id)
     : Promise.reject(new Error("offert_engine_not_ready")),
+  // order-PDF (kund) + kök-PM via offert_api:s render-motor
+  renderOrderPdf: (id, kind) => (offertEngine && offertEngine.renderOrderPdf)
+    ? offertEngine.renderOrderPdf(id, kind)
+    : Promise.reject(new Error("offert_engine_not_ready")),
 });
 
 // ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──
