@@ -19838,6 +19838,10 @@ registerAffarRoutes(app, {
   clientIp: _clientIp,
   FE_CONNECTION_ID,
   CONNECTION_NAMES,
+  // offert→order-konvertering (lat: offertEngine sätts vid registerOffertRoutes ovan)
+  offertConvert: (id) => (offertEngine && offertEngine.convertOffertToOrder)
+    ? offertEngine.convertOffertToOrder(id)
+    : Promise.reject(new Error("offert_engine_not_ready")),
 });
 
 // ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──

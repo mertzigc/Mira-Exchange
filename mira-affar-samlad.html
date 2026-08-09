@@ -83,6 +83,10 @@
   .pager .pinfo{font-size:11px;color:var(--w40)}
   .viewbtn{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:7px;padding:5px 11px;font-size:11px;font-weight:700;color:var(--w70);text-decoration:none;white-space:nowrap}
   .viewbtn:hover{border-color:var(--orange);color:var(--orange)}
+  .af-conv{background:var(--orange);border:none;border-radius:7px;padding:5px 11px;font-size:11px;font-weight:800;color:#1c1206;cursor:pointer;white-space:nowrap;font-family:var(--fb);transition:filter .12s}
+  .af-conv:hover{filter:brightness(1.07)}
+  .af-conv:disabled{opacity:.5;cursor:default}
+  .af .ordertag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--green);background:rgba(76,175,125,.13);border-radius:5px;padding:3px 8px;white-space:nowrap}
   /* inline edit (lead + aktivitet) */
   .af tr.lead,.af tr.akt{cursor:pointer}
   .af tr.lead.open>td,.af tr.akt.open>td{background:var(--card)}
@@ -252,7 +256,7 @@
     else if(isKopp) af=' class="kopplarow" data-kid="'+esc(r.id)+'" data-ktype="'+kt+'" data-ksrc="'+esc(r.source)+'" data-kdeal="'+(r.deal_id?"1":"")+'"';
     var chev=(r.type==="Affär"||isWo||isKopp)?' <span class="muted" style="font-weight:400">▸</span>':'';
     var koppTag=(isKopp&&r.deal_id)?' <span class="kindtag" style="color:var(--green)">kopplad</span>':'';
-    var lastCell=isWo?('<span class="worowlink">'+r.rows.length+' rader ▸</span>'):viewCell(r);
+    var lastCell=isWo?('<span class="worowlink">'+r.rows.length+' rader ▸</span>'):(viewCell(r)+convertCell(r));
     return '<tr'+af+'>'+
       '<td><span class="typ"><span class="ic">'+ic+'</span>'+esc(r.type)+chev+(r.type==="Offert"&&r.kind?' <span class="kindtag">'+esc(r.kind)+'</span>':'')+koppTag+'</span></td>'+
       '<td><span class="src '+esc(r.source)+'"><span class="d"></span>'+esc(r.source)+'</span></td>'+
@@ -269,6 +273,24 @@
     var dt=TYPE2DOC[r.type];
     if(dt && r.source==="fortnox") return '<button class="viewbtn" data-doc-type="'+esc(dt)+'" data-doc-id="'+esc(r.id)+'">Visa ↗</button>';
     return "";
+  }
+  // Mira offert → order: Konvertera-knapp om ingen order, annars ✓ Order-tag. Bara Mira (Fortnox avvaktas).
+  function convertCell(r){
+    if(r.type!=="Offert" || r.source!=="mira") return "";
+    if(r.order_id) return ' <span class="ordertag" title="Order '+esc(r.order_nr||"")+'">✓ Order '+esc(r.order_nr||"")+'</span>';
+    return ' <button class="af-conv" data-off-id="'+esc(r.id)+'">Konvertera →</button>';
+  }
+  function doConvert(btn){
+    var id=btn.getAttribute("data-off-id");
+    if(!window.confirm("Konvertera offerten till en order?")) return;
+    var orig=btn.textContent; btn.disabled=true; btn.textContent="Konverterar…";
+    fetch(HOST+"/admin/affar/offert/"+encodeURIComponent(id)+"/convert",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"}})
+      .then(function(r){ return r.json(); }).then(function(j){
+        if(!j||!j.ok){ btn.disabled=false; btn.textContent=orig; alert("Kunde inte konvertera: "+esc((j&&(j.hint||j.error))||"okänt fel")); return; }
+        btn.outerHTML='<span class="ordertag">✓ Order '+esc(j.order_nr||"")+(j.created?"":" (fanns)")+'</span>';
+        var i; for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id){ STATE.listRows[i].order_id=j.order_id; STATE.listRows[i].order_nr=j.order_nr; break; } }
+        for(i=0;i<STATE.feedRows.length;i++){ if(STATE.feedRows[i].id===id){ STATE.feedRows[i].order_id=j.order_id; STATE.feedRows[i].order_nr=j.order_nr; break; } }
+      }).catch(function(){ btn.disabled=false; btn.textContent=orig; alert("Nätverksfel vid konvertering."); });
   }
   function assignSel(r){
     if(!USERS.length) return cm((r.tilldelad&&r.tilldelad.name)||"");
@@ -607,7 +629,7 @@
         '<td class="mono">'+cm(it.number)+tag+'</td>'+
         '<td class="num">'+(it.amount!=null?esc(money(it.amount)):'<span class="muted">—</span>')+'</td>'+
         '<td>'+pillMini(it.status,it.status_cls)+'</td>'+
-        '<td>'+chainViewCell(it)+'</td>'+
+        '<td>'+chainViewCell(it)+convertCell(it)+'</td>'+
       '</tr>';
     }).join("");
   }
@@ -1058,6 +1080,7 @@
     var ckt=t.closest && t.closest(".ck-toggle"); if(ckt){ var b=ckt.parentNode.querySelector(".ck-body"); if(b){ b.style.display=(b.style.display==="none"?"block":"none"); } return; }
     var cks=t.closest && t.closest(".ck-save"); if(cks){ saveCardKoppla(cks); return; }
     var csx=t.closest && t.closest(".cstep-x"); if(csx){ toggleStepDetail(csx); return; }
+    var cv=t.closest && t.closest(".af-conv"); if(cv){ doConvert(cv); return; }
     var nas=t.closest && t.closest(".af-na-save"); if(nas){ saveNewAkt(nas); return; }
     var nts=t.closest && t.closest(".af-nt-save"); if(nts){ saveNewTodo(nts); return; }
     var nnb=t.closest && t.closest(".af-newbtn"); if(nnb){ openCreate(nnb.getAttribute("data-new")); return; }

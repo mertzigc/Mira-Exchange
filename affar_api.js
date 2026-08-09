@@ -17,7 +17,7 @@ export function registerAffarRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleCount, bubblePatch, bubbleCreate, bubbleId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
-    FE_CONNECTION_ID, CONNECTION_NAMES,
+    FE_CONNECTION_ID, CONNECTION_NAMES, offertConvert,
   } = deps;
 
   const SOURCE_MIRA_FE = "mira_fe";
@@ -150,7 +150,18 @@ export function registerAffarRoutes(app, deps) {
     };
   }
   const _liveWO = (arr) => (arr || []).filter((r) => r && r.is_deleted !== true);
-  function nOffertM(r, m, durl) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); const d0 = (Array.isArray(r.dokument) ? r.dokument[0] : null); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, url: (durl && d0) ? (durl.get(_ref(d0)) || "") : "", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nOffertM(r, m, durl) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); const d0 = (Array.isArray(r.dokument) ? r.dokument[0] : null); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, url: (durl && d0) ? (durl.get(_ref(d0)) || "") : "", deal_id: _ref(r.deal) || null, order_id: null, order_nr: "", id: bubbleId(r) }; }
+  // Batch: vilka Mira-offerter har redan en MiraOrder? → id→{id,nr} (för Konvertera-status i affär-vyn).
+  async function orderMapForOfferts(offRecs) {
+    const ids = (offRecs || []).map(bubbleId).filter(Boolean);
+    const map = new Map();
+    if (!ids.length) return map;
+    const orders = await bubbleFindAll("MiraOrder", { constraints: [{ key: "offert", constraint_type: "in", value: ids }] }).catch(() => []);
+    for (const o of orders) { const oid = _ref(o.offert); if (oid && !map.has(oid)) map.set(oid, { id: bubbleId(o), nr: _str(o.ordernr) }); }
+    return map;
+  }
+  // Sätt order_id/order_nr på nOffertM-rader utifrån orderMapForOfferts.
+  function applyOrderStatus(rows, omap) { for (const row of rows) { if (row && row.source === "mira" && row.type === "Offert") { const os = omap.get(row.id); if (os) { row.order_id = os.id; row.order_nr = os.nr; } } } return rows; }
   function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   // Avtal (Contract) i affärskedjan. Status härleds enkelt (affar_api saknar _deriveContractStatus):
@@ -286,11 +297,12 @@ export function registerAffarRoutes(app, deps) {
         recent("FortnoxInvoice", limit), recent("Contract", limit),
       ]);
 
+      const offMapFeed = await orderMapForOfferts(offMs);
       const rows = [
         ...leads.map((r) => nLead(r, m)),
         ...akts.map((r) => nAkt(r, m)),
         ...deals.map((r) => nDeal(r, m)),
-        ...offMs.map((r) => nOffertM(r, m)),
+        ...applyOrderStatus(offMs.map((r) => nOffertM(r, m)), offMapFeed),
         ...offFs.map(nOffertF),
         ...avtals.map((r) => nAvtal(r, m)),
         ...ordMs.map((r) => nOrderM(r, m)),
@@ -374,10 +386,11 @@ export function registerAffarRoutes(app, deps) {
       const tag = (x, isLinked) => { x.linked = !!isLinked; return x; };
 
       const akItems = aktRows.map((r) => nAkt(r, m)).sort((a, b) => _ts(b.date) - _ts(a.date));
-      const offItems = [
+      const offOmap = await orderMapForOfferts(offRows);
+      const offItems = applyOrderStatus([
         ...offRows.map((r) => tag(nOffertM(r, m), !offListIds.has(bubbleId(r)))),
         ...offFRows.map((r) => tag(nOffertF(r), true)),   // FortnoxOffer når kortet bara via reverse
-      ];
+      ], offOmap);
       const avtalItems = (avtalRows || []).map((r) => tag(nAvtal(r, m), true));  // Contract: bara reverse
       const ordItems = [
         ...fortOrders.map(nOrderF).filter((r) => r.source !== "tengella").map((x) => tag(x, !ordListIds.has(x.id))),
@@ -528,7 +541,9 @@ export function registerAffarRoutes(app, deps) {
           ]);
         } else { miras = await pageOf("Offert", feMira); forts = await pageOf("FortnoxOffer"); }
         const durl = await dokUrlMap(miras);
-        rows = [...miras.map((r) => nOffertM(r, m, durl)), ...forts.map(nOffertF)].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
+        const omap = await orderMapForOfferts(miras);
+        const miraRows = applyOrderStatus(miras.map((r) => nOffertM(r, m, durl)), omap);
+        rows = [...miraRows, ...forts.map(nOffertF)].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
         total = q ? rows.length : ((await bubbleCount("Offert", feMira)) + (await bubbleCount("FortnoxOffer")));
       }
       else if (type === "order") {
@@ -960,6 +975,29 @@ export function registerAffarRoutes(app, deps) {
       return res.json({ ok: true, row_type: rowType, bubble_type: bubbleType, id, deal_id: dealId || null, deal_name });
     } catch (e) {
       console.error("[/admin/affar/link]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/affar/offert/:id/convert — Mira offert → MiraOrder (idempotent) ──
+  // Wrappar offert_api:s convertOffertToOrder (samma motor som auto-convert vid signering).
+  // Bara Mira-offerter (source=mira_fe); Fortnox hanteras separat (beslut 2026-08-08: avvakta).
+  app.options("/admin/affar/offert/:id/convert", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/offert/:id/convert", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!offertConvert) return res.status(501).json({ ok: false, error: "convert_not_wired" });
+      const id = req.params.id;
+      const off = await bubbleGet("Offert", id).catch(() => null);
+      if (!off) return res.status(404).json({ ok: false, error: "offert_not_found" });
+      if (_str(off.source) !== SOURCE_MIRA_FE) return res.status(400).json({ ok: false, error: "ej_mira_offert", hint: "Bara Mira-offerter kan konverteras här; Fortnox-offert hanteras i Fortnox." });
+      const result = await offertConvert(id);
+      if (!result || !result.ok) return res.status(500).json({ ok: false, error: (result && result.error) || "convert_failed" });
+      let order_nr = "";
+      if (result.order_id) { const mo = await bubbleGet("MiraOrder", result.order_id).catch(() => null); if (mo) order_nr = _str(mo.ordernr); }
+      return res.json({ ok: true, order_id: result.order_id || null, order_nr, created: !!result.created, reason: result.reason || null });
+    } catch (e) {
+      console.error("[/admin/affar/offert/:id/convert]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
