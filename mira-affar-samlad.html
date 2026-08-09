@@ -57,6 +57,10 @@
   .muted{color:var(--w40)}
   .kindtag{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--w40);background:var(--w10);border-radius:4px;padding:1px 5px;margin-left:4px;vertical-align:middle}
   .af-note{margin-top:16px;font-size:11px;color:var(--w40)}
+  .af .af-filterbar{align-items:center;gap:8px}
+  .af .af-datein{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--white);font-family:var(--fb);font-size:12px;color-scheme:dark}
+  .af .af-datein:focus{outline:none;border-color:var(--orange)}
+  .af .af-datclear{cursor:pointer}
   tr.affar{cursor:pointer}
   tr.affar.open td{background:var(--card)}
   .deal-cell{padding:0 !important;background:var(--card)}
@@ -227,6 +231,14 @@
     </div>
   </div>
 
+  <div class="bar af-filterbar" data-af="filterbar" style="display:none">
+    <span class="muted" style="font-size:11px">Skapad:</span>
+    <input type="date" class="af-datein" data-af="from" title="Från och med (skapad)">
+    <span class="muted">–</span>
+    <input type="date" class="af-datein" data-af="to" title="Till och med (skapad)">
+    <span class="chip af-datclear" data-af="datclear" style="display:none">Rensa datum ✕</span>
+  </div>
+
   <div class="tablewrap">
     <table class="grid">
       <thead data-af="thead"></thead>
@@ -254,13 +266,13 @@
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), CUC=cfg("current_user_company");
 
   // type="" => feed-läge (samlad översikt); annars list-läge (server-paginerad per typ)
-  var STATE={ feedRows:[], listRows:[], funnel:null, type:"", src:"", q:"", page:0, total:null, hasMore:false, loading:false };
+  var STATE={ feedRows:[], listRows:[], funnel:null, type:"", src:"", q:"", from:"", to:"", page:0, total:null, hasMore:false, loading:false };
   var USERS=[];   // kollegor (för tilldela-dropdown)
   var ICON={ Lead:"✨", Aktivitet:"💬", "Affär":"🤝", Offert:"📄", Avtal:"📘", Order:"🧾", Faktura:"💳" };
   var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Avtal","avtal"],["Order","order"],["Faktura","faktura"]];
   var LABEL2TYPE={ "":"", "Lead":"lead", "Aktivitet":"aktivitet", "Affär":"affar", "Offert":"offert", "Avtal":"avtal", "Order":"order", "Faktura":"faktura" };
-  var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Status",""];
-  var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Meddelande","Region","Källa","Formulär","Kundansvarig","Tilldela"];
+  var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Ansvarig","Status",""];
+  var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Meddelande","Region","Källa","Formulär","Kundansvarig","Skapad av","Tilldela"];
   var AKT_HEADS=["Skapad","Leverantör","Typ","Fas","Mötesdatum","Företag","Affär","Meddelande","Vår användare"];
   var TYPE2DOC={ "Order":"order", "Offert":"offert", "Faktura":"faktura" };
 
@@ -305,6 +317,7 @@
       '<td class="mono">'+cm(r.number)+'</td>'+
       '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
       '<td class="muted">'+esc(r.date||"")+'</td>'+
+      '<td>'+cm(r.ansvarig)+'</td>'+
       '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
       '<td>'+lastCell+'</td>'+
     '</tr>';
@@ -502,6 +515,7 @@
       '<td>'+cm(r.kalla)+'</td>'+
       '<td>'+(r.formular?"✓":'<span class="muted">—</span>')+'</td>'+
       '<td>'+cm(r.kundansvarig)+'</td>'+
+      '<td>'+cm(r.ansvarig)+'</td>'+
       '<td>'+assignSel(r)+'</td>'+
     '</tr>';
   }
@@ -744,15 +758,23 @@
     });
     $("rows").innerHTML=rows.length?rows.map(docRowHtml).join(""):emptyRow("Inga poster.");
     $("pager").style.display="none";
+    $("filterbar").style.display="none";
   }
   function renderList(){
     var t=LABEL2TYPE[STATE.type]||"";
-    var heads = t==="lead"?LEAD_HEADS : t==="aktivitet"?AKT_HEADS : DOC_HEADS;
+    var heads;
+    if(t==="lead") heads=LEAD_HEADS;
+    else if(t==="aktivitet") heads=AKT_HEADS;
+    else { heads=DOC_HEADS.slice(); var ai=heads.indexOf("Ansvarig"); if(ai>-1 && (t==="offert"||t==="order"||t==="faktura"||t==="avtal")) heads[ai]="Vår referens"; }
     setHead(heads);
     var rows=STATE.listRows;
     if(STATE.src) rows=rows.filter(function(r){ return (r.source||"")===STATE.src; });
     var fn = t==="lead"?leadRowHtml : t==="aktivitet"?aktRowHtml : docRowHtml;
     $("rows").innerHTML=rows.length?rows.map(fn).join(""):emptyRow(STATE.loading?"Laddar…":"Inga poster.");
+    // datum-filterbar (skapat)
+    $("filterbar").style.display="flex";
+    var fi=$("from"), ti=$("to"); if(fi&&fi.value!==STATE.from) fi.value=STATE.from; if(ti&&ti.value!==STATE.to) ti.value=STATE.to;
+    $("datclear").style.display=(STATE.from||STATE.to)?"inline-flex":"none";
     // pager
     var pg=$("pager"); pg.style.display="flex";
     $("prev").disabled=(STATE.page<=0);
@@ -1238,7 +1260,7 @@
     var t=LABEL2TYPE[STATE.type]||"";
     if(!t){ render(); return; }
     STATE.loading=true; render();
-    var url=HOST+"/admin/affar/list?type="+encodeURIComponent(t)+"&page="+STATE.page+"&limit=30"+(STATE.q?("&q="+encodeURIComponent(STATE.q)):"");
+    var url=HOST+"/admin/affar/list?type="+encodeURIComponent(t)+"&page="+STATE.page+"&limit=30"+(STATE.q?("&q="+encodeURIComponent(STATE.q)):"")+(STATE.from?("&from="+encodeURIComponent(STATE.from)):"")+(STATE.to?("&to="+encodeURIComponent(STATE.to)):"");
     fetch(url,{headers:{"x-admin-token":TOKEN}})
       .then(function(r){ return r.json(); })
       .then(function(j){
@@ -1298,6 +1320,7 @@
         .catch(function(){ vb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-hämtning."); });
       return;
     }
+    var dc=t.closest && t.closest('[data-af="datclear"]'); if(dc){ STATE.from=""; STATE.to=""; STATE.page=0; if(STATE.type) loadList(); return; }
     var pnav=t.closest('[data-af="prev"],[data-af="next"]');
     if(pnav){ var isNext=(pnav.getAttribute("data-af")==="next"); if(isNext&&STATE.hasMore){ STATE.page++; loadList(); } else if(!isNext&&STATE.page>0){ STATE.page--; loadList(); } return; }
     var step=t.closest("[data-step]");
@@ -1332,6 +1355,8 @@
   });
   root.addEventListener("change",function(e){
     var sel=e.target;
+    if(sel.getAttribute && sel.getAttribute("data-af")==="from"){ STATE.from=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
+    if(sel.getAttribute && sel.getAttribute("data-af")==="to"){ STATE.to=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
     if(sel.classList && sel.classList.contains("af-a-type")){ toggleAktCond(sel); return; }
     if(sel.classList && sel.classList.contains("af-a-done")){ toggleNote(sel); return; }
     if(sel.classList && sel.classList.contains("af-na-type")){ toggleNaCond(sel); return; }

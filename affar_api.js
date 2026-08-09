@@ -64,16 +64,27 @@ export function registerAffarRoutes(app, deps) {
     return m;
   }
 
-  // ── Deal-cache (id → titel) ───────────────────────────────────────
-  let _dCache = { map: null, ts: 0 };
-  async function dealMap() {
-    if (_dCache.map && (Date.now() - _dCache.ts) < CC_TTL) return _dCache.map;
+  // ── Deal-cache (id → titel / ägar-namn / kategori) ────────────────
+  let _dCache = { map: null, owner: null, cat: null, ts: 0 };
+  async function _loadDeals() {
+    if (_dCache.map && (Date.now() - _dCache.ts) < CC_TTL) return _dCache;
     const all = await bubbleFindAll("deal", {}).catch(() => []);
-    const m = new Map();
-    for (const d of all) { const id = bubbleId(d); if (id) m.set(id, _str(d.titel) || _str(d.Namn) || _str(d.name)); }
-    _dCache = { map: m, ts: Date.now() };
-    return m;
+    const um = await userMap();
+    const map = new Map(), owner = new Map(), cat = new Map();
+    for (const d of all) {
+      const id = bubbleId(d); if (!id) continue;
+      map.set(id, _str(d.titel) || _str(d.Namn) || _str(d.name));
+      const ow = Array.isArray(d.deal_owner) ? d.deal_owner[0] : d.deal_owner;   // deal_owner = List of Users
+      const owId = _ref(ow); if (owId) owner.set(id, um.get(owId) || "");
+      const kat = Array.isArray(d.Kategori) ? d.Kategori[0] : d.Kategori;          // affärens kategori (Category-OS)
+      if (kat) cat.set(id, _str(kat));
+    }
+    _dCache = { map, owner, cat, ts: Date.now() };
+    return _dCache;
   }
+  async function dealMap() { return (await _loadDeals()).map; }
+  async function dealOwnerMap() { return (await _loadDeals()).owner; }
+  async function dealCatMap() { return (await _loadDeals()).cat; }
 
   // ── Leverantör-cache (id → Företagsnamn) ──────────────────────────
   let _sCache = { map: null, ts: 0 };
@@ -178,7 +189,7 @@ export function registerAffarRoutes(app, deps) {
   function nOrderF(r) { const src = connSource(r.connection); const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   // ⚠️ ft_url är Fortnox API-URL (JSON, EJ PDF) på order/Fortnox-faktura → aldrig som Visa-länk.
   // Bara Tengella-fakturans ft_url är en riktig (temporär) PDF-länk. Order utan ft_pdf → lazy-knapp.
-  function nInvoice(r) { const src = connSource(r.connection); const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || (src === "tengella" ? _httpsUrl(r.ft_url) : ""), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nInvoice(r) { const src = connSource(r.connection); const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || (src === "tengella" ? _httpsUrl(r.ft_url) : ""), deal_id: _ref(r.deal) || null, ansvarig: _str(r.ft_our_reference), id: bubbleId(r) }; }
 
   // ── Rika per-typ-rader för native-ersättande liggaren ─────────────
   // Lead-kolumner: skapad/namn/email/telefon/företag/meddelande/region/källa/formulär/kundansvarig/tilldelad.
@@ -196,6 +207,7 @@ export function registerAffarRoutes(app, deps) {
       formular: _ref(r["Formulär"]) ? "Ja" : "",
       status: lbl, status_cls: cls,
       kundansvarig: kaId ? (um.get(kaId) || "") : "",
+      ansvarig: (_ref(r["Created By"]) ? (um.get(_ref(r["Created By"])) || "") : ""),   // skapare
       tilldelad: tId ? { id: tId, name: um.get(tId) || "" } : null,
       // edit-prefill (koppla-fält): leadets EGNA Kundansvarig (ej företags-fallback) + todo
       kundansvarig_id: _ref(r.Kundansvarig) || null,
@@ -221,6 +233,7 @@ export function registerAffarRoutes(app, deps) {
       affar: dId ? (dm.get(dId) || "") : "", affar_id: dId || null,
       meddelande: _str(r.beskrivning) || _str(r["mötesantecking"]),
       var_anvandare: wId ? (um.get(wId) || "") : "",
+      ansvarig: wId ? (um.get(wId) || "") : "",   // skapare (writer||Created By)
       // edit-prefill: råvärden för inline-redigering (skrivnycklar = dessa läsnycklar)
       beskrivning: _str(r.beskrivning),
       motesanteckning: _str(r["mötesantecking"]),
@@ -455,9 +468,17 @@ export function registerAffarRoutes(app, deps) {
       const cursor = page * limit;
       const feMira = [{ key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE }];
 
-      const pageOf = (t, extra = []) => bubbleFind(t, { constraints: extra, limit, cursor, sort_field: "Created Date", descending: true }).catch(() => []);
+      // ── Datum-filter (skapat): Created Date-range, enhetligt över alla typer. Order-specifika
+      // datum (orderdatum/leveransdatum) + Person/Kategori = nästa steg. Bubble date-constraints
+      // på Created Date; verifiera reliabilitet via curl (string-datum-constraints är opålitliga).
+      const _from = _str(req.query.from), _to = _str(req.query.to);
+      const dateBase = [];
+      if (_from) dateBase.push({ key: "Created Date", constraint_type: "greater than or equal to", value: new Date(_from + "T00:00:00.000Z").toISOString() });
+      if (_to)   dateBase.push({ key: "Created Date", constraint_type: "less than or equal to",    value: new Date(_to + "T23:59:59.999Z").toISOString() });
+
+      const pageOf = (t, extra = []) => bubbleFind(t, { constraints: [...dateBase, ...extra], limit, cursor, sort_field: "Created Date", descending: true }).catch(() => []);
       async function searchUnion(t, sets) {
-        const all = await Promise.all(sets.map((cs) => bubbleFindAll(t, { constraints: cs }).catch(() => [])));
+        const all = await Promise.all(sets.map((cs) => bubbleFindAll(t, { constraints: [...dateBase, ...cs] }).catch(() => [])));
         const seen = new Map();
         for (const arr of all) for (const r of arr) { const id = bubbleId(r); if (id && !seen.has(id)) seen.set(id, r); }
         return [...seen.values()];
@@ -574,7 +595,17 @@ export function registerAffarRoutes(app, deps) {
         return res.status(400).json({ ok: false, error: "okänd_typ", hint: "type=lead|aktivitet|offert|order|faktura|avtal|affar" });
       }
 
-      return res.json({ ok: true, type, page, limit, q, total, count: rows.length, has_more: rows.length >= limit, rows });
+      // ── ANSVARIG/SKAPARE-berikning ──
+      // lead=skapare(Created By), aktivitet=writer (satta i normaliseraren), faktura=ft_our_reference.
+      // affär=deal_owner (egen id); offert/order/avtal=affärens ansvarige via kopplat deal (fallback tom).
+      const ownerMap = await dealOwnerMap();
+      for (const r of rows) {
+        if (r.ansvarig) continue;                    // redan satt (lead/akt/faktura)
+        if (type === "affar") r.ansvarig = ownerMap.get(r.id) || "";
+        else r.ansvarig = (r.deal_id ? (ownerMap.get(r.deal_id) || "") : "");
+      }
+
+      return res.json({ ok: true, type, page, limit, q, total, count: rows.length, has_more: rows.length >= limit, from: _from || null, to: _to || null, rows });
     } catch (e) {
       console.error("[/admin/affar/list]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
