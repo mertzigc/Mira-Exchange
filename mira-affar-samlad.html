@@ -236,7 +236,11 @@
     <input type="date" class="af-datein" data-af="from" title="Från och med (affärsdatum: offert/order/faktura-datum, annars skapad)">
     <span class="muted">–</span>
     <input type="date" class="af-datein" data-af="to" title="Till och med">
-    <span class="chip af-datclear" data-af="datclear" style="display:none">Rensa datum ✕</span>
+    <span class="muted" style="font-size:11px;margin-left:6px">Person:</span>
+    <select class="af-datein" data-af="person"><option value="">Alla</option></select>
+    <span class="muted" style="font-size:11px">Kategori:</span>
+    <select class="af-datein" data-af="kategori"><option value="">Alla</option><option value="Food &amp; Event">Food &amp; Event</option><option value="Housekeeping">Housekeeping</option><option value="Service &amp; People">Service &amp; People</option><option value="Other facility services">Other facility services</option></select>
+    <span class="chip af-datclear" data-af="datclear" style="display:none">Rensa filter ✕</span>
   </div>
 
   <div class="tablewrap">
@@ -266,7 +270,7 @@
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), CUC=cfg("current_user_company");
 
   // type="" => feed-läge (samlad översikt); annars list-läge (server-paginerad per typ)
-  var STATE={ feedRows:[], listRows:[], funnel:null, type:"", src:"", q:"", from:"", to:"", page:0, total:null, hasMore:false, loading:false };
+  var STATE={ feedRows:[], listRows:[], funnel:null, type:"", src:"", q:"", from:"", to:"", person:"", kategori:"", page:0, total:null, grand:null, filtered:false, hasMore:false, loading:false };
   var USERS=[];   // kollegor (för tilldela-dropdown)
   var ICON={ Lead:"✨", Aktivitet:"💬", "Affär":"🤝", Offert:"📄", Avtal:"📘", Order:"🧾", Faktura:"💳" };
   var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Avtal","avtal"],["Order","order"],["Faktura","faktura"]];
@@ -771,15 +775,20 @@
     if(STATE.src) rows=rows.filter(function(r){ return (r.source||"")===STATE.src; });
     var fn = t==="lead"?leadRowHtml : t==="aktivitet"?aktRowHtml : docRowHtml;
     $("rows").innerHTML=rows.length?rows.map(fn).join(""):emptyRow(STATE.loading?"Laddar…":"Inga poster.");
-    // datum-filterbar (skapat)
+    // filterbar (datum + person + kategori)
     $("filterbar").style.display="flex";
     var fi=$("from"), ti=$("to"); if(fi&&fi.value!==STATE.from) fi.value=STATE.from; if(ti&&ti.value!==STATE.to) ti.value=STATE.to;
-    $("datclear").style.display=(STATE.from||STATE.to)?"inline-flex":"none";
+    var ps=$("person");
+    if(ps && ps.options.length<=1 && USERS.length){ var po='<option value="">Alla</option>'; for(var pi=0;pi<USERS.length;pi++){ po+='<option value="'+esc(USERS[pi].id)+'">'+esc(USERS[pi].name)+'</option>'; } ps.innerHTML=po; }
+    if(ps && ps.value!==STATE.person) ps.value=STATE.person;
+    var ks=$("kategori"); if(ks && ks.value!==STATE.kategori) ks.value=STATE.kategori;
+    $("datclear").style.display=(STATE.from||STATE.to||STATE.person||STATE.kategori)?"inline-flex":"none";
     // pager
     var pg=$("pager"); pg.style.display="flex";
     $("prev").disabled=(STATE.page<=0);
     $("next").disabled=(!STATE.hasMore);
-    $("pinfo").textContent="Sida "+(STATE.page+1)+(STATE.total!=null?(" · "+STATE.total+" poster totalt"):"");
+    var cnt=""; if(STATE.total!=null){ cnt=STATE.filtered?(STATE.total+" av "+(STATE.grand!=null?STATE.grand:"?")+" poster (filtrerat)"):(STATE.total+" poster totalt"); }
+    $("pinfo").textContent="Sida "+(STATE.page+1)+(cnt?(" · "+cnt):"");
   }
   function render(){ renderFunnel(); if(STATE.type){ renderList(); } else { renderFeed(); } }
 
@@ -1260,13 +1269,13 @@
     var t=LABEL2TYPE[STATE.type]||"";
     if(!t){ render(); return; }
     STATE.loading=true; render();
-    var url=HOST+"/admin/affar/list?type="+encodeURIComponent(t)+"&page="+STATE.page+"&limit=30"+(STATE.q?("&q="+encodeURIComponent(STATE.q)):"")+(STATE.from?("&from="+encodeURIComponent(STATE.from)):"")+(STATE.to?("&to="+encodeURIComponent(STATE.to)):"");
+    var url=HOST+"/admin/affar/list?type="+encodeURIComponent(t)+"&page="+STATE.page+"&limit=30"+(STATE.q?("&q="+encodeURIComponent(STATE.q)):"")+(STATE.from?("&from="+encodeURIComponent(STATE.from)):"")+(STATE.to?("&to="+encodeURIComponent(STATE.to)):"")+(STATE.person?("&person="+encodeURIComponent(STATE.person)):"")+(STATE.kategori?("&kategori="+encodeURIComponent(STATE.kategori)):"");
     fetch(url,{headers:{"x-admin-token":TOKEN}})
       .then(function(r){ return r.json(); })
       .then(function(j){
         STATE.loading=false;
         if(!j||!j.ok){ STATE.listRows=[]; render(); $("rows").innerHTML=emptyRow("Kunde inte ladda ("+esc((j&&j.error)||"fel")+")."); return; }
-        STATE.listRows=j.rows||[]; STATE.total=(j.total!=null?j.total:null); STATE.hasMore=!!j.has_more;
+        STATE.listRows=j.rows||[]; STATE.total=(j.total!=null?j.total:null); STATE.grand=(j.grand_total!=null?j.grand_total:null); STATE.filtered=!!j.filtered; STATE.hasMore=!!j.has_more;
         render();
       })
       .catch(function(){ STATE.loading=false; STATE.listRows=[]; render(); $("rows").innerHTML=emptyRow("Nätverksfel."); });
@@ -1320,7 +1329,7 @@
         .catch(function(){ vb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-hämtning."); });
       return;
     }
-    var dc=t.closest && t.closest('[data-af="datclear"]'); if(dc){ STATE.from=""; STATE.to=""; STATE.page=0; if(STATE.type) loadList(); return; }
+    var dc=t.closest && t.closest('[data-af="datclear"]'); if(dc){ STATE.from=""; STATE.to=""; STATE.person=""; STATE.kategori=""; STATE.page=0; var pe=$("person"); if(pe) pe.value=""; var ke=$("kategori"); if(ke) ke.value=""; if(STATE.type) loadList(); return; }
     var pnav=t.closest('[data-af="prev"],[data-af="next"]');
     if(pnav){ var isNext=(pnav.getAttribute("data-af")==="next"); if(isNext&&STATE.hasMore){ STATE.page++; loadList(); } else if(!isNext&&STATE.page>0){ STATE.page--; loadList(); } return; }
     var step=t.closest("[data-step]");
@@ -1357,6 +1366,8 @@
     var sel=e.target;
     if(sel.getAttribute && sel.getAttribute("data-af")==="from"){ STATE.from=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
     if(sel.getAttribute && sel.getAttribute("data-af")==="to"){ STATE.to=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
+    if(sel.getAttribute && sel.getAttribute("data-af")==="person"){ STATE.person=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
+    if(sel.getAttribute && sel.getAttribute("data-af")==="kategori"){ STATE.kategori=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
     if(sel.classList && sel.classList.contains("af-a-type")){ toggleAktCond(sel); return; }
     if(sel.classList && sel.classList.contains("af-a-done")){ toggleNote(sel); return; }
     if(sel.classList && sel.classList.contains("af-na-type")){ toggleNaCond(sel); return; }

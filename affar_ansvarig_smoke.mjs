@@ -14,19 +14,19 @@ const DB = {
   FortnoxOffer: [],
   MiraOrder: [{ _id: "mo1", source: "mira_fe", ordernr: "FE-1", kundforetag: "cc1", total: 2000, deal: "d1", "Created Date": "2026-07-13" }],
   FortnoxOrder: [], TengellaWorkorder: [],
-  FortnoxInvoice: [{ _id: "inv1", ft_customer_name: "Acme AB", ft_document_number: "F-1", ft_total: 2000, ft_our_reference: "Sara S", connection: "FE", ft_invoice_date: "2026-07-31", "Created Date": "2026-08-05" }],
+  FortnoxInvoice: [{ _id: "inv1", ft_customer_name: "Acme AB", ft_document_number: "F-1", ft_total: 2000, ft_our_reference: "Sara S", connection: "FE", connection_id: "FE", ft_invoice_date: "2026-07-31", "Created Date": "2026-08-05" }],
   Contract: [{ _id: "c1", contract_title: "Ramavtal", "kundföretag": "cc1", "månadskostnad": 1000, deal: "d1", "Created Date": "2026-07-15" }],
   Todo: [], "leverantör-supplier": [],
 };
 let lastConstraints = {};
-const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); if (c.constraint_type === "greater than") return Date.parse(v) > Date.parse(c.value); if (c.constraint_type === "less than") return Date.parse(v) < Date.parse(c.value); return true; };
+const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); if (c.constraint_type === "contains") return Array.isArray(v) ? v.map(String).includes(String(c.value)) : String(v) === String(c.value); if (c.constraint_type === "greater than") return Date.parse(v) > Date.parse(c.value); if (c.constraint_type === "less than") return Date.parse(v) < Date.parse(c.value); return true; };
 const rec = (t, cs) => { lastConstraints[t] = (lastConstraints[t] || []).concat(cs); };
 const deps = {
   bubbleId: (r) => (r ? r._id : null),
   bubbleFindAll: async (t, { constraints = [] } = {}) => { rec(t, constraints); return (DB[t] || []).filter((r) => constraints.every((c) => _match(r, c))); },
   bubbleFind: async (t, { constraints = [], limit = 30, cursor = 0 } = {}) => { rec(t, constraints); return (DB[t] || []).filter((r) => constraints.every((c) => _match(r, c))).slice(cursor, cursor + limit); },
   bubbleGet: async (t, id) => (DB[t] || []).find((r) => r._id === id) || null,
-  bubbleCount: async (t) => (DB[t] || []).length,
+  bubbleCount: async (t, cs = []) => (DB[t] || []).filter((r) => cs.every((c) => _match(r, c))).length,
   bubblePatch: async () => ({}), bubbleCreate: async () => "n", bubbleDelete: async () => ({}),
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
   FE_CONNECTION_ID: "FE", CONNECTION_NAMES: { FE: "Food & Event" }, offertConvert: async () => ({}), renderOrderPdf: async () => ({}),
@@ -72,6 +72,33 @@ const run = async () => {
   ok("faktura (fakturadatum juli) syns i juli-filter", fq.body.rows.length === 1);
   const fq2 = await call("/admin/affar/list", { query: { type: "faktura", from: "2026-08-01", to: "2026-08-31" } });
   ok("faktura (skapad aug men fakturadatum juli) syns EJ i aug-filter", fq2.body.rows.length === 0);
+
+  // ── PERSON-filter ──
+  const pAff = await call("/admin/affar/list", { query: { type: "affar", person: "u2" } });
+  ok("person=u2 på affär → d1 (deal_owner u2)", pAff.body.rows.length === 1 && pAff.body.rows[0].id === "d1");
+  const pAff0 = await call("/admin/affar/list", { query: { type: "affar", person: "u1" } });
+  ok("person=u1 på affär → tomt (äger ej d1)", pAff0.body.rows.length === 0);
+  const pOff = await call("/admin/affar/list", { query: { type: "offert", person: "u2" } });
+  ok("person=u2 på offert → o1 (via affär d1)", pOff.body.rows.some((r) => r.id === "o1"));
+  const pLead = await call("/admin/affar/list", { query: { type: "lead", person: "u1" } });
+  ok("person=u1 på lead → l1 (Created By u1)", pLead.body.rows.length === 1 && pLead.body.rows[0].id === "l1");
+
+  // ── KATEGORI-filter ──
+  const kAff = await call("/admin/affar/list", { query: { type: "affar", kategori: "Food & Event" } });
+  ok("kategori F&E på affär → d1", kAff.body.rows.length === 1 && kAff.body.rows[0].id === "d1");
+  const kAff0 = await call("/admin/affar/list", { query: { type: "affar", kategori: "Housekeeping" } });
+  ok("kategori Housekeeping på affär → tomt", kAff0.body.rows.length === 0);
+  const kOff = await call("/admin/affar/list", { query: { type: "offert", kategori: "Food & Event" } });
+  ok("kategori F&E på offert → Mira o1 syns", kOff.body.rows.some((r) => r.id === "o1"));
+  const kOff0 = await call("/admin/affar/list", { query: { type: "offert", kategori: "Service & People" } });
+  ok("kategori Service&People på offert → Mira exkluderad (tomt, ingen Fortnox)", kOff0.body.rows.length === 0);
+  const kFak = await call("/admin/affar/list", { query: { type: "faktura", kategori: "Food & Event" } });
+  ok("kategori F&E på faktura → inv1 (connection_id FE)", kFak.body.rows.length === 1);
+
+  // ── COUNT: grand_total + filtrerad total ──
+  const cAll = await call("/admin/affar/list", { query: { type: "affar" } });
+  ok("ofiltrerat: total=grand_total, filtered=false", cAll.body.total === 1 && cAll.body.grand_total === 1 && cAll.body.filtered === false);
+  ok("filtrerat: grand_total kvar, filtered=true, total krymper", kAff0.body.grand_total === 1 && kAff0.body.filtered === true && kAff0.body.total === 0);
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

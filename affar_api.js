@@ -65,26 +65,33 @@ export function registerAffarRoutes(app, deps) {
   }
 
   // ── Deal-cache (id → titel / ägar-namn / kategori) ────────────────
-  let _dCache = { map: null, owner: null, cat: null, ts: 0 };
+  let _dCache = { map: null, owner: null, ownerId: null, cat: null, ts: 0 };
   async function _loadDeals() {
     if (_dCache.map && (Date.now() - _dCache.ts) < CC_TTL) return _dCache;
     const all = await bubbleFindAll("deal", {}).catch(() => []);
     const um = await userMap();
-    const map = new Map(), owner = new Map(), cat = new Map();
+    const map = new Map(), owner = new Map(), ownerId = new Map(), cat = new Map();
     for (const d of all) {
       const id = bubbleId(d); if (!id) continue;
       map.set(id, _str(d.titel) || _str(d.Namn) || _str(d.name));
       const ow = Array.isArray(d.deal_owner) ? d.deal_owner[0] : d.deal_owner;   // deal_owner = List of Users
-      const owId = _ref(ow); if (owId) owner.set(id, um.get(owId) || "");
+      const owId = _ref(ow); if (owId) { owner.set(id, um.get(owId) || ""); ownerId.set(id, owId); }
       const kat = Array.isArray(d.Kategori) ? d.Kategori[0] : d.Kategori;          // affärens kategori (Category-OS)
       if (kat) cat.set(id, _str(kat));
     }
-    _dCache = { map, owner, cat, ts: Date.now() };
+    _dCache = { map, owner, ownerId, cat, ts: Date.now() };
     return _dCache;
   }
   async function dealMap() { return (await _loadDeals()).map; }
   async function dealOwnerMap() { return (await _loadDeals()).owner; }
   async function dealCatMap() { return (await _loadDeals()).cat; }
+  // Affärs-id:n ägda av en viss användare (för person-filter på dok-typer via kopplad affär)
+  async function dealsOwnedBy(userId) { if (!userId) return []; const om = (await _loadDeals()).ownerId; const ids = []; for (const [did, uid] of om) if (uid === userId) ids.push(did); return ids; }
+  // Affärs-id:n med en viss kategori (för kategori-filter på avtal via kopplad affär)
+  async function dealsWithCategory(cat) { if (!cat) return []; const cm = (await _loadDeals()).cat; const ids = []; for (const [did, c] of cm) if (c === cat) ids.push(did); return ids; }
+  // Fortnox-anslutnings-id:n som mappar till en kategori (Staff→Service & People, Group→Other facility services)
+  const NAME_TO_CAT = { "Food & Event": "Food & Event", "Housekeeping": "Housekeeping", "Staff": "Service & People", "Group": "Other facility services" };
+  function connIdsForCat(cat) { const cn = CONNECTION_NAMES || {}; const ids = []; for (const id in cn) { if (NAME_TO_CAT[cn[id]] === cat) ids.push(id); } return ids; }
 
   // ── Leverantör-cache (id → Företagsnamn) ──────────────────────────
   let _sCache = { map: null, ts: 0 };
@@ -482,6 +489,28 @@ export function registerAffarRoutes(app, deps) {
       const DATE_FIELD = { lead: "Created Date", aktivitet: "Created Date", affar: "Created Date", faktura: "ft_invoice_date", avtal: "startdatum" };
       const dateBase = (type === "offert" || type === "order") ? [] : dateC(DATE_FIELD[type] || "Created Date");
 
+      // ── PERSON- + KATEGORI-filter ──
+      const _person = _str(req.query.person), _kategori = _str(req.query.kategori);
+      const filtersActive = !!(q || _from || _to || _person || _kategori);
+      const personDealIds = _person ? await dealsOwnedBy(_person) : null;   // dok-typer: via kopplad affär
+      const katDealIds    = _kategori ? await dealsWithCategory(_kategori) : null;  // avtal: via kopplad affär
+      const katConnIds    = _kategori ? connIdsForCat(_kategori) : null;    // Fortnox-dok: via anslutning
+      // person-constraint per typ (direkt fält där det finns, annars via affär)
+      const personC = (kind) => {
+        if (!_person) return [];
+        if (kind === "lead")  return [{ key: "Created By", constraint_type: "equals", value: _person }];
+        if (kind === "akt")   return [{ key: "writer", constraint_type: "equals", value: _person }];
+        if (kind === "deal")  return [{ key: "deal_owner", constraint_type: "contains", value: _person }];
+        return [{ key: "deal", constraint_type: "in", value: personDealIds || [] }];   // dok via affär
+      };
+      // Mira/Tengella-källa relevant för vald kategori? (F&E resp. Housekeeping). Fortnox = connection-constraint.
+      const miraCatOk = (!_kategori || _kategori === "Food & Event");
+      const tengCatOk = (!_kategori || _kategori === "Housekeeping");
+      const fortKatC = _kategori ? [{ key: "connection", constraint_type: "in", value: katConnIds }] : [];
+      const invKatC  = _kategori ? [{ key: "connection_id", constraint_type: "in", value: katConnIds }] : [];   // FortnoxInvoice = connection_id
+      // filtrerad total per typ (grand_total = ofiltrerat; total = efter filter)
+      const sumCounts = async (pairs) => { let n = 0; for (const [t, cs] of pairs) n += await bubbleCount(t, cs).catch(() => 0); return n; };
+
       const pageOf = (t, extra = []) => bubbleFind(t, { constraints: [...dateBase, ...extra], limit, cursor, sort_field: "Created Date", descending: true }).catch(() => []);
       async function searchUnion(t, sets) {
         const all = await Promise.all(sets.map((cs) => bubbleFindAll(t, { constraints: [...dateBase, ...cs] }).catch(() => [])));
@@ -491,113 +520,129 @@ export function registerAffarRoutes(app, deps) {
       }
       const byCreated = (a, b) => _ts(b["Created Date"]) - _ts(a["Created Date"]);
 
-      let rows = [], total = null;
+      let rows = [], total = null, grand_total = null;
 
       if (type === "lead") {
         const m = await companyMap(), um = await userMap(), ownerMap = await companyOwnerMap();
+        const extra = personC("lead");   // lead saknar kategori-begrepp → kategori-filter ignoreras här
         let recs;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
           const sets = [
-            [{ key: "Name",  constraint_type: "text contains", value: q }],
-            [{ key: "Email", constraint_type: "text contains", value: q }],
-            [{ key: "Phone", constraint_type: "text contains", value: q }],
-            [{ key: "Company", constraint_type: "text contains", value: q }],
+            [...extra, { key: "Name",  constraint_type: "text contains", value: q }],
+            [...extra, { key: "Email", constraint_type: "text contains", value: q }],
+            [...extra, { key: "Phone", constraint_type: "text contains", value: q }],
+            [...extra, { key: "Company", constraint_type: "text contains", value: q }],
           ];
-          if (ccIds.length) sets.push([{ key: "client_company", constraint_type: "in", value: ccIds }]);
+          if (ccIds.length) sets.push([...extra, { key: "client_company", constraint_type: "in", value: ccIds }]);
           recs = (await searchUnion("Lead", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
-        } else { recs = await pageOf("Lead"); total = await bubbleCount("Lead"); }
+        } else { recs = await pageOf("Lead", extra); total = filtersActive ? await bubbleCount("Lead", [...dateBase, ...extra]) : await bubbleCount("Lead"); }
+        grand_total = await bubbleCount("Lead");
         rows = recs.map((r) => nLeadFull(r, m, um, ownerMap));
         const tmap = await todoTitleMap(recs);
         for (let i = 0; i < rows.length; i++) { const tid = rows[i].todo_id; rows[i].todo_title = tid ? (tmap.get(tid) || "") : ""; }
       }
       else if (type === "aktivitet") {
         const m = await companyMap(), um = await userMap(), sm = await supplierMap(), dm = await dealMap();
+        const extra = personC("akt");   // aktivitet saknar kategori-begrepp
         let recs;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const sets = [[{ key: "beskrivning", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) sets.push([{ key: "company", constraint_type: "in", value: ccIds }]);
+          const sets = [[...extra, { key: "beskrivning", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) sets.push([...extra, { key: "company", constraint_type: "in", value: ccIds }]);
           recs = (await searchUnion("activitet_crm", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
-        } else { recs = await pageOf("activitet_crm"); total = await bubbleCount("activitet_crm"); }
+        } else { recs = await pageOf("activitet_crm", extra); total = filtersActive ? await bubbleCount("activitet_crm", [...dateBase, ...extra]) : await bubbleCount("activitet_crm"); }
+        grand_total = await bubbleCount("activitet_crm");
         rows = recs.map((r) => nAktFull(r, m, um, sm, dm));
       }
       else if (type === "faktura") {
+        const extra = [...personC("doc"), ...invKatC];   // person via affär + kategori via connection_id
         let recs;
         if (q) {
           recs = (await searchUnion("FortnoxInvoice", [
-            [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
-            [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
+            [...extra, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [...extra, { key: "ft_document_number", constraint_type: "text contains", value: q }],
           ])).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
-        } else { recs = await pageOf("FortnoxInvoice"); total = await bubbleCount("FortnoxInvoice"); }
+        } else { recs = await pageOf("FortnoxInvoice", extra); total = filtersActive ? await bubbleCount("FortnoxInvoice", [...dateBase, ...extra]) : await bubbleCount("FortnoxInvoice"); }
+        grand_total = await bubbleCount("FortnoxInvoice");
         rows = recs.map(nInvoice);
       }
       else if (type === "avtal") {
         const m = await companyMap();
+        const extra = [...personC("doc"), ...(_kategori ? [{ key: "deal", constraint_type: "in", value: katDealIds || [] }] : [])];   // kategori via kopplad affär
         let recs;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const sets = [[{ key: "contract_title", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) sets.push([{ key: "kundföretag", constraint_type: "in", value: ccIds }]);
+          const sets = [[...extra, { key: "contract_title", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) sets.push([...extra, { key: "kundföretag", constraint_type: "in", value: ccIds }]);
           recs = (await searchUnion("Contract", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
-        } else { recs = await pageOf("Contract"); total = await bubbleCount("Contract"); }
+        } else { recs = await pageOf("Contract", extra); total = filtersActive ? await bubbleCount("Contract", [...dateBase, ...extra]) : await bubbleCount("Contract"); }
+        grand_total = await bubbleCount("Contract");
         rows = recs.map((r) => nAvtal(r, m));
       }
       else if (type === "affar") {
         const m = await companyMap();
+        const extra = [...personC("deal"), ...(_kategori ? [{ key: "Kategori", constraint_type: "contains", value: _kategori }] : [])];
         let recs;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const sets = [[{ key: "titel", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) sets.push([{ key: "kundföretag", constraint_type: "in", value: ccIds }]);
+          const sets = [[...extra, { key: "titel", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) sets.push([...extra, { key: "kundföretag", constraint_type: "in", value: ccIds }]);
           recs = (await searchUnion("deal", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
-        } else { recs = await pageOf("deal"); total = await bubbleCount("deal"); }
+        } else { recs = await pageOf("deal", extra); total = filtersActive ? await bubbleCount("deal", [...dateBase, ...extra]) : await bubbleCount("deal"); }
+        grand_total = await bubbleCount("deal");
         rows = recs.map((r) => nDeal(r, m));
       }
       else if (type === "offert") {
         const m = await companyMap();
-        const dMira = dateC("offertdatum"), dFort = dateC("ft_offer_date");   // affärsdatum per källa
+        const dMira = dateC("offertdatum"), dFort = dateC("ft_offer_date"), pDoc = personC("doc");   // affärsdatum + person via affär
+        const mBase = [...feMira, ...dMira, ...pDoc], fBase = [...dFort, ...pDoc, ...fortKatC];   // Mira=F&E (skip om annan kategori)
         let miras, forts;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const mSets = [[...feMira, ...dMira, { key: "offertnr", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) mSets.push([...feMira, ...dMira, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
-          miras = await searchUnion("Offert", mSets);
+          if (miraCatOk) {
+            const mSets = [[...mBase, { key: "offertnr", constraint_type: "text contains", value: q }]];
+            if (ccIds.length) mSets.push([...mBase, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
+            miras = await searchUnion("Offert", mSets);
+          } else miras = [];
           forts = await searchUnion("FortnoxOffer", [
-            [...dFort, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
-            [...dFort, { key: "ft_document_number", constraint_type: "text contains", value: q }],
+            [...fBase, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [...fBase, { key: "ft_document_number", constraint_type: "text contains", value: q }],
           ]);
-        } else { miras = await pageOf("Offert", [...feMira, ...dMira]); forts = await pageOf("FortnoxOffer", dFort); }
+        } else { miras = miraCatOk ? await pageOf("Offert", mBase) : []; forts = await pageOf("FortnoxOffer", fBase); }
         const durl = await dokUrlMap(miras);
         const omap = await orderMapForOfferts(miras);
         const miraRows = applyOrderStatus(miras.map((r) => nOffertM(r, m, durl)), omap);
         rows = [...miraRows, ...forts.map(nOffertF)].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
-        total = q ? rows.length : ((await bubbleCount("Offert", feMira)) + (await bubbleCount("FortnoxOffer")));
+        grand_total = (await bubbleCount("Offert", feMira)) + (await bubbleCount("FortnoxOffer"));
+        total = !filtersActive ? grand_total : (q ? (miras.length + forts.length)
+          : ((miraCatOk ? await bubbleCount("Offert", mBase) : 0) + await bubbleCount("FortnoxOffer", fBase)));
       }
       else if (type === "order") {
         // Order = MiraOrder + FortnoxOrder(ej HK) + raw TengellaWorkorder (kanonisk HK, Fas 1 2026-08-07).
         const m = await companyMap();
-        const dMira = dateC("orderdatum"), dFort = dateC("ft_delivery_date"), dWo = dateC("order_date");   // affärsdatum per källa
+        const dMira = dateC("orderdatum"), dFort = dateC("ft_delivery_date"), dWo = dateC("order_date"), pDoc = personC("doc");
+        const mBase = [...dMira, ...pDoc], fBase = [...dFort, ...pDoc, ...fortKatC], wBase = [...dWo, ...pDoc];
+        const useMira = miraCatOk, useWo = tengCatOk, useFort = (!_kategori || _kategori !== "Housekeeping");   // HK visas via Tengella, ej FortnoxOrder
         let miras, forts, wos;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const mSets = [[...dMira, { key: "ordernr", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) mSets.push([...dMira, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
-          miras = await searchUnion("MiraOrder", mSets);
-          forts = await searchUnion("FortnoxOrder", [
-            [...dFort, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
-            [...dFort, { key: "ft_document_number", constraint_type: "text contains", value: q }],
-          ]);
-          const woSets = [[...dWo, { key: "workorder_no", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) woSets.push([...dWo, { key: "company", constraint_type: "in", value: ccIds }]);
-          wos = await searchUnion("TengellaWorkorder", woSets);
-        } else { miras = await pageOf("MiraOrder", dMira); forts = await pageOf("FortnoxOrder", dFort); wos = await pageOf("TengellaWorkorder", dWo); }
-        rows = [
+          if (useMira) { const mSets = [[...mBase, { key: "ordernr", constraint_type: "text contains", value: q }]]; if (ccIds.length) mSets.push([...mBase, { key: "kundforetag", constraint_type: "in", value: ccIds }]); miras = await searchUnion("MiraOrder", mSets); } else miras = [];
+          forts = useFort ? await searchUnion("FortnoxOrder", [
+            [...fBase, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [...fBase, { key: "ft_document_number", constraint_type: "text contains", value: q }],
+          ]) : [];
+          if (useWo) { const woSets = [[...wBase, { key: "workorder_no", constraint_type: "text contains", value: q }]]; if (ccIds.length) woSets.push([...wBase, { key: "company", constraint_type: "in", value: ccIds }]); wos = await searchUnion("TengellaWorkorder", woSets); } else wos = [];
+        } else { miras = useMira ? await pageOf("MiraOrder", mBase) : []; forts = useFort ? await pageOf("FortnoxOrder", fBase) : []; wos = useWo ? await pageOf("TengellaWorkorder", wBase) : []; }
+        const combined = [
           ...miras.map((r) => nOrderM(r, m)),
           ...forts.map(nOrderF).filter((r) => r.source !== "tengella"),
           ..._liveWO(wos).map((r) => nWorkorder(r, m)),
-        ].sort((a, b) => _ts(b.date) - _ts(a.date)).slice(0, limit);
-        total = q ? rows.length : ((await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder")) + (await bubbleCount("TengellaWorkorder")));
+        ].sort((a, b) => _ts(b.date) - _ts(a.date));
+        rows = combined.slice(0, limit);
+        grand_total = (await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder")) + (await bubbleCount("TengellaWorkorder"));
+        total = !filtersActive ? grand_total : (q ? combined.length
+          : ((useMira ? await bubbleCount("MiraOrder", mBase) : 0) + (useFort ? await bubbleCount("FortnoxOrder", fBase) : 0) + (useWo ? await bubbleCount("TengellaWorkorder", wBase) : 0)));
       }
       else {
         return res.status(400).json({ ok: false, error: "okänd_typ", hint: "type=lead|aktivitet|offert|order|faktura|avtal|affar" });
@@ -613,7 +658,7 @@ export function registerAffarRoutes(app, deps) {
         else r.ansvarig = (r.deal_id ? (ownerMap.get(r.deal_id) || "") : "");
       }
 
-      return res.json({ ok: true, type, page, limit, q, total, count: rows.length, has_more: rows.length >= limit, from: _from || null, to: _to || null, rows });
+      return res.json({ ok: true, type, page, limit, q, total, grand_total, filtered: filtersActive, count: rows.length, has_more: rows.length >= limit, from: _from || null, to: _to || null, person: _person || null, kategori: _kategori || null, rows });
     } catch (e) {
       console.error("[/admin/affar/list]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
