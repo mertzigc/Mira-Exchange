@@ -19,7 +19,7 @@ const DB = {
   Todo: [], "leverantör-supplier": [],
 };
 let lastConstraints = {};
-const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); return true; };
+const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); if (c.constraint_type === "greater than") return Date.parse(v) > Date.parse(c.value); if (c.constraint_type === "less than") return Date.parse(v) < Date.parse(c.value); return true; };
 const rec = (t, cs) => { lastConstraints[t] = (lastConstraints[t] || []).concat(cs); };
 const deps = {
   bubbleId: (r) => (r ? r._id : null),
@@ -55,8 +55,15 @@ const run = async () => {
   const df = await call("/admin/affar/list", { query: { type: "lead", from: "2026-07-01", to: "2026-07-31" } });
   ok("datum-filter ekar tillbaka from/to", df.body.from === "2026-07-01" && df.body.to === "2026-07-31");
   const leadC = (lastConstraints["Lead"] || []).flat();
-  ok("Created Date >= from-constraint skickad", leadC.some((c) => c.key === "Created Date" && c.constraint_type === "greater than or equal to"));
-  ok("Created Date <= to-constraint skickad", leadC.some((c) => c.key === "Created Date" && c.constraint_type === "less than or equal to"));
+  ok("Created Date greater-than-constraint (giltig Bubble-typ)", leadC.some((c) => c.key === "Created Date" && c.constraint_type === "greater than"));
+  ok("Created Date less-than-constraint (giltig Bubble-typ)", leadC.some((c) => c.key === "Created Date" && c.constraint_type === "less than"));
+  ok("lead 2026-07-10 INOM range → syns (inklusiv from/till)", df.body.rows.length === 1 && df.body.rows[0].id === "l1");
+  // utanför range → tomt
+  const df2 = await call("/admin/affar/list", { query: { type: "lead", from: "2026-08-01", to: "2026-08-31" } });
+  ok("lead 2026-07-10 UTANFÖR aug-range → tomt", df2.body.rows.length === 0);
+  // exakt from-dag inkluderas (lead skapad 2026-07-10, range from=2026-07-10)
+  const df3 = await call("/admin/affar/list", { query: { type: "lead", from: "2026-07-10", to: "2026-07-10" } });
+  ok("exakt from=till=skapdag → inkluderas", df3.body.rows.length === 1);
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

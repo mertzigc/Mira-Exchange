@@ -471,10 +471,12 @@ export function registerAffarRoutes(app, deps) {
       // ── Datum-filter (skapat): Created Date-range, enhetligt över alla typer. Order-specifika
       // datum (orderdatum/leveransdatum) + Person/Kategori = nästa steg. Bubble date-constraints
       // på Created Date; verifiera reliabilitet via curl (string-datum-constraints är opålitliga).
+      // Bubble har BARA "greater than"/"less than" (ej ...or equal to → ogiltig, tömmer resultatet).
+      // Inklusiv range: från = start-of-day −1ms (> ⇒ ≥ from); till = start-of-next-day (< ⇒ ≤ to).
       const _from = _str(req.query.from), _to = _str(req.query.to);
       const dateBase = [];
-      if (_from) dateBase.push({ key: "Created Date", constraint_type: "greater than or equal to", value: new Date(_from + "T00:00:00.000Z").toISOString() });
-      if (_to)   dateBase.push({ key: "Created Date", constraint_type: "less than or equal to",    value: new Date(_to + "T23:59:59.999Z").toISOString() });
+      if (_from) dateBase.push({ key: "Created Date", constraint_type: "greater than", value: new Date(new Date(_from + "T00:00:00.000Z").getTime() - 1).toISOString() });
+      if (_to)   dateBase.push({ key: "Created Date", constraint_type: "less than",    value: new Date(new Date(_to + "T00:00:00.000Z").getTime() + 86400000).toISOString() });
 
       const pageOf = (t, extra = []) => bubbleFind(t, { constraints: [...dateBase, ...extra], limit, cursor, sort_field: "Created Date", descending: true }).catch(() => []);
       async function searchUnion(t, sets) {
