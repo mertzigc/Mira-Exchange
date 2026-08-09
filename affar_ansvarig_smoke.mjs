@@ -14,7 +14,7 @@ const DB = {
   FortnoxOffer: [],
   MiraOrder: [{ _id: "mo1", source: "mira_fe", ordernr: "FE-1", kundforetag: "cc1", total: 2000, deal: "d1", "Created Date": "2026-07-13" }],
   FortnoxOrder: [], TengellaWorkorder: [],
-  FortnoxInvoice: [{ _id: "inv1", ft_customer_name: "Acme AB", ft_document_number: "F-1", ft_total: 2000, ft_our_reference: "Sara S", connection: "FE", "Created Date": "2026-07-14" }],
+  FortnoxInvoice: [{ _id: "inv1", ft_customer_name: "Acme AB", ft_document_number: "F-1", ft_total: 2000, ft_our_reference: "Sara S", connection: "FE", ft_invoice_date: "2026-07-31", "Created Date": "2026-08-05" }],
   Contract: [{ _id: "c1", contract_title: "Ramavtal", "kundföretag": "cc1", "månadskostnad": 1000, deal: "d1", "Created Date": "2026-07-15" }],
   Todo: [], "leverantör-supplier": [],
 };
@@ -64,6 +64,14 @@ const run = async () => {
   // exakt from-dag inkluderas (lead skapad 2026-07-10, range from=2026-07-10)
   const df3 = await call("/admin/affar/list", { query: { type: "lead", from: "2026-07-10", to: "2026-07-10" } });
   ok("exakt from=till=skapdag → inkluderas", df3.body.rows.length === 1);
+
+  // ── faktura filtreras på AFFÄRSDATUM (ft_invoice_date=juli), EJ Created Date (aug-synk) ──
+  lastConstraints = {};
+  const fq = await call("/admin/affar/list", { query: { type: "faktura", from: "2026-07-01", to: "2026-07-31" } });
+  ok("faktura constraint på ft_invoice_date (ej Created Date)", (lastConstraints["FortnoxInvoice"] || []).flat().some((c) => c.key === "ft_invoice_date" && c.constraint_type === "greater than"));
+  ok("faktura (fakturadatum juli) syns i juli-filter", fq.body.rows.length === 1);
+  const fq2 = await call("/admin/affar/list", { query: { type: "faktura", from: "2026-08-01", to: "2026-08-31" } });
+  ok("faktura (skapad aug men fakturadatum juli) syns EJ i aug-filter", fq2.body.rows.length === 0);
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

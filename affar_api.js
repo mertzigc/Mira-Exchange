@@ -471,12 +471,16 @@ export function registerAffarRoutes(app, deps) {
       // ── Datum-filter (skapat): Created Date-range, enhetligt över alla typer. Order-specifika
       // datum (orderdatum/leveransdatum) + Person/Kategori = nästa steg. Bubble date-constraints
       // på Created Date; verifiera reliabilitet via curl (string-datum-constraints är opålitliga).
-      // Bubble har BARA "greater than"/"less than" (ej ...or equal to → ogiltig, tömmer resultatet).
-      // Inklusiv range: från = start-of-day −1ms (> ⇒ ≥ from); till = start-of-next-day (< ⇒ ≤ to).
+      // DATUM-FILTER på respektive typs AFFÄRSDATUM (samma fält som visas i Datum-kolumnen), INTE
+      // Created Date/synktid — annars dyker t.ex. juli-fakturor synkade i aug upp i ett aug-filter.
+      // Bubble har BARA "greater than"/"less than" (ej ...or equal to). Inklusiv: från −1ms, till +1 dygn.
+      // Multi-källa (offert/order) filtreras per källa på sitt fält (offertdatum/ft_offer_date etc.).
       const _from = _str(req.query.from), _to = _str(req.query.to);
-      const dateBase = [];
-      if (_from) dateBase.push({ key: "Created Date", constraint_type: "greater than", value: new Date(new Date(_from + "T00:00:00.000Z").getTime() - 1).toISOString() });
-      if (_to)   dateBase.push({ key: "Created Date", constraint_type: "less than",    value: new Date(new Date(_to + "T00:00:00.000Z").getTime() + 86400000).toISOString() });
+      const _fromV = _from ? new Date(new Date(_from + "T00:00:00.000Z").getTime() - 1).toISOString() : null;
+      const _toV   = _to   ? new Date(new Date(_to   + "T00:00:00.000Z").getTime() + 86400000).toISOString() : null;
+      const dateC = (field) => { const c = []; if (_fromV) c.push({ key: field, constraint_type: "greater than", value: _fromV }); if (_toV) c.push({ key: field, constraint_type: "less than", value: _toV }); return c; };
+      const DATE_FIELD = { lead: "Created Date", aktivitet: "Created Date", affar: "Created Date", faktura: "ft_invoice_date", avtal: "startdatum" };
+      const dateBase = (type === "offert" || type === "order") ? [] : dateC(DATE_FIELD[type] || "Created Date");
 
       const pageOf = (t, extra = []) => bubbleFind(t, { constraints: [...dateBase, ...extra], limit, cursor, sort_field: "Created Date", descending: true }).catch(() => []);
       async function searchUnion(t, sets) {
@@ -552,17 +556,18 @@ export function registerAffarRoutes(app, deps) {
       }
       else if (type === "offert") {
         const m = await companyMap();
+        const dMira = dateC("offertdatum"), dFort = dateC("ft_offer_date");   // affärsdatum per källa
         let miras, forts;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const mSets = [[...feMira, { key: "offertnr", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) mSets.push([...feMira, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
+          const mSets = [[...feMira, ...dMira, { key: "offertnr", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) mSets.push([...feMira, ...dMira, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
           miras = await searchUnion("Offert", mSets);
           forts = await searchUnion("FortnoxOffer", [
-            [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
-            [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
+            [...dFort, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [...dFort, { key: "ft_document_number", constraint_type: "text contains", value: q }],
           ]);
-        } else { miras = await pageOf("Offert", feMira); forts = await pageOf("FortnoxOffer"); }
+        } else { miras = await pageOf("Offert", [...feMira, ...dMira]); forts = await pageOf("FortnoxOffer", dFort); }
         const durl = await dokUrlMap(miras);
         const omap = await orderMapForOfferts(miras);
         const miraRows = applyOrderStatus(miras.map((r) => nOffertM(r, m, durl)), omap);
@@ -572,20 +577,21 @@ export function registerAffarRoutes(app, deps) {
       else if (type === "order") {
         // Order = MiraOrder + FortnoxOrder(ej HK) + raw TengellaWorkorder (kanonisk HK, Fas 1 2026-08-07).
         const m = await companyMap();
+        const dMira = dateC("orderdatum"), dFort = dateC("ft_delivery_date"), dWo = dateC("order_date");   // affärsdatum per källa
         let miras, forts, wos;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
-          const mSets = [[{ key: "ordernr", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) mSets.push([{ key: "kundforetag", constraint_type: "in", value: ccIds }]);
+          const mSets = [[...dMira, { key: "ordernr", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) mSets.push([...dMira, { key: "kundforetag", constraint_type: "in", value: ccIds }]);
           miras = await searchUnion("MiraOrder", mSets);
           forts = await searchUnion("FortnoxOrder", [
-            [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
-            [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
+            [...dFort, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [...dFort, { key: "ft_document_number", constraint_type: "text contains", value: q }],
           ]);
-          const woSets = [[{ key: "workorder_no", constraint_type: "text contains", value: q }]];
-          if (ccIds.length) woSets.push([{ key: "company", constraint_type: "in", value: ccIds }]);
+          const woSets = [[...dWo, { key: "workorder_no", constraint_type: "text contains", value: q }]];
+          if (ccIds.length) woSets.push([...dWo, { key: "company", constraint_type: "in", value: ccIds }]);
           wos = await searchUnion("TengellaWorkorder", woSets);
-        } else { miras = await pageOf("MiraOrder"); forts = await pageOf("FortnoxOrder"); wos = await pageOf("TengellaWorkorder"); }
+        } else { miras = await pageOf("MiraOrder", dMira); forts = await pageOf("FortnoxOrder", dFort); wos = await pageOf("TengellaWorkorder", dWo); }
         rows = [
           ...miras.map((r) => nOrderM(r, m)),
           ...forts.map(nOrderF).filter((r) => r.source !== "tengella"),
