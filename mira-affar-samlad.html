@@ -93,6 +93,8 @@
   .af-conv:hover{filter:brightness(1.07)}
   .af-conv:disabled{opacity:.5;cursor:default}
   .af .ordertag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--green);background:rgba(76,175,125,.13);border-radius:5px;padding:3px 8px;white-space:nowrap}
+  .af .af-klarbadge{display:inline-block;font-size:11px;font-weight:800;color:var(--green);background:rgba(76,175,125,.15);border:1px solid rgba(76,175,125,.35);border-radius:6px;padding:3px 9px;white-space:nowrap}
+  .af .af-klarbadge.sm{font-size:9.5px;padding:2px 6px;text-transform:uppercase;letter-spacing:.03em}
   /* order-editor (inline, dokument-läsvy + penn-ikon) */
   .af tr.orderrow{cursor:pointer}
   .af tr.orderrow.open>td{background:var(--card)}
@@ -220,6 +222,8 @@
 
   <div class="bar">
     <input class="search" data-af="search" placeholder="🔍 Sök företag eller nummer…">
+    <button class="chip af-refresh" data-af="refresh" title="Uppdatera">↻ Uppdatera</button>
+    <span class="muted" data-af="upd" style="font-size:11px;white-space:nowrap"></span>
   </div>
   <div class="bar">
     <div class="chips" data-af="typechips">
@@ -287,6 +291,7 @@
   function money(n){ if(n==null) return ""; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
   function clip(s,n){ s=String(s==null?"":s); return s.length>n?s.slice(0,n-1)+"…":s; }
   function weekRange(){ var d=new Date(); var day=(d.getDay()+6)%7; var mon=new Date(d); mon.setDate(d.getDate()-day); var sun=new Date(mon); sun.setDate(mon.getDate()+13); function iso(x){ return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); } return { from:iso(mon), to:iso(sun) }; }
+  function stampAffar(){ var u=$("upd"); if(u){ var d=new Date(); function p(n){return ("0"+n).slice(-2);} u.textContent="· uppdaterad "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); } }
   function cm(v){ return v?esc(v):'<span class="muted">—</span>'; }
 
   function renderFunnel(){
@@ -326,7 +331,7 @@
       '<td class="num">'+(r.amount!=null?esc(money(r.amount)):'<span class="muted">—</span>')+'</td>'+
       '<td class="muted">'+esc(r.date||"")+'</td>'+
       '<td>'+cm(r.ansvarig)+'</td>'+
-      '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span></td>'+
+      '<td><span class="pill p-'+esc(r.status_cls||"wait")+'"><span class="d"></span>'+esc(r.status||"")+'</span>'+((isMiraOrder&&r.klar_for_leverans)?' <span class="af-klarbadge sm">✓ klar f. lev.</span>':'')+'</td>'+
       '<td>'+lastCell+'</td>'+
     '</tr>';
   }
@@ -358,7 +363,7 @@
   // ── order-editor (inline, Mira-order redigerbar utan cutoff) ──
   var orderCache={};
   function kokOptions(koks, cur){ var o='<option value="">— kök —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
-  var PREP_KATEGORIER=["Frallor","Kall lunch","Varm lunch","Sallad","Wraps","Mingel","Buffé","Bröd","Konditori"];
+  var PREP_KATEGORIER=["Frallor","Kall lunch","Varm lunch","Sallad","Wraps","Mingel","Buffé","Bröd","Konditori","Kall dryck","Varm dryck","Alkohol"];
   function prepOptions(cur){ var list=PREP_KATEGORIER.slice(); if(cur && list.indexOf(cur)<0) list.unshift(cur); var o='<option value="">— prep —</option>'; for(var i=0;i<list.length;i++){ o+='<option value="'+esc(list[i])+'"'+(list[i]===cur?" selected":"")+'>'+esc(list[i])+'</option>'; } return o; }
   // Läsvy för en rad (dokument-utseende). Penna → redigering.
   function rowViewInner(r){
@@ -399,22 +404,35 @@
   }
   function headViewInner(o){
     function f(lbl, val){ return '<div class="af-ohv-f"><span class="af-ohv-l">'+esc(lbl)+'</span><span class="af-ohv-v">'+(val?esc(val):'<span class="muted">—</span>')+'</span></div>'; }
+    var refName=o.var_referens_name||"";
+    var refCell=refName?esc(refName):(o.var_referens_default_name?('<span class="muted">'+esc(o.var_referens_default_name)+' (ägare)</span>'):'<span class="muted">—</span>');
+    var klarBadge=(o.klar_for_leverans===true)?'<span class="af-klarbadge">✓ Klar för leverans</span>':'';
     return '<div class="af-ohv-grid">'+
         f("Leveransdatum", o.leveransdatum)+f("Leveranstid", o.leveranstid)+f("Status", o.orderstatus)+
+        '<div class="af-ohv-f"><span class="af-ohv-l">Vår referens</span><span class="af-ohv-v">'+refCell+'</span></div>'+
         f("Betalningsvillkor", o.betalningsvillkor)+f("Momstyp", o.momstyp)+f("Valuta", o.valuta)+
         f("Leveransadress", o.leveransadress)+
         (o.villkor_text?f("Villkorstext", o.villkor_text):'')+
       '</div>'+
+      (klarBadge?('<div style="margin-top:6px">'+klarBadge+'</div>'):'')+
       (o.intern_instruktion?('<div class="af-ohv-instr"><span class="af-ohv-l">Intern instruktion (skrivs på kök-PM)</span><div class="af-ohv-v">'+esc(o.intern_instruktion)+'</div></div>'):'')+
       '<span class="af-icobtn af-o-headpencil" title="Redigera orderuppgifter">✎</span>';
   }
-  function headEditInner(o, so){
+  function headEditInner(o, so, users){
     var statusOpts=''; for(var i=0;i<so.length;i++){ statusOpts+='<option value="'+esc(so[i])+'"'+(so[i]===o.orderstatus?" selected":"")+'>'+esc(so[i])+'</option>'; }
+    var us=users||[]; var curRef=o.var_referens||"";
+    var defLbl=o.var_referens_default_name?(" — "+o.var_referens_default_name+" (affärens ägare)"):"";
+    var refOpts='<option value="">— ingen'+esc(defLbl)+' —</option>';
+    for(var u=0;u<us.length;u++){ refOpts+='<option value="'+esc(us[u].id)+'"'+(us[u].id===curRef?" selected":"")+'>'+esc(us[u].name)+'</option>'; }
     return '<div class="erow">'+
         '<div><label class="el">Leveransdatum</label><input type="date" class="ein af-o-levdatum" value="'+esc(o.leveransdatum)+'"></div>'+
         '<div><label class="el">Leveranstid</label><input class="ein af-o-levtid" value="'+esc(o.leveranstid)+'" placeholder="t.ex. 12:00"></div>'+
         '<div><label class="el">Status</label><select class="ein af-o-status">'+statusOpts+'</select></div>'+
         '<div><label class="el">Valuta</label><input class="ein af-o-valuta" value="'+esc(o.valuta)+'"></div>'+
+      '</div>'+
+      '<div class="erow">'+
+        '<div style="flex:2"><label class="el">Vår referens (ansvarig för ordern)</label><select class="ein af-o-varref">'+refOpts+'</select></div>'+
+        '<div style="flex:1;display:flex;align-items:flex-end"><label class="el" style="display:flex;align-items:center;gap:7px;cursor:pointer;margin:0 0 9px"><input type="checkbox" class="af-o-klar" style="width:16px;height:16px;accent-color:var(--green)"'+(o.klar_for_leverans===true?" checked":"")+'>Klar för leverans</label></div>'+
       '</div>'+
       '<div class="erow">'+
         '<div><label class="el">Betalningsvillkor</label><input class="ein af-o-betalning" value="'+esc(o.betalningsvillkor)+'"></div>'+
@@ -426,13 +444,13 @@
       '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-o-savehead">Spara</button><button class="af-lnk af-o-headcancel">Avbryt</button><span class="af-o-headmsg ecur"></span></div>';
   }
   function orderEditorHtml(j){
-    var o=j.order, koks=j.koks||[], so=j.status_options||[]; orderCache[o.id]=j;
+    var o=j.order, koks=j.koks||[], so=j.status_options||[], users=j.users||[]; orderCache[o.id]=j;
     var rowsHtml=(j.rows||[]).map(function(r){ return orderRowHtml(r, koks); }).join("");
     return '<div class="edit af-ord" data-order-id="'+esc(o.id)+'">'+
       '<div class="af-o-head-row"><div style="font-weight:800;color:var(--orange)">Order '+esc(o.ordernr||"")+' · '+esc(o.company||"")+'</div>'+
         '<div class="af-o-pdfbtns"><button class="af-pdfbtn af-o-pdf-order">Order-PDF ↗</button><button class="af-pdfbtn af-o-pdf-pm">Kök-PM ↗</button></div></div>'+
       '<div class="af-o-headview">'+headViewInner(o)+'</div>'+
-      '<div class="af-o-headedit" style="display:none">'+headEditInner(o, so)+'</div>'+
+      '<div class="af-o-headedit" style="display:none">'+headEditInner(o, so, users)+'</div>'+
       '<div class="af-o-rowshead">Rader · kök-tilldelning styr produktionen</div>'+
       '<div class="af-o-rows">'+rowsHtml+'</div>'+
       '<div class="eact" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:11px">'+
@@ -464,12 +482,14 @@
   function toggleRowEdit(row, on){ row.querySelector(".af-or-view").style.display=on?"none":""; row.querySelector(".af-or-edit").style.display=on?"":"none"; }
   function saveOrderHead(btn){
     var box=btn.closest(".af-ord"); if(!box) return; var id=box.getAttribute("data-order-id");
-    var vals={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value, intern_instruktion:box.querySelector(".af-o-instr").value };
+    var refSel=box.querySelector(".af-o-varref"); var klarChk=box.querySelector(".af-o-klar");
+    var vals={ leveransdatum:box.querySelector(".af-o-levdatum").value, leveranstid:box.querySelector(".af-o-levtid").value, orderstatus:box.querySelector(".af-o-status").value, betalningsvillkor:box.querySelector(".af-o-betalning").value, momstyp:box.querySelector(".af-o-momstyp").value, valuta:box.querySelector(".af-o-valuta").value, villkor_text:box.querySelector(".af-o-villkor").value, intern_instruktion:box.querySelector(".af-o-instr").value, var_referens:(refSel?refSel.value:""), klar_for_leverans:(klarChk?klarChk.checked:false) };
+    var refName=(refSel&&refSel.value)?refSel.options[refSel.selectedIndex].text:"";
     var msg=box.querySelector(".af-o-headmsg"); btn.disabled=true; msg.textContent="Sparar…";
     fetch(HOST+"/admin/affar/order/"+encodeURIComponent(id)+"/patch",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(vals)})
       .then(function(r){ return r.json(); }).then(function(j){ btn.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
         var cached=orderCache[id]; var o=(cached&&cached.order)||{}; var leveransadress=o.leveransadress||"";
-        var no={ leveransdatum:vals.leveransdatum, leveranstid:vals.leveranstid, orderstatus:vals.orderstatus, betalningsvillkor:vals.betalningsvillkor, momstyp:vals.momstyp, valuta:vals.valuta, villkor_text:vals.villkor_text, intern_instruktion:vals.intern_instruktion, leveransadress:leveransadress };
+        var no={ leveransdatum:vals.leveransdatum, leveranstid:vals.leveranstid, orderstatus:vals.orderstatus, betalningsvillkor:vals.betalningsvillkor, momstyp:vals.momstyp, valuta:vals.valuta, villkor_text:vals.villkor_text, intern_instruktion:vals.intern_instruktion, leveransadress:leveransadress, var_referens:vals.var_referens, var_referens_name:refName, var_referens_default_name:(o.var_referens_default_name||""), klar_for_leverans:vals.klar_for_leverans };
         if(cached&&cached.order){ for(var k in no){ cached.order[k]=no[k]; } }
         box.querySelector(".af-o-headview").innerHTML=headViewInner(no);
         toggleHeadEdit(box, false);
@@ -1267,6 +1287,7 @@
       .then(function(j){
         if(!j||!j.ok){ if(!STATE.type) $("rows").innerHTML=emptyRow("Kunde inte ladda ("+esc((j&&j.error)||"fel")+")."); return; }
         STATE.feedRows=j.rows||[]; STATE.funnel=j.funnel||{};
+        stampAffar();
         if(!STATE.type){ render(); } else { renderFunnel(); }
       })
       .catch(function(){ if(!STATE.type) $("rows").innerHTML=emptyRow("Nätverksfel."); });
@@ -1282,6 +1303,7 @@
         STATE.loading=false;
         if(!j||!j.ok){ STATE.listRows=[]; render(); $("rows").innerHTML=emptyRow("Kunde inte ladda ("+esc((j&&j.error)||"fel")+")."); return; }
         STATE.listRows=j.rows||[]; STATE.total=(j.total!=null?j.total:null); STATE.grand=(j.grand_total!=null?j.grand_total:null); STATE.filtered=!!j.filtered; STATE.hasMore=!!j.has_more;
+        stampAffar();
         render();
       })
       .catch(function(){ STATE.loading=false; STATE.listRows=[]; render(); $("rows").innerHTML=emptyRow("Nätverksfel."); });
@@ -1335,6 +1357,7 @@
         .catch(function(){ vb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-hämtning."); });
       return;
     }
+    var rf=t.closest && t.closest('[data-af="refresh"]'); if(rf){ loadFeed(); if(STATE.type) loadList(); return; }
     var wp=t.closest && t.closest('[data-af="weekpreset"]'); if(wp){ var wr=weekRange(); STATE.from=wr.from; STATE.to=wr.to; STATE.page=0; var ff=$("from"); if(ff) ff.value=wr.from; var tf=$("to"); if(tf) tf.value=wr.to; if(STATE.type) loadList(); return; }
     var dc=t.closest && t.closest('[data-af="datclear"]'); if(dc){ STATE.from=""; STATE.to=""; STATE.person=""; STATE.kategori=""; STATE.page=0; var pe=$("person"); if(pe) pe.value=""; var ke=$("kategori"); if(ke) ke.value=""; if(STATE.type) loadList(); return; }
     var pnav=t.closest('[data-af="prev"],[data-af="next"]');

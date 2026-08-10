@@ -746,8 +746,9 @@ export function registerOffertRoutes(app, deps) {
   }
 
   // Kök-PM: leveransinfo + intern instruktion highlightade, rader GRUPPERADE per kök (produktionsenhet).
-  function buildOrderPmHtml({ order, rows, company, kokById }) {
+  function buildOrderPmHtml({ order, rows, company, kokById, ansvarig }) {
     const custName = _esc((company && company.Name_company) || "");
+    const ansv = _esc(ansvarig || "");
     const dLev = _ordDay(order.leveransdatum), levTid = _esc(order.leveranstid || ""), levAddr = _esc(_pickAddr(order.leveransadress));
     const intern = _noMustache(_str(order.intern_instruktion || ""));
     const groups = new Map();
@@ -773,7 +774,7 @@ export function registerOffertRoutes(app, deps) {
       .pm-antal{font-weight:800;font-size:15px;white-space:nowrap;width:76px}.pm-ben{font-weight:700;font-size:13.5px}.pm-beskr{color:#374151;margin-top:3px;font-size:11px;line-height:1.45}.pm-prep{color:#6b7280;white-space:nowrap;width:110px}
       </style></head><body>
       <h1>Produktions-PM</h1><div class="pm-sub">${_esc(order.ordernr || "")}${custName ? " · " + custName : ""}</div>
-      <div class="pm-lev"><div><h3>Leverans</h3><div class="v">${dLev || "—"}${levTid ? " · " + levTid : ""}</div></div><div style="flex:1"><h3>Plats</h3><div class="v" style="font-size:14px">${levAddr || "—"}</div></div></div>
+      <div class="pm-lev"><div><h3>Leverans</h3><div class="v">${dLev || "—"}${levTid ? " · " + levTid : ""}</div></div><div><h3>Vår referens</h3><div class="v" style="font-size:14px">${ansv || "—"}</div></div><div style="flex:1"><h3>Plats</h3><div class="v" style="font-size:14px">${levAddr || "—"}</div></div></div>
       ${intern ? `<div class="pm-instr"><h3>Intern instruktion</h3><p>${_esc(intern).replace(/\n/g, "<br>")}</p></div>` : ""}
       ${groupHtml || '<p style="color:#6b7280">Inga rader.</p>'}
       </body></html>`;
@@ -790,12 +791,24 @@ export function registerOffertRoutes(app, deps) {
     if (kind === "pm") {
       const koks = await bubbleFindAll("Kok", {}).catch(() => []);
       const kokById = new Map(); for (const k of koks) { const id = bubbleId(k); if (id) kokById.set(id, _str(k.namn) || _str(k.Namn) || _str(k.name) || ""); }
-      html = buildOrderPmHtml({ order, rows, company, kokById }); titel = `PM ${order.ordernr || orderId}`;
+      const ansvarig = await _resolveOrderAnsvarig(order);
+      html = buildOrderPmHtml({ order, rows, company, kokById, ansvarig }); titel = `PM ${order.ordernr || orderId}`;
     } else {
       html = buildOrderHtml({ order, rows, company }); titel = `Order ${order.ordernr || orderId}`;
     }
     const rendered = await contractRenderEngine.renderAndPersist({ templateHtml: html, spec: {}, titel });
     return { ok: true, kind: kind === "pm" ? "pm" : "order", file_url: rendered.file_url, dokument_id: rendered.dokument_id, bytes: rendered.bytes };
+  }
+  // Vår referens (ansvarig) för en order: MiraOrder.var_referens (override) ELLER offert→deal→deal_owner.
+  function _uName(u) { if (!u) return ""; const first = _str(u["First Name"] || u["Förnamn"]); const last = _str(u["Last Name"] || u["Efternamn"] || u["Surname"]); return (first + " " + last).trim() || _str(u.email || u.Email); }
+  async function _resolveOrderAnsvarig(order) {
+    const vr = _ref(order.var_referens);
+    if (vr) { const u = await bubbleGet("User", vr).catch(() => null); return _uName(u); }
+    const offId = _ref(order.offert); if (!offId) return "";
+    const off = await bubbleGet("Offert", offId).catch(() => null); const dealId = off ? _ref(off.deal) : null; if (!dealId) return "";
+    const deal = await bubbleGet("deal", dealId).catch(() => null); if (!deal) return "";
+    const ownerId = _ref(Array.isArray(deal.deal_owner) ? deal.deal_owner[0] : deal.deal_owner); if (!ownerId) return "";
+    const owner = await bubbleGet("User", ownerId).catch(() => null); return _uName(owner);
   }
   async function loadOrderRows(orderId) {
     const rows = await bubbleFind(TYPE_ORDERRAD, { constraints: [{ key: "order", constraint_type: "equals", value: orderId }], limit: 300 }).catch(() => []);

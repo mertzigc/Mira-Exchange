@@ -12,8 +12,11 @@ let idseq = 100;
 const DB = {
   ClientCompany: [{ _id: "cc1", Name_company: "Acme AB" }],
   Kok: [{ _id: "k1", namn: "Varmkök Söder", aktiv: true }, { _id: "k2", namn: "Kallskänk Nord", aktiv: true }],
+  User: [{ _id: "u1", "First Name": "Anna", "Surname": "Andersson" }, { _id: "u2", "First Name": "Bertil", "Surname": "Berg" }],
+  deal: [{ _id: "d1", deal_owner: ["u1"] }],
+  Offert: [{ _id: "off1", deal: "d1" }],
   MiraOrder: [
-    { _id: "moM", source: "mira_fe", ordernr: "FE-2026-0001", orderdatum: "2026-07-06", orderstatus: "Bekräftad", kundforetag: "cc1", leveransdatum: "2026-07-20", leverans_ts: Date.parse("2026-07-20T00:00:00Z"), leveranstid: "12:00", betalningsvillkor: "10 dagar", momstyp: "SEVAT", valuta: "SEK", summa: 1000, moms_belopp: 120, total: 1120, offert: "off1", villkor_text: "" },
+    { _id: "moM", source: "mira_fe", ordernr: "FE-2026-0001", orderdatum: "2026-07-06", orderstatus: "Bekräftad", kundforetag: "cc1", leveransdatum: "2026-07-20", leverans_ts: Date.parse("2026-07-20T00:00:00Z"), leveranstid: "12:00", betalningsvillkor: "10 dagar", momstyp: "SEVAT", valuta: "SEK", summa: 1000, moms_belopp: 120, total: 1120, offert: "off1", villkor_text: "", klar_for_leverans: false },
     { _id: "moF", source: "fortnox", ordernr: "40718", ft_customer_name: "Beta" },
   ],
   MiraOrderRad: [
@@ -50,6 +53,11 @@ const run = async () => {
   ok("order rad + kök-namn upplöst", g.body.rows.length === 1 && g.body.rows[0].kok_namn === "Varmkök Söder" && g.body.rows[0].radsumma === 1000);
   ok("status_options + koks medskickade", g.body.status_options.includes("I produktion") && g.body.koks.length === 2);
 
+  // ── #1 vår referens: users-lista + default (offert→deal→ägare) ──
+  ok("GET order: users-lista (2, sorterad)", g.body.users.length === 2 && g.body.users[0].name === "Anna Andersson");
+  ok("GET order: var_referens tomt, default = affärens ägare (Anna)", g.body.order.var_referens === "" && g.body.order.var_referens_default_name === "Anna Andersson");
+  ok("GET order: klar_for_leverans=false", g.body.order.klar_for_leverans === false);
+
   // ── GET Fortnox-order → 400 ej redigerbar ──
   const gf = await call("get", "/admin/affar/order/:id", { params: { id: "moF" } });
   ok("Fortnox-order → 400 ej_mira_order", gf.code === 400 && gf.body.error === "ej_mira_order");
@@ -61,6 +69,14 @@ const run = async () => {
   ok("order leverans_ts uppdaterat", DB.MiraOrder.find((o) => o._id === "moM").leverans_ts === newTs);
   ok("rad leverans_ts propagerat", DB.MiraOrderRad.find((r) => r._id === "r1").leverans_ts === newTs);
   ok("orderstatus satt", DB.MiraOrder.find((o) => o._id === "moM").orderstatus === "I produktion");
+
+  // ── #1/#5 patcha vår referens + klar_for_leverans ──
+  const pv = await call("post", "/admin/affar/order/:id/patch", { params: { id: "moM" }, body: { var_referens: "u2", klar_for_leverans: true } });
+  ok("patch vår referens + klar ok", pv.body.ok);
+  ok("var_referens satt i DB (u2)", DB.MiraOrder.find((o) => o._id === "moM").var_referens === "u2");
+  ok("klar_for_leverans satt i DB (true)", DB.MiraOrder.find((o) => o._id === "moM").klar_for_leverans === true);
+  const g2 = await call("get", "/admin/affar/order/:id", { params: { id: "moM" } });
+  ok("GET reflekterar var_referens (Bertil Berg) + klar", g2.body.order.var_referens === "u2" && g2.body.order.var_referens_name === "Bertil Berg" && g2.body.order.klar_for_leverans === true);
 
   // ── rad-patch: ändra antal + kök → radsumma + totaler räknas om ──
   const pr = await call("post", "/admin/affar/order/row/:rowId/patch", { params: { rowId: "r1" }, body: { antal: 20, kok_id: "k2" } });

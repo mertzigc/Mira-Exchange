@@ -19,7 +19,9 @@ export function registerProduktionRoutes(app, deps) {
   const _str = (v) => (v == null ? "" : String(v));
   const _num = (v) => { if (v == null || v === "") return 0; const n = typeof v === "number" ? v : parseFloat(String(v).replace(/\s/g, "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
   const _ref = (v) => (v == null ? null : (typeof v === "string" ? v : (v._id || bubbleId(v) || null)));
-  const STATUS_PROD = ["Bekräftad", "I produktion"];   // endast dessa produceras
+  const _day = (v) => (v ? _str(v).slice(0, 10) : "");
+  const STATUS_PROD = ["Bekräftad", "I produktion"];              // aktiva i produktion
+  const STATUS_DISPLAY = ["Bekräftad", "I produktion", "Levererad"];   // visas i dagsvyn (Levererad dimmad, #6)
   const CC_TTL = 5 * 60 * 1000;
 
   // ── caches: ClientCompany-namn + Kok-namn ──
@@ -55,21 +57,25 @@ export function registerProduktionRoutes(app, deps) {
   app.get("/admin/produktion/dag", async (req, res) => {
     if (!guard(req, res)) return;
     try {
+      // Enkel dag (?date=) ELLER intervall (?from=&to=, t.ex. denna+nästa vecka). Range = inklusiv t.o.m. to.
       const date = _str(req.query.date).slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ ok: false, error: "date_krävs", hint: "?date=YYYY-MM-DD" });
-      const dayStart = new Date(date + "T00:00:00.000Z").getTime();
-      const dayEnd = dayStart + 86400000;
+      const from = _str(req.query.from).slice(0, 10), to = _str(req.query.to).slice(0, 10);
+      const isRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to);
+      if (!isRange && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ ok: false, error: "date_krävs", hint: "?date=YYYY-MM-DD eller ?from=&to=" });
+      const dayStart = isRange ? new Date(from + "T00:00:00.000Z").getTime() : new Date(date + "T00:00:00.000Z").getTime();
+      const dayEnd = isRange ? (new Date(to + "T00:00:00.000Z").getTime() + 86400000) : (dayStart + 86400000);
 
-      // Ordrar för dagen (numeriskt leverans_ts, pålitligt) + rätt status
+      // Ordrar för dagen (numeriskt leverans_ts, pålitligt). Inkl Levererad (visas dimmad + Ångra, #6).
       const orders = await bubbleFind("MiraOrder", { constraints: [
         { key: "leverans_ts", constraint_type: "greater than", value: dayStart - 1 },
         { key: "leverans_ts", constraint_type: "less than", value: dayEnd },
-        { key: "orderstatus", constraint_type: "in", value: STATUS_PROD },
+        { key: "orderstatus", constraint_type: "in", value: STATUS_DISPLAY },
       ], limit: 300 }).catch(() => []);
 
       const cm = await ccMap(), km = await kokNameMap();
 
-      // ── Vår referens (ansvarig PL) per order: order.offert → Offert.deal → deal.deal_owner → User ──
+      // ── Vår referens (ansvarig PL) per order: MiraOrder.var_referens (override) ELLER
+      //    order.offert → Offert.deal → deal.deal_owner → User (härledd fallback) ──
       const offIds = [...new Set(orders.map((o) => _ref(o.offert)).filter(Boolean))];
       const offs = await Promise.all(offIds.map((id) => bubbleGet("Offert", id).catch(() => null)));
       const offDeal = new Map(); offs.forEach((o) => { if (o) offDeal.set(bubbleId(o), _ref(o.deal)); });
@@ -77,12 +83,13 @@ export function registerProduktionRoutes(app, deps) {
       const deals = await Promise.all(dealIds.map((id) => bubbleGet("deal", id).catch(() => null)));
       const dealOwner = new Map(); const ownerIds = new Set();
       deals.forEach((d) => { if (d) { const oid = _ref(Array.isArray(d.deal_owner) ? d.deal_owner[0] : d.deal_owner); if (oid) { dealOwner.set(bubbleId(d), oid); ownerIds.add(oid); } } });
+      orders.forEach((o) => { const vr = _ref(o.var_referens); if (vr) ownerIds.add(vr); });   // direkt-satt referens
       const users = await Promise.all([...ownerIds].map((id) => bubbleGet("User", id).catch(() => null)));
       const uName = new Map(); users.forEach((u) => { if (u) { const nm = ((_str(u["First Name"] || u["Förnamn"]) + " " + _str(u["Last Name"] || u["Efternamn"] || u["Surname"])).trim()) || _str(u.email || u.Email); uName.set(bubbleId(u), nm); } });
-      const ordAnsvarig = (o) => { const offId = _ref(o.offert); const dealId = offId ? offDeal.get(offId) : null; const ownerId = dealId ? dealOwner.get(dealId) : null; return ownerId ? (uName.get(ownerId) || "") : ""; };
+      const ordAnsvarig = (o) => { const vr = _ref(o.var_referens); if (vr) return uName.get(vr) || ""; const offId = _ref(o.offert); const dealId = offId ? offDeal.get(offId) : null; const ownerId = dealId ? dealOwner.get(dealId) : null; return ownerId ? (uName.get(ownerId) || "") : ""; };
 
       const orderMeta = new Map();   // orderId → {ordernr, company, leveranstid, ansvarig, status}
-      for (const o of orders) orderMeta.set(bubbleId(o), { ordernr: _str(o.ordernr), company: (cm.get(_ref(o.kundforetag)) || ""), leveranstid: _str(o.leveranstid), ansvarig: ordAnsvarig(o), status: _str(o.orderstatus) });
+      for (const o of orders) orderMeta.set(bubbleId(o), { ordernr: _str(o.ordernr), company: (cm.get(_ref(o.kundforetag)) || ""), leveransdatum: _day(o.leveransdatum), leveranstid: _str(o.leveranstid), ansvarig: ordAnsvarig(o), status: _str(o.orderstatus), levererad: (_str(o.orderstatus) === "Levererad"), klar_for_leverans: (o.klar_for_leverans === true) });
 
       // Alla rader för dagens ordrar (+ per-order aggregat för order-vyn)
       const allRads = [];
@@ -90,8 +97,8 @@ export function registerProduktionRoutes(app, deps) {
       for (const o of orders) {
         const oid = bubbleId(o);
         const rads = await bubbleFind("MiraOrderRad", { constraints: [{ key: "order", constraint_type: "equals", value: oid }], limit: 300 }).catch(() => []);
-        const agg = { row_count: 0, total_antal: 0, koks: new Set() };
-        for (const r of rads) { allRads.push(r); agg.row_count++; agg.total_antal += _num(r.antal); const kid = _ref(r.kok); agg.koks.add(kid ? (km.get(kid) || "(okänt)") : "Ej tilldelat"); }
+        const agg = { row_count: 0, total_antal: 0, koks: new Set(), producerade: 0 };
+        for (const r of rads) { allRads.push(r); agg.row_count++; agg.total_antal += _num(r.antal); if (r.producerad === true) agg.producerade++; const kid = _ref(r.kok); agg.koks.add(kid ? (km.get(kid) || "(okänt)") : "Ej tilldelat"); }
         orderAgg.set(oid, agg);
       }
 
@@ -109,7 +116,7 @@ export function registerProduktionRoutes(app, deps) {
         const antal = _num(r.antal);
         const meta = orderMeta.get(_ref(r.order)) || {};
         pk.total_antal += antal;
-        pk.items.push({ benamning: _str(r.benamning), antal, enhet: _str(r.enhet), beskrivning: _str(r.beskrivning_long), order_nr: meta.ordernr || "", company: meta.company || "", leveranstid: meta.leveranstid || "", ansvarig: meta.ansvarig || "", rad_id: bubbleId(r), kok_id: _ref(r.kok) || "" });
+        pk.items.push({ benamning: _str(r.benamning), antal, enhet: _str(r.enhet), beskrivning: _str(r.beskrivning_long), order_nr: meta.ordernr || "", company: meta.company || "", leveransdatum: meta.leveransdatum || "", leveranstid: meta.leveranstid || "", ansvarig: meta.ansvarig || "", producerad: (r.producerad === true), levererad: !!meta.levererad, rad_id: bubbleId(r), kok_id: _ref(r.kok) || "" });
         g.row_count++;
       }
 
@@ -124,11 +131,12 @@ export function registerProduktionRoutes(app, deps) {
       }));
 
       // Order-vy: en rad per order (grupperbar per kök i frontend), med status-avcheckning
-      const ordersArr = orders.map((o) => { const oid = bubbleId(o); const meta = orderMeta.get(oid) || {}; const agg = orderAgg.get(oid) || { row_count: 0, total_antal: 0, koks: new Set() }; return { order_id: oid, ordernr: meta.ordernr, company: meta.company, leveranstid: meta.leveranstid, ansvarig: meta.ansvarig, status: meta.status, row_count: agg.row_count, total_antal: agg.total_antal, koks: [...agg.koks].sort() }; })
-        .sort((a, b) => String(a.leveranstid || "~").localeCompare(String(b.leveranstid || "~"), "sv"));
+      const ordersArr = orders.map((o) => { const oid = bubbleId(o); const meta = orderMeta.get(oid) || {}; const agg = orderAgg.get(oid) || { row_count: 0, total_antal: 0, koks: new Set(), producerade: 0 }; return { order_id: oid, ordernr: meta.ordernr, company: meta.company, leveransdatum: meta.leveransdatum, leveranstid: meta.leveranstid, ansvarig: meta.ansvarig, status: meta.status, levererad: !!meta.levererad, klar_for_leverans: !!meta.klar_for_leverans, producerade: agg.producerade, row_count: agg.row_count, total_antal: agg.total_antal, koks: [...agg.koks].sort() }; })
+        .sort((a, b) => String((a.leveransdatum || "~") + (a.leveranstid || "~")).localeCompare(String((b.leveransdatum || "~") + (b.leveranstid || "~")), "sv"));
 
       return res.json({
-        ok: true, date, order_count: orders.length, row_count: allRads.length,
+        ok: true, date: isRange ? null : date, from: isRange ? from : null, to: isRange ? to : null, range: isRange,
+        order_count: orders.length, row_count: allRads.length,
         koks: koksArr,
         orders: ordersArr,
         koklist: await kokList(),   // för fördelning (flytta rad → annat kök)
@@ -172,6 +180,36 @@ export function registerProduktionRoutes(app, deps) {
       return res.json({ ok: true, order_id: id, status });
     } catch (e) {
       console.error("[/admin/produktion/order/:id/status]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/produktion/rad/:id/producerad {producerad} — bocka av prep-rad som producerad (#5) ──
+  app.options("/admin/produktion/rad/:id/producerad", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/produktion/rad/:id/producerad", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const producerad = ((req.body || {}).producerad === true || (req.body || {}).producerad === "true");
+      await bubblePatch("MiraOrderRad", _str(req.params.id), { producerad });   // Bubble-fält: MiraOrderRad.producerad (yes/no)
+      return res.json({ ok: true, rad_id: _str(req.params.id), producerad });
+    } catch (e) {
+      console.error("[/admin/produktion/rad/:id/producerad]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/produktion/order/:id/leveransklar {klar} — "Klar för leverans" på ordern (#5) ──
+  app.options("/admin/produktion/order/:id/leveransklar", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/produktion/order/:id/leveransklar", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubblePatch) return res.status(501).json({ ok: false, error: "patch_not_wired" });
+      const klar = ((req.body || {}).klar === true || (req.body || {}).klar === "true");
+      await bubblePatch("MiraOrder", _str(req.params.id), { klar_for_leverans: klar });   // Bubble-fält: MiraOrder.klar_for_leverans (yes/no)
+      return res.json({ ok: true, order_id: _str(req.params.id), klar_for_leverans: klar });
+    } catch (e) {
+      console.error("[/admin/produktion/order/:id/leveransklar]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });

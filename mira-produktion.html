@@ -62,6 +62,24 @@
   .mp .klarbtn{background:var(--green);border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:800;color:#0d1a12;cursor:pointer;font-family:var(--fb);white-space:nowrap}
   .mp .klarbtn:hover{filter:brightness(1.07)}
   .mp .klarbtn:disabled{opacity:.5}
+  /* #5 producerad-checkbox på prep-rad */
+  .mp .it-chk{width:34px;text-align:center}
+  .mp .prodchk{width:17px;height:17px;accent-color:var(--green);cursor:pointer}
+  .mp tr.prod-done .it-ben,.mp tr.prod-done .it-antal{text-decoration:line-through;color:var(--w40)}
+  .mp tr.prod-done{opacity:.62}
+  /* #5 klar-för-leverans toggle + produktions-progress i order-vy */
+  .mp .lvbtn{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);white-space:nowrap}
+  .mp .lvbtn:hover{border-color:var(--green);color:var(--green)}
+  .mp .lvbtn.on{background:var(--green);border-color:var(--green);color:#0d1a12;font-weight:800}
+  .mp .lvbtn:disabled{opacity:.5}
+  .mp .prog{font-variant-numeric:tabular-nums;font-weight:700;background:var(--deep);border-radius:6px;padding:3px 9px;color:var(--w70);white-space:nowrap}
+  .mp .prog.full{background:rgba(76,175,125,.18);color:var(--green)}
+  /* #6 levererad order dimmad men kvar + Ångra */
+  .mp tr.ord-done{opacity:.5}
+  .mp tr.ord-done .pill{background:rgba(76,175,125,.14);color:var(--green);border-color:rgba(76,175,125,.35)}
+  .mp .undobtn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);white-space:nowrap}
+  .mp .undobtn:hover{border-color:var(--orange);color:var(--orange)}
+  .mp .undobtn:disabled{opacity:.5}
   .mp .ord-table{background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden}
   .mp .ord-table table{width:100%;border-collapse:collapse}
   .mp .ord-table th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:11px 14px;border-bottom:1.5px solid var(--w10)}
@@ -81,7 +99,10 @@
     <input type="date" class="datein" data-mp="date">
     <button class="navbtn" data-mp="next">Nästa dag ›</button>
     <button class="navbtn" data-mp="today">Idag</button>
+    <button class="navbtn" data-mp="week" style="border-color:rgba(244,123,48,.4);color:var(--orange)">📅 Denna + nästa vecka</button>
+    <button class="navbtn" data-mp="refresh">↻ Uppdatera</button>
     <span class="summary" data-mp="summary"></span>
+    <span class="upd muted" data-mp="upd" style="font-size:11px"></span>
   </div>
 
   <div class="bar">
@@ -102,18 +123,23 @@
   var $=function(k){ return root.querySelector('[data-mp="'+k+'"]'); };
   var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
-  var STATE={ date:"", data:null, koklist:[], view:"prep" };
+  var STATE={ date:"", mode:"day", from:"", to:"", data:null, koklist:[], view:"prep", updatedAt:null };
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function num(n){ return (n==null?0:Math.round(n*100)/100).toLocaleString("sv-SE"); }
   function todayISO(){ var d=new Date(); return d.toISOString().slice(0,10); }
   function addDays(iso, n){ var d=new Date(iso+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+  function weekRange(){ var d=new Date(); var day=(d.getDay()+6)%7; var mon=new Date(d); mon.setDate(d.getDate()-day); var sun=new Date(mon); sun.setDate(mon.getDate()+13); function iso(x){ return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); } return { from:iso(mon), to:iso(sun) }; }
+  function pad2(n){ return ("0"+n).slice(-2); }
+  function stampNow(){ STATE.updatedAt=new Date(); var u=$("upd"); if(u){ var d=STATE.updatedAt; u.textContent="· uppdaterad "+pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds()); } }
 
   function kokOptions(koks, cur){ var o='<option value="">— ej tilldelat —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
 
   function itemsTable(items, koks){
     var trs=items.map(function(it){
-      return '<tr>'+
+      var done=it.producerad===true;
+      return '<tr class="'+(done?"prod-done":"")+'">'+
+        '<td class="it-chk"><input type="checkbox" class="prodchk" data-rad="'+esc(it.rad_id)+'"'+(done?" checked":"")+' title="Markera producerad"></td>'+
         '<td class="it-antal">'+esc(num(it.antal))+' '+esc(it.enhet||"")+'</td>'+
         '<td class="it-tid">'+esc(it.leveranstid||"—")+'</td>'+
         '<td><div class="it-ben">'+esc(it.benamning||"")+'</div>'+(it.beskrivning?('<div class="it-beskr">'+esc(it.beskrivning)+'</div>'):'')+'</td>'+
@@ -122,28 +148,39 @@
         '<td><select class="it-kok" data-rad="'+esc(it.rad_id)+'">'+kokOptions(koks, it.kok_id||"")+'</select></td>'+
       '</tr>';
     }).join("");
-    return '<table class="it"><thead><tr><th>Antal</th><th>Tid</th><th>Maträtt / produkt</th><th>Order</th><th>Vår referens</th><th>Kök</th></tr></thead><tbody>'+trs+'</tbody></table>';
+    return '<table class="it"><thead><tr><th></th><th>Antal</th><th>Tid</th><th>Maträtt / produkt</th><th>Order</th><th>Vår referens</th><th>Kök</th></tr></thead><tbody>'+trs+'</tbody></table>';
   }
   function renderOrders(){
     var d=STATE.data, os=d.orders||[];
     if(!os.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
     var trs=os.map(function(o){
-      return '<tr>'+
+      var lev=o.levererad===true;
+      var klar=o.klar_for_leverans===true;
+      var rc=o.row_count||0, pr=o.producerade||0;
+      var progFull=(rc>0 && pr>=rc);
+      var klarBtn='<button class="lvbtn'+(klar?" on":"")+'" data-lev="'+esc(o.order_id)+'">'+(klar?"✓ Klar f. leverans":"Markera klar")+'</button>';
+      var action=lev
+        ? '<button class="undobtn" data-undo="'+esc(o.order_id)+'">↩ Ångra leverans</button>'
+        : '<button class="klarbtn" data-order="'+esc(o.order_id)+'">✓ Levererad</button>';
+      return '<tr class="'+(lev?"ord-done":"")+'">'+
         '<td class="it-tid">'+esc(o.leveranstid||"—")+'</td>'+
         '<td><div class="it-ben">'+esc(o.ordernr||"")+'</div><div class="it-beskr">'+esc(o.company||"")+'</div></td>'+
         '<td class="it-meta">'+esc((o.koks||[]).join(", "))+'</td>'+
         '<td class="it-antal">'+esc(num(o.total_antal))+'</td>'+
         '<td class="it-ref">'+esc(o.ansvarig||"—")+'</td>'+
+        '<td><span class="prog'+(progFull?" full":"")+'" title="Producerade rader">'+pr+'/'+rc+'</span></td>'+
+        '<td>'+klarBtn+'</td>'+
         '<td><span class="pill">'+esc(o.status)+'</span></td>'+
-        '<td><button class="klarbtn" data-order="'+esc(o.order_id)+'">✓ Markera klar</button></td>'+
+        '<td>'+action+'</td>'+
       '</tr>';
     }).join("");
-    $("body").innerHTML='<div class="ord-table"><table><thead><tr><th>Tid</th><th>Order</th><th>Kök</th><th>Antal</th><th>Vår referens</th><th>Status</th><th></th></tr></thead><tbody>'+trs+'</tbody></table></div>';
+    $("body").innerHTML='<div class="ord-table"><table><thead><tr><th>Tid</th><th>Order</th><th>Kök</th><th>Antal</th><th>Vår referens</th><th>Prod.</th><th>Klar f. lev.</th><th>Status</th><th></th></tr></thead><tbody>'+trs+'</tbody></table></div>';
   }
   function render(){
     var d=STATE.data;
     if(!d){ $("body").innerHTML='<div class="empty">Laddar…</div>'; return; }
-    $("summary").textContent=d.order_count+" ordrar · "+d.row_count+" rader";
+    var period=(STATE.mode==="range")?(STATE.from+" – "+STATE.to):STATE.date;
+    $("summary").textContent=period+" · "+d.order_count+" ordrar · "+d.row_count+" rader";
     if(STATE.view==="order"){ renderOrders(); return; }
     if(!d.koks || !d.koks.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
     var koks=STATE.koklist||[];
@@ -162,32 +199,61 @@
   function load(){
     if(!HOST||!TOKEN){ $("body").innerHTML='<div class="err">Saknar api_host/planning_token.</div>'; return; }
     $("body").innerHTML='<div class="empty">Laddar…</div>';
-    fetch(HOST+"/admin/produktion/dag?date="+encodeURIComponent(STATE.date),{headers:{"x-admin-token":TOKEN}})
+    var qs=(STATE.mode==="range")?("from="+encodeURIComponent(STATE.from)+"&to="+encodeURIComponent(STATE.to)):("date="+encodeURIComponent(STATE.date));
+    fetch(HOST+"/admin/produktion/dag?"+qs,{headers:{"x-admin-token":TOKEN}})
       .then(function(r){ return r.json(); })
-      .then(function(j){ if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; } STATE.data=j; STATE.koklist=j.koklist||[]; render(); })
+      .then(function(j){ if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; } STATE.data=j; STATE.koklist=j.koklist||[]; stampNow(); render(); })
       .catch(function(){ $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
   }
-  function setDate(iso){ STATE.date=iso; var di=$("date"); if(di) di.value=iso; load(); }
+  function setDate(iso){ STATE.mode="day"; STATE.date=iso; var di=$("date"); if(di) di.value=iso; load(); }
+  function setRange(r){ STATE.mode="range"; STATE.from=r.from; STATE.to=r.to; load(); }
 
   root.addEventListener("click",function(e){
     var t=e.target;
     if(t.closest && t.closest('[data-mp="prev"]')){ setDate(addDays(STATE.date,-1)); return; }
     if(t.closest && t.closest('[data-mp="next"]')){ setDate(addDays(STATE.date,1)); return; }
     if(t.closest && t.closest('[data-mp="today"]')){ setDate(todayISO()); return; }
+    if(t.closest && t.closest('[data-mp="week"]')){ setRange(weekRange()); return; }
+    if(t.closest && t.closest('[data-mp="refresh"]')){ load(); return; }
     var vc=t.closest && t.closest('.vchip[data-mp="view"]');
     if(vc){ STATE.view=vc.getAttribute("data-v"); root.querySelectorAll('.vchip[data-mp="view"]').forEach(function(c){ c.className="vchip"+(c.getAttribute("data-v")===STATE.view?" on":""); }); render(); return; }
     var kb=t.closest && t.closest(".klarbtn");
     if(kb){
       var oid=kb.getAttribute("data-order"); kb.disabled=true; kb.textContent="…";
       fetch(HOST+"/admin/produktion/order/"+encodeURIComponent(oid)+"/status",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({status:"Levererad"})})
-        .then(function(r){ return r.json(); }).then(function(j){ if(!j||!j.ok){ kb.disabled=false; kb.textContent="✓ Markera klar"; alert("Kunde inte uppdatera status."); return; } load(); })   // reload → försvinner ur dagsvyn
-        .catch(function(){ kb.disabled=false; kb.textContent="✓ Markera klar"; alert("Nätverksfel."); });
+        .then(function(r){ return r.json(); }).then(function(j){ if(!j||!j.ok){ kb.disabled=false; kb.textContent="✓ Levererad"; alert("Kunde inte uppdatera status."); return; } load(); })   // #6: reload → ordern dimmas men stannar kvar
+        .catch(function(){ kb.disabled=false; kb.textContent="✓ Levererad"; alert("Nätverksfel."); });
+      return;
+    }
+    var ub=t.closest && t.closest(".undobtn");   // #6 Ångra leverans → tillbaka till "I produktion"
+    if(ub){
+      var uid=ub.getAttribute("data-undo"); ub.disabled=true; ub.textContent="…";
+      fetch(HOST+"/admin/produktion/order/"+encodeURIComponent(uid)+"/status",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({status:"I produktion"})})
+        .then(function(r){ return r.json(); }).then(function(j){ if(!j||!j.ok){ ub.disabled=false; ub.textContent="↩ Ångra leverans"; alert("Kunde inte ångra."); return; } load(); })
+        .catch(function(){ ub.disabled=false; ub.textContent="↩ Ångra leverans"; alert("Nätverksfel."); });
+      return;
+    }
+    var lv=t.closest && t.closest(".lvbtn");   // #5 Klar för leverans (yes/no-toggle på ordern)
+    if(lv){
+      var lid=lv.getAttribute("data-lev"); var willKlar=!lv.classList.contains("on"); lv.disabled=true;
+      fetch(HOST+"/admin/produktion/order/"+encodeURIComponent(lid)+"/leveransklar",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({klar:willKlar})})
+        .then(function(r){ return r.json(); }).then(function(j){ lv.disabled=false; if(!j||!j.ok){ alert("Kunde inte uppdatera."); return; } lv.classList.toggle("on",willKlar); lv.textContent=willKlar?"✓ Klar f. leverans":"Markera klar"; })
+        .catch(function(){ lv.disabled=false; alert("Nätverksfel."); });
       return;
     }
     var ph=t.closest && t.closest(".prep-h");
     if(ph){ ph.classList.toggle("open"); var box=root.querySelector('[data-items="'+ph.getAttribute("data-g")+'-'+ph.getAttribute("data-p")+'"]'); if(box) box.classList.toggle("open"); return; }
   });
   root.addEventListener("change",function(e){
+    var cb=e.target;
+    if(cb.classList && cb.classList.contains("prodchk")){   // #5 markera prep-rad producerad
+      var rid=cb.getAttribute("data-rad"), done=cb.checked, tr=cb.closest("tr"); cb.disabled=true;
+      fetch(HOST+"/admin/produktion/rad/"+encodeURIComponent(rid)+"/producerad",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({producerad:done})})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ cb.disabled=false; if(!j||!j.ok){ cb.checked=!done; alert("Kunde inte uppdatera."); return; } if(tr) tr.classList.toggle("prod-done",done); })
+        .catch(function(){ cb.disabled=false; cb.checked=!done; alert("Nätverksfel."); });
+      return;
+    }
     var sel=e.target;
     if(!sel.classList || !sel.classList.contains("it-kok")) return;
     if(sel.getAttribute("data-mp")==="date"){ return; }

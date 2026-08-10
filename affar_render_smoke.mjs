@@ -5,15 +5,19 @@ import { registerAffarRoutes } from "./affar_api.js";
 const noApp = () => ({ get(){}, post(){}, options(){}, patch(){} });
 
 const DB = {
-  MiraOrder: [{ _id: "moM", source: "mira_fe", ordernr: "FE-2026-0001", orderdatum: "2026-07-06", orderstatus: "I produktion", kundforetag: "cc1", leveransdatum: "2026-08-01", leveranstid: "11:30", leveransadress: "Kammakargatan 12, Stockholm", betalningsvillkor: "10 dagar", valuta: "SEK", villkor_text: "Villkor.", intern_instruktion: "Var på plats 10:30 för uppdukning!", summa: 2000, moms_belopp: 240, total: 2240 },
+  MiraOrder: [{ _id: "moM", source: "mira_fe", ordernr: "FE-2026-0001", orderdatum: "2026-07-06", orderstatus: "I produktion", kundforetag: "cc1", leveransdatum: "2026-08-01", leveranstid: "11:30", leveransadress: "Kammakargatan 12, Stockholm", betalningsvillkor: "10 dagar", valuta: "SEK", villkor_text: "Villkor.", intern_instruktion: "Var på plats 10:30 för uppdukning!", summa: 2000, moms_belopp: 240, total: 2240, offert: "off1" },
+                { _id: "moV", source: "mira_fe", ordernr: "FE-2026-0002", kundforetag: "cc1", leveransdatum: "2026-08-02", leveranstid: "09:00", var_referens: "u2", offert: "off1" },
                 { _id: "moF", source: "fortnox", ordernr: "40718" }],
   MiraOrderRad: [
     { _id: "r1", order: "moM", radnr: 1, benamning: "Dagens lunch", beskrivning_long: "God lunch", antal: 15, enhet: "st", apris: 100, rabatt: 0, moms: 12, radsumma: 1500, kok: "k1", prep_kategori: "Varmkök" },
     { _id: "r2", order: "moM", radnr: 2, benamning: "Spira vatten", beskrivning_long: "", antal: 10, enhet: "st", apris: 20, rabatt: 0, moms: 12, radsumma: 200, kok: "", prep_kategori: "" },
+    { _id: "r3", order: "moV", radnr: 1, benamning: "Frukostfralla", antal: 8, enhet: "st", apris: 40, moms: 12, radsumma: 320, kok: "k1", prep_kategori: "Frallor" },
   ],
   ClientCompany: [{ _id: "cc1", Name_company: "Acme AB", Org_Number: "5560001111", Adress: "Storgatan 1" }],
   Kok: [{ _id: "k1", namn: "Varmkök Söder", aktiv: true }],
-  Offert: [], OffertRad: [],
+  User: [{ _id: "u1", "First Name": "Anna", "Surname": "Andersson" }, { _id: "u2", "First Name": "Bertil", "Surname": "Berg" }],
+  deal: [{ _id: "d1", deal_owner: ["u1"] }],
+  Offert: [{ _id: "off1", deal: "d1" }], OffertRad: [],
 };
 const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); return true; };
 let captured = [];
@@ -63,6 +67,12 @@ const run = async () => {
   ok("pm-html: intern instruktion highlightad", /Intern instruktion/.test(pmHtml) && /Var på plats 10:30/.test(pmHtml));
   ok("pm-html: grupperad per kök (Varmkök Söder + Ej tilldelat kök)", /Varmkök Söder/.test(pmHtml) && /Ej tilldelat kök/.test(pmHtml));
   ok("pm-html: mat highlightad (pm-ben) utan pris-kolumn", /pm-ben/.test(pmHtml) && !/Att betala/.test(pmHtml));
+  ok("pm-html: Vår referens = affärens ägare via offert→deal (Anna Andersson)", /Vår referens/.test(pmHtml) && /Anna Andersson/.test(pmHtml));
+
+  // ── kök-PM med var_referens-override ──
+  const rpv = await offertEngine.renderOrderPdf("moV", "pm");
+  const pmVHtml = captured[captured.length - 1].html;
+  ok("pm-html (moV): Vår referens = override (Bertil Berg, ej deal-ägare)", rpv.ok && /Bertil Berg/.test(pmVHtml) && !/Anna Andersson/.test(pmVHtml));
 
   // ── affär render-route ──
   const rr = await callP("/admin/affar/order/:id/render-pdf", { params: { id: "moM" }, query: { kind: "pm" } });

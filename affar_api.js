@@ -181,7 +181,7 @@ export function registerAffarRoutes(app, deps) {
   // Sätt order_id/order_nr på nOffertM-rader utifrån orderMapForOfferts.
   function applyOrderStatus(rows, omap) { for (const row of rows) { if (row && row.source === "mira" && row.type === "Offert") { const os = omap.get(row.id); if (os) { row.order_id = os.id; row.order_nr = os.nr; } } } return rows; }
   function nOffertF(r) { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", kind: "fortnox", company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
-  function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, klar_for_leverans: (r.klar_for_leverans === true), levererad: (_str(r.orderstatus) === "Levererad"), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   // Avtal (Contract) i affärskedjan. Status härleds enkelt (affar_api saknar _deriveContractStatus):
   // status_override först, annars slutdatum-passerat → Avslutad, annars Aktiv. Belopp = månadskostnad.
   function nAvtal(r, m) {
@@ -1138,7 +1138,16 @@ export function registerAffarRoutes(app, deps) {
       const o = await ensureMiraOrder(req.params.id, res); if (!o) return;
       const rows = await bubbleFind("MiraOrderRad", { constraints: [{ key: "order", constraint_type: "equals", value: req.params.id }], limit: 300 }).catch(() => []);
       rows.sort((a, b) => _num(a.radnr) - _num(b.radnr));
-      const m = await companyMap(); const km = await kokNameMap();
+      const m = await companyMap(); const km = await kokNameMap(); const um = await userMap();
+      // Vår referens (#1): MiraOrder.var_referens (User) om satt, annars offert→deal→ägare som default.
+      const vrId = _ref(o.var_referens) || "";
+      let defOwnerId = "";
+      if (!vrId && _ref(o.offert)) {
+        const off = await bubbleGet("Offert", _ref(o.offert)).catch(() => null);
+        const did = off ? _ref(off.deal) : "";
+        if (did) defOwnerId = (await _loadDeals()).ownerId.get(did) || "";
+      }
+      const usersArr = [...um.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "sv"));
       return res.json({
         ok: true,
         order: {
@@ -1149,7 +1158,11 @@ export function registerAffarRoutes(app, deps) {
           betalningsvillkor: _str(o.betalningsvillkor), momstyp: _str(o.momstyp), valuta: _str(o.valuta) || "SEK",
           villkor_text: _str(o.villkor_text), intern_instruktion: _str(o.intern_instruktion),
           summa: _num(o.summa), moms_belopp: _num(o.moms_belopp), total: _num(o.total),
+          var_referens: vrId, var_referens_name: (vrId ? (um.get(vrId) || "") : ""),
+          var_referens_default: defOwnerId, var_referens_default_name: (defOwnerId ? (um.get(defOwnerId) || "") : ""),
+          klar_for_leverans: (o.klar_for_leverans === true),   // Bubble-fält: MiraOrder.klar_for_leverans (yes/no)
         },
+        users: usersArr,
         rows: rows.map((r) => ({
           id: bubbleId(r), radnr: _num(r.radnr), artikelnr: _str(r.artikelnr), benamning: _str(r.benamning),
           beskrivning_long: _str(r.beskrivning_long), antal: _num(r.antal), enhet: _str(r.enhet),
@@ -1182,6 +1195,8 @@ export function registerAffarRoutes(app, deps) {
       if (b.valuta !== undefined)           p["valuta"]           = _str(b.valuta);
       if (b.villkor_text !== undefined)     p["villkor_text"]     = _str(b.villkor_text);
       if (b.intern_instruktion !== undefined) p["intern_instruktion"] = _str(b.intern_instruktion);   // Bubble-fält: MiraOrder.intern_instruktion (text)
+      if (b.var_referens !== undefined)     p["var_referens"]     = (_str(b.var_referens) || null);   // Bubble-fält: MiraOrder.var_referens (User)
+      if (b.klar_for_leverans !== undefined) p["klar_for_leverans"] = (b.klar_for_leverans === true || b.klar_for_leverans === "true");   // Bubble-fält: MiraOrder.klar_for_leverans (yes/no)
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
       await bubblePatch("MiraOrder", id, p);
       let rows_touched = 0;
