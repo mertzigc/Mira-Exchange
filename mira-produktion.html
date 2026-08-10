@@ -101,6 +101,7 @@
     <button class="navbtn" data-mp="today">Idag</button>
     <button class="navbtn" data-mp="week" style="border-color:rgba(244,123,48,.4);color:var(--orange)">📅 Denna + nästa vecka</button>
     <button class="navbtn" data-mp="refresh">↻ Uppdatera</button>
+    <button class="navbtn" data-mp="export" style="border-color:rgba(91,141,239,.4);color:var(--blue)" title="Leveranslista + prep-lista + kök-PM + orderbekräftelser för hela perioden i ett PDF">⬇ Exportera PDF</button>
     <span class="summary" data-mp="summary"></span>
     <span class="upd muted" data-mp="upd" style="font-size:11px"></span>
   </div>
@@ -215,6 +216,19 @@
     if(t.closest && t.closest('[data-mp="today"]')){ setDate(todayISO()); return; }
     if(t.closest && t.closest('[data-mp="week"]')){ setRange(weekRange()); return; }
     if(t.closest && t.closest('[data-mp="refresh"]')){ load(); return; }
+    var xb=t.closest && t.closest('[data-mp="export"]');
+    if(xb){
+      var qs=(STATE.mode==="range")?("from="+encodeURIComponent(STATE.from)+"&to="+encodeURIComponent(STATE.to)):("date="+encodeURIComponent(STATE.date));
+      var w=window.open("","_blank");   // förladda flik i klick-gesten (undviker popup-blockare)
+      xb.disabled=true; var orig=xb.textContent; xb.textContent="Genererar PDF…";
+      fetch(HOST+"/admin/produktion/export?"+qs,{headers:{"x-admin-token":TOKEN}})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ xb.disabled=false; xb.textContent=orig;
+          if(j&&j.ok&&j.file_url){ var u=(j.file_url.indexOf("//")===0?("https:"+j.file_url):j.file_url); if(w){ w.location.href=u; } }
+          else { if(w){ w.close(); } alert("Kunde inte skapa export"+((j&&j.error)?(" ("+j.error+")"):"")+"."); } })
+        .catch(function(){ xb.disabled=false; xb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid export."); });
+      return;
+    }
     var vc=t.closest && t.closest('.vchip[data-mp="view"]');
     if(vc){ STATE.view=vc.getAttribute("data-v"); root.querySelectorAll('.vchip[data-mp="view"]').forEach(function(c){ c.className="vchip"+(c.getAttribute("data-v")===STATE.view?" on":""); }); render(); return; }
     var kb=t.closest && t.closest(".klarbtn");

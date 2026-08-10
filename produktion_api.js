@@ -14,6 +14,7 @@ export function registerProduktionRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
     planningAuthed, planningCors, publicRateLimited, clientIp,
+    renderBatchExport,   // (offert_api) samtliga ordrar i intervall → ETT sammanslaget PDF
   } = deps;
 
   const _str = (v) => (v == null ? "" : String(v));
@@ -210,6 +211,21 @@ export function registerProduktionRoutes(app, deps) {
       return res.json({ ok: true, order_id: _str(req.params.id), klar_for_leverans: klar });
     } catch (e) {
       console.error("[/admin/produktion/order/:id/leveransklar]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/produktion/export?date= | from=&to= [&parts=list,prep,pm,order] — samtliga ordrar → ETT PDF ──
+  app.options("/admin/produktion/export", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/produktion/export", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!renderBatchExport) return res.status(501).json({ ok: false, error: "export_not_wired" });
+      const out = await renderBatchExport({ date: _str(req.query.date), from: _str(req.query.from), to: _str(req.query.to), parts: _str(req.query.parts) });
+      if (!out || !out.ok) return res.status(400).json(out || { ok: false, error: "export_fel" });
+      return res.json(out);
+    } catch (e) {
+      console.error("[/admin/produktion/export]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });

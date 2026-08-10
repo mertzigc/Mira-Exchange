@@ -19856,6 +19856,10 @@ registerProduktionRoutes(app, {
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,
+  // batch-export (samtliga ordrar i intervall → ETT PDF) via offert_api:s render-motor
+  renderBatchExport: (opts) => (offertEngine && offertEngine.renderBatchExport)
+    ? offertEngine.renderBatchExport(opts)
+    : Promise.reject(new Error("offert_engine_not_ready")),
 });
 
 // ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──
