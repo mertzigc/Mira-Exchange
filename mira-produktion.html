@@ -1,0 +1,156 @@
+<!--
+  MIRA — Produktion: dagsvy per kök (Fas 1). Läser /admin/produktion/dag?date=
+  → aggregerad prep-lista per kök + per-order-rader, med kök-fördelning.
+  Design: OFFERT_PRODUKTION_HANDOFF.md §5. Fristående HTML-block (.mp-namnrymd).
+
+  KOPPLING I BUBBLE:
+    data-mira="api_host"        = https://mira-exchange.onrender.com
+    data-mira="planning_token"  = PLANNING_ADMIN_TOKEN
+  OBS: INGEN ?. eller ?? (Bubbles script-parser). IIFE, BROOT-scopat.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .mp, .mp *{box-sizing:border-box;margin:0;padding:0}
+  .mp{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;padding:22px 26px 40px;border-radius:14px}
+  .mp input[type=hidden]{display:none}
+  .mp h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}.mp h1 span{color:var(--orange)}
+  .mp .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 20px}
+  .mp .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+  .mp .datein{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--white);font-family:var(--fb);font-size:13px;color-scheme:dark}
+  .mp .datein:focus{outline:none;border-color:var(--orange)}
+  .mp .navbtn{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--w70);cursor:pointer;font-family:var(--fb);font-size:13px}
+  .mp .navbtn:hover{border-color:var(--orange);color:var(--orange)}
+  .mp .summary{color:var(--w40);font-size:12px;margin-left:auto}
+  .mp .kok{background:var(--panel);border:1px solid var(--border);border-radius:13px;margin-bottom:14px;overflow:hidden}
+  .mp .kok.none{border-color:rgba(224,90,90,.4)}
+  .mp .kok-h{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:var(--card)}
+  .mp .kok-h .knamn{font-family:'DM Serif Display',Georgia,serif;font-size:18px}
+  .mp .kok.none .knamn{color:var(--red)}
+  .mp .kok-h .kmeta{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
+  .mp .prep{border-top:1px solid var(--border)}
+  .mp .prep-h{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;cursor:pointer}
+  .mp .prep-h:hover{background:var(--card)}
+  .mp .prep-h .pk{font-weight:700;font-size:14px}
+  .mp .prep-h .pk .exp{color:var(--w40);font-weight:400;margin-right:7px;display:inline-block;transition:transform .12s}
+  .mp .prep-h.open .exp{color:var(--orange);transform:rotate(90deg)}
+  .mp .prep-h .ptot{font-variant-numeric:tabular-nums;font-weight:800;font-size:15px;background:var(--deep);border-radius:7px;padding:3px 11px;white-space:nowrap}
+  .mp .items{display:none;padding:0 18px 12px}
+  .mp .items.open{display:block}
+  .mp table.it{width:100%;border-collapse:collapse}
+  .mp table.it th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:6px 8px;border-bottom:1px solid var(--w10)}
+  .mp table.it td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12.5px}
+  .mp .it-antal{font-weight:800;white-space:nowrap;width:70px}
+  .mp .it-ben{font-weight:600}
+  .mp .it-beskr{color:var(--w40);font-size:11px;margin-top:2px}
+  .mp .it-meta{color:var(--w70);white-space:nowrap;font-size:11px}
+  .mp .it-kok{background:var(--input);border:1px solid var(--border);border-radius:7px;padding:5px 7px;color:var(--white);font-family:var(--fb);font-size:11.5px;max-width:150px}
+  .mp .it-kok:focus{outline:none;border-color:var(--orange)}
+  .mp .empty{color:var(--w40);padding:30px 4px;text-align:center}
+  .mp .err{color:var(--red);padding:20px 4px}
+</style>
+
+<div class="mp">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+
+  <h1>Produktion <span>·</span> dagsvy</h1>
+  <div class="sub">Prep-lista per kök · aggregerat på leveransdatum</div>
+
+  <div class="bar">
+    <button class="navbtn" data-mp="prev">‹ Föregående dag</button>
+    <input type="date" class="datein" data-mp="date">
+    <button class="navbtn" data-mp="next">Nästa dag ›</button>
+    <button class="navbtn" data-mp="today">Idag</button>
+    <span class="summary" data-mp="summary"></span>
+  </div>
+
+  <div data-mp="body"><div class="empty">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".mp"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-mp-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-mp-claimed","1");
+  var $=function(k){ return root.querySelector('[data-mp="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+  var STATE={ date:"", data:null, koklist:[] };
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function num(n){ return (n==null?0:Math.round(n*100)/100).toLocaleString("sv-SE"); }
+  function todayISO(){ var d=new Date(); return d.toISOString().slice(0,10); }
+  function addDays(iso, n){ var d=new Date(iso+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+
+  function kokOptions(koks, cur){ var o='<option value="">— ej tilldelat —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
+
+  function itemsTable(items, koks){
+    var trs=items.map(function(it){
+      return '<tr>'+
+        '<td class="it-antal">'+esc(num(it.antal))+' '+esc(it.enhet||"")+'</td>'+
+        '<td><div class="it-ben">'+esc(it.benamning||"")+'</div>'+(it.beskrivning?('<div class="it-beskr">'+esc(it.beskrivning)+'</div>'):'')+'</td>'+
+        '<td class="it-meta">'+esc(it.order_nr||"")+(it.company?(' · '+esc(it.company)):'')+'</td>'+
+        '<td><select class="it-kok" data-rad="'+esc(it.rad_id)+'">'+kokOptions(koks, it.kok_id||"")+'</select></td>'+
+      '</tr>';
+    }).join("");
+    return '<table class="it"><thead><tr><th>Antal</th><th>Maträtt / produkt</th><th>Order</th><th>Kök</th></tr></thead><tbody>'+trs+'</tbody></table>';
+  }
+  function render(){
+    var d=STATE.data;
+    if(!d){ $("body").innerHTML='<div class="empty">Laddar…</div>'; return; }
+    $("summary").textContent=d.order_count+" ordrar · "+d.row_count+" rader";
+    if(!d.koks || !d.koks.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
+    var koks=STATE.koklist||[];
+    var h=d.koks.map(function(g, gi){
+      var preps=g.prep.map(function(p, pi){
+        return '<div class="prep">'+
+          '<div class="prep-h" data-g="'+gi+'" data-p="'+pi+'"><div class="pk"><span class="exp">▸</span>'+esc(p.kategori)+'</div><div class="ptot">'+esc(num(p.total_antal))+' st</div></div>'+
+          '<div class="items" data-items="'+gi+'-'+pi+'">'+itemsTable(p.items, koks)+'</div>'+
+        '</div>';
+      }).join("");
+      return '<div class="kok'+(g.kok_id?"":" none")+'"><div class="kok-h"><div class="knamn">'+esc(g.kok_namn)+'</div><div class="kmeta">'+g.row_count+' rader</div></div>'+preps+'</div>';
+    }).join("");
+    $("body").innerHTML=h;
+  }
+
+  function load(){
+    if(!HOST||!TOKEN){ $("body").innerHTML='<div class="err">Saknar api_host/planning_token.</div>'; return; }
+    $("body").innerHTML='<div class="empty">Laddar…</div>';
+    fetch(HOST+"/admin/produktion/dag?date="+encodeURIComponent(STATE.date),{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; } STATE.data=j; STATE.koklist=j.koklist||[]; render(); })
+      .catch(function(){ $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
+  }
+  function setDate(iso){ STATE.date=iso; var di=$("date"); if(di) di.value=iso; load(); }
+
+  root.addEventListener("click",function(e){
+    var t=e.target;
+    if(t.closest && t.closest('[data-mp="prev"]')){ setDate(addDays(STATE.date,-1)); return; }
+    if(t.closest && t.closest('[data-mp="next"]')){ setDate(addDays(STATE.date,1)); return; }
+    if(t.closest && t.closest('[data-mp="today"]')){ setDate(todayISO()); return; }
+    var ph=t.closest && t.closest(".prep-h");
+    if(ph){ ph.classList.toggle("open"); var box=root.querySelector('[data-items="'+ph.getAttribute("data-g")+'-'+ph.getAttribute("data-p")+'"]'); if(box) box.classList.toggle("open"); return; }
+  });
+  root.addEventListener("change",function(e){
+    var sel=e.target;
+    if(!sel.classList || !sel.classList.contains("it-kok")) return;
+    if(sel.getAttribute("data-mp")==="date"){ return; }
+    var radId=sel.getAttribute("data-rad"), kokId=sel.value;
+    sel.disabled=true;
+    fetch(HOST+"/admin/produktion/rad/"+encodeURIComponent(radId)+"/kok",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({kok_id:kokId})})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ sel.disabled=false; if(!j||!j.ok){ alert("Kunde inte flytta rad."); return; } load(); })   // reload → omgruppering
+      .catch(function(){ sel.disabled=false; alert("Nätverksfel."); });
+  });
+  root.addEventListener("change",function(e){ if(e.target.getAttribute("data-mp")==="date"){ STATE.date=e.target.value; load(); } });
+
+  setDate(todayISO());
+})();
+</script>

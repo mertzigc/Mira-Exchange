@@ -354,6 +354,8 @@
   // ── order-editor (inline, Mira-order redigerbar utan cutoff) ──
   var orderCache={};
   function kokOptions(koks, cur){ var o='<option value="">— kök —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
+  var PREP_KATEGORIER=["Frallor","Kall lunch","Varm lunch","Sallad","Wraps","Mingel","Buffé","Bröd","Konditori"];
+  function prepOptions(cur){ var list=PREP_KATEGORIER.slice(); if(cur && list.indexOf(cur)<0) list.unshift(cur); var o='<option value="">— prep —</option>'; for(var i=0;i<list.length;i++){ o+='<option value="'+esc(list[i])+'"'+(list[i]===cur?" selected":"")+'>'+esc(list[i])+'</option>'; } return o; }
   // Läsvy för en rad (dokument-utseende). Penna → redigering.
   function rowViewInner(r){
     var qty=esc(r.antal)+(r.enhet?(' '+esc(r.enhet)):'')+' · '+esc(money(r.apris))+'/'+(r.enhet?esc(r.enhet):'st');
@@ -380,7 +382,7 @@
         '<div style="max-width:90px"><label class="el">Rabatt %</label><input class="ein af-or-rabatt" type="number" step="any" value="'+esc(r.rabatt)+'"></div>'+
         '<div style="max-width:90px"><label class="el">Moms %</label><input class="ein af-or-moms" type="number" step="any" value="'+esc(r.moms)+'"></div>'+
         '<div><label class="el">Kök (produktionsenhet)</label><select class="ein af-or-kok">'+kokOptions(koks, r.kok_id)+'</select></div>'+
-        '<div><label class="el">Prep-kategori</label><input class="ein af-or-prep" value="'+esc(r.prep_kategori)+'"></div>'+
+        '<div><label class="el">Prep-kategori</label><select class="ein af-or-prep">'+prepOptions(r.prep_kategori)+'</select></div>'+
       '</div>'+
       '<div><label class="el">Beskrivning (visas i produktion)</label><textarea class="ein af-or-besk" rows="2">'+esc(r.beskrivning_long)+'</textarea></div>'+
       '<div class="eact" style="justify-content:flex-start"><button class="ebtn af-or-save">Spara rad</button><button class="af-lnk af-or-cancel">Avbryt</button><span class="af-or-msg ecur"></span></div>';

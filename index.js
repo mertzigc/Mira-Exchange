@@ -8,6 +8,7 @@ import { createApprovalDocEngine } from "./offer_approval_doc.js";
 import { createContractRenderEngine } from "./contract_render.js";
 import { registerOffertRoutes } from "./offert_api.js";
 import { registerAffarRoutes } from "./affar_api.js";
+import { registerProduktionRoutes } from "./produktion_api.js";
 import multer from "multer";
 import express from "express";
 import cors from "cors";
@@ -445,6 +446,7 @@ function requireApiKey(req, res, next) {
     "/admin/dokument/",            // Fristående Dokument-upload för wizardens bilagor (Fas 5b spår 2), x-admin-token-grindad
     "/admin/offert",               // F&E offert-modul (Fas 2), x-admin-token-grindad (offert_api.js)
     "/admin/affar",                // Affär samlad vy (P1), x-admin-token-grindad (affar_api.js)
+    "/admin/produktion",           // Produktionsmodul (dagsvy per kök), x-admin-token-grindad (produktion_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
@@ -19846,6 +19848,14 @@ registerAffarRoutes(app, {
   renderOrderPdf: (id, kind) => (offertEngine && offertEngine.renderOrderPdf)
     ? offertEngine.renderOrderPdf(id, kind)
     : Promise.reject(new Error("offert_engine_not_ready")),
+});
+
+registerProduktionRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
 });
 
 // ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──
