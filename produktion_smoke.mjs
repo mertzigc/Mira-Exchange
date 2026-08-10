@@ -10,8 +10,11 @@ const TS = (d) => new Date(d + "T00:00:00.000Z").getTime() + 12 * 3600000;   // 
 const DB = {
   ClientCompany: [{ _id: "cc1", Name_company: "Acme AB" }, { _id: "cc2", Name_company: "Beta AB" }],
   Kok: [{ _id: "k1", namn: "Epicenter", aktiv: true }, { _id: "k2", namn: "Söder", aktiv: true }],
+  User: [{ _id: "u1", "First Name": "Anna", "Surname": "Andersson" }],
+  deal: [{ _id: "d1", deal_owner: ["u1"] }],
+  Offert: [{ _id: "off1", deal: "d1" }],
   MiraOrder: [
-    { _id: "o1", source: "mira_fe", ordernr: "FE-1", kundforetag: "cc1", orderstatus: "Bekräftad", leverans_ts: TS("2026-08-12"), leveranstid: "12:00" },
+    { _id: "o1", source: "mira_fe", ordernr: "FE-1", kundforetag: "cc1", orderstatus: "Bekräftad", leverans_ts: TS("2026-08-12"), leveranstid: "12:00", offert: "off1" },
     { _id: "o2", source: "mira_fe", ordernr: "FE-2", kundforetag: "cc2", orderstatus: "I produktion", leverans_ts: TS("2026-08-12"), leveranstid: "11:30" },
     { _id: "o3", source: "mira_fe", ordernr: "FE-3", kundforetag: "cc1", orderstatus: "Levererad", leverans_ts: TS("2026-08-12") },   // fel status → exkluderas
     { _id: "o4", source: "mira_fe", ordernr: "FE-4", kundforetag: "cc1", orderstatus: "Bekräftad", leverans_ts: TS("2026-08-13") },   // fel dag → exkluderas
@@ -57,6 +60,25 @@ const run = async () => {
   // date saknas → 400
   const bad = await call("get", "/admin/produktion/dag", { query: {} });
   ok("date saknas → 400", bad.code === 400);
+
+  // ── vår referens (ansvarig) + leveranstid per rad ──
+  const frItem = k1.prep.find((p) => p.kategori === "Frallor").items[0];
+  ok("item ansvarig = deal-ägare (Anna Andersson via off1→d1→u1)", frItem.ansvarig === "Anna Andersson");
+  ok("item leveranstid från order (12:00)", frItem.leveranstid === "12:00");
+
+  // ── order-vy (orders-lista) ──
+  ok("orders-lista: 2 ordrar", d.body.orders.length === 2);
+  const oFE1 = d.body.orders.find((o) => o.ordernr === "FE-1");
+  ok("order FE-1: ansvarig + leveranstid + köks + antal", oFE1 && oFE1.ansvarig === "Anna Andersson" && oFE1.leveranstid === "12:00" && oFE1.total_antal === 75 && oFE1.koks.length >= 1);
+
+  // ── status-avcheckning ──
+  const st = await call("post", "/admin/produktion/order/:id/status", { params: { id: "o1" }, body: { status: "Levererad" } });
+  ok("status → Levererad", st.body.ok && DB.MiraOrder.find((o) => o._id === "o1").orderstatus === "Levererad");
+  const st0 = await call("post", "/admin/produktion/order/:id/status", { params: { id: "o1" }, body: { status: "Trams" } });
+  ok("ogiltig status → 400", st0.code === 400);
+  // efter Levererad → o1 försvinner ur dagsvyn (bara o2 kvar)
+  const d2 = await call("get", "/admin/produktion/dag", { query: { date: "2026-08-12" } });
+  ok("o1 (Levererad) borta ur dagsvyn → 1 order kvar", d2.body.order_count === 1);
 
   // reassign rad r5 (kaka) → k2
   const mv = await call("post", "/admin/produktion/rad/:id/kok", { params: { id: "r5" }, body: { kok_id: "k2" } });

@@ -61,6 +61,8 @@
   .af .af-datein{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--white);font-family:var(--fb);font-size:12px;color-scheme:dark}
   .af .af-datein:focus{outline:none;border-color:var(--orange)}
   .af .af-datclear{cursor:pointer}
+  .af .af-weekpreset{cursor:pointer;border-color:rgba(244,123,48,.4);color:var(--orange)}
+  .af .af-weekpreset:hover{background:var(--orange-dim)}
   tr.affar{cursor:pointer}
   tr.affar.open td{background:var(--card)}
   .deal-cell{padding:0 !important;background:var(--card)}
@@ -236,6 +238,7 @@
     <input type="date" class="af-datein" data-af="from" title="Från och med (affärsdatum: offert/order/faktura-datum, annars skapad)">
     <span class="muted">–</span>
     <input type="date" class="af-datein" data-af="to" title="Till och med">
+    <span class="chip af-weekpreset" data-af="weekpreset" title="Denna vecka + nästa vecka (mån–sön)">📅 Denna + nästa vecka</span>
     <span class="muted" style="font-size:11px;margin-left:6px">Person:</span>
     <select class="af-datein" data-af="person"><option value="">Alla</option></select>
     <span class="muted" style="font-size:11px">Kategori:</span>
@@ -283,6 +286,7 @@
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function money(n){ if(n==null) return ""; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
   function clip(s,n){ s=String(s==null?"":s); return s.length>n?s.slice(0,n-1)+"…":s; }
+  function weekRange(){ var d=new Date(); var day=(d.getDay()+6)%7; var mon=new Date(d); mon.setDate(d.getDate()-day); var sun=new Date(mon); sun.setDate(mon.getDate()+13); function iso(x){ return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); } return { from:iso(mon), to:iso(sun) }; }
   function cm(v){ return v?esc(v):'<span class="muted">—</span>'; }
 
   function renderFunnel(){
@@ -1331,6 +1335,7 @@
         .catch(function(){ vb.textContent=orig; if(w){ w.close(); } alert("Nätverksfel vid PDF-hämtning."); });
       return;
     }
+    var wp=t.closest && t.closest('[data-af="weekpreset"]'); if(wp){ var wr=weekRange(); STATE.from=wr.from; STATE.to=wr.to; STATE.page=0; var ff=$("from"); if(ff) ff.value=wr.from; var tf=$("to"); if(tf) tf.value=wr.to; if(STATE.type) loadList(); return; }
     var dc=t.closest && t.closest('[data-af="datclear"]'); if(dc){ STATE.from=""; STATE.to=""; STATE.person=""; STATE.kategori=""; STATE.page=0; var pe=$("person"); if(pe) pe.value=""; var ke=$("kategori"); if(ke) ke.value=""; if(STATE.type) loadList(); return; }
     var pnav=t.closest('[data-af="prev"],[data-af="next"]');
     if(pnav){ var isNext=(pnav.getAttribute("data-af")==="next"); if(isNext&&STATE.hasMore){ STATE.page++; loadList(); } else if(!isNext&&STATE.page>0){ STATE.page--; loadList(); } return; }

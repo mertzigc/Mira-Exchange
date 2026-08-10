@@ -53,6 +53,20 @@
   .mp .it-kok:focus{outline:none;border-color:var(--orange)}
   .mp .empty{color:var(--w40);padding:30px 4px;text-align:center}
   .mp .err{color:var(--red);padding:20px 4px}
+  .mp .muted{color:var(--w40)}
+  .mp .vchip{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 15px;font-size:12px;color:var(--w70);cursor:pointer}
+  .mp .vchip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .mp .it-tid{font-weight:700;white-space:nowrap;color:var(--orange)}
+  .mp .it-ref{white-space:nowrap;color:var(--w70)}
+  .mp .pill{display:inline-block;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--w70);background:var(--orange-dim)}
+  .mp .klarbtn{background:var(--green);border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:800;color:#0d1a12;cursor:pointer;font-family:var(--fb);white-space:nowrap}
+  .mp .klarbtn:hover{filter:brightness(1.07)}
+  .mp .klarbtn:disabled{opacity:.5}
+  .mp .ord-table{background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden}
+  .mp .ord-table table{width:100%;border-collapse:collapse}
+  .mp .ord-table th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:11px 14px;border-bottom:1.5px solid var(--w10)}
+  .mp .ord-table td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:middle;font-size:13px}
+  .mp .ord-table tr:last-child td{border-bottom:none}
 </style>
 
 <div class="mp">
@@ -70,6 +84,12 @@
     <span class="summary" data-mp="summary"></span>
   </div>
 
+  <div class="bar">
+    <span class="muted" style="font-size:11px">Vy:</span>
+    <span class="vchip on" data-mp="view" data-v="prep">Prep-lista per kök</span>
+    <span class="vchip" data-mp="view" data-v="order">Ordrar</span>
+  </div>
+
   <div data-mp="body"><div class="empty">Laddar…</div></div>
 </div>
 
@@ -82,7 +102,7 @@
   var $=function(k){ return root.querySelector('[data-mp="'+k+'"]'); };
   var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
-  var STATE={ date:"", data:null, koklist:[] };
+  var STATE={ date:"", data:null, koklist:[], view:"prep" };
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function num(n){ return (n==null?0:Math.round(n*100)/100).toLocaleString("sv-SE"); }
@@ -95,17 +115,36 @@
     var trs=items.map(function(it){
       return '<tr>'+
         '<td class="it-antal">'+esc(num(it.antal))+' '+esc(it.enhet||"")+'</td>'+
+        '<td class="it-tid">'+esc(it.leveranstid||"—")+'</td>'+
         '<td><div class="it-ben">'+esc(it.benamning||"")+'</div>'+(it.beskrivning?('<div class="it-beskr">'+esc(it.beskrivning)+'</div>'):'')+'</td>'+
         '<td class="it-meta">'+esc(it.order_nr||"")+(it.company?(' · '+esc(it.company)):'')+'</td>'+
+        '<td class="it-ref">'+esc(it.ansvarig||"—")+'</td>'+
         '<td><select class="it-kok" data-rad="'+esc(it.rad_id)+'">'+kokOptions(koks, it.kok_id||"")+'</select></td>'+
       '</tr>';
     }).join("");
-    return '<table class="it"><thead><tr><th>Antal</th><th>Maträtt / produkt</th><th>Order</th><th>Kök</th></tr></thead><tbody>'+trs+'</tbody></table>';
+    return '<table class="it"><thead><tr><th>Antal</th><th>Tid</th><th>Maträtt / produkt</th><th>Order</th><th>Vår referens</th><th>Kök</th></tr></thead><tbody>'+trs+'</tbody></table>';
+  }
+  function renderOrders(){
+    var d=STATE.data, os=d.orders||[];
+    if(!os.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
+    var trs=os.map(function(o){
+      return '<tr>'+
+        '<td class="it-tid">'+esc(o.leveranstid||"—")+'</td>'+
+        '<td><div class="it-ben">'+esc(o.ordernr||"")+'</div><div class="it-beskr">'+esc(o.company||"")+'</div></td>'+
+        '<td class="it-meta">'+esc((o.koks||[]).join(", "))+'</td>'+
+        '<td class="it-antal">'+esc(num(o.total_antal))+'</td>'+
+        '<td class="it-ref">'+esc(o.ansvarig||"—")+'</td>'+
+        '<td><span class="pill">'+esc(o.status)+'</span></td>'+
+        '<td><button class="klarbtn" data-order="'+esc(o.order_id)+'">✓ Markera klar</button></td>'+
+      '</tr>';
+    }).join("");
+    $("body").innerHTML='<div class="ord-table"><table><thead><tr><th>Tid</th><th>Order</th><th>Kök</th><th>Antal</th><th>Vår referens</th><th>Status</th><th></th></tr></thead><tbody>'+trs+'</tbody></table></div>';
   }
   function render(){
     var d=STATE.data;
     if(!d){ $("body").innerHTML='<div class="empty">Laddar…</div>'; return; }
     $("summary").textContent=d.order_count+" ordrar · "+d.row_count+" rader";
+    if(STATE.view==="order"){ renderOrders(); return; }
     if(!d.koks || !d.koks.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
     var koks=STATE.koklist||[];
     var h=d.koks.map(function(g, gi){
@@ -135,6 +174,16 @@
     if(t.closest && t.closest('[data-mp="prev"]')){ setDate(addDays(STATE.date,-1)); return; }
     if(t.closest && t.closest('[data-mp="next"]')){ setDate(addDays(STATE.date,1)); return; }
     if(t.closest && t.closest('[data-mp="today"]')){ setDate(todayISO()); return; }
+    var vc=t.closest && t.closest('.vchip[data-mp="view"]');
+    if(vc){ STATE.view=vc.getAttribute("data-v"); root.querySelectorAll('.vchip[data-mp="view"]').forEach(function(c){ c.className="vchip"+(c.getAttribute("data-v")===STATE.view?" on":""); }); render(); return; }
+    var kb=t.closest && t.closest(".klarbtn");
+    if(kb){
+      var oid=kb.getAttribute("data-order"); kb.disabled=true; kb.textContent="…";
+      fetch(HOST+"/admin/produktion/order/"+encodeURIComponent(oid)+"/status",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({status:"Levererad"})})
+        .then(function(r){ return r.json(); }).then(function(j){ if(!j||!j.ok){ kb.disabled=false; kb.textContent="✓ Markera klar"; alert("Kunde inte uppdatera status."); return; } load(); })   // reload → försvinner ur dagsvyn
+        .catch(function(){ kb.disabled=false; kb.textContent="✓ Markera klar"; alert("Nätverksfel."); });
+      return;
+    }
     var ph=t.closest && t.closest(".prep-h");
     if(ph){ ph.classList.toggle("open"); var box=root.querySelector('[data-items="'+ph.getAttribute("data-g")+'-'+ph.getAttribute("data-p")+'"]'); if(box) box.classList.toggle("open"); return; }
   });
