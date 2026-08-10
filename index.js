@@ -9,6 +9,7 @@ import { createContractRenderEngine } from "./contract_render.js";
 import { registerOffertRoutes } from "./offert_api.js";
 import { registerAffarRoutes } from "./affar_api.js";
 import { registerProduktionRoutes } from "./produktion_api.js";
+import { makeKitchenAuth } from "./kitchen_auth.js";
 import multer from "multer";
 import express from "express";
 import cors from "cors";
@@ -18225,9 +18226,15 @@ function _planningAuthed(req) {
 }
 function _planningCors(req, res) {
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token, x-api-key");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-token, x-api-key, x-kitchen-token");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 }
+
+// ── Köks-iPad: delad access-kod → scoped kitchen-session-token (ger BARA /admin/produktion/*, ─
+//    aldrig hela admin-ytan). Publik sida mira-fm.com/produktion bär ALDRIG PLANNING_ADMIN_TOKEN. ─
+//    Logik i kitchen_auth.js (testbar). Signeras med PLANNING_ADMIN_TOKEN (stannar server-side).
+const KITCHEN_ACCESS_CODE = String(process.env.KITCHEN_ACCESS_CODE || "").trim();
+const _kitchenAuth = makeKitchenAuth({ secret: PLANNING_ADMIN_TOKEN, ttlMs: 12 * 60 * 60 * 1000, code: KITCHEN_ACCESS_CODE });
 // Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)
 const PLANNING_SRC = {
   [ACTIVITY_CONFIG.AT_BOKNING]: { type: ACTIVITY_CONFIG.COMISSION_TYPE, status: ACTIVITY_CONFIG.C_STATUS, thread: "Tråd", start: ACTIVITY_CONFIG.C_DELIVERY, end: ACTIVITY_CONFIG.C_END },
@@ -19852,7 +19859,8 @@ registerAffarRoutes(app, {
 
 registerProduktionRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
-  planningAuthed: _planningAuthed,
+  // Produktion-endpoints accepterar admin-token (intern vy) ELLER köks-session-token (iPad-vyn)
+  planningAuthed: (req) => _planningAuthed(req) || _kitchenAuth.authed(req),
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,
@@ -19860,6 +19868,17 @@ registerProduktionRoutes(app, {
   renderBatchExport: (opts) => (offertEngine && offertEngine.renderBatchExport)
     ? offertEngine.renderBatchExport(opts)
     : Promise.reject(new Error("offert_engine_not_ready")),
+});
+
+// ── POST /admin/produktion/login {code} — köks-iPad: delad kod → 12h scoped kitchen-token. ──
+//    Ingen admin-token krävs (login SJÄLV). Sidan mira-fm.com/produktion bär ingen admin-token.
+app.options("/admin/produktion/login", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+app.post("/admin/produktion/login", (req, res) => {
+  _planningCors(req, res);
+  if (_publicRateLimited && _publicRateLimited("klogin:" + _clientIp(req), 20)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  const out = _kitchenAuth.verifyCode(String((req.body && req.body.code) || "").trim());
+  if (!out.ok) return res.status(out.status || 401).json({ ok: false, error: out.error });
+  return res.json({ ok: true, token: out.token, exp: out.exp });
 });
 
 // ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──

@@ -1,0 +1,386 @@
+<!--
+  MIRA — Produktion iPad-vy (kök). Publik sida (t.ex. mira-fm.com/produktion).
+  Köken loggar in med DELAD åtkomstkod → scoped köks-token (bara /admin/produktion/*).
+  BÄR ALDRIG admin-token. Läser/skriver via x-kitchen-token.
+  Kopia av mira-produktion.html men: .mpi-namnrymd, login-grind, iPad-läge-toggle (större/läsbart).
+
+  KOPPLING I BUBBLE:
+    data-mira="api_host" = https://mira-exchange.onrender.com
+  Server kräver env KITCHEN_ACCESS_CODE. OBS: INGEN ?. eller ?? (Bubbles parser). IIFE, BROOT-scopat.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .mpi, .mpi *{box-sizing:border-box;margin:0;padding:0}
+  .mpi{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;padding:22px 26px 40px;border-radius:14px;position:relative;min-height:420px}
+  .mpi input[type=hidden]{display:none}
+  .mpi h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}.mpi h1 span{color:var(--orange)}
+  .mpi .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 20px}
+  .mpi .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+  .mpi .topbar-actions{display:flex;gap:10px;align-items:center}
+  .mpi .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
+  .mpi .datein{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--white);font-family:var(--fb);font-size:13px;color-scheme:dark}
+  .mpi .datein:focus{outline:none;border-color:var(--orange)}
+  .mpi .navbtn{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--w70);cursor:pointer;font-family:var(--fb);font-size:13px}
+  .mpi .navbtn:hover{border-color:var(--orange);color:var(--orange)}
+  .mpi .summary{color:var(--w40);font-size:12px;margin-left:auto}
+  .mpi .kok{background:var(--panel);border:1px solid var(--border);border-radius:13px;margin-bottom:14px;overflow:hidden}
+  .mpi .kok.none{border-color:rgba(224,90,90,.4)}
+  .mpi .kok-h{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:var(--card)}
+  .mpi .kok-h .knamn{font-family:'DM Serif Display',Georgia,serif;font-size:18px}
+  .mpi .kok.none .knamn{color:var(--red)}
+  .mpi .kok-h .kmeta{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
+  .mpi .prep{border-top:1px solid var(--border)}
+  .mpi .prep-h{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;cursor:pointer}
+  .mpi .prep-h:hover{background:var(--card)}
+  .mpi .prep-h .pk{font-weight:700;font-size:14px}
+  .mpi .prep-h .pk .exp{color:var(--w40);font-weight:400;margin-right:7px;display:inline-block;transition:transform .12s}
+  .mpi .prep-h.open .exp{color:var(--orange);transform:rotate(90deg)}
+  .mpi .prep-h .ptot{font-variant-numeric:tabular-nums;font-weight:800;font-size:15px;background:var(--deep);border-radius:7px;padding:3px 11px;white-space:nowrap}
+  .mpi .items{display:none;padding:0 18px 12px}
+  .mpi .items.open{display:block}
+  .mpi table.it{width:100%;border-collapse:collapse}
+  .mpi table.it th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:6px 8px;border-bottom:1px solid var(--w10)}
+  .mpi table.it td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12.5px}
+  .mpi .it-antal{font-weight:800;white-space:nowrap;width:70px}
+  .mpi .it-ben{font-weight:600}
+  .mpi .it-beskr{color:var(--w40);font-size:11px;margin-top:2px}
+  .mpi .it-meta{color:var(--w70);white-space:nowrap;font-size:11px}
+  .mpi .it-kok{background:var(--input);border:1px solid var(--border);border-radius:7px;padding:5px 7px;color:var(--white);font-family:var(--fb);font-size:11.5px;max-width:150px}
+  .mpi .it-kok:focus{outline:none;border-color:var(--orange)}
+  .mpi .empty{color:var(--w40);padding:30px 4px;text-align:center}
+  .mpi .err{color:var(--red);padding:20px 4px}
+  .mpi .muted{color:var(--w40)}
+  .mpi .vchip{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 15px;font-size:12px;color:var(--w70);cursor:pointer}
+  .mpi .vchip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .mpi .it-tid{font-weight:700;white-space:nowrap;color:var(--orange)}
+  .mpi .it-ref{white-space:nowrap;color:var(--w70)}
+  .mpi .pill{display:inline-block;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--w70);background:var(--orange-dim)}
+  .mpi .klarbtn{background:var(--green);border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:800;color:#0d1a12;cursor:pointer;font-family:var(--fb);white-space:nowrap}
+  .mpi .klarbtn:hover{filter:brightness(1.07)}
+  .mpi .klarbtn:disabled{opacity:.5}
+  /* producerad-checkbox på prep-rad */
+  .mpi .it-chk{width:34px;text-align:center}
+  .mpi .prodchk{width:17px;height:17px;accent-color:var(--green);cursor:pointer}
+  .mpi tr.prod-done .it-ben,.mpi tr.prod-done .it-antal{text-decoration:line-through;color:var(--w40)}
+  .mpi tr.prod-done{opacity:.62}
+  /* klar-för-leverans toggle + produktions-progress i order-vy */
+  .mpi .lvbtn{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);white-space:nowrap}
+  .mpi .lvbtn:hover{border-color:var(--green);color:var(--green)}
+  .mpi .lvbtn.on{background:var(--green);border-color:var(--green);color:#0d1a12;font-weight:800}
+  .mpi .lvbtn:disabled{opacity:.5}
+  .mpi .prog{font-variant-numeric:tabular-nums;font-weight:700;background:var(--deep);border-radius:6px;padding:3px 9px;color:var(--w70);white-space:nowrap}
+  .mpi .prog.full{background:rgba(76,175,125,.18);color:var(--green)}
+  /* levererad order dimmad men kvar + Ångra */
+  .mpi tr.ord-done{opacity:.5}
+  .mpi tr.ord-done .pill{background:rgba(76,175,125,.14);color:var(--green);border-color:rgba(76,175,125,.35)}
+  .mpi .undobtn{background:transparent;border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);white-space:nowrap}
+  .mpi .undobtn:hover{border-color:var(--orange);color:var(--orange)}
+  .mpi .undobtn:disabled{opacity:.5}
+  .mpi .ord-table{background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden}
+  .mpi .ord-table table{width:100%;border-collapse:collapse}
+  .mpi .ord-table th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:11px 14px;border-bottom:1.5px solid var(--w10)}
+  .mpi .ord-table td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:middle;font-size:13px}
+  .mpi .ord-table tr:last-child td{border-bottom:none}
+
+  /* ── LOGIN-grind ── */
+  .mpi .mpi-login{position:absolute;inset:0;background:var(--base);border-radius:14px;display:none;align-items:center;justify-content:center;z-index:20}
+  .mpi .mpi-login.show{display:flex}
+  .mpi .mpi-login-card{width:340px;max-width:90%;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:34px 30px;text-align:center}
+  .mpi .mpi-login-logo{font-family:'DM Serif Display',Georgia,serif;font-size:26px;margin-bottom:4px}
+  .mpi .mpi-login-logo span{color:var(--orange)}
+  .mpi .mpi-login-sub{color:var(--w40);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:22px}
+  .mpi .mpi-code{width:100%;background:var(--input);border:1px solid var(--border);border-radius:11px;padding:15px 16px;color:var(--white);font-family:var(--fb);font-size:17px;text-align:center;letter-spacing:.12em;color-scheme:dark}
+  .mpi .mpi-code:focus{outline:none;border-color:var(--orange)}
+  .mpi .mpi-login-btn{width:100%;margin-top:14px;background:var(--orange);border:none;border-radius:11px;padding:15px;color:#1c1206;font-family:var(--fb);font-size:16px;font-weight:800;cursor:pointer}
+  .mpi .mpi-login-btn:disabled{opacity:.55}
+  .mpi .mpi-login-err{color:var(--red);font-size:12.5px;margin-top:12px;min-height:16px}
+
+  /* ── iPad-läge: större/läsbart, touch-vänligt ── */
+  .mpi.ipad{font-size:16px}
+  .mpi.ipad h1{font-size:32px}
+  .mpi.ipad .sub{font-size:12px}
+  .mpi.ipad .navbtn{font-size:16px;padding:14px 20px;border-radius:12px}
+  .mpi.ipad .datein{font-size:16px;padding:13px 15px;border-radius:12px}
+  .mpi.ipad .summary{font-size:14px}
+  .mpi.ipad .upd{font-size:13px}
+  .mpi.ipad .vchip{font-size:16px;padding:12px 24px}
+  .mpi.ipad .kok-h{padding:18px 22px}
+  .mpi.ipad .knamn{font-size:23px}
+  .mpi.ipad .kok-h .kmeta{font-size:13px}
+  .mpi.ipad .prep-h{padding:18px 22px}
+  .mpi.ipad .prep-h .pk{font-size:19px}
+  .mpi.ipad .prep-h .ptot{font-size:19px;padding:6px 15px}
+  .mpi.ipad .items{padding:0 22px 16px}
+  .mpi.ipad table.it th{font-size:11px;padding:9px 10px}
+  .mpi.ipad table.it td{padding:15px 10px;font-size:16px}
+  .mpi.ipad .it-antal{font-size:18px;width:96px}
+  .mpi.ipad .it-tid{font-size:16px}
+  .mpi.ipad .it-meta,.mpi.ipad .it-ref{font-size:14px}
+  .mpi.ipad .it-beskr{font-size:13px}
+  .mpi.ipad .it-chk{width:60px}
+  .mpi.ipad .prodchk{width:30px;height:30px}
+  .mpi.ipad .it-kok{font-size:16px;padding:12px 12px;max-width:230px}
+  .mpi.ipad .klarbtn,.mpi.ipad .lvbtn,.mpi.ipad .undobtn{font-size:15px;padding:13px 20px;border-radius:11px}
+  .mpi.ipad .prog{font-size:16px;padding:5px 13px}
+  .mpi.ipad .pill{font-size:13px;padding:5px 14px}
+  .mpi.ipad .ord-table th{font-size:11px;padding:14px 16px}
+  .mpi.ipad .ord-table td{padding:18px 16px;font-size:16px}
+</style>
+
+<div class="mpi">
+  <input type="hidden" data-mira="api_host" value="https://mira-exchange.onrender.com">
+
+  <!-- LOGIN-grind (köks-kod) -->
+  <div class="mpi-login" data-mpi="login">
+    <div class="mpi-login-card">
+      <div class="mpi-login-logo">Mira <span>·</span> Produktion</div>
+      <div class="mpi-login-sub">Logga in för köket</div>
+      <input type="password" class="mpi-code" data-mpi="code" placeholder="Åtkomstkod" autocomplete="off" inputmode="text">
+      <button class="mpi-login-btn" data-mpi="login-btn">Logga in</button>
+      <div class="mpi-login-err" data-mpi="login-err"></div>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div class="mpi-app" data-mpi="app">
+    <div class="topbar">
+      <div>
+        <h1>Produktion <span>·</span> kök</h1>
+        <div class="sub">Prep-lista per kök · aggregerat på leveransdatum</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="navbtn" data-mpi="ipadtoggle" title="Väx­la mellan stor iPad-vy och kompakt vy">🔍 Stor vy</button>
+        <button class="navbtn" data-mpi="logout" title="Logga ut">⎋ Logga ut</button>
+      </div>
+    </div>
+
+    <div class="bar">
+      <button class="navbtn" data-mpi="prev">‹ Föreg. dag</button>
+      <input type="date" class="datein" data-mpi="date">
+      <button class="navbtn" data-mpi="next">Nästa dag ›</button>
+      <button class="navbtn" data-mpi="today">Idag</button>
+      <button class="navbtn" data-mpi="week" style="border-color:rgba(244,123,48,.4);color:var(--orange)">📅 Denna + nästa vecka</button>
+      <button class="navbtn" data-mpi="refresh">↻ Uppdatera</button>
+      <button class="navbtn" data-mpi="export" style="border-color:rgba(91,141,239,.4);color:var(--blue)" title="Leveranslista + prep-lista + kök-PM + orderbekräftelser för perioden i ett PDF">⬇ Exportera PDF</button>
+      <span class="summary" data-mpi="summary"></span>
+      <span class="upd muted" data-mpi="upd" style="font-size:11px"></span>
+    </div>
+
+    <div class="bar">
+      <span class="muted" style="font-size:11px">Vy:</span>
+      <span class="vchip on" data-mpi="view" data-v="prep">Prep-lista per kök</span>
+      <span class="vchip" data-mpi="view" data-v="order">Ordrar</span>
+    </div>
+
+    <div data-mpi="body"><div class="empty">Laddar…</div></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".mpi"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-mpi-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-mpi-claimed","1");
+  var $=function(k){ return root.querySelector('[data-mpi="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,"");
+  var TOKEN_KEY="mira_kitchen_token", IPAD_KEY="mira_kitchen_ipad";
+  var STATE={ date:"", mode:"day", from:"", to:"", data:null, koklist:[], view:"prep", updatedAt:null };
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function num(n){ return (n==null?0:Math.round(n*100)/100).toLocaleString("sv-SE"); }
+  function todayISO(){ var d=new Date(); return d.toISOString().slice(0,10); }
+  function addDays(iso, n){ var d=new Date(iso+"T00:00:00.000Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+  function weekRange(){ var d=new Date(); var day=(d.getDay()+6)%7; var mon=new Date(d); mon.setDate(d.getDate()-day); var sun=new Date(mon); sun.setDate(mon.getDate()+13); function iso(x){ return x.getFullYear()+"-"+("0"+(x.getMonth()+1)).slice(-2)+"-"+("0"+x.getDate()).slice(-2); } return { from:iso(mon), to:iso(sun) }; }
+  function pad2(n){ return ("0"+n).slice(-2); }
+  function stampNow(){ STATE.updatedAt=new Date(); var u=$("upd"); if(u){ var d=STATE.updatedAt; u.textContent="· uppdaterad "+pad2(d.getHours())+":"+pad2(d.getMinutes())+":"+pad2(d.getSeconds()); } }
+
+  // ── köks-token (localStorage) + auth-fetch (401 → tillbaka till login) ──
+  function getToken(){ try{ return localStorage.getItem(TOKEN_KEY)||""; }catch(e){ return ""; } }
+  function setToken(t){ try{ if(t){ localStorage.setItem(TOKEN_KEY,t); } else { localStorage.removeItem(TOKEN_KEY); } }catch(e){} }
+  function kfetch(url, opts){
+    opts=opts||{}; var h=opts.headers||{}; h["x-kitchen-token"]=getToken(); opts.headers=h;
+    return fetch(url,opts).then(function(r){ if(r.status===401){ showLogin(true); throw new Error("unauthorized"); } return r.json(); });
+  }
+  function showLogin(show){
+    var lg=$("login"); if(lg) lg.className="mpi-login"+(show?" show":"");
+    if(show){ var c=$("code"); if(c){ c.value=""; setTimeout(function(){ try{ c.focus(); }catch(e){} },50); } }
+  }
+  function doLogin(){
+    var codeEl=$("code"), btn=$("login-btn"), err=$("login-err");
+    var code=(codeEl&&codeEl.value)||""; if(!code){ if(err) err.textContent="Ange kod."; return; }
+    if(btn){ btn.disabled=true; btn.textContent="Loggar in…"; } if(err) err.textContent="";
+    fetch(HOST+"/admin/produktion/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:code})})
+      .then(function(r){ return r.json().then(function(j){ return {status:r.status,j:j}; }); })
+      .then(function(x){ if(btn){ btn.disabled=false; btn.textContent="Logga in"; }
+        if(x.j&&x.j.ok&&x.j.token){ setToken(x.j.token); showLogin(false); boot(); return; }
+        if(err){ err.textContent=(x.status===503)?"Kod ej konfigurerad på servern.":(x.status===429)?"För många försök — vänta en stund.":"Fel kod, försök igen."; } })
+      .catch(function(){ if(btn){ btn.disabled=false; btn.textContent="Logga in"; } if(err) err.textContent="Nätverksfel."; });
+  }
+  function logout(){ setToken(""); STATE.data=null; showLogin(true); }
+
+  // ── iPad-läge ──
+  function applyIpad(on){ if(on){ root.classList.add("ipad"); } else { root.classList.remove("ipad"); } var b=$("ipadtoggle"); if(b) b.textContent=on?"🗜 Kompakt vy":"🔍 Stor vy"; }
+  function ipadOn(){ try{ var v=localStorage.getItem(IPAD_KEY); return v===null?true:(v==="1"); }catch(e){ return true; } }   // default PÅ (kök-iPad)
+  function setIpad(on){ try{ localStorage.setItem(IPAD_KEY,on?"1":"0"); }catch(e){} applyIpad(on); }
+
+  function kokOptions(koks, cur){ var o='<option value="">— ej tilldelat —</option>'; for(var i=0;i<koks.length;i++){ o+='<option value="'+esc(koks[i].id)+'"'+(koks[i].id===cur?" selected":"")+'>'+esc(koks[i].namn)+'</option>'; } return o; }
+
+  function itemsTable(items, koks){
+    var trs=items.map(function(it){
+      var done=it.producerad===true;
+      return '<tr class="'+(done?"prod-done":"")+'">'+
+        '<td class="it-chk"><input type="checkbox" class="prodchk" data-rad="'+esc(it.rad_id)+'"'+(done?" checked":"")+' title="Markera producerad"></td>'+
+        '<td class="it-antal">'+esc(num(it.antal))+' '+esc(it.enhet||"")+'</td>'+
+        '<td class="it-tid">'+esc(it.leveranstid||"—")+'</td>'+
+        '<td><div class="it-ben">'+esc(it.benamning||"")+'</div>'+(it.beskrivning?('<div class="it-beskr">'+esc(it.beskrivning)+'</div>'):'')+'</td>'+
+        '<td class="it-meta">'+esc(it.order_nr||"")+(it.company?(' · '+esc(it.company)):'')+'</td>'+
+        '<td class="it-ref">'+esc(it.ansvarig||"—")+'</td>'+
+        '<td><select class="it-kok" data-rad="'+esc(it.rad_id)+'">'+kokOptions(koks, it.kok_id||"")+'</select></td>'+
+      '</tr>';
+    }).join("");
+    return '<table class="it"><thead><tr><th></th><th>Antal</th><th>Tid</th><th>Maträtt / produkt</th><th>Order</th><th>Vår referens</th><th>Kök</th></tr></thead><tbody>'+trs+'</tbody></table>';
+  }
+  function renderOrders(){
+    var d=STATE.data, os=d.orders||[];
+    if(!os.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
+    var trs=os.map(function(o){
+      var lev=o.levererad===true;
+      var klar=o.klar_for_leverans===true;
+      var rc=o.row_count||0, pr=o.producerade||0;
+      var progFull=(rc>0 && pr>=rc);
+      var klarBtn='<button class="lvbtn'+(klar?" on":"")+'" data-lev="'+esc(o.order_id)+'">'+(klar?"✓ Klar f. leverans":"Markera klar")+'</button>';
+      var action=lev
+        ? '<button class="undobtn" data-undo="'+esc(o.order_id)+'">↩ Ångra leverans</button>'
+        : '<button class="klarbtn" data-order="'+esc(o.order_id)+'">✓ Levererad</button>';
+      return '<tr class="'+(lev?"ord-done":"")+'">'+
+        '<td class="it-tid">'+esc(o.leveranstid||"—")+'</td>'+
+        '<td><div class="it-ben">'+esc(o.ordernr||"")+'</div><div class="it-beskr">'+esc(o.company||"")+'</div></td>'+
+        '<td class="it-meta">'+esc((o.koks||[]).join(", "))+'</td>'+
+        '<td class="it-antal">'+esc(num(o.total_antal))+'</td>'+
+        '<td class="it-ref">'+esc(o.ansvarig||"—")+'</td>'+
+        '<td><span class="prog'+(progFull?" full":"")+'" title="Producerade rader">'+pr+'/'+rc+'</span></td>'+
+        '<td>'+klarBtn+'</td>'+
+        '<td><span class="pill">'+esc(o.status)+'</span></td>'+
+        '<td>'+action+'</td>'+
+      '</tr>';
+    }).join("");
+    $("body").innerHTML='<div class="ord-table"><table><thead><tr><th>Tid</th><th>Order</th><th>Kök</th><th>Antal</th><th>Vår referens</th><th>Prod.</th><th>Klar f. lev.</th><th>Status</th><th></th></tr></thead><tbody>'+trs+'</tbody></table></div>';
+  }
+  function render(){
+    var d=STATE.data;
+    if(!d){ $("body").innerHTML='<div class="empty">Laddar…</div>'; return; }
+    var period=(STATE.mode==="range")?(STATE.from+" – "+STATE.to):STATE.date;
+    $("summary").textContent=period+" · "+d.order_count+" ordrar · "+d.row_count+" rader";
+    if(STATE.view==="order"){ renderOrders(); return; }
+    if(!d.koks || !d.koks.length){ $("body").innerHTML='<div class="empty">Inga ordrar i produktion detta datum.</div>'; return; }
+    var koks=STATE.koklist||[];
+    var h=d.koks.map(function(g, gi){
+      var preps=g.prep.map(function(p, pi){
+        return '<div class="prep">'+
+          '<div class="prep-h" data-g="'+gi+'" data-p="'+pi+'"><div class="pk"><span class="exp">▸</span>'+esc(p.kategori)+'</div><div class="ptot">'+esc(num(p.total_antal))+' st</div></div>'+
+          '<div class="items" data-items="'+gi+'-'+pi+'">'+itemsTable(p.items, koks)+'</div>'+
+        '</div>';
+      }).join("");
+      return '<div class="kok'+(g.kok_id?"":" none")+'"><div class="kok-h"><div class="knamn">'+esc(g.kok_namn)+'</div><div class="kmeta">'+g.row_count+' rader</div></div>'+preps+'</div>';
+    }).join("");
+    $("body").innerHTML=h;
+  }
+
+  function load(){
+    if(!HOST){ $("body").innerHTML='<div class="err">Saknar api_host.</div>'; return; }
+    if(!getToken()){ showLogin(true); return; }
+    $("body").innerHTML='<div class="empty">Laddar…</div>';
+    var qs=(STATE.mode==="range")?("from="+encodeURIComponent(STATE.from)+"&to="+encodeURIComponent(STATE.to)):("date="+encodeURIComponent(STATE.date));
+    kfetch(HOST+"/admin/produktion/dag?"+qs)
+      .then(function(j){ if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; } STATE.data=j; STATE.koklist=j.koklist||[]; stampNow(); render(); })
+      .catch(function(){ /* 401 hanteras i kfetch; annat = nätverk */ var b=$("body"); if(b&&getToken()) b.innerHTML='<div class="err">Nätverksfel.</div>'; });
+  }
+  function setDate(iso){ STATE.mode="day"; STATE.date=iso; var di=$("date"); if(di) di.value=iso; load(); }
+  function setRange(r){ STATE.mode="range"; STATE.from=r.from; STATE.to=r.to; load(); }
+  function boot(){ setDate(todayISO()); }
+
+  root.addEventListener("click",function(e){
+    var t=e.target;
+    // login/topbar
+    if(t.closest && t.closest('[data-mpi="login-btn"]')){ doLogin(); return; }
+    if(t.closest && t.closest('[data-mpi="logout"]')){ logout(); return; }
+    if(t.closest && t.closest('[data-mpi="ipadtoggle"]')){ setIpad(!root.classList.contains("ipad")); return; }
+    if(t.closest && t.closest('[data-mpi="prev"]')){ setDate(addDays(STATE.date,-1)); return; }
+    if(t.closest && t.closest('[data-mpi="next"]')){ setDate(addDays(STATE.date,1)); return; }
+    if(t.closest && t.closest('[data-mpi="today"]')){ setDate(todayISO()); return; }
+    if(t.closest && t.closest('[data-mpi="week"]')){ setRange(weekRange()); return; }
+    if(t.closest && t.closest('[data-mpi="refresh"]')){ load(); return; }
+    var xb=t.closest && t.closest('[data-mpi="export"]');
+    if(xb){
+      var qs=(STATE.mode==="range")?("from="+encodeURIComponent(STATE.from)+"&to="+encodeURIComponent(STATE.to)):("date="+encodeURIComponent(STATE.date));
+      var w=window.open("","_blank");   // förladda flik i klick-gesten (undviker popup-blockare)
+      xb.disabled=true; var orig=xb.textContent; xb.textContent="Genererar PDF…";
+      kfetch(HOST+"/admin/produktion/export?"+qs)
+        .then(function(j){ xb.disabled=false; xb.textContent=orig;
+          if(j&&j.ok&&j.file_url){ var u=(j.file_url.indexOf("//")===0?("https:"+j.file_url):j.file_url); if(w){ w.location.href=u; } }
+          else { if(w){ w.close(); } alert("Kunde inte skapa export"+((j&&j.error)?(" ("+j.error+")"):"")+"."); } })
+        .catch(function(){ xb.disabled=false; xb.textContent=orig; if(w){ w.close(); } });
+      return;
+    }
+    var vc=t.closest && t.closest('.vchip[data-mpi="view"]');
+    if(vc){ STATE.view=vc.getAttribute("data-v"); root.querySelectorAll('.vchip[data-mpi="view"]').forEach(function(c){ c.className="vchip"+(c.getAttribute("data-v")===STATE.view?" on":""); }); render(); return; }
+    var kb=t.closest && t.closest(".klarbtn");
+    if(kb){
+      var oid=kb.getAttribute("data-order"); kb.disabled=true; kb.textContent="…";
+      kfetch(HOST+"/admin/produktion/order/"+encodeURIComponent(oid)+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"Levererad"})})
+        .then(function(j){ if(!j||!j.ok){ kb.disabled=false; kb.textContent="✓ Levererad"; alert("Kunde inte uppdatera status."); return; } load(); })
+        .catch(function(){ kb.disabled=false; kb.textContent="✓ Levererad"; });
+      return;
+    }
+    var ub=t.closest && t.closest(".undobtn");   // Ångra leverans → tillbaka till "I produktion"
+    if(ub){
+      var uid=ub.getAttribute("data-undo"); ub.disabled=true; ub.textContent="…";
+      kfetch(HOST+"/admin/produktion/order/"+encodeURIComponent(uid)+"/status",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"I produktion"})})
+        .then(function(j){ if(!j||!j.ok){ ub.disabled=false; ub.textContent="↩ Ångra leverans"; alert("Kunde inte ångra."); return; } load(); })
+        .catch(function(){ ub.disabled=false; ub.textContent="↩ Ångra leverans"; });
+      return;
+    }
+    var lv=t.closest && t.closest(".lvbtn");   // Klar för leverans (yes/no-toggle)
+    if(lv){
+      var lid=lv.getAttribute("data-lev"); var willKlar=!lv.classList.contains("on"); lv.disabled=true;
+      kfetch(HOST+"/admin/produktion/order/"+encodeURIComponent(lid)+"/leveransklar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({klar:willKlar})})
+        .then(function(j){ lv.disabled=false; if(!j||!j.ok){ alert("Kunde inte uppdatera."); return; } lv.classList.toggle("on",willKlar); lv.textContent=willKlar?"✓ Klar f. leverans":"Markera klar"; })
+        .catch(function(){ lv.disabled=false; });
+      return;
+    }
+    var ph=t.closest && t.closest(".prep-h");
+    if(ph){ ph.classList.toggle("open"); var box=root.querySelector('[data-items="'+ph.getAttribute("data-g")+'-'+ph.getAttribute("data-p")+'"]'); if(box) box.classList.toggle("open"); return; }
+  });
+  root.addEventListener("change",function(e){
+    var cb=e.target;
+    if(cb.classList && cb.classList.contains("prodchk")){   // markera prep-rad producerad
+      var rid=cb.getAttribute("data-rad"), done=cb.checked, tr=cb.closest("tr"); cb.disabled=true;
+      kfetch(HOST+"/admin/produktion/rad/"+encodeURIComponent(rid)+"/producerad",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({producerad:done})})
+        .then(function(j){ cb.disabled=false; if(!j||!j.ok){ cb.checked=!done; alert("Kunde inte uppdatera."); return; } if(tr) tr.classList.toggle("prod-done",done); })
+        .catch(function(){ cb.disabled=false; cb.checked=!done; });
+      return;
+    }
+    var sel=e.target;
+    if(!sel.classList || !sel.classList.contains("it-kok")) return;
+    var radId=sel.getAttribute("data-rad"), kokId=sel.value;
+    sel.disabled=true;
+    kfetch(HOST+"/admin/produktion/rad/"+encodeURIComponent(radId)+"/kok",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kok_id:kokId})})
+      .then(function(j){ sel.disabled=false; if(!j||!j.ok){ alert("Kunde inte flytta rad."); return; } load(); })
+      .catch(function(){ sel.disabled=false; });
+  });
+  root.addEventListener("change",function(e){ if(e.target.getAttribute("data-mpi")==="date"){ STATE.date=e.target.value; load(); } });
+  root.addEventListener("keydown",function(e){ if(e.target.getAttribute("data-mpi")==="code" && e.key==="Enter"){ doLogin(); } });
+
+  // ── init ──
+  applyIpad(ipadOn());
+  if(getToken()){ showLogin(false); boot(); } else { showLogin(true); }
+})();
+</script>
