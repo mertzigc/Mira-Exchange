@@ -37,6 +37,7 @@ const deps = {
   bubbleGet: async (t, id) => (DB[t] || []).find((r) => r._id === id) || null,
   bubblePatch: async (t, id, p) => { const r = (DB[t] || []).find((x) => x._id === id); if (r) Object.assign(r, p); return {}; },
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
+  renderOrderPdf: async (id, kind) => { const o = (DB.MiraOrder || []).find((x) => x._id === id); if (!o) return { ok: false, error: "order_not_found" }; if (o.source !== "mira_fe") return { ok: false, error: "ej_mira_order" }; return { ok: true, kind: kind === "pm" ? "pm" : "order", file_url: "//cdn/" + id + "-" + (kind || "order") + ".pdf", dokument_id: "d", bytes: 9 }; },
 };
 registerProduktionRoutes(app, deps);
 let pass = 0, fail = 0; const ok = (n, c) => { if (c) pass++; else { fail++; console.log("  ✗ " + n); } };
@@ -115,6 +116,12 @@ const run = async () => {
   // reassign rad r5 (kaka) → k2
   const mv = await call("post", "/admin/produktion/rad/:id/kok", { params: { id: "r5" }, body: { kok_id: "k2" } });
   ok("reassign rad → k2 (Söder)", mv.body.ok && mv.body.kok_namn === "Söder" && DB.MiraOrderRad.find((r) => r._id === "r5").kok === "k2");
+
+  // ── order-PDF-route (ladda hem/kika) ──
+  const pdf = await call("get", "/admin/produktion/order/:id/pdf", { params: { id: "o1" }, query: {} });
+  ok("order-PDF default kind=order → file_url", pdf.body.ok && pdf.body.kind === "order" && /o1-order\.pdf/.test(pdf.body.file_url));
+  const pdfPm = await call("get", "/admin/produktion/order/:id/pdf", { params: { id: "o1" }, query: { kind: "pm" } });
+  ok("order-PDF kind=pm → pm-fil", pdfPm.body.ok && pdfPm.body.kind === "pm" && /o1-pm\.pdf/.test(pdfPm.body.file_url));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

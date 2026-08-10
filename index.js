@@ -19868,6 +19868,10 @@ registerProduktionRoutes(app, {
   renderBatchExport: (opts) => (offertEngine && offertEngine.renderBatchExport)
     ? offertEngine.renderBatchExport(opts)
     : Promise.reject(new Error("offert_engine_not_ready")),
+  // enskild order-PDF (kund) | kök-PM via offert_api:s render-motor
+  renderOrderPdf: (id, kind) => (offertEngine && offertEngine.renderOrderPdf)
+    ? offertEngine.renderOrderPdf(id, kind)
+    : Promise.reject(new Error("offert_engine_not_ready")),
 });
 
 // ── POST /admin/produktion/login {code} — köks-iPad: delad kod → 12h scoped kitchen-token. ──

@@ -85,6 +85,9 @@
   .mp .ord-table th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:11px 14px;border-bottom:1.5px solid var(--w10)}
   .mp .ord-table td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:middle;font-size:13px}
   .mp .ord-table tr:last-child td{border-bottom:none}
+  .mp .pdflink{display:inline-block;margin-top:5px;font-size:11px;font-weight:700;color:var(--blue);cursor:pointer;border:1px solid rgba(91,141,239,.35);border-radius:6px;padding:3px 8px;white-space:nowrap}
+  .mp .pdflink:hover{background:rgba(91,141,239,.12)}
+  .mp .pdflink.busy{opacity:.55}
 </style>
 
 <div class="mp">
@@ -165,7 +168,7 @@
         : '<button class="klarbtn" data-order="'+esc(o.order_id)+'">✓ Levererad</button>';
       return '<tr class="'+(lev?"ord-done":"")+'">'+
         '<td class="it-tid">'+esc(o.leveranstid||"—")+'</td>'+
-        '<td><div class="it-ben">'+esc(o.ordernr||"")+'</div><div class="it-beskr">'+esc(o.company||"")+'</div></td>'+
+        '<td><div class="it-ben">'+esc(o.ordernr||"")+'</div><div class="it-beskr">'+esc(o.company||"")+'</div><span class="pdflink" data-pdf="'+esc(o.order_id)+'">📄 Order-PDF</span></td>'+
         '<td class="it-meta">'+esc((o.koks||[]).join(", "))+'</td>'+
         '<td class="it-antal">'+esc(num(o.total_antal))+'</td>'+
         '<td class="it-ref">'+esc(o.ansvarig||"—")+'</td>'+
@@ -231,6 +234,18 @@
     }
     var vc=t.closest && t.closest('.vchip[data-mp="view"]');
     if(vc){ STATE.view=vc.getAttribute("data-v"); root.querySelectorAll('.vchip[data-mp="view"]').forEach(function(c){ c.className="vchip"+(c.getAttribute("data-v")===STATE.view?" on":""); }); render(); return; }
+    var pl=t.closest && t.closest(".pdflink");   // ladda hem/kika order-PDF
+    if(pl){
+      var poid=pl.getAttribute("data-pdf"); var w=window.open("","_blank");
+      pl.classList.add("busy"); var porig=pl.textContent; pl.textContent="Genererar…";
+      fetch(HOST+"/admin/produktion/order/"+encodeURIComponent(poid)+"/pdf?kind=order",{headers:{"x-admin-token":TOKEN}})
+        .then(function(r){ return r.json(); })
+        .then(function(j){ pl.classList.remove("busy"); pl.textContent=porig;
+          if(j&&j.ok&&j.file_url){ var u=(j.file_url.indexOf("//")===0?("https:"+j.file_url):j.file_url); if(w){ w.location.href=u; } }
+          else { if(w){ w.close(); } alert("Kunde inte skapa PDF"+((j&&j.error)?(" ("+j.error+")"):"")+"."); } })
+        .catch(function(){ pl.classList.remove("busy"); pl.textContent=porig; if(w){ w.close(); } alert("Nätverksfel."); });
+      return;
+    }
     var kb=t.closest && t.closest(".klarbtn");
     if(kb){
       var oid=kb.getAttribute("data-order"); kb.disabled=true; kb.textContent="…";

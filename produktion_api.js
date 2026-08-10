@@ -15,6 +15,7 @@ export function registerProduktionRoutes(app, deps) {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
     planningAuthed, planningCors, publicRateLimited, clientIp,
     renderBatchExport,   // (offert_api) samtliga ordrar i intervall → ETT sammanslaget PDF
+    renderOrderPdf,      // (offert_api) enskild order → kund-Order-PDF | kök-PM
   } = deps;
 
   const _str = (v) => (v == null ? "" : String(v));
@@ -211,6 +212,22 @@ export function registerProduktionRoutes(app, deps) {
       return res.json({ ok: true, order_id: _str(req.params.id), klar_for_leverans: klar });
     } catch (e) {
       console.error("[/admin/produktion/order/:id/leveransklar]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/produktion/order/:id/pdf?kind=order|pm — enskild order-PDF (ladda hem/kika). Default order. ──
+  app.options("/admin/produktion/order/:id/pdf", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/produktion/order/:id/pdf", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!renderOrderPdf) return res.status(501).json({ ok: false, error: "render_not_wired" });
+      const kind = _str(req.query.kind) === "pm" ? "pm" : "order";
+      const out = await renderOrderPdf(_str(req.params.id), kind);
+      if (!out || !out.ok) return res.status(out && out.error === "ej_mira_order" ? 400 : 500).json(out || { ok: false, error: "render_fel" });
+      return res.json(out);
+    } catch (e) {
+      console.error("[/admin/produktion/order/:id/pdf]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
