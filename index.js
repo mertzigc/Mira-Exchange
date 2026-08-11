@@ -19618,11 +19618,21 @@ app.post("/admin/offers/upsert", async (req, res) => {
     if (b.pricing_formula_json !== undefined) patch[FORFRAGAN.OFFER_PRICING_JSON] = String(b.pricing_formula_json || "");
 
     let id = b.id ? String(b.id).trim() : null;
-    if (id) {
-      await bubblePatch(FORFRAGAN.OFFER_TYPE, id, patch);
-    } else {
-      const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch);
-      id = created?.id || created?._id || null;
+    async function _writeOffer() {
+      if (id) { await bubblePatch(FORFRAGAN.OFFER_TYPE, id, patch); }
+      else { const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch); id = created?.id || created?._id || null; }
+    }
+    try {
+      await _writeOffer();
+    } catch (e) {
+      // Skottsäkert: en ogiltig Leverantör-referens (raderad/fel typ) får ALDRIG
+      // blockera sparningen av pris/text. Släpp fältet och spara ändå.
+      const blob = JSON.stringify(e?.detail || e?.message || "");
+      if (patch.Leverantör && /Leverant/i.test(blob)) {
+        delete patch.Leverantör;
+        await _writeOffer();
+        console.warn("[/admin/offers/upsert] ogiltig Leverantör-referens — sparade utan leverantör");
+      } else { throw e; }
     }
     const fresh = id ? await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null) : null;
     return res.json({ ok: true, id, offer: fresh ? _offerAdminOut(fresh) : null });
@@ -22328,5 +22338,11 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT));
+// Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
+app.get("/version", (req, res) => {
+  res.json({ ok: true, build: "2026-08-11-supplier-dynamic-retry",
+    note: "dynamisk leverantörsuppslagning + spar-retry utan Leverantör" });
+});
+
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-11-supplier-dynamic-retry]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
