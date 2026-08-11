@@ -58,9 +58,11 @@
   @media (max-width:720px){ .mt-grid { grid-template-columns:repeat(2,1fr); } }
   @media (max-width:460px){ .mt-grid { grid-template-columns:1fr; } }
   /* ── Fas 3: paket ── */
-  #mt-packages { display:flex; flex-direction:column; gap:10px; margin-bottom:14px; }
+  #mt-packages { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px; }
   #mt-packages:empty { display:none; }
-  .mt-pkg { background:#262b42; border:0.5px solid rgba(255,255,255,0.09); border-radius:12px; padding:16px 18px; }
+  .mt-pkg { flex:1 1 300px; max-width:480px; background:#262b42; border:0.5px solid rgba(255,255,255,0.09); border-radius:12px; padding:16px 18px; display:flex; flex-direction:column; }
+  .mt-pkg-top { flex:1; }
+  @media (max-width:720px){ .mt-pkg { max-width:none; } }
   .mt-pkg.hero { border-color:rgba(219,105,35,0.55); background:linear-gradient(135deg,rgba(219,105,35,0.10),#262b42 60%); }
   .mt-pkg-top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
   .mt-pkg-name { font-size:15px; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px; }
