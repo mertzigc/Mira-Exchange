@@ -19607,32 +19607,20 @@ app.post("/admin/offers/upsert", async (req, res) => {
     if (b.start != null) patch[FORFRAGAN.OFFER_START] = b.start;
     if (b.end != null) patch[FORFRAGAN.OFFER_END] = b.end;
     if (b.company_ids != null) patch[FORFRAGAN.OFFER_COMPANY] = Array.isArray(b.company_ids) ? b.company_ids : [];
-    // Auto-leverantör per kategori (din regel: när kategori sätts → mappa supplier)
-    if (b.category) {
-      // Slå upp leverantören dynamiskt (på namn i live-DB) i stället för hårdkodat
-      // id — det hårdkodade id:t kan vara inaktuellt (raderad/omskapad Leverantör → 400).
-      const supId = await _supplierIdForCategory(b.category);
-      if (supId) patch.Leverantör = [supId];
-    }
+    // OBS: INGEN auto-Leverantör på Erbjudandet. SUPPLIER_BY_CATEGORY/-mappen är gjord
+    // för Comission.Leverantör (ordern), vars Bubble-typ skiljer sig från
+    // Erbjudande.Leverantör → att skriva den här gav "object does not exist".
+    // Leverantören sätts korrekt på Comission vid beställning (request-activation /
+    // forfragan/create). Erbjudandets ev. egen leverantör sätts manuellt vid behov.
     if (b.custom_form_json !== undefined) patch[FORFRAGAN.OFFER_FORM_JSON] = String(b.custom_form_json || "");
     if (b.pricing_formula_json !== undefined) patch[FORFRAGAN.OFFER_PRICING_JSON] = String(b.pricing_formula_json || "");
 
     let id = b.id ? String(b.id).trim() : null;
-    async function _writeOffer() {
-      if (id) { await bubblePatch(FORFRAGAN.OFFER_TYPE, id, patch); }
-      else { const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch); id = created?.id || created?._id || null; }
-    }
-    try {
-      await _writeOffer();
-    } catch (e) {
-      // Skottsäkert: en ogiltig Leverantör-referens (raderad/fel typ) får ALDRIG
-      // blockera sparningen av pris/text. Släpp fältet och spara ändå.
-      const blob = JSON.stringify(e?.detail || e?.message || "");
-      if (patch.Leverantör && /Leverant/i.test(blob)) {
-        delete patch.Leverantör;
-        await _writeOffer();
-        console.warn("[/admin/offers/upsert] ogiltig Leverantör-referens — sparade utan leverantör");
-      } else { throw e; }
+    if (id) {
+      await bubblePatch(FORFRAGAN.OFFER_TYPE, id, patch);
+    } else {
+      const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch);
+      id = created?.id || created?._id || null;
     }
     const fresh = id ? await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null) : null;
     return res.json({ ok: true, id, offer: fresh ? _offerAdminOut(fresh) : null });
@@ -22340,9 +22328,9 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-11-supplier-dynamic-retry",
-    note: "dynamisk leverantörsuppslagning + spar-retry utan Leverantör" });
+  res.json({ ok: true, build: "2026-08-11-no-offer-supplier",
+    note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-11-supplier-dynamic-retry]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-11-no-offer-supplier]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
