@@ -19978,12 +19978,15 @@ function _servicesUnitOf(offer, fallback) {
   return SERVICES.UNIT_SUFFIX[String(raw)] || ("/" + String(raw));
 }
 
-function _servicesPriceOf(offer, defaultQty, fallback) {
+function _servicesPriceOf(offer, defaultQty, fallback, assumptions) {
   if (!offer) return fallback || 0;
   const formulaRaw = offer[FORFRAGAN.OFFER_PRICING_JSON];
   if (formulaRaw && String(formulaRaw).trim()) {
     try {
-      const r = _evalPricing(formulaRaw, { antal: defaultQty || 1 });
+      // Fas 2: mata prismotorns drivare med kundens egna siffror (yta, medarbetare)
+      // + rimliga defaults (antal, dagar) → priset anpassas per kund.
+      const answers = Object.assign({ antal: defaultQty || 1, dagar: 5 }, assumptions || {});
+      const r = _evalPricing(formulaRaw, answers);
       if (r && r.ok && r.total != null) return Math.round(Number(r.total) || 0);
     } catch (e) { /* fall through */ }
   }
@@ -19999,6 +20002,21 @@ function _servicesIncludes(productText) {
     .filter((s) => s.length > 1)
     .slice(0, 20);
 }
+
+// Fas 3: kurerade paket för merförsäljning. Config-drivet (inget Bubble-typ än) —
+// priset räknas live i frontend per valt kontor (summa av ingående tjänster − rabatt).
+// include = ServiceCatalog-slugs; saknad slug hoppas tyst över.
+const SERVICE_PACKAGES = [
+  { slug: "kontoret_runt", name: "Kontoret Runt", hero: true,
+    desc: "Hela kontoret omhändertaget — städ, kaffe, frukt och grönska i ett.",
+    include: ["housekeeping", "kaffe", "frukt", "vaxter"], rabatt_pct: 12 },
+  { slug: "trivsel", name: "Trivselpaket", hero: false,
+    desc: "Frukt och grönska som märks i vardagen.",
+    include: ["frukt", "vaxter"], rabatt_pct: 10 },
+  { slug: "frascht", name: "Fräscht & grönt", hero: false,
+    desc: "Daglig städning plus levande växter.",
+    include: ["housekeeping", "vaxter"], rabatt_pct: 8 },
+];
 
 async function _buildServicesDashboard(companyId) {
   // 1) Katalog
@@ -20023,6 +20041,32 @@ async function _buildServicesDashboard(companyId) {
     if (o) offerById.set(oid, o);
   }
 
+  // 2b) Offices för kunden (hämtas före katalogen så priser kan anpassas mot
+  //     kundens yta + arbetsplatser) — sortera på KontorsID (01, 02…) sen titel.
+  const officesRaw = await bubbleFindAll(SERVICES.OFFICE_TYPE, {
+    constraints: [{ key: SERVICES.OF_COMPANY, constraint_type: "equals", value: companyId }],
+  }).catch(() => []);
+  const offices = officesRaw.map((o) => ({
+    id: bubbleId(o),
+    name: o[SERVICES.OF_NAME] || "Kontor",
+    kontors_id: o[SERVICES.OF_KONTORSID] || null,
+    address: (o[SERVICES.OF_ADDRESS] && o[SERVICES.OF_ADDRESS].address) || "",
+    kvm: Number(String(o[SERVICES.OF_YTA] || "").replace(/[^\d.]/g, "")) || 0,
+    arbetsplatser: Number(o[SERVICES.OF_ARBETSPL] || 0) || 0,
+  })).sort((a, b) => {
+    const aid = a.kontors_id || "zzz", bid = b.kontors_id || "zzz";
+    if (aid !== bid) return aid.localeCompare(bid);
+    return (a.name || "").localeCompare(b.name || "");
+  });
+  const officeIds = new Set(offices.map((o) => o.id));
+
+  // Company-aggregat (Fas 2): summa yta + arbetsplatser över kundens kontor.
+  // Namnen matchar prismotorns standard-drivare (yta, arbetsplatser).
+  const assumptions = {
+    yta:           offices.reduce((s, o) => s + (Number(o.kvm) || 0), 0),
+    arbetsplatser: offices.reduce((s, o) => s + (Number(o.arbetsplatser) || 0), 0),
+  };
+
   // 3) Bygg catalog-respons
   const catalog = catalogsRaw.map((c) => {
     const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
@@ -20044,7 +20088,7 @@ async function _buildServicesDashboard(companyId) {
         capacity: o.Capacity != null ? Number(o.Capacity) : null,
         includes: _servicesIncludes(o["Produktinnehåll"]),
         terms: o.Villkor || "",
-        price: _servicesPriceOf(o, qtyMin, fromPrice),
+        price: _servicesPriceOf(o, qtyMin, fromPrice, assumptions),
         unit: _servicesUnitOf(o, fromUnit),
         pricing_formula_json: o[FORFRAGAN.OFFER_PRICING_JSON] || "",
       }));
@@ -20087,23 +20131,8 @@ async function _buildServicesDashboard(companyId) {
     };
   }).filter((c) => c.slug);
 
-  // 4) Offices för kunden — sortera på KontorsID (01, 02…) sen Office_title
-  const officesRaw = await bubbleFindAll(SERVICES.OFFICE_TYPE, {
-    constraints: [{ key: SERVICES.OF_COMPANY, constraint_type: "equals", value: companyId }],
-  }).catch(() => []);
-  const offices = officesRaw.map((o) => ({
-    id: bubbleId(o),
-    name: o[SERVICES.OF_NAME] || "Kontor",
-    kontors_id: o[SERVICES.OF_KONTORSID] || null,
-    address: (o[SERVICES.OF_ADDRESS] && o[SERVICES.OF_ADDRESS].address) || "",
-    kvm: Number(String(o[SERVICES.OF_YTA] || "").replace(/[^\d.]/g, "")) || 0,
-    arbetsplatser: Number(o[SERVICES.OF_ARBETSPL] || 0) || 0,
-  })).sort((a, b) => {
-    const aid = a.kontors_id || "zzz", bid = b.kontors_id || "zzz";
-    if (aid !== bid) return aid.localeCompare(bid);
-    return (a.name || "").localeCompare(b.name || "");
-  });
-  const officeIds = new Set(offices.map((o) => o.id));
+  // 4) Offices + assumptions beräknas nu i steg 2b ovan (före katalogen, så
+  //    priserna kan anpassas mot kundens yta/arbetsplatser).
 
   // 5) Aktiva Contracts för kunden — filtrera utgångna client-side
   const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
@@ -20238,6 +20267,8 @@ async function _buildServicesDashboard(companyId) {
 
   return {
     catalog, offices,
+    packages: SERVICE_PACKAGES,     // Fas 3: kurerade paket (pris räknas live i frontend)
+    assumptions,                    // Fas 2: {yta, arbetsplatser} — company-aggregat, driver priserna
     active_account:  activeAccount,
     active_by_office: activeByOffice,
     last_fe_order:   lastFeOrder,   // {ts, iso, doc_no, ref} eller null
@@ -20369,6 +20400,7 @@ app.post("/services/request-activation", async (req, res) => {
   const serviceSlug = String(b.service_slug || "").trim();
   const optionId = String(b.option_id || "").trim();
   const qty = Math.max(1, Number(b.qty || 1));
+  const officeId = String(b.office_id || "").trim() || null;
   if (!companyId)   return res.status(400).json({ ok: false, error: "company_id krävs" });
   if (!serviceSlug) return res.status(400).json({ ok: false, error: "service_slug krävs" });
   if (!optionId)    return res.status(400).json({ ok: false, error: "option_id krävs" });
@@ -20377,6 +20409,19 @@ app.post("/services/request-activation", async (req, res) => {
     // Hämta valt Erbjudande + ServiceCatalog för korrekt kategori + leverantör
     const offer = await bubbleGet(FORFRAGAN.OFFER_TYPE, optionId).catch(() => null);
     if (!offer) return res.status(404).json({ ok: false, error: "Erbjudande saknas" });
+
+    // Fas 4: hämta kontorets yta + arbetsplatser → förseglar SAMMA pris som grid:en
+    // visade för kunden (inte ett antal-1-defaultpris).
+    let assumptions = {};
+    if (officeId) {
+      const office = await bubbleGet(SERVICES.OFFICE_TYPE, officeId).catch(() => null);
+      if (office) {
+        assumptions = {
+          yta:           Number(String(office[SERVICES.OF_YTA] || "").replace(/[^\d.]/g, "")) || 0,
+          arbetsplatser: Number(office[SERVICES.OF_ARBETSPL] || 0) || 0,
+        };
+      }
+    }
 
     const cat = await bubbleFindOne(SERVICES.CATALOG_TYPE, [
       { key: SERVICES.SC_SLUG, constraint_type: "equals", value: serviceSlug },
@@ -20390,19 +20435,22 @@ app.post("/services/request-activation", async (req, res) => {
       `Aktivering begärd via kund-dashboarden.\n` +
       `Tjänst: ${serviceName}\n` +
       `Variant: ${offer.Title || optionId}\n` +
-      `Antal: ${qty}`;
+      `Antal: ${qty}` +
+      ((assumptions.yta || assumptions.arbetsplatser)
+        ? `\nBeräknat för: ${assumptions.yta || 0} kvm · ${assumptions.arbetsplatser || 0} arbetsplatser`
+        : "");
 
     // Pris-breakdown (försegld), samma mönster som forfragan/create
     let priceBreakdownJson = null;
     try {
       const formulaRaw = offer[FORFRAGAN.OFFER_PRICING_JSON];
       if (formulaRaw && String(formulaRaw).trim()) {
-        const answers = { antal: qty };
+        const answers = Object.assign({ antal: qty, dagar: 5 }, assumptions);
         const breakdown = _evalPricing(formulaRaw, answers);
         if (breakdown && breakdown.ok) {
           priceBreakdownJson = JSON.stringify({
             evaluated_at: new Date().toISOString(),
-            offer_id: optionId, answers, ...breakdown,
+            offer_id: optionId, office_id: officeId, answers, ...breakdown,
           });
         }
       }
@@ -20422,6 +20470,7 @@ app.post("/services/request-activation", async (req, res) => {
       [FORFRAGAN.C_CATEGORY]:    category,
       [FORFRAGAN.C_GUEST]:       qty,
       [FORFRAGAN.C_SUPPLIER]:    supplierId ? [supplierId] : null,
+      [FORFRAGAN.C_OFFICE]:      officeId,
       [FORFRAGAN.C_OFFER]:       optionId,
       [FORFRAGAN.C_PRICE_BREAKDOWN]: priceBreakdownJson,
     };

@@ -26,6 +26,9 @@
 //   tiered_discount { qty_from?, applies_to?, tiers:[{min, rate}] }
 //   volume_discount { qty_from, applies_to?, tiers:[{qty, rate}] }   // linjär
 //   min_charge      { amount }
+//   housekeeping    { qty_from(yta), days_from?, default_days?, days_map?,
+//                     avverk_low?, avverk_high?, avverk_break?, hourly?,
+//                     base?, material_per_sqm_year?, uplift? }  // Vasakronan-städformel
 //
 // answers = { qid: value, ... }  (från custom_form_json-frågorna)
 // ════════════════════════════════════════════════════════════════════════════
@@ -171,6 +174,36 @@ export function evalPricing(formula, answers, opts) {
         });
         subtotal += amount;
         break;
+      case "housekeeping": {
+        // Städkalkyl (Vasakronan): ((yta/avverkning) × dagar/mån × timpris
+        // + baspris + material) × påslag. Icke-linjär (avverkning byter vid
+        // brytyta) → egen regeltyp, kan inte uttryckas som linjär per_kvm.
+        const s = _qty(rule, answers, warnings);            // yta via qty_from
+        const daysMap = rule.days_map || { "5": 21, "4": 16.8, "3": 12.6, "2": 8.4 };
+        const daysRaw = rule.days_from
+          ? _num(answers ? answers[rule.days_from] : null, rule.default_days || 5)
+          : _num(rule.default_days, 5);
+        // days_from-svaret kan vara dagar/vecka (5/4/3/2 → slås upp i days_map)
+        // ELLER dagar/mån direkt (om det inte finns i mappen).
+        const dagar = daysMap[String(daysRaw)] != null
+          ? _num(daysMap[String(daysRaw)], 0) : _num(daysRaw, 0);
+        const avverk = s <= _num(rule.avverk_break, 500)
+          ? _num(rule.avverk_low, 200) : _num(rule.avverk_high, 220);
+        const raw = ((s / (avverk || 1)) * dagar * _num(rule.hourly, 322)
+                     + _num(rule.base, 1000)
+                     + (_num(rule.material_per_sqm_year, 37) * s / 12))
+                    * _num(rule.uplift, 1.15);
+        amount = _round(raw);
+        lineAmounts[rule.id || ("r" + breakdown.length)] = amount;
+        breakdown.push({
+          id: rule.id || null, type: t,
+          label: rule.label || "Städning",
+          qty: s, unit_price: null, amount, unit: rule.unit || "kvm",
+          meta: { days: daysRaw, days_per_month: dagar, avverk },
+        });
+        subtotal += amount;
+        break;
+      }
       case "min_charge":
         minCharge = _num(rule.amount, 0);
         break;
@@ -240,7 +273,8 @@ export function validateFormula(formula) {
     return { ok: false, errors: ["Formel.rules måste vara array"] };
   }
   const KNOWN = ["per_person","per_kvm","per_hour","fixed","piecewise",
-                 "addon_per_unit","tiered_discount","volume_discount","min_charge"];
+                 "addon_per_unit","tiered_discount","volume_discount","min_charge",
+                 "housekeeping"];
   parsed.rules.forEach((r, i) => {
     const prefix = "rules[" + i + "]";
     if (!r || typeof r !== "object") {
@@ -273,6 +307,9 @@ export function validateFormula(formula) {
     }
     if (t === "min_charge" && r.amount == null) {
       errors.push(prefix + " (min_charge): saknar amount");
+    }
+    if (t === "housekeeping" && !r.qty_from) {
+      errors.push(prefix + " (housekeeping): saknar qty_from (yta)");
     }
   });
   return { ok: !errors.length, errors };
