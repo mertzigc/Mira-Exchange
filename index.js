@@ -19230,7 +19230,7 @@ app.post("/admin/forfragan/create", async (req, res) => {
     }
 
     // ── Leverantör = bestäms av kategori (fast Carotte-bolag) ──
-    const supplierId = FORFRAGAN.SUPPLIER_BY_CATEGORY[category] || null;
+    const supplierId = category ? await _supplierIdForCategory(category) : null;
 
     // ── Datum + recurrence-serie ──
     const deliveryIso = toBubbleDate(d.delivery_date) || new Date(Date.now() + 5 * 864e5).toISOString();
@@ -19608,8 +19608,11 @@ app.post("/admin/offers/upsert", async (req, res) => {
     if (b.end != null) patch[FORFRAGAN.OFFER_END] = b.end;
     if (b.company_ids != null) patch[FORFRAGAN.OFFER_COMPANY] = Array.isArray(b.company_ids) ? b.company_ids : [];
     // Auto-leverantör per kategori (din regel: när kategori sätts → mappa supplier)
-    if (b.category && FORFRAGAN.SUPPLIER_BY_CATEGORY[b.category]) {
-      patch.Leverantör = [FORFRAGAN.SUPPLIER_BY_CATEGORY[b.category]];
+    if (b.category) {
+      // Slå upp leverantören dynamiskt (på namn i live-DB) i stället för hårdkodat
+      // id — det hårdkodade id:t kan vara inaktuellt (raderad/omskapad Leverantör → 400).
+      const supId = await _supplierIdForCategory(b.category);
+      if (supId) patch.Leverantör = [supId];
     }
     if (b.custom_form_json !== undefined) patch[FORFRAGAN.OFFER_FORM_JSON] = String(b.custom_form_json || "");
     if (b.pricing_formula_json !== undefined) patch[FORFRAGAN.OFFER_PRICING_JSON] = String(b.pricing_formula_json || "");
@@ -20429,7 +20432,7 @@ app.post("/services/request-activation", async (req, res) => {
 
     const serviceName = (cat && cat[SERVICES.SC_NAME]) || b.service_name || serviceSlug;
     const category = offer.Category || (cat && cat[SERVICES.SC_CATEGORY]) || null;
-    const supplierId = category ? FORFRAGAN.SUPPLIER_BY_CATEGORY[category] || null : null;
+    const supplierId = category ? await _supplierIdForCategory(category) : null;
     const title = `Aktivera ${serviceName}` + (qty > 1 ? ` (${qty} st)` : "");
     const msg =
       `Aktivering begärd via kund-dashboarden.\n` +
