@@ -5757,6 +5757,28 @@ async function createLeadAlways(fields, existingId = null) {
   const id = await bubbleCreate("Lead", payload);
   return { ok: true, lead_id: id, created: true };
 }
+
+// Skapar en Lead men droppar det fält Bubble avvisar (t.ex. ett option-set-värde
+// som inte finns, som Source/lead_source) och försöker igen — så en enskild
+// ogiltig fält-flagga aldrig blockerar hela leadet. Returnerar lead-id eller null.
+async function _createLeadDroppingBadFields(fields, maxDrops = 6) {
+  const payload = { ...fields };
+  for (let i = 0; i <= maxDrops; i++) {
+    try {
+      return await bubbleCreate("Lead", payload);
+    } catch (e) {
+      const blob = JSON.stringify(e?.detail || e?.message || "");
+      const m = blob.match(/Invalid data for field (\w+)/);
+      if (m && payload[m[1]] !== undefined) {
+        console.warn("[Lead] droppar ogiltigt fält och försöker igen:", m[1]);
+        delete payload[m[1]];
+        continue;
+      }
+      throw e;
+    }
+  }
+  return null;
+}
 // -------------------------
 // Graph: delta fetch (delegated) with pagination
 async function graphDeltaFetchAll({ tenant, mailbox_upn, delta_link, top = 25, auth_user_id }) {
@@ -20552,7 +20574,7 @@ app.post("/services/request-activation", async (req, res) => {
         estimated_service_cost_monthly: priceTotal,   // ← ca-priset visas i leadet
       };
       const leadClean = Object.fromEntries(Object.entries(leadFields).filter(([, v]) => v !== null && v !== ""));
-      leadId = await safeCreate("Lead", leadClean, {});
+      leadId = await _createLeadDroppingBadFields(leadClean);
     } catch (e) { console.warn("[/services/request-activation] lead-skapande misslyckades", e?.message, e?.detail); }
 
     console.log(`[services/activate] commission ${commissionId} lead ${leadId} pris ${priceTotal} (${serviceSlug}/${optionId} ×${qty}) · ${queued} mail · push=${pushed}`);
@@ -22374,9 +22396,9 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-12-order-lead",
+  res.json({ ok: true, build: "2026-08-12-lead-resilient",
     note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-order-lead]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-lead-resilient]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
