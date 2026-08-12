@@ -190,6 +190,11 @@
   .af .ck-toggle{display:inline-block;font-size:12px;font-weight:700;color:var(--orange);cursor:pointer;padding:4px 0}
   .af .ck-toggle:hover{text-decoration:underline}
   .af .ck-body{margin-top:8px}
+  /* skapa ny affär från lead/aktivitet (inline i expanderad rad) */
+  .af .af-createdeal{margin-top:12px;border-top:1px dashed var(--border);padding-top:11px;max-width:660px}
+  .af .af-cd-toggle{display:inline-block;font-size:12.5px;font-weight:700;color:var(--orange);cursor:pointer}
+  .af .af-cd-toggle:hover{text-decoration:underline}
+  .af .af-cd-form{margin-top:11px}
   /* skapa nytt: generell rad + kort-actions */
   .af .af-createbar{margin-bottom:12px}
   .af .af-newbtn{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);transition:border-color .12s,color .12s}
@@ -586,7 +591,8 @@
       '</div>'+
       '<div class="af-note-wrap" style="'+((isK&&done)?"":"display:none")+'"><label class="el">Mötesanteckning</label><textarea class="ein af-a-note" rows="4">'+esc(r.motesanteckning||"")+'</textarea></div>'+
       '<div class="eact"><button class="ebtn af-a-save" data-akt-id="'+esc(r.id)+'">Spara</button><span class="af-a-msg ecur"></span></div>'+
-      '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("aktivitet","",r.id,r.affar_id)+'</div>'+
+      '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("aktivitet","",r.id,r.affar_id)+
+        createDealWidgetHtml("aktivitet", r.id, { titel:(r.company||(r.beskrivning?r.beskrivning.slice(0,60):"")||""), company_id:r.company_id, company_name:r.company })+'</div>'+
     '</div>';
   }
   function leadEditHtml(r){
@@ -608,7 +614,8 @@
           '<div class="ecur af-td-cur">'+tdCur+'</div><div class="sugg af-td-sugg"></div></div>'+
       '</div>'+
       '<div class="eact"><button class="ebtn af-l-save" data-lead-id="'+esc(r.id)+'">Spara koppling</button><span class="af-l-msg ecur"></span></div>'+
-      '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("lead","",r.id,r.deal_id)+'</div>'+
+      '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("lead","",r.id,r.deal_id)+
+        createDealWidgetHtml("lead", r.id, { titel:(r.company||r.name||""), company_id:r.company_id, company_name:r.company, value_brutto:r.belopp, owner_id:r.kundansvarig_id })+'</div>'+
     '</div>';
   }
   function closeEdits(){
@@ -1005,6 +1012,35 @@
       '<div class="eact" style="justify-content:flex-start;border:none;padding-top:8px;margin-top:0"><button class="ebtn af-koppla-save">Koppla</button><span class="af-koppla-msg ecur"></span></div>'+
     '</div>';
   }
+  // Skapa NY affär (deal) direkt från lead/aktivitet + koppla i samma steg. pf = förifyllning.
+  var CD_CATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+  function createDealWidgetHtml(rowType, id, pf){
+    pf=pf||{};
+    var uaOpts='<option value="">— ägare —</option>';
+    for(var i=0;i<USERS.length;i++){ uaOpts+='<option value="'+esc(USERS[i].id)+'"'+(USERS[i].id===(pf.owner_id||"")?" selected":"")+'>'+esc(USERS[i].name)+'</option>'; }
+    var katOpts='<option value="">— kategori —</option>';
+    for(var k=0;k<CD_CATS.length;k++){ katOpts+='<option value="'+esc(CD_CATS[k])+'">'+esc(CD_CATS[k])+'</option>'; }
+    var coCur=pf.company_name?("Vald: "+esc(pf.company_name)):"Ingen vald";
+    return '<div class="af-createdeal" data-cdtype="'+esc(rowType)+'" data-cdid="'+esc(id)+'">'+
+      '<div class="af-cd-toggle">＋ Skapa ny affär av '+(rowType==="lead"?"leadet":"aktiviteten")+'</div>'+
+      '<div class="af-cd-form" style="display:none">'+
+        '<div class="erow">'+
+          '<div style="flex:2"><label class="el">Titel *</label><input class="ein af-cd-titel" value="'+esc(pf.titel||"")+'" placeholder="Affärens namn"></div>'+
+          '<div><label class="el">Kategori</label><select class="ein af-cd-kat">'+katOpts+'</select></div>'+
+        '</div>'+
+        '<div class="erow">'+
+          '<div class="egrow"><label class="el">Kundföretag</label>'+
+            '<input class="ein af-cd-co-search" placeholder="Sök företag…" autocomplete="off">'+
+            '<input type="hidden" class="af-cd-co-id" value="'+esc(pf.company_id||"")+'">'+
+            '<div class="ecur af-cd-co-cur">'+coCur+'</div><div class="sugg af-cd-co-sugg"></div></div>'+
+          '<div><label class="el">Prel. värde (kr)</label><input type="number" class="ein af-cd-brutto" value="'+esc(pf.value_brutto==null?"":pf.value_brutto)+'"></div>'+
+          '<div><label class="el">Ägare</label><select class="ein af-cd-owner">'+uaOpts+'</select></div>'+
+        '</div>'+
+        '<div><label class="el">Beskrivning</label><textarea class="ein af-cd-besk" rows="2" placeholder="Kort om affären…"></textarea></div>'+
+        '<div class="eact" style="justify-content:flex-start;border:none;padding-top:8px;margin-top:0"><button class="ebtn af-cd-save">Skapa &amp; koppla</button><span class="af-cd-msg ecur"></span></div>'+
+      '</div>'+
+    '</div>';
+  }
   var dealTimer=null;
   function searchDeals(inp){
     var box=inp.parentNode.querySelector(".af-deal-sugg"), q=inp.value.trim();
@@ -1028,6 +1064,27 @@
         if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
         msg.textContent=j.deal_id?("Kopplad: "+esc(j.deal_name||"affär")+" ✓"):"Bortkopplad ✓";
         var i; for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id){ STATE.listRows[i].deal_id=j.deal_id; break; } }
+      }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
+  }
+  function saveCreateDeal(btn){
+    var box=btn.closest(".af-createdeal"); if(!box) return;
+    var titel=box.querySelector(".af-cd-titel").value.trim();
+    var msg=box.querySelector(".af-cd-msg");
+    if(!titel){ msg.textContent="Titel krävs."; return; }
+    var payload={ titel:titel, beskrivning:box.querySelector(".af-cd-besk").value,
+      kundforetag_id:box.querySelector(".af-cd-co-id").value, kategori:box.querySelector(".af-cd-kat").value,
+      value_brutto:box.querySelector(".af-cd-brutto").value, deal_owner:box.querySelector(".af-cd-owner").value,
+      source_type:box.getAttribute("data-cdtype"), source_id:box.getAttribute("data-cdid") };
+    btn.disabled=true; msg.textContent="Skapar…";
+    fetch(HOST+"/admin/affar/deal/create",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); }).then(function(j){
+        btn.disabled=false;
+        if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
+        msg.textContent="Affär skapad & kopplad ✓";
+        box.querySelector(".af-cd-form").style.display="none";
+        var tg=box.querySelector(".af-cd-toggle"); tg.textContent="✓ Affär skapad: "+esc(titel); tg.style.color="var(--green)";
+        var i; for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===payload.source_id){ STATE.listRows[i].deal_id=j.deal_id; break; } }
+        setTimeout(function(){ if(STATE.type){ loadList(); } },1100);   // spegla koppling + ev. Delegerad-status
       }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
   function toggleKoppla(tr){
@@ -1328,6 +1385,8 @@
     var sl=t.closest && t.closest(".af-l-save"); if(sl){ saveLead(sl); return; }
     var sd=t.closest && t.closest(".af-d-save"); if(sd){ saveDeal(sd); return; }
     var sk=t.closest && t.closest(".af-koppla-save"); if(sk){ saveKoppla(sk); return; }
+    var cdt=t.closest && t.closest(".af-cd-toggle"); if(cdt){ var cf=cdt.parentNode.querySelector(".af-cd-form"); if(cf){ cf.style.display=(cf.style.display==="none"?"block":"none"); } return; }
+    var cdsv=t.closest && t.closest(".af-cd-save"); if(cdsv){ saveCreateDeal(cdsv); return; }
     var ckt=t.closest && t.closest(".ck-toggle"); if(ckt){ var b=ckt.parentNode.querySelector(".ck-body"); if(b){ b.style.display=(b.style.display==="none"?"block":"none"); } return; }
     var cks=t.closest && t.closest(".ck-save"); if(cks){ saveCardKoppla(cks); return; }
     var csx=t.closest && t.closest(".cstep-x"); if(csx){ toggleStepDetail(csx); return; }
@@ -1382,6 +1441,7 @@
     if(e.target.classList && e.target.classList.contains("af-d-td-search")){ searchDealTodos(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-deal-search")){ searchDeals(e.target); return; }
     if(e.target.classList && e.target.classList.contains("ck-search")){ searchDocForCard(e.target); return; }
+    if(e.target.classList && e.target.classList.contains("af-cd-co-search")){ fieldSearchCompanies(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-na-co-search")){ fieldSearchCompanies(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-na-deal-search")){ fieldSearchDeals(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-nt-co-search")){ fieldSearchCompanies(e.target); return; }

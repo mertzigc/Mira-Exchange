@@ -17,7 +17,8 @@ const DB = {
   ClientCompany: [{ _id: "cc1", Name_company: "Acme AB" }],
   User: [{ _id: "u1", "First Name": "Sara", "Last Name": "S" }],
   deal: [{ _id: "d1", titel: "Acme lunch", "kundföretag": "cc1", todo: ["t_old"] }],
-  activitet_crm: [], Todo: [{ _id: "t_old" }], "leverantör-supplier": [], Coworker: [],
+  Lead: [{ _id: "lead1", Name: "Kalle Kund", status: "Ny" }],
+  activitet_crm: [{ _id: "akt1", beskrivning: "Ringde kund" }], Todo: [{ _id: "t_old" }], "leverantör-supplier": [], Coworker: [],
 };
 let seq = 1;
 const _match = (rec, c) => { const v = rec[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); return true; };
@@ -77,6 +78,30 @@ const run = async () => {
   patched = [];
   const t3 = await call("post", "/admin/affar/todo/create", { body: { titel: "Solo todo" } });
   ok("todo utan deal → deal_linked false", t3.body.ok && t3.body.deal_linked === false && !patched.some((p) => p.t === "deal"));
+
+  // ── skapa affär från LEAD (+ koppla + lead→Delegerad) ──
+  patched = [];
+  const dc = await call("post", "/admin/affar/deal/create", { body: { titel: "Acme – F&E", beskrivning: "Från lead", kundforetag_id: "cc1", kategori: "Food & Event", value_brutto: 50000, deal_owner: "u1", source_type: "lead", source_id: "lead1" } });
+  ok("deal/create ok + deal_id + linked + lead_status_set", dc.body.ok && !!dc.body.deal_id && dc.body.linked === true && dc.body.lead_status_set === true);
+  const cd = created.find((c) => c.t === "deal");
+  ok("deal payload titel + Status=Kundkontakt (auto) + beskrivning", cd.payload.titel === "Acme – F&E" && cd.payload.Status === "Kundkontakt" && cd.payload.beskrivning === "Från lead");
+  ok("deal kundföretag + Kategori(list) + value_brutto + deal_owner(list)", cd.payload["kundföretag"] === "cc1" && Array.isArray(cd.payload.Kategori) && cd.payload.Kategori[0] === "Food & Event" && cd.payload.value_brutto === 50000 && Array.isArray(cd.payload.deal_owner) && cd.payload.deal_owner[0] === "u1");
+  const leadLink = patched.find((p) => p.t === "Lead" && p.id === "lead1" && p.p.deal);
+  ok("lead kopplad → nya affärens deal-id", leadLink && leadLink.p.deal === cd.id);
+  const leadStat = patched.find((p) => p.t === "Lead" && p.id === "lead1" && p.p.status);
+  ok("lead status → Delegerad", leadStat && leadStat.p.status === "Delegerad");
+
+  // ── titel obligatorisk ──
+  const dcBad = await call("post", "/admin/affar/deal/create", { body: { source_type: "lead", source_id: "lead1" } });
+  ok("deal/create utan titel → 400 titel_krävs", dcBad.code === 400 && dcBad.body.error === "titel_krävs");
+
+  // ── skapa affär från AKTIVITET (koppla, ingen lead-status) ──
+  patched = [];
+  const dcA = await call("post", "/admin/affar/deal/create", { body: { titel: "Från akt", source_type: "aktivitet", source_id: "akt1" } });
+  ok("deal/create från aktivitet ok + linked, lead_status_set=false", dcA.body.ok && dcA.body.linked === true && dcA.body.lead_status_set === false);
+  const aktLink = patched.find((p) => p.t === "activitet_crm" && p.id === "akt1" && p.p.deal);
+  ok("aktivitet kopplad → nya affären", aktLink && aktLink.p.deal === dcA.body.deal_id);
+  ok("ingen lead-status-patch vid aktivitet-källa", !patched.some((p) => p.t === "Lead"));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

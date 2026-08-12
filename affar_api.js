@@ -894,6 +894,54 @@ export function registerAffarRoutes(app, deps) {
     }
   });
 
+  // ── POST /admin/affar/deal/create — skapa ny affär (deal) + koppla källrad (lead/aktivitet) ──
+  // body {titel(obl), beskrivning, kundforetag_id, kategori[], value_brutto, deal_owner, region,
+  //       source_type: lead|aktivitet, source_id}. Sätter källradens deal-fält. lead → status Delegerad.
+  app.options("/admin/affar/deal/create", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/affar/deal/create", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      if (!bubbleCreate) return res.status(501).json({ ok: false, error: "create_not_wired" });
+      const b = req.body || {};
+      const titel = _str(b.titel).trim();
+      if (!titel) return res.status(400).json({ ok: false, error: "titel_krävs" });
+      const asList = (v) => (Array.isArray(v) ? v.map(_str).filter(Boolean) : (v ? [_str(v)] : []));
+      const asNum = (v) => ((v === "" || v == null) ? null : _num(v));
+      // deal-payload (skrivnycklar = display-namn, som deal/:id/patch)
+      const p = { titel, Status: _str(b.status) || "Kundkontakt" };
+      if (b.beskrivning !== undefined) p["beskrivning"] = _str(b.beskrivning);
+      const ccId = _str(b.kundforetag_id).trim(); if (ccId) p["kundföretag"] = ccId;
+      const kat = asList(b.kategori); if (kat.length) p["Kategori"] = kat;
+      const vb = asNum(b.value_brutto); if (vb != null) p["value_brutto"] = vb;
+      const owner = _str(b.deal_owner).trim(); if (owner) p["deal_owner"] = [owner];   // deal_owner = List of Users
+      const region = _str(b.region).trim(); if (region) p["Region"] = region;
+
+      const dealId = await bubbleCreate("deal", p);
+      if (!dealId) return res.status(500).json({ ok: false, error: "deal_create_failed" });
+      _dCache.ts = 0;   // invalidera deal-cache → nya affären syns i sök/kedja/kategori
+
+      // koppla källraden (lead/aktivitet) → nya affären (enhetlig deal-modell, som /link)
+      const sourceType = _str(b.source_type).toLowerCase();
+      const sourceId = _str(b.source_id).trim();
+      const SRC_TYPE = { lead: "Lead", aktivitet: "activitet_crm" };
+      const bt = SRC_TYPE[sourceType];
+      let linked = false, lead_status_set = false;
+      if (bt && sourceId && bubblePatch) {
+        try { await bubblePatch(bt, sourceId, { deal: dealId }); linked = true; }
+        catch (e) { console.warn("[deal/create] koppling misslyckades:", e?.message); }
+      }
+      // lead → Delegerad (best-effort; ogiltigt OS-värde droppas tyst av Bubble/patch)
+      if (sourceType === "lead" && sourceId && bubblePatch) {
+        try { await bubblePatch("Lead", sourceId, { status: "Delegerad" }); lead_status_set = true; }
+        catch (e) { console.warn("[deal/create] lead-status ej satt:", e?.message); }
+      }
+      return res.json({ ok: true, deal_id: dealId, titel, linked, lead_status_set });
+    } catch (e) {
+      console.error("[/admin/affar/deal/create]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
   // ── GET /admin/affar/coworkers?company=&q= — kontaktpersoner på ett kundföretag ──
   // Scope:at till affärens kundföretag (Coworker.Kundföretag equals) → snabbt, ingen jättecache.
   app.options("/admin/affar/coworkers", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
