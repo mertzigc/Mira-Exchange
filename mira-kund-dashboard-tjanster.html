@@ -6,9 +6,11 @@
   tiles. Aktiva tiles visar månadskostnad; inaktiva visar
   "Läs mer →" + "Aktivera" — båda öppnar popup.
 
-  KOPPLING I BUBBLE (bara två fält):
+  KOPPLING I BUBBLE:
     #mira_company_id    = Current User's Company's unique id  (value="")
     #mira_company_name  = Current User's Company's name        (value="")
+    #mira_user_email    = Current User's email                 (value="")  ← kontakt på lead
+    #mira_user_name     = Current User's namn                  (value="")  ← kontakt på lead
     #mira_api_host      = https://mira-exchange.onrender.com   (value="", redan ifyllt)
 
   FLÖDE:
@@ -253,6 +255,8 @@
 <!-- Bubble fyller company_id/name. Saknas → demo-läge för preview. -->
 <input type="hidden" id="mira_company_id"   value="">
 <input type="hidden" id="mira_company_name" value="">
+<input type="hidden" id="mira_user_email"   value="">
+<input type="hidden" id="mira_user_name"    value="">
 <input type="hidden" id="mira_api_host"     value="https://mira-exchange.onrender.com">
 
 <div class="mt-wrap">
