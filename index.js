@@ -20563,7 +20563,7 @@ app.post("/services/request-activation", async (req, res) => {
         titel:              `Beställning: ${serviceName}`,
         Description:        msg,
         Description_short:  safeText(serviceName + (offer.Title ? " · " + offer.Title : ""), 500),
-        Source:             "kund-dashboard",
+        Source:             "Mira",   // giltigt lead_source-option
         lead_subsource:     "kund_dashboard_order",
         inbound_channel:    "dashboard",
         external_reference: commissionId,
@@ -22396,9 +22396,9 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-12-lead-resilient",
+  res.json({ ok: true, build: "2026-08-12-lead-source-mira",
     note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-lead-resilient]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-lead-source-mira]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
