@@ -14281,11 +14281,14 @@ const LANDING = {
 
 // ── Enkel in-memory rate limit per IP (v1; byt mot Cloudflare Turnstile senare) ──
 const _publicRl = new Map();
-function _publicRateLimited(ip, max = 30, windowMs = 60 * 60 * 1000) {
+function _publicRateLimited(ip, max = 30, windowMs = 60 * 60 * 1000, bucket = "") {
   const now = Date.now();
-  const hits = (_publicRl.get(ip) || []).filter(t => now - t < windowMs);
+  // Separat hink per endpoint-typ så att t.ex. dashboard-omladdningar INTE äter
+  // upp beställningsbudgeten (delade hinken gav tysta 429 på request-activation).
+  const key = bucket ? ip + "|" + bucket : ip;
+  const hits = (_publicRl.get(key) || []).filter(t => now - t < windowMs);
   hits.push(now);
-  _publicRl.set(ip, hits);
+  _publicRl.set(key, hits);
   return hits.length > max;
 }
 function _clientIp(req) {
@@ -20282,7 +20285,7 @@ app.get("/services/dashboard", async (req, res) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("Cache-Control", "no-store");
 
-  if (_publicRateLimited(_clientIp(req), 300)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(_clientIp(req), 300, undefined, "dashboard")) return res.status(429).json({ ok: false, error: "rate_limited" });
 
   const companyId = String(req.query.company_id || "").trim();
   if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
@@ -20394,7 +20397,10 @@ app.post("/services/request-activation", async (req, res) => {
   if (KUND_KPI_ALLOWED.includes(orig)) res.setHeader("Access-Control-Allow-Origin", orig);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (_publicRateLimited(_clientIp(req))) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(_clientIp(req), 120, undefined, "activation")) {
+    console.warn("[/services/request-activation] rate_limited", _clientIp(req));
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
 
   const b = req.body || {};
   const companyId = String(b.company_id || "").trim();
@@ -20476,7 +20482,19 @@ app.post("/services/request-activation", async (req, res) => {
       [FORFRAGAN.C_PRICE_BREAKDOWN]: priceBreakdownJson,
     };
     const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
-    const commissionId = await bubbleCreate(FORFRAGAN.COMISSION_TYPE, finalPayload);
+    let commissionId;
+    try {
+      commissionId = await bubbleCreate(FORFRAGAN.COMISSION_TYPE, finalPayload);
+    } catch (e) {
+      // Skottsäkert: en ogiltig Leverantör-referens får aldrig blockera att
+      // förfrågan/leaden skapas. Släpp leverantören och skapa ändå.
+      const blob = JSON.stringify(e?.detail || e?.message || "");
+      if (finalPayload[FORFRAGAN.C_SUPPLIER] && /Leverant/i.test(blob)) {
+        delete finalPayload[FORFRAGAN.C_SUPPLIER];
+        commissionId = await bubbleCreate(FORFRAGAN.COMISSION_TYPE, finalPayload);
+        console.warn("[/services/request-activation] ogiltig Leverantör — skapade order utan leverantör");
+      } else { throw e; }
+    }
 
     // Activity write-through (samma som forfragan/create)
     try {
@@ -22328,9 +22346,9 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-11-no-offer-supplier",
+  res.json({ ok: true, build: "2026-08-12-rate-buckets",
     note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-11-no-offer-supplier]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-rate-buckets]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
