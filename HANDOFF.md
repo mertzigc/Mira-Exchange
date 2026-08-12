@@ -1,9 +1,42 @@
 # HANDOFF — Mira-Exchange sync-omtag
 
-> Senast uppdaterad 2026-07-19. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
+> Senast uppdaterad 2026-08-12. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
 >
 > ⚠️ **AKTIVT SPÅR (2026-08-06): Offert/Affär/Avtal-modulen** lever i `OFFERT_PRODUKTION_HANDOFF.md` (⭐ STATUS överst) + minnet `project-offert-produktion-fe.md`. Denna sync-doc är fortsatt referens för faktura/order/workorder-synken (som offert/affär-vyn läser). Relevant härifrån för det spåret: §9d workorder→FortnoxOrder(connection=TENGELLA), §4 connection-IDs, Fortnox-auth (`fortnoxGetBinary` global client_secret), Bubble-gotchas.
+
+---
+
+## 0i. Tjänste-grid PRISHJÄRNA (Fas 0–5) + order→lead→pris — LIVE & VERIFIERAT 2026-08-12
+
+Session-mål: göra kund-dashboardens tjänste-grid smart/anpassad med **EN prissanning**, förenkla erbjudande-adminen, paketera för merförsäljning, och låta "Beställ" bli lead→avtal. Hela kedjan LIVE + verifierad på testkund CMIAB (Frukt/Växter beställda → Comission i planering + mail + Lead med pris). Detaljplan i minnet `project-tjanstegrid-prishjarna.md`.
+
+**Arkitektur (single source of truth):** Erbjudande äger pris+innehåll, `pricing_engine.js` räknar, kundens **Office (`Yta`+`Arbetsplatser`)** anpassar. Samma motor (`window.MiraPricing`, `HOST/pricing_engine.js`) driver kalkylator, kund-grid, förfrågan-wizard och admin-preview.
+
+**PRISLÅST: Vasakronan v10** (`~/Downloads/vasakronan-calculator-v10.html`) = kanoniska priser:
+- Housekeeping (formel): `((kvm/avverk)×dagar/mån×322 + 1000 + 37×kvm/12) × 1,15`; avverk=200 (≤500 kvm) annars 220; dagar/mån 5→21, 4→16,8, 3→12,6, 2→8,4.
+- Kaffe Jura Giga X8c 3190/st · Jura X10 1650/st · Vatten 1210/st · Växter kvm×14 · Frukt(korg) 115/arbetsplats · Skrivare 1950 · Entrématta 130 · Förbrukning kaffe/mjölk/te 330/aplats · Hygien 58/aplats · Förbrukningsmtrl 17/aplats · Reception 69990/79990 (behålls, ej i Vasakronan). Engångstjänster UT. Wording: **Arbetsplatser** (ej Medarbetare) överallt; drivar-id `arbetsplatser`.
+
+**Ny/ändrad kod:**
+- `pricing_engine.js`: regeltyp **`housekeeping`** (parametriserad Vasakronan-formel, verifierad exakt mot `calcHK`).
+- `mira-kommunikation-admin.html` (Erbjudanden): förenklad **pris-typ-väljare** (5 typer → genererar `custom_form_json`+`pricing_formula_json`; dagens byggare flyttad till "Avancerat läge"); standardiserade drivar-id `yta`/`arbetsplatser`/`antal`/`dagar`; live-preview; **"Uppdatera priser"**-inline-lista (merge-upsert, bara priset).
+- `index.js /services/dashboard`: `assumptions`{yta,arbetsplatser}=`SUM(offices)` matas in i `_servicesPriceOf` → anpassade priser; returnerar `assumptions`+`packages` (config `SERVICE_PACKAGES`, Fas 3).
+- `mira-kund-dashboard-tjanster.html`: laddar `window.MiraPricing`; `adaptedUnitPrice` räknar per **VALT kontor**; aktiv tile visar **AVTALSPRIS** (`Contract.monthly_cost`), ej prelpris; paketkort (live per-kontor-pris + besparing, "Beställ paketet", ~480px bredd); skickar `office_id` + `contact_email/name`.
+- `index.js /services/request-activation` (Fas 4): office-antaganden → förseglar SAMMA pris som grid:en; skapar **Comission** (`C_OFFICE`/`C_OFFER`/`C_PRICE_BREAKDOWN`) OCH **Lead** (`Source="Mira"`, `estimated_service_cost_monthly`=priset). Self-healing lead-create `_createLeadDroppingBadFields`.
+- `affar_api.js` (`nLeadFull`) + `mira-affar-samlad.html`: lead-listan har **"Prel. värde"**-kolumn (`belopp`=`estimated_service_cost_monthly`).
+
+**Bubble-gotchas (nya — viktiga för framtida spår):**
+- **Erbjudande.Leverantör ≠ Comission.Leverantör** (olika Bubble-typer). `SUPPLIER_BY_CATEGORY`-id:na gäller Comission → gav "object does not exist" på Erbjudande. Lösning: sätt **ALDRIG auto-Leverantör på erbjudandet**; leverantör sätts på Comission via `_supplierIdForCategory` (dynamisk namn-uppslag mot typ `leverantör-supplier`, ersatte hårdkodade stale id:n i offers/upsert + request-activation + forfragan/create).
+- **Category option set = "Service & People"** (INTE "Staff"). Admin-dropdown rättad.
+- **lead_source option set:** giltiga = Formulär/Telefonsamtal/Email/Möte/**Mira**/info@carotte.se/Kalkylator/Internservice. Order-lead använder "Mira". `safeCreate` självläker EJ ogiltiga option-set-värden → `_createLeadDroppingBadFields` droppar fältet och kör om.
+- **Rate-limiter delade EN IP-hink** över alla publika endpoints → dashboard-laddningar fyllde hinken → **tysta 429** på request-activation (visade sig som "Delvis skickat", tom logg). Lösning: `_publicRateLimited(ip, max, windowMs, bucket)` — separata hinkar (activation 120/h, dashboard 300/h) + logga 429.
+- **Office.Yta + Office.Arbetsplatser** (båda number, redan API-exponerade) MÅSTE vara ifyllda per kontor, annars blir storleksbaserade priser 0 ("Ingår") i grid:en.
+
+**Datakrav i Bubble:** Office.Yta+Arbetsplatser per kontor · Erbjudanden med `pricing_formula_json` (upplagda via nya adminen) · ServiceCatalog-slugs matchar paket-config (`housekeeping`/`kaffe`/`frukt`/`vaxter`) · hidden inputs `mira_user_email`/`mira_user_name` bundna (Current User) i dashboard-blocket.
+
+**Deploy/workflow:** commit rakt på `main`; **push via GitHub Desktop** (inte terminalen — GitHub tog bort lösenords-auth och `gh`/PAT saknas lokalt; keychain-cred kan behöva rensas). Build-markör verifieras på `GET HOST/version` (senast `2026-08-12-lead-value-col`). Bubble-block (admin + kund-grid + affär-vy) MÅSTE re-pastas manuellt vid frontend-ändringar — Render deployar bara backend.
+
+**KVAR/nästa:** paket-config → egen Bubble-typ (så personal styr paket/rabatt själv, som erbjudandena) · ev. Lead↔ClientCompany-**referens** för tightare affärsvy-koppling (idag textfält `Company`) · Housekeeping-frekvensval i grid · cross-sell-nudgar · "kunden saknar kontorsyta"-prompt · nicer paket-bekräftelse-UX.
 
 ---
 
