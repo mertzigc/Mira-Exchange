@@ -578,6 +578,7 @@
           service_slug: p.item.slug, service_name: p.item.name,
           option_id: p.opt.id, qty: (p.item.qty_min||1),
           office_id: SELECTED_OFFICE_ID, category_hint: p.item.category,
+          contact_email: txt('mira_user_email'), contact_name: txt('mira_user_name'),
           package_slug: slug
         })
       }).then(function(r){ return r.json().catch(function(){return {ok:false};}); });
@@ -798,6 +799,8 @@
         option_id: modal.optionId,
         qty: modal.qty,
         office_id: SELECTED_OFFICE_ID,
+        contact_email: txt('mira_user_email'),
+        contact_name: txt('mira_user_name'),
         category_hint: item.category
       })
     })

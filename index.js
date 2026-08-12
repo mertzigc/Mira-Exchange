@@ -20449,12 +20449,14 @@ app.post("/services/request-activation", async (req, res) => {
 
     // Pris-breakdown (försegld), samma mönster som forfragan/create
     let priceBreakdownJson = null;
+    let priceTotal = null;
     try {
       const formulaRaw = offer[FORFRAGAN.OFFER_PRICING_JSON];
       if (formulaRaw && String(formulaRaw).trim()) {
         const answers = Object.assign({ antal: qty, dagar: 5 }, assumptions);
         const breakdown = _evalPricing(formulaRaw, answers);
         if (breakdown && breakdown.ok) {
+          priceTotal = Math.round(Number(breakdown.total) || 0);
           priceBreakdownJson = JSON.stringify({
             evaluated_at: new Date().toISOString(),
             offer_id: optionId, office_id: officeId, answers, ...breakdown,
@@ -20527,8 +20529,34 @@ app.post("/services/request-activation", async (req, res) => {
       });
     } catch (e) { console.warn("[/services/request-activation] push fail", e?.message); }
 
-    console.log(`[services/activate] commission ${commissionId} (${serviceSlug}/${optionId} ×${qty}) · ${queued} mail · push=${pushed}`);
-    return res.json({ ok: true, commission_id: commissionId });
+    // Fas 4: skapa Lead (säljpipeline) med det framräknade ca-priset.
+    // Best-effort — får aldrig blockera ordern. Priset lagras i
+    // estimated_service_cost_monthly så det syns i leadet.
+    let leadId = null;
+    try {
+      const leadFields = {
+        Name:               safeText(b.contact_name || b.company_name || serviceName, 200),
+        Email:              normEmail(b.contact_email || ""),
+        Company:            safeText(b.company_name || "", 200),
+        titel:              `Beställning: ${serviceName}`,
+        Description:        msg,
+        Description_short:  safeText(serviceName + (offer.Title ? " · " + offer.Title : ""), 500),
+        Source:             "kund-dashboard",
+        lead_subsource:     "kund_dashboard_order",
+        inbound_channel:    "dashboard",
+        external_reference: commissionId,
+        decision_stage:     "Beställning via dashboard",
+        requested_services_summary: safeText(serviceName, 1000),
+        office_sqm:         assumptions.yta || null,
+        office_employees:   assumptions.arbetsplatser || null,
+        estimated_service_cost_monthly: priceTotal,   // ← ca-priset visas i leadet
+      };
+      const leadClean = Object.fromEntries(Object.entries(leadFields).filter(([, v]) => v !== null && v !== ""));
+      leadId = await safeCreate("Lead", leadClean, {});
+    } catch (e) { console.warn("[/services/request-activation] lead-skapande misslyckades", e?.message, e?.detail); }
+
+    console.log(`[services/activate] commission ${commissionId} lead ${leadId} pris ${priceTotal} (${serviceSlug}/${optionId} ×${qty}) · ${queued} mail · push=${pushed}`);
+    return res.json({ ok: true, commission_id: commissionId, lead_id: leadId, price: priceTotal });
   } catch (e) {
     console.error("[/services/request-activation]", e?.message, e?.detail);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -22346,9 +22374,9 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-12-rate-buckets",
+  res.json({ ok: true, build: "2026-08-12-order-lead",
     note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-rate-buckets]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-order-lead]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
