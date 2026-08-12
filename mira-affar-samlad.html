@@ -283,7 +283,7 @@
   var STEPS=[["Lead","lead"],["Aktivitet","aktivitet"],["Affär","affar"],["Offert","offert"],["Avtal","avtal"],["Order","order"],["Faktura","faktura"]];
   var LABEL2TYPE={ "":"", "Lead":"lead", "Aktivitet":"aktivitet", "Affär":"affar", "Offert":"offert", "Avtal":"avtal", "Order":"order", "Faktura":"faktura" };
   var DOC_HEADS=["Typ","Källa","Företag","Nummer","Belopp","Datum","Ansvarig","Status",""];
-  var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Meddelande","Region","Källa","Formulär","Kundansvarig","Skapad av","Tilldela"];
+  var LEAD_HEADS=["Skapad","Namn","Email","Telefon","Företag","Prel. värde","Meddelande","Region","Källa","Formulär","Kundansvarig","Skapad av","Tilldela"];
   var AKT_HEADS=["Skapad","Leverantör","Typ","Fas","Mötesdatum","Företag","Affär","Meddelande","Vår användare"];
   var TYPE2DOC={ "Order":"order", "Offert":"offert", "Faktura":"faktura" };
 
@@ -540,6 +540,7 @@
       '<td class="mono">'+cm(r.email)+'</td>'+
       '<td class="mono">'+cm(r.phone)+'</td>'+
       '<td>'+cm(r.company)+'</td>'+
+      '<td class="mono">'+(r.belopp!=null ? esc(Number(r.belopp).toLocaleString("sv-SE"))+' kr/mån' : '<span class="muted">—</span>')+'</td>'+
       '<td><div class="msg" title="'+esc(r.message||"")+'">'+cm(clip(r.message,90))+'</div></td>'+
       '<td>'+cm(r.region)+'</td>'+
       '<td>'+cm(r.kalla)+'</td>'+

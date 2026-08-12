@@ -22396,9 +22396,9 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-12-lead-source-mira",
+  res.json({ ok: true, build: "2026-08-12-lead-value-col",
     note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-lead-source-mira]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-lead-value-col]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });

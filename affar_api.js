@@ -211,6 +211,7 @@ export function registerAffarRoutes(app, deps) {
       company: (ccId ? (m.get(ccId) || "") : "") || _str(r.Company), company_id: ccId || null,
       message: _str(r.prospect_message) || _str(r.Description),
       region: _str(r.Region), kalla: _str(r.Source),
+      belopp: _num(r.estimated_service_cost_monthly) || null,   // prel. ca-värde (kr/mån)
       formular: _ref(r["Formulär"]) ? "Ja" : "",
       status: lbl, status_cls: cls,
       kundansvarig: kaId ? (um.get(kaId) || "") : "",
