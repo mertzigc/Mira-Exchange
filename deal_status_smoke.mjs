@@ -36,8 +36,12 @@ ok("nuvarande med whitespace matchar", S(" Avtal ", "Avslutad") === true && S(" 
 ok("rank: Kundkontakt<Offert<Avtal<Avslutad", DEAL_STATUS_RANK.Kundkontakt < DEAL_STATUS_RANK.Offert && DEAL_STATUS_RANK.Offert < DEAL_STATUS_RANK.Avtal && DEAL_STATUS_RANK.Avtal < DEAL_STATUS_RANK.Avslutad);
 ok("Delegerad samma rank som Kundkontakt", DEAL_STATUS_RANK.Delegerad === DEAL_STATUS_RANK.Kundkontakt);
 
-// ── båda målhändelserna → Avtal (Christians val) ──
-ok("offert signeras: Kundkontakt → Avtal går", S("Kundkontakt", "Avtal") === true);
+// ── stegvis tratt: offert SKICKAS → Offert, SIGNERAS → Avtal, abonnemang → Avtal ──
+ok("offert skickas: Kundkontakt → Offert", S("Kundkontakt", "Offert") === true);
+ok("offert skickas: Delegerad → Offert (lead-skapad)", S("Delegerad", "Offert") === true);
+ok("offert skickas igen (redan Offert): ingen dubbelpatch", S("Offert", "Offert") === false);
+ok("offert skickas på redan-Avtal-affär: ingen nedgradering", S("Avtal", "Offert") === false);
+ok("offert signeras: Offert → Avtal (steget efter skicka)", S("Offert", "Avtal") === true);
 ok("abonnemang skapas när redan Avtal: ingen dubbelpatch", S("Avtal", "Avtal") === false);
 
 console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);

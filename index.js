@@ -17026,6 +17026,15 @@ async function _createApprovalRequestInternal({ req, files, dokumentIds, payload
     }
   }
 
+  // Offert skickad för signering → flytta affären framåt till "Offert" (framåt-bara, best-effort).
+  // Grindat på payload.offert = bara F&E-offert-sändningar (ej avtal-signering via samma OAR-flöde).
+  // deal från payload om satt, annars härledd från offertens deal-fält.
+  if (payload?.offert) {
+    let offDealId = dealId;
+    if (!offDealId) { const off = await bubbleGet("Offert", payload.offert).catch(() => null); offDealId = off ? (off.deal || null) : null; }
+    if (offDealId) await _advanceDealStatus(offDealId, "Offert");
+  }
+
   // 3) Skapa OfferApproval per mottagare + invite-mail per role
   const created = [];
   for (const r of normalizedRecipients) {
