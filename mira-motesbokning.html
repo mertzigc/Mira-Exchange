@@ -1,0 +1,394 @@
+<!--
+  MIRA — Mötesbokning + Säljmål. Ersätter Bubble-native mötesbokningstratten på startsidan.
+  Läser /admin/salj/moten (mötestratt per fas + attribution möte→affär) + /admin/salj/budget (säljmål).
+  Två vyer: (A) Gruppens mötestratt (4 faser), (B) Admin: säljmål & utfall per säljare.
+
+  KOPPLING I BUBBLE:
+    data-mira="api_host"       = https://mira-exchange.onrender.com
+    data-mira="planning_token" = PLANNING_ADMIN_TOKEN
+  OBS: INGEN ?. eller ?? (Bubbles parser). IIFE, BROOT-scopat, .mb-namnrymd.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .mb, .mb *{box-sizing:border-box;margin:0;padding:0}
+  .mb{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;padding:22px 26px 40px;border-radius:14px}
+  .mb input[type=hidden]{display:none}
+  .mb h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}.mb h1 span{color:var(--orange)}
+  .mb .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 18px}
+  .mb .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .mb .vchip{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:8px 18px;font-size:13px;color:var(--w70);cursor:pointer}
+  .mb .vchip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:800}
+  .mb .sel,.mb .datein{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 12px;color:var(--white);font-family:var(--fb);font-size:13px;color-scheme:dark}
+  .mb .sel:focus,.mb .datein:focus{outline:none;border-color:var(--orange)}
+  .mb .navbtn{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--w70);cursor:pointer;font-family:var(--fb);font-size:13px}
+  .mb .navbtn:hover{border-color:var(--orange);color:var(--orange)}
+  .mb .muted{color:var(--w40)}
+  .mb .err{color:var(--red);padding:18px 4px}
+  /* summering-chips */
+  .mb .stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  .mb .stat{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:11px 16px;min-width:120px}
+  .mb .stat .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--w40)}
+  .mb .stat .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:2px}
+  .mb .stat.hl .v{color:var(--orange)}
+  .mb .stat.gr .v{color:var(--green)}
+  /* fas-kolumner */
+  .mb .faser{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+  @media(max-width:1100px){.mb .faser{grid-template-columns:repeat(2,1fr)}}
+  .mb .fas{background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden;min-height:80px}
+  .mb .fas-h{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--card);border-bottom:1px solid var(--border)}
+  .mb .fas-h .fn{font-weight:800;font-size:13px;letter-spacing:.02em}
+  .mb .fas-h .fc{font-variant-numeric:tabular-nums;font-weight:800;background:var(--deep);border-radius:7px;padding:2px 10px;font-size:13px}
+  .mb .fas-body{padding:9px 10px;display:flex;flex-direction:column;gap:8px}
+  .mb .mcard{background:var(--card);border:1px solid var(--border);border-radius:9px;padding:10px 11px}
+  .mb .mcard .co{font-weight:700;font-size:13px}
+  .mb .mcard .meta{color:var(--w40);font-size:11px;margin-top:2px}
+  .mb .mcard .badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+  .mb .badge{font-size:10px;font-weight:700;border-radius:6px;padding:2px 7px;white-space:nowrap}
+  .mb .badge.done{background:rgba(76,175,125,.15);color:var(--green);border:1px solid rgba(76,175,125,.3)}
+  .mb .badge.wait{background:var(--w10);color:var(--w40);border:1px solid var(--border)}
+  .mb .badge.deal{background:rgba(244,123,48,.15);color:var(--orange);border:1px solid rgba(244,123,48,.35)}
+  .mb .fas-empty{color:var(--w40);font-size:11px;padding:14px 4px;text-align:center}
+  /* expanderbart mötes-kort */
+  .mb .mcard-head{display:flex;gap:7px;align-items:flex-start;cursor:pointer}
+  .mb .mcard-head .exp{color:var(--w40);transition:transform .12s;margin-top:1px}
+  .mb .mcard.open .mcard-head .exp{color:var(--orange);transform:rotate(90deg)}
+  .mb .mcard-exp{margin-top:9px;border-top:1px solid var(--border);padding-top:9px}
+  .mb .me-body{display:flex;flex-direction:column;gap:9px}
+  .mb .me-body .fld{display:flex;flex-direction:column;gap:4px}
+  .mb .me-body .fld label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--w40)}
+  .mb .me-body .fld input,.mb .me-body .fld select,.mb .me-body textarea{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--white);font-family:var(--fb);font-size:12.5px;color-scheme:dark;width:100%}
+  .mb .me-body textarea{resize:vertical}
+  .mb .me-body input:focus,.mb .me-body select:focus,.mb .me-body textarea:focus{outline:none;border-color:var(--orange)}
+  .mb .cbx{display:flex;align-items:center;gap:7px;font-size:12.5px;cursor:pointer}
+  .mb .cbx input{width:16px;height:16px;accent-color:var(--green)}
+  .mb .me-act{display:flex;gap:10px;align-items:center;margin-top:2px}
+  .mb .me-act .btn{padding:8px 16px;font-size:12.5px}
+  .mb .me-det{font-size:12.5px}.mb .me-det .me-l{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--w40);display:block;margin-bottom:3px}
+  .mb .me-det>div{color:var(--w70);white-space:pre-wrap}
+  /* säljmål-tabell */
+  .mb .bt{background:var(--panel);border:1px solid var(--border);border-radius:13px;overflow:hidden}
+  .mb table.bud{width:100%;border-collapse:collapse}
+  .mb table.bud th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);padding:11px 14px;border-bottom:1.5px solid var(--w10)}
+  .mb table.bud td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:middle;font-size:13px}
+  .mb table.bud tr:last-child td{border-bottom:none}
+  .mb .rep{font-weight:700}
+  .mb .kpi{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mb .kpi b{font-weight:800}
+  .mb .kpi .goal{color:var(--w40)}
+  .mb .prog{height:6px;background:var(--deep);border-radius:4px;overflow:hidden;margin-top:5px;min-width:80px}
+  .mb .prog>span{display:block;height:100%;background:var(--orange)}
+  .mb .prog.full>span{background:var(--green)}
+  .mb .gk{font-size:11px;font-weight:800;border-radius:6px;padding:3px 9px}
+  .mb .gk.y{background:rgba(76,175,125,.15);color:var(--green)}
+  .mb .gk.n{background:var(--w10);color:var(--w40)}
+  .mb .lnk{color:var(--orange);cursor:pointer;font-weight:700;font-size:12px}
+  .mb .lnk:hover{text-decoration:underline}
+  .mb .addrow{background:var(--card);border:1px dashed var(--border);border-radius:11px;padding:12px 14px;margin-top:12px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+  .mb .fld{display:flex;flex-direction:column;gap:4px}
+  .mb .fld label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--w40)}
+  .mb .fld input,.mb .fld select{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--white);font-family:var(--fb);font-size:13px;color-scheme:dark;width:110px}
+  .mb .fld.wide input{width:200px}
+  .mb .fld input:focus,.mb .fld select:focus{outline:none;border-color:var(--orange)}
+  .mb .btn{background:var(--orange);border:none;border-radius:8px;padding:9px 16px;color:#1c1206;font-family:var(--fb);font-size:13px;font-weight:800;cursor:pointer}
+  .mb .btn:disabled{opacity:.55}
+  .mb .btn.ghost{background:var(--input);color:var(--w70);border:1px solid var(--border)}
+  .mb .msg{font-size:12px;color:var(--w40)}
+  .mb .editform{background:var(--deep);border-top:1px solid var(--border)}
+  .mb .editform td{padding:14px}
+  .mb .ef-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .mb .ef-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--w40);margin-bottom:7px}
+  .mb .fld.sm input{width:64px}
+  .mb .fasbr{font-size:10px;color:var(--w40);margin-top:5px;font-variant-numeric:tabular-nums}
+</style>
+
+<div class="mb">
+  <input type="hidden" data-mira="api_host"        value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"  value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="current_user"    value="">
+  <input type="hidden" data-mira="is_salesmanager" value="">
+
+  <h1>Mötesbokning <span>·</span> sälj</h1>
+  <div class="sub">Mötestratt per fas · attribution möte → affär · säljmål</div>
+
+  <div class="bar">
+    <span class="vchip on" data-mb="view" data-v="tratt">Mötestratt</span>
+    <span class="vchip" data-mb="view" data-v="budget">Säljmål &amp; utfall</span>
+    <button class="navbtn" data-mb="refresh" style="margin-left:auto">↻ Uppdatera</button>
+  </div>
+
+  <div data-mb="filterbar"></div>
+  <div data-mb="body"><div class="muted" style="padding:20px 4px">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".mb"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-mb-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-mb-claimed","1");
+  var $=function(k){ return root.querySelector('[data-mb="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+  var ME=cfg("current_user"), IS_MGR=/^(yes|true|1)$/i.test(cfg("is_salesmanager"));
+  var FASER=["Fas 1","Fas 2","Fas 3","Fas 4","Övrigt"];
+  var FASKEY={"Fas 1":"fas1","Fas 2":"fas2","Fas 3":"fas3","Fas 4":"fas4","Övrigt":"ovrigt"};
+  var FASSHORT={"Fas 1":"F1","Fas 2":"F2","Fas 3":"F3","Fas 4":"F4","Övrigt":"Öv"};
+  var STATE={ view:"tratt", moten:null, budget:null, person:"", from:"", to:"", month:"" };
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function kr(n){ return (n==null?0:Math.round(n)).toLocaleString("sv-SE")+" kr"; }
+  function num(n){ return (n==null?0:n).toLocaleString("sv-SE"); }
+  function thisMonth(){ var d=new Date(); return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2); }
+  function monthShift(mm, n){ var y=parseInt(mm.slice(0,4),10), m=parseInt(mm.slice(5,7),10)-1+n; var d=new Date(Date.UTC(y,m,1)); return d.getUTCFullYear()+"-"+("0"+(d.getUTCMonth()+1)).slice(-2); }
+  function monthLabel(mm){ var names=["jan","feb","mar","apr","maj","jun","jul","aug","sep","okt","nov","dec"]; return names[parseInt(mm.slice(5,7),10)-1]+" "+mm.slice(0,4); }
+  function pct(a,b){ if(!b) return 0; return Math.min(100, Math.round((a/b)*100)); }
+  function fasInputs(prefix, malFas){ malFas=malFas||{}; var h=""; for(var i=0;i<FASER.length;i++){ var f=FASER[i]; h+='<div class="fld sm"><label>'+esc(f)+'</label><input type="number" class="'+prefix+'-'+FASKEY[f]+'" value="'+esc(malFas[f]||0)+'"></div>'; } return h; }
+  function gatherFas(box, prefix){ var o={}; for(var i=0;i<FASER.length;i++){ var f=FASER[i]; var el=box.querySelector("."+prefix+"-"+FASKEY[f]); o[f]=el?el.value:0; } return o; }
+  function fasBreakdown(uf, mf){ uf=uf||{}; mf=mf||{}; var parts=[]; for(var i=0;i<FASER.length;i++){ var f=FASER[i]; parts.push(FASSHORT[f]+" "+num(uf[f]||0)+"/"+num(mf[f]||0)); } return '<div class="fasbr">'+parts.join(" · ")+'</div>'; }
+
+  function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+  function apiPost(path, body){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){ return r.json(); }); }
+
+  // ── FILTERBAR ──
+  function renderFilter(){
+    var fb=$("filterbar");
+    if(STATE.view==="tratt"){
+      var d=STATE.moten, pers=(d&&d.personer)||[];
+      var opts='<option value="">Alla kundansvariga</option>';
+      for(var i=0;i<pers.length;i++){ opts+='<option value="'+esc(pers[i].id)+'"'+(pers[i].id===STATE.person?" selected":"")+'>'+esc(pers[i].name)+'</option>'; }
+      fb.innerHTML='<div class="bar">'+
+        '<select class="sel" data-mb="person">'+opts+'</select>'+
+        '<span class="muted" style="font-size:11px">Datum:</span>'+
+        '<input type="date" class="datein" data-mb="from" value="'+esc(STATE.from)+'">'+
+        '<span class="muted">–</span>'+
+        '<input type="date" class="datein" data-mb="to" value="'+esc(STATE.to)+'">'+
+        '<button class="navbtn" data-mb="clear">Rensa</button>'+
+      '</div>';
+    } else {
+      if(!STATE.month) STATE.month=thisMonth();
+      fb.innerHTML='<div class="bar">'+
+        '<button class="navbtn" data-mb="mprev">‹</button>'+
+        '<span style="font-weight:800;min-width:96px;text-align:center;text-transform:capitalize">'+esc(monthLabel(STATE.month))+'</span>'+
+        '<button class="navbtn" data-mb="mnext">›</button>'+
+        '<button class="navbtn" data-mb="mnow">Denna månad</button>'+
+      '</div>';
+    }
+  }
+
+  // ── VY A: mötestratt ──
+  function mcard(mt){
+    var badges='';
+    badges+= mt.genomfort ? '<span class="badge done">✓ Genomfört</span>' : '<span class="badge wait">Ej genomfört</span>';
+    if(mt.blev_affar) badges+='<span class="badge deal">✓ Affär'+(mt.deal_value?(" · "+kr(mt.deal_value)):"")+'</span>';
+    var canEdit = IS_MGR || (mt.ansvarig_id && mt.ansvarig_id===ME);
+    return '<div class="mcard" data-mid="'+esc(mt.id)+'">'+
+      '<div class="mcard-head" data-mb="expand"><span class="exp">▸</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div class="co">'+esc(mt.company||"(företag saknas)")+'</div>'+
+          '<div class="meta">'+esc(mt.datum||"—")+(mt.ansvarig?(" · "+esc(mt.ansvarig)):"")+'</div>'+
+          '<div class="badges">'+badges+'</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mcard-exp" style="display:none">'+moteExpand(mt, canEdit)+'</div>'+
+    '</div>';
+  }
+  function moteExpand(mt, canEdit){
+    if(!canEdit){
+      var det='';
+      if(mt.meddelande) det+='<div class="me-det"><span class="me-l">Beskrivning</span><div>'+esc(mt.meddelande)+'</div></div>';
+      if(mt.motesanteckning) det+='<div class="me-det"><span class="me-l">Mötesanteckning</span><div>'+esc(mt.motesanteckning)+'</div></div>';
+      if(!det) det='<div class="muted" style="font-size:11px">Inga anteckningar. Endast '+esc(mt.ansvarig||"ägaren")+' eller säljchef kan redigera.</div>';
+      return '<div class="me-body">'+det+'</div>';
+    }
+    var fasOpts=''; for(var i=0;i<FASER.length;i++){ fasOpts+='<option value="'+esc(FASER[i])+'"'+(FASER[i]===mt.fas?" selected":"")+'>'+esc(FASER[i])+'</option>'; }
+    return '<div class="me-body">'+
+      '<div class="fld"><label>Fas</label><select class="me-fas">'+fasOpts+'</select></div>'+
+      '<div class="fld"><label>Mötesdatum</label><input type="date" class="me-datum" value="'+esc(mt.datum||"")+'"></div>'+
+      '<label class="cbx"><input type="checkbox" class="me-genomfort"'+(mt.genomfort?" checked":"")+'> Genomfört?</label>'+
+      '<div class="fld"><label>Beskrivning</label><textarea class="me-besk" rows="2">'+esc(mt.meddelande||"")+'</textarea></div>'+
+      '<div class="me-note fld" style="'+(mt.genomfort?"":"display:none")+'"><label>Mötesanteckning</label><textarea class="me-anteckning" rows="3">'+esc(mt.motesanteckning||"")+'</textarea></div>'+
+      '<div class="me-act"><button class="btn" data-mb="savemote" data-mid="'+esc(mt.id)+'">Spara</button><span class="msg" data-me-msg></span></div>'+
+    '</div>';
+  }
+  function renderTratt(){
+    var d=STATE.moten;
+    if(!d){ $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>'; return; }
+    var s=d.summary||{};
+    var stats='<div class="stats">'+
+      '<div class="stat"><div class="k">Möten</div><div class="v">'+num(s.total)+'</div></div>'+
+      '<div class="stat gr"><div class="k">Genomförda</div><div class="v">'+num(s.genomforda)+'</div></div>'+
+      '<div class="stat hl"><div class="k">Blev affär</div><div class="v">'+num(s.blev_affar)+'</div></div>'+
+      '<div class="stat"><div class="k">Konvertering</div><div class="v">'+num(s.konvertering)+'%</div></div>'+
+      '<div class="stat"><div class="k">Affärsvärde</div><div class="v" style="font-size:17px">'+kr(s.affarsvarde)+'</div></div>'+
+    '</div>';
+    var cols=(d.groups||[]).map(function(g){
+      var body=g.moten.length? g.moten.map(mcard).join("") : '<div class="fas-empty">Inga möten</div>';
+      return '<div class="fas"><div class="fas-h"><span class="fn">'+esc(g.fas)+'</span><span class="fc">'+g.moten.length+'</span></div><div class="fas-body">'+body+'</div></div>';
+    }).join("");
+    $("body").innerHTML=stats+'<div class="faser">'+cols+'</div>';
+  }
+
+  // ── VY B: säljmål ──
+  function bar(a,b){ var p=pct(a,b); return '<div class="prog'+(b&&a>=b?" full":"")+'"><span style="width:'+p+'%"></span></div>'; }
+  function budRow(r){
+    var editCell = IS_MGR ? '<span class="lnk" data-mb="edit" data-rep="'+esc(r.user_id)+'" data-bid="'+esc(r.budget_id)+'">Redigera</span>' : '<span class="muted" style="font-size:11px">—</span>';
+    return '<tr data-rep="'+esc(r.user_id)+'">'+
+      '<td class="rep">'+esc(r.name)+'</td>'+
+      '<td><span class="kpi"><b>'+num(r.utfall.moten)+'</b> <span class="goal">/ '+num(r.mal.moten)+'</span></span>'+bar(r.utfall.moten,r.mal.moten)+fasBreakdown(r.utfall.moten_fas, r.mal.moten_fas)+'</td>'+
+      '<td><span class="kpi"><b>'+num(r.utfall.blev_affar)+'</b> <span class="goal">/ '+num(r.mal.affar)+'</span></span>'+bar(r.utfall.blev_affar,r.mal.affar)+'</td>'+
+      '<td><span class="kpi"><b>'+kr(r.utfall.affarsvarde)+'</b> <span class="goal">/ '+kr(r.mal.invoice)+'</span></span>'+bar(r.utfall.affarsvarde,r.mal.invoice)+'</td>'+
+      '<td class="kpi">'+num(r.utfall.moten?Math.round((r.utfall.blev_affar/r.utfall.moten)*100):0)+'%</td>'+
+      '<td><span class="gk '+(r.godkand?"y":"n")+'">'+(r.godkand?"Godkänd":"Ej godkänd")+'</span></td>'+
+      '<td>'+editCell+'</td>'+
+    '</tr>';
+  }
+  function editFormRow(r){
+    return '<tr class="editform" data-editrow="'+esc(r.user_id)+'"><td colspan="7">'+
+      '<div class="ef-lbl">Mål antal kundmöten per fas</div>'+
+      '<div class="ef-row">'+fasInputs("ef", r.mal.moten_fas)+'</div>'+
+      '<div class="ef-row" style="margin-top:10px">'+
+        '<div class="fld"><label>Mål affärer</label><input type="number" class="ef-affar" value="'+esc(r.mal.affar)+'"></div>'+
+        '<div class="fld"><label>Mål affärsvärde (kr)</label><input type="number" class="ef-invoice" value="'+esc(r.mal.invoice)+'"></div>'+
+        '<div class="fld wide"><label>Kommentar</label><input type="text" class="ef-kommentar" value="'+esc(r.kommentar||"")+'"></div>'+
+        '<div class="fld"><label>Godkänd</label><label style="display:flex;align-items:center;gap:6px;height:36px;cursor:pointer"><input type="checkbox" class="ef-godkand" style="width:17px;height:17px;accent-color:var(--green)"'+(r.godkand?" checked":"")+'> ja</label></div>'+
+        '<button class="btn" data-mb="savetarget" data-rep="'+esc(r.user_id)+'" data-bid="'+esc(r.budget_id)+'">Spara</button>'+
+        '<span class="lnk ghostlnk" data-mb="canceledit">Avbryt</span>'+
+        '<span class="msg" data-ef-msg></span>'+
+      '</div>'+
+    '</td></tr>';
+  }
+  function renderBudget(){
+    var d=STATE.budget;
+    if(!d){ $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>'; return; }
+    var t=d.total||{};
+    var stats='<div class="stats">'+
+      '<div class="stat"><div class="k">Möten (utfall/mål)</div><div class="v" style="font-size:18px">'+num(t.moten)+' <span class="muted" style="font-size:13px">/ '+num(t.mal_moten)+'</span></div></div>'+
+      '<div class="stat hl"><div class="k">Affärer (utfall/mål)</div><div class="v" style="font-size:18px">'+num(t.blev_affar)+' <span class="muted" style="font-size:13px">/ '+num(t.mal_affar)+'</span></div></div>'+
+      '<div class="stat gr"><div class="k">Affärsvärde (utfall/mål)</div><div class="v" style="font-size:16px">'+kr(t.affarsvarde)+' <span class="muted" style="font-size:12px">/ '+kr(t.mal_invoice)+'</span></div></div>'+
+    '</div>';
+    var emptyMsg = IS_MGR ? ('Inga säljmål satta för '+esc(monthLabel(d.month))+'. Lägg till en säljare nedan.') : ('Inga mål satta för dig i '+esc(monthLabel(d.month))+' än.');
+    var rows=(d.rows||[]).map(budRow).join("");
+    if(!rows) rows='<tr><td colspan="7" class="muted" style="padding:22px;text-align:center">'+emptyMsg+'</td></tr>';
+    var head = IS_MGR ? '' : '<div class="sub" style="margin:0 0 12px">Dina mål · '+esc(monthLabel(d.month))+' · endast läsvy</div>';
+    var table='<div class="bt"><table class="bud"><thead><tr><th>Säljare</th><th>Möten</th><th>Affärer</th><th>Affärsvärde</th><th>Konv.</th><th>Godkänd</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+    // add-rep-rad — BARA för salesmanager
+    var add='';
+    if(IS_MGR){
+      var taken=d.taken||[], users=(d.users||[]).filter(function(u){ return taken.indexOf(u.id)<0; });
+      var uopts='<option value="">— välj säljare —</option>'; for(var i=0;i<users.length;i++){ uopts+='<option value="'+esc(users[i].id)+'">'+esc(users[i].name)+'</option>'; }
+      add='<div class="addrow">'+
+        '<div class="fld"><label>Lägg till säljare</label><select class="ar-user" style="width:190px">'+uopts+'</select></div>'+
+        fasInputs("ar", null)+
+        '<div class="fld"><label>Mål affärer</label><input type="number" class="ar-affar" value="0"></div>'+
+        '<div class="fld"><label>Mål affärsvärde</label><input type="number" class="ar-invoice" value="0"></div>'+
+        '<button class="btn" data-mb="addrep">＋ Lägg till</button>'+
+        '<span class="msg" data-ar-msg></span>'+
+      '</div>';
+    }
+    $("body").innerHTML=head+stats+table+add;
+  }
+
+  // ── LOAD ──
+  function loadMoten(){
+    var qs=[]; if(STATE.person) qs.push("person="+encodeURIComponent(STATE.person));
+    if(STATE.from) qs.push("from="+encodeURIComponent(STATE.from)); if(STATE.to) qs.push("to="+encodeURIComponent(STATE.to));
+    $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>';
+    api("/admin/salj/moten"+(qs.length?("?"+qs.join("&")):"")).then(function(j){
+      if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; }
+      STATE.moten=j; renderFilter(); renderTratt();
+    }).catch(function(){ $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
+  }
+  function loadBudget(){
+    if(!STATE.month) STATE.month=thisMonth();
+    $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>';
+    var q="/admin/salj/budget?month="+encodeURIComponent(STATE.month);
+    if(!IS_MGR && ME) q+="&user_id="+encodeURIComponent(ME);   // icke-chef → bara egna mål
+    api(q).then(function(j){
+      if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; }
+      STATE.budget=j; renderFilter(); renderBudget();
+    }).catch(function(){ $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
+  }
+  function load(){ if(STATE.view==="tratt") loadMoten(); else loadBudget(); }
+
+  // ── EVENTS ──
+  root.addEventListener("click",function(e){
+    var t=e.target;
+    var vc=t.closest && t.closest('.vchip[data-mb="view"]');
+    if(vc){ STATE.view=vc.getAttribute("data-v"); root.querySelectorAll('.vchip[data-mb="view"]').forEach(function(c){ c.className="vchip"+(c.getAttribute("data-v")===STATE.view?" on":""); }); load(); return; }
+    if(t.closest && t.closest('[data-mb="refresh"]')){ load(); return; }
+    if(t.closest && t.closest('[data-mb="clear"]')){ STATE.person=""; STATE.from=""; STATE.to=""; loadMoten(); return; }
+    // expandera mötes-kort
+    var eh=t.closest && t.closest('.mcard-head[data-mb="expand"]');
+    if(eh){ var card=eh.closest(".mcard"), exp=card.querySelector(".mcard-exp"); var open=exp.style.display==="none"; exp.style.display=open?"block":"none"; card.classList.toggle("open",open); return; }
+    // spara mötes-redigering
+    var sm=t.closest && t.closest('[data-mb="savemote"]');
+    if(sm){
+      var mcard2=sm.closest(".mcard"), mid=sm.getAttribute("data-mid"), mmsg=mcard2.querySelector("[data-me-msg]");
+      var noteEl=mcard2.querySelector(".me-anteckning");
+      sm.disabled=true; mmsg.textContent="Sparar…";
+      apiPost("/admin/salj/mote/"+encodeURIComponent(mid)+"/patch",{ by_user:ME,
+        fas:mcard2.querySelector(".me-fas").value, motesdatum:mcard2.querySelector(".me-datum").value,
+        beskrivning:mcard2.querySelector(".me-besk").value, genomfort:mcard2.querySelector(".me-genomfort").checked,
+        motesanteckning:noteEl?noteEl.value:""
+      }).then(function(j){ sm.disabled=false; if(!j||!j.ok){ mmsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } mmsg.textContent="Sparat ✓"; loadMoten(); })
+        .catch(function(){ sm.disabled=false; mmsg.textContent="Nätverksfel."; });
+      return;
+    }
+    if(t.closest && t.closest('[data-mb="mprev"]')){ STATE.month=monthShift(STATE.month,-1); loadBudget(); return; }
+    if(t.closest && t.closest('[data-mb="mnext"]')){ STATE.month=monthShift(STATE.month,1); loadBudget(); return; }
+    if(t.closest && t.closest('[data-mb="mnow"]')){ STATE.month=thisMonth(); loadBudget(); return; }
+    // redigera mål → visa edit-rad
+    var ed=t.closest && t.closest('[data-mb="edit"]');
+    if(ed){
+      var rid=ed.getAttribute("data-rep");
+      root.querySelectorAll('tr.editform').forEach(function(x){ x.parentNode.removeChild(x); });
+      var r=(STATE.budget.rows||[]).find(function(x){ return x.user_id===rid; }); if(!r) return;
+      var tr=root.querySelector('tr[data-rep="'+rid+'"]');
+      if(tr){ var tmp=document.createElement("tbody"); tmp.innerHTML=editFormRow(r); tr.parentNode.insertBefore(tmp.firstChild, tr.nextSibling); }
+      return;
+    }
+    if(t.closest && t.closest('[data-mb="canceledit"]')){ root.querySelectorAll('tr.editform').forEach(function(x){ x.parentNode.removeChild(x); }); return; }
+    // spara mål (edit)
+    var sv=t.closest && t.closest('[data-mb="savetarget"]');
+    if(sv){
+      var row=sv.closest("tr"), rep=sv.getAttribute("data-rep"), bid=sv.getAttribute("data-bid");
+      var msg=row.querySelector("[data-ef-msg]"); sv.disabled=true; msg.textContent="Sparar…";
+      apiPost("/admin/salj/budget/set",{ user_id:rep, budget_id:bid, month:STATE.month, by_user:ME,
+        mal_fas:gatherFas(row,"ef"), total_affar:row.querySelector(".ef-affar").value,
+        total_invoice:row.querySelector(".ef-invoice").value, kommentar:row.querySelector(".ef-kommentar").value,
+        godkand:row.querySelector(".ef-godkand").checked
+      }).then(function(j){ sv.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } msg.textContent="Sparat ✓"; loadBudget(); })
+        .catch(function(){ sv.disabled=false; msg.textContent="Nätverksfel."; });
+      return;
+    }
+    // lägg till säljare
+    var ar=t.closest && t.closest('[data-mb="addrep"]');
+    if(ar){
+      var box=ar.closest(".addrow"), uid=box.querySelector(".ar-user").value, amsg=box.querySelector("[data-ar-msg]");
+      if(!uid){ amsg.textContent="Välj en säljare."; return; }
+      ar.disabled=true; amsg.textContent="Lägger till…";
+      apiPost("/admin/salj/budget/set",{ user_id:uid, month:STATE.month, by_user:ME,
+        mal_fas:gatherFas(box,"ar"), total_affar:box.querySelector(".ar-affar").value, total_invoice:box.querySelector(".ar-invoice").value
+      }).then(function(j){ ar.disabled=false; if(!j||!j.ok){ amsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } amsg.textContent="Tillagd ✓"; loadBudget(); })
+        .catch(function(){ ar.disabled=false; amsg.textContent="Nätverksfel."; });
+      return;
+    }
+  });
+  root.addEventListener("change",function(e){
+    var t=e.target;
+    if(t.classList && t.classList.contains("me-genomfort")){ var card=t.closest(".mcard"), note=card.querySelector(".me-note"); if(note) note.style.display=t.checked?"block":"none"; return; }
+    if(t.getAttribute("data-mb")==="person"){ STATE.person=t.value; loadMoten(); return; }
+    if(t.getAttribute("data-mb")==="from"){ STATE.from=t.value; loadMoten(); return; }
+    if(t.getAttribute("data-mb")==="to"){ STATE.to=t.value; loadMoten(); return; }
+  });
+
+  renderFilter();
+  load();
+})();
+</script>

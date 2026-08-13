@@ -9,6 +9,7 @@ import { createContractRenderEngine } from "./contract_render.js";
 import { registerOffertRoutes } from "./offert_api.js";
 import { registerAffarRoutes } from "./affar_api.js";
 import { registerProduktionRoutes } from "./produktion_api.js";
+import { registerSaljRoutes } from "./salj_api.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -449,6 +450,7 @@ function requireApiKey(req, res, next) {
     "/admin/offert",               // F&E offert-modul (Fas 2), x-admin-token-grindad (offert_api.js)
     "/admin/affar",                // Affär samlad vy (P1), x-admin-token-grindad (affar_api.js)
     "/admin/produktion",           // Produktionsmodul (dagsvy per kök), x-admin-token-grindad (produktion_api.js)
+    "/admin/salj",                 // Sälj — mötestratt + säljmål, x-admin-token-grindad (salj_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
@@ -19932,6 +19934,14 @@ registerProduktionRoutes(app, {
   renderOrderPdf: (id, kind) => (offertEngine && offertEngine.renderOrderPdf)
     ? offertEngine.renderOrderPdf(id, kind)
     : Promise.reject(new Error("offert_engine_not_ready")),
+});
+
+registerSaljRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleId,
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
 });
 
 // ── POST /admin/produktion/login {code} — köks-iPad: delad kod → 12h scoped kitchen-token. ──
