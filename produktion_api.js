@@ -29,6 +29,7 @@ export function registerProduktionRoutes(app, deps) {
   // ── caches: ClientCompany-namn + Kok-namn ──
   let _cc = { map: null, ts: 0 };
   async function ccMap() {
+    if (deps.companyMap) return deps.companyMap();   // delad förvärmd CC-cache
     if (_cc.map && (Date.now() - _cc.ts) < CC_TTL) return _cc.map;
     const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
     const m = new Map();

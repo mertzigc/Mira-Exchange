@@ -19900,9 +19900,46 @@ offertEngine = registerOffertRoutes(app, {
   createApprovalRequest: _createApprovalRequestInternal,
 });
 
+// ── Delad, förvärmd ClientCompany-cache (5413 poster = ~55 sekventiella Bubble-sidor). ──
+// Byggs EN gång + bakgrundsuppdateras; delas av affär/sälj/produktion så ingen vy betalar
+// 55-sidorsladdningen. Stale-while-revalidate: färsk→direkt, stale→servera stale+refresh i bg,
+// kall→vänta (bara allra första requesten före prewarm). In-flight-dedup mot dubbel-load.
+const CC_SHARED_TTL = 15 * 60 * 1000;
+let _ccSharedCache = { name: null, owner: null, ts: 0 };
+let _ccSharedInflight = null;
+async function _loadSharedCC() {
+  if (_ccSharedInflight) return _ccSharedInflight;
+  _ccSharedInflight = (async () => {
+    try {
+      const all = await bubbleFindAll("ClientCompany", {});
+      const name = new Map(), owner = new Map();
+      for (const c of all) {
+        const id = bubbleId(c); if (!id) continue;
+        name.set(id, c.Name_company || c.name || "");
+        const ka = c.Kundansvarig ? (typeof c.Kundansvarig === "string" ? c.Kundansvarig : bubbleId(c.Kundansvarig)) : null;
+        if (ka) owner.set(id, ka);
+      }
+      _ccSharedCache = { name, owner, ts: Date.now() };
+      return _ccSharedCache;
+    } finally { _ccSharedInflight = null; }
+  })();
+  return _ccSharedInflight;
+}
+async function _sharedCC() {
+  const c = _ccSharedCache;
+  if (c.name && (Date.now() - c.ts) < CC_SHARED_TTL) return c;        // färsk
+  if (c.name) { _loadSharedCC().catch(() => {}); return c; }          // stale → servera + refresh i bg
+  return _loadSharedCC();                                             // kall → vänta
+}
+async function sharedCompanyMap() { return (await _sharedCC()).name; }
+async function sharedCompanyOwnerMap() { return (await _sharedCC()).owner; }
+_loadSharedCC().catch(() => {});                                      // prewarm vid boot (icke-blockerande)
+setInterval(() => { _loadSharedCC().catch(() => {}); }, 10 * 60 * 1000).unref?.();   // bakgrundsrefresh
+
 // Affär samlad vy (P1+P2) — routes i affar_api.js.
 registerAffarRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount, bubblePatch, bubbleCreate, bubbleDelete,
+  companyMap: sharedCompanyMap, companyOwnerMap: sharedCompanyOwnerMap,   // delad förvärmd CC-cache
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
@@ -19921,6 +19958,7 @@ registerAffarRoutes(app, {
 
 registerProduktionRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
+  companyMap: sharedCompanyMap,   // delad förvärmd CC-cache
   // Produktion-endpoints accepterar admin-token (intern vy) ELLER köks-session-token (iPad-vyn)
   planningAuthed: (req) => _planningAuthed(req) || _kitchenAuth.authed(req),
   planningCors: _planningCors,
@@ -19938,6 +19976,7 @@ registerProduktionRoutes(app, {
 
 registerSaljRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleId,
+  companyMap: sharedCompanyMap,   // delad förvärmd CC-cache
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,

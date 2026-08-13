@@ -152,6 +152,10 @@
   function gatherFas(box, prefix){ var o={}; for(var i=0;i<FASER.length;i++){ var f=FASER[i]; var el=box.querySelector("."+prefix+"-"+FASKEY[f]); o[f]=el?el.value:0; } return o; }
   function fasBreakdown(uf, mf){ uf=uf||{}; mf=mf||{}; var parts=[]; for(var i=0;i<FASER.length;i++){ var f=FASER[i]; parts.push(FASSHORT[f]+" "+num(uf[f]||0)+"/"+num(mf[f]||0)); } return '<div class="fasbr">'+parts.join(" · ")+'</div>'; }
 
+  // stale-while-revalidate: visa senaste svaret direkt ur sessionStorage, uppdatera i bakgrunden.
+  function cacheGet(k){ try{ var v=sessionStorage.getItem(k); if(!v) return null; var o=JSON.parse(v); if(!o||(Date.now()-o.t)>1800000) return null; return o.d; }catch(e){ return null; } }
+  function cacheSet(k,d){ try{ sessionStorage.setItem(k,JSON.stringify({t:Date.now(),d:d})); }catch(e){} }
+  function cacheClearAll(){ try{ for(var i=sessionStorage.length-1;i>=0;i--){ var k=sessionStorage.key(i); if(k&&k.indexOf("mb:")===0) sessionStorage.removeItem(k); } }catch(e){} }
   function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
   function apiPost(path, body){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){ return r.json(); }); }
 
@@ -298,21 +302,27 @@
   function loadMoten(){
     var qs=[]; if(STATE.person) qs.push("person="+encodeURIComponent(STATE.person));
     if(STATE.from) qs.push("from="+encodeURIComponent(STATE.from)); if(STATE.to) qs.push("to="+encodeURIComponent(STATE.to));
-    $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>';
-    api("/admin/salj/moten"+(qs.length?("?"+qs.join("&")):"")).then(function(j){
-      if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; }
-      STATE.moten=j; renderFilter(); renderTratt();
-    }).catch(function(){ $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
+    var q=(qs.length?("?"+qs.join("&")):""), key="mb:moten:"+q;
+    var cached=cacheGet(key);
+    if(cached){ STATE.moten=cached; renderFilter(); renderTratt(); }   // visa direkt ur cache
+    else { $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>'; }
+    api("/admin/salj/moten"+q).then(function(j){
+      if(!j||!j.ok){ if(!cached) $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; }
+      STATE.moten=j; cacheSet(key,j); renderFilter(); renderTratt();
+    }).catch(function(){ if(!cached) $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
   }
   function loadBudget(){
     if(!STATE.month) STATE.month=thisMonth();
-    $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>';
     var q="/admin/salj/budget?month="+encodeURIComponent(STATE.month);
     if(!IS_MGR && ME) q+="&user_id="+encodeURIComponent(ME);   // icke-chef → bara egna mål
+    var key="mb:budget:"+STATE.month+(IS_MGR?":all":(":"+ME));
+    var cached=cacheGet(key);
+    if(cached){ STATE.budget=cached; renderFilter(); renderBudget(); }
+    else { $("body").innerHTML='<div class="muted" style="padding:20px 4px">Laddar…</div>'; }
     api(q).then(function(j){
-      if(!j||!j.ok){ $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; }
-      STATE.budget=j; renderFilter(); renderBudget();
-    }).catch(function(){ $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
+      if(!j||!j.ok){ if(!cached) $("body").innerHTML='<div class="err">Kunde inte ladda ('+esc((j&&j.error)||"fel")+').</div>'; return; }
+      STATE.budget=j; cacheSet(key,j); renderFilter(); renderBudget();
+    }).catch(function(){ if(!cached) $("body").innerHTML='<div class="err">Nätverksfel.</div>'; });
   }
   function load(){ if(STATE.view==="tratt") loadMoten(); else loadBudget(); }
 
@@ -336,7 +346,7 @@
         fas:mcard2.querySelector(".me-fas").value, motesdatum:mcard2.querySelector(".me-datum").value,
         beskrivning:mcard2.querySelector(".me-besk").value, genomfort:mcard2.querySelector(".me-genomfort").checked,
         motesanteckning:noteEl?noteEl.value:""
-      }).then(function(j){ sm.disabled=false; if(!j||!j.ok){ mmsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } mmsg.textContent="Sparat ✓"; loadMoten(); })
+      }).then(function(j){ sm.disabled=false; if(!j||!j.ok){ mmsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } mmsg.textContent="Sparat ✓"; cacheClearAll(); loadMoten(); })
         .catch(function(){ sm.disabled=false; mmsg.textContent="Nätverksfel."; });
       return;
     }
@@ -363,7 +373,7 @@
         mal_fas:gatherFas(row,"ef"), total_affar:row.querySelector(".ef-affar").value,
         total_invoice:row.querySelector(".ef-invoice").value, kommentar:row.querySelector(".ef-kommentar").value,
         godkand:row.querySelector(".ef-godkand").checked
-      }).then(function(j){ sv.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } msg.textContent="Sparat ✓"; loadBudget(); })
+      }).then(function(j){ sv.disabled=false; if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } msg.textContent="Sparat ✓"; cacheClearAll(); loadBudget(); })
         .catch(function(){ sv.disabled=false; msg.textContent="Nätverksfel."; });
       return;
     }
@@ -375,7 +385,7 @@
       ar.disabled=true; amsg.textContent="Lägger till…";
       apiPost("/admin/salj/budget/set",{ user_id:uid, month:STATE.month, by_user:ME,
         mal_fas:gatherFas(box,"ar"), total_affar:box.querySelector(".ar-affar").value, total_invoice:box.querySelector(".ar-invoice").value
-      }).then(function(j){ ar.disabled=false; if(!j||!j.ok){ amsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } amsg.textContent="Tillagd ✓"; loadBudget(); })
+      }).then(function(j){ ar.disabled=false; if(!j||!j.ok){ amsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } amsg.textContent="Tillagd ✓"; cacheClearAll(); loadBudget(); })
         .catch(function(){ ar.disabled=false; amsg.textContent="Nätverksfel."; });
       return;
     }

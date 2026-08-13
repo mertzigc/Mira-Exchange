@@ -58,6 +58,7 @@ export function registerSaljRoutes(app, deps) {
   }
   let _ccCache = { map: null, ts: 0 };
   async function companyMap() {
+    if (deps.companyMap) return deps.companyMap();   // delad förvärmd CC-cache
     if (_ccCache.map && (Date.now() - _ccCache.ts) < CC_TTL) return _ccCache.map;
     const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
     const m = new Map();

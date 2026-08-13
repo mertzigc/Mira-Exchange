@@ -43,8 +43,9 @@ export function registerAffarRoutes(app, deps) {
     _ccCache = { name, owner, ts: Date.now() };
     return _ccCache;
   }
-  async function companyMap() { return (await _loadCC()).name; }
-  async function companyOwnerMap() { return (await _loadCC()).owner; }
+  // Delad förvärmd CC-cache (deps.companyMap/OwnerMap) om injicerad, annars lokal _loadCC.
+  async function companyMap() { if (deps.companyMap) return deps.companyMap(); return (await _loadCC()).name; }
+  async function companyOwnerMap() { if (deps.companyOwnerMap) return deps.companyOwnerMap(); return (await _loadCC()).owner; }
   const cname = (m, ref) => { const id = _ref(ref); return id ? (m.get(id) || "") : ""; };
 
   // ── User-cache (id → visningsnamn) ────────────────────────────────
