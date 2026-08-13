@@ -10,6 +10,7 @@ import { registerOffertRoutes } from "./offert_api.js";
 import { registerAffarRoutes } from "./affar_api.js";
 import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
+import { registerCompaniesRoutes } from "./companies_api.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -19905,21 +19906,48 @@ offertEngine = registerOffertRoutes(app, {
 // 55-sidorsladdningen. Stale-while-revalidate: färsk→direkt, stale→servera stale+refresh i bg,
 // kall→vänta (bara allra första requesten före prewarm). In-flight-dedup mot dubbel-load.
 const CC_SHARED_TTL = 15 * 60 * 1000;
-let _ccSharedCache = { name: null, owner: null, ts: 0 };
+let _ccSharedCache = { name: null, owner: null, full: null, ts: 0 };
 let _ccSharedInflight = null;
+// Företagslistan (companies_api) behöver fler fält än namn+ägare. Vi bygger en
+// list-projektion ur SAMMA enda laddning så listan aldrig betalar en egen 55-sidorshämtning.
+// Refs (ansvarig/grupp/fastighet) lagras som id:n; namn resolvas i companies_api mot
+// egna små cachar (User/ClientGroup/Fastighet). Option-set-fält är redan display-strängar.
+function _ccRef(v) { return v == null ? null : (typeof v === "string" ? v : bubbleId(v)); }
+function _ccRefList(v) { if (v == null) return []; const a = Array.isArray(v) ? v : [v]; return a.map(_ccRef).filter(Boolean); }
+function _ccNum(v) { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
+function _projectCompany(c) {
+  return {
+    id: bubbleId(c),
+    name: c.Name_company || c.name || "",
+    orgnr: c.Org_Number == null ? "" : String(c.Org_Number),
+    kundstatus: c.Kundstatus == null ? "" : String(c.Kundstatus),
+    bransch: c.Bransch == null ? "" : String(c.Bransch),
+    potential: c.Potential == null ? "" : String(c.Potential),
+    lojalitet: c.Lojalitet == null ? "" : String(c.Lojalitet),
+    region: c.Region == null ? "" : String(c.Region),
+    customer_type: c.customer_type == null ? "" : String(c.customer_type),
+    nki: _ccNum(c.NKI_carotte),
+    antal_medarbetare: _ccNum(c.antal_medarbetare),
+    omsattning_field: _ccNum(c["omsättning"]),
+    ansvarig_id: _ccRef(c.Kundansvarig),
+    group_id: _ccRef(c.group),
+    fastighet_ids: _ccRefList(c.Fastighet),
+  };
+}
 async function _loadSharedCC() {
   if (_ccSharedInflight) return _ccSharedInflight;
   _ccSharedInflight = (async () => {
     try {
       const all = await bubbleFindAll("ClientCompany", {});
-      const name = new Map(), owner = new Map();
+      const name = new Map(), owner = new Map(), full = new Map();
       for (const c of all) {
         const id = bubbleId(c); if (!id) continue;
         name.set(id, c.Name_company || c.name || "");
         const ka = c.Kundansvarig ? (typeof c.Kundansvarig === "string" ? c.Kundansvarig : bubbleId(c.Kundansvarig)) : null;
         if (ka) owner.set(id, ka);
+        full.set(id, _projectCompany(c));
       }
-      _ccSharedCache = { name, owner, ts: Date.now() };
+      _ccSharedCache = { name, owner, full, ts: Date.now() };
       return _ccSharedCache;
     } finally { _ccSharedInflight = null; }
   })();
@@ -19933,8 +19961,60 @@ async function _sharedCC() {
 }
 async function sharedCompanyMap() { return (await _sharedCC()).name; }
 async function sharedCompanyOwnerMap() { return (await _sharedCC()).owner; }
+async function sharedCompanyFullMap() { return (await _sharedCC()).full; }
+// Inline-edit: skriv om en post i cachen direkt (utan att vänta på 55-sidorsreload)
+// så listan visar det nya värdet omedelbart efter PATCH. `fresh` = råposten från Bubble.
+function sharedCompanyPatchEntry(id, fresh) {
+  const c = _ccSharedCache; if (!c || !c.full || !id || !fresh) return;
+  c.name.set(id, fresh.Name_company || fresh.name || c.name.get(id) || "");
+  const ka = _ccRef(fresh.Kundansvarig); if (ka) c.owner.set(id, ka); else c.owner.delete(id);
+  c.full.set(id, _projectCompany(fresh));
+}
 _loadSharedCC().catch(() => {});                                      // prewarm vid boot (icke-blockerande)
 setInterval(() => { _loadSharedCC().catch(() => {}); }, 10 * 60 * 1000).unref?.();   // bakgrundsrefresh
+
+// ── Delad omsättnings-cache (FortnoxInvoice.ft_net per linked_company + år). ──
+// EN faktura-scan (~10k rader, ~20-60s) → Map(companyId → {2024,2025,2026,…}). Speglar
+// computeSalesKpi: exkl Group-connection, makulerat exkl (ft_cancelled === true ELLER "ja").
+// ⚠️ WU-medveten: FortnoxInvoice-helsvep är dyrt (se HANDOFF WU-fällorna) → LAT laddning,
+// INGEN boot-prewarm/setInterval. Laddas först vid första företagslist-requesten, sen
+// stale-while-revalidate (TTL 60 min): en aktiv session bg-refreshar ~1/h, idle kostar noll.
+// Driver företagslistans Omsättning-kolumner (kan senare driva kundkortets siffror).
+// Företag utan linked_company får inga siffror (by design).
+const CC_REV_TTL = 60 * 60 * 1000;
+let _ccRevCache = { map: null, ts: 0 };
+let _ccRevInflight = null;
+async function _loadCompanyRevenue() {
+  if (_ccRevInflight) return _ccRevInflight;
+  _ccRevInflight = (async () => {
+    try {
+      const all = await bubbleFindAll("FortnoxInvoice", {});
+      const map = new Map();   // companyId → { [year]: net }
+      for (const r of (all || [])) {
+        const cid = String(r.connection_id || "");
+        if (cid === GROUP_CONNECTION_ID) continue;                       // exkludera Group (som KPI)
+        const cancelled = (r.ft_cancelled === true) || (String(r.ft_cancelled || "").toLowerCase() === "ja");
+        if (cancelled) continue;
+        const company = _ccRef(r.linked_company); if (!company) continue;
+        const t = new Date(r.ft_invoice_date).getTime(); if (!isFinite(t)) continue;
+        const year = new Date(t).getUTCFullYear();
+        const net = Number(r.ft_net) || 0;
+        let entry = map.get(company); if (!entry) { entry = {}; map.set(company, entry); }
+        entry[year] = (entry[year] || 0) + net;
+      }
+      for (const entry of map.values()) for (const y in entry) entry[y] = Math.round(entry[y]);
+      _ccRevCache = { map, ts: Date.now() };
+      return _ccRevCache;
+    } finally { _ccRevInflight = null; }
+  })();
+  return _ccRevInflight;
+}
+async function sharedCompanyRevenueMap() {
+  const c = _ccRevCache;
+  if (c.map && (Date.now() - c.ts) < CC_REV_TTL) return c.map;          // färsk
+  if (c.map) { _loadCompanyRevenue().catch(() => {}); return c.map; }   // stale → servera + refresh i bg
+  return (await _loadCompanyRevenue()).map;                             // kall → vänta (bara första list-requesten)
+}
 
 // Affär samlad vy (P1+P2) — routes i affar_api.js.
 registerAffarRoutes(app, {
@@ -19977,6 +20057,18 @@ registerProduktionRoutes(app, {
 registerSaljRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleId,
   companyMap: sharedCompanyMap,   // delad förvärmd CC-cache
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
+});
+
+// Företagslista (render-baserad ersättning för Bubble-native företagsvyn) — routes i companies_api.js.
+registerCompaniesRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
+  companyFullMap: sharedCompanyFullMap,        // delad förvärmd CC-cache (list-projektion)
+  companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år
+  companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,

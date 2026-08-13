@@ -1,0 +1,288 @@
+<!--
+  mira-foretag-lista.html — render-baserad ersättning för Bubble-native företagsvyn.
+  Backend: companies_api.js (GET /admin/companies/list + /meta, PATCH /admin/companies/:id).
+  Data-mira hidden inputs:
+    data-mira="api_host"       = https://mira-exchange.onrender.com
+    data-mira="planning_token" = PLANNING_ADMIN_TOKEN
+  Konventioner (se HANDOFF): INGEN ?. / ?? (Bubbles parser). IIFE, BROOT-scopat via claim,
+  .fl-namnrymd på ALLA klasser (Bubbles globala CSS krockar annars), yes/no → "ja".
+  Inline-edit via PATCH. SWR-cache i sessionStorage (fl:-prefix).
+-->
+<style>
+  .fl{--fl-bg:#0f1830;--fl-card:#16223d;--fl-line:#243456;--fl-txt:#e7ecf6;--fl-mut:#8ea0c2;--fl-acc:#df6f39;--fl-ok:#2ecc71;--fl-chip:#1c2b4d;
+      color:var(--fl-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
+  .fl *{box-sizing:border-box;}
+  .fl-head{display:flex;align-items:center;gap:10px;margin:0 0 12px;}
+  .fl-head h1{font-size:20px;font-weight:700;margin:0;}
+  .fl-head .fl-count{color:var(--fl-mut);font-size:12px;font-weight:500;}
+  .fl-head .fl-refresh{margin-left:auto;background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12px;}
+  .fl-head .fl-refresh:hover{border-color:var(--fl-acc);}
+  .fl-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center;}
+  .fl-filters .fl-search{flex:1;min-width:180px;background:var(--fl-card);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:8px 12px;font-size:13px;}
+  .fl-filters .fl-sel{background:var(--fl-card);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:7px 10px;font-size:12px;max-width:190px;}
+  .fl-filters .fl-sel option{background:#16223d;color:#e7ecf6;}
+  .fl-filters .fl-clear{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:12px;}
+  .fl-filters .fl-clear:hover{color:var(--fl-txt);border-color:var(--fl-acc);}
+  .fl-wrap{overflow-x:auto;border:1px solid var(--fl-line);border-radius:12px;background:var(--fl-card);}
+  .fl-tbl{width:100%;border-collapse:collapse;min-width:1050px;}
+  .fl-tbl th{text-align:left;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;padding:11px 12px;border-bottom:1px solid var(--fl-line);white-space:nowrap;position:sticky;top:0;background:var(--fl-card);}
+  .fl-tbl th.fl-sortable{cursor:pointer;user-select:none;}
+  .fl-tbl th.fl-sortable:hover{color:var(--fl-txt);}
+  .fl-tbl th .fl-arr{color:var(--fl-acc);margin-left:3px;}
+  .fl-tbl th.fl-num,.fl-tbl td.fl-num{text-align:right;}
+  .fl-tbl td{padding:9px 12px;border-bottom:1px solid rgba(36,52,86,.5);vertical-align:middle;white-space:nowrap;}
+  .fl-tbl tr:last-child td{border-bottom:none;}
+  .fl-tbl tr:hover td{background:rgba(28,43,77,.4);}
+  .fl-name{font-weight:600;color:var(--fl-txt);}
+  .fl-edit{cursor:text;border-radius:6px;padding:2px 6px;margin:-2px -6px;display:inline-block;min-width:26px;}
+  .fl-edit:hover{background:var(--fl-chip);outline:1px dashed var(--fl-line);}
+  .fl-edit.fl-empty{color:var(--fl-mut);font-style:italic;}
+  .fl-tbl td.fl-ecell{cursor:pointer;}
+  .fl-tbl td.fl-ecell:hover{background:rgba(223,111,57,.10);box-shadow:inset 0 0 0 1px var(--fl-line);}
+  .fl-pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;}
+  .fl-pill.fl-active{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fl-pill.fl-prospect{background:rgba(223,111,57,.16);color:#f0a070;}
+  .fl-pill.fl-plain{background:var(--fl-chip);color:var(--fl-mut);}
+  .fl-star{color:var(--fl-acc);}
+  .fl-ec{background:var(--fl-bg);border:1px solid var(--fl-acc);color:var(--fl-txt);border-radius:6px;padding:4px 6px;font-size:12px;max-width:180px;}
+  .fl-ec option{background:#16223d;color:#e7ecf6;}
+  .fl-save{color:var(--fl-mut);font-size:10px;margin-left:6px;}
+  .fl-save.fl-okc{color:var(--fl-ok);}
+  .fl-save.fl-errc{color:#ff6b6b;}
+  .fl-more{text-align:center;padding:14px;}
+  .fl-more button{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:8px 20px;cursor:pointer;font-size:12px;}
+  .fl-more button:hover{border-color:var(--fl-acc);}
+  .fl-msg{padding:22px 6px;color:var(--fl-mut);text-align:center;}
+  .fl-err{padding:16px;color:#ff8080;}
+</style>
+
+<div class="fl">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+
+  <div class="fl-head">
+    <h1>Företag</h1>
+    <span class="fl-count" data-fl="count"></span>
+    <button class="fl-refresh" data-fl="refresh">↻ Uppdatera</button>
+  </div>
+  <div class="fl-filters" data-fl="filters"></div>
+  <div data-fl="body"><div class="fl-msg">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".fl"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-fl-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-fl-claimed","1");
+
+  var $=function(k){ return root.querySelector('[data-fl="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+
+  // Kolumner: key=radfält, label=rubrik, sort=sorterings-nyckel (om sorterbar), edit=redigerbart fält-namn, kind
+  var COLS=[
+    {key:"name",       label:"Företagsnamn", sort:"name",       edit:"name",       kind:"name"},
+    {key:"group",      label:"Grupp",        sort:"group",      edit:"group",      kind:"groupref"},
+    {key:"kundstatus", label:"Kundstatus",   sort:"kundstatus", edit:"kundstatus", kind:"status"},
+    {key:"orgnr",      label:"Org nr",       sort:"orgnr",      edit:"orgnr",      kind:"text"},
+    {key:"bransch",    label:"Bransch",      sort:"bransch",    edit:"bransch",    kind:"optionset"},
+    {key:"ansvarig",   label:"Ansvarig",     sort:"ansvarig",   edit:"ansvarig",   kind:"userref"},
+    {key:"potential",  label:"Potential",    sort:"potential",  edit:"potential",  kind:"optionset"},
+    {key:"lojalitet",  label:"Lojalitet",    sort:"lojalitet",  edit:"lojalitet",  kind:"loyalty"},
+    {key:"nki",        label:"NKI",          sort:"nki",        edit:"nki",        kind:"number", num:true},
+    {key:"oms_now",    label:"Omsättning",   sort:"oms_now",    edit:null,         kind:"kr",     num:true, yearlbl:"now"},
+    {key:"oms_prev",   label:"Omsättning",   sort:"oms_prev",   edit:null,         kind:"kr",     num:true, yearlbl:"prev"}
+  ];
+  // facet-fält per option-set-redigerbar kolumn (för select-optioner)
+  var FACET_OF={kundstatus:"kundstatus", potential:"potential", lojalitet:"lojalitet", bransch:"bransch", region:"region", customer_type:"customer_type"};
+
+  var STATE={ q:"", sort:"name", dir:"asc", page:1, limit:100,
+              rows:[], total:0, pages:1, year:0, prev:0, meta:null,
+              f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""} };
+  var _deb=null;
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function kr(n){ if(n==null) return '<span class="fl-edit fl-empty">—</span>'; return esc(Math.round(n).toLocaleString("sv-SE")); }
+
+  // SWR-cache
+  function ckey(){ return "fl:list:"+JSON.stringify({q:STATE.q,sort:STATE.sort,dir:STATE.dir,page:STATE.page,limit:STATE.limit,f:STATE.f}); }
+  function cacheGet(k){ try{ var v=sessionStorage.getItem(k); if(!v) return null; var o=JSON.parse(v); if(!o||(Date.now()-o.t)>900000) return null; return o.d; }catch(e){ return null; } }
+  function cacheSet(k,d){ try{ sessionStorage.setItem(k,JSON.stringify({t:Date.now(),d:d})); }catch(e){} }
+  function cacheClearAll(){ try{ for(var i=sessionStorage.length-1;i>=0;i--){ var k=sessionStorage.key(i); if(k&&k.indexOf("fl:")===0) sessionStorage.removeItem(k); } }catch(e){} }
+
+  function qstr(){
+    var p=["q="+encodeURIComponent(STATE.q),"sort="+STATE.sort,"dir="+STATE.dir,"page="+STATE.page,"limit="+STATE.limit];
+    var f=STATE.f; for(var k in f){ if(f[k]) p.push(k+"="+encodeURIComponent(f[k])); }
+    return "/admin/companies/list?"+p.join("&");
+  }
+  function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+  function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
+
+  // ── FILTERBAR ──
+  function selOpts(list, cur, allLabel){
+    var h='<option value="">'+esc(allLabel)+'</option>';
+    for(var i=0;i<list.length;i++){ var it=list[i], v=it.id!==undefined?it.id:it, nm=it.name!==undefined?it.name:it;
+      h+='<option value="'+esc(v)+'"'+(String(v)===String(cur)?" selected":"")+'>'+esc(nm)+'</option>'; }
+    return h;
+  }
+  function renderFilters(){
+    var m=STATE.meta; if(!m) return;
+    var fac=m.facets||{};
+    var h='<input class="fl-search" data-fl="q" type="text" placeholder="Sök företagsnamn / org.nr" value="'+esc(STATE.q)+'">';
+    h+='<select class="fl-sel" data-flf="ansvarig">'+selOpts(m.users||[], STATE.f.ansvarig, "Alla kundansvariga")+'</select>';
+    h+='<select class="fl-sel" data-flf="kundstatus">'+selOpts(fac.kundstatus||[], STATE.f.kundstatus, "Alla kundstatus")+'</select>';
+    h+='<select class="fl-sel" data-flf="lojalitet">'+selOpts(fac.lojalitet||[], STATE.f.lojalitet, "All lojalitet")+'</select>';
+    h+='<select class="fl-sel" data-flf="potential">'+selOpts(fac.potential||[], STATE.f.potential, "All potential")+'</select>';
+    h+='<select class="fl-sel" data-flf="region">'+selOpts(fac.region||[], STATE.f.region, "Alla regioner")+'</select>';
+    h+='<select class="fl-sel" data-flf="fastighet">'+selOpts(m.fastigheter||[], STATE.f.fastighet, "Alla fastigheter")+'</select>';
+    h+='<button class="fl-clear" data-fl="clear">Rensa</button>';
+    $("filters").innerHTML=h;
+  }
+
+  // ── TABELL ──
+  function th(c){
+    var lbl=esc(c.label); if(c.yearlbl==="now") lbl="Omsättning "+STATE.year; if(c.yearlbl==="prev") lbl="Omsättning "+STATE.prev;
+    var cls="fl-sortable"+(c.num?" fl-num":"");
+    var arr=""; if(STATE.sort===c.sort) arr='<span class="fl-arr">'+(STATE.dir==="asc"?"▲":"▼")+'</span>';
+    return '<th class="'+cls+'" data-sort="'+esc(c.sort)+'">'+lbl+arr+'</th>';
+  }
+  function statusPill(v){
+    if(!v) return '<span class="fl-edit fl-empty">—</span>';
+    var cls="fl-plain"; var lv=v.toLowerCase();
+    if(lv.indexOf("aktiv")>-1) cls="fl-active"; else if(lv.indexOf("prospekt")>-1) cls="fl-prospect";
+    return '<span class="fl-pill '+cls+'">'+esc(v)+'</span>';
+  }
+  function loyaltyCell(v){ if(!v) return '<span class="fl-edit fl-empty">—</span>'; return '<span class="fl-star">★</span> '+esc(v); }
+  function cellHtml(c, r){
+    if(c.kind==="name")     return '<span class="fl-name">'+esc(r.name||"—")+'</span>';
+    if(c.kind==="kr")       return kr(c.key==="oms_now"?r.oms_now:r.oms_prev);
+    if(c.kind==="status")   return statusPill(r.kundstatus);
+    if(c.kind==="loyalty")  return loyaltyCell(r.lojalitet);
+    if(c.kind==="userref")  return r.ansvarig?esc(r.ansvarig):'<span class="fl-edit fl-empty">—</span>';
+    if(c.kind==="groupref") return r.group?esc(r.group):'<span class="fl-edit fl-empty">—</span>';
+    if(c.kind==="number"){ var nv=r[c.key]; return nv==null?'<span class="fl-edit fl-empty">—</span>':esc(nv); }
+    var val=r[c.key]; return (val===""||val==null)?'<span class="fl-edit fl-empty">—</span>':esc(val);
+  }
+  function tdOf(c, r){
+    var inner=cellHtml(c, r);
+    var editable=!!c.edit;
+    var cls=(c.num?"fl-num ":"")+(editable?"fl-ecell ":"");
+    var attrs=editable?(' data-flcell="1" data-field="'+esc(c.edit)+'" data-kind="'+esc(c.kind)+'"'):"";
+    return '<td class="'+cls.trim()+'"'+attrs+'>'+inner+'</td>';
+  }
+  function rowInner(r){ var h=""; for(var i=0;i<COLS.length;i++) h+=tdOf(COLS[i], r); return h; }
+  function renderTable(){
+    var head=""; for(var i=0;i<COLS.length;i++) head+=th(COLS[i]);
+    var body="";
+    for(var j=0;j<STATE.rows.length;j++){ var r=STATE.rows[j]; body+='<tr data-id="'+esc(r.id)+'">'+rowInner(r)+'</tr>'; }
+    var more="";
+    if(STATE.rows.length<STATE.total) more='<div class="fl-more"><button data-fl="more">Visa fler ('+STATE.rows.length+'/'+STATE.total+')</button></div>';
+    var html='<div class="fl-wrap"><table class="fl-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+
+             (body||'<tr><td colspan="'+COLS.length+'"><div class="fl-msg">Inga företag matchar.</div></td></tr>')+
+             '</tbody></table></div>'+more;
+    $("body").innerHTML=html;
+    $("count").textContent=STATE.total+" företag";
+  }
+
+  // ── INLINE-EDIT ──
+  function optsFor(kind, field, cur){
+    var m=STATE.meta;
+    if(kind==="userref") return selOpts(m.users||[], cur, "— ingen —");
+    if(kind==="groupref") return selOpts(m.groups||[], cur, "— ingen —");
+    var fk=FACET_OF[field]; var list=(m.facets&&m.facets[fk])||[];
+    return selOpts(list, cur, "— tom —");
+  }
+  function findRow(id){ for(var i=0;i<STATE.rows.length;i++) if(STATE.rows[i].id===id) return STATE.rows[i]; return null; }
+  function curValFor(r, field, kind){
+    if(kind==="userref") return r.ansvarig_id||"";
+    if(kind==="groupref") return r.group_id||"";
+    return r[field]==null?"":r[field];
+  }
+  function beginEdit(td){
+    if(td.getAttribute("data-editing")) return;
+    var tr=td.parentNode, id=tr.getAttribute("data-id"), field=td.getAttribute("data-field"), kind=td.getAttribute("data-kind");
+    var r=findRow(id); if(!r) return;
+    td.setAttribute("data-editing","1");
+    td.setAttribute("data-orig", td.innerHTML);
+    var cur=curValFor(r, field, kind), ctrl;
+    if(kind==="text"||kind==="name"){ ctrl='<input class="fl-ec" type="text" value="'+esc(cur)+'">'; }
+    else if(kind==="number"){ ctrl='<input class="fl-ec" type="number" value="'+esc(cur)+'">'; }
+    else { ctrl='<select class="fl-ec">'+optsFor(kind, field, cur)+'</select>'; }
+    td.innerHTML=ctrl+'<span class="fl-save" data-flsavemsg></span>';
+    var el=td.querySelector(".fl-ec"); if(el){ el.focus(); if(el.select) try{el.select();}catch(e){} }
+    var isSelect=(kind!=="text"&&kind!=="name"&&kind!=="number");
+    if(isSelect){ el.addEventListener("change", function(){ commitEdit(td, el.value); }); }
+    el.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ commitEdit(td, el.value); } else if(ev.key==="Escape"){ cancelEdit(td); } });
+    el.addEventListener("blur", function(){ if(!isSelect) commitEdit(td, el.value); });
+  }
+  function cancelEdit(td){ var o=td.getAttribute("data-orig"); td.removeAttribute("data-editing"); td.removeAttribute("data-orig"); if(o!=null) td.innerHTML=o; }
+  function commitEdit(td, value){
+    if(td.getAttribute("data-committing")) return; td.setAttribute("data-committing","1");
+    var tr=td.parentNode, id=tr.getAttribute("data-id"), field=td.getAttribute("data-field"), kind=td.getAttribute("data-kind");
+    var r=findRow(id); var prev=curValFor(r, field, kind);
+    if(String(value)===String(prev)){ td.removeAttribute("data-committing"); cancelEdit(td); return; }
+    var msg=td.querySelector("[data-flsavemsg]"); if(msg){ msg.textContent="Sparar…"; msg.className="fl-save"; }
+    var fields={}; fields[field]=value;
+    apiPatch(id, fields).then(function(j){
+      td.removeAttribute("data-committing");
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&(j.error||""))||"fel"); msg.className="fl-save fl-errc"; } setTimeout(function(){ cancelEdit(td); }, 2200); return; }
+      // uppdatera lokal rad ur serverns färska rad
+      if(j.row){ for(var i=0;i<STATE.rows.length;i++){ if(STATE.rows[i].id===id){ STATE.rows[i]=j.row; break; } } }
+      cacheClearAll();
+      td.removeAttribute("data-editing"); td.removeAttribute("data-orig");
+      // re-rendera hela raden (namn/pill/omsättning kan bero på flera fält)
+      var nr=findRow(id); if(nr && tr){ tr.innerHTML=rowInner(nr); }
+    }).catch(function(){
+      td.removeAttribute("data-committing");
+      if(msg){ msg.textContent="✗ nätverksfel"; msg.className="fl-save fl-errc"; }
+      setTimeout(function(){ cancelEdit(td); }, 2200);
+    });
+  }
+
+  // ── LADDNING ──
+  function applyResp(j, append){
+    if(!j||!j.ok) return false;
+    STATE.total=j.total; STATE.pages=j.pages; STATE.year=j.year; STATE.prev=j.prev;
+    if(j.meta) STATE.meta=j.meta;
+    if(append) STATE.rows=STATE.rows.concat(j.rows||[]); else STATE.rows=j.rows||[];
+    return true;
+  }
+  function load(append){
+    var path=qstr(), key=ckey();
+    if(!append){
+      var cached=cacheGet(key);
+      if(cached && applyResp(cached, false)){ if(!$("filters").innerHTML) renderFilters(); renderTable(); }
+    }
+    api(path).then(function(j){
+      if(!applyResp(j, append)){ if(!STATE.rows.length) $("body").innerHTML='<div class="fl-err">Kunde inte ladda: '+esc((j&&j.error)||"okänt fel")+'</div>'; return; }
+      cacheSet(key, j);
+      if(STATE.meta && !$("filters").innerHTML) renderFilters();
+      renderTable();
+    }).catch(function(){ if(!STATE.rows.length) $("body").innerHTML='<div class="fl-err">Nätverksfel — kontrollera api_host/token.</div>'; });
+  }
+  function reload(){ STATE.page=1; load(false); }
+
+  // ── EVENTS (delegation på root) ──
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    var soRt=t.closest?t.closest("th[data-sort]"):null;
+    if(soRt){ var s=soRt.getAttribute("data-sort"); if(STATE.sort===s) STATE.dir=(STATE.dir==="asc"?"desc":"asc"); else { STATE.sort=s; STATE.dir="asc"; } reload(); return; }
+    if(t.closest && t.closest('[data-fl="more"]')){ STATE.page++; load(true); return; }
+    if(t.closest && t.closest('[data-fl="refresh"]')){ cacheClearAll(); reload(); return; }
+    if(t.closest && t.closest('[data-fl="clear"]')){ STATE.q=""; for(var k in STATE.f) STATE.f[k]=""; renderFilters(); reload(); return; }
+    var cell=t.closest?t.closest('[data-flcell="1"]'):null;
+    if(cell){ beginEdit(cell); return; }
+  });
+  root.addEventListener("input", function(e){
+    var t=e.target;
+    if(t.getAttribute && t.getAttribute("data-fl")==="q"){ STATE.q=t.value; if(_deb) clearTimeout(_deb); _deb=setTimeout(reload, 350); }
+  });
+  root.addEventListener("change", function(e){
+    var t=e.target, ff=t.getAttribute?t.getAttribute("data-flf"):null;
+    if(ff){ STATE.f[ff]=t.value; reload(); }
+  });
+
+  load(false);
+})();
+</script>
