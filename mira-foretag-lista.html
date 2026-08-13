@@ -137,6 +137,19 @@
   .fk-sech{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--fl-mut);font-weight:700;margin:2px 0 10px;}
   .fk-placeholder{padding:44px;text-align:center;color:var(--fl-mut);background:var(--fl-card);border:1px dashed var(--fl-line);border-radius:14px;}
   .fk-placeholder b{color:var(--fl-txt);display:block;font-size:15px;margin-bottom:6px;}
+  .fk-ltbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .fk-ltbl th{text-align:left;color:var(--fl-mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--fl-line);}
+  .fk-ltbl td{padding:9px 10px;border-bottom:1px solid rgba(36,52,86,.5);vertical-align:middle;}
+  .fk-ltbl tr:last-child td{border-bottom:none;}
+  .fk-ltbl tr:hover td{background:rgba(28,43,77,.4);}
+  .fk-ltbl .num{text-align:right;white-space:nowrap;}
+  .fk-src{font-size:10px;color:var(--fl-mut);margin-top:1px;}
+  .fk-lpill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:600;}
+  .fk-lpill.ok{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fk-lpill.open{background:rgba(223,111,57,.16);color:#f0a070;}
+  .fk-lpill.wait{background:var(--fl-chip);color:var(--fl-mut);}
+  .fk-lpill.red{background:rgba(226,75,74,.16);color:#f09595;}
+  .fk-llink{color:var(--fl-acc);text-decoration:none;margin-left:8px;font-size:11px;}
   @media(max-width:820px){.fk-grid{grid-template-columns:1fr;}.fk-strip{grid-template-columns:repeat(2,1fr);}.fk-form{grid-template-columns:1fr;}}
 </style>
 
@@ -186,7 +199,7 @@
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0 };
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{} };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -194,6 +207,8 @@
   function krc(n){ if(n==null) return "—"; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
   function numc(n){ if(n==null) return "—"; return Number(n).toLocaleString("sv-SE"); }
   function initials(nm){ nm=String(nm||"").trim(); if(!nm) return "?"; var w=nm.split(/\s+/); if(w.length>1) return (w[0][0]+w[1][0]).toUpperCase(); return nm.slice(0,2).toUpperCase(); }
+  // Telefon: number-fältet i Bubble tappar inledande 0 → återlägg + formatera xxx-xxx xx xx (10 siffror).
+  function formatPhone(v){ var d=String(v==null?"":v).replace(/\D/g,""); if(!d) return "—"; if(d.charAt(0)!=="0") d="0"+d; if(d.length===10) return d.slice(0,3)+"-"+d.slice(3,6)+" "+d.slice(6,8)+" "+d.slice(8,10); return d; }
 
   function progHtml(pct){
     return '<div class="fl-loading"><div class="fl-lbar"><div class="fl-lfill" style="width:'+pct+'%"></div></div>'+
@@ -397,6 +412,7 @@
     {k:"ordrar",lbl:"Ordrar"},{k:"fakturor",lbl:"Fakturor"},{k:"avtal",lbl:"Avtal"},
     {k:"drift",lbl:"Drift"},{k:"installningar",lbl:"Inställningar"}
   ];
+  var CHAIN_TABS={deals:1,leads:1,offerter:1,ordrar:1,fakturor:1};
   var TAB_SRC={personer:"Coworker (company = koncernens bolag) · User-badge + lösenordsikon",historik:"activity_crm för företaget",
     deals:"deals för företaget (reverse-lookup)",leads:"leads för företaget",offerter:"offerter för företaget",
     ordrar:"ordrar för företaget",fakturor:"fakturor för företaget",avtal:"abonnemang + signering (mira-abonnemang-kund)",
@@ -405,6 +421,7 @@
   function cCurVal(c,fd){ if(fd.t==="userref") return c.ansvarig_id||""; if(fd.t==="groupref") return c.group_id||""; return c[fd.k]==null?"":c[fd.k]; }
   function cDispVal(c,fd){
     if(fd.k==="lojalitet") return c.lojalitet?("★ "+esc(c.lojalitet)):"—";
+    if(fd.k==="telefon") return c.telefon?esc(formatPhone(c.telefon)):"—";
     if(fd.k==="antal_medarbetare") return numc(c.antal_medarbetare);
     if(fd.t==="userref") return c.ansvarig?esc(c.ansvarig):"—";
     if(fd.t==="groupref") return c.group?esc(c.group):"—";
@@ -494,13 +511,41 @@
         '<button class="fk-act">+ Ny förfrågan</button><button class="fk-act">Skicka signering</button>'+
       '</div></div>';
   }
+  function tabLbl(k){ var t=TABS.filter(function(x){return x.k===k;})[0]; return t?t.lbl:k; }
+  function chainBody(tab, rows){
+    if(!rows.length) return '<div class="fk-body"><div class="fk-placeholder"><b>Inga '+esc(tabLbl(tab).toLowerCase())+'</b>Inget kopplat till detta företag ännu.</div></div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var pdf=r.url?'<a class="fk-llink" href="'+esc(r.url)+'" target="_blank" rel="noopener">PDF ↗</a>':'';
+      body+='<tr><td>'+esc(r.date||"—")+'</td>'+
+        '<td>'+esc(r.title||"—")+'<div class="fk-src">'+esc(r.source==="fortnox"?"Fortnox":"Mira")+'</div></td>'+
+        '<td class="num">'+(r.amount==null?"—":krc(r.amount))+'</td>'+
+        '<td><span class="fk-lpill '+esc(r.status_cls||"wait")+'">'+esc(r.status||"—")+'</span>'+pdf+'</td></tr>';
+    }
+    return '<div class="fk-body"><div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Datum</th><th>Nr / namn</th><th class="num">Belopp</th><th>Status</th></tr></thead>'+
+      '<tbody>'+body+'</tbody></table></div></div>';
+  }
+  function fetchChain(tab){
+    if(STATE.chain[tab]==="loading" || (STATE.chain[tab] && STATE.chain[tab].length!==undefined)) return;
+    STATE.chain[tab]="loading";
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/chain?type="+encodeURIComponent(tab)).then(function(j){
+      STATE.chain[tab]=(j&&j.ok&&j.rows)?j.rows:[];
+      if(STATE.view==="card"&&STATE.cardTab===tab) renderCard();
+    }).catch(function(){ STATE.chain[tab]=[]; if(STATE.view==="card"&&STATE.cardTab===tab) renderCard(); });
+  }
   function cardBody(){
     if(STATE.cardTab==="hem"){
       var left=STATE.cardEditing?cardKunddataEdit():cardKunddataRead();
       return '<div class="fk-body"><div class="fk-grid">'+left+cardHemRight()+'</div></div>';
     }
-    var t=TABS.filter(function(x){return x.k===STATE.cardTab;})[0];
-    return '<div class="fk-body"><div class="fk-placeholder"><b>'+esc(t.lbl)+'</b>Byggs modul för modul.<br><span style="font-size:12px">Källa: '+esc(TAB_SRC[STATE.cardTab]||"—")+'</span></div></div>';
+    if(CHAIN_TABS[STATE.cardTab]){
+      var rows=STATE.chain[STATE.cardTab];
+      if(rows===undefined){ fetchChain(STATE.cardTab); return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>'; }
+      if(rows==="loading") return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>';
+      return chainBody(STATE.cardTab, rows);
+    }
+    return '<div class="fk-body"><div class="fk-placeholder"><b>'+esc(tabLbl(STATE.cardTab))+'</b>Byggs modul för modul.<br><span style="font-size:12px">Källa: '+esc(TAB_SRC[STATE.cardTab]||"—")+'</span></div></div>';
   }
   function renderCard(){
     if(!STATE.card){ $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-msg">Laddar kundkort…</div>'; return; }
@@ -517,7 +562,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={};
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();

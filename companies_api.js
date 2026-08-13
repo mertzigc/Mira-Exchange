@@ -31,6 +31,17 @@ export function registerCompaniesRoutes(app, deps) {
   const _num = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
   const _low = (v) => _str(v).toLowerCase();
   const _httpsUrl = (v) => { const s = _str(v); return s ? s.replace(/^\/\//, "https://") : ""; };
+  const _day = (v) => (v ? _str(v).slice(0, 10) : "");
+
+  // ── Kedje-normaliserare (kundkortets Deals/Leads/Offerter/Ordrar/Fakturor-flikar) ──
+  // Speglar affar_api.js-normaliserarna men kompakt. status_cls: ok|open|wait|red.
+  function nDeal(r)  { const s = _str(r.Status); const cls = s === "Avtal" ? "ok" : (s === "Offert" ? "open" : (s === "Avslutad" ? "red" : "wait")); return { type: "Deal", source: "mira", title: _str(r.titel) || "Affär", amount: _num(r.value_brutto), date: _day(r["Created Date"]), status: s || "—", status_cls: cls, url: "", id: bubbleId(r) }; }
+  function nLead(r)  { return { type: "Lead", source: "mira", title: _str(r.Name) || "Lead", amount: _num(r.estimated_service_cost_monthly), date: _day(r["Created Date"]), status: _str(r.status) || "Ny", status_cls: "wait", url: "", id: bubbleId(r) }; }
+  function nOffM(r)  { const s = _str(r.status); const cls = s === "Approved" ? "ok" : ((s === "Expired" || s === "Revoked") ? "red" : "open"); return { type: "Offert", source: "mira", title: _str(r.offertnr) || "Offert", amount: _num(r.total), date: _day(r.offertdatum || r["Created Date"]), status: s || "Utkast", status_cls: cls, url: "", id: bubbleId(r) }; }
+  function nOffF(r)  { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", title: _str(r.ft_document_number), amount: _num(r.ft_total), date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
+  function nOrdM(r)  { const s = _str(r.orderstatus); const cls = (s === "Levererad" || s === "Fakturerad") ? "ok" : "open"; return { type: "Order", source: "mira", title: _str(r.ordernr) || "Order", amount: _num(r.total), date: _day(r.orderdatum || r["Created Date"]), status: s || "Bekräftad", status_cls: cls, url: "", id: bubbleId(r) }; }
+  function nOrdF(r)  { const t = r.ft_delivery_date ? Date.parse(r.ft_delivery_date) : 0; const past = t && t < Date.now(); return { type: "Order", source: "fortnox", title: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total), date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
+  function nInv(r)   { const bal = _num(r.ft_balance); const due = r.ft_due_date ? Date.parse(r.ft_due_date) : 0; let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: "fortnox", title: _str(r.ft_document_number), amount: _num(r.ft_total), date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || _httpsUrl(r.ft_url), id: bubbleId(r) }; }
 
   // ── Hjälp-cachar för namn-resolvning (små typer, egen TTL) ──────────
   const AUX_TTL = 5 * 60 * 1000;
@@ -328,11 +339,20 @@ export function registerCompaniesRoutes(app, deps) {
         if (isActive) { active++; mrr += Math.round(Number(ct["månadskostnad"] || 0)); }
       }
 
-      // Counts jag kan beräkna pålitligt nu (övriga byggs med resp. modul)
-      const [histCount, dealCount] = await Promise.all([
-        bubbleCount("activitet_crm", [{ key: "clientcompany", constraint_type: "equals", value: id }]).catch(() => null),
-        bubbleCount("deal", [{ key: "kundföretag", constraint_type: "equals", value: id }]).catch(() => null),
+      // Counts per flik (parallellt). Företagsfält per typ: Mira=kundföretag/kundforetag/client_company,
+      // Fortnox=linked_company. Personer/drift byggs senare → null.
+      const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
+      const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount] = await Promise.all([
+        bubbleCount("activitet_crm", eqc("clientcompany")).catch(() => null),
+        bubbleCount("deal", eqc("kundföretag")).catch(() => null),
+        bubbleCount("Lead", eqc("client_company")).catch(() => null),
+        bubbleCount("Offert", eqc("kundforetag")).catch(() => null),
+        bubbleCount("FortnoxOffer", eqc("linked_company")).catch(() => null),
+        bubbleCount("MiraOrder", eqc("kundforetag")).catch(() => null),
+        bubbleCount("FortnoxOrder", eqc("linked_company")).catch(() => null),
+        bubbleCount("FortnoxInvoice", eqc("linked_company")).catch(() => null),
       ]);
+      const sumC = (a, b) => ((a == null && b == null) ? null : (Number(a || 0) + Number(b || 0)));
 
       const adr = rec && rec.Adress;
       const address = adr ? (typeof adr === "string" ? adr : (adr.address || "")) : "";
@@ -365,7 +385,8 @@ export function registerCompaniesRoutes(app, deps) {
         },
         counts: {
           avtal: (contracts || []).length, historik: histCount, deals: dealCount,
-          personer: null, leads: null, offerter: null, ordrar: null, fakturor: null, drift: null,
+          leads: leadCount, offerter: sumC(offMC, offFC), ordrar: sumC(ordMC, ordFC), fakturor: invCount,
+          personer: null, drift: null,
         },
         meta: {
           facets: _facets(full), users: u.list, groups: g.list, fastigheter: f.list,
@@ -374,6 +395,42 @@ export function registerCompaniesRoutes(app, deps) {
       });
     } catch (e) {
       console.error("[/admin/companies/:id/card]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/companies/:id/chain?type=deals|leads|offerter|ordrar|fakturor ──
+  // Reverse-lookup per företag (kundkortets liggar-flikar). Mira-typer via kundföretag/
+  // kundforetag/client_company, Fortnox via linked_company. Rader sorteras nyast först.
+  app.options("/admin/companies/:id/chain", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/chain", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    const type = _str(req.query.type).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    const eq = (field) => ({ constraints: [{ key: field, constraint_type: "equals", value: id }] });
+    const find = (t, field) => bubbleFindAll(t, eq(field)).catch(() => []);
+    try {
+      let rows = [];
+      if (type === "deals") {
+        rows = (await find("deal", "kundföretag")).map(nDeal);
+      } else if (type === "leads") {
+        rows = (await find("Lead", "client_company")).map(nLead);
+      } else if (type === "offerter") {
+        const [a, b] = await Promise.all([find("Offert", "kundforetag"), find("FortnoxOffer", "linked_company")]);
+        rows = a.map(nOffM).concat(b.map(nOffF));
+      } else if (type === "ordrar") {
+        const [a, b] = await Promise.all([find("MiraOrder", "kundforetag"), find("FortnoxOrder", "linked_company")]);
+        rows = a.map(nOrdM).concat(b.map(nOrdF));
+      } else if (type === "fakturor") {
+        rows = (await find("FortnoxInvoice", "linked_company")).map(nInv);
+      } else {
+        return res.status(400).json({ ok: false, error: "bad_type" });
+      }
+      rows.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+      return res.json({ ok: true, type, count: rows.length, rows });
+    } catch (e) {
+      console.error("[/admin/companies/:id/chain]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

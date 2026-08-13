@@ -20,7 +20,21 @@ const CONTRACTS = [
   { _id: "ct3", "kundföretag": "cc1", "månadskostnad": 173985, "slutdatum": "2099-01-01" },     // aktiv (framtida slut)
 ];
 const ACTS = [{ _id: "a1", clientcompany: "cc1" }, { _id: "a2", clientcompany: "cc1" }];
-const DEALS = [{ _id: "d1", "kundföretag": "cc1" }];
+// Kedje-typer per företag (reverse-lookup): Mira via kundföretag/kundforetag/client_company, Fortnox via linked_company
+const STORE = {
+  Contract: CONTRACTS,
+  activitet_crm: ACTS,
+  deal: [{ _id: "d1", "kundföretag": "cc1", titel: "CMIAB fruktlåda", value_brutto: 5000, Status: "Avtal", "Created Date": "2026-08-12" }],
+  Lead: [{ _id: "l1", client_company: "cc1", Name: "Lead X", estimated_service_cost_monthly: 92880, status: "Ny", "Created Date": "2026-06-22" }],
+  Offert: [{ _id: "of1", kundforetag: "cc1", offertnr: "MO-1", total: 12000, status: "Approved", offertdatum: "2026-07-01" }],
+  FortnoxOffer: [{ _id: "ff1", linked_company: "cc1", ft_document_number: "FE-2026-0004", ft_total: 8000, ft_sent: true, ft_offer_date: "2026-07-31" }],
+  MiraOrder: [{ _id: "mo1", kundforetag: "cc1", ordernr: "O-1", total: 9000, orderstatus: "Levererad", orderdatum: "2026-08-01" }],
+  FortnoxOrder: [{ _id: "fo1", linked_company: "cc1", ft_document_number: "FO-1", ft_total: 15000, ft_delivery_date: "2026-08-10" }],
+  FortnoxInvoice: [
+    { _id: "inv1", linked_company: "cc1", ft_document_number: "F-1", ft_total: 20000, ft_invoice_date: "2026-05-01", ft_balance: 0, ft_cancelled: false },
+    { _id: "inv2", linked_company: "cc1", ft_document_number: "F-2", ft_total: 5000, ft_invoice_date: "2026-06-01", ft_balance: 5000, ft_due_date: "2020-01-01", ft_cancelled: false },
+  ],
+};
 const _cmatch = (r, cs) => (cs || []).every((c) => String(r[c.key] == null ? "" : r[c.key]) === String(c.value));
 
 // projektion identisk med index.js _projectCompany
@@ -43,15 +57,11 @@ const deps = {
   bubbleId: (r) => (r ? r._id : null),
   bubbleFindAll: async (t, { constraints = [] } = {}) => {
     fetchedTypes.push(t);
-    if (t === "Contract") return CONTRACTS.filter((r) => _cmatch(r, constraints));
+    if (STORE[t]) return STORE[t].filter((r) => _cmatch(r, constraints));
     return AUX[t] || (t === "ClientCompany" ? Object.values(CC) : []);
   },
   bubbleFind: async (t) => { fetchedTypes.push(t); return AUX[t] || []; },
-  bubbleCount: async (t, cs = []) => {
-    if (t === "activitet_crm") return ACTS.filter((r) => _cmatch(r, cs)).length;
-    if (t === "deal") return DEALS.filter((r) => _cmatch(r, cs)).length;
-    return 0;
-  },
+  bubbleCount: async (t, cs = []) => (STORE[t] ? STORE[t].filter((r) => _cmatch(r, cs)).length : 0),
   bubbleGet: async (t, id) => (t === "ClientCompany" ? (CC[id] || null) : null),
   bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) Object.assign(CC[id], payload); return {}; },
   companyFullMap: async () => FULL,
@@ -180,7 +190,22 @@ const run = async () => {
   ok("card KPI MRR=273985 (aktiva 2) + total 3", card.body.kpi.mrr === 273985 && card.body.kpi.active_contracts === 2 && card.body.kpi.contracts_total === 3);
   ok("card KPI omsättning nu/prev", card.body.kpi.omsattning_now === 40992 && card.body.kpi.omsattning_prev === 146750 && card.body.kpi.nki === 8);
   ok("card counts avtal/historik/deals", card.body.counts.avtal === 3 && card.body.counts.historik === 2 && card.body.counts.deals === 1);
-  ok("card counts ej byggda flikar = null", card.body.counts.leads === null && card.body.counts.offerter === null);
+  ok("card counts leads/offerter/ordrar/fakturor", card.body.counts.leads === 1 && card.body.counts.offerter === 2 && card.body.counts.ordrar === 2 && card.body.counts.fakturor === 2);
+  ok("card counts ej byggda flikar = null", card.body.counts.personer === null && card.body.counts.drift === null);
+
+  // ── CHAIN: reverse-lookup per flik ──
+  var chD = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "deals" } });
+  ok("chain deals → 1 (Deal/mira, status Avtal→ok)", chD.body.ok && chD.body.count === 1 && chD.body.rows[0].type === "Deal" && chD.body.rows[0].status_cls === "ok" && chD.body.rows[0].amount === 5000);
+  var chL = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "leads" } });
+  ok("chain leads → 1", chL.body.count === 1 && chL.body.rows[0].title === "Lead X" && chL.body.rows[0].amount === 92880);
+  var chO = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "offerter" } });
+  ok("chain offerter → 2 (Mira+Fortnox), nyast först", chO.body.count === 2 && chO.body.rows[0].date === "2026-07-31" && chO.body.rows.filter(function(r){return r.source==="fortnox";}).length === 1);
+  var chOr = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "ordrar" } });
+  ok("chain ordrar → 2 (Mira Levererad + Fortnox)", chOr.body.count === 2 && chOr.body.rows.some(function(r){return r.status==="Levererad";}));
+  var chF = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "fakturor" } });
+  ok("chain fakturor → 2 (Betald + Förfallen)", chF.body.count === 2 && chF.body.rows.some(function(r){return r.status_cls==="ok";}) && chF.body.rows.some(function(r){return r.status==="Förfallen";}));
+  var chBad = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "nope" } });
+  ok("chain okänd typ → 400", chBad.code === 400);
   ok("card meta editable inkl kunddata-fält", card.body.meta.editable.email === "text" && card.body.meta.editable.kundinformation === "text");
   var card404 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "nope" } });
   ok("card okänt id → 404", card404.code === 404);
