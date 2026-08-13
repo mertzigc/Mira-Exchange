@@ -135,7 +135,7 @@
   var $=function(k){ return root.querySelector('[data-mb="'+k+'"]'); };
   var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
-  var ME=cfg("current_user"), IS_MGR=/^(yes|true|1)$/i.test(cfg("is_salesmanager"));
+  var ME=cfg("current_user"), IS_MGR=/^(ja|yes|true|1|on|x)$/i.test((cfg("is_salesmanager")||"").trim());   // yes/no → "ja" på svensk app
   var FASER=["Fas 1","Fas 2","Fas 3","Fas 4","Övrigt"];
   var FASKEY={"Fas 1":"fas1","Fas 2":"fas2","Fas 3":"fas3","Fas 4":"fas4","Övrigt":"ovrigt"};
   var FASSHORT={"Fas 1":"F1","Fas 2":"F2","Fas 3":"F3","Fas 4":"F4","Övrigt":"Öv"};
