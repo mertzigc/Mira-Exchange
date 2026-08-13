@@ -10,6 +10,7 @@ import { registerOffertRoutes } from "./offert_api.js";
 import { registerAffarRoutes } from "./affar_api.js";
 import { registerProduktionRoutes } from "./produktion_api.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
+import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
 import express from "express";
 import cors from "cors";
@@ -16523,6 +16524,27 @@ function _deriveContractStatus(contract, nowMs) {
   return SERVICES.STATUS_AKTIV;
 }
 
+// ── _advanceDealStatus — flytta Deal framåt i sälj-tratten (aldrig bakåt). ──────
+// Rank + framåt-bara-regel i deal_status.js (testbar). Patchar bara om target ligger
+// längre fram än nuvarande (redan "Avtal"/"Avslutad" nedgraderas aldrig). Best-effort:
+// felar mjukt, bryter aldrig sitt anropande flöde (signering / contract-create).
+async function _advanceDealStatus(dealRef, target) {
+  try {
+    const id = (typeof dealRef === "string" ? dealRef : (dealRef && (dealRef._id || dealRef.id))) || "";
+    if (!id || !DEAL_STATUS_RANK[target]) return false;
+    const deal = await bubbleGet("deal", id).catch(() => null);
+    if (!deal) return false;
+    const cur = String(deal.Status || "").trim();
+    if (!shouldAdvanceDealStatus(cur, target)) return false;   // redan lika långt/längre → rör inte
+    await bubblePatch("deal", id, { Status: target });
+    console.log(`[deal-status] ${id}: ${cur || "(tom)"} → ${target}`);
+    return true;
+  } catch (e) {
+    console.warn("[_advanceDealStatus] misslyckades (non-fatal):", e?.message);
+    return false;
+  }
+}
+
 // ── _createContractsFromApprovalRequest — auto-Contract vid signering ──────
 // Anropas från _checkAndCompleteRequest direkt efter parent.status="Approved".
 // Idempotent: skippar om Contract redan finns med offer_approval == parent._id.
@@ -16704,6 +16726,9 @@ async function _checkAndCompleteRequest(requestId) {
   } catch (cvErr) {
     console.warn(`[approval-complete] auto-convert offert failed (non-fatal) för request ${requestId}`, cvErr?.message);
   }
+
+  // Offert signerad → flytta affären framåt till "Avtal" (framåt-bara, best-effort).
+  if (parent.deal) await _advanceDealStatus(parent.deal, "Avtal");
 
   const children = await bubbleFindAll("OfferApproval", {
     constraints: [{ key: "request", constraint_type: "equals", value: requestId }],
@@ -21045,6 +21070,9 @@ app.post("/admin/contracts/create", async (req, res) => {
 
     const contractId = await bubbleCreate(SERVICES.CONTRACT_TYPE, finalPayload);
 
+    // Abonnemang skapat med deal-koppling → flytta affären framåt till "Avtal" (framåt-bara).
+    if (b.deal || b.deal_id) await _advanceDealStatus(b.deal || b.deal_id, "Avtal");
+
     // Returnera enriched contract
     const fresh = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId).catch(() => null);
     let enriched = null;
@@ -21721,6 +21749,9 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
     const finalPayload = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
 
     const contractId = await bubbleCreate(SERVICES.CONTRACT_TYPE, finalPayload);
+
+    // Importerat avtal med deal-koppling → flytta affären framåt till "Avtal" (framåt-bara).
+    if (b.deal || b.deal_id) await _advanceDealStatus(b.deal || b.deal_id, "Avtal");
 
     console.log(`[contracts/import/commit] skapade Contract ${contractId} för ${companyId} (typ ${contractType}, signed_pdf=${fileUrl ? "ja" : "nej"})`);
     return res.json({ ok: true, contract_id: contractId });
