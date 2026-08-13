@@ -452,6 +452,7 @@ function requireApiKey(req, res, next) {
     "/admin/affar",                // Affär samlad vy (P1), x-admin-token-grindad (affar_api.js)
     "/admin/produktion",           // Produktionsmodul (dagsvy per kök), x-admin-token-grindad (produktion_api.js)
     "/admin/salj",                 // Sälj — mötestratt + säljmål, x-admin-token-grindad (salj_api.js)
+    "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad (companies_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
