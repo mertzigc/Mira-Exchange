@@ -23,6 +23,7 @@ export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount,
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
+    sendPasswordReset,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
 
@@ -42,6 +43,8 @@ export function registerCompaniesRoutes(app, deps) {
   function nOrdM(r)  { const s = _str(r.orderstatus); const cls = (s === "Levererad" || s === "Fakturerad") ? "ok" : "open"; return { type: "Order", source: "mira", title: _str(r.ordernr) || "Order", amount: _num(r.total), date: _day(r.orderdatum || r["Created Date"]), status: s || "Bekräftad", status_cls: cls, url: "", id: bubbleId(r) }; }
   function nOrdF(r)  { const t = r.ft_delivery_date ? Date.parse(r.ft_delivery_date) : 0; const past = t && t < Date.now(); return { type: "Order", source: "fortnox", title: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total), date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
   function nInv(r)   { const bal = _num(r.ft_balance); const due = r.ft_due_date ? Date.parse(r.ft_due_date) : 0; let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: "fortnox", title: _str(r.ft_document_number), amount: _num(r.ft_total), date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || _httpsUrl(r.ft_url), id: bubbleId(r) }; }
+  function nContract(r) { const end = r["slutdatum"] ? Date.parse(r["slutdatum"]) : 0; const active = !(end && !Number.isNaN(end) && end < Date.now()); return { type: "Avtal", source: "mira", title: _str(r.contract_title) || _str(r["kategori"]) || "Avtal", contract_type: _str(r.contract_type) || "Subscription", amount: _num(r["månadskostnad"]), date: _day(r["slutdatum"]), status: active ? "Aktiv" : "Avslutad", status_cls: active ? "ok" : "wait", id: bubbleId(r) }; }
+  function nApproval(r) { const s = _str(r.status); const cls = s === "Approved" ? "ok" : ((s === "Expired" || s === "Revoked") ? "red" : "open"); return { type: "Signering", source: "mira", title: _str(r.rubrik) || "Signering", status: s || "Utkast", status_cls: cls, signed: _num(r.signed_count) || 0, recipients: _num(r.recipients_count) || 0, date: _day(r["Created Date"]), id: bubbleId(r) }; }
 
   // ── Hjälp-cachar för namn-resolvning (små typer, egen TTL) ──────────
   const AUX_TTL = 5 * 60 * 1000;
@@ -342,7 +345,7 @@ export function registerCompaniesRoutes(app, deps) {
       // Counts per flik (parallellt). Företagsfält per typ: Mira=kundföretag/kundforetag/client_company,
       // Fortnox=linked_company. Personer/drift byggs senare → null.
       const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
-      const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount] = await Promise.all([
+      const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount, persCount] = await Promise.all([
         bubbleCount("activitet_crm", eqc("clientcompany")).catch(() => null),
         bubbleCount("deal", eqc("kundföretag")).catch(() => null),
         bubbleCount("Lead", eqc("client_company")).catch(() => null),
@@ -351,6 +354,7 @@ export function registerCompaniesRoutes(app, deps) {
         bubbleCount("MiraOrder", eqc("kundforetag")).catch(() => null),
         bubbleCount("FortnoxOrder", eqc("linked_company")).catch(() => null),
         bubbleCount("FortnoxInvoice", eqc("linked_company")).catch(() => null),
+        bubbleCount("Coworker", eqc("Kundföretag")).catch(() => null),
       ]);
       const sumC = (a, b) => ((a == null && b == null) ? null : (Number(a || 0) + Number(b || 0)));
 
@@ -386,7 +390,7 @@ export function registerCompaniesRoutes(app, deps) {
         counts: {
           avtal: (contracts || []).length, historik: histCount, deals: dealCount,
           leads: leadCount, offerter: sumC(offMC, offFC), ordrar: sumC(ordMC, ordFC), fakturor: invCount,
-          personer: null, drift: null,
+          personer: persCount, drift: null,
         },
         meta: {
           facets: _facets(full), users: u.list, groups: g.list, fastigheter: f.list,
@@ -424,6 +428,10 @@ export function registerCompaniesRoutes(app, deps) {
         rows = a.map(nOrdM).concat(b.map(nOrdF));
       } else if (type === "fakturor") {
         rows = (await find("FortnoxInvoice", "linked_company")).map(nInv);
+      } else if (type === "avtal") {
+        rows = (await find("Contract", "kundföretag")).map(nContract);
+      } else if (type === "signeringar") {
+        rows = (await find("OfferApprovalRequest", "clientcompany")).map(nApproval);
       } else {
         return res.status(400).json({ ok: false, error: "bad_type" });
       }
@@ -431,6 +439,77 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, type, count: rows.length, rows });
     } catch (e) {
       console.error("[/admin/companies/:id/chain]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/companies/:id/coworkers — Personer-fliken ──────────
+  // Coworker (Kundföretag == id). has_user = coworkerns e-post matchar en User vars
+  // Company (singular — EN per user; INTE Associated_company som är en lista) == företaget,
+  // dvs har ett login-konto. Ren Coworker utan User = CRM-kontakt. Sorterat efternamn+förnamn.
+  const _email = (v) => String(v == null ? "" : v).trim().toLowerCase();
+  app.options("/admin/companies/:id/coworkers", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/coworkers", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const [cos, users] = await Promise.all([
+        bubbleFindAll("Coworker", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
+        bubbleFindAll("User", { constraints: [{ key: "Company", constraint_type: "equals", value: id }] }).catch(() => []),
+      ]);
+      // e-post → user-id (login-konto)
+      const userByEmail = new Map();
+      for (const u of (users || [])) {
+        const em = _email(u.email || u.Email || (u.authentication && u.authentication.email && u.authentication.email.email));
+        if (em) userByEmail.set(em, bubbleId(u));
+      }
+      const rows = (cos || []).map((co) => {
+        const first = _str(co["Förnamn"] || co["First Name"] || co.first_name || co.fornamn);
+        const last  = _str(co["Efternamn"] || co["Last Name"] || co.last_name || co.efternamn);
+        const email = _str(co.Email || co.email || co.email_address);
+        const uid   = email ? userByEmail.get(_email(email)) : null;
+        return {
+          id: bubbleId(co),
+          first, last,
+          name: (first + " " + last).trim() || email,
+          title: _str(co.Titel || co.title || co.Befattning || co.Roll || co.roll),
+          email,
+          phone: _str(co.Telefon || co.telefon || co.Phone || co.phone || co.Mobil || co.mobil),
+          has_user: !!uid,
+          user_id: uid || null,
+        };
+      });
+      rows.sort((a, b) => (a.last || a.first).localeCompare(b.last || b.first, "sv") || a.first.localeCompare(b.first, "sv"));
+      return res.json({ ok: true, count: rows.length, rows });
+    } catch (e) {
+      console.error("[/admin/companies/:id/coworkers]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/companies/coworker/:id/send-password ──────────────
+  // Skickar nytt lösenord/återställning till en Coworkers login-konto. Bubble genererar
+  // reset-token → kräver en Bubble API-workflow (env BUBBLE_PW_RESET_WF) el. injicerad
+  // sendPasswordReset(email). Saknas mekanismen → 501 not_configured (tydligt för UI).
+  app.options("/admin/companies/coworker/:id/send-password", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/coworker/:id/send-password", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const co = await bubbleGet("Coworker", id).catch(() => null);
+      if (!co) return res.status(404).json({ ok: false, error: "coworker_not_found" });
+      const email = _str(co.Email || co.email || co.email_address);
+      if (!email) return res.status(400).json({ ok: false, error: "no_email" });
+      if (typeof sendPasswordReset !== "function") {
+        return res.status(501).json({ ok: false, error: "not_configured", hint: "Lösenordsåterställning ej inkopplad — sätt upp Bubble API-workflow + injicera sendPasswordReset.", email });
+      }
+      const r = await sendPasswordReset({ email, coworker_id: id });
+      if (!r || !r.ok) return res.status(502).json({ ok: false, error: (r && r.error) || "send_failed", email });
+      return res.json({ ok: true, email });
+    } catch (e) {
+      console.error("[/admin/companies/coworker/:id/send-password]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

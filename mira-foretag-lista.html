@@ -150,6 +150,19 @@
   .fk-lpill.wait{background:var(--fl-chip);color:var(--fl-mut);}
   .fk-lpill.red{background:rgba(226,75,74,.16);color:#f09595;}
   .fk-llink{color:var(--fl-acc);text-decoration:none;margin-left:8px;font-size:11px;}
+  .fk-ubadge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;white-space:nowrap;}
+  .fk-ubadge.on{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fk-ubadge.off{background:var(--fl-chip);color:var(--fl-mut);}
+  .fk-key{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:11.5px;white-space:nowrap;}
+  .fk-key:hover{border-color:var(--fl-acc);}
+  .fk-key[disabled]{opacity:.45;cursor:default;}
+  .fk-kmsg{font-size:11px;color:var(--fl-mut);margin-left:8px;}
+  .fk-kmsg.ok{color:var(--fl-ok);}
+  .fk-kmsg.err{color:#ff8080;}
+  .fk-subtabs{display:flex;gap:6px;margin-bottom:14px;}
+  .fk-subtab{padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;color:var(--fl-mut);border:1px solid var(--fl-line);font-weight:600;}
+  .fk-subtab:hover{color:var(--fl-txt);}
+  .fk-subtab.on{color:#0f1830;background:var(--fl-acc);border-color:var(--fl-acc);}
   @media(max-width:820px){.fk-grid{grid-template-columns:1fr;}.fk-strip{grid-template-columns:repeat(2,1fr);}.fk-form{grid-template-columns:1fr;}}
 </style>
 
@@ -199,7 +212,7 @@
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{} };
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal" };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -234,6 +247,7 @@
   }
   function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
   function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
+  function apiPost(path){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:"{}"}).then(function(r){ return r.json(); }); }
 
   // ── FILTERBAR ──
   function selOpts(list, cur, allLabel){
@@ -526,18 +540,95 @@
       '<thead><tr><th>Datum</th><th>Nr / namn</th><th class="num">Belopp</th><th>Status</th></tr></thead>'+
       '<tbody>'+body+'</tbody></table></div></div>';
   }
+  // Visas denna chain-typ just nu? (direkt flik ELLER Avtal-underflik)
+  function chainVisible(tab){ return STATE.view==="card" && (STATE.cardTab===tab || (STATE.cardTab==="avtal" && (STATE.avtalSub||"avtal")===tab)); }
   function fetchChain(tab){
     if(STATE.chain[tab]==="loading" || (STATE.chain[tab] && STATE.chain[tab].length!==undefined)) return;
     STATE.chain[tab]="loading";
     api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/chain?type="+encodeURIComponent(tab)).then(function(j){
       STATE.chain[tab]=(j&&j.ok&&j.rows)?j.rows:[];
-      if(STATE.view==="card"&&STATE.cardTab===tab) renderCard();
-    }).catch(function(){ STATE.chain[tab]=[]; if(STATE.view==="card"&&STATE.cardTab===tab) renderCard(); });
+      if(chainVisible(tab)) renderCard();
+    }).catch(function(){ STATE.chain[tab]=[]; if(chainVisible(tab)) renderCard(); });
+  }
+  // ── Personer (Coworker + konto-badge + lösenordsikon) ──
+  function fetchCoworkers(){
+    if(STATE.coworkers==="loading" || (STATE.coworkers && STATE.coworkers.length!==undefined)) return;
+    STATE.coworkers="loading";
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/coworkers").then(function(j){
+      STATE.coworkers=(j&&j.ok&&j.rows)?j.rows:[];
+      if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard();
+    }).catch(function(){ STATE.coworkers=[]; if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard(); });
+  }
+  function coworkerBody(rows){
+    if(!rows.length) return '<div class="fk-body"><div class="fk-placeholder"><b>Inga personer</b>Inga kontaktpersoner kopplade till detta företag ännu.</div></div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var badge=r.has_user?'<span class="fk-ubadge on">Konto</span>':'<span class="fk-ubadge off">CRM-kontakt</span>';
+      var key=r.has_user?'<button class="fk-key" data-fk="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>':'';
+      body+='<tr><td>'+esc(r.name||"—")+'</td><td>'+esc(r.title||"—")+'</td>'+
+        '<td>'+esc(r.email||"—")+'</td><td>'+(r.phone?esc(formatPhone(r.phone)):"—")+'</td>'+
+        '<td>'+badge+'</td><td class="num">'+key+'<span class="fk-kmsg" data-kmsg="'+esc(r.id)+'"></span></td></tr>';
+    }
+    return '<div class="fk-body"><div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Namn</th><th>Titel</th><th>E-post</th><th>Telefon</th><th>Konto</th><th class="num"></th></tr></thead>'+
+      '<tbody>'+body+'</tbody></table></div></div>';
+  }
+  // ── Avtal (abonnemang + signeringar) ──
+  var CT_LBL={Subscription:"Abonnemang",RateCard:"Prislista",Hybrid:"Hybrid"};
+  function avtalTableBody(rows){
+    if(!rows.length) return '<div class="fk-placeholder"><b>Inga avtal</b>Inga abonnemang/avtal kopplade till detta företag ännu.</div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      body+='<tr><td>'+esc(r.title||"—")+'</td><td>'+esc(CT_LBL[r.contract_type]||r.contract_type||"—")+'</td>'+
+        '<td class="num">'+(r.amount==null?"—":(krc(r.amount)+"/mån"))+'</td><td>'+(r.date?esc(r.date):"tillsvidare")+'</td>'+
+        '<td><span class="fk-lpill '+esc(r.status_cls||"wait")+'">'+esc(r.status||"—")+'</span></td></tr>';
+    }
+    return '<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Avtal</th><th>Typ</th><th class="num">Belopp</th><th>Utgår</th><th>Status</th></tr></thead>'+
+      '<tbody>'+body+'</tbody></table></div>';
+  }
+  function signTableBody(rows){
+    if(!rows.length) return '<div class="fk-placeholder"><b>Inga signeringar</b>Inga signeringsprocesser för detta företag ännu.</div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      body+='<tr><td>'+esc(r.date||"—")+'</td><td>'+esc(r.title||"—")+'</td>'+
+        '<td class="num">'+numc(r.signed||0)+'/'+numc(r.recipients||0)+' signerat</td>'+
+        '<td><span class="fk-lpill '+esc(r.status_cls||"open")+'">'+esc(r.status||"—")+'</span></td></tr>';
+    }
+    return '<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Datum</th><th>Rubrik</th><th class="num">Signerat</th><th>Status</th></tr></thead>'+
+      '<tbody>'+body+'</tbody></table></div>';
+  }
+  function sendPw(cid, btn){
+    var msg=root.querySelector('[data-kmsg="'+cid+'"]');
+    if(!window.confirm("Skicka nytt lösenord till denna person?")) return;   // sidoeffekt → bekräfta
+    btn.disabled=true; if(msg){ msg.textContent="Skickar…"; msg.className="fk-kmsg"; }
+    apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/send-password").then(function(j){
+      btn.disabled=false;
+      if(j&&j.ok){ if(msg){ msg.textContent="✓ Skickat"; msg.className="fk-kmsg ok"; } }
+      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="fk-kmsg err"; } }
+    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="fk-kmsg err"; } });
   }
   function cardBody(){
     if(STATE.cardTab==="hem"){
       var left=STATE.cardEditing?cardKunddataEdit():cardKunddataRead();
       return '<div class="fk-body"><div class="fk-grid">'+left+cardHemRight()+'</div></div>';
+    }
+    if(STATE.cardTab==="personer"){
+      if(STATE.coworkers===null){ fetchCoworkers(); return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>'; }
+      if(STATE.coworkers==="loading") return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>';
+      return coworkerBody(STATE.coworkers);
+    }
+    if(STATE.cardTab==="avtal"){
+      var sub=STATE.avtalSub||"avtal";
+      var toggle='<div class="fk-subtabs">'+
+        '<span class="fk-subtab'+(sub==="avtal"?" on":"")+'" data-fk="avsub" data-s="avtal">Abonnemang</span>'+
+        '<span class="fk-subtab'+(sub==="signeringar"?" on":"")+'" data-fk="avsub" data-s="signeringar">Signeringar</span></div>';
+      var rows=STATE.chain[sub], inner;
+      if(rows===undefined){ fetchChain(sub); inner='<div class="fl-msg">Laddar…</div>'; }
+      else if(rows==="loading") inner='<div class="fl-msg">Laddar…</div>';
+      else inner=(sub==="avtal"?avtalTableBody(rows):signTableBody(rows));
+      return '<div class="fk-body">'+toggle+inner+'</div>';
     }
     if(CHAIN_TABS[STATE.cardTab]){
       var rows=STATE.chain[STATE.cardTab];
@@ -562,7 +653,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={};
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -607,6 +698,10 @@
       if(t.closest && t.closest('[data-fk="edit"]')){ STATE.cardEditing=true; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="canceledit"]')){ STATE.cardEditing=false; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="save"]')){ cardSave(); return; }
+      var pw=t.closest?t.closest('[data-fk="pw"]'):null;
+      if(pw){ sendPw(pw.getAttribute("data-cid"), pw); return; }
+      var avs=t.closest?t.closest('[data-fk="avsub"]'):null;
+      if(avs){ STATE.avtalSub=avs.getAttribute("data-s"); renderCard(); return; }
       return;
     }
     // LIST-vy

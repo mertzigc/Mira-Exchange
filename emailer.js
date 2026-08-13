@@ -179,6 +179,7 @@ async function buildEmail(item) {
     case "approval_signed":        return tmplApprovalSigned(entity, extra, toName, ctaLabel, ctx);
     case "approval_review_invite": return tmplApprovalReviewInvite(entity, extra, toName, ctaLabel, ctx);
     case "approval_reminder":      return tmplApprovalReminder(entity, extra, toName, ctaLabel, ctx);
+    case "password_reset":         return tmplPasswordReset(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1374,6 +1375,47 @@ async function tmplApprovalOtp(e, extra, toName, ctaLabel, item) {
     ctaLabel: null,
     ctaUrl: null,
     miraNote: "Har du inte begärt denna kod kan du bortse från mailet.",
+  });
+  return { subject, html };
+}
+
+// MALL: Nytt/tillfälligt lösenord (slug=password_reset)
+// Drivs av Bubble-workflow send_password_reset (Assign temp password → emailqueue).
+// extra_data: { temp_password, login_url?, sender_name?, logo_url?, accent_color? }
+async function tmplPasswordReset(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const accent     = x.accent_color || "#df6f39";
+  const pw         = String(x.temp_password || x.password || "").trim();
+  const loginUrl   = x.login_url || APP_BASE_URL || "https://mira-fm.com";
+  const senderName = x.sender_name || "Carotte";
+
+  const pwBlock = pw
+    ? `<div style="margin:22px 0 6px;padding:18px 24px;background:#0d1117;border:1px solid #262b42;`
+      + `border-radius:10px;text-align:center;">`
+      + `<div style="font-family:'SF Mono',Menlo,Consolas,monospace;font-size:26px;letter-spacing:.12em;`
+      + `font-weight:600;color:#e8eaf0;word-break:break-all;">${esc(pw)}</div>`
+      + `<div style="margin-top:8px;font-size:11px;color:#606880;letter-spacing:.08em;text-transform:uppercase;">`
+      + `Tillfälligt lösenord</div></div>`
+    : "";
+
+  const subject = item.subject_override || "Nytt lösenord till Mira";
+  const html = wrapLayout({
+    toName,
+    logoUrl: x.logo_url || "",
+    senderName,
+    imageUrl: "",
+    accent,
+    tag: "Lösenord",
+    headline: "Ditt nya lösenord",
+    body:
+      `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">`
+      + `Ett tillfälligt lösenord har skapats för ditt konto. Logga in med det nedan och byt sedan `
+      + `till ett eget lösenord under dina inställningar.</p>`
+      + pwBlock,
+    details: null,
+    ctaLabel: "Logga in",
+    ctaUrl: loginUrl,
+    miraNote: "Har du inte begärt detta kan du bortse från mailet.",
   });
   return { subject, html };
 }

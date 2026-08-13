@@ -20080,6 +20080,22 @@ registerCompaniesRoutes(app, {
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
   companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen
   companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit
+  // Lösenordsåterställning för Coworker-konton: Bubble genererar reset-token → kräver en
+  // Bubble API-workflow. Injiceras BARA om env BUBBLE_PW_RESET_WF är satt (annars 501 not_configured).
+  sendPasswordReset: process.env.BUBBLE_PW_RESET_WF ? (async ({ email }) => {
+    const wf = process.env.BUBBLE_PW_RESET_WF;
+    for (const base of BUBBLE_BASES) {
+      try {
+        const r = await fetch(`${base}/api/1.1/wf/${wf}`, {
+          method: "POST",
+          headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        if (r.ok) return { ok: true };
+      } catch (_) {}
+    }
+    return { ok: false, error: "workflow_failed" };
+  }) : undefined,
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,

@@ -10,14 +10,14 @@ const CC = {
 };
 const REV = new Map([["cc1", { 2025: 146750, 2026: 40992 }], ["cc2", { 2026: 7600 }]]);
 const AUX = {
-  User: [{ _id: "u1", "First Name": "Anna", "Surname": "Andersson" }, { _id: "u2", "First Name": "Bo", "Surname": "Berg" }],
+  User: [{ _id: "u1", "First Name": "Anna", "Surname": "Andersson", email: "christian.mertzig@gmail.com", Company: "cc1" }, { _id: "u2", "First Name": "Bo", "Surname": "Berg", Company: "cc2" }],
   ClientGroup: [{ _id: "g1", name: "Acme-koncernen" }],
   Fastighet: [{ _id: "f1", Namn: "Kungsgatan 1" }, { _id: "f2", Namn: "Vasagatan 5" }],
 };
 const CONTRACTS = [
-  { _id: "ct1", "kundföretag": "cc1", "månadskostnad": 100000, "slutdatum": null },            // aktiv (inget slut)
-  { _id: "ct2", "kundföretag": "cc1", "månadskostnad": 73985,  "slutdatum": "2020-01-01" },     // utgången
-  { _id: "ct3", "kundföretag": "cc1", "månadskostnad": 173985, "slutdatum": "2099-01-01" },     // aktiv (framtida slut)
+  { _id: "ct1", "kundföretag": "cc1", "månadskostnad": 100000, "slutdatum": null, contract_type: "Subscription", contract_title: "Reception CMIAB" },   // aktiv (inget slut)
+  { _id: "ct2", "kundföretag": "cc1", "månadskostnad": 73985,  "slutdatum": "2020-01-01", contract_type: "Subscription", "kategori": "Housekeeping" },  // utgången
+  { _id: "ct3", "kundföretag": "cc1", "månadskostnad": 173985, "slutdatum": "2099-01-01", contract_type: "Hybrid", contract_title: "HK Hybrid" },        // aktiv (framtida slut)
 ];
 const ACTS = [{ _id: "a1", clientcompany: "cc1" }, { _id: "a2", clientcompany: "cc1" }];
 // Kedje-typer per företag (reverse-lookup): Mira via kundföretag/kundforetag/client_company, Fortnox via linked_company
@@ -34,8 +34,20 @@ const STORE = {
     { _id: "inv1", linked_company: "cc1", ft_document_number: "F-1", ft_total: 20000, ft_invoice_date: "2026-05-01", ft_balance: 0, ft_cancelled: false },
     { _id: "inv2", linked_company: "cc1", ft_document_number: "F-2", ft_total: 5000, ft_invoice_date: "2026-06-01", ft_balance: 5000, ft_due_date: "2020-01-01", ft_cancelled: false },
   ],
+  Coworker: [
+    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900 },  // har User (matchar u1)
+    { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
+  ],
+  OfferApprovalRequest: [
+    { _id: "oar1", clientcompany: "cc1", rubrik: "Avtal — CMIAB", status: "Approved", signed_count: 1, recipients_count: 1, "Created Date": "2026-08-05" },
+    { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
+  ],
 };
-const _cmatch = (r, cs) => (cs || []).every((c) => String(r[c.key] == null ? "" : r[c.key]) === String(c.value));
+const _cmatch = (r, cs) => (cs || []).every((c) => {
+  const v = r[c.key];
+  if (c.constraint_type === "contains") { const a = Array.isArray(v) ? v : (v == null ? [] : [v]); return a.map(String).includes(String(c.value)); }
+  return String(v == null ? "" : v) === String(c.value);
+});
 
 // projektion identisk med index.js _projectCompany
 const _ref = (v) => (v == null ? null : (typeof v === "string" ? v : v._id));
@@ -57,12 +69,12 @@ const deps = {
   bubbleId: (r) => (r ? r._id : null),
   bubbleFindAll: async (t, { constraints = [] } = {}) => {
     fetchedTypes.push(t);
-    if (STORE[t]) return STORE[t].filter((r) => _cmatch(r, constraints));
-    return AUX[t] || (t === "ClientCompany" ? Object.values(CC) : []);
+    const arr = STORE[t] || AUX[t] || (t === "ClientCompany" ? Object.values(CC) : []);
+    return arr.filter((r) => _cmatch(r, constraints));
   },
   bubbleFind: async (t) => { fetchedTypes.push(t); return AUX[t] || []; },
   bubbleCount: async (t, cs = []) => (STORE[t] ? STORE[t].filter((r) => _cmatch(r, cs)).length : 0),
-  bubbleGet: async (t, id) => (t === "ClientCompany" ? (CC[id] || null) : null),
+  bubbleGet: async (t, id) => { if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
   bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) Object.assign(CC[id], payload); return {}; },
   companyFullMap: async () => FULL,
   companyRevenueMap: async () => REV,
@@ -191,7 +203,8 @@ const run = async () => {
   ok("card KPI omsättning nu/prev", card.body.kpi.omsattning_now === 40992 && card.body.kpi.omsattning_prev === 146750 && card.body.kpi.nki === 8);
   ok("card counts avtal/historik/deals", card.body.counts.avtal === 3 && card.body.counts.historik === 2 && card.body.counts.deals === 1);
   ok("card counts leads/offerter/ordrar/fakturor", card.body.counts.leads === 1 && card.body.counts.offerter === 2 && card.body.counts.ordrar === 2 && card.body.counts.fakturor === 2);
-  ok("card counts ej byggda flikar = null", card.body.counts.personer === null && card.body.counts.drift === null);
+  ok("card counts personer=2", card.body.counts.personer === 2);
+  ok("card counts drift ännu null", card.body.counts.drift === null);
 
   // ── CHAIN: reverse-lookup per flik ──
   var chD = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "deals" } });
@@ -204,8 +217,26 @@ const run = async () => {
   ok("chain ordrar → 2 (Mira Levererad + Fortnox)", chOr.body.count === 2 && chOr.body.rows.some(function(r){return r.status==="Levererad";}));
   var chF = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "fakturor" } });
   ok("chain fakturor → 2 (Betald + Förfallen)", chF.body.count === 2 && chF.body.rows.some(function(r){return r.status_cls==="ok";}) && chF.body.rows.some(function(r){return r.status==="Förfallen";}));
+  var chA = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "avtal" } });
+  ok("chain avtal → 3 (1 avslutad, typ Hybrid finns)", chA.body.count === 3 && chA.body.rows.some(function(r){return r.status==="Avslutad";}) && chA.body.rows.some(function(r){return r.contract_type==="Hybrid";}) && chA.body.rows.some(function(r){return r.amount===100000;}));
+  var chS = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "signeringar" } });
+  ok("chain signeringar → 2 (Approved→ok, Sent→open)", chS.body.count === 2 && chS.body.rows.some(function(r){return r.status==="Approved"&&r.status_cls==="ok";}) && chS.body.rows.some(function(r){return r.status==="Sent"&&r.status_cls==="open";}) && chS.body.rows[0].recipients === 1);
   var chBad = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "nope" } });
   ok("chain okänd typ → 400", chBad.code === 400);
+
+  // ── PERSONER (Coworker + konto-badge) ──
+  var cw = await call(s.routes, "get", "/admin/companies/:id/coworkers", { params: { id: "cc1" } });
+  ok("coworkers ok, 2 rader", cw.body.ok && cw.body.count === 2);
+  var coTest = cw.body.rows.filter(function(r){return r.id==="co1";})[0];
+  var coRen = cw.body.rows.filter(function(r){return r.id==="co2";})[0];
+  ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "christian.mertzig@gmail.com" && coTest.phone === "755678900");
+  ok("coworker has_user (email matchar User vars Company==företaget)", coTest.has_user === true && coTest.user_id === "u1");
+  ok("ren coworker = CRM-kontakt (has_user false)", coRen.has_user === false && coRen.user_id === null);
+  // send-password: sendPasswordReset ej injicerad → 501 not_configured
+  var pw = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "co1" } });
+  ok("send-password utan mekanism → 501 not_configured", pw.code === 501 && pw.body.error === "not_configured");
+  var pw404 = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "nope" } });
+  ok("send-password okänd coworker → 404", pw404.code === 404);
   ok("card meta editable inkl kunddata-fält", card.body.meta.editable.email === "text" && card.body.meta.editable.kundinformation === "text");
   var card404 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "nope" } });
   ok("card okänt id → 404", card404.code === 404);
