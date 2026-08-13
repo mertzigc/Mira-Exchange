@@ -2102,7 +2102,8 @@
       volume_json: readVal('f-volume') || null,
       category: readSelectedCategory(),
       contract_title: readVal('f-title') || null,
-      "leverantör": readVal('f-supplier') || null
+      "leverantör": readVal('f-supplier') || null,
+      deal: cfg('deal') || null   // Affär-ryggrad: koppla till affären (live-läst; tom på Företag-kortet). create+import kopplar; edit rör ej befintlig vid tom.
     };
 
     var url, method;

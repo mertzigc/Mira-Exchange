@@ -21017,6 +21017,7 @@ app.post("/admin/contracts/create", async (req, res) => {
       [SERVICES.CT_TITLE]:              b.contract_title ? String(b.contract_title).trim() : null,
       [SERVICES.CT_SUPPLIER]:           supplierId,
       [SERVICES.CT_OFFER]:              b.offer_id || null,
+      [SERVICES.CT_DEAL]:               b.deal || b.deal_id || null,   // Affär-ryggrad: koppla direkt-skapat avtal till affären (från deal-popupen)
       [SERVICES.CT_OFFICE]:             b.office_id || null,
       [SERVICES.CT_QTY]:                b.qty != null ? Number(b.qty) : 1,
       [SERVICES.CT_MONTHLY]:            b.monthly_cost != null ? Number(b.monthly_cost) : 0,
@@ -21114,6 +21115,7 @@ app.patch("/admin/contracts/:id", async (req, res) => {
     if ("contract_type" in b)          patch[SERVICES.CT_TYPE]              = b.contract_type;
     if ("office_id" in b)              patch[SERVICES.CT_OFFICE]            = b.office_id || null;
     if ("offer_id" in b)               patch[SERVICES.CT_OFFER]             = b.offer_id || null;
+    if (b.deal || b.deal_id)           patch[SERVICES.CT_DEAL]              = b.deal || b.deal_id;   // koppla (aldrig wipa vid tom → företagskontext-edit rör ej befintlig koppling)
     if ("qty" in b)                    patch[SERVICES.CT_QTY]               = b.qty != null ? Number(b.qty) : null;
     if ("monthly_cost" in b)           patch[SERVICES.CT_MONTHLY]           = b.monthly_cost != null ? Number(b.monthly_cost) : null;
     if ("category" in b) {
@@ -21697,6 +21699,7 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
       [SERVICES.CT_TITLE]:             b.contract_title ? String(b.contract_title).trim() : null,
       [SERVICES.CT_SUPPLIER]:          supplierId,
       [SERVICES.CT_OFFER]:             b.offer_id || null,
+      [SERVICES.CT_DEAL]:              b.deal || b.deal_id || null,   // Affär-ryggrad: koppla importerat avtal till affären
       [SERVICES.CT_OFFICE]:            b.office_id || null,
       [SERVICES.CT_QTY]:               b.qty != null ? Number(b.qty) : 1,
       [SERVICES.CT_MONTHLY]:           b.monthly_cost != null ? Number(b.monthly_cost) : 0,
