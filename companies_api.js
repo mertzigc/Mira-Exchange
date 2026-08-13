@@ -21,8 +21,8 @@
 
 export function registerCompaniesRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
-    companyFullMap, companyRevenueMap, companyPatchEntry,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount,
+    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
 
@@ -30,6 +30,7 @@ export function registerCompaniesRoutes(app, deps) {
   const _ref = (v) => (v == null ? null : (typeof v === "string" ? v : bubbleId(v)));
   const _num = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
   const _low = (v) => _str(v).toLowerCase();
+  const _httpsUrl = (v) => { const s = _str(v); return s ? s.replace(/^\/\//, "https://") : ""; };
 
   // ── Hjälp-cachar för namn-resolvning (små typer, egen TTL) ──────────
   const AUX_TTL = 5 * 60 * 1000;
@@ -108,6 +109,13 @@ export function registerCompaniesRoutes(app, deps) {
     nki:           { bubbleField: "NKI_carotte",  type: "number" },
     ansvarig:      { bubbleField: "Kundansvarig", type: "userref" },
     group:         { bubbleField: "group",        type: "groupref" },
+    // Kunddata-fält (kundkortets Hem-flik). Adress (geografiskt objekt) + Grundat_år (date) +
+    // logotyp (image) redigeras EJ inline i denna omgång — läs-only tills egna kontroller byggs.
+    email:              { bubbleField: "Email",        type: "text" },
+    telefon:            { bubbleField: "Telefon",      type: "number" },   // Bubble-fält är number → tappar ev. inledande 0
+    web:                { bubbleField: "hemsida_crm",  type: "text" },
+    kundinformation:    { bubbleField: "kundinfo_crm", type: "text" },
+    fakturainformation: { bubbleField: "Fakturainfo",  type: "text" },
   };
 
   // ── Bygg en list-rad ur cache-projektionen + resolvade namn + omsättning ──
@@ -162,11 +170,14 @@ export function registerCompaniesRoutes(app, deps) {
     return true;
   }
 
+  // Omsättning laddas ALDRIG blockerande i list-vägen (tung faktura-scan). Varm/stale → med,
+  // kall → null (+ bg-laddning startad) → frontenden hämtar om när klar.
   async function _ctx() {
-    const [full, rev, u, g, f] = await Promise.all([
-      companyFullMap(), companyRevenueMap(), _users(), _groups(), _fastigheter(),
+    const [full, u, g, f] = await Promise.all([
+      companyFullMap(), _users(), _groups(), _fastigheter(),
     ]);
-    return { full, rev, users: u.map, groups: g.map, fast: f.map };
+    const rev = companyRevenueMapWarm ? companyRevenueMapWarm() : (await companyRevenueMap());
+    return { full, rev: rev || new Map(), revenueReady: !!rev, users: u.map, groups: g.map, fast: f.map };
   }
 
   // ── GET /admin/companies/meta ──────────────────────────────────────
@@ -261,6 +272,7 @@ export function registerCompaniesRoutes(app, deps) {
         ok: true, total, page, limit,
         pages: Math.max(1, Math.ceil(total / limit)),
         year: yearNow, prev: yearPrev,
+        revenue_ready: ctx.revenueReady,   // false = faktura-scanningen värms fortf. → oms-kolumnerna kommer strax
         rows: pageRows,
       };
       if (_str(req.query.meta) === "1" || page === 1) {
@@ -275,6 +287,93 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json(out);
     } catch (e) {
       console.error("[/admin/companies/list]", e?.message, e?.detail);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/companies/:id/card ──────────────────────────────────
+  // Kundkortets Hem-flik: kunddata (läs+edit) + KPI-aggregat + counts per flik + meta.
+  // Återanvänder delade cacharna + omsättning (icke-blockerande). EN bubbleGet (extra CC-fält)
+  // + EN Contract-hämtning (MRR/aktiva) + 2 counts. Counts som ännu kräver modul-specifik
+  // fältmappning (personer/leads/offert/order/faktura) = null tills resp. flik byggs.
+  app.options("/admin/companies/:id/card", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/card", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const full = await companyFullMap();
+      const proj = full.get(id);
+      if (!proj) return res.status(404).json({ ok: false, error: "company_not_found" });
+
+      const nowYear = new Date().getUTCFullYear();
+      const [rec, u, g, f] = await Promise.all([
+        bubbleGet("ClientCompany", id).catch(() => null),
+        _users(), _groups(), _fastigheter(),
+      ]);
+      const rev = companyRevenueMapWarm ? companyRevenueMapWarm() : (await companyRevenueMap());
+      const revReady = !!rev;
+      const revEntry = (rev && rev.get(id)) || {};
+
+      // Contract-aggregat (aktiv = slutdatum tomt eller ≥ nu — speglar /services/dashboard)
+      const contracts = await bubbleFindAll("Contract", {
+        constraints: [{ key: "kundföretag", constraint_type: "equals", value: id }],
+      }).catch(() => []);
+      const now = Date.now();
+      let mrr = 0, active = 0;
+      for (const ct of (contracts || [])) {
+        const endRaw = ct["slutdatum"];
+        const end = endRaw ? new Date(endRaw).getTime() : null;
+        const isActive = !(end != null && !Number.isNaN(end) && end < now);
+        if (isActive) { active++; mrr += Math.round(Number(ct["månadskostnad"] || 0)); }
+      }
+
+      // Counts jag kan beräkna pålitligt nu (övriga byggs med resp. modul)
+      const [histCount, dealCount] = await Promise.all([
+        bubbleCount("activitet_crm", [{ key: "clientcompany", constraint_type: "equals", value: id }]).catch(() => null),
+        bubbleCount("deal", [{ key: "kundföretag", constraint_type: "equals", value: id }]).catch(() => null),
+      ]);
+
+      const adr = rec && rec.Adress;
+      const address = adr ? (typeof adr === "string" ? adr : (adr.address || "")) : "";
+      const grundat = rec && rec["Grundat_år"] ? _str(rec["Grundat_år"]).slice(0, 4) : "";
+
+      const company = Object.assign({}, proj, {
+        ansvarig: proj.ansvarig_id ? (u.map.get(proj.ansvarig_id) || "") : "",
+        group: proj.group_id ? (g.map.get(proj.group_id) || "") : "",
+        fastigheter: (proj.fastighet_ids || []).map((x) => f.map.get(x)).filter(Boolean),
+        adress: address,
+        email: rec ? _str(rec.Email) : "",
+        telefon: (rec && rec.Telefon != null) ? _str(rec.Telefon) : "",
+        web: rec ? _str(rec.hemsida_crm) : "",
+        kundinformation: rec ? _str(rec.kundinfo_crm) : "",
+        fakturainformation: rec ? _str(rec.Fakturainfo) : "",
+        grundat: grundat,
+        logotyp: rec ? _httpsUrl(rec.logotyp) : "",
+      });
+
+      return res.json({
+        ok: true,
+        revenue_ready: revReady,
+        company,
+        kpi: {
+          mrr, active_contracts: active, contracts_total: (contracts || []).length,
+          omsattning_now: revReady ? (revEntry[nowYear] != null ? revEntry[nowYear] : null) : null,
+          omsattning_prev: revReady ? (revEntry[nowYear - 1] != null ? revEntry[nowYear - 1] : null) : null,
+          year: nowYear, prev: nowYear - 1,
+          nki: proj.nki, antal_medarbetare: proj.antal_medarbetare,
+        },
+        counts: {
+          avtal: (contracts || []).length, historik: histCount, deals: dealCount,
+          personer: null, leads: null, offerter: null, ordrar: null, fakturor: null, drift: null,
+        },
+        meta: {
+          facets: _facets(full), users: u.list, groups: g.list, fastigheter: f.list,
+          editable: Object.fromEntries(Object.entries(EDITABLE).map(([k, v]) => [k, v.type])),
+        },
+      });
+    } catch (e) {
+      console.error("[/admin/companies/:id/card]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

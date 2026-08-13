@@ -1,0 +1,307 @@
+<!--
+  mira-foretag-kort.html — kundkortet (steg 2). Hem-fliken SKARP; övriga flikar byggs modul för modul.
+  Backend: GET /admin/companies/:id/card + PATCH /admin/companies/:id (inline-edit, samma som listan).
+  Data-mira hidden inputs:
+    data-mira="api_host"       = https://mira-exchange.onrender.com
+    data-mira="planning_token" = PLANNING_ADMIN_TOKEN
+    data-mira="company_id"     = <Current Company unique id>
+  Konventioner: INGEN ?. / ?? (Bubbles parser). IIFE, BROOT-claim, .fk-namnrymd, yes/no→"ja". SWR (fk:).
+-->
+<style>
+  .fk{--fk-bg:#0f1830;--fk-card:#16223d;--fk-card2:#1b2947;--fk-line:#243456;--fk-txt:#e7ecf6;--fk-mut:#8ea0c2;--fk-acc:#df6f39;--fk-ok:#2ecc71;--fk-chip:#1c2b4d;
+      color:var(--fk-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;background:var(--fk-bg);border-radius:16px;overflow:hidden;border:1px solid var(--fk-line);}
+  .fk *{box-sizing:border-box;}
+  .fk-hero{padding:20px 24px 0;}
+  .fk-herotop{display:flex;align-items:flex-start;gap:16px;}
+  .fk-logo{width:44px;height:44px;border-radius:10px;background:var(--fk-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex-shrink:0;overflow:hidden;}
+  .fk-logo img{width:100%;height:100%;object-fit:cover;}
+  .fk-hname{font-size:24px;font-weight:700;line-height:1.1;}
+  .fk-hmeta{color:var(--fk-mut);font-size:12px;margin-top:4px;display:flex;gap:14px;flex-wrap:wrap;}
+  .fk-hmeta b{color:var(--fk-txt);font-weight:600;}
+  .fk-pill{display:inline-block;padding:3px 11px;border-radius:20px;font-size:11px;font-weight:700;vertical-align:middle;margin-left:10px;}
+  .fk-pill.ok{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fk-pill.prospect{background:rgba(223,111,57,.16);color:#f0a070;}
+  .fk-pill.plain{background:var(--fk-chip);color:var(--fk-mut);}
+  .fk-close{margin-left:auto;background:var(--fk-chip);color:var(--fk-txt);border:1px solid var(--fk-line);border-radius:9px;padding:8px 16px;cursor:pointer;font-size:12px;}
+  .fk-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0 4px;}
+  .fk-stat{background:var(--fk-card);border:1px solid var(--fk-line);border-radius:12px;padding:12px 14px;}
+  .fk-stat .l{color:var(--fk-mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
+  .fk-stat .v{font-size:19px;font-weight:700;margin-top:5px;}
+  .fk-stat .v small{font-size:11px;color:var(--fk-mut);font-weight:500;}
+  .fk-stat.acc .v{color:var(--fk-acc);}
+  .fk-calc{color:var(--fk-mut);font-size:12px;font-style:italic;opacity:.75;}
+  .fk-tabs{display:flex;gap:4px;flex-wrap:wrap;padding:14px 24px 0;border-bottom:1px solid var(--fk-line);}
+  .fk-tab{padding:9px 14px;border-radius:9px 9px 0 0;cursor:pointer;font-size:12.5px;color:var(--fk-mut);font-weight:600;border:1px solid transparent;border-bottom:none;display:flex;align-items:center;gap:7px;}
+  .fk-tab:hover{color:var(--fk-txt);}
+  .fk-tab.on{color:var(--fk-txt);background:var(--fk-card);border-color:var(--fk-line);}
+  .fk-tab .cnt{background:var(--fk-chip);color:var(--fk-mut);border-radius:20px;font-size:10px;padding:1px 7px;font-weight:700;}
+  .fk-tab.on .cnt{background:var(--fk-acc);color:#0f1830;}
+  .fk-body{padding:20px 24px 24px;}
+  .fk-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;}
+  .fk-panel{background:var(--fk-card);border:1px solid var(--fk-line);border-radius:14px;padding:16px 18px;}
+  .fk-ph{display:flex;align-items:center;margin-bottom:12px;gap:8px;}
+  .fk-ph h3{font-size:14px;font-weight:700;margin:0;}
+  .fk-editbtn{margin-left:auto;background:transparent;color:var(--fk-acc);border:1px solid var(--fk-line);border-radius:8px;padding:5px 12px;cursor:pointer;font-size:11.5px;font-weight:600;}
+  .fk-editbtn.pri{background:var(--fk-acc);color:#0f1830;border-color:var(--fk-acc);}
+  .fk-kv{display:grid;grid-template-columns:auto 1fr;gap:9px 16px;font-size:13px;align-items:baseline;}
+  .fk-kv .k{color:var(--fk-mut);white-space:nowrap;}
+  .fk-kv .val{color:var(--fk-txt);text-align:right;word-break:normal;}
+  .fk-form{display:grid;grid-template-columns:1fr 1fr;gap:11px 14px;}
+  .fk-fld{display:flex;flex-direction:column;gap:4px;}
+  .fk-fld.full{grid-column:1 / -1;}
+  .fk-fld label{font-size:11px;color:var(--fk-mut);font-weight:600;}
+  .fk-fld input,.fk-fld select,.fk-fld textarea{background:var(--fk-bg);border:1px solid var(--fk-line);color:var(--fk-txt);border-radius:8px;padding:7px 9px;font-size:12.5px;font-family:inherit;width:100%;}
+  .fk-fld input:focus,.fk-fld select:focus,.fk-fld textarea:focus{outline:none;border-color:var(--fk-acc);}
+  .fk-fld select option{background:#16223d;}
+  .fk-fld textarea{min-height:60px;resize:vertical;}
+  .fk-fld .ro{color:var(--fk-mut);font-size:12.5px;padding:7px 0;}
+  .fk-formbtns{grid-column:1 / -1;display:flex;gap:9px;margin-top:4px;align-items:center;}
+  .fk-formbtns .save{background:var(--fk-acc);color:#0f1830;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12.5px;font-weight:700;}
+  .fk-formbtns .cancel{background:transparent;color:var(--fk-mut);border:1px solid var(--fk-line);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12.5px;}
+  .fk-formbtns .msg{font-size:12px;color:var(--fk-mut);}
+  .fk-formbtns .msg.err{color:#ff8080;}
+  .fk-note{margin-top:14px;padding:11px 13px;background:var(--fk-bg);border:1px solid var(--fk-line);border-radius:10px;color:var(--fk-mut);font-size:12.5px;line-height:1.5;}
+  .fk-note b{color:var(--fk-txt);font-weight:600;display:block;margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
+  .fk-kpi{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .fk-kc{background:var(--fk-card2);border-radius:12px;padding:13px 15px;}
+  .fk-kc .l{color:var(--fk-mut);font-size:11px;font-weight:600;}
+  .fk-kc .v{font-size:22px;font-weight:700;margin-top:4px;}
+  .fk-kc .v small{font-size:12px;color:var(--fk-mut);font-weight:500;}
+  .fk-kc .v.up{color:var(--fk-ok);}
+  .fk-rate{display:flex;flex-direction:column;gap:9px;}
+  .fk-rrow{display:grid;grid-template-columns:110px 1fr 34px;align-items:center;gap:10px;font-size:12px;}
+  .fk-rrow .rl{color:var(--fk-mut);}
+  .fk-bar{height:6px;border-radius:4px;background:var(--fk-line);overflow:hidden;}
+  .fk-bar i{display:block;height:100%;background:var(--fk-acc);border-radius:4px;}
+  .fk-rrow .rv{text-align:right;font-weight:700;}
+  .fk-actions{display:flex;gap:9px;flex-wrap:wrap;}
+  .fk-act{background:var(--fk-chip);color:var(--fk-txt);border:1px solid var(--fk-line);border-radius:9px;padding:9px 15px;cursor:pointer;font-size:12px;font-weight:600;}
+  .fk-act.pri{background:var(--fk-acc);color:#0f1830;border-color:var(--fk-acc);}
+  .fk-act:hover{border-color:var(--fk-acc);}
+  .fk-sech{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--fk-mut);font-weight:700;margin:2px 0 10px;}
+  .fk-placeholder{padding:44px;text-align:center;color:var(--fk-mut);background:var(--fk-card);border:1px dashed var(--fk-line);border-radius:14px;}
+  .fk-placeholder b{color:var(--fk-txt);display:block;font-size:15px;margin-bottom:6px;}
+  .fk-msg{padding:40px;text-align:center;color:var(--fk-mut);}
+  .fk-err{padding:20px;color:#ff8080;}
+  @media(max-width:820px){.fk-grid{grid-template-columns:1fr;}.fk-strip{grid-template-columns:repeat(2,1fr);}.fk-form{grid-template-columns:1fr;}}
+</style>
+
+<div class="fk">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="company_id"     value="">
+  <div data-fk="root"><div class="fk-msg">Laddar kundkort…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".fk"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-fk-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-fk-claimed","1");
+  var $=function(k){ return root.querySelector('[data-fk="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), CID=cfg("company_id");
+
+  var STATE={ card:null, tab:"hem", editing:false, revTries:0 };
+  var _revTimer=null;
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function kr(n){ if(n==null) return "—"; return Math.round(n).toLocaleString("sv-SE")+" kr"; }
+  function num(n){ if(n==null) return "—"; return Number(n).toLocaleString("sv-SE"); }
+  function initials(nm){ nm=String(nm||"").trim(); if(!nm) return "?"; var w=nm.split(/\s+/); if(w.length>1) return (w[0][0]+w[1][0]).toUpperCase(); return nm.slice(0,2).toUpperCase(); }
+
+  function cacheGet(k){ try{ var v=sessionStorage.getItem(k); if(!v) return null; var o=JSON.parse(v); if(!o||(Date.now()-o.t)>900000) return null; return o.d; }catch(e){ return null; } }
+  function cacheSet(k,d){ try{ sessionStorage.setItem(k,JSON.stringify({t:Date.now(),d:d})); }catch(e){} }
+  function cacheClear(){ try{ sessionStorage.removeItem("fk:card:"+CID); }catch(e){} }
+  function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+  function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
+
+  // ── Kunddata-fält (Hem, läs + redigera) ──
+  var FIELDS=[
+    {k:"kundstatus",lbl:"Kundstatus",t:"optionset",facet:"kundstatus"},
+    {k:"potential",lbl:"Potential",t:"optionset",facet:"potential"},
+    {k:"lojalitet",lbl:"Lojalitet",t:"optionset",facet:"lojalitet"},
+    {k:"ansvarig",lbl:"Kundansvarig",t:"userref"},
+    {k:"bransch",lbl:"Bransch",t:"optionset",facet:"bransch"},
+    {k:"group",lbl:"Kundgrupp",t:"groupref"},
+    {k:"orgnr",lbl:"Org.nr",t:"text"},
+    {k:"region",lbl:"Region",t:"optionset",facet:"region"},
+    {k:"adress",lbl:"Adress",t:"ro"},
+    {k:"email",lbl:"E-post",t:"text"},
+    {k:"telefon",lbl:"Telefon",t:"number"},
+    {k:"web",lbl:"Web",t:"text"},
+    {k:"grundat",lbl:"Grundat",t:"ro"},
+    {k:"antal_medarbetare",lbl:"Medarbetare",t:"ro"}
+  ];
+  var TABS=[
+    {k:"hem",lbl:"Hem"},{k:"personer",lbl:"Personer"},{k:"historik",lbl:"Historik"},
+    {k:"deals",lbl:"Deals"},{k:"leads",lbl:"Leads"},{k:"offerter",lbl:"Offerter"},
+    {k:"ordrar",lbl:"Ordrar"},{k:"fakturor",lbl:"Fakturor"},{k:"avtal",lbl:"Avtal"},
+    {k:"drift",lbl:"Drift"},{k:"installningar",lbl:"Inställningar"}
+  ];
+  var TAB_SRC={personer:"Coworker (company = koncernens bolag) · User-badge + lösenordsikon",historik:"activity_crm för företaget",
+    deals:"deals för företaget (reverse-lookup)",leads:"leads för företaget",offerter:"offerter för företaget",
+    ordrar:"ordrar för företaget",fakturor:"fakturor för företaget",avtal:"abonnemang + signering (mira-abonnemang-kund)",
+    drift:"native ärenden + kvalitetskontroller (djupdyk senare)",installningar:"kontor / avtal / users / leverantörer / logo"};
+
+  function curVal(c,fdef){ if(fdef.t==="userref") return c.ansvarig_id||""; if(fdef.t==="groupref") return c.group_id||""; return c[fdef.k]==null?"":c[fdef.k]; }
+  function dispVal(c,fdef){
+    if(fdef.k==="lojalitet") return c.lojalitet?("★ "+esc(c.lojalitet)):"—";
+    if(fdef.k==="antal_medarbetare") return num(c.antal_medarbetare);
+    if(fdef.t==="userref") return c.ansvarig?esc(c.ansvarig):"—";
+    if(fdef.t==="groupref") return c.group?esc(c.group):"—";
+    var v=c[fdef.k]; return (v===""||v==null)?"—":esc(v);
+  }
+
+  // ── HEADER + STRIP ──
+  function statusCls(v){ var lv=String(v||"").toLowerCase(); if(lv.indexOf("aktiv")>-1) return "ok"; if(lv.indexOf("prospekt")>-1) return "prospect"; return "plain"; }
+  function renderHero(){
+    var c=STATE.card.company, k=STATE.card.kpi, ready=STATE.card.revenue_ready;
+    var logo=c.logotyp?('<img src="'+esc(c.logotyp)+'" alt="">'):esc(initials(c.name));
+    var meta=[];
+    if(c.orgnr) meta.push('Org.nr <b>'+esc(c.orgnr)+'</b>');
+    if(c.ansvarig) meta.push('Ansvarig <b>'+esc(c.ansvarig)+'</b>');
+    if(c.region) meta.push('Region <b>'+esc(c.region)+'</b>');
+    if(c.bransch) meta.push('Bransch <b>'+esc(c.bransch)+'</b>');
+    if(c.potential) meta.push('Potential <b>'+esc(c.potential)+'</b>');
+    var omsNow=ready?kr(k.omsattning_now).replace(" kr",""):'<span class="fk-calc">beräknar…</span>';
+    return '<div class="fk-hero"><div class="fk-herotop">'+
+      '<div class="fk-logo">'+logo+'</div>'+
+      '<div><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+'</div>'+
+      '<div class="fk-hmeta">'+meta.map(function(m){return '<span>'+m+'</span>';}).join("")+'</div></div>'+
+      '<button class="fk-close" data-fk="close">Stäng</button></div>'+
+      '<div class="fk-strip">'+
+        '<div class="fk-stat acc"><div class="l">Avtal / mån</div><div class="v">'+kr(k.mrr)+'</div></div>'+
+        '<div class="fk-stat"><div class="l">Aktiva avtal</div><div class="v">'+num(k.active_contracts)+'</div></div>'+
+        '<div class="fk-stat"><div class="l">Öppna ärenden</div><div class="v">'+(STATE.card.counts.drift==null?"—":num(STATE.card.counts.drift))+'</div></div>'+
+        '<div class="fk-stat"><div class="l">Omsättning '+k.year+'</div><div class="v">'+omsNow+'</div></div>'+
+        '<div class="fk-stat"><div class="l">NKI</div><div class="v">'+(k.nki==null?"—":num(k.nki))+'</div></div>'+
+      '</div></div>';
+  }
+  function renderTabs(){
+    var cn=STATE.card.counts;
+    var h='<div class="fk-tabs">';
+    for(var i=0;i<TABS.length;i++){ var t=TABS[i], badge="";
+      var cv=cn[t.k]; if(cv!=null && cv!==undefined) badge=' <span class="cnt">'+num(cv)+'</span>';
+      h+='<div class="fk-tab'+(STATE.tab===t.k?" on":"")+'" data-fk="tab" data-t="'+t.k+'">'+esc(t.lbl)+badge+'</div>';
+    }
+    return h+'</div>';
+  }
+
+  // ── HEM: läsläge / redigera ──
+  function renderKunddataRead(){
+    var c=STATE.card.company;
+    var rows="";
+    for(var i=0;i<FIELDS.length;i++){ var fd=FIELDS[i]; rows+='<div class="k">'+esc(fd.lbl)+'</div><div class="val">'+dispVal(c,fd)+'</div>'; }
+    if(c.fastigheter&&c.fastigheter.length) rows+='<div class="k">Fastighet</div><div class="val">'+c.fastigheter.map(esc).join(", ")+'</div>';
+    return '<div class="fk-panel"><div class="fk-ph"><h3>Kunddata</h3><button class="fk-editbtn" data-fk="edit">✎ Redigera</button></div>'+
+      '<div class="fk-kv">'+rows+'</div>'+
+      '<div class="fk-note"><b>Kundinformation</b>'+(c.kundinformation?esc(c.kundinformation):"—")+'</div>'+
+      '<div class="fk-note"><b>Fakturainformation</b>'+(c.fakturainformation?esc(c.fakturainformation):"—")+'</div></div>';
+  }
+  function selOpts(list,cur){ var h=""; for(var i=0;i<list.length;i++){ var it=list[i],v=it.id!==undefined?it.id:it,nm=it.name!==undefined?it.name:it; h+='<option value="'+esc(v)+'"'+(String(v)===String(cur)?" selected":"")+'>'+esc(nm)+'</option>'; } return h; }
+  function ctrl(fd,c){
+    var cur=curVal(c,fd), m=STATE.card.meta;
+    if(fd.t==="ro") return '<div class="ro">'+dispVal(c,fd)+'</div>';
+    if(fd.t==="text") return '<input type="text" data-f="'+fd.k+'" value="'+esc(cur)+'">';
+    if(fd.t==="number") return '<input type="number" data-f="'+fd.k+'" value="'+esc(cur)+'">';
+    if(fd.t==="userref") return '<select data-f="'+fd.k+'"><option value="">— ingen —</option>'+selOpts(m.users||[],cur)+'</select>';
+    if(fd.t==="groupref") return '<select data-f="'+fd.k+'"><option value="">— ingen —</option>'+selOpts(m.groups||[],cur)+'</select>';
+    var vals=(m.facets&&m.facets[fd.facet])||[];
+    return '<select data-f="'+fd.k+'"><option value="">— tom —</option>'+selOpts(vals,cur)+'</select>';
+  }
+  function renderKunddataEdit(){
+    var c=STATE.card.company, flds="";
+    for(var i=0;i<FIELDS.length;i++){ var fd=FIELDS[i]; flds+='<div class="fk-fld"><label>'+esc(fd.lbl)+'</label>'+ctrl(fd,c)+'</div>'; }
+    flds+='<div class="fk-fld full"><label>Kundinformation</label><textarea data-f="kundinformation">'+esc(c.kundinformation||"")+'</textarea></div>';
+    flds+='<div class="fk-fld full"><label>Fakturainformation</label><textarea data-f="fakturainformation">'+esc(c.fakturainformation||"")+'</textarea></div>';
+    flds+='<div class="fk-formbtns"><button class="save" data-fk="save">Spara</button><button class="cancel" data-fk="canceledit">Avbryt</button><span class="msg" data-fk="savemsg"></span></div>';
+    return '<div class="fk-panel"><div class="fk-ph"><h3>Redigera kunddata</h3></div><div class="fk-form">'+flds+'</div></div>';
+  }
+  function renderHemRight(){
+    var k=STATE.card.kpi, ready=STATE.card.revenue_ready;
+    var onow=ready?kr(k.omsattning_now):'<span class="fk-calc">beräknar…</span>';
+    var oprev=ready?kr(k.omsattning_prev):'<span class="fk-calc">beräknar…</span>';
+    return '<div><div class="fk-sech">Nyckeltal</div>'+
+      '<div class="fk-kpi">'+
+        '<div class="fk-kc"><div class="l">Omsättning '+k.year+'</div><div class="v up">'+onow+'</div></div>'+
+        '<div class="fk-kc"><div class="l">Omsättning '+k.prev+'</div><div class="v">'+oprev+'</div></div>'+
+        '<div class="fk-kc"><div class="l">Avtalsvärde / mån</div><div class="v">'+kr(k.mrr)+'</div></div>'+
+        '<div class="fk-kc"><div class="l">Aktiva avtal</div><div class="v">'+num(k.active_contracts)+'</div></div>'+
+      '</div>'+
+      '<div class="fk-sech" style="margin-top:18px">Betyg &amp; NKI (30 dagar)</div>'+
+      '<div class="fk-panel" style="padding:14px 16px"><div class="fk-rate">'+
+        '<div class="fk-rrow"><span class="rl">Housekeeping</span><span class="fk-bar"><i style="width:0%"></i></span><span class="rv">—</span></div>'+
+        '<div class="fk-rrow"><span class="rl">Ärendehantering</span><span class="fk-bar"><i style="width:0%"></i></span><span class="rv">—</span></div>'+
+        '<div class="fk-rrow"><span class="rl">Leveranser</span><span class="fk-bar"><i style="width:0%"></i></span><span class="rv">—</span></div>'+
+        '<div class="fk-rrow"><span class="rl">NKI</span><span class="fk-bar"><i style="width:'+(k.nki?Math.min(100,k.nki*10):0)+'%"></i></span><span class="rv">'+(k.nki==null?"—":num(k.nki))+'</span></div>'+
+      '</div></div>'+
+      '<div class="fk-sech" style="margin-top:18px">Snabbåtgärder</div>'+
+      '<div class="fk-actions">'+
+        '<button class="fk-act pri">+ Ny affär</button><button class="fk-act">+ Ny aktivitet</button>'+
+        '<button class="fk-act">+ Ny kontakt</button><button class="fk-act">+ Nytt avtal</button>'+
+        '<button class="fk-act">+ Ny förfrågan</button><button class="fk-act">Skicka signering</button>'+
+      '</div></div>';
+  }
+  function renderBody(){
+    if(STATE.tab==="hem"){
+      var left=STATE.editing?renderKunddataEdit():renderKunddataRead();
+      return '<div class="fk-body"><div class="fk-grid">'+left+renderHemRight()+'</div></div>';
+    }
+    var t=TABS.filter(function(x){return x.k===STATE.tab;})[0];
+    return '<div class="fk-body"><div class="fk-placeholder"><b>'+esc(t.lbl)+'</b>Byggs modul för modul.<br><span style="font-size:12px">Källa: '+esc(TAB_SRC[STATE.tab]||"—")+'</span></div></div>';
+  }
+  function render(){ root.querySelector('[data-fk="root"]').innerHTML=renderHero()+renderTabs()+renderBody(); }
+
+  // ── SPARA (inline-edit → PATCH) ──
+  function doSave(){
+    var c=STATE.card.company, form=root.querySelector(".fk-form"), fields={};
+    var els=form.querySelectorAll("[data-f]");
+    for(var i=0;i<els.length;i++){ var el=els[i], key=el.getAttribute("data-f"), val=el.value;
+      var orig; if(key==="ansvarig") orig=c.ansvarig_id||""; else if(key==="group") orig=c.group_id||""; else orig=c[key]==null?"":String(c[key]);
+      if(String(val)!==String(orig)) fields[key]=val;
+    }
+    var msg=root.querySelector('[data-fk="savemsg"]');
+    if(!Object.keys(fields).length){ STATE.editing=false; render(); return; }
+    msg.textContent="Sparar…"; msg.className="msg";
+    apiPatch(CID, fields).then(function(j){
+      if(!j||!j.ok){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; return; }
+      cacheClear();
+      api("/admin/companies/"+encodeURIComponent(CID)+"/card").then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet("fk:card:"+CID,cj); } STATE.editing=false; render(); });
+    }).catch(function(){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; });
+  }
+
+  function scheduleRevenueRefetch(){
+    if(_revTimer){ clearTimeout(_revTimer); _revTimer=null; }
+    if(!STATE.card || STATE.card.revenue_ready || STATE.revTries>20) return;
+    _revTimer=setTimeout(function(){ STATE.revTries++;
+      api("/admin/companies/"+encodeURIComponent(CID)+"/card").then(function(j){ if(j&&j.ok){ STATE.card=j; cacheSet("fk:card:"+CID,j); if(!STATE.editing) render(); scheduleRevenueRefetch(); } });
+    }, Math.min(4000+STATE.revTries*1000,12000));
+  }
+
+  function load(){
+    if(!CID){ root.querySelector('[data-fk="root"]').innerHTML='<div class="fk-err">Inget företag valt (data-mira="company_id" saknas).</div>'; return; }
+    var key="fk:card:"+CID, cached=cacheGet(key);
+    if(cached){ STATE.card=cached; render(); }
+    api("/admin/companies/"+encodeURIComponent(CID)+"/card").then(function(j){
+      if(!j||!j.ok){ if(!STATE.card) root.querySelector('[data-fk="root"]').innerHTML='<div class="fk-err">Kunde inte ladda: '+esc((j&&j.error)||"okänt fel")+'</div>'; return; }
+      STATE.card=j; cacheSet(key,j); STATE.revTries=0;
+      if(!STATE.editing) render();
+      scheduleRevenueRefetch();
+    }).catch(function(){ if(!STATE.card) root.querySelector('[data-fk="root"]').innerHTML='<div class="fk-err">Nätverksfel — kontrollera api_host/token.</div>'; });
+  }
+
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    var tab=t.closest?t.closest('[data-fk="tab"]'):null;
+    if(tab){ STATE.tab=tab.getAttribute("data-t"); STATE.editing=false; render(); return; }
+    if(t.closest&&t.closest('[data-fk="edit"]')){ STATE.editing=true; render(); return; }
+    if(t.closest&&t.closest('[data-fk="canceledit"]')){ STATE.editing=false; render(); return; }
+    if(t.closest&&t.closest('[data-fk="save"]')){ doSave(); return; }
+    if(t.closest&&t.closest('[data-fk="close"]')){ root.dispatchEvent(new CustomEvent("mira-kort-close",{bubbles:true})); return; }
+  });
+
+  load();
+})();
+</script>

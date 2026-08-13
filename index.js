@@ -20016,6 +20016,15 @@ async function sharedCompanyRevenueMap() {
   if (c.map) { _loadCompanyRevenue().catch(() => {}); return c.map; }   // stale → servera + refresh i bg
   return (await _loadCompanyRevenue()).map;                             // kall → vänta (bara första list-requesten)
 }
+// Icke-blockerande variant: företagslistan ska ALDRIG vänta på den tunga faktura-scanningen
+// (20–60s kall) — den blockade hela listan. Returnerar kartan om varm/stale, annars null +
+// startar bg-laddning. Frontenden visar "beräknar omsättning…" och hämtar om när klar.
+function sharedCompanyRevenueMapWarm() {
+  const c = _ccRevCache;
+  if (c.map && (Date.now() - c.ts) < CC_REV_TTL) return c.map;          // färsk
+  _loadCompanyRevenue().catch(() => {});                                // kall el. stale → ladda i bg (aldrig await)
+  return c.map || null;                                                 // stale→servera, kall→null
+}
 
 // Affär samlad vy (P1+P2) — routes i affar_api.js.
 registerAffarRoutes(app, {
@@ -20066,9 +20075,10 @@ registerSaljRoutes(app, {
 
 // Företagslista (render-baserad ersättning för Bubble-native företagsvyn) — routes i companies_api.js.
 registerCompaniesRoutes(app, {
-  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount,
   companyFullMap: sharedCompanyFullMap,        // delad förvärmd CC-cache (list-projektion)
-  companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år
+  companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
+  companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen
   companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
