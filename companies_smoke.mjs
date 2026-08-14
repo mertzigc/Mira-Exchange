@@ -86,6 +86,7 @@ const deps = {
   assignTempPassword: async ({ email }) => ({ ok: true, temp_password: "TMP-" + email }),
   appBaseUrl: "https://mira-fm.com",
   pwResetTemplateId: "tpl_pw",
+  welcomeTemplateId: "tpl_welcome",
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
 };
 
@@ -271,6 +272,7 @@ const run = async () => {
   var snd = await call(s.routes, "post", "/admin/reset-password/send", { body: { email: "ny.user@acme.se", name: "Ny User" } });
   ok("reset-password/send ok + skapade token+mail", snd.body.ok && snd.body.email === "ny.user@acme.se" && STORE.PasswordReset.length === 1 && STORE.emailqueue.length === 1);
   ok("send: mail till rätt adress + reset_url", STORE.emailqueue[0].to_email === "ny.user@acme.se" && /\/reset_pw\?t=/.test(JSON.parse(STORE.emailqueue[0].extra_data).reset_url));
+  ok("send: nya användare får VÄLKOMST-mallen (tpl_welcome)", STORE.emailqueue[0].template_id === "tpl_welcome");
   var sndNo = await call(s.routes, "post", "/admin/reset-password/send", { body: {} });
   ok("send utan email → 400 no_email", sndNo.code === 400 && sndNo.body.error === "no_email");
   // utan pwResetTemplateId → 501 not_configured

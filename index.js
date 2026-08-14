@@ -20084,6 +20084,7 @@ registerCompaniesRoutes(app, {
   bubbleCreate,                                // skapar PasswordReset- + emailqueue-rader
   appBaseUrl: process.env.APP_BASE_URL || "https://mira-fm.com",   // för reset-länkens bas
   pwResetTemplateId: process.env.PW_RESET_TEMPLATE_ID || "",       // EmailTemplate-id (slug=password_reset)
+  welcomeTemplateId: process.env.WELCOME_TEMPLATE_ID || process.env.PW_RESET_TEMPLATE_ID || "",   // slug=user_welcome (nya användare)
   // Lösenords-reset-relä: tilldelar ett engångs-temp via Bubble-wf assign_temp_password och
   // returnerar det (reset_pw loggar in + Update password). Injiceras BARA om env satt.
   assignTempPassword: process.env.BUBBLE_ASSIGN_TEMP_WF ? (async ({ email }) => {

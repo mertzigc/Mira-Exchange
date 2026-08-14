@@ -25,7 +25,7 @@ export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate,
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
-    assignTempPassword, appBaseUrl, pwResetTemplateId,
+    assignTempPassword, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
 
@@ -503,8 +503,9 @@ export function registerCompaniesRoutes(app, deps) {
 
   // Delad kärna: gen token → spara PasswordReset → maila "sätt lösenord"-länk. Används av
   // BÅDE nyckelknappen (befintlig coworker) OCH ny-user-flödet (/admin/reset-password/send).
-  async function _sendSetPassword({ email, coworkerId, toName }) {
-    if (!pwResetTemplateId || typeof bubbleCreate !== "function") return { ok: false, code: 501, error: "not_configured" };
+  async function _sendSetPassword({ email, coworkerId, toName, templateId }) {
+    const tpl = templateId || pwResetTemplateId;
+    if (!tpl || typeof bubbleCreate !== "function") return { ok: false, code: 501, error: "not_configured" };
     if (!email) return { ok: false, code: 400, error: "no_email" };
     const raw = crypto.randomBytes(24).toString("hex");
     const now = Date.now();
@@ -513,7 +514,7 @@ export function registerCompaniesRoutes(app, deps) {
     await bubbleCreate("PasswordReset", row);
     const base = (appBaseUrl || "https://mira-fm.com").replace(/\/+$/, "");
     await bubbleCreate("emailqueue", {
-      template_id: pwResetTemplateId,
+      template_id: tpl,
       to_email: email,
       to_name: _str(toName || ""),
       entity_id: "",
@@ -554,7 +555,8 @@ export function registerCompaniesRoutes(app, deps) {
       const email = _str(b.email).trim();
       if (!email) return res.status(400).json({ ok: false, error: "no_email" });
       if (email === "__INIT__") return res.json({ ok: true, email: "init@example.com", sample: true });   // API Connector-init utan sidoeffekt
-      const r = await _sendSetPassword({ email, coworkerId: _str(b.coworker_id) || null, toName: _str(b.name || b.to_name) });
+      // Nya användare → välkomstmallen (user_welcome) om satt, annars reset-mallen.
+      const r = await _sendSetPassword({ email, coworkerId: _str(b.coworker_id) || null, toName: _str(b.name || b.to_name), templateId: welcomeTemplateId || pwResetTemplateId });
       if (!r.ok) return res.status(r.code || 500).json({ ok: false, error: r.error });
       return res.json({ ok: true, email });
     } catch (e) {

@@ -180,6 +180,7 @@ async function buildEmail(item) {
     case "approval_review_invite": return tmplApprovalReviewInvite(entity, extra, toName, ctaLabel, ctx);
     case "approval_reminder":      return tmplApprovalReminder(entity, extra, toName, ctaLabel, ctx);
     case "password_reset":         return tmplPasswordReset(entity, extra, toName, ctaLabel, ctx);
+    case "user_welcome":           return tmplUserWelcome(entity, extra, toName, ctaLabel, ctx);
     default:
       throw new Error(`Okänd slug: "${slug}" – lägg till i EmailTemplate.slug`);
   }
@@ -1376,6 +1377,62 @@ async function tmplApprovalOtp(e, extra, toName, ctaLabel, item) {
     ctaUrl: null,
     miraNote: "Har du inte begärt denna kod kan du bortse från mailet.",
   });
+  return { subject, html };
+}
+
+// MALL: Välkommen till Mira + sätt lösenord (slug=user_welcome)
+// Nya användare. Rikare än password_reset: CTA + sektioner som säljer in Mira (USP från startsidan).
+// extra_data: { reset_url, sender_name?, logo_url?, accent_color? }
+async function tmplUserWelcome(e, extra, toName, ctaLabel, item) {
+  const x = extra || {};
+  const accent   = x.accent_color || "#df6f39";
+  const resetUrl = String(x.reset_url || APP_BASE_URL || "https://mira-fm.com").trim().replace(/^\/\//, "https://");
+  const logoUrl  = String(x.logo_url || "").trim().replace(/^\/\//, "https://");
+  const logo = logoUrl
+    ? `<img src="${esc(logoUrl)}" alt="Mira" style="height:26px;max-width:150px;object-fit:contain;display:block;">`
+    : `<span style="font-size:20px;font-weight:700;color:#e8eaf0;letter-spacing:.5px;">mira</span> <span style="font-size:11px;color:#8892aa;">by Carotte</span>`;
+
+  const usp = (icon, title, desc) =>
+    `<tr><td style="padding:11px 0;border-bottom:1px solid #1e2437;">`
+    + `<table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>`
+    + `<td style="width:30px;font-size:17px;vertical-align:top;padding-top:1px;">${icon}</td>`
+    + `<td><div style="font-size:14px;font-weight:600;color:#e8eaf0;">${esc(title)}</div>`
+    + `<div style="font-size:13px;color:#8892aa;line-height:1.55;margin-top:2px;">${esc(desc)}</div></td>`
+    + `</tr></table></td></tr>`;
+
+  const subject = item.subject_override || "Välkommen till Mira – sätt ditt lösenord";
+  const html = `<!DOCTYPE html><html lang="sv"><head><meta charset="UTF-8">`
+    + `<meta name="viewport" content="width=device-width,initial-scale=1"><title>Välkommen till Mira</title></head>`
+    + `<body style="margin:0;padding:0;background:#0d1117;font-family:'DM Sans',Arial,sans-serif;">`
+    + `<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:40px 16px;">`
+    + `<table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#161c2d;border-radius:12px;overflow:hidden;max-width:600px;width:100%;">`
+    + `<tr><td style="background:${accent};height:3px;"></td></tr>`
+    + `<tr><td style="padding:28px 36px 0;">${logo}</td></tr>`
+    + `<tr><td style="padding:22px 36px 0;">`
+    + `<div style="display:inline-block;background:${hexAlpha(accent, "1a")};border:1px solid ${hexAlpha(accent, "33")};color:${accent};font-size:11px;font-weight:600;padding:3px 12px;border-radius:20px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:14px;">Välkommen</div>`
+    + `<h1 style="margin:0 0 12px;font-size:23px;font-weight:600;color:#e8eaf0;line-height:1.25;letter-spacing:-.3px;">Välkommen till Mira</h1>`
+    + (toName ? `<p style="margin:0 0 6px;font-size:14px;color:#8892aa;">Hej ${esc(toName)},</p>` : "")
+    + `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:8px 0 0;">Ett konto har skapats åt dig. Sätt ditt lösenord nedan så är du igång — länken är giltig i 24 timmar.</p>`
+    + `</td></tr>`
+    + `<tr><td style="padding:22px 36px 0;"><a href="${esc(resetUrl)}" style="display:inline-block;background:${accent};color:#ffffff;font-size:14px;font-weight:600;padding:13px 30px;border-radius:8px;text-decoration:none;">Sätt ditt lösenord</a></td></tr>`
+    // Vad är Mira
+    + `<tr><td style="padding:30px 36px 0;"><div style="background:#0d1117;border:1px solid #262b42;border-radius:10px;padding:18px 20px;">`
+    + `<div style="font-size:12px;font-weight:600;color:${accent};letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;">Vad är Mira?</div>`
+    + `<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0;">Du bokar digitalt — <strong style="color:#e8eaf0;">Carotte levererar fysiskt</strong>. Mira är facility-plattformen byggd kring en riktig tjänsteleverantör: varje klick i appen utlöser en faktisk Carotte-insats som mäts, betygsätts och analyseras. Inte bara mjukvara — utbildad personal och certifierade processer bakom varje åtgärd.</p>`
+    + `</div></td></tr>`
+    // USP-lista
+    + `<tr><td style="padding:20px 36px 0;"><div style="font-size:12px;font-weight:600;color:#8892aa;letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px;">Därför blir det bra för dig och ert kontor</div>`
+    + `<table width="100%" cellpadding="0" cellspacing="0" border="0">`
+    + usp("📅", "Boka på ett par klick", "Frukost, lunch, städning, event och underhåll — direkt till Carottes team, inte en tredjepartsleverantör.")
+    + usp("✨", "Kvalitet du kan mäta", "Betygsätt städningen; ditt betyg triggar direkt en åtgärd. Se ytkvalitet rum för rum i realtid.")
+    + usp("📋", "Ärenden utan mejlkedjor", "Skapa ett driftärende — Carottes team ser det direkt, med foto, prioritet och notiser.")
+    + usp("🔔", "Alltid i loopen", "Push på mobil, webb och Apple Watch när något levererats eller behöver din feedback.")
+    + `</table></td></tr>`
+    // Slutna loopen
+    + `<tr><td style="padding:18px 36px 0;"><p style="font-size:13px;color:#606880;line-height:1.6;margin:0;font-style:italic;">Du bokar eller betygsätter → Carotte agerar fysiskt → Mira mäter och förbättrar. Loopen sluts.</p></td></tr>`
+    // Footer
+    + `<tr><td style="padding:26px 36px;border-top:1px solid #1e2437;"><p style="font-size:11px;color:#3a4055;line-height:1.6;margin:0;">Har du inte väntat dig detta kan du bortse från mailet.</p><p style="font-size:11px;color:#3a4055;margin:6px 0 0;">Mira · Carotte Group AB</p></td></tr>`
+    + `</table></td></tr></table></body></html>`;
   return { subject, html };
 }
 
