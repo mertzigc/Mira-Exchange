@@ -1,9 +1,57 @@
 # HANDOFF — Mira-Exchange sync-omtag
 
-> Senast uppdaterad 2026-08-12. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
+> Senast uppdaterad 2026-08-14. Läs detta + `ARKITEKTUR_OCH_OMTAG.md` (§1–9) för full kontext.
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
 >
-> ⚠️ **AKTIVT SPÅR (2026-08-06): Offert/Affär/Avtal-modulen** lever i `OFFERT_PRODUKTION_HANDOFF.md` (⭐ STATUS överst) + minnet `project-offert-produktion-fe.md`. Denna sync-doc är fortsatt referens för faktura/order/workorder-synken (som offert/affär-vyn läser). Relevant härifrån för det spåret: §9d workorder→FortnoxOrder(connection=TENGELLA), §4 connection-IDs, Fortnox-auth (`fortnoxGetBinary` global client_secret), Bubble-gotchas.
+> ⭐ **AKTIVT SPÅR (2026-08-13→): Företagslista + Kundkort-omtag** — se §0k nedan + minnet `project-foretagslista-kundkort.md`. Allt LIVE, testat, grönt.
+> ⚠️ **Offert/Affär/Avtal-modulen** lever i `OFFERT_PRODUKTION_HANDOFF.md` (⭐ STATUS överst) + minnet `project-offert-produktion-fe.md`. Denna sync-doc är fortsatt referens för faktura/order/workorder-synken. Relevant där: §9d workorder→FortnoxOrder(connection=TENGELLA), §4 connection-IDs, Fortnox-auth (`fortnoxGetBinary` global client_secret), Bubble-gotchas.
+
+---
+
+## 0k. FÖRETAGSLISTA + KUNDKORT (render-omtag av Bubble-native företagsvyn) — LIVE & VERIFIERAT 2026-08-14
+
+**Mål:** ersätta Bubbles native företagslista + expanderat kundkort med EETT render-baserat HTML-block (samma DI-mönster som affär/sälj/produktion). Ingen Bubble-popup/workflow för kortet — allt är vy-växling i samma block. **Allt deployat + skarpt testat.**
+
+### Filer
+- **`companies_api.js`** (NY, ~48k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
+- **`mira-foretag-lista.html`** (NY, ~63k) — ENDA Bubble-blocket (lista + kort + alla flikar). `.fl`/`.fk`-namnrymd, BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` + `planning_token` (INGET company_id — kortet öppnas från raden).
+- **`companies_smoke.mjs`** — 105/105 gröna. `index.js` — wiring + delade cachar + Bubble-wf-callers. `emailer.js` — mallar `password_reset` + `user_welcome`.
+
+### Backend-arkitektur (companies_api.js)
+- **Delade cachar (index.js):** `sharedCompanyFullMap` (CC-list-projektion ur EN 55-sidorsladdning) + `sharedCompanyRevenueMapWarm` (FortnoxInvoice.ft_net/år, **lat** — ingen boot-prewarm, WU-medveten). Listan gör NOLL Bubble-anrop (allt ur cacharna); bara PATCH/skapa skriver.
+- **Lista:** `GET /admin/companies/list` (filter/sök/sort/paginering + meta) · `GET /admin/companies/meta` · `PATCH /admin/companies/:id` (inline-edit, option-set validerad mot facetter). `revenue_ready`-flagga → frontend visar "beräknar omsättning…" + auto-omhämtning.
+- **Kort:** `GET /admin/companies/:id/card` (kunddata + KPI + counts per flik) · `GET /admin/companies/:id/chain?type=deals|leads|offerter|ordrar|fakturor|avtal|signeringar` (reverse-lookup per typ) · `GET /admin/companies/:id/coworkers` (+offices+departments) · `GET /admin/companies/coworker/:id/activities`.
+- **Skapa/redigera:** `POST /admin/companies/:id/coworker/create` · `PATCH /admin/companies/coworker/:id` (CO_EDITABLE) · `POST /admin/companies/coworker/:id/create-account` (Bubble-wf + välkomstmail).
+- **Lösenord/onboarding (eget token-flöde via vår SendGrid-motor):** `POST /admin/companies/coworker/:id/send-password` · `POST /admin/reset-password/send {email}` (nya users) · `POST /admin/reset-password/exchange {token}` (reset_pw-sidan). `__INIT__`-läge för API Connector-init utan sidoeffekt.
+
+### Företagsfält per typ (VERIFIERAT — kritiskt vid reverse-lookup)
+deal=`kundföretag` · Lead=`client_company` · Mira Offert/MiraOrder=`kundforetag` · Fortnox(FortnoxOffer/Order/Invoice)=`linked_company` · Contract=`kundföretag` · OfferApprovalRequest(signering)=`clientcompany` · activitet_crm=`clientcompany` (historik-count) + `taggade_personer`(List of Coworker, tagg) · Coworker→företag=`Kundföretag`, has_user=User vars **`Company`**(singular)==företaget matchar coworker-mail · Office→företag=`Kundföretag`.
+
+### Kortets flikar — status
+Hem ✅ (kunddata läs/redigera + KPI) · Personer ✅ (lista m. avatarer + skapa person + skapa konto + person-detalj m. **Profilfoto**[upload/byt/ta bort] + Profil-redigering[Förnamn/Efternamn/Titel/Email/Telefon/crm_info/Avdelning/Kontor] + Aktivitet-flik) · Historik ✅ (activity_crm-feed för hela företaget, timeline) · Deals/Leads/Offerter/Ordrar/Fakturor ✅ (reverse-lookup) · Avtal ✅ (Abonnemang+Signeringar, READ) · **Drift ⏳** (native djupdyk, ej rörd) · **Inställningar ⏳** (setup-hub: kontor/avtal/leverantörer/logo — ej byggd).
+
+### Historik-fliken (activity_crm för hela företaget) — expanderbar + redigerbar + skapa ny — KLAR + verifierat 2026-08-14 (ej deployat)
+`chain?type=historik` → `activitet_crm` där `clientcompany==id` → `nActivity(r, um)` (hoistad; `um`=user-map för `ansvarig` via writer/Created By; returnerar full edit-prefill: beskrivning/motesanteckning/motesdatum_iso/created/genomfort). Frontend: `historikBody`-timeline-feed (`.fk-feed`); **klick på rad → expanderar** (STATE.histOpen) → detaljgrid (`.fk-hmetagrid`: typ/fas/mötesdatum/registrerad/ansvarig/status) + mötesanteckning + inline **redigera**-form. **"+ Ny historik"** (STATE.histNew) → skapa-form. Kundmöte-typen visar villkorliga fält (fas/datum/genomfört/anteckning) via `.fk-konly`/`.fk-notewrap`-DOM-toggle (change-listener, ingen re-render mitt i edit). Egen gren i `cardBody` (ej CHAIN_TABS).
+- **Skriv-endpoints (lånade affär-mönstret, affar_api.js):** `POST /admin/companies/:id/historik/create` + `POST /admin/companies/historik/:id/patch`. Delad `_aktWrite`-mappning, SKRIVNYCKLAR=display-namn: `activity_type`/`beskrivning`/`Kundmöte`(fas)/`Datum_bokning`/`genomfört`/`mötesantecking`. **⚠️ create sätter BÅDE `clientcompany` (fältet kortets historik LÄSER) OCH `company` (affär-paritet)** — `activitet_crm` har båda ref-fälten (affär skriver bara `company` → affär-skapade aktiviteter syns EJ på kortet; våra syns i båda). Option-set: AKT_TYPES (Säljsamtal/Kommentar/Kundmöte/…) + AKT_FASER (Fas 1–4/Övrigt). `bubbleCreate`/`bubblePatch` redan wire:ade.
+- Verifierat: smoke 105/105 (chain historik full-prefill + create Kundmöte/icke-Kundmöte + patch + 400/404) + harness (expandera→detalj+form, redigera→spara→rad uppdateras, skapa→ny rad överst+badge++). Deploy: companies_api.js + klistra om mira-foretag-lista.html (index.js oförändrad).
+
+### Profilfoto (Coworker.Foto) — KLAR + verifierat 2026-08-14 (ej deployat)
+`POST /admin/companies/coworker/:id/photo` (multipart, fält `file`; rensa m. `clear=1`) → laddar upp till Bubble file storage via `bubbleUploadFile` → sätter `Coworker.Foto` (image-fält = URL-sträng). Coworkers-GET returnerar `foto` (https-normaliserat). Frontend: `.fk-avatar` (rund) i person-huvud + personlista; foto-rad i Profil (Ladda upp/Byt/Ta bort). Klienten komprimerar bilden client-side (canvas, max 512px, jpeg 0.82) → FormData. **Deps tillagda i wiringen:** `bubbleUploadFile` + `photoUpload: _approvalUpload` (multer memory 25MB). **Ingen Bubble-schemaändring** (Foto-fältet finns). Verifierat: smoke 96/96 + browser-harness (avatar i lista/profil, upload→img, ta bort→initialer). Deploy: index.js + companies_api.js (Render) + klistra om mira-foretag-lista.html.
+
+### Onboarding/lösenord (LIVE, funkar från start till mål)
+Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mailar länk (SendGrid: `password_reset`-mall vid reset, `user_welcome`-mall m. USP-sektioner vid ny user) → reset_pw-sidan: **API Connector → exchange** (byter token mot engångs-temp via Bubble-wf `assign_temp_password`) → **Log the user in** + **Update password** (valt lösenord). Ny user: Bubble-wf `create_user_account` (Create an account for someone else + sätt Company/Coworker/namn). **Render kan EJ skapa User el. sätta valfritt lösenord via Data API → allt sådant via Bubble-wf** (auth ägs av Bubble).
+
+### Bubble-delar (byggda av Christian, LIVE): typer `PasswordReset`{email,coworker,token_hash,expires_at,used} · wf `assign_temp_password`(email→temp) · wf `create_user_account`(email/password/firstname/surname/company/coworker_id→user_id) · API Connector-calls (exchange/send/create) · reset_pw-sidan. **Env (Render):** `PW_RESET_TEMPLATE_ID`, `WELCOME_TEMPLATE_ID`, `BUBBLE_ASSIGN_TEMP_WF=assign_temp_password`, `BUBBLE_CREATE_USER_WF=create_user_account`, `APP_BASE_URL=https://mira-fm.com`, `BUBBLE_PW_RESET_WF` (gammal, utgår).
+### KVAR ATT SKAPA I BUBBLE: **`taggade_personer` (List of Coworker) på activitet_crm** — Aktivitet-fliken hämtar mot det; tom lista tills fältet finns + aktiviteter taggas.
+
+### Gotchas (nya i detta spår)
+- **Global-grind:** nya `/admin/*`-endpoints MÅSTE i `openPrefixes` (index.js ~443) annars `Unauthorized (bad x-api-key)` FÖRE route-auth. Prefix `/admin/companies` + `/admin/reset-password` tillagda.
+- **`fl-edit`-klass (display:inline-block) på `<td>` bryter tabell-layout** → egen `fl-ecell`. Aldrig inline-block på table-celler.
+- **Lat-laddade underflikar:** `fetchChain` re-renderar bara om synlig → `chainVisible()` (direkt flik ELLER Avtal-underflik).
+- **Return data from API (Bubble-wf):** Plain text funkade bäst; Render läser `r.text()` med JSON-fallback.
+- Se även: [[reference-bubble-sort-drops-empty]], [[reference-bubble-option-sets]], yes/no→"ja".
+
+**Djupdetaljer:** minnet `project-foretagslista-kundkort.md` (steg 1–7, alla beslut + verifieringar).
 
 ---
 

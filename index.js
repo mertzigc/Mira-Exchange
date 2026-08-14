@@ -20077,6 +20077,8 @@ registerSaljRoutes(app, {
 // Företagslista (render-baserad ersättning för Bubble-native företagsvyn) — routes i companies_api.js.
 registerCompaniesRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount,
+  bubbleUploadFile,                            // profilfoto-upload (Coworker.Foto)
+  photoUpload: _approvalUpload,                // multer (memory, 25MB) för foto-multipart
   companyFullMap: sharedCompanyFullMap,        // delad förvärmd CC-cache (list-projektion)
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
   companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen

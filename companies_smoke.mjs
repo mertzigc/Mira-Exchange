@@ -35,7 +35,7 @@ const STORE = {
     { _id: "inv2", linked_company: "cc1", ft_document_number: "F-2", ft_total: 5000, ft_invoice_date: "2026-06-01", ft_balance: 5000, ft_due_date: "2020-01-01", ft_cancelled: false },
   ],
   Coworker: [
-    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1" },  // har User (matchar u1)
+    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1", Foto: "//files/co1.jpg" },  // har User (matchar u1) + foto
     { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
   ],
   Office: [
@@ -47,7 +47,7 @@ const STORE = {
     { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
   ],
   activitet_crm: [
-    { _id: "act1", clientcompany: "cc1", taggade_personer: ["co1"], "Datum_bokning": "2026-08-10", activity_type: "Kundmöte", "Kundmöte": "Fas 2", beskrivning: "Möte om frukten", "genomfört": true, "Created Date": "2026-08-01" },
+    { _id: "act1", clientcompany: "cc1", taggade_personer: ["co1"], writer: "u1", "Datum_bokning": "2026-08-10", activity_type: "Kundmöte", "Kundmöte": "Fas 2", beskrivning: "Möte om frukten", "mötesantecking": "Bra möte", "genomfört": true, "Created Date": "2026-08-01" },
     { _id: "act2", clientcompany: "cc1", taggade_personer: ["co1", "co2"], "Datum_bokning": "2026-06-20", activity_type: "Samtal", beskrivning: "Uppföljning", "Created Date": "2026-06-20" },
     { _id: "act3", clientcompany: "cc2", taggade_personer: ["co2"], "Datum_bokning": "2026-07-01", activity_type: "Mail", "Created Date": "2026-07-01" },
   ],
@@ -89,6 +89,8 @@ const deps = {
   bubbleGet: async (t, id) => { if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
   bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; } if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); } return {}; },
   bubbleCreate: async (t, payload) => { const id = "new_" + (++_idc); (STORE[t] = STORE[t] || []).push(Object.assign({ _id: id }, payload)); return id; },
+  bubbleUploadFile: async ({ filename }) => "//files/" + filename,   // fejkad Bubble file storage
+  // photoUpload utelämnas → _photoMw blir passthrough; testet sätter req.file direkt.
   companyFullMap: async () => FULL,
   companyRevenueMap: async () => REV,
   companyRevenueMapWarm: () => REV,
@@ -101,10 +103,11 @@ const deps = {
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
 };
 
-function mk() { const routes = { get: {}, post: {}, patch: {}, options: {} }; return { app: { get: (p, h) => { routes.get[p] = h; }, post: (p, h) => { routes.post[p] = h; }, patch: (p, h) => { routes.patch[p] = h; }, options: (p, h) => { routes.options[p] = h; } }, routes }; }
-function call(routes, method, path, { query = {}, params = {}, body = {} } = {}) {
+// Fångar SISTA handlern per rout (foto-routen registreras med middleware + handler → ta sista).
+function mk() { const routes = { get: {}, post: {}, patch: {}, options: {} }; const last = (a) => a[a.length - 1]; return { app: { get: (p, ...a) => { routes.get[p] = last(a); }, post: (p, ...a) => { routes.post[p] = last(a); }, patch: (p, ...a) => { routes.patch[p] = last(a); }, options: (p, ...a) => { routes.options[p] = last(a); } }, routes }; }
+function call(routes, method, path, { query = {}, params = {}, body = {}, file = undefined } = {}) {
   const h = routes[method][path]; if (!h) throw new Error("no route " + method + " " + path);
-  return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); }, sendStatus(c) { r({ code: c, body: null }); } }; h({ params, query, body, headers: {} }, res); });
+  return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); }, sendStatus(c) { r({ code: c, body: null }); } }; h({ params, query, body, file, headers: {} }, res); });
 }
 
 let pass = 0, fail = 0;
@@ -239,6 +242,9 @@ const run = async () => {
   ok("chain avtal → 3 (1 avslutad, typ Hybrid finns)", chA.body.count === 3 && chA.body.rows.some(function(r){return r.status==="Avslutad";}) && chA.body.rows.some(function(r){return r.contract_type==="Hybrid";}) && chA.body.rows.some(function(r){return r.amount===100000;}));
   var chS = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "signeringar" } });
   ok("chain signeringar → 2 (Approved→ok, Sent→open)", chS.body.count === 2 && chS.body.rows.some(function(r){return r.status==="Approved"&&r.status_cls==="ok";}) && chS.body.rows.some(function(r){return r.status==="Sent"&&r.status_cls==="open";}) && chS.body.rows[0].recipients === 1);
+  var chH = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "historik" } });
+  ok("chain historik → 2 (företagets activitet_crm), nyast först + fält", chH.body.count === 2 && chH.body.rows[0].id === "act1" && chH.body.rows[0].typ === "Kundmöte" && chH.body.rows[0].fas === "Fas 2" && chH.body.rows[0].genomfort === true && chH.body.rows[1].id === "act2");
+  ok("chain historik: full edit-prefill (ansvarig via writer, motesanteckning, motesdatum_iso)", chH.body.rows[0].ansvarig === "Anna Andersson" && chH.body.rows[0].motesanteckning === "Bra möte" && chH.body.rows[0].motesdatum_iso === "2026-08-10" && chH.body.rows[0].beskrivning === "Möte om frukten");
   var chBad = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "nope" } });
   ok("chain okänd typ → 400", chBad.code === 400);
 
@@ -249,6 +255,7 @@ const run = async () => {
   var coRen = cw.body.rows.filter(function(r){return r.id==="co2";})[0];
   ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "christian.mertzig@gmail.com" && coTest.phone === "755678900");
   ok("coworker crm_info/avdelning/kontor resolvat", coTest.crm_info === "Nyckelkontakt" && coTest.avdelning === "Försäljning" && coTest.kontor_id === "of1" && coTest.kontor === "CMIAB Sthlm");
+  ok("coworker foto (https-normaliserat) + tom när saknas", coTest.foto === "https://files/co1.jpg" && coRen.foto === "");
   ok("coworkers svar bär offices + departments", cw.body.offices.length === 2 && cw.body.offices[0].name === "CMIAB Göteborg" && cw.body.departments.indexOf("Försäljning") > -1);
   ok("coworker has_user (email matchar User vars Company==företaget)", coTest.has_user === true && coTest.user_id === "u1");
   ok("ren coworker = CRM-kontakt (has_user false)", coRen.has_user === false && coRen.user_id === null);
@@ -312,6 +319,38 @@ const run = async () => {
   ok("coworker PATCH icke-redigerbart → 400", copBad.code === 400 && String(copBad.body.error).startsWith("field_not_editable"));
   var cop404 = await call(s.routes, "patch", "/admin/companies/coworker/:id", { params: { id: "nope" }, body: { field: "title", value: "X" } });
   ok("coworker PATCH okänt id → 404", cop404.code === 404);
+
+  // ── PROFILFOTO (Coworker.Foto): sätt / rensa / valideringar ──
+  var ph = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, file: { buffer: Buffer.from("abc"), mimetype: "image/png" } });
+  ok("photo upload ok → url + Foto satt på Coworker", ph.body.ok && ph.body.url === "https://files/coworker_co2_foto.png" && STORE.Coworker[1].Foto === "https://files/coworker_co2_foto.png");
+  var phClr = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, body: { clear: "1" } });
+  ok("photo clear → Foto tömt", phClr.body.ok && phClr.body.url === "" && STORE.Coworker[1].Foto === "");
+  var phNo = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, body: {} });
+  ok("photo utan fil (ej clear) → 400 no_file", phNo.code === 400 && phNo.body.error === "no_file");
+  var phBad = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, file: { buffer: Buffer.from("x"), mimetype: "application/pdf" } });
+  ok("photo icke-bild → 400 not_image", phBad.code === 400 && phBad.body.error === "not_image");
+  var ph404 = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "nope" }, file: { buffer: Buffer.from("x"), mimetype: "image/jpeg" } });
+  ok("photo okänd coworker → 404", ph404.code === 404);
+
+  // ── HISTORIK: skapa + redigera aktivitet (activitet_crm) ──
+  var abefore = STORE.activitet_crm.length;
+  var hc = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Nytt möte", fas: "Fas 3", motesdatum: "2026-08-20", genomfort: true, motesanteckning: "Genomgång" } });
+  ok("historik/create ok + rad skapad", hc.body.ok && STORE.activitet_crm.length === abefore + 1 && hc.body.row && hc.body.row.typ === "Kundmöte");
+  var newAkt = STORE.activitet_crm[STORE.activitet_crm.length - 1];
+  ok("ny aktivitet: clientcompany+company=cc1 + Kundmöte-fält (display-nycklar)", newAkt.clientcompany === "cc1" && newAkt.company === "cc1" && newAkt.activity_type === "Kundmöte" && newAkt["Kundmöte"] === "Fas 3" && newAkt["genomfört"] === true && newAkt["mötesantecking"] === "Genomgång" && /^2026-08-20/.test(newAkt["Datum_bokning"]));
+  var hcTom = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: {} });
+  ok("historik/create tom → 400", hcTom.code === 400 && hcTom.body.error === "tom_aktivitet");
+  // icke-Kundmöte skickar inte fas/datum
+  var hc2 = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kommentar", beskrivning: "Bara en kommentar" } });
+  var newAkt2 = STORE.activitet_crm[STORE.activitet_crm.length - 1];
+  ok("historik/create icke-Kundmöte → ingen fas/datum satt", hc2.body.ok && newAkt2.activity_type === "Kommentar" && newAkt2["Kundmöte"] === undefined && newAkt2["Datum_bokning"] === undefined);
+  // patch: redigera act2
+  var hp = await call(s.routes, "post", "/admin/companies/historik/:id/patch", { params: { id: "act2" }, body: { beskrivning: "Uppdaterad text", activity_type: "Säljsamtal" } });
+  ok("historik/patch ok (bara skickade fält)", hp.body.ok && STORE.activitet_crm.filter(function(r){return r._id==="act2";})[0].beskrivning === "Uppdaterad text" && hp.body.row.beskrivning === "Uppdaterad text");
+  var hpNo = await call(s.routes, "post", "/admin/companies/historik/:id/patch", { params: { id: "act2" }, body: {} });
+  ok("historik/patch inga fält → 400", hpNo.code === 400 && hpNo.body.error === "no_fields");
+  var hp404 = await call(s.routes, "post", "/admin/companies/historik/:id/patch", { params: { id: "nope" }, body: { beskrivning: "x" } });
+  ok("historik/patch okänt id → 404", hp404.code === 404);
 
   // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
   var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });

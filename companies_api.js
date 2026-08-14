@@ -24,10 +24,14 @@ import crypto from "crypto";
 export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate,
+    bubbleUploadFile, photoUpload,
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
     assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
+  // multer .single-middleware (memory) för foto-upload; no-op om ej injicerat (smoke/mock).
+  const _photoMw = (typeof photoUpload === "function" && typeof photoUpload.single === "function")
+    ? photoUpload.single("file") : (req, res, next) => next();
 
   const _sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
   const _str = (v) => (v == null ? "" : String(v));
@@ -406,7 +410,7 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
-  // ── GET /admin/companies/:id/chain?type=deals|leads|offerter|ordrar|fakturor ──
+  // ── GET /admin/companies/:id/chain?type=deals|leads|offerter|ordrar|fakturor|avtal|signeringar|historik ──
   // Reverse-lookup per företag (kundkortets liggar-flikar). Mira-typer via kundföretag/
   // kundforetag/client_company, Fortnox via linked_company. Rader sorteras nyast först.
   app.options("/admin/companies/:id/chain", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
@@ -435,6 +439,9 @@ export function registerCompaniesRoutes(app, deps) {
         rows = (await find("Contract", "kundföretag")).map(nContract);
       } else if (type === "signeringar") {
         rows = (await find("OfferApprovalRequest", "clientcompany")).map(nApproval);
+      } else if (type === "historik") {
+        const [raw, uc] = await Promise.all([find("activitet_crm", "clientcompany"), _users().catch(() => null)]);   // hela företagets aktivitetsflöde
+        rows = raw.map((r) => nActivity(r, uc && uc.map));
       } else {
         return res.status(400).json({ ok: false, error: "bad_type" });
       }
@@ -487,6 +494,7 @@ export function registerCompaniesRoutes(app, deps) {
           phone: _str(co.Telefon || co.telefon || co.Phone || co.phone || co.Mobil || co.mobil),
           crm_info: _str(co.crm_info),
           avdelning: _str(co.Avdelning),
+          foto: _httpsUrl(co.Foto || co.foto),
           kontor_id: kontorId || null,
           kontor: kontorId ? (officeMap.get(kontorId) || "") : "",
           has_user: !!uid,
@@ -601,17 +609,58 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
+  // ── POST /admin/companies/coworker/:id/photo — sätt/ta bort profilfoto (Coworker.Foto) ──
+  // Multipart: fält "file" (bild) → laddas upp till Bubble file storage → Foto=url.
+  // Rensa: skicka fält "clear"=1 (utan fil) → Foto="". Foto är ett Bubble image-fält (URL-sträng).
+  app.options("/admin/companies/coworker/:id/photo", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/coworker/:id/photo", _photoMw, async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const co = await bubbleGet("Coworker", id).catch(() => null);
+      if (!co) return res.status(404).json({ ok: false, error: "coworker_not_found" });
+      const clear = req.body && (req.body.clear === "1" || req.body.clear === 1 || req.body.clear === true || req.body.clear === "true");
+      const file = req.file;
+      if (clear && !file) {
+        await bubblePatch("Coworker", id, { Foto: "" });
+        return res.json({ ok: true, url: "" });
+      }
+      if (!file || !file.buffer || !file.buffer.length) return res.status(400).json({ ok: false, error: "no_file" });
+      const ct = _str(file.mimetype || "image/jpeg");
+      if (!/^image\//i.test(ct)) return res.status(400).json({ ok: false, error: "not_image" });
+      if (file.buffer.length > 8 * 1024 * 1024) return res.status(413).json({ ok: false, error: "too_large" });
+      if (typeof bubbleUploadFile !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+      const ext = /png/i.test(ct) ? "png" : (/webp/i.test(ct) ? "webp" : "jpg");
+      const filename = ("coworker_" + id + "_foto." + ext).replace(/[^\w.\-]/g, "_");
+      const url = _httpsUrl(await bubbleUploadFile({ filename, contentType: ct, buffer: file.buffer }));
+      if (!url) return res.status(502).json({ ok: false, error: "upload_failed" });
+      await bubblePatch("Coworker", id, { Foto: url });
+      return res.json({ ok: true, url });
+    } catch (e) {
+      console.error("[/admin/companies/coworker/:id/photo]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
   // ── GET /admin/companies/coworker/:id/activities — aktiviteter där personen är taggad ──
   // Söker activitet_crm där taggade_personer (List of Coworker) contains personen. Nyast först.
-  function nActivity(r) {
+  // um (valfri Map id→namn) resolvar skapare (writer||Created By) → ansvarig. Rå edit-prefill-fält
+  // (beskrivning/motesanteckning/motesdatum_iso) = SKRIVNYCKLAR (display-namn) för inline-redigering.
+  function nActivity(r, um) {
+    const wId = _ref(r.writer) || _ref(r["Created By"]);
     return {
       id: bubbleId(r),
       date: _day(r["Datum_bokning"] || r["Created Date"]),
       created: _day(r["Created Date"]),
       typ: _str(r.activity_type),
       fas: _str(r["Kundmöte"]),
+      motesdatum_iso: _day(r["Datum_bokning"]),
       meddelande: _str(r.beskrivning) || _str(r["mötesantecking"]),
+      beskrivning: _str(r.beskrivning),
+      motesanteckning: _str(r["mötesantecking"]),
       genomfort: r["genomfört"] === true,
+      ansvarig: (um && wId) ? (um.get(wId) || "") : "",
     };
   }
   app.options("/admin/companies/coworker/:id/activities", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
@@ -626,6 +675,65 @@ export function registerCompaniesRoutes(app, deps) {
     } catch (e) {
       console.error("[/admin/companies/coworker/:id/activities]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── Historik-skrivning (activitet_crm) — lånar affär-mönstret (affar_api.js).
+  // SKRIVNYCKLAR = display-namn (bekräftat 2026-08-07): activity_type/beskrivning/Kundmöte(fas)/
+  // Datum_bokning/genomfört/mötesantecking. Kundmöte-typen bär fas/datum/genomfört/anteckning.
+  const AKT_TYPES = ["Säljsamtal", "Kommentar", "Kundmöte", "Pratat med", "Skickat e-post", "Fått e-post", "Sökt, ej på plats", "Mötesanteckningar"];
+  const AKT_FASER = ["Fas 1", "Fas 2", "Fas 3", "Fas 4", "Övrigt"];
+  function _aktWrite(p, b) {
+    // gemensam fält-mappning för create+patch (bara skickade fält). p muteras.
+    if (b.activity_type   !== undefined) p["activity_type"]  = _str(b.activity_type) || null;
+    if (b.beskrivning     !== undefined) p["beskrivning"]    = _str(b.beskrivning);
+    if (b.fas             !== undefined) p["Kundmöte"]       = _str(b.fas) || null;
+    if (b.motesdatum      !== undefined) p["Datum_bokning"]  = _str(b.motesdatum) ? new Date(_str(b.motesdatum) + "T00:00:00.000Z").toISOString() : null;
+    if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
+    if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
+    return p;
+  }
+
+  // ── POST /admin/companies/:id/historik/create — ny aktivitet på företaget ──
+  app.options("/admin/companies/:id/historik/create", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/:id/historik/create", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim();
+    if (!cid) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    try {
+      const b = req.body || {};
+      // clientcompany = fältet kundkortets historik LÄSER; company = affär-paritet (visas även där).
+      const p = { clientcompany: cid, company: cid };
+      _aktWrite(p, b);
+      if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
+      const id = await bubbleCreate("activitet_crm", p);
+      if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
+      const [fresh, uc] = await Promise.all([bubbleGet("activitet_crm", id).catch(() => null), _users().catch(() => null)]);
+      return res.json({ ok: true, id, row: fresh ? nActivity(fresh, uc && uc.map) : null });
+    } catch (e) {
+      console.error("[/admin/companies/:id/historik/create]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ── POST /admin/companies/historik/:id/patch — redigera aktivitet inline ──
+  app.options("/admin/companies/historik/:id/patch", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/historik/:id/patch", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const cur = await bubbleGet("activitet_crm", id).catch(() => null);
+      if (!cur) return res.status(404).json({ ok: false, error: "activity_not_found" });
+      const p = _aktWrite({}, req.body || {});
+      if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "no_fields" });
+      await bubblePatch("activitet_crm", id, p);
+      const [fresh, uc] = await Promise.all([bubbleGet("activitet_crm", id).catch(() => null), _users().catch(() => null)]);
+      return res.json({ ok: true, id, patched: p, row: fresh ? nActivity(fresh, uc && uc.map) : null });
+    } catch (e) {
+      console.error("[/admin/companies/historik/:id/patch]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });
 
