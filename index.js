@@ -452,7 +452,8 @@ function requireApiKey(req, res, next) {
     "/admin/affar",                // Affär samlad vy (P1), x-admin-token-grindad (affar_api.js)
     "/admin/produktion",           // Produktionsmodul (dagsvy per kök), x-admin-token-grindad (produktion_api.js)
     "/admin/salj",                 // Sälj — mötestratt + säljmål, x-admin-token-grindad (salj_api.js)
-    "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad (companies_api.js)
+    "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad
+    "/admin/reset-password",       // Lösenords-reset exchange (token-grindad, publik — reset_pw-sidan) (companies_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
     "/approval/view/",
@@ -20080,10 +20081,13 @@ registerCompaniesRoutes(app, {
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
   companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen
   companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit
-  // Lösenordsåterställning för Coworker-konton: Bubble genererar reset-token → kräver en
-  // Bubble API-workflow. Injiceras BARA om env BUBBLE_PW_RESET_WF är satt (annars 501 not_configured).
-  sendPasswordReset: process.env.BUBBLE_PW_RESET_WF ? (async ({ email }) => {
-    const wf = process.env.BUBBLE_PW_RESET_WF;
+  bubbleCreate,                                // skapar PasswordReset- + emailqueue-rader
+  appBaseUrl: process.env.APP_BASE_URL || "https://mira-fm.com",   // för reset-länkens bas
+  pwResetTemplateId: process.env.PW_RESET_TEMPLATE_ID || "",       // EmailTemplate-id (slug=password_reset)
+  // Lösenords-reset-relä: tilldelar ett engångs-temp via Bubble-wf assign_temp_password och
+  // returnerar det (reset_pw loggar in + Update password). Injiceras BARA om env satt.
+  assignTempPassword: process.env.BUBBLE_ASSIGN_TEMP_WF ? (async ({ email }) => {
+    const wf = process.env.BUBBLE_ASSIGN_TEMP_WF;
     for (const base of BUBBLE_BASES) {
       try {
         const r = await fetch(`${base}/api/1.1/wf/${wf}`, {
@@ -20091,7 +20095,19 @@ registerCompaniesRoutes(app, {
           headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ email }),
         });
-        if (r.ok) return { ok: true };
+        if (r.ok) {
+          // Stödjer BÅDE Plain text (rå = temp-lösenordet) och Structured JSON ({response:{temp_password}}).
+          const raw = (await r.text().catch(() => "")).trim();
+          if (!raw) return { ok: false, error: "empty_response" };
+          try {
+            const j = JSON.parse(raw);
+            const tp = (j && j.response && j.response.temp_password) || (j && j.temp_password);
+            if (tp) return { ok: true, temp_password: String(tp) };
+            return { ok: false, error: "no_temp_in_response" };   // JSON men ingen temp
+          } catch (_) {
+            return { ok: true, temp_password: raw };               // ren text = lösenordet
+          }
+        }
       } catch (_) {}
     }
     return { ok: false, error: "workflow_failed" };

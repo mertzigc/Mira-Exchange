@@ -19,14 +19,17 @@
 //   • bubbleFindAll med sort_field fäller tomma → vi sorterar client-side här (på cachen).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import crypto from "crypto";
+
 export function registerCompaniesRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate,
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
-    sendPasswordReset,
+    assignTempPassword, appBaseUrl, pwResetTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
 
+  const _sha256 = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
   const _str = (v) => (v == null ? "" : String(v));
   const _ref = (v) => (v == null ? null : (typeof v === "string" ? v : bubbleId(v)));
   const _num = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -488,10 +491,17 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
+  // ══════════════ LÖSENORDS-RESET (eget token-flöde via vår motor) ══════════════
+  // Bubble kan inte sätta ett valfritt lösenord via API → relä: vår token → reset_pw
+  // loggar in användaren med ett engångs-temp (Bubble-wf assign_temp_password) och sätter
+  // deras VALDA lösenord via "Update password". Användaren skriver aldrig nuvarande lösenord.
+  //
+  // 1) send-password: gen token → spara PasswordReset-rad (token_hash) → maila reset-länk via emailqueue.
+  // 2) reset_pw-sidan POST:ar token+ → exchange: validera token → assign_temp_password → returnera temp.
+  //    reset_pw kör sen Log the user in + Update password i Bubble.
+  const PW_TTL_MS = 24 * 60 * 60 * 1000;
+
   // ── POST /admin/companies/coworker/:id/send-password ──────────────
-  // Skickar nytt lösenord/återställning till en Coworkers login-konto. Bubble genererar
-  // reset-token → kräver en Bubble API-workflow (env BUBBLE_PW_RESET_WF) el. injicerad
-  // sendPasswordReset(email). Saknas mekanismen → 501 not_configured (tydligt för UI).
   app.options("/admin/companies/coworker/:id/send-password", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.post("/admin/companies/coworker/:id/send-password", async (req, res) => {
     if (!guard(req, res)) return;
@@ -502,14 +512,69 @@ export function registerCompaniesRoutes(app, deps) {
       if (!co) return res.status(404).json({ ok: false, error: "coworker_not_found" });
       const email = _str(co.Email || co.email || co.email_address);
       if (!email) return res.status(400).json({ ok: false, error: "no_email" });
-      if (typeof sendPasswordReset !== "function") {
-        return res.status(501).json({ ok: false, error: "not_configured", hint: "Lösenordsåterställning ej inkopplad — sätt upp Bubble API-workflow + injicera sendPasswordReset.", email });
+      if (!pwResetTemplateId || typeof bubbleCreate !== "function") {
+        return res.status(501).json({ ok: false, error: "not_configured", hint: "Sätt env PW_RESET_TEMPLATE_ID + skapa PasswordReset-typen i Bubble.", email });
       }
-      const r = await sendPasswordReset({ email, coworker_id: id });
-      if (!r || !r.ok) return res.status(502).json({ ok: false, error: (r && r.error) || "send_failed", email });
+      const raw = crypto.randomBytes(24).toString("hex");
+      const now = Date.now();
+      await bubbleCreate("PasswordReset", {
+        email,
+        coworker: id,
+        token_hash: _sha256(raw),
+        expires_at: new Date(now + PW_TTL_MS).toISOString(),
+        used: false,
+      });
+      const base = (appBaseUrl || "https://mira-fm.com").replace(/\/+$/, "");
+      const resetUrl = base + "/reset_pw?t=" + raw;
+      await bubbleCreate("emailqueue", {
+        template_id: pwResetTemplateId,
+        to_email: email,
+        to_name: ((_str(co["Förnamn"] || co["First Name"]) + " " + _str(co["Efternamn"] || co["Last Name"])).trim()),
+        entity_id: "",
+        email_sent: false,
+        extra_data: JSON.stringify({ reset_url: resetUrl, sender_name: "Carotte" }),
+      });
       return res.json({ ok: true, email });
     } catch (e) {
       console.error("[/admin/companies/coworker/:id/send-password]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/reset-password/exchange — reset_pw-sidan byter token mot engångs-temp ──
+  // PUBLIK (token-grindad, ingen admin-token). Rate-limitad. Validerar PasswordReset-token,
+  // bränner den, tilldelar ett temp-lösenord via Bubble-wf och returnerar {email, temp_password}.
+  app.options("/admin/reset-password/exchange", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/reset-password/exchange", async (req, res) => {
+    if (planningCors) planningCors(req, res);
+    if (publicRateLimited && clientIp && publicRateLimited(clientIp(req), 30, 60 * 60 * 1000, "pwreset")) {
+      return res.status(429).json({ ok: false, error: "rate_limited" });
+    }
+    try {
+      const token = _str((req.body && (req.body.token || req.body.t)) || "").trim();
+      if (!token) return res.status(400).json({ ok: false, error: "missing_token" });
+      // Init-läge: låter Bubbles API Connector lära sig svarsformen utan att röra data/bränna token.
+      if (token === "__INIT__") {
+        return res.json({ ok: true, email: "init@example.com", temp_password: "INIT-SAMPLE-PW", sample: true });
+      }
+      if (typeof assignTempPassword !== "function") {
+        return res.status(501).json({ ok: false, error: "not_configured", hint: "Sätt env BUBBLE_ASSIGN_TEMP_WF + bygg Bubble-wf assign_temp_password." });
+      }
+      const hash = _sha256(token);
+      const rows = await bubbleFindAll("PasswordReset", { constraints: [{ key: "token_hash", constraint_type: "equals", value: hash }] }).catch(() => []);
+      const now = Date.now();
+      const row = (rows || []).find((r) => {
+        if (r.used === true) return false;
+        const exp = r.expires_at ? Date.parse(r.expires_at) : 0;
+        return !(exp && exp < now);
+      });
+      if (!row) return res.status(400).json({ ok: false, error: "invalid_or_expired" });
+      await bubblePatch("PasswordReset", bubbleId(row), { used: true, used_at: new Date(now).toISOString() }).catch(() => {});
+      const r = await assignTempPassword({ email: _str(row.email) });
+      if (!r || !r.ok || !r.temp_password) return res.status(502).json({ ok: false, error: (r && r.error) || "assign_failed" });
+      return res.json({ ok: true, email: _str(row.email), temp_password: r.temp_password });
+    } catch (e) {
+      console.error("[/admin/reset-password/exchange]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

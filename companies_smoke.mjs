@@ -43,6 +43,8 @@ const STORE = {
     { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
   ],
 };
+STORE.PasswordReset = []; STORE.emailqueue = [];   // token-flödet skapar rader här
+let _idc = 0;
 const _cmatch = (r, cs) => (cs || []).every((c) => {
   const v = r[c.key];
   if (c.constraint_type === "contains") { const a = Array.isArray(v) ? v : (v == null ? [] : [v]); return a.map(String).includes(String(c.value)); }
@@ -75,11 +77,15 @@ const deps = {
   bubbleFind: async (t) => { fetchedTypes.push(t); return AUX[t] || []; },
   bubbleCount: async (t, cs = []) => (STORE[t] ? STORE[t].filter((r) => _cmatch(r, cs)).length : 0),
   bubbleGet: async (t, id) => { if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
-  bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) Object.assign(CC[id], payload); return {}; },
+  bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; } if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); } return {}; },
+  bubbleCreate: async (t, payload) => { const id = "new_" + (++_idc); (STORE[t] = STORE[t] || []).push(Object.assign({ _id: id }, payload)); return id; },
   companyFullMap: async () => FULL,
   companyRevenueMap: async () => REV,
   companyRevenueMapWarm: () => REV,
   companyPatchEntry: (id, fresh) => { FULL.set(id, project(fresh)); },
+  assignTempPassword: async ({ email }) => ({ ok: true, temp_password: "TMP-" + email }),
+  appBaseUrl: "https://mira-fm.com",
+  pwResetTemplateId: "tpl_pw",
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
 };
 
@@ -232,11 +238,38 @@ const run = async () => {
   ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "christian.mertzig@gmail.com" && coTest.phone === "755678900");
   ok("coworker has_user (email matchar User vars Company==företaget)", coTest.has_user === true && coTest.user_id === "u1");
   ok("ren coworker = CRM-kontakt (has_user false)", coRen.has_user === false && coRen.user_id === null);
-  // send-password: sendPasswordReset ej injicerad → 501 not_configured
+  // ── LÖSENORDS-RESET (eget token-flöde) ──
+  STORE.PasswordReset.length = 0; STORE.emailqueue.length = 0;
   var pw = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "co1" } });
-  ok("send-password utan mekanism → 501 not_configured", pw.code === 501 && pw.body.error === "not_configured");
+  ok("send-password ok + email", pw.body.ok && pw.body.email === "christian.mertzig@gmail.com");
+  ok("send-password skapade PasswordReset + emailqueue", STORE.PasswordReset.length === 1 && STORE.emailqueue.length === 1);
+  var eq = STORE.emailqueue[0];
+  ok("emailqueue: rätt template_id + email_sent false", eq.template_id === "tpl_pw" && eq.email_sent === false);
+  var ed = JSON.parse(eq.extra_data);
+  ok("emailqueue extra_data har reset_url med token", /\/reset_pw\?t=[a-f0-9]{48}$/.test(ed.reset_url));
+  var rawTok = ed.reset_url.split("t=")[1];
+  ok("PasswordReset: token_hash satt, used false, coworker=co1", STORE.PasswordReset[0].token_hash && STORE.PasswordReset[0].used === false && STORE.PasswordReset[0].coworker === "co1");
+
+  // exchange: byt token mot temp
+  var ex = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: rawTok } });
+  ok("exchange ok → email + temp_password", ex.body.ok && ex.body.email === "christian.mertzig@gmail.com" && ex.body.temp_password === "TMP-christian.mertzig@gmail.com");
+  ok("exchange brände token (used=true)", STORE.PasswordReset[0].used === true);
+  var ex2 = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: rawTok } });
+  ok("exchange samma token igen → 400 invalid_or_expired", ex2.code === 400 && ex2.body.error === "invalid_or_expired");
+  var exBad = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: "deadbeef" } });
+  ok("exchange okänd token → 400", exBad.code === 400 && exBad.body.error === "invalid_or_expired");
+  var exNo = await call(s.routes, "post", "/admin/reset-password/exchange", { body: {} });
+  ok("exchange utan token → 400 missing_token", exNo.code === 400 && exNo.body.error === "missing_token");
+  var exInit = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: "__INIT__" } });
+  ok("exchange __INIT__ → sample-svar (rör ej data)", exInit.body.ok && exInit.body.sample === true && exInit.body.temp_password === "INIT-SAMPLE-PW");
+
   var pw404 = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "nope" } });
   ok("send-password okänd coworker → 404", pw404.code === 404);
+  // utan pwResetTemplateId → 501 not_configured
+  var noTplDeps = Object.assign({}, deps, { pwResetTemplateId: "" });
+  var nts = mk(); registerCompaniesRoutes(nts.app, noTplDeps);
+  var pw501 = await call(nts.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "co1" } });
+  ok("send-password utan template → 501 not_configured", pw501.code === 501 && pw501.body.error === "not_configured");
   ok("card meta editable inkl kunddata-fält", card.body.meta.editable.email === "text" && card.body.meta.editable.kundinformation === "text");
   var card404 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "nope" } });
   ok("card okänt id → 404", card404.code === 404);
