@@ -353,7 +353,7 @@ export function registerCompaniesRoutes(app, deps) {
       // Fortnox=linked_company. Personer/drift byggs senare → null.
       const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
       const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount, persCount] = await Promise.all([
-        bubbleCount("activitet_crm", eqc("clientcompany")).catch(() => null),
+        _companyActivityRows(id).then((r) => r.length).catch(() => null),   // union company+clientcompany (dedup)
         bubbleCount("deal", eqc("kundföretag")).catch(() => null),
         bubbleCount("Lead", eqc("client_company")).catch(() => null),
         bubbleCount("Offert", eqc("kundforetag")).catch(() => null),
@@ -440,7 +440,7 @@ export function registerCompaniesRoutes(app, deps) {
       } else if (type === "signeringar") {
         rows = (await find("OfferApprovalRequest", "clientcompany")).map(nApproval);
       } else if (type === "historik") {
-        const [raw, uc] = await Promise.all([find("activitet_crm", "clientcompany"), _users().catch(() => null)]);   // hela företagets aktivitetsflöde
+        const [raw, uc] = await Promise.all([_companyActivityRows(id), _users().catch(() => null)]);   // union company+clientcompany
         rows = raw.map((r) => nActivity(r, uc && uc.map));
       } else {
         return res.status(400).json({ ok: false, error: "bad_type" });
@@ -645,6 +645,13 @@ export function registerCompaniesRoutes(app, deps) {
 
   // ── GET /admin/companies/coworker/:id/activities — aktiviteter där personen är taggad ──
   // Söker activitet_crm där taggade_personer (List of Coworker) contains personen. Nyast först.
+  // activitet_crm länkas till kunden via fältet `company` (ClientCompany) — bekräftat i Bubble-schemat
+  // 2026-08-14 (INGET clientcompany-fält finns; det var ett felaktigt tidigt antagande). Native
+  // "Historik" + affär använder `company`. (Hoistad function-declaration → nåbar i card-counten ovan.)
+  async function _companyActivityRows(id) {
+    return bubbleFindAll("activitet_crm", { constraints: [{ key: "company", constraint_type: "equals", value: id }] }).catch(() => []);
+  }
+
   // um (valfri Map id→namn) resolvar skapare (writer||Created By) → ansvarig. Rå edit-prefill-fält
   // (beskrivning/motesanteckning/motesdatum_iso) = SKRIVNYCKLAR (display-namn) för inline-redigering.
   function nActivity(r, um) {
@@ -703,8 +710,8 @@ export function registerCompaniesRoutes(app, deps) {
     if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
     try {
       const b = req.body || {};
-      // clientcompany = fältet kundkortets historik LÄSER; company = affär-paritet (visas även där).
-      const p = { clientcompany: cid, company: cid };
+      // company (ClientCompany) = det ENDA kund-fältet på activitet_crm → native/affär/kort läser detta.
+      const p = { company: cid };
       _aktWrite(p, b);
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
       const id = await bubbleCreate("activitet_crm", p);
