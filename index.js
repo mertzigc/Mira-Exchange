@@ -20113,6 +20113,26 @@ registerCompaniesRoutes(app, {
     }
     return { ok: false, error: "workflow_failed" };
   }) : undefined,
+  // Skapar login-konto för en person via Bubble-wf create_user_account (auth ägs av Bubble).
+  // Returnerar user_id. Injiceras bara om env satt.
+  createUserAccount: process.env.BUBBLE_CREATE_USER_WF ? (async ({ email, password, firstname, surname, company, coworker_id }) => {
+    const wf = process.env.BUBBLE_CREATE_USER_WF;
+    for (const base of BUBBLE_BASES) {
+      try {
+        const r = await fetch(`${base}/api/1.1/wf/${wf}`, {
+          method: "POST",
+          headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, firstname, surname, company, coworker_id }),
+        });
+        if (r.ok) {
+          const raw = (await r.text().catch(() => "")).trim();
+          try { const j = JSON.parse(raw); const uid = (j && j.response && j.response.user_id) || (j && j.user_id); return { ok: true, user_id: uid || null }; }
+          catch (_) { return { ok: true, user_id: raw || null }; }
+        }
+      } catch (_) {}
+    }
+    return { ok: false, error: "workflow_failed" };
+  }) : undefined,
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,

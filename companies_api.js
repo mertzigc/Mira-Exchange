@@ -25,7 +25,7 @@ export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate,
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
-    assignTempPassword, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
+    assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
 
@@ -487,6 +487,65 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, count: rows.length, rows });
     } catch (e) {
       console.error("[/admin/companies/:id/coworkers]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/companies/:id/coworker/create — ny person (Coworker) på företaget ──
+  // Data API (Render kan skapa Coworker direkt). Login-konto skapas separat via create-account.
+  app.options("/admin/companies/:id/coworker/create", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/:id/coworker/create", async (req, res) => {
+    if (!guard(req, res)) return;
+    const companyId = _str(req.params.id).trim();
+    if (!companyId) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    try {
+      const b = req.body || {};
+      const first = _str(b.first || b.first_name).trim();
+      const last = _str(b.last || b.last_name).trim();
+      const email = _str(b.email).trim();
+      const title = _str(b.title).trim();
+      const phoneDigits = _str(b.phone).replace(/\D/g, "");
+      if (!first && !last && !email) return res.status(400).json({ ok: false, error: "missing_fields" });
+      const payload = { "Förnamn": first, "Efternamn": last, "Kundföretag": companyId };
+      if (email) payload.Email = email;
+      if (title) payload.Titel = title;
+      if (phoneDigits) payload.Telefon = Number(phoneDigits);   // Telefon = number-fält
+      const id = await bubbleCreate("Coworker", payload);
+      return res.json({ ok: true, id });
+    } catch (e) {
+      console.error("[/admin/companies/:id/coworker/create]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/companies/coworker/:id/create-account — skapa login-konto + välkomstmail ──
+  // User-kontot skapas via Bubble-wf (auth ägs av Bubble); sen skickar vi välkomstmailet.
+  app.options("/admin/companies/coworker/:id/create-account", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/coworker/:id/create-account", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const co = await bubbleGet("Coworker", id).catch(() => null);
+      if (!co) return res.status(404).json({ ok: false, error: "coworker_not_found" });
+      const email = _str(co.Email || co.email || co.email_address);
+      if (!email) return res.status(400).json({ ok: false, error: "no_email" });
+      const firstname = _str(co["Förnamn"] || co["First Name"]);
+      const surname = _str(co["Efternamn"] || co["Last Name"]);
+      const name = (firstname + " " + surname).trim();
+      const company = _ref(co["Kundföretag"] || co.company || co.Company);
+      if (typeof createUserAccount !== "function") {
+        return res.status(501).json({ ok: false, error: "not_configured", hint: "Sätt env BUBBLE_CREATE_USER_WF + bygg Bubble-wf create_user_account.", email });
+      }
+      const pw = crypto.randomBytes(18).toString("hex") + "Aa1!";   // slump (Steg 1 använder ingen — ersätts vid reset)
+      const r = await createUserAccount({ email, password: pw, firstname, surname, company, coworker_id: id });
+      if (!r || !r.ok) return res.status(502).json({ ok: false, error: (r && r.error) || "create_failed", email });
+      // välkomstmail (samma som ny-user-flödet)
+      const m = await _sendSetPassword({ email, coworkerId: id, toName: name, templateId: welcomeTemplateId || pwResetTemplateId });
+      return res.json({ ok: true, email, user_id: r.user_id || null, mail: m.ok === true });
+    } catch (e) {
+      console.error("[/admin/companies/coworker/:id/create-account]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

@@ -67,6 +67,7 @@ function project(c) {
 const FULL = new Map(Object.values(CC).map((c) => [c._id, project(c)]));
 
 const fetchedTypes = [];
+const createUserCalls = [];
 const deps = {
   bubbleId: (r) => (r ? r._id : null),
   bubbleFindAll: async (t, { constraints = [] } = {}) => {
@@ -84,6 +85,7 @@ const deps = {
   companyRevenueMapWarm: () => REV,
   companyPatchEntry: (id, fresh) => { FULL.set(id, project(fresh)); },
   assignTempPassword: async ({ email }) => ({ ok: true, temp_password: "TMP-" + email }),
+  createUserAccount: async (args) => { createUserCalls.push(args); return { ok: true, user_id: "newuser1" }; },
   appBaseUrl: "https://mira-fm.com",
   pwResetTemplateId: "tpl_pw",
   welcomeTemplateId: "tpl_welcome",
@@ -275,6 +277,22 @@ const run = async () => {
   ok("send: nya användare får VÄLKOMST-mallen (tpl_welcome)", STORE.emailqueue[0].template_id === "tpl_welcome");
   var sndNo = await call(s.routes, "post", "/admin/reset-password/send", { body: {} });
   ok("send utan email → 400 no_email", sndNo.code === 400 && sndNo.body.error === "no_email");
+
+  // ── skapa person (Coworker) från kortet ──
+  var cbefore = STORE.Coworker.length;
+  var cr = await call(s.routes, "post", "/admin/companies/:id/coworker/create", { params: { id: "cc1" }, body: { first: "Nils", last: "Ny", email: "nils@acme.se", phone: "070-111 11 11", title: "Tekniker" } });
+  ok("coworker/create ok + Coworker skapad med rätt fält", cr.body.ok && STORE.Coworker.length === cbefore + 1);
+  var newCo = STORE.Coworker[STORE.Coworker.length - 1];
+  ok("ny Coworker: Förnamn/Efternamn/Email/Titel/Kundföretag + Telefon=number", newCo["Förnamn"] === "Nils" && newCo.Email === "nils@acme.se" && newCo.Titel === "Tekniker" && newCo["Kundföretag"] === "cc1" && newCo.Telefon === 701111111);
+
+  // ── skapa login-konto + välkomstmail för en ren CRM-kontakt (co2) ──
+  STORE.emailqueue.length = 0; createUserCalls.length = 0;
+  var ca = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "co2" } });
+  ok("create-account ok (user_id + mail)", ca.body.ok && ca.body.user_id === "newuser1" && ca.body.mail === true);
+  ok("create-account anropade Bubble-wf med email+firstname/surname+company+coworker", createUserCalls.length === 1 && createUserCalls[0].email === "rena@acme.se" && createUserCalls[0].firstname === "Rena" && createUserCalls[0].surname === "Kontakt" && createUserCalls[0].company === "cc1" && createUserCalls[0].coworker_id === "co2");
+  ok("create-account skickade VÄLKOMST-mailet", STORE.emailqueue.length === 1 && STORE.emailqueue[0].template_id === "tpl_welcome" && STORE.emailqueue[0].to_email === "rena@acme.se");
+  var ca404 = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "nope" } });
+  ok("create-account okänd coworker → 404", ca404.code === 404);
   // utan pwResetTemplateId → 501 not_configured
   var noTplDeps = Object.assign({}, deps, { pwResetTemplateId: "" });
   var nts = mk(); registerCompaniesRoutes(nts.app, noTplDeps);
