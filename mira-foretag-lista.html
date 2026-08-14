@@ -212,7 +212,7 @@
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false };
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[] };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -248,6 +248,7 @@
   function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
   function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
   function apiPost(path, body){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){ return r.json(); }); }
+  function apiCoworkerPatch(id, fields){ return fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
 
   // ── FILTERBAR ──
   function selOpts(list, cur, allLabel){
@@ -556,6 +557,7 @@
     STATE.coworkers="loading";
     api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/coworkers").then(function(j){
       STATE.coworkers=(j&&j.ok&&j.rows)?j.rows:[];
+      STATE.coworkerOffices=(j&&j.offices)||[]; STATE.coworkerDepartments=(j&&j.departments)||[];
       if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard();
     }).catch(function(){ STATE.coworkers=[]; if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard(); });
   }
@@ -571,6 +573,7 @@
       '</div></div>';
   }
   function coworkerBody(rows){
+    if(STATE.personDetail) return personDetailBody();
     var bar='<div style="display:flex;margin:0 0 12px"><button class="fk-editbtn" data-fk="newperson">+ Ny person</button></div>'+personForm();
     if(!rows.length) return '<div class="fk-body">'+bar+'<div class="fk-placeholder"><b>Inga personer</b>Lägg till en person med "+ Ny person".</div></div>';
     var body="";
@@ -579,13 +582,75 @@
       var action=r.has_user
         ? '<button class="fk-key" data-fk="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>'
         : '<button class="fk-key" data-fk="createaccount" data-cid="'+esc(r.id)+'">+ Skapa konto</button>';
-      body+='<tr><td>'+esc(r.name||"—")+'</td><td>'+esc(r.title||"—")+'</td>'+
+      body+='<tr><td><span class="fl-open" data-fk="openperson" data-cid="'+esc(r.id)+'">'+esc(r.name||"—")+'</span></td><td>'+esc(r.title||"—")+'</td>'+
         '<td>'+esc(r.email||"—")+'</td><td>'+(r.phone?esc(formatPhone(r.phone)):"—")+'</td>'+
         '<td>'+badge+'</td><td class="num">'+action+'<span class="fk-kmsg" data-kmsg="'+esc(r.id)+'"></span></td></tr>';
     }
     return '<div class="fk-body">'+bar+'<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
       '<thead><tr><th>Namn</th><th>Titel</th><th>E-post</th><th>Telefon</th><th>Konto</th><th class="num"></th></tr></thead>'+
       '<tbody>'+body+'</tbody></table></div></div>';
+  }
+  function findCoworker(id){ var a=STATE.coworkers; if(!a||a.length===undefined) return null; for(var i=0;i<a.length;i++) if(a[i].id===id) return a[i]; return null; }
+  function personDetailBody(){
+    var c=findCoworker(STATE.personDetail);
+    var back='<button class="fk-back" data-fk="backperson">← Personer</button>';
+    if(!c) return '<div class="fk-body">'+back+'<div class="fk-placeholder"><b>Person hittades inte</b></div></div>';
+    var tab=STATE.personTab||"profil";
+    var head=back+'<div class="fk-ph" style="margin:4px 0 0"><h3>'+esc(c.name||"—")+'</h3>'+
+      (c.has_user?'<span class="fk-ubadge on" style="margin-left:10px">Konto</span>':'<span class="fk-ubadge off" style="margin-left:10px">CRM-kontakt</span>')+'</div>'+
+      '<div class="fk-subtabs" style="margin-top:12px">'+
+        '<span class="fk-subtab'+(tab==="profil"?" on":"")+'" data-fk="ptab" data-p="profil">Profil</span>'+
+        '<span class="fk-subtab'+(tab==="aktivitet"?" on":"")+'" data-fk="ptab" data-p="aktivitet">Aktivitet</span></div>';
+    var inner=(tab==="aktivitet")?aktivitetBody():profilForm(c);
+    return '<div class="fk-body">'+head+inner+'</div>';
+  }
+  function profilForm(c){
+    var fld=function(lbl,k,v){ return '<div class="fk-fld"><label>'+esc(lbl)+'</label><input type="text" data-cw="'+k+'" value="'+esc(v||"")+'"></div>'; };
+    var depSel='<div class="fk-fld"><label>Avdelning</label><select data-cw="avdelning">'+selOpts(STATE.coworkerDepartments||[], c.avdelning, "— ingen —")+'</select></div>';
+    var offSel='<div class="fk-fld"><label>Kontor</label><select data-cw="kontor">'+selOpts(STATE.coworkerOffices||[], c.kontor_id, "— inget —")+'</select></div>';
+    return '<div class="fk-panel" style="padding:16px 18px"><div class="fk-form">'+
+      fld("Förnamn","first",c.first)+fld("Efternamn","last",c.last)+
+      fld("Titel","title",c.title)+fld("E-post","email",c.email)+
+      fld("Telefon","telefon",c.phone?formatPhone(c.phone):"")+depSel+offSel+
+      '<div class="fk-fld full"><label>Allmän info</label><textarea data-cw="crm_info">'+esc(c.crm_info||"")+'</textarea></div>'+
+      '<div class="fk-formbtns"><button class="save" data-fk="savecoworker">Spara</button><span class="msg" data-cw-msg></span></div>'+
+      '</div></div>';
+  }
+  function aktivitetBody(){
+    if(STATE.personActs===null){ fetchPersonActs(); return '<div class="fl-msg">Laddar…</div>'; }
+    if(STATE.personActs==="loading") return '<div class="fl-msg">Laddar…</div>';
+    var rows=STATE.personActs;
+    if(!rows.length) return '<div class="fk-placeholder"><b>Inga aktiviteter</b>Tagga personen på aktiviteter (fältet <b style="display:inline">taggade_personer</b> på activitet_crm) så dyker de upp här.</div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var typ=[r.typ,r.fas].filter(Boolean).join(" · ")||"Aktivitet";
+      var status=r.genomfort?'<span class="fk-lpill ok">Genomförd</span>':'<span class="fk-lpill wait">Planerad</span>';
+      body+='<tr><td>'+esc(r.date||"—")+'</td><td>'+esc(typ)+'</td><td>'+esc(r.meddelande||"—")+'</td><td>'+status+'</td></tr>';
+    }
+    return '<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Datum</th><th>Typ</th><th>Anteckning</th><th>Status</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  function fetchPersonActs(){
+    if(STATE.personActs==="loading" || (STATE.personActs && STATE.personActs.length!==undefined)) return;
+    STATE.personActs="loading";
+    api("/admin/companies/coworker/"+encodeURIComponent(STATE.personDetail)+"/activities").then(function(j){
+      STATE.personActs=(j&&j.ok&&j.rows)?j.rows:[];
+      if(STATE.view==="card"&&STATE.cardTab==="personer"&&STATE.personDetail&&STATE.personTab==="aktivitet") renderCard();
+    }).catch(function(){ STATE.personActs=[]; if(STATE.view==="card"&&STATE.personTab==="aktivitet") renderCard(); });
+  }
+  function saveCoworker(){
+    var form=root.querySelector(".fk-form"); if(!form) return;
+    var g=function(k){ var el=form.querySelector('[data-cw="'+k+'"]'); return el?el.value.trim():""; };
+    var cid=STATE.personDetail, msg=root.querySelector("[data-cw-msg]");
+    var fields={first:g("first"),last:g("last"),title:g("title"),email:g("email"),telefon:g("telefon"),crm_info:g("crm_info"),avdelning:g("avdelning"),kontor:g("kontor")};
+    if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
+    apiCoworkerPatch(cid, fields).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      var c=findCoworker(cid);   // optimistisk lokal uppdatering
+      if(c){ c.first=fields.first; c.last=fields.last; c.name=(fields.first+" "+fields.last).trim()||fields.email; c.title=fields.title; c.email=fields.email; c.phone=(fields.telefon||"").replace(/\D/g,""); c.crm_info=fields.crm_info; c.avdelning=fields.avdelning; c.kontor_id=fields.kontor||null; var of=(STATE.coworkerOffices||[]).filter(function(o){return o.id===fields.kontor;})[0]; c.kontor=of?of.name:""; }
+      renderCard();
+      var m2=root.querySelector("[data-cw-msg]"); if(m2){ m2.textContent="Sparat ✓"; m2.className="msg"; m2.style.color="var(--fl-ok)"; }
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
   }
   function savePerson(){
     var form=root.querySelector(".fk-form"); if(!form) return;
@@ -689,7 +754,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -741,6 +806,12 @@
       if(t.closest && t.closest('[data-fk="saveperson"]')){ savePerson(); return; }
       var ca=t.closest?t.closest('[data-fk="createaccount"]'):null;
       if(ca){ createAccount(ca.getAttribute("data-cid"), ca); return; }
+      var op=t.closest?t.closest('[data-fk="openperson"]'):null;
+      if(op){ STATE.personDetail=op.getAttribute("data-cid"); STATE.personTab="profil"; STATE.personActs=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="backperson"]')){ STATE.personDetail=null; renderCard(); return; }
+      var ptb=t.closest?t.closest('[data-fk="ptab"]'):null;
+      if(ptb){ STATE.personTab=ptb.getAttribute("data-p"); renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="savecoworker"]')){ saveCoworker(); return; }
       var avs=t.closest?t.closest('[data-fk="avsub"]'):null;
       if(avs){ STATE.avtalSub=avs.getAttribute("data-s"); renderCard(); return; }
       return;

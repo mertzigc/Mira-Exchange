@@ -35,12 +35,21 @@ const STORE = {
     { _id: "inv2", linked_company: "cc1", ft_document_number: "F-2", ft_total: 5000, ft_invoice_date: "2026-06-01", ft_balance: 5000, ft_due_date: "2020-01-01", ft_cancelled: false },
   ],
   Coworker: [
-    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900 },  // har User (matchar u1)
+    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1" },  // har User (matchar u1)
     { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
+  ],
+  Office: [
+    { _id: "of1", "Kundföretag": "cc1", "Office_title": "CMIAB Sthlm" },
+    { _id: "of2", "Kundföretag": "cc1", "Office_title": "CMIAB Göteborg" },
   ],
   OfferApprovalRequest: [
     { _id: "oar1", clientcompany: "cc1", rubrik: "Avtal — CMIAB", status: "Approved", signed_count: 1, recipients_count: 1, "Created Date": "2026-08-05" },
     { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
+  ],
+  activitet_crm: [
+    { _id: "act1", clientcompany: "cc1", taggade_personer: ["co1"], "Datum_bokning": "2026-08-10", activity_type: "Kundmöte", "Kundmöte": "Fas 2", beskrivning: "Möte om frukten", "genomfört": true, "Created Date": "2026-08-01" },
+    { _id: "act2", clientcompany: "cc1", taggade_personer: ["co1", "co2"], "Datum_bokning": "2026-06-20", activity_type: "Samtal", beskrivning: "Uppföljning", "Created Date": "2026-06-20" },
+    { _id: "act3", clientcompany: "cc2", taggade_personer: ["co2"], "Datum_bokning": "2026-07-01", activity_type: "Mail", "Created Date": "2026-07-01" },
   ],
 };
 STORE.PasswordReset = []; STORE.emailqueue = [];   // token-flödet skapar rader här
@@ -239,6 +248,8 @@ const run = async () => {
   var coTest = cw.body.rows.filter(function(r){return r.id==="co1";})[0];
   var coRen = cw.body.rows.filter(function(r){return r.id==="co2";})[0];
   ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "christian.mertzig@gmail.com" && coTest.phone === "755678900");
+  ok("coworker crm_info/avdelning/kontor resolvat", coTest.crm_info === "Nyckelkontakt" && coTest.avdelning === "Försäljning" && coTest.kontor_id === "of1" && coTest.kontor === "CMIAB Sthlm");
+  ok("coworkers svar bär offices + departments", cw.body.offices.length === 2 && cw.body.offices[0].name === "CMIAB Göteborg" && cw.body.departments.indexOf("Försäljning") > -1);
   ok("coworker has_user (email matchar User vars Company==företaget)", coTest.has_user === true && coTest.user_id === "u1");
   ok("ren coworker = CRM-kontakt (has_user false)", coRen.has_user === false && coRen.user_id === null);
   // ── LÖSENORDS-RESET (eget token-flöde) ──
@@ -293,6 +304,20 @@ const run = async () => {
   ok("create-account skickade VÄLKOMST-mailet", STORE.emailqueue.length === 1 && STORE.emailqueue[0].template_id === "tpl_welcome" && STORE.emailqueue[0].to_email === "rena@acme.se");
   var ca404 = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "nope" } });
   ok("create-account okänd coworker → 404", ca404.code === 404);
+
+  // ── redigera person (Coworker PATCH) ──
+  var cop = await call(s.routes, "patch", "/admin/companies/coworker/:id", { params: { id: "co1" }, body: { fields: { title: "Senior PL", telefon: "070-222 33 44", crm_info: "VD-kontakt", avdelning: "Ledning", kontor: "of2" } } });
+  ok("coworker PATCH ok (Titel/Telefon/crm_info/Avdelning/Kontor)", cop.body.ok && STORE.Coworker[0].Titel === "Senior PL" && STORE.Coworker[0].Telefon === 702223344 && STORE.Coworker[0].crm_info === "VD-kontakt" && STORE.Coworker[0].Avdelning === "Ledning" && STORE.Coworker[0].Kontor === "of2");
+  var copBad = await call(s.routes, "patch", "/admin/companies/coworker/:id", { params: { id: "co1" }, body: { field: "has_user", value: true } });
+  ok("coworker PATCH icke-redigerbart → 400", copBad.code === 400 && String(copBad.body.error).startsWith("field_not_editable"));
+  var cop404 = await call(s.routes, "patch", "/admin/companies/coworker/:id", { params: { id: "nope" }, body: { field: "title", value: "X" } });
+  ok("coworker PATCH okänt id → 404", cop404.code === 404);
+
+  // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
+  var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });
+  ok("activities co1 → 2 (act1+act2), nyast först + fält", av1.body.count === 2 && av1.body.rows[0].id === "act1" && av1.body.rows[0].typ === "Kundmöte" && av1.body.rows[0].fas === "Fas 2" && av1.body.rows[0].genomfort === true);
+  var av2 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co2" } });
+  ok("activities co2 → 2 (act2+act3)", av2.body.count === 2 && av2.body.rows.some(function(r){return r.id==="act3";}));
   // utan pwResetTemplateId → 501 not_configured
   var noTplDeps = Object.assign({}, deps, { pwResetTemplateId: "" });
   var nts = mk(); registerCompaniesRoutes(nts.app, noTplDeps);

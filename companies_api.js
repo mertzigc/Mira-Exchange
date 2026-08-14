@@ -451,15 +451,17 @@ export function registerCompaniesRoutes(app, deps) {
   // Company (singular — EN per user; INTE Associated_company som är en lista) == företaget,
   // dvs har ett login-konto. Ren Coworker utan User = CRM-kontakt. Sorterat efternamn+förnamn.
   const _email = (v) => String(v == null ? "" : v).trim().toLowerCase();
+  const DEPARTMENTS = ["Ekonomi", "Försäljning", "Ledning", "Leverans", "Marknad", "IT", "Kontor"];   // option set "Department"
   app.options("/admin/companies/:id/coworkers", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.get("/admin/companies/:id/coworkers", async (req, res) => {
     if (!guard(req, res)) return;
     const id = _str(req.params.id).trim();
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
     try {
-      const [cos, users] = await Promise.all([
+      const [cos, users, offs] = await Promise.all([
         bubbleFindAll("Coworker", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
         bubbleFindAll("User", { constraints: [{ key: "Company", constraint_type: "equals", value: id }] }).catch(() => []),
+        bubbleFindAll("Office", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
       ]);
       // e-post → user-id (login-konto)
       const userByEmail = new Map();
@@ -467,11 +469,15 @@ export function registerCompaniesRoutes(app, deps) {
         const em = _email(u.email || u.Email || (u.authentication && u.authentication.email && u.authentication.email.email));
         if (em) userByEmail.set(em, bubbleId(u));
       }
+      const officeMap = new Map(), offices = [];
+      for (const o of (offs || [])) { const oid = bubbleId(o); if (!oid) continue; const nm = _str(o.Office_title || o.name || o.Name); officeMap.set(oid, nm); offices.push({ id: oid, name: nm }); }
+      offices.sort((a, b) => a.name.localeCompare(b.name, "sv"));
       const rows = (cos || []).map((co) => {
         const first = _str(co["Förnamn"] || co["First Name"] || co.first_name || co.fornamn);
         const last  = _str(co["Efternamn"] || co["Last Name"] || co.last_name || co.efternamn);
         const email = _str(co.Email || co.email || co.email_address);
         const uid   = email ? userByEmail.get(_email(email)) : null;
+        const kontorId = _ref(co.Kontor);
         return {
           id: bubbleId(co),
           first, last,
@@ -479,12 +485,16 @@ export function registerCompaniesRoutes(app, deps) {
           title: _str(co.Titel || co.title || co.Befattning || co.Roll || co.roll),
           email,
           phone: _str(co.Telefon || co.telefon || co.Phone || co.phone || co.Mobil || co.mobil),
+          crm_info: _str(co.crm_info),
+          avdelning: _str(co.Avdelning),
+          kontor_id: kontorId || null,
+          kontor: kontorId ? (officeMap.get(kontorId) || "") : "",
           has_user: !!uid,
           user_id: uid || null,
         };
       });
       rows.sort((a, b) => (a.last || a.first).localeCompare(b.last || b.first, "sv") || a.first.localeCompare(b.first, "sv"));
-      return res.json({ ok: true, count: rows.length, rows });
+      return res.json({ ok: true, count: rows.length, rows, offices, departments: DEPARTMENTS });
     } catch (e) {
       console.error("[/admin/companies/:id/coworkers]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -546,6 +556,75 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, email, user_id: r.user_id || null, mail: m.ok === true });
     } catch (e) {
       console.error("[/admin/companies/coworker/:id/create-account]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── PATCH /admin/companies/coworker/:id — redigera person (Coworker) ──
+  // Whitelistade fält (bekräftade Coworker-display-namn). Fler (Info/datum/avdelning) kan
+  // läggas till när fältnamnen bekräftats.
+  const CO_EDITABLE = {
+    first:    { f: "Förnamn",   t: "text" },
+    last:     { f: "Efternamn", t: "text" },
+    title:    { f: "Titel",     t: "text" },
+    email:    { f: "Email",     t: "text" },
+    telefon:  { f: "Telefon",   t: "number" },
+    crm_info: { f: "crm_info",  t: "text" },
+    avdelning:{ f: "Avdelning", t: "optionset" },   // option set Department → skriv display-värde
+    kontor:   { f: "Kontor",    t: "ref" },          // Office-referens → skriv id (tom = rensa)
+  };
+  app.options("/admin/companies/coworker/:id", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.patch("/admin/companies/coworker/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const co = await bubbleGet("Coworker", id).catch(() => null);
+      if (!co) return res.status(404).json({ ok: false, error: "coworker_not_found" });
+      const body = req.body || {};
+      const fields = body.fields || (body.field ? { [body.field]: body.value } : null);
+      if (!fields || !Object.keys(fields).length) return res.status(400).json({ ok: false, error: "no_fields" });
+      const payload = {};
+      for (const [k, v] of Object.entries(fields)) {
+        const spec = CO_EDITABLE[k];
+        if (!spec) return res.status(400).json({ ok: false, error: `field_not_editable:${k}` });
+        if (spec.t === "number") { const d = _str(v).replace(/\D/g, ""); payload[spec.f] = d ? Number(d) : null; }
+        else if (spec.t === "ref") { payload[spec.f] = _ref(v) || ""; }             // Office-id el. rensa
+        else if (spec.t === "optionset") { const sv = _str(v).trim(); payload[spec.f] = sv; }   // "" rensar
+        else payload[spec.f] = _str(v);
+      }
+      await bubblePatch("Coworker", id, payload);
+      return res.json({ ok: true, id });
+    } catch (e) {
+      console.error("[/admin/companies/coworker/:id PATCH]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ── GET /admin/companies/coworker/:id/activities — aktiviteter där personen är taggad ──
+  // Söker activitet_crm där taggade_personer (List of Coworker) contains personen. Nyast först.
+  function nActivity(r) {
+    return {
+      id: bubbleId(r),
+      date: _day(r["Datum_bokning"] || r["Created Date"]),
+      created: _day(r["Created Date"]),
+      typ: _str(r.activity_type),
+      fas: _str(r["Kundmöte"]),
+      meddelande: _str(r.beskrivning) || _str(r["mötesantecking"]),
+      genomfort: r["genomfört"] === true,
+    };
+  }
+  app.options("/admin/companies/coworker/:id/activities", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/coworker/:id/activities", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const raw = await bubbleFindAll("activitet_crm", { constraints: [{ key: "taggade_personer", constraint_type: "contains", value: id }] }).catch(() => []);
+      const rows = (raw || []).map(nActivity).sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+      return res.json({ ok: true, count: rows.length, rows });
+    } catch (e) {
+      console.error("[/admin/companies/coworker/:id/activities]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
