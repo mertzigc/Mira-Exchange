@@ -265,6 +265,14 @@ const run = async () => {
 
   var pw404 = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "nope" } });
   ok("send-password okänd coworker → 404", pw404.code === 404);
+
+  // ny-user-flödet: /admin/reset-password/send {email}
+  STORE.PasswordReset.length = 0; STORE.emailqueue.length = 0;
+  var snd = await call(s.routes, "post", "/admin/reset-password/send", { body: { email: "ny.user@acme.se", name: "Ny User" } });
+  ok("reset-password/send ok + skapade token+mail", snd.body.ok && snd.body.email === "ny.user@acme.se" && STORE.PasswordReset.length === 1 && STORE.emailqueue.length === 1);
+  ok("send: mail till rätt adress + reset_url", STORE.emailqueue[0].to_email === "ny.user@acme.se" && /\/reset_pw\?t=/.test(JSON.parse(STORE.emailqueue[0].extra_data).reset_url));
+  var sndNo = await call(s.routes, "post", "/admin/reset-password/send", { body: {} });
+  ok("send utan email → 400 no_email", sndNo.code === 400 && sndNo.body.error === "no_email");
   // utan pwResetTemplateId → 501 not_configured
   var noTplDeps = Object.assign({}, deps, { pwResetTemplateId: "" });
   var nts = mk(); registerCompaniesRoutes(nts.app, noTplDeps);

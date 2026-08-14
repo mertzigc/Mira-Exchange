@@ -501,7 +501,29 @@ export function registerCompaniesRoutes(app, deps) {
   //    reset_pw kör sen Log the user in + Update password i Bubble.
   const PW_TTL_MS = 24 * 60 * 60 * 1000;
 
-  // ── POST /admin/companies/coworker/:id/send-password ──────────────
+  // Delad kärna: gen token → spara PasswordReset → maila "sätt lösenord"-länk. Används av
+  // BÅDE nyckelknappen (befintlig coworker) OCH ny-user-flödet (/admin/reset-password/send).
+  async function _sendSetPassword({ email, coworkerId, toName }) {
+    if (!pwResetTemplateId || typeof bubbleCreate !== "function") return { ok: false, code: 501, error: "not_configured" };
+    if (!email) return { ok: false, code: 400, error: "no_email" };
+    const raw = crypto.randomBytes(24).toString("hex");
+    const now = Date.now();
+    const row = { email, token_hash: _sha256(raw), expires_at: new Date(now + PW_TTL_MS).toISOString(), used: false };
+    if (coworkerId) row.coworker = coworkerId;
+    await bubbleCreate("PasswordReset", row);
+    const base = (appBaseUrl || "https://mira-fm.com").replace(/\/+$/, "");
+    await bubbleCreate("emailqueue", {
+      template_id: pwResetTemplateId,
+      to_email: email,
+      to_name: _str(toName || ""),
+      entity_id: "",
+      email_sent: false,
+      extra_data: JSON.stringify({ reset_url: base + "/reset_pw?t=" + raw, sender_name: "Carotte" }),
+    });
+    return { ok: true, email };
+  }
+
+  // ── POST /admin/companies/coworker/:id/send-password (nyckelknappen) ──
   app.options("/admin/companies/coworker/:id/send-password", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.post("/admin/companies/coworker/:id/send-password", async (req, res) => {
     if (!guard(req, res)) return;
@@ -511,32 +533,32 @@ export function registerCompaniesRoutes(app, deps) {
       const co = await bubbleGet("Coworker", id).catch(() => null);
       if (!co) return res.status(404).json({ ok: false, error: "coworker_not_found" });
       const email = _str(co.Email || co.email || co.email_address);
-      if (!email) return res.status(400).json({ ok: false, error: "no_email" });
-      if (!pwResetTemplateId || typeof bubbleCreate !== "function") {
-        return res.status(501).json({ ok: false, error: "not_configured", hint: "Sätt env PW_RESET_TEMPLATE_ID + skapa PasswordReset-typen i Bubble.", email });
-      }
-      const raw = crypto.randomBytes(24).toString("hex");
-      const now = Date.now();
-      await bubbleCreate("PasswordReset", {
-        email,
-        coworker: id,
-        token_hash: _sha256(raw),
-        expires_at: new Date(now + PW_TTL_MS).toISOString(),
-        used: false,
-      });
-      const base = (appBaseUrl || "https://mira-fm.com").replace(/\/+$/, "");
-      const resetUrl = base + "/reset_pw?t=" + raw;
-      await bubbleCreate("emailqueue", {
-        template_id: pwResetTemplateId,
-        to_email: email,
-        to_name: ((_str(co["Förnamn"] || co["First Name"]) + " " + _str(co["Efternamn"] || co["Last Name"])).trim()),
-        entity_id: "",
-        email_sent: false,
-        extra_data: JSON.stringify({ reset_url: resetUrl, sender_name: "Carotte" }),
-      });
+      const toName = (_str(co["Förnamn"] || co["First Name"]) + " " + _str(co["Efternamn"] || co["Last Name"])).trim();
+      const r = await _sendSetPassword({ email, coworkerId: id, toName });
+      if (!r.ok) return res.status(r.code || 500).json({ ok: false, error: r.error, email });
       return res.json({ ok: true, email });
     } catch (e) {
       console.error("[/admin/companies/coworker/:id/send-password]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/reset-password/send {email, name?, coworker_id?} — nya användare ──
+  // Admin-token-grindad (anropas server-side från Bubble efter user-skapande). Samma
+  // mail + reset_pw-flöde som nyckelknappen. Kör detta direkt efter "Create a new user".
+  app.options("/admin/reset-password/send", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/reset-password/send", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const b = req.body || {};
+      const email = _str(b.email).trim();
+      if (!email) return res.status(400).json({ ok: false, error: "no_email" });
+      if (email === "__INIT__") return res.json({ ok: true, email: "init@example.com", sample: true });   // API Connector-init utan sidoeffekt
+      const r = await _sendSetPassword({ email, coworkerId: _str(b.coworker_id) || null, toName: _str(b.name || b.to_name) });
+      if (!r.ok) return res.status(r.code || 500).json({ ok: false, error: r.error });
+      return res.json({ ok: true, email });
+    } catch (e) {
+      console.error("[/admin/reset-password/send]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
