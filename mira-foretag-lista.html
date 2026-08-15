@@ -92,6 +92,7 @@
   .fk-feedhead{display:flex;align-items:center;gap:9px;margin-bottom:3px;}
   .fk-feedtyp{font-size:12.5px;font-weight:600;color:var(--fl-txt);}
   .fk-feedmsg{font-size:12.5px;color:var(--fl-mut);line-height:1.45;white-space:pre-wrap;}
+  .fk-hwrap{max-width:900px;}
   .fk-hrowtoggle{cursor:pointer;user-select:none;}
   .fk-caret{margin-left:auto;color:var(--fl-mut);font-size:10px;}
   .fk-hdetail{margin-top:10px;padding-top:10px;border-top:1px dashed var(--fl-line);}
@@ -556,9 +557,7 @@
       '</div></div>'+
       '<div class="fk-sech" style="margin-top:18px">Snabbåtgärder</div>'+
       '<div class="fk-actions">'+
-        '<button class="fk-act pri">+ Ny affär</button><button class="fk-act">+ Ny aktivitet</button>'+
-        '<button class="fk-act">+ Ny kontakt</button><button class="fk-act">+ Nytt avtal</button>'+
-        '<button class="fk-act">+ Ny förfrågan</button><button class="fk-act">Skicka signering</button>'+
+        '<button class="fk-act pri" data-fk="qa-aktivitet">+ Ny aktivitet</button><button class="fk-act" data-fk="qa-kontakt">+ Ny kontakt</button>'+
       '</div></div>';
   }
   function tabLbl(k){ var t=TABS.filter(function(x){return x.k===k;})[0]; return t?t.lbl:k; }
@@ -608,9 +607,9 @@
     return '<div class="fk-hdetail"><div class="fk-hmetagrid">'+meta+'</div>'+note+'</div>';
   }
   function historikBody(rows){
-    var head='<div style="display:flex;margin:0 0 12px"><button class="fk-editbtn" data-fk="histnew">+ Ny historik</button></div>'+
+    var head='<div style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="fk-editbtn" data-fk="histnew">+ Ny historik</button></div>'+
       (STATE.histNew?'<div class="fk-panel" style="margin:0 0 12px;padding:14px 16px"><div class="fk-ph"><h3>Ny aktivitet</h3></div>'+histForm(null)+'</div>':'');
-    if(!rows.length) return '<div class="fk-body">'+head+'<div class="fk-placeholder"><b>Ingen historik</b>Inga aktiviteter registrerade på företaget ännu.</div></div>';
+    if(!rows.length) return '<div class="fk-body"><div class="fk-hwrap">'+head+'<div class="fk-placeholder"><b>Ingen historik</b>Inga aktiviteter registrerade på företaget ännu.</div></div></div>';
     var body="";
     for(var i=0;i<rows.length;i++){ var r=rows[i];
       var open=(STATE.histOpen===r.id);
@@ -621,7 +620,7 @@
         (r.meddelande?'<div class="fk-feedmsg">'+esc(r.meddelande)+'</div>':'')+
         (open?(histDetail(r)+histForm(r)):'')+'</div></div>';
     }
-    return '<div class="fk-body">'+head+'<div class="fk-panel" style="padding:12px 14px"><div class="fk-feed">'+body+'</div></div></div>';
+    return '<div class="fk-body"><div class="fk-hwrap">'+head+'<div class="fk-panel" style="padding:12px 14px"><div class="fk-feed">'+body+'</div></div></div></div>';
   }
   // Visas denna chain-typ just nu? (direkt flik ELLER Avtal-underflik)
   function chainVisible(tab){ return STATE.view==="card" && (STATE.cardTab===tab || (STATE.cardTab==="avtal" && (STATE.avtalSub||"avtal")===tab)); }
@@ -992,6 +991,8 @@
       if(hsave){ var hb=hsave.closest(".fk-hedit"); if(hb) saveHist(hb); return; }
       var hcre=t.closest?t.closest('[data-fk="histcreate"]'):null;
       if(hcre){ var hb2=hcre.closest(".fk-hedit"); if(hb2) createHist(hb2); return; }
+      if(t.closest && t.closest('[data-fk="qa-aktivitet"]')){ STATE.cardTab="historik"; STATE.histNew=true; STATE.histOpen=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="qa-kontakt"]')){ STATE.cardTab="personer"; STATE.personDetail=null; STATE.newPerson=true; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="histnew"]')){ STATE.histNew=!STATE.histNew; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="histnewcancel"]')){ STATE.histNew=false; renderCard(); return; }
       var hrow=t.closest?t.closest('[data-fk="histrow"]'):null;
