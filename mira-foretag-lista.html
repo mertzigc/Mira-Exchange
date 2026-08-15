@@ -93,6 +93,30 @@
   .fk-feedtyp{font-size:12.5px;font-weight:600;color:var(--fl-txt);}
   .fk-feedmsg{font-size:12.5px;color:var(--fl-mut);line-height:1.45;white-space:pre-wrap;}
   .fk-hwrap{max-width:900px;}
+  .fk-owrap{max-width:1080px;}
+  .fk-olist{display:flex;flex-direction:column;gap:10px;}
+  .fk-otile{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:14px 16px;}
+  .fk-orow{display:flex;align-items:center;gap:18px;}
+  .fk-ocell{display:flex;flex-direction:column;gap:2px;flex:0 0 auto;}
+  .fk-ocell.grow{flex:1;min-width:0;}
+  .fk-ocell .l{font-size:10px;color:var(--fl-mut);text-transform:uppercase;letter-spacing:.4px;}
+  .fk-ocell b{font-size:12.5px;color:var(--fl-txt);font-weight:600;}
+  .fk-oname{font-size:14px;font-weight:700;color:var(--fl-txt);}
+  .fk-osub{font-size:11.5px;color:var(--fl-mut);margin-top:1px;}
+  .fk-editbtn.sm{padding:6px 12px;font-size:12px;}
+  .fk-oedit .fk-fld input,.fk-oedit .fk-fld select{width:100%;}
+  .fk-oedit{margin-top:2px;}
+  .fk-rooms{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;padding-top:14px;border-top:1px solid var(--fl-line);}
+  @media(max-width:720px){ .fk-rooms{grid-template-columns:1fr;} }
+  .fk-roomlist{display:flex;flex-direction:column;gap:6px;margin:6px 0 10px;}
+  .fk-roomrow{display:flex;align-items:center;gap:10px;background:var(--fl-chip);border:1px solid var(--fl-line);border-radius:8px;padding:8px 12px;}
+  .fk-roomname{flex:1;min-width:0;font-size:12.5px;color:var(--fl-txt);}
+  .fk-roomsub{color:var(--fl-mut);font-size:11px;}
+  .fk-roomdel{background:none;border:1px solid var(--fl-line);color:var(--fl-mut);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:600;flex-shrink:0;}
+  .fk-roomdel:hover{border-color:var(--fl-err);color:var(--fl-err);}
+  .fk-roomempty{font-size:12px;color:var(--fl-mut);padding:4px 2px;}
+  .fk-roomadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .fk-roomadd input{flex:1;min-width:120px;}
   .fk-hrowtoggle{cursor:pointer;user-select:none;}
   .fk-caret{margin-left:auto;color:var(--fl-mut);font-size:10px;}
   .fk-hdetail{margin-top:10px;padding-top:10px;border-top:1px dashed var(--fl-line);}
@@ -247,7 +271,8 @@
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false };
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false,
+              setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -819,6 +844,71 @@
       renderCard();
     }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
   }
+  // ── Inställningar/Kontor: hämta, skapa (+auto-rum), redigera ──
+  function fetchOffices(){
+    if(STATE.offices==="loading" || (STATE.offices && STATE.offices.length!==undefined)) return;
+    STATE.offices="loading";
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/offices").then(function(j){
+      STATE.offices=(j&&j.ok&&j.rows)?j.rows:[];
+      STATE.officeMeta={fastigheter:(j&&j.fastigheter)||[], coworkers:(j&&j.coworkers)||[]};
+      if(STATE.view==="card"&&STATE.cardTab==="installningar"&&STATE.setupSub==="kontor") renderCard();
+    }).catch(function(){ STATE.offices=[]; if(STATE.view==="card"&&STATE.cardTab==="installningar") renderCard(); });
+  }
+  function officePayload(box){
+    var g=function(k){ var el=box.querySelector('[data-of="'+k+'"]'); return el?el.value.trim():""; };
+    var ans=g("ansvarig");
+    return { name:g("name"), fastighet_id:g("fastighet"), ansvarig_ids:ans?[ans]:[], yta:g("yta"), arbetsplatser:g("arbetsplatser"), budget:g("budget") };
+  }
+  function createOffice(box){
+    var msg=box.querySelector("[data-omsg]"), p=officePayload(box);
+    if(!p.name){ if(msg){ msg.textContent="Fyll i kontorsnamn"; msg.className="msg err"; } return; }
+    if(msg){ msg.textContent="Skapar kontor + rum…"; msg.className="msg"; }
+    apiPost("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/office/create", p).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      if(j.row){ STATE.offices=[j.row].concat(STATE.offices||[]); }
+      STATE.officeNew=false; renderCard();
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  function saveOffice(box){
+    var id=box.getAttribute("data-oid"), msg=box.querySelector("[data-omsg]"), p=officePayload(box);
+    if(!p.name){ if(msg){ msg.textContent="Fyll i kontorsnamn"; msg.className="msg err"; } return; }
+    if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
+    fetch(HOST+"/admin/companies/office/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(p)}).then(function(r){ return r.json(); }).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      var arr=STATE.offices||[]; for(var i=0;i<arr.length;i++){ if(arr[i].id===id && j.row){ arr[i]=j.row; } }
+      STATE.officeEdit=null; renderCard();
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  // ── Kontor 1b: rum (mötesrum + interna lokaler) i redigera-vyn ──
+  function fetchOfficeRooms(oid){
+    if(STATE.officeRooms==="loading" || (STATE.officeRooms && STATE.officeRooms.meetingrooms!==undefined)) return;
+    STATE.officeRooms="loading";
+    api("/admin/companies/office/"+encodeURIComponent(oid)+"/rooms").then(function(j){
+      STATE.officeRooms=(j&&j.ok)?{meetingrooms:j.meetingrooms||[],internals:j.internals||[]}:{meetingrooms:[],internals:[]};
+      if(STATE.view==="card"&&STATE.cardTab==="installningar"&&STATE.officeEdit===oid) renderCard();
+    }).catch(function(){ STATE.officeRooms={meetingrooms:[],internals:[]}; if(STATE.officeEdit===oid) renderCard(); });
+  }
+  function officeCountDelta(oid, type, d){
+    var arr=STATE.offices||[]; for(var i=0;i<arr.length;i++){ if(arr[i].id===oid){ if(type==="meeting") arr[i].motesrum=(arr[i].motesrum||0)+d; else arr[i].intern=(arr[i].intern||0)+d; } }
+  }
+  function addRoom(type){
+    var oid=STATE.officeEdit, inp=root.querySelector('[data-roomadd="'+type+'"]'), msg=root.querySelector('[data-roommsg="'+type+'"]');
+    var name=inp?inp.value.trim():"";
+    if(!name){ if(msg){ msg.textContent="Fyll i namn"; msg.className="msg err"; } return; }
+    if(msg){ msg.textContent="Lägger till…"; msg.className="msg"; }
+    apiPost("/admin/companies/office/"+encodeURIComponent(oid)+"/room", {type:type,name:name}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      officeCountDelta(oid,type,1); STATE.officeRooms=null; renderCard();
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  function delRoom(type, rid){
+    var oid=STATE.officeEdit;
+    if(!window.confirm("Radera rummet? Det tas bort permanent.")) return;
+    fetch(HOST+"/admin/companies/office/"+encodeURIComponent(oid)+"/room/"+encodeURIComponent(rid)+"?type="+encodeURIComponent(type),{method:"DELETE",headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }).then(function(j){
+      if(!j||!j.ok) return;
+      officeCountDelta(oid,type,-1); STATE.officeRooms=null; renderCard();
+    }).catch(function(){});
+  }
   function savePerson(){
     var form=root.querySelector(".fk-form"); if(!form) return;
     var g=function(k){ var el=form.querySelector('[data-np="'+k+'"]'); return el?el.value.trim():""; };
@@ -910,7 +1000,85 @@
       if(rows==="loading") return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>';
       return chainBody(STATE.cardTab, rows);
     }
+    if(STATE.cardTab==="installningar") return installningarBody();
     return '<div class="fk-body"><div class="fk-placeholder"><b>'+esc(tabLbl(STATE.cardTab))+'</b>Byggs modul för modul.<br><span style="font-size:12px">Källa: '+esc(TAB_SRC[STATE.cardTab]||"—")+'</span></div></div>';
+  }
+  // ── Inställningar (setup-hub): underflikar; Kontor byggd, övriga kommer bit för bit ──
+  var SETUP_SUBS=[{k:"kontor",lbl:"Kontor"},{k:"leverantorer",lbl:"Leverantörer"},{k:"logo",lbl:"Logo"},{k:"fastighetsagare",lbl:"Fastighetsägare"},{k:"portal",lbl:"Medarbetarportal"}];
+  function installningarBody(){
+    var sub=STATE.setupSub||"kontor", tabs="";
+    for(var i=0;i<SETUP_SUBS.length;i++){ var s=SETUP_SUBS[i]; tabs+='<span class="fk-subtab'+(sub===s.k?" on":"")+'" data-fk="setupsub" data-s="'+s.k+'">'+esc(s.lbl)+'</span>'; }
+    var inner=(sub==="kontor")?kontorBody():'<div class="fk-hwrap"><div class="fk-placeholder"><b>'+esc((SETUP_SUBS.filter(function(x){return x.k===sub;})[0]||{}).lbl||"")+'</b>Byggs härnäst.</div></div>';
+    return '<div class="fk-body"><div class="fk-subtabs" style="margin-bottom:14px">'+tabs+'</div>'+inner+'</div>';
+  }
+  function officeForm(o){
+    var isNew=!o; o=o||{name:"",fastighet_id:"",ansvarig_ids:[],yta:null,arbetsplatser:null,budget:null};
+    var fOpts='<option value="">— välj fastighet —</option>'; var F=STATE.officeMeta.fastigheter||[];
+    for(var i=0;i<F.length;i++){ fOpts+='<option value="'+esc(F[i].id)+'"'+(F[i].id===o.fastighet_id?" selected":"")+'>'+esc(F[i].name)+'</option>'; }
+    var curAns=(o.ansvarig_ids&&o.ansvarig_ids.length)?o.ansvarig_ids[0]:"";
+    var aOpts='<option value="">— välj ansvarig —</option>'; var C=STATE.officeMeta.coworkers||[];
+    for(var j=0;j<C.length;j++){ aOpts+='<option value="'+esc(C[j].id)+'"'+(C[j].id===curAns?" selected":"")+'>'+esc(C[j].name)+'</option>'; }
+    var num=function(v){ return v==null?"":String(v); };
+    var idAttr=isNew?"":(' data-oid="'+esc(o.id)+'"');
+    return '<div class="fk-oedit" data-oform="'+(isNew?"new":"edit")+'"'+idAttr+'>'+
+      '<div class="fk-fld full"><label>Kontorsnamn</label><input type="text" data-of="name" value="'+esc(o.name||"")+'"></div>'+
+      '<div class="fk-hrow">'+
+        '<div class="fk-fld"><label>Fastighet</label><select data-of="fastighet">'+fOpts+'</select></div>'+
+        '<div class="fk-fld"><label>Kontorsansvarig</label><select data-of="ansvarig">'+aOpts+'</select></div>'+
+      '</div>'+
+      '<div class="fk-hrow">'+
+        '<div class="fk-fld"><label>Yta (kvm)</label><input type="number" data-of="yta" value="'+esc(num(o.yta))+'"></div>'+
+        '<div class="fk-fld"><label>Arbetsplatser</label><input type="number" data-of="arbetsplatser" value="'+esc(num(o.arbetsplatser))+'"></div>'+
+        '<div class="fk-fld"><label>Budget (kr)</label><input type="number" data-of="budget" value="'+esc(num(o.budget))+'"></div>'+
+      '</div>'+
+      (isNew?'<div class="fl-lsub" style="margin:2px 0 8px">En default-uppsättning rum (1 mötesrum + 8 interna lokaler) skapas automatiskt för kvalitetskontroller.</div>':'')+
+      '<div class="fk-formbtns"><button class="save" data-fk="'+(isNew?"officecreate":"officesave")+'">'+(isNew?"Skapa kontor":"Spara")+'</button>'+
+        '<button class="fk-cancel" data-fk="'+(isNew?"officenewcancel":"officeeditcancel")+'">Avbryt</button><span class="msg" data-omsg></span></div>'+
+    '</div>';
+  }
+  function roomList(title, type, rooms, ph){
+    var items="";
+    for(var i=0;i<rooms.length;i++){ var r=rooms[i];
+      items+='<div class="fk-roomrow"><span class="fk-roomname">'+esc(r.name||"—")+(r.email?' <span class="fk-roomsub">'+esc(r.email)+'</span>':'')+'</span>'+
+        '<button class="fk-roomdel" data-fk="roomdel" data-type="'+type+'" data-id="'+esc(r.id)+'">Radera</button></div>';
+    }
+    if(!rooms.length) items='<div class="fk-roomempty">Inga rum ännu.</div>';
+    return '<div class="fk-roomsec"><div class="fk-sech">'+esc(title)+'</div><div class="fk-roomlist">'+items+'</div>'+
+      '<div class="fk-roomadd"><input type="text" data-roomadd="'+type+'" placeholder="'+esc(ph)+'"><button class="fk-editbtn sm" data-fk="roomadd" data-type="'+type+'">Lägg till</button><span class="msg" data-roommsg="'+type+'"></span></div></div>';
+  }
+  function roomsSection(o){
+    if(STATE.officeRooms===null){ fetchOfficeRooms(o.id); return '<div class="fk-rooms"><div class="fl-msg">Laddar rum…</div></div>'; }
+    if(STATE.officeRooms==="loading") return '<div class="fk-rooms"><div class="fl-msg">Laddar rum…</div></div>';
+    var R=STATE.officeRooms;
+    return '<div class="fk-rooms">'+
+      roomList("Mötesrum","meeting",R.meetingrooms||[],"Namn på mötesrummet")+
+      roomList("Interna lokaler","internal",R.internals||[],"T ex Pentry")+
+    '</div>';
+  }
+  function kontorBody(){
+    if(STATE.offices===null){ fetchOffices(); return '<div class="fk-hwrap"><div class="fl-msg">Laddar kontor…</div></div>'; }
+    if(STATE.offices==="loading") return '<div class="fk-hwrap"><div class="fl-msg">Laddar kontor…</div></div>';
+    var rows=STATE.offices;
+    var head='<div style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="fk-editbtn" data-fk="officenew">+ Nytt kontor</button></div>'+
+      (STATE.officeNew?'<div class="fk-panel" style="margin:0 0 12px;padding:14px 16px"><div class="fk-ph"><h3>Nytt kontor</h3></div>'+officeForm(null)+'</div>':'');
+    if(!rows.length) return '<div class="fk-owrap">'+head+'<div class="fk-placeholder"><b>Inga kontor</b>Lägg till företagets första kontor med "+ Nytt kontor".</div></div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var o=rows[i];
+      var ans=(o.ansvariga||[]).map(function(a){return a.name;}).join(", ")||"—";
+      if(STATE.officeEdit===o.id){
+        body+='<div class="fk-otile"><div class="fk-ph" style="margin:0 0 4px"><h3>Redigera '+esc(o.name||"kontor")+'</h3></div>'+officeForm(o)+roomsSection(o)+'</div>';
+      } else {
+        body+='<div class="fk-otile"><div class="fk-orow">'+
+          '<div class="fk-ocell grow"><div class="fk-oname">'+esc(o.name||"—")+'</div><div class="fk-osub">'+esc(o.fastighet||"— ingen fastighet —")+(o.adress?(" · "+esc(o.adress)):"")+'</div></div>'+
+          '<div class="fk-ocell"><span class="l">Ansvarig</span><b>'+esc(ans)+'</b></div>'+
+          '<div class="fk-ocell"><span class="l">Yta</span><b>'+(o.yta==null?"—":esc(String(o.yta))+" kvm")+'</b></div>'+
+          '<div class="fk-ocell"><span class="l">Arbetsplatser</span><b>'+(o.arbetsplatser==null?"—":esc(String(o.arbetsplatser)))+'</b></div>'+
+          '<div class="fk-ocell"><span class="l">Rum</span><b>'+esc(String((o.motesrum||0)+(o.intern||0)))+'</b></div>'+
+          '<button class="fk-editbtn sm" data-fk="officeedit" data-id="'+esc(o.id)+'">Redigera</button>'+
+        '</div></div>';
+      }
+    }
+    return '<div class="fk-owrap">'+head+'<div class="fk-olist">'+body+'</div></div>';
   }
   function renderCard(){
     if(!STATE.card){ $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-msg">Laddar kundkort…</div>'; return; }
@@ -927,7 +1095,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -997,6 +1165,21 @@
       if(t.closest && t.closest('[data-fk="histnewcancel"]')){ STATE.histNew=false; renderCard(); return; }
       var hrow=t.closest?t.closest('[data-fk="histrow"]'):null;
       if(hrow){ var rid=hrow.getAttribute("data-id"); STATE.histOpen=(STATE.histOpen===rid?null:rid); renderCard(); return; }
+      var ssub=t.closest?t.closest('[data-fk="setupsub"]'):null;
+      if(ssub){ STATE.setupSub=ssub.getAttribute("data-s"); STATE.officeNew=false; STATE.officeEdit=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="officenew"]')){ STATE.officeNew=!STATE.officeNew; STATE.officeEdit=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="officenewcancel"]')){ STATE.officeNew=false; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="officeeditcancel"]')){ STATE.officeEdit=null; STATE.officeRooms=null; renderCard(); return; }
+      var oed=t.closest?t.closest('[data-fk="officeedit"]'):null;
+      if(oed){ STATE.officeEdit=oed.getAttribute("data-id"); STATE.officeNew=false; STATE.officeRooms=null; renderCard(); return; }
+      var radd=t.closest?t.closest('[data-fk="roomadd"]'):null;
+      if(radd){ addRoom(radd.getAttribute("data-type")); return; }
+      var rdel=t.closest?t.closest('[data-fk="roomdel"]'):null;
+      if(rdel){ delRoom(rdel.getAttribute("data-type"), rdel.getAttribute("data-id")); return; }
+      var ocre=t.closest?t.closest('[data-fk="officecreate"]'):null;
+      if(ocre){ var ob=ocre.closest(".fk-oedit"); if(ob) createOffice(ob); return; }
+      var osav=t.closest?t.closest('[data-fk="officesave"]'):null;
+      if(osav){ var ob2=osav.closest(".fk-oedit"); if(ob2) saveOffice(ob2); return; }
       var avs=t.closest?t.closest('[data-fk="avsub"]'):null;
       if(avs){ STATE.avtalSub=avs.getAttribute("data-s"); renderCard(); return; }
       return;

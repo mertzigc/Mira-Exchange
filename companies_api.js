@@ -23,7 +23,7 @@ import crypto from "crypto";
 
 export function registerCompaniesRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate, bubbleDelete,
     bubbleUploadFile, photoUpload,
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
     assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
@@ -740,6 +740,210 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, id, patched: p, row: fresh ? nActivity(fresh, uc && uc.map) : null });
     } catch (e) {
       console.error("[/admin/companies/historik/:id/patch]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ══════════════ INSTÄLLNINGAR — KONTOR (Office) ══════════════
+  // Office-fält (Bubble-schema verifierat 2026-08-15): Office_title(text), Kundföretag(ClientCompany),
+  // Fastighet(ref), Kontorsansvarig(List of Coworker), office_address(geo), Yta(number),
+  // Arbetsplatser(number), Budget(number), Mötesrum(List of MeetingRoom), intern_lokal(List of Internal_local).
+  // Vid nytt kontor auto-skapas en default-rumsuppsättning (för kvalitetskontroller): 1 MeetingRoom +
+  // 8 Internal_local. Rummen bär tillbaka-ref (office/kontor + Company/kundföretag) OCH appendas till
+  // Office-listorna (Mötesrum/intern_lokal) så native-vyerna hittar dem.
+  const DEFAULT_INTERNAL_ROOMS = ["Toaletter", "Kopieringsutrymme/Förråd", "Pentry", "Reception/Lounge", "Korridor", "Dusch", "Städförråd", "Kontorsrum"];
+  async function _companyCoworkerMap(companyId) {
+    const cos = await bubbleFindAll("Coworker", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }] }).catch(() => []);
+    const map = new Map(), list = [];
+    for (const co of (cos || [])) {
+      const id = bubbleId(co); if (!id) continue;
+      const nm = (_str(co["Förnamn"] || co["First Name"]) + " " + _str(co["Efternamn"] || co["Last Name"])).trim() || _str(co.Email || co.email);
+      if (!nm) continue;
+      map.set(id, nm); list.push({ id, name: nm });
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    return { map, list };
+  }
+  function nOffice(o, fMap, coMap) {
+    const ansvarigIds = (Array.isArray(o.Kontorsansvarig) ? o.Kontorsansvarig : (o.Kontorsansvarig ? [o.Kontorsansvarig] : [])).map(_ref).filter(Boolean);
+    const adr = o.office_address;
+    const fid = _ref(o.Fastighet);
+    return {
+      id: bubbleId(o),
+      name: _str(o.Office_title),
+      fastighet_id: fid || null,
+      fastighet: fid ? (fMap.get(fid) || "") : "",
+      ansvarig_ids: ansvarigIds,
+      ansvariga: ansvarigIds.map((id) => ({ id, name: (coMap.get(id) || "") })).filter((x) => x.name),
+      adress: adr ? (typeof adr === "string" ? adr : _str(adr.address)) : "",
+      yta: _num(o.Yta),
+      arbetsplatser: _num(o.Arbetsplatser),
+      budget: _num(o.Budget),
+      motesrum: (Array.isArray(o["Mötesrum"]) ? o["Mötesrum"] : []).length,
+      intern: (Array.isArray(o.intern_lokal) ? o.intern_lokal : []).length,
+    };
+  }
+  function _officeWrite(p, b, isCreate) {
+    if (b.name !== undefined) p["Office_title"] = _str(b.name);
+    if (b.fastighet_id !== undefined) { const v = _ref(b.fastighet_id); if (v || !isCreate) p["Fastighet"] = v || ""; }
+    if (b.ansvarig_ids !== undefined) { const a = Array.isArray(b.ansvarig_ids) ? b.ansvarig_ids.filter(Boolean) : []; if (a.length || !isCreate) p["Kontorsansvarig"] = a; }
+    for (const [k, f] of [["yta", "Yta"], ["arbetsplatser", "Arbetsplatser"], ["budget", "Budget"]]) {
+      if (b[k] !== undefined) { const n = _num(b[k]); if (n != null) p[f] = n; else if (!isCreate) p[f] = null; }
+    }
+    return p;
+  }
+  async function _createDefaultRooms(officeId, companyId) {
+    const meetingIds = [], internalIds = [];
+    const mr = await bubbleCreate("MeetingRoom", { Name: "Mötesrum", office: officeId, Company: companyId }).catch(() => null);
+    if (mr) meetingIds.push(mr);
+    for (const namn of DEFAULT_INTERNAL_ROOMS) {
+      const il = await bubbleCreate("Internal_local", { Namn: namn, kontor: officeId, "kundföretag": companyId }).catch(() => null);
+      if (il) internalIds.push(il);
+    }
+    const patch = {};
+    if (meetingIds.length) patch["Mötesrum"] = meetingIds;
+    if (internalIds.length) patch["intern_lokal"] = internalIds;
+    if (Object.keys(patch).length) await bubblePatch("Office", officeId, patch).catch(() => {});
+    return { meeting: meetingIds.length, internal: internalIds.length };
+  }
+
+  // ── GET /admin/companies/:id/offices — Kontor-listan + dropdown-data (fastigheter, medarbetare) ──
+  app.options("/admin/companies/:id/offices", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/offices", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const [offs, f, cw] = await Promise.all([
+        bubbleFindAll("Office", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
+        _fastigheter().catch(() => ({ map: new Map(), list: [] })),
+        _companyCoworkerMap(id),
+      ]);
+      const rows = (offs || []).map((o) => nOffice(o, f.map, cw.map)).sort((a, b) => a.name.localeCompare(b.name, "sv"));
+      return res.json({ ok: true, count: rows.length, rows, fastigheter: f.list, coworkers: cw.list });
+    } catch (e) {
+      console.error("[/admin/companies/:id/offices]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── POST /admin/companies/:id/office/create — nytt kontor + auto-rumsuppsättning ──
+  app.options("/admin/companies/:id/office/create", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/:id/office/create", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim();
+    if (!cid) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    try {
+      const b = req.body || {};
+      if (!_str(b.name).trim()) return res.status(400).json({ ok: false, error: "namn_krävs" });
+      const payload = _officeWrite({ "Kundföretag": cid }, b, true);
+      const officeId = await bubbleCreate("Office", payload);
+      if (!officeId) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
+      const rooms = await _createDefaultRooms(officeId, cid);   // default-rum för kvalitetskontroller
+      const [fresh, f, cw] = await Promise.all([bubbleGet("Office", officeId).catch(() => null), _fastigheter().catch(() => ({ map: new Map() })), _companyCoworkerMap(cid)]);
+      return res.json({ ok: true, id: officeId, rooms, row: fresh ? nOffice(fresh, f.map, cw.map) : null });
+    } catch (e) {
+      console.error("[/admin/companies/:id/office/create]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ── PATCH /admin/companies/office/:id — redigera kontor (grundfält) ──
+  app.options("/admin/companies/office/:id", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.patch("/admin/companies/office/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const cur = await bubbleGet("Office", id).catch(() => null);
+      if (!cur) return res.status(404).json({ ok: false, error: "office_not_found" });
+      const p = _officeWrite({}, req.body || {}, false);
+      if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "no_fields" });
+      await bubblePatch("Office", id, p);
+      const companyId = _ref(cur["Kundföretag"]) || "";
+      const [fresh, f, cw] = await Promise.all([bubbleGet("Office", id).catch(() => null), _fastigheter().catch(() => ({ map: new Map() })), _companyCoworkerMap(companyId)]);
+      return res.json({ ok: true, id, patched: p, row: fresh ? nOffice(fresh, f.map, cw.map) : null });
+    } catch (e) {
+      console.error("[/admin/companies/office/:id PATCH]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ── Rum i ett kontor (Kontor 1b): MeetingRoom (office) + Internal_local (kontor) ──
+  const _ROOM = { meeting: { type: "MeetingRoom", ref: "office", nameKey: "Name", companyKey: "Company", list: "Mötesrum" },
+                  internal: { type: "Internal_local", ref: "kontor", nameKey: "Namn", companyKey: "kundföretag", list: "intern_lokal" } };
+  function _byName(a, b) { return _str(a.name).localeCompare(_str(b.name), "sv"); }
+
+  // GET /admin/companies/office/:id/rooms — mötesrum + interna lokaler för kontoret
+  app.options("/admin/companies/office/:id/rooms", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/office/:id/rooms", async (req, res) => {
+    if (!guard(req, res)) return;
+    const oid = _str(req.params.id).trim();
+    if (!oid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const [mrs, ils] = await Promise.all([
+        bubbleFindAll("MeetingRoom", { constraints: [{ key: "office", constraint_type: "equals", value: oid }] }).catch(() => []),
+        bubbleFindAll("Internal_local", { constraints: [{ key: "kontor", constraint_type: "equals", value: oid }] }).catch(() => []),
+      ]);
+      const meetingrooms = (mrs || []).map((r) => ({ id: bubbleId(r), name: _str(r.Name), email: _str(r.room_email) })).sort(_byName);
+      const internals = (ils || []).map((r) => ({ id: bubbleId(r), name: _str(r.Namn) })).sort(_byName);
+      return res.json({ ok: true, meetingrooms, internals });
+    } catch (e) {
+      console.error("[/admin/companies/office/:id/rooms]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // POST /admin/companies/office/:id/room {type:meeting|internal, name} — lägg till rum
+  app.options("/admin/companies/office/:id/room", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/office/:id/room", async (req, res) => {
+    if (!guard(req, res)) return;
+    const oid = _str(req.params.id).trim();
+    if (!oid) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    const b = req.body || {};
+    const spec = _ROOM[_str(b.type)];
+    if (!spec) return res.status(400).json({ ok: false, error: "bad_type" });
+    const name = _str(b.name).trim();
+    if (!name) return res.status(400).json({ ok: false, error: "namn_krävs" });
+    try {
+      const office = await bubbleGet("Office", oid).catch(() => null);
+      if (!office) return res.status(404).json({ ok: false, error: "office_not_found" });
+      const companyId = _ref(office["Kundföretag"]) || "";
+      const payload = { [spec.nameKey]: name, [spec.ref]: oid };
+      if (companyId) payload[spec.companyKey] = companyId;
+      const id = await bubbleCreate(spec.type, payload);
+      if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
+      const cur = (Array.isArray(office[spec.list]) ? office[spec.list] : []).map(_ref).filter(Boolean);
+      cur.push(id);
+      await bubblePatch("Office", oid, { [spec.list]: cur }).catch(() => {});
+      return res.json({ ok: true, id, type: _str(b.type) });
+    } catch (e) {
+      console.error("[/admin/companies/office/:id/room]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // DELETE /admin/companies/office/:oid/room/:rid?type=meeting|internal — radera rum
+  app.options("/admin/companies/office/:oid/room/:rid", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.delete("/admin/companies/office/:oid/room/:rid", async (req, res) => {
+    if (!guard(req, res)) return;
+    const oid = _str(req.params.oid).trim(), rid = _str(req.params.rid).trim();
+    const spec = _ROOM[_str(req.query.type)];
+    if (!oid || !rid) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (!spec) return res.status(400).json({ ok: false, error: "bad_type" });
+    if (typeof bubbleDelete !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    try {
+      const office = await bubbleGet("Office", oid).catch(() => null);
+      await bubbleDelete(spec.type, rid).catch((e) => { throw e; });
+      if (office) {
+        const cur = (Array.isArray(office[spec.list]) ? office[spec.list] : []).map(_ref).filter((x) => x && x !== rid);
+        await bubblePatch("Office", oid, { [spec.list]: cur }).catch(() => {});
+      }
+      return res.json({ ok: true, id: rid });
+    } catch (e) {
+      console.error("[/admin/companies/office/:oid/room/:rid DELETE]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });

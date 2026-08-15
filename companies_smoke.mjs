@@ -39,9 +39,11 @@ const STORE = {
     { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
   ],
   Office: [
-    { _id: "of1", "Kundföretag": "cc1", "Office_title": "CMIAB Sthlm" },
+    { _id: "of1", "Kundföretag": "cc1", "Office_title": "CMIAB Sthlm", "Fastighet": "f1", "Kontorsansvarig": ["co1"], "office_address": { address: "Kammakargatan 12, Stockholm" }, "Yta": 200, "Arbetsplatser": 10, "Budget": 500000, "Mötesrum": ["m1"], "intern_lokal": ["i1", "i2"] },
     { _id: "of2", "Kundföretag": "cc1", "Office_title": "CMIAB Göteborg" },
   ],
+  MeetingRoom: [{ _id: "m1", office: "of1", Company: "cc1", Name: "Stora mötesrummet", room_email: "stora@acme.se" }],
+  Internal_local: [{ _id: "i1", kontor: "of1", "kundföretag": "cc1", Namn: "Pentry" }, { _id: "i2", kontor: "of1", "kundföretag": "cc1", Namn: "Toaletter" }],
   OfferApprovalRequest: [
     { _id: "oar1", clientcompany: "cc1", rubrik: "Avtal — CMIAB", status: "Approved", signed_count: 1, recipients_count: 1, "Created Date": "2026-08-05" },
     { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
@@ -92,6 +94,7 @@ const deps = {
   bubbleGet: async (t, id) => { if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
   bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; } if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); } return {}; },
   bubbleCreate: async (t, payload) => { const id = "new_" + (++_idc); (STORE[t] = STORE[t] || []).push(Object.assign({ _id: id }, payload)); return id; },
+  bubbleDelete: async (t, id) => { if (STORE[t]) { const i = STORE[t].findIndex((r) => r._id === id); if (i >= 0) STORE[t].splice(i, 1); } return {}; },
   bubbleUploadFile: async ({ filename }) => "//files/" + filename,   // fejkad Bubble file storage
   // photoUpload utelämnas → _photoMw blir passthrough; testet sätter req.file direkt.
   companyFullMap: async () => FULL,
@@ -107,7 +110,7 @@ const deps = {
 };
 
 // Fångar SISTA handlern per rout (foto-routen registreras med middleware + handler → ta sista).
-function mk() { const routes = { get: {}, post: {}, patch: {}, options: {} }; const last = (a) => a[a.length - 1]; return { app: { get: (p, ...a) => { routes.get[p] = last(a); }, post: (p, ...a) => { routes.post[p] = last(a); }, patch: (p, ...a) => { routes.patch[p] = last(a); }, options: (p, ...a) => { routes.options[p] = last(a); } }, routes }; }
+function mk() { const routes = { get: {}, post: {}, patch: {}, delete: {}, options: {} }; const last = (a) => a[a.length - 1]; return { app: { get: (p, ...a) => { routes.get[p] = last(a); }, post: (p, ...a) => { routes.post[p] = last(a); }, patch: (p, ...a) => { routes.patch[p] = last(a); }, delete: (p, ...a) => { routes.delete[p] = last(a); }, options: (p, ...a) => { routes.options[p] = last(a); } }, routes }; }
 function call(routes, method, path, { query = {}, params = {}, body = {}, file = undefined } = {}) {
   const h = routes[method][path]; if (!h) throw new Error("no route " + method + " " + path);
   return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); }, sendStatus(c) { r({ code: c, body: null }); } }; h({ params, query, body, file, headers: {} }, res); });
@@ -355,6 +358,55 @@ const run = async () => {
   ok("historik/patch inga fält → 400", hpNo.code === 400 && hpNo.body.error === "no_fields");
   var hp404 = await call(s.routes, "post", "/admin/companies/historik/:id/patch", { params: { id: "nope" }, body: { beskrivning: "x" } });
   ok("historik/patch okänt id → 404", hp404.code === 404);
+
+  // ── INSTÄLLNINGAR: KONTOR (Office) ──
+  var of = await call(s.routes, "get", "/admin/companies/:id/offices", { params: { id: "cc1" } });
+  ok("offices → 2 (cc1), sorterade + dropdown-data", of.body.ok && of.body.count === 2 && of.body.fastigheter.length === 2 && of.body.coworkers.length >= 2);
+  var of1 = of.body.rows.filter(function(r){return r.id==="of1";})[0];
+  ok("office nOffice: namn/fastighet/ansvarig/adress/yta/arbetsplatser/budget/rum-antal", of1.name === "CMIAB Sthlm" && of1.fastighet === "Kungsgatan 1" && of1.ansvariga.length === 1 && of1.ansvariga[0].name === "Testare Testsson" && of1.adress === "Kammakargatan 12, Stockholm" && of1.yta === 200 && of1.arbetsplatser === 10 && of1.budget === 500000 && of1.motesrum === 1 && of1.intern === 2);
+  // skapa kontor + auto-rum
+  var mrBefore = (STORE.MeetingRoom || []).length, ilBefore = (STORE.Internal_local || []).length, ofBefore = STORE.Office.length;
+  var oc = await call(s.routes, "post", "/admin/companies/:id/office/create", { params: { id: "cc1" }, body: { name: "CMIAB Malmö", fastighet_id: "f2", ansvarig_ids: ["co1"], yta: "350", arbetsplatser: "25", budget: "800000" } });
+  ok("office/create ok + rum-rapport (1 mötesrum + 8 interna)", oc.body.ok && oc.body.rooms.meeting === 1 && oc.body.rooms.internal === 8 && STORE.Office.length === ofBefore + 1);
+  var newOf = STORE.Office[STORE.Office.length - 1];
+  ok("nytt kontor: Office_title/Kundföretag/Fastighet/Kontorsansvarig/Yta/Arbetsplatser/Budget", newOf["Office_title"] === "CMIAB Malmö" && newOf["Kundföretag"] === "cc1" && newOf["Fastighet"] === "f2" && JSON.stringify(newOf["Kontorsansvarig"]) === '["co1"]' && newOf["Yta"] === 350 && newOf["Arbetsplatser"] === 25 && newOf["Budget"] === 800000);
+  ok("auto-rum skapade: 1 MeetingRoom + 8 Internal_local med rätt kopplingar", (STORE.MeetingRoom || []).length === mrBefore + 1 && (STORE.Internal_local || []).length === ilBefore + 8);
+  var newMr = STORE.MeetingRoom[STORE.MeetingRoom.length - 1];
+  var newIl = STORE.Internal_local[STORE.Internal_local.length - 1];
+  ok("MeetingRoom: Name/office/Company", newMr.Name === "Mötesrum" && newMr.office === newOf._id && newMr.Company === "cc1");
+  ok("Internal_local: Namn ur default-listan + kontor/kundföretag", newIl.Namn === "Kontorsrum" && newIl.kontor === newOf._id && newIl["kundföretag"] === "cc1");
+  ok("Office-listorna Mötesrum/intern_lokal appendade (8 interna)", (newOf["Mötesrum"] || []).length === 1 && (newOf["intern_lokal"] || []).length === 8);
+  var ocTom = await call(s.routes, "post", "/admin/companies/:id/office/create", { params: { id: "cc1" }, body: {} });
+  ok("office/create utan namn → 400", ocTom.code === 400 && ocTom.body.error === "namn_krävs");
+  // redigera kontor
+  var op = await call(s.routes, "patch", "/admin/companies/office/:id", { params: { id: "of1" }, body: { name: "CMIAB Sthlm HK", yta: "225", ansvarig_ids: ["co2"] } });
+  ok("office PATCH ok (namn/yta/ansvarig)", op.body.ok && STORE.Office[0]["Office_title"] === "CMIAB Sthlm HK" && STORE.Office[0]["Yta"] === 225 && JSON.stringify(STORE.Office[0]["Kontorsansvarig"]) === '["co2"]' && op.body.row.yta === 225);
+  var opNo = await call(s.routes, "patch", "/admin/companies/office/:id", { params: { id: "of1" }, body: {} });
+  ok("office PATCH inga fält → 400", opNo.code === 400 && opNo.body.error === "no_fields");
+  var op404 = await call(s.routes, "patch", "/admin/companies/office/:id", { params: { id: "nope" }, body: { name: "X" } });
+  ok("office PATCH okänt id → 404", op404.code === 404);
+
+  // ── KONTOR 1b: rum (mötesrum + interna lokaler) ──
+  var rm = await call(s.routes, "get", "/admin/companies/office/:id/rooms", { params: { id: "of1" } });
+  ok("office rooms → mötesrum + interna lokaler (bara detta kontors)", rm.body.ok && rm.body.meetingrooms.length === 1 && rm.body.meetingrooms[0].name === "Stora mötesrummet" && rm.body.meetingrooms[0].email === "stora@acme.se" && rm.body.internals.length === 2);
+  var ilBefore2 = STORE.Internal_local.length;
+  var ra = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "internal", name: "Dusch" } });
+  ok("room/create internal ok + rad skapad", ra.body.ok && STORE.Internal_local.length === ilBefore2 + 1);
+  var newRoom = STORE.Internal_local[STORE.Internal_local.length - 1];
+  ok("nytt internal-rum: Namn/kontor/kundföretag + Office.intern_lokal appendad", newRoom.Namn === "Dusch" && newRoom.kontor === "of1" && newRoom["kundföretag"] === "cc1" && (STORE.Office[0]["intern_lokal"] || []).indexOf(newRoom._id) > -1);
+  var rmr = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "meeting", name: "Lilla rummet" } });
+  ok("room/create meeting ok (Name/office/Company)", rmr.body.ok && STORE.MeetingRoom.some(function(r){return r.Name === "Lilla rummet" && r.office === "of1" && r.Company === "cc1";}));
+  var raBad = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "x", name: "Y" } });
+  ok("room/create bad_type → 400", raBad.code === 400 && raBad.body.error === "bad_type");
+  var raTom = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "internal" } });
+  ok("room/create utan namn → 400", raTom.code === 400 && raTom.body.error === "namn_krävs");
+  var ra404 = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "nope" }, body: { type: "internal", name: "X" } });
+  ok("room/create okänt kontor → 404", ra404.code === 404);
+  var delBefore = STORE.Internal_local.length;
+  var rd = await call(s.routes, "delete", "/admin/companies/office/:oid/room/:rid", { params: { oid: "of1", rid: "i1" }, query: { type: "internal" } });
+  ok("room DELETE ok + borttagen ur STORE + ur Office-listan", rd.body.ok && STORE.Internal_local.length === delBefore - 1 && !STORE.Internal_local.some(function(r){return r._id === "i1";}) && (STORE.Office[0]["intern_lokal"] || []).indexOf("i1") === -1);
+  var rdBad = await call(s.routes, "delete", "/admin/companies/office/:oid/room/:rid", { params: { oid: "of1", rid: "i2" }, query: { type: "x" } });
+  ok("room DELETE bad_type → 400", rdBad.code === 400 && rdBad.body.error === "bad_type");
 
   // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
   var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });
