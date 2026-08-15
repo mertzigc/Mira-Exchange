@@ -44,7 +44,7 @@ const STORE = {
   ],
   MeetingRoom: [{ _id: "m1", office: "of1", Company: "cc1", Name: "Stora mötesrummet", room_email: "stora@acme.se" }],
   // i1 = ref-väg (kontor satt); i2 = list-väg (INGET kontor, ligger bara i Office.intern_lokal — som native-rum)
-  Internal_local: [{ _id: "i1", kontor: "of1", "kundföretag": "cc1", Namn: "Pentry" }, { _id: "i2", "kundföretag": "cc1", Namn: "Toaletter" }],
+  Internal_room: [{ _id: "i1", kontor: "of1", "kundföretag": "cc1", Namn: "Pentry" }, { _id: "i2", "kundföretag": "cc1", Namn: "Toaletter" }],
   OfferApprovalRequest: [
     { _id: "oar1", clientcompany: "cc1", rubrik: "Avtal — CMIAB", status: "Approved", signed_count: 1, recipients_count: 1, "Created Date": "2026-08-05" },
     { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
@@ -366,16 +366,16 @@ const run = async () => {
   var of1 = of.body.rows.filter(function(r){return r.id==="of1";})[0];
   ok("office nOffice: namn/fastighet/ansvarig/adress/yta/arbetsplatser/budget/rum-antal", of1.name === "CMIAB Sthlm" && of1.fastighet === "Kungsgatan 1" && of1.ansvariga.length === 1 && of1.ansvariga[0].name === "Testare Testsson" && of1.adress === "Kammakargatan 12, Stockholm" && of1.yta === 200 && of1.arbetsplatser === 10 && of1.budget === 500000 && of1.motesrum === 1 && of1.intern === 2);
   // skapa kontor + auto-rum
-  var mrBefore = (STORE.MeetingRoom || []).length, ilBefore = (STORE.Internal_local || []).length, ofBefore = STORE.Office.length;
+  var mrBefore = (STORE.MeetingRoom || []).length, ilBefore = (STORE.Internal_room || []).length, ofBefore = STORE.Office.length;
   var oc = await call(s.routes, "post", "/admin/companies/:id/office/create", { params: { id: "cc1" }, body: { name: "CMIAB Malmö", fastighet_id: "f2", ansvarig_ids: ["co1"], yta: "350", arbetsplatser: "25", budget: "800000" } });
   ok("office/create ok + rum-rapport (1 mötesrum + 8 interna)", oc.body.ok && oc.body.rooms.meeting === 1 && oc.body.rooms.internal === 8 && STORE.Office.length === ofBefore + 1);
   var newOf = STORE.Office[STORE.Office.length - 1];
   ok("nytt kontor: Office_title/Kundföretag/Fastighet/Kontorsansvarig/Yta/Arbetsplatser/Budget", newOf["Office_title"] === "CMIAB Malmö" && newOf["Kundföretag"] === "cc1" && newOf["Fastighet"] === "f2" && JSON.stringify(newOf["Kontorsansvarig"]) === '["co1"]' && newOf["Yta"] === 350 && newOf["Arbetsplatser"] === 25 && newOf["Budget"] === 800000);
-  ok("auto-rum skapade: 1 MeetingRoom + 8 Internal_local med rätt kopplingar", (STORE.MeetingRoom || []).length === mrBefore + 1 && (STORE.Internal_local || []).length === ilBefore + 8);
+  ok("auto-rum skapade: 1 MeetingRoom + 8 Internal_room med rätt kopplingar", (STORE.MeetingRoom || []).length === mrBefore + 1 && (STORE.Internal_room || []).length === ilBefore + 8);
   var newMr = STORE.MeetingRoom[STORE.MeetingRoom.length - 1];
-  var newIl = STORE.Internal_local[STORE.Internal_local.length - 1];
+  var newIl = STORE.Internal_room[STORE.Internal_room.length - 1];
   ok("MeetingRoom: Name/office/Company", newMr.Name === "Mötesrum" && newMr.office === newOf._id && newMr.Company === "cc1");
-  ok("Internal_local: Namn ur default-listan + kontor/kundföretag", newIl.Namn === "Kontorsrum" && newIl.kontor === newOf._id && newIl["kundföretag"] === "cc1");
+  ok("Internal_room: Namn ur default-listan + kontor/kundföretag", newIl.Namn === "Kontorsrum" && newIl.kontor === newOf._id && newIl["kundföretag"] === "cc1");
   ok("Office-listorna Mötesrum/intern_lokal appendade (8 interna)", (newOf["Mötesrum"] || []).length === 1 && (newOf["intern_lokal"] || []).length === 8);
   var ocTom = await call(s.routes, "post", "/admin/companies/:id/office/create", { params: { id: "cc1" }, body: {} });
   ok("office/create utan namn → 400", ocTom.code === 400 && ocTom.body.error === "namn_krävs");
@@ -392,10 +392,10 @@ const run = async () => {
   ok("office rooms → union av Office-listan (i2, ingen ref) + ref-query (i1) → 2 interna + 1 mötesrum", rm.body.ok && rm.body.meetingrooms.length === 1 && rm.body.meetingrooms[0].name === "Stora mötesrummet" && rm.body.meetingrooms[0].email === "stora@acme.se" && rm.body.internals.length === 2 && rm.body.internals.some(function(r){return r.id==="i2";}));
   var rm404 = await call(s.routes, "get", "/admin/companies/office/:id/rooms", { params: { id: "nope" } });
   ok("office rooms okänt kontor → 404", rm404.code === 404);
-  var ilBefore2 = STORE.Internal_local.length;
+  var ilBefore2 = STORE.Internal_room.length;
   var ra = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "internal", name: "Dusch" } });
-  ok("room/create internal ok + rad skapad", ra.body.ok && STORE.Internal_local.length === ilBefore2 + 1);
-  var newRoom = STORE.Internal_local[STORE.Internal_local.length - 1];
+  ok("room/create internal ok + rad skapad", ra.body.ok && STORE.Internal_room.length === ilBefore2 + 1);
+  var newRoom = STORE.Internal_room[STORE.Internal_room.length - 1];
   ok("nytt internal-rum: Namn/kontor/kundföretag + Office.intern_lokal appendad", newRoom.Namn === "Dusch" && newRoom.kontor === "of1" && newRoom["kundföretag"] === "cc1" && (STORE.Office[0]["intern_lokal"] || []).indexOf(newRoom._id) > -1);
   var rmr = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "meeting", name: "Lilla rummet" } });
   ok("room/create meeting ok (Name/office/Company)", rmr.body.ok && STORE.MeetingRoom.some(function(r){return r.Name === "Lilla rummet" && r.office === "of1" && r.Company === "cc1";}));
@@ -405,9 +405,9 @@ const run = async () => {
   ok("room/create utan namn → 400", raTom.code === 400 && raTom.body.error === "namn_krävs");
   var ra404 = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "nope" }, body: { type: "internal", name: "X" } });
   ok("room/create okänt kontor → 404", ra404.code === 404);
-  var delBefore = STORE.Internal_local.length;
+  var delBefore = STORE.Internal_room.length;
   var rd = await call(s.routes, "delete", "/admin/companies/office/:oid/room/:rid", { params: { oid: "of1", rid: "i1" }, query: { type: "internal" } });
-  ok("room DELETE ok + borttagen ur STORE + ur Office-listan", rd.body.ok && STORE.Internal_local.length === delBefore - 1 && !STORE.Internal_local.some(function(r){return r._id === "i1";}) && (STORE.Office[0]["intern_lokal"] || []).indexOf("i1") === -1);
+  ok("room DELETE ok + borttagen ur STORE + ur Office-listan", rd.body.ok && STORE.Internal_room.length === delBefore - 1 && !STORE.Internal_room.some(function(r){return r._id === "i1";}) && (STORE.Office[0]["intern_lokal"] || []).indexOf("i1") === -1);
   var rdBad = await call(s.routes, "delete", "/admin/companies/office/:oid/room/:rid", { params: { oid: "of1", rid: "i2" }, query: { type: "x" } });
   ok("room DELETE bad_type → 400", rdBad.code === 400 && rdBad.body.error === "bad_type");
 

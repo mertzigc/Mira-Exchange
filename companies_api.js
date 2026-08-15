@@ -747,9 +747,9 @@ export function registerCompaniesRoutes(app, deps) {
   // ══════════════ INSTÄLLNINGAR — KONTOR (Office) ══════════════
   // Office-fält (Bubble-schema verifierat 2026-08-15): Office_title(text), Kundföretag(ClientCompany),
   // Fastighet(ref), Kontorsansvarig(List of Coworker), office_address(geo), Yta(number),
-  // Arbetsplatser(number), Budget(number), Mötesrum(List of MeetingRoom), intern_lokal(List of Internal_local).
+  // Arbetsplatser(number), Budget(number), Mötesrum(List of MeetingRoom), intern_lokal(List of Internal_room).
   // Vid nytt kontor auto-skapas en default-rumsuppsättning (för kvalitetskontroller): 1 MeetingRoom +
-  // 8 Internal_local. Rummen bär tillbaka-ref (office/kontor + Company/kundföretag) OCH appendas till
+  // 8 Internal_room. Rummen bär tillbaka-ref (office/kontor + Company/kundföretag) OCH appendas till
   // Office-listorna (Mötesrum/intern_lokal) så native-vyerna hittar dem.
   const DEFAULT_INTERNAL_ROOMS = ["Toaletter", "Kopieringsutrymme/Förråd", "Pentry", "Reception/Lounge", "Korridor", "Dusch", "Städförråd", "Kontorsrum"];
   async function _companyCoworkerMap(companyId) {
@@ -797,7 +797,7 @@ export function registerCompaniesRoutes(app, deps) {
     const mr = await bubbleCreate("MeetingRoom", { Name: "Mötesrum", office: officeId, Company: companyId }).catch(() => null);
     if (mr) meetingIds.push(mr);
     for (const namn of DEFAULT_INTERNAL_ROOMS) {
-      const il = await bubbleCreate("Internal_local", { Namn: namn, kontor: officeId, "kundföretag": companyId }).catch(() => null);
+      const il = await bubbleCreate("Internal_room", { Namn: namn, kontor: officeId, "kundföretag": companyId }).catch(() => null);
       if (il) internalIds.push(il);
     }
     const patch = {};
@@ -870,9 +870,9 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
-  // ── Rum i ett kontor (Kontor 1b): MeetingRoom (office) + Internal_local (kontor) ──
+  // ── Rum i ett kontor (Kontor 1b): MeetingRoom (office) + Internal_room (kontor) ──
   const _ROOM = { meeting: { type: "MeetingRoom", ref: "office", nameKey: "Name", companyKey: "Company", list: "Mötesrum" },
-                  internal: { type: "Internal_local", ref: "kontor", nameKey: "Namn", companyKey: "kundföretag", list: "intern_lokal" } };
+                  internal: { type: "Internal_room", ref: "kontor", nameKey: "Namn", companyKey: "kundföretag", list: "intern_lokal" } };
   function _byName(a, b) { return _str(a.name).localeCompare(_str(b.name), "sv"); }
 
   // Rummen hittas via TVÅ vägar (native-skapade rum saknar ofta tillbaka-ref, de ligger bara i
@@ -884,9 +884,9 @@ export function registerCompaniesRoutes(app, deps) {
     const ilIds = (Array.isArray(office["intern_lokal"]) ? office["intern_lokal"] : []).map(_ref).filter(Boolean);
     const [mrList, ilList, mrRef, ilRef] = await Promise.all([
       Promise.all(mrIds.map((id) => bubbleGet("MeetingRoom", id).catch(() => null))),
-      Promise.all(ilIds.map((id) => bubbleGet("Internal_local", id).catch(() => null))),
+      Promise.all(ilIds.map((id) => bubbleGet("Internal_room", id).catch(() => null))),
       bubbleFindAll("MeetingRoom", { constraints: [{ key: "office", constraint_type: "equals", value: oid }] }).catch(() => []),
-      bubbleFindAll("Internal_local", { constraints: [{ key: "kontor", constraint_type: "equals", value: oid }] }).catch(() => []),
+      bubbleFindAll("Internal_room", { constraints: [{ key: "kontor", constraint_type: "equals", value: oid }] }).catch(() => []),
     ]);
     return { mrs: _dedupRooms([].concat(mrList, mrRef || [])), ils: _dedupRooms([].concat(ilList, ilRef || [])) };
   }
