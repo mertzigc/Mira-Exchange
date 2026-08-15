@@ -875,6 +875,22 @@ export function registerCompaniesRoutes(app, deps) {
                   internal: { type: "Internal_local", ref: "kontor", nameKey: "Namn", companyKey: "kundföretag", list: "intern_lokal" } };
   function _byName(a, b) { return _str(a.name).localeCompare(_str(b.name), "sv"); }
 
+  // Rummen hittas via TVÅ vägar (native-skapade rum saknar ofta tillbaka-ref, de ligger bara i
+  // Office-LISTAN Mötesrum/intern_lokal): (1) per-id ur Office-listan, (2) ref-query (office/kontor).
+  // Union + dedup → komplett oavsett hur rummet kopplades. (Rums-antal/kontor är litet → per-id ok.)
+  function _dedupRooms(arr) { const seen = new Set(), out = []; for (const r of arr) { if (!r) continue; const id = bubbleId(r); if (id && !seen.has(id)) { seen.add(id); out.push(r); } } return out; }
+  async function _officeRooms(office, oid) {
+    const mrIds = (Array.isArray(office["Mötesrum"]) ? office["Mötesrum"] : []).map(_ref).filter(Boolean);
+    const ilIds = (Array.isArray(office["intern_lokal"]) ? office["intern_lokal"] : []).map(_ref).filter(Boolean);
+    const [mrList, ilList, mrRef, ilRef] = await Promise.all([
+      Promise.all(mrIds.map((id) => bubbleGet("MeetingRoom", id).catch(() => null))),
+      Promise.all(ilIds.map((id) => bubbleGet("Internal_local", id).catch(() => null))),
+      bubbleFindAll("MeetingRoom", { constraints: [{ key: "office", constraint_type: "equals", value: oid }] }).catch(() => []),
+      bubbleFindAll("Internal_local", { constraints: [{ key: "kontor", constraint_type: "equals", value: oid }] }).catch(() => []),
+    ]);
+    return { mrs: _dedupRooms([].concat(mrList, mrRef || [])), ils: _dedupRooms([].concat(ilList, ilRef || [])) };
+  }
+
   // GET /admin/companies/office/:id/rooms — mötesrum + interna lokaler för kontoret
   app.options("/admin/companies/office/:id/rooms", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.get("/admin/companies/office/:id/rooms", async (req, res) => {
@@ -882,12 +898,11 @@ export function registerCompaniesRoutes(app, deps) {
     const oid = _str(req.params.id).trim();
     if (!oid) return res.status(400).json({ ok: false, error: "missing_id" });
     try {
-      const [mrs, ils] = await Promise.all([
-        bubbleFindAll("MeetingRoom", { constraints: [{ key: "office", constraint_type: "equals", value: oid }] }).catch(() => []),
-        bubbleFindAll("Internal_local", { constraints: [{ key: "kontor", constraint_type: "equals", value: oid }] }).catch(() => []),
-      ]);
-      const meetingrooms = (mrs || []).map((r) => ({ id: bubbleId(r), name: _str(r.Name), email: _str(r.room_email) })).sort(_byName);
-      const internals = (ils || []).map((r) => ({ id: bubbleId(r), name: _str(r.Namn) })).sort(_byName);
+      const office = await bubbleGet("Office", oid).catch(() => null);
+      if (!office) return res.status(404).json({ ok: false, error: "office_not_found" });
+      const { mrs, ils } = await _officeRooms(office, oid);
+      const meetingrooms = mrs.map((r) => ({ id: bubbleId(r), name: _str(r.Name), email: _str(r.room_email) })).sort(_byName);
+      const internals = ils.map((r) => ({ id: bubbleId(r), name: _str(r.Namn) })).sort(_byName);
       return res.json({ ok: true, meetingrooms, internals });
     } catch (e) {
       console.error("[/admin/companies/office/:id/rooms]", e?.message);

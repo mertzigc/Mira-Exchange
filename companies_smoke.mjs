@@ -43,7 +43,8 @@ const STORE = {
     { _id: "of2", "Kundföretag": "cc1", "Office_title": "CMIAB Göteborg" },
   ],
   MeetingRoom: [{ _id: "m1", office: "of1", Company: "cc1", Name: "Stora mötesrummet", room_email: "stora@acme.se" }],
-  Internal_local: [{ _id: "i1", kontor: "of1", "kundföretag": "cc1", Namn: "Pentry" }, { _id: "i2", kontor: "of1", "kundföretag": "cc1", Namn: "Toaletter" }],
+  // i1 = ref-väg (kontor satt); i2 = list-väg (INGET kontor, ligger bara i Office.intern_lokal — som native-rum)
+  Internal_local: [{ _id: "i1", kontor: "of1", "kundföretag": "cc1", Namn: "Pentry" }, { _id: "i2", "kundföretag": "cc1", Namn: "Toaletter" }],
   OfferApprovalRequest: [
     { _id: "oar1", clientcompany: "cc1", rubrik: "Avtal — CMIAB", status: "Approved", signed_count: 1, recipients_count: 1, "Created Date": "2026-08-05" },
     { _id: "oar2", clientcompany: "cc1", rubrik: "Offert FE-2026-0004", status: "Sent", signed_count: 0, recipients_count: 1, "Created Date": "2026-07-31" },
@@ -388,7 +389,9 @@ const run = async () => {
 
   // ── KONTOR 1b: rum (mötesrum + interna lokaler) ──
   var rm = await call(s.routes, "get", "/admin/companies/office/:id/rooms", { params: { id: "of1" } });
-  ok("office rooms → mötesrum + interna lokaler (bara detta kontors)", rm.body.ok && rm.body.meetingrooms.length === 1 && rm.body.meetingrooms[0].name === "Stora mötesrummet" && rm.body.meetingrooms[0].email === "stora@acme.se" && rm.body.internals.length === 2);
+  ok("office rooms → union av Office-listan (i2, ingen ref) + ref-query (i1) → 2 interna + 1 mötesrum", rm.body.ok && rm.body.meetingrooms.length === 1 && rm.body.meetingrooms[0].name === "Stora mötesrummet" && rm.body.meetingrooms[0].email === "stora@acme.se" && rm.body.internals.length === 2 && rm.body.internals.some(function(r){return r.id==="i2";}));
+  var rm404 = await call(s.routes, "get", "/admin/companies/office/:id/rooms", { params: { id: "nope" } });
+  ok("office rooms okänt kontor → 404", rm404.code === 404);
   var ilBefore2 = STORE.Internal_local.length;
   var ra = await call(s.routes, "post", "/admin/companies/office/:id/room", { params: { id: "of1" }, body: { type: "internal", name: "Dusch" } });
   ok("room/create internal ok + rad skapad", ra.body.ok && STORE.Internal_local.length === ilBefore2 + 1);
