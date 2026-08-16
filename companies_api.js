@@ -352,7 +352,7 @@ export function registerCompaniesRoutes(app, deps) {
       // Counts per flik (parallellt). Företagsfält per typ: Mira=kundföretag/kundforetag/client_company,
       // Fortnox=linked_company. Personer/drift byggs senare → null.
       const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
-      const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount, persCount] = await Promise.all([
+      const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount, persCount, driftCount] = await Promise.all([
         _companyActivityRows(id).then((r) => r.length).catch(() => null),   // union company+clientcompany (dedup)
         bubbleCount("deal", eqc("kundföretag")).catch(() => null),
         bubbleCount("Lead", eqc("client_company")).catch(() => null),
@@ -362,6 +362,7 @@ export function registerCompaniesRoutes(app, deps) {
         bubbleCount("FortnoxOrder", eqc("linked_company")).catch(() => null),
         bubbleCount("FortnoxInvoice", eqc("linked_company")).catch(() => null),
         bubbleCount("Coworker", eqc("Kundföretag")).catch(() => null),
+        bubbleCount("Matter", [{ key: "Kundföretag", constraint_type: "equals", value: id }, { key: "status", constraint_type: "equals", value: "Pågående" }]).catch(() => null),   // öppna ärenden
       ]);
       const sumC = (a, b) => ((a == null && b == null) ? null : (Number(a || 0) + Number(b || 0)));
 
@@ -397,7 +398,7 @@ export function registerCompaniesRoutes(app, deps) {
         counts: {
           avtal: (contracts || []).length, historik: histCount, deals: dealCount,
           leads: leadCount, offerter: sumC(offMC, offFC), ordrar: sumC(ordMC, ordFC), fakturor: invCount,
-          personer: persCount, drift: null,
+          personer: persCount, drift: driftCount,
         },
         meta: {
           facets: _facets(full), users: u.list, groups: g.list, fastigheter: f.list,
@@ -1182,6 +1183,198 @@ export function registerCompaniesRoutes(app, deps) {
     } catch (e) {
       console.error("[/admin/companies/:id/fastighetsagare/:hid DELETE]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ══════════════ DRIFT — ärenden (Matter) + kvalitetskontroller (QualityControl) ══════════════
+  // Fas 1 = LÄS på kundkortet. Båda kopplade till kund via Kundföretag(ClientCompany).
+  // Ärende: status Pågående=öppen; Avvikelse=yes → Avvikelser. QC: varje yta (Mötesrum/Internal_room)
+  // = en "Kommentar - Comment" (kvalitetskontroll==QC) m. Betyg(Grade.Värde)/Bild/Beskrivning.
+  // Snittbetyg = medel av Grade.Värde där kvalitetskontroll==QC.
+  const _img1 = (v) => { if (Array.isArray(v)) return _httpsUrl(v[0]); return _httpsUrl(v); };
+  const _imgs = (v) => (Array.isArray(v) ? v : (v ? [v] : [])).map(_httpsUrl).filter(Boolean);
+  async function _officeNameMap(companyId) {
+    const offs = await bubbleFindAll("Office", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }] }).catch(() => []);
+    const m = new Map(); for (const o of (offs || [])) { const id = bubbleId(o); if (id) m.set(id, _str(o.Office_title || o.name || o.Name)); } return m;
+  }
+  async function _contractNameMap(companyId) {
+    const cs = await bubbleFindAll("Contract", { constraints: [{ key: "kundföretag", constraint_type: "equals", value: companyId }] }).catch(() => []);
+    const m = new Map(); for (const c of (cs || [])) { const id = bubbleId(c); if (id) m.set(id, _str(c.contract_title || c["kategori"] || c.title)); } return m;
+  }
+  async function _supplierNameMap() {
+    const all = await bubbleFindAll("Leverantör - Supplier", {}).catch(() => []);
+    const m = new Map(); for (const s of (all || [])) { const id = bubbleId(s); if (id) m.set(id, _str(s["Företagsnamn"] || s.name || s.Name)); } return m;
+  }
+  async function _roomNameMap(ids) {
+    const uniq = Array.from(new Set((ids || []).filter(Boolean)));
+    const m = new Map();
+    await Promise.all(uniq.map(async (id) => {
+      let r = await bubbleGet("Internal_room", id).catch(() => null);
+      if (r) { m.set(id, _str(r.Namn || r.name)); return; }
+      r = await bubbleGet("MeetingRoom", id).catch(() => null);
+      if (r) m.set(id, _str(r.Name || r.Namn));
+    }));
+    return m;
+  }
+  function nMatter(r, um, om) {
+    const refId = _ref(r.Referens), kid = _ref(r.Kontor);
+    const st = _str(r.status) || "Pågående";
+    return {
+      id: bubbleId(r),
+      rubrik: _str(r.Rubrik) || _str(r.case_title) || "Ärende",
+      beskrivning: _str(r.Beskrivning) || _str(r.case_description_clean),
+      datum: _day(r.reported_at || r["Created Date"]),
+      referens: (refId && um) ? (um.get(refId) || "") : _str(r.reported_by_name),
+      prioritet: _str(r.Prioritet),
+      kontor: (kid && om) ? (om.get(kid) || "") : "",
+      status: st,
+      open: st === "Pågående",
+      avvikelse: r.Avvikelse === true,
+      bild: _img1(r.Bild),
+      kategori: _str(r.case_category),
+    };
+  }
+  function nQC(r, um, om, cm, sm) {
+    const kid = _ref(r.Kontor), avId = _ref(r.Avtal), leId = _ref(r.Leverantör), ktId = _ref(r.Kontrollant);
+    return {
+      id: bubbleId(r),
+      titel: _str(r.Titel) || "Kvalitetskontroll",
+      datum: _day(r.kontrolldatum || r["Created Date"]),
+      kontor: (kid && om) ? (om.get(kid) || "") : "",
+      avtal: (avId && cm) ? (cm.get(avId) || "") : "",
+      snittbetyg: _num(r.Betyg_lev),
+      leverantor: (leId && sm) ? (sm.get(leId) || "") : "",
+      kontrollant: (ktId && um) ? (um.get(ktId) || "") : "",
+    };
+  }
+
+  // GET /admin/companies/:id/matters — alla ärenden för kunden (frontend delar öppna/avslutade/avvikelser)
+  app.options("/admin/companies/:id/matters", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/matters", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const [raw, uc, om] = await Promise.all([
+        bubbleFindAll("Matter", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
+        _users().catch(() => null),
+        _officeNameMap(id),
+      ]);
+      const rows = (raw || []).map((r) => nMatter(r, uc && uc.map, om)).sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
+      return res.json({ ok: true, count: rows.length, rows });
+    } catch (e) {
+      console.error("[/admin/companies/:id/matters]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // GET /admin/companies/matter/:id — ärende-detalj (läs)
+  app.options("/admin/companies/matter/:id", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/matter/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const m = await bubbleGet("Matter", id).catch(() => null);
+      if (!m) return res.status(404).json({ ok: false, error: "matter_not_found" });
+      const companyId = _ref(m["Kundföretag"]) || "";
+      const [uc, om, cw] = await Promise.all([_users().catch(() => null), _officeNameMap(companyId), _companyCoworkerMap(companyId)]);
+      const base = nMatter(m, uc && uc.map, om);
+      const internIds = (Array.isArray(m["Team åtgärd intern"]) ? m["Team åtgärd intern"] : (m["Team åtgärd intern"] ? [m["Team åtgärd intern"]] : [])).map(_ref).filter(Boolean);
+      const team_intern = internIds.map((cid) => cw.map.get(cid) || "").filter(Boolean);
+      // extern team (Konsult) → best-effort namn
+      const externIds = (Array.isArray(m["Team åtgärd extern"]) ? m["Team åtgärd extern"] : (m["Team åtgärd extern"] ? [m["Team åtgärd extern"]] : [])).map(_ref).filter(Boolean);
+      const externRows = await Promise.all(externIds.map((kid) => bubbleGet("Konsult - Consultant", kid).catch(() => null)));
+      const team_extern = externRows.filter(Boolean).map((k) => (_str(k["Förnamn"] || k["First Name"]) + " " + _str(k["Efternamn"] || k["Last Name"])).trim() || _str(k.Email || k.email || k["Företagsnamn"])).filter(Boolean);
+      const trad = (Array.isArray(m["Tråd"]) ? m["Tråd"] : (m["Tråd"] ? [m["Tråd"]] : [])).map(_str).filter(Boolean);
+      const detail = Object.assign(base, {
+        team_intern, team_extern, trad,
+        feedback: _str(m.Feedback), forbattring: _str(m["Förbättring"]),
+        internservice: m.Internservice === true,
+        bilder: _imgs(m.Bild),
+      });
+      return res.json({ ok: true, matter: detail });
+    } catch (e) {
+      console.error("[/admin/companies/matter/:id]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // GET /admin/companies/:id/qc — alla kvalitetskontroller för kunden
+  app.options("/admin/companies/:id/qc", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/qc", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const [raw, uc, om, cm, sm] = await Promise.all([
+        bubbleFindAll("QualityControl", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
+        _users().catch(() => null), _officeNameMap(id), _contractNameMap(id), _supplierNameMap(),
+      ]);
+      const rows = (raw || []).map((r) => nQC(r, uc && uc.map, om, cm, sm)).sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
+      return res.json({ ok: true, count: rows.length, rows });
+    } catch (e) {
+      console.error("[/admin/companies/:id/qc]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // GET /admin/companies/qc/:id — kvalitetskontroll-detalj (ytorna + snittbetyg + summering + kundutvärdering)
+  app.options("/admin/companies/qc/:id", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/qc/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const qc = await bubbleGet("QualityControl", id).catch(() => null);
+      if (!qc) return res.status(404).json({ ok: false, error: "qc_not_found" });
+      const companyId = _ref(qc["Kundföretag"]) || "";
+      const [uc, om, cm, sm, komments, grades, full] = await Promise.all([
+        _users().catch(() => null), _officeNameMap(companyId), _contractNameMap(companyId), _supplierNameMap(),
+        bubbleFindAll("Kommentar - Comment", { constraints: [{ key: "kvalitetskontroll", constraint_type: "equals", value: id }] }).catch(() => []),
+        bubbleFindAll("Grade", { constraints: [{ key: "kvalitetskontroll", constraint_type: "equals", value: id }] }).catch(() => []),
+        companyFullMap().catch(() => new Map()),
+      ]);
+      const gradeVal = new Map(); const gvals = [];
+      for (const g of (grades || [])) { const gid = bubbleId(g); const v = _num(g["Värde"]); if (gid != null) gradeVal.set(gid, v); if (v != null) gvals.push(v); }
+      // surface-namn: samla intern_lokal + mötesrum-refs ur kommentarerna, resolva
+      const surfIds = []; for (const k of (komments || [])) { const il = _ref(k.Intern_lokal); const mr = _ref(k["Mötesrum"]); if (il) surfIds.push(il); if (mr) surfIds.push(mr); }
+      const roomNames = await _roomNameMap(surfIds);
+      const surfaces = (komments || []).map((k) => {
+        const il = _ref(k.Intern_lokal), mr = _ref(k["Mötesrum"]);
+        const betygId = _ref(k.Betyg);
+        return {
+          namn: (il && roomNames.get(il)) || (mr && roomNames.get(mr)) || "Yta",
+          betyg: betygId != null ? (gradeVal.get(betygId) != null ? gradeVal.get(betygId) : null) : null,
+          bild: _img1(k.Bild),
+          kommentar: _str(k.Beskrivning),
+          godkand: k["Godkänd"] === true,
+        };
+      });
+      const snitt = gvals.length ? Math.round((gvals.reduce((a, b) => a + b, 0) / gvals.length) * 100) / 100 : (_num(qc.Betyg_lev));
+      const kid = _ref(qc.Kontor), avId = _ref(qc.Avtal), leId = _ref(qc.Leverantör), ktId = _ref(qc.Kontrollant);
+      const krIds = (Array.isArray(qc["Kundreferens"]) ? qc["Kundreferens"] : (qc["Kundreferens"] ? [qc["Kundreferens"]] : [])).map(_ref).filter(Boolean);
+      const cwMap = (await _companyCoworkerMap(companyId)).map;
+      return res.json({
+        ok: true,
+        qc: {
+          id, titel: _str(qc.Titel) || "Kvalitetskontroll",
+          datum: _day(qc.kontrolldatum || qc["Created Date"]),
+          kontor: (kid && om.get(kid)) || "",
+          avtal: (avId && cm.get(avId)) || "",
+          leverantor: (leId && sm.get(leId)) || "",
+          kontrollant: (ktId && uc && uc.map.get(ktId)) || "",
+          kund: (full.get(companyId) && full.get(companyId).name) || "",
+          kundreferens: krIds.map((c) => cwMap.get(c) || "").filter(Boolean),
+          snittbetyg: snitt,
+          summering: { arbetsklader: qc["arbetskläder"] === true, servicekort: qc.servicekort === true, stadforrad: qc["städförråd"] === true, meddelande: _str(qc.Meddelande) },
+          kundutvardering: { betyg: _str(qc.betyg_client), feedback: _str(qc.feedback_client) },
+          surfaces,
+        },
+      });
+    } catch (e) {
+      console.error("[/admin/companies/qc/:id]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 

@@ -72,6 +72,25 @@ STORE["Hyresvärd"] = [
   { _id: "hv1", Namn: "Vasakronan", "Hyresgäster": ["cc1"] },
   { _id: "hv2", Namn: "Fabege", "Hyresgäster": [] },
 ];
+// Drift: ärenden (Matter) + kvalitetskontroller (QualityControl) + ytor (Kommentar-Comment) + Grade
+// Kontor=of2 (aldrig omdöpt) + surface=i2 (aldrig raderad) → drift-testerna oberoende av office/room-mutationer
+STORE.Matter = [
+  { _id: "mt1", "Kundföretag": "cc1", Rubrik: "Kaffemaskin trasig", Beskrivning: "Fungerar ej", Kontor: "of2", Referens: "u1", "Created Date": "2026-08-10", Prioritet: "3 - brådskande", status: "Pågående", Avvikelse: false, "Team åtgärd intern": ["co1"], "Tråd": ["Christian: tittar på det"], Feedback: "" },
+  { _id: "mt2", "Kundföretag": "cc1", Rubrik: "Avfallshantering", Beskrivning: "Glas", Kontor: "of2", "Created Date": "2026-07-20", Prioritet: "2", status: "Avslutad", Avvikelse: false },
+  { _id: "mt3", "Kundföretag": "cc1", Rubrik: "Fel städ", Beskrivning: "Ej torkat", Kontor: "of2", "Created Date": "2026-08-05", Prioritet: "3", status: "Pågående", Avvikelse: true },
+  { _id: "mt4", "Kundföretag": "cc2", Rubrik: "Annat bolag", status: "Pågående" },
+];
+STORE.QualityControl = [
+  { _id: "qc1", "Kundföretag": "cc1", Titel: "Regelmässigt städ", Avtal: "ct1", Kontor: "of2", kontrolldatum: "2026-06-09", Kontrollant: "u1", "Leverantör": "sup1", "Betyg_lev": 4, "arbetskläder": true, servicekort: false, "städförråd": true, Meddelande: "Bra jobbat", betyg_client: "Nivå 3", feedback_client: "Nöjda", "Kundreferens": ["co1"] },
+];
+STORE["Kommentar - Comment"] = [
+  { _id: "kc1", kvalitetskontroll: "qc1", "Intern_lokal": "i2", Betyg: "gr1", Bild: "//img/toa.jpg", Beskrivning: "Regelmässig städ ok", "Godkänd": true },
+  { _id: "kc2", kvalitetskontroll: "qc1", "Mötesrum": "m1", Betyg: "gr2", Beskrivning: "Dammsuget", "Godkänd": true },
+];
+STORE.Grade = [
+  { _id: "gr1", kvalitetskontroll: "qc1", "Värde": 4 },
+  { _id: "gr2", kvalitetskontroll: "qc1", "Värde": 4 },
+];
 STORE.PasswordReset = []; STORE.emailqueue = [];   // token-flödet skapar rader här
 let _idc = 0;
 const _cmatch = (r, cs) => (cs || []).every((c) => {
@@ -246,7 +265,7 @@ const run = async () => {
   ok("card counts avtal/historik(company-fältet)/deals", card.body.counts.avtal === 3 && card.body.counts.historik === 4 && card.body.counts.deals === 1);
   ok("card counts leads/offerter/ordrar/fakturor", card.body.counts.leads === 1 && card.body.counts.offerter === 2 && card.body.counts.ordrar === 2 && card.body.counts.fakturor === 2);
   ok("card counts personer=2", card.body.counts.personer === 2);
-  ok("card counts drift ännu null", card.body.counts.drift === null);
+  ok("card counts drift = öppna ärenden (Pågående) = 2", card.body.counts.drift === 2);
 
   // ── CHAIN: reverse-lookup per flik ──
   var chD = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "deals" } });
@@ -463,6 +482,22 @@ const run = async () => {
   ok("fastighetsägare delete → company borttagen ur Hyresgäster", delHv.body.ok && (STORE["Hyresvärd"][0]["Hyresgäster"] || []).indexOf("cc1") === -1);
   var addHv404 = await call(s.routes, "post", "/admin/companies/:id/fastighetsagare", { params: { id: "cc1" }, body: { landlord_id: "nope" } });
   ok("fastighetsägare add okänd → 404", addHv404.code === 404);
+
+  // ── DRIFT: ärenden (Matter) + kvalitetskontroller (QualityControl) ──
+  var mts = await call(s.routes, "get", "/admin/companies/:id/matters", { params: { id: "cc1" } });
+  ok("matters → 3 (cc1, ej cc2), nyast först + fält (referens/kontor resolvade)", mts.body.ok && mts.body.count === 3 && mts.body.rows[0].id === "mt1" && mts.body.rows[0].referens === "Anna Andersson" && mts.body.rows[0].kontor === "CMIAB Göteborg" && mts.body.rows[0].open === true && mts.body.rows.every(function(r){return r.id!=="mt4";}));
+  ok("matters: avvikelse-flagga (mt3) + status (mt2 avslutad)", mts.body.rows.filter(function(r){return r.id==="mt3";})[0].avvikelse === true && mts.body.rows.filter(function(r){return r.id==="mt2";})[0].open === false);
+  var mdet = await call(s.routes, "get", "/admin/companies/matter/:id", { params: { id: "mt1" } });
+  ok("matter detalj: team_intern (co1) + tråd + beskrivning", mdet.body.ok && mdet.body.matter.team_intern.length === 1 && mdet.body.matter.team_intern[0] === "Testare Testsson" && mdet.body.matter.trad.length === 1 && mdet.body.matter.beskrivning === "Fungerar ej");
+  var mdet404 = await call(s.routes, "get", "/admin/companies/matter/:id", { params: { id: "nope" } });
+  ok("matter detalj okänt id → 404", mdet404.code === 404);
+  var qcs = await call(s.routes, "get", "/admin/companies/:id/qc", { params: { id: "cc1" } });
+  ok("qc → 1 (cc1) + resolvade namn (avtal/kontor/leverantör/kontrollant)", qcs.body.ok && qcs.body.count === 1 && qcs.body.rows[0].avtal === "Reception CMIAB" && qcs.body.rows[0].kontor === "CMIAB Göteborg" && qcs.body.rows[0].leverantor === "Carotte Housekeeping AB" && qcs.body.rows[0].kontrollant === "Anna Andersson" && qcs.body.rows[0].snittbetyg === 4);
+  var qdet = await call(s.routes, "get", "/admin/companies/qc/:id", { params: { id: "qc1" } });
+  ok("qc detalj: 2 ytor m. rätt namn/betyg + snittbetyg 4 (medel Grade.Värde)", qdet.body.ok && qdet.body.qc.surfaces.length === 2 && qdet.body.qc.surfaces.some(function(x){return x.namn==="Toaletter" && x.betyg===4;}) && qdet.body.qc.surfaces.some(function(x){return x.namn==="Stora mötesrummet";}) && qdet.body.qc.snittbetyg === 4);
+  ok("qc detalj: header (kund/avtal/leverantör) + summering + kundutvärdering + mottagare", qdet.body.qc.kund === "Acme AB" && qdet.body.qc.summering.arbetsklader === true && qdet.body.qc.summering.servicekort === false && qdet.body.qc.summering.stadforrad === true && qdet.body.qc.kundutvardering.feedback === "Nöjda" && qdet.body.qc.kundreferens[0] === "Testare Testsson");
+  var qdet404 = await call(s.routes, "get", "/admin/companies/qc/:id", { params: { id: "nope" } });
+  ok("qc detalj okänt id → 404", qdet404.code === 404);
 
   // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
   var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });

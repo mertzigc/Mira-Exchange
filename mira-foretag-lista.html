@@ -124,6 +124,17 @@
   .fk-roomempty{font-size:12px;color:var(--fl-mut);padding:4px 2px;}
   .fk-roomadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
   .fk-roomadd input,.fk-roomadd select{flex:1;min-width:120px;}
+  .fk-drow{cursor:pointer;}
+  .fk-drow:hover td{background:var(--fl-chip);}
+  .fk-dimg{max-width:280px;max-height:200px;border-radius:10px;margin-top:12px;display:block;object-fit:cover;}
+  .fk-tradrow{font-size:12.5px;color:var(--fl-txt);padding:8px 0;border-bottom:1px solid var(--fl-line);line-height:1.45;white-space:pre-wrap;}
+  .fk-tradrow:last-child{border-bottom:none;}
+  .fk-qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:14px;}
+  .fk-qcard{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;overflow:hidden;}
+  .fk-qchead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;}
+  .fk-qcname{font-size:12.5px;font-weight:700;color:var(--fl-acc);}
+  .fk-qcimg{width:100%;height:150px;object-fit:cover;display:block;}
+  .fk-qccom{font-size:12px;color:var(--fl-mut);padding:8px 12px;line-height:1.4;}
   .fk-hrowtoggle{cursor:pointer;user-select:none;}
   .fk-caret{margin-left:auto;color:var(--fl-mut);font-size:10px;}
   .fk-hdetail{margin-top:10px;padding-top:10px;border-top:1px dashed var(--fl-line);}
@@ -280,7 +291,8 @@
               revenue_ready:true, revTries:0, listDirty:false,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false,
-              setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null };
+              setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
+              driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -1073,11 +1085,130 @@
       if(rows==="loading") return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>';
       return chainBody(STATE.cardTab, rows);
     }
+    if(STATE.cardTab==="drift") return driftBody();
     if(STATE.cardTab==="installningar") return installningarBody();
     return '<div class="fk-body"><div class="fk-placeholder"><b>'+esc(tabLbl(STATE.cardTab))+'</b>Byggs modul för modul.<br><span style="font-size:12px">Källa: '+esc(TAB_SRC[STATE.cardTab]||"—")+'</span></div></div>';
   }
+  // ── Drift (LÄS): ärenden (Matter) + kvalitetskontroller (QualityControl) för kunden ──
+  var DRIFT_SUBS=[{k:"arenden",lbl:"Ärenden"},{k:"avvikelser",lbl:"Avvikelser"},{k:"kvalitet",lbl:"Kvalitetskontroller"}];
+  function prioCls(p){ p=String(p||""); if(/1/.test(p)) return "wait"; if(/2/.test(p)) return "open"; if(/3/.test(p)) return "red"; return "wait"; }
+  function betygCls(v){ v=Number(v); if(!v) return "wait"; if(v>=4) return "ok"; if(v>=3) return "open"; return "red"; }
+  function matterListBody(rows){
+    if(!rows.length) return '<div class="fk-placeholder"><b>Inga ärenden</b>Inga ärenden registrerade för företaget ännu.</div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var st=r.open?'<span class="fk-lpill open">Pågående</span>':'<span class="fk-lpill ok">Avslutad</span>';
+      var av=r.avvikelse?' <span class="fk-lpill red">Avvikelse</span>':'';
+      var prio=r.prioritet?'<span class="fk-lpill '+prioCls(r.prioritet)+'">'+esc(r.prioritet)+'</span>':'—';
+      body+='<tr class="fk-drow" data-fk="matteropen" data-id="'+esc(r.id)+'"><td>'+esc(r.datum||"—")+'</td>'+
+        '<td><b>'+esc(r.rubrik||"—")+'</b>'+(r.beskrivning?'<div class="fk-src">'+esc(r.beskrivning.slice(0,70))+(r.beskrivning.length>70?"…":"")+'</div>':'')+'</td>'+
+        '<td>'+esc(r.referens||"—")+'</td><td>'+prio+'</td><td>'+esc(r.kontor||"—")+'</td><td>'+st+av+'</td></tr>';
+    }
+    return '<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Datum</th><th>Rubrik</th><th>Referens</th><th>Prioritet</th><th>Kontor</th><th>Status</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  function qcListBody(rows){
+    if(!rows.length) return '<div class="fk-placeholder"><b>Inga kvalitetskontroller</b>Inga kontroller registrerade för företaget ännu.</div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var b=r.snittbetyg==null?"—":'<span class="fk-lpill '+betygCls(r.snittbetyg)+'">'+esc(String(r.snittbetyg))+'</span>';
+      body+='<tr class="fk-drow" data-fk="qcopen" data-id="'+esc(r.id)+'"><td>'+esc(r.datum||"—")+'</td>'+
+        '<td><b>'+esc(r.titel||"—")+'</b></td><td>'+esc(r.avtal||"—")+'</td><td>'+esc(r.kontor||"—")+'</td>'+
+        '<td>'+b+'</td><td>'+esc(r.leverantor||"—")+'</td></tr>';
+    }
+    return '<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Datum</th><th>Titel</th><th>Avtal</th><th>Kontor</th><th>Snittbetyg</th><th>Leverantör</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  function matterDetailBody(){
+    var m=STATE.matterDetail;
+    var back='<button class="fk-back" data-fk="driftback">← Drift</button>';
+    if(m==="loading"||m===null) return '<div class="fk-body">'+back+'<div class="fl-msg">Laddar ärende…</div></div>';
+    var st=m.open?'<span class="fk-lpill open">Pågående</span>':'<span class="fk-lpill ok">Avslutad</span>';
+    var meta=[["Kontor",m.kontor],["Referens",m.referens],["Datum",m.datum],["Prioritet",m.prioritet],["Kategori",m.kategori]];
+    var mg=""; for(var i=0;i<meta.length;i++){ if(meta[i][1]) mg+='<div class="fk-hmeta"><span>'+esc(meta[i][0])+'</span><b>'+esc(meta[i][1])+'</b></div>'; }
+    var bild=(m.bilder&&m.bilder.length)?('<img class="fk-dimg" src="'+esc(m.bilder[0])+'" alt="">'):'';
+    var team=function(t,arr){ return (arr&&arr.length)?('<div class="fk-hmeta"><span>'+t+'</span><b>'+esc(arr.join(", "))+'</b></div>'):''; };
+    var trad=""; if(m.trad&&m.trad.length){ for(var j=0;j<m.trad.length;j++){ trad+='<div class="fk-tradrow">'+esc(m.trad[j])+'</div>'; } } else trad='<div class="fk-roomempty">Inga inlägg.</div>';
+    return '<div class="fk-body"><div class="fk-hwrap">'+back+
+      '<div class="fk-ph" style="margin:2px 0 8px"><div class="fk-avatar" style="background:var(--fl-acc)">🛠</div><h3 style="margin-left:10px">'+esc(m.rubrik||"Ärende")+'</h3>'+st+(m.avvikelse?' <span class="fk-lpill red">Avvikelse</span>':'')+'</div>'+
+      '<div class="fk-panel" style="padding:14px 16px"><div class="fk-sech">Beskrivning</div><div class="fk-feedmsg">'+esc(m.beskrivning||"—")+'</div>'+bild+
+        '<div class="fk-hmetagrid" style="margin-top:12px">'+mg+team("Team internt",m.team_intern)+team("Team externt",m.team_extern)+'</div></div>'+
+      '<div class="fk-panel" style="padding:14px 16px;margin-top:12px"><div class="fk-sech">Tråd</div>'+trad+'</div>'+
+      ((m.feedback||m.forbattring)?('<div class="fk-panel" style="padding:14px 16px;margin-top:12px"><div class="fk-sech">Uppföljning</div>'+(m.feedback?'<div class="fk-feedmsg"><b>Feedback:</b> '+esc(m.feedback)+'</div>':'')+(m.forbattring?'<div class="fk-feedmsg"><b>Förbättring:</b> '+esc(m.forbattring)+'</div>':'')+'</div>'):'')+
+    '</div></div>';
+  }
+  function qcDetailBody(){
+    var q=STATE.qcDetail;
+    var back='<button class="fk-back" data-fk="driftback">← Drift</button>';
+    if(q==="loading"||q===null) return '<div class="fk-body">'+back+'<div class="fl-msg">Laddar kvalitetskontroll…</div></div>';
+    var hd=[["Datum",q.datum],["Kontor",q.kontor],["Avtal",q.avtal],["Kund",q.kund],["Leverantör",q.leverantor],["Kontrollant",q.kontrollant]];
+    var hg=""; for(var i=0;i<hd.length;i++){ if(hd[i][1]) hg+='<div class="fk-hmeta"><span>'+esc(hd[i][0])+'</span><b>'+esc(hd[i][1])+'</b></div>'; }
+    if(q.kundreferens&&q.kundreferens.length) hg+='<div class="fk-hmeta"><span>Mottagare</span><b>'+esc(q.kundreferens.join(", "))+'</b></div>';
+    var cards="";
+    for(var j=0;j<q.surfaces.length;j++){ var s=q.surfaces[j];
+      cards+='<div class="fk-qcard"><div class="fk-qchead"><span class="fk-qcname">'+esc(s.namn||"Yta")+'</span>'+(s.betyg!=null?'<span class="fk-lpill '+betygCls(s.betyg)+'">Betyg '+esc(String(s.betyg))+'</span>':'')+'</div>'+
+        (s.bild?'<img class="fk-qcimg" src="'+esc(s.bild)+'" alt="">':'')+
+        (s.kommentar?'<div class="fk-qccom">'+esc(s.kommentar)+'</div>':'')+'</div>';
+    }
+    if(!q.surfaces.length) cards='<div class="fk-roomempty">Inga kontrollerade ytor.</div>';
+    var sm=q.summering, summ='<div class="fk-feedmsg">Arbetskläder: <b>'+(sm.arbetsklader?"ja":"nej")+'</b> · Servicekort: <b>'+(sm.servicekort?"ja":"nej")+'</b> · Städförråd: <b>'+(sm.stadforrad?"ja":"nej")+'</b></div>'+(sm.meddelande?'<div class="fk-feedmsg" style="margin-top:6px">'+esc(sm.meddelande)+'</div>':'');
+    var ku=q.kundutvardering, kub=(ku.betyg||ku.feedback)?('<div class="fk-feedmsg">'+(ku.betyg?'<b>'+esc(ku.betyg)+'</b> · ':'')+esc(ku.feedback||"")+'</div>'):'<div class="fk-roomempty">Ingen kundutvärdering.</div>';
+    return '<div class="fk-body"><div class="fk-owrap">'+back+
+      '<div class="fk-ph" style="margin:2px 0 8px"><h3>'+esc(q.titel)+'</h3>'+(q.snittbetyg!=null?'<span class="fk-lpill '+betygCls(q.snittbetyg)+'" style="margin-left:10px">Snitt '+esc(String(q.snittbetyg))+'</span>':'')+'</div>'+
+      '<div class="fk-panel" style="padding:14px 16px"><div class="fk-hmetagrid">'+hg+'</div></div>'+
+      '<div class="fk-qgrid">'+cards+'</div>'+
+      '<div class="fk-rooms" style="margin-top:14px"><div class="fk-roomsec"><div class="fk-sech">Summering kontrollant</div>'+summ+'</div>'+
+        '<div class="fk-roomsec"><div class="fk-sech">Kundutvärdering</div>'+kub+'</div></div>'+
+    '</div></div>';
+  }
+  function driftBody(){
+    if(STATE.matterOpen) return matterDetailBody();
+    if(STATE.qcOpen) return qcDetailBody();
+    var sub=STATE.driftSub||"arenden", tabs="";
+    for(var i=0;i<DRIFT_SUBS.length;i++){ var s=DRIFT_SUBS[i]; tabs+='<span class="fk-subtab'+(sub===s.k?" on":"")+'" data-fk="driftsub" data-s="'+s.k+'">'+esc(s.lbl)+'</span>'; }
+    var inner;
+    if(sub==="kvalitet"){
+      if(STATE.qcList===null||STATE.qcList==="loading"){ fetchQC(); inner='<div class="fl-msg">Laddar…</div>'; }
+      else inner=qcListBody(STATE.qcList);
+    } else {
+      if(STATE.matters===null||STATE.matters==="loading"){ fetchMatters(); inner='<div class="fl-msg">Laddar…</div>'; }
+      else { var rows=STATE.matters; if(sub==="avvikelser") rows=rows.filter(function(r){return r.avvikelse;}); inner=matterListBody(rows); }
+    }
+    return '<div class="fk-body"><div class="fk-subtabs" style="margin-bottom:14px">'+tabs+'</div>'+inner+'</div>';
+  }
+  function fetchMatters(){
+    if(STATE.matters==="loading"||(STATE.matters&&STATE.matters.length!==undefined)) return;
+    STATE.matters="loading";
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/matters").then(function(j){
+      STATE.matters=(j&&j.ok&&j.rows)?j.rows:[];
+      if(STATE.view==="card"&&STATE.cardTab==="drift"&&!STATE.matterOpen&&STATE.driftSub!=="kvalitet") renderCard();
+    }).catch(function(){ STATE.matters=[]; if(STATE.cardTab==="drift") renderCard(); });
+  }
+  function fetchQC(){
+    if(STATE.qcList==="loading"||(STATE.qcList&&STATE.qcList.length!==undefined)) return;
+    STATE.qcList="loading";
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/qc").then(function(j){
+      STATE.qcList=(j&&j.ok&&j.rows)?j.rows:[];
+      if(STATE.view==="card"&&STATE.cardTab==="drift"&&!STATE.qcOpen&&STATE.driftSub==="kvalitet") renderCard();
+    }).catch(function(){ STATE.qcList=[]; if(STATE.cardTab==="drift") renderCard(); });
+  }
+  function fetchMatterDetail(id){
+    STATE.matterDetail="loading";
+    api("/admin/companies/matter/"+encodeURIComponent(id)).then(function(j){
+      STATE.matterDetail=(j&&j.ok&&j.matter)?j.matter:{rubrik:"Kunde inte ladda",beskrivning:"",trad:[]};
+      if(STATE.matterOpen===id) renderCard();
+    }).catch(function(){ STATE.matterDetail={rubrik:"Nätverksfel",beskrivning:"",trad:[]}; if(STATE.matterOpen===id) renderCard(); });
+  }
+  function fetchQCDetail(id){
+    STATE.qcDetail="loading";
+    api("/admin/companies/qc/"+encodeURIComponent(id)).then(function(j){
+      STATE.qcDetail=(j&&j.ok&&j.qc)?j.qc:{titel:"Kunde inte ladda",surfaces:[],summering:{},kundutvardering:{}};
+      if(STATE.qcOpen===id) renderCard();
+    }).catch(function(){ STATE.qcDetail={titel:"Nätverksfel",surfaces:[],summering:{},kundutvardering:{}}; if(STATE.qcOpen===id) renderCard(); });
+  }
   // ── Inställningar (setup-hub): underflikar; Kontor byggd, övriga kommer bit för bit ──
-  var SETUP_SUBS=[{k:"kontor",lbl:"Kontor"},{k:"leverantorer",lbl:"Leverantörer"},{k:"logo",lbl:"Logo"},{k:"fastighetsagare",lbl:"Fastighetsägare"},{k:"portal",lbl:"Medarbetarportal"}];
+  // Medarbetarportal dold tills vidare (finns på annat ställe) — lägg tillbaka {k:"portal",lbl:"Medarbetarportal"} när den ska in.
+  var SETUP_SUBS=[{k:"kontor",lbl:"Kontor"},{k:"leverantorer",lbl:"Leverantörer"},{k:"logo",lbl:"Logo"},{k:"fastighetsagare",lbl:"Fastighetsägare"}];
   function installningarBody(){
     var sub=STATE.setupSub||"kontor", tabs="";
     for(var i=0;i<SETUP_SUBS.length;i++){ var s=SETUP_SUBS[i]; tabs+='<span class="fk-subtab'+(sub===s.k?" on":"")+'" data-fk="setupsub" data-s="'+s.k+'">'+esc(s.lbl)+'</span>'; }
@@ -1222,6 +1353,7 @@
   }
   function openCard(id){
     STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
+    STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -1291,6 +1423,13 @@
       if(t.closest && t.closest('[data-fk="histnewcancel"]')){ STATE.histNew=false; renderCard(); return; }
       var hrow=t.closest?t.closest('[data-fk="histrow"]'):null;
       if(hrow){ var rid=hrow.getAttribute("data-id"); STATE.histOpen=(STATE.histOpen===rid?null:rid); renderCard(); return; }
+      var dsub=t.closest?t.closest('[data-fk="driftsub"]'):null;
+      if(dsub){ STATE.driftSub=dsub.getAttribute("data-s"); STATE.matterOpen=null; STATE.qcOpen=null; renderCard(); return; }
+      var mop=t.closest?t.closest('[data-fk="matteropen"]'):null;
+      if(mop){ STATE.matterOpen=mop.getAttribute("data-id"); STATE.matterDetail=null; fetchMatterDetail(STATE.matterOpen); renderCard(); return; }
+      var qop=t.closest?t.closest('[data-fk="qcopen"]'):null;
+      if(qop){ STATE.qcOpen=qop.getAttribute("data-id"); STATE.qcDetail=null; fetchQCDetail(STATE.qcOpen); renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="driftback"]')){ STATE.matterOpen=null; STATE.qcOpen=null; STATE.matterDetail=null; STATE.qcDetail=null; renderCard(); return; }
       var ssub=t.closest?t.closest('[data-fk="setupsub"]'):null;
       if(ssub){ STATE.setupSub=ssub.getAttribute("data-s"); STATE.officeNew=false; STATE.officeEdit=null; STATE.setupLev=null; STATE.setupHv=null; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="logopick"]')){ var lf=root.querySelector('[data-fk="logofile"]'); if(lf) lf.click(); return; }
