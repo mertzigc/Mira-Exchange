@@ -73,6 +73,8 @@
   .fk-card{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:16px;overflow:hidden;}
   .fk-hero{padding:20px 24px 0;}
   .fk-herotop{display:flex;align-items:flex-start;gap:16px;}
+  .fk-hident{min-width:0;}
+  .fk-herotop .fk-logo,.fk-herotop .fk-herologo{margin-left:auto;}
   .fk-logo{width:56px;height:56px;border-radius:12px;background:var(--fl-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;flex-shrink:0;overflow:hidden;}
   /* Riktig logga: bred pill med fast höjd + auto bredd → rektangulära wordmarks syns i full bredd */
   .fk-herologo{height:56px;max-width:300px;background:#fff;border-radius:12px;padding:8px 14px;box-sizing:border-box;display:flex;align-items:center;flex-shrink:0;}
@@ -524,9 +526,9 @@
     if(c.potential) meta.push('Potential <b>'+esc(c.potential)+'</b>');
     var omsNow=ready?numc(k.omsattning_now):'<span class="fk-calc">beräknar…</span>';
     return '<div class="fk-hero"><div class="fk-herotop">'+
-      logo+
-      '<div><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+'</div>'+
-      '<div class="fk-hmeta">'+meta.map(function(m){return '<span>'+m+'</span>';}).join("")+'</div></div></div>'+
+      '<div class="fk-hident"><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+'</div>'+
+      '<div class="fk-hmeta">'+meta.map(function(m){return '<span>'+m+'</span>';}).join("")+'</div></div>'+
+      logo+'</div>'+
       '<div class="fk-strip">'+
         '<div class="fk-stat acc"><div class="l">Avtal / mån</div><div class="v">'+krc(k.mrr)+'</div></div>'+
         '<div class="fk-stat"><div class="l">Aktiva avtal</div><div class="v">'+numc(k.active_contracts)+'</div></div>'+
