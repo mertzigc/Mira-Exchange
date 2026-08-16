@@ -1199,7 +1199,12 @@ export function registerCompaniesRoutes(app, deps) {
     return Number(dd) + " " + mon + " " + year + " · " + String(hh).padStart(2, "0") + ":" + String(mi).padStart(2, "0");
   }
   function _cleanTrad(line) {
-    return _str(line).replace(/\b(\d{2})(\d{2})(\d{2})[,\s]+(\d{1,2})[:.](\d{2})\b/g, (m, yy, mm, dd, hh, mi) => _prettyStamp(yy, mm, dd, hh, mi)).replace(/,\s*·/g, " ·");
+    line = _str(line);
+    // Format B (datum-först m. snedstreck): "YY/MM/DD, HH:MM:SS / Namn: kommentar" → "Namn · D mmm YYYY · HH:MM: kommentar"
+    const b = line.match(/^\s*(\d{2})\/(\d{2})\/(\d{2}),?\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*\/\s*([^:]+?):\s*([\s\S]*)$/);
+    if (b) return b[6].trim() + " · " + _prettyStamp(b[1], b[2], b[3], b[4], b[5]) + ": " + b[7].trim();
+    // Format A (namn-först): reformatera YYMMDD,HH:MM-token inline
+    return line.replace(/\b(\d{2})(\d{2})(\d{2})[,\s]+(\d{1,2})[:.](\d{2})\b/g, (m, yy, mm, dd, hh, mi) => _prettyStamp(yy, mm, dd, hh, mi)).replace(/,\s*·/g, " ·");
   }
   function _nowStampSV() {
     try {

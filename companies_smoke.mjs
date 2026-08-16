@@ -75,7 +75,7 @@ STORE["Hyresvärd"] = [
 // Drift: ärenden (Matter) + kvalitetskontroller (QualityControl) + ytor (Kommentar-Comment) + Grade
 // Kontor=of2 (aldrig omdöpt) + surface=i2 (aldrig raderad) → drift-testerna oberoende av office/room-mutationer
 STORE.Matter = [
-  { _id: "mt1", "Kundföretag": "cc1", Rubrik: "Kaffemaskin trasig", Beskrivning: "Fungerar ej", Kontor: "of2", Referens: "u1", "Created Date": "2026-08-10", Prioritet: "3 - brådskande", status: "Pågående", Avvikelse: false, "Team åtgärd intern": ["co1"], "Tråd": ["Christian Mertzig, Carotte Group, 260810,09:15: tittar på det"], Feedback: "" },
+  { _id: "mt1", "Kundföretag": "cc1", Rubrik: "Kaffemaskin trasig", Beskrivning: "Fungerar ej", Kontor: "of2", Referens: "u1", "Created Date": "2026-08-10", Prioritet: "3 - brådskande", status: "Pågående", Avvikelse: false, "Team åtgärd intern": ["co1"], "Tråd": ["Christian Mertzig, Carotte Group, 260810,09:15: tittar på det", "26/07/22, 15:21:35 / Biljana Nikolic: Jag fixar imorgon"], Feedback: "" },
   { _id: "mt2", "Kundföretag": "cc1", Rubrik: "Avfallshantering", Beskrivning: "Glas", Kontor: "of2", "Created Date": "2026-07-20", Prioritet: "2", status: "Avslutat", Avvikelse: false },
   { _id: "mt3", "Kundföretag": "cc1", Rubrik: "Fel städ", Beskrivning: "Ej torkat", Kontor: "of2", "Created Date": "2026-08-05", Prioritet: "3", status: "Pågående", Avvikelse: true },
   { _id: "mt4", "Kundföretag": "cc2", Rubrik: "Annat bolag", status: "Pågående" },
@@ -492,8 +492,8 @@ const run = async () => {
   ok("matters → 3 (cc1, ej cc2), nyast först + fält (referens/kontor resolvade)", mts.body.ok && mts.body.count === 3 && mts.body.rows[0].id === "mt1" && mts.body.rows[0].referens === "Anna Andersson" && mts.body.rows[0].kontor === "CMIAB Göteborg" && mts.body.rows[0].open === true && mts.body.rows.every(function(r){return r.id!=="mt4";}));
   ok("matters: avvikelse-flagga (mt3) + status (mt2 avslutad)", mts.body.rows.filter(function(r){return r.id==="mt3";})[0].avvikelse === true && mts.body.rows.filter(function(r){return r.id==="mt2";})[0].open === false);
   var mdet = await call(s.routes, "get", "/admin/companies/matter/:id", { params: { id: "mt1" } });
-  ok("matter detalj: team_intern (co1) + tråd + beskrivning", mdet.body.ok && mdet.body.matter.team_intern.length === 1 && mdet.body.matter.team_intern[0] === "Testare Testsson" && mdet.body.matter.trad.length === 1 && mdet.body.matter.beskrivning === "Fungerar ej");
-  ok("matter detalj: tråd-datum tvättat (260810,09:15 → 10 aug 2026 · 09:15) + status_options ur datan", mdet.body.matter.trad[0].indexOf("10 aug 2026 · 09:15") > -1 && mdet.body.matter.trad[0].indexOf("260810") === -1 && mdet.body.matter.status_options.indexOf("Pågående") > -1 && mdet.body.matter.status_options.indexOf("Avslutat") > -1);
+  ok("matter detalj: team_intern (co1) + tråd + beskrivning", mdet.body.ok && mdet.body.matter.team_intern.length === 1 && mdet.body.matter.team_intern[0] === "Testare Testsson" && mdet.body.matter.trad.length === 2 && mdet.body.matter.beskrivning === "Fungerar ej");
+  ok("matter detalj: tråd-datum tvättat båda formaten + status_options ur datan", mdet.body.matter.trad[0].indexOf("10 aug 2026 · 09:15") > -1 && mdet.body.matter.trad[0].indexOf("260810") === -1 && mdet.body.matter.trad[1] === "Biljana Nikolic · 22 jul 2026 · 15:21: Jag fixar imorgon" && mdet.body.matter.status_options.indexOf("Pågående") > -1 && mdet.body.matter.status_options.indexOf("Avslutat") > -1);
   var mdet404 = await call(s.routes, "get", "/admin/companies/matter/:id", { params: { id: "nope" } });
   ok("matter detalj okänt id → 404", mdet404.code === 404);
   var qcs = await call(s.routes, "get", "/admin/companies/:id/qc", { params: { id: "cc1" } });

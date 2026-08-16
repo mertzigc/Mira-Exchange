@@ -123,7 +123,10 @@
   .fk-roomdel:hover{border-color:var(--fl-err);color:var(--fl-err);}
   .fk-roomempty{font-size:12px;color:var(--fl-mut);padding:4px 2px;}
   .fk-roomadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-  .fk-roomadd input,.fk-roomadd select{flex:1;min-width:120px;}
+  .fk-roomadd input,.fk-roomadd select{flex:1;min-width:120px;background:var(--fl-bg);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:8px 11px;font-size:12.5px;font-family:inherit;}
+  .fk-roomadd input:focus,.fk-roomadd select:focus{outline:none;border-color:var(--fl-acc);}
+  .fk-roomadd input::placeholder{color:var(--fl-mut);}
+  .fk-roomadd select option{background:#16223d;}
   .fk-drow{cursor:pointer;}
   .fk-drow:hover td{background:var(--fl-chip);}
   .fk-dimg{max-width:280px;max-height:200px;border-radius:10px;margin-top:12px;display:block;object-fit:cover;}
