@@ -247,6 +247,7 @@
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
   <input type="hidden" data-mira="user_company"   value=""><!-- bind till Current User's Company's unique id (för personal-dropdown i Leverantörer) -->
+  <input type="hidden" data-mira="user_name"      value=""><!-- bind till Current User's namn (signerar drift-kommentarer) -->
 
   <div data-fl="listview">
     <div class="fl-head">
@@ -1097,7 +1098,7 @@
     if(!rows.length) return '<div class="fk-placeholder"><b>Inga ärenden</b>Inga ärenden registrerade för företaget ännu.</div>';
     var body="";
     for(var i=0;i<rows.length;i++){ var r=rows[i];
-      var st=r.open?'<span class="fk-lpill open">Pågående</span>':'<span class="fk-lpill ok">Avslutad</span>';
+      var st='<span class="fk-lpill '+(r.open?"open":"ok")+'">'+esc(r.status||(r.open?"Pågående":"Avslutat"))+'</span>';
       var av=r.avvikelse?' <span class="fk-lpill red">Avvikelse</span>':'';
       var prio=r.prioritet?'<span class="fk-lpill '+prioCls(r.prioritet)+'">'+esc(r.prioritet)+'</span>':'—';
       body+='<tr class="fk-drow" data-fk="matteropen" data-id="'+esc(r.id)+'"><td>'+esc(r.datum||"—")+'</td>'+
@@ -1123,17 +1124,22 @@
     var m=STATE.matterDetail;
     var back='<button class="fk-back" data-fk="driftback">← Drift</button>';
     if(m==="loading"||m===null) return '<div class="fk-body">'+back+'<div class="fl-msg">Laddar ärende…</div></div>';
-    var st=m.open?'<span class="fk-lpill open">Pågående</span>':'<span class="fk-lpill ok">Avslutad</span>';
+    var st='<span class="fk-lpill '+(m.open?"open":"ok")+'">'+esc(m.status||(m.open?"Pågående":"Avslutat"))+'</span>';
     var meta=[["Kontor",m.kontor],["Referens",m.referens],["Datum",m.datum],["Prioritet",m.prioritet],["Kategori",m.kategori]];
     var mg=""; for(var i=0;i<meta.length;i++){ if(meta[i][1]) mg+='<div class="fk-hmeta"><span>'+esc(meta[i][0])+'</span><b>'+esc(meta[i][1])+'</b></div>'; }
     var bild=(m.bilder&&m.bilder.length)?('<img class="fk-dimg" src="'+esc(m.bilder[0])+'" alt="">'):'';
     var team=function(t,arr){ return (arr&&arr.length)?('<div class="fk-hmeta"><span>'+t+'</span><b>'+esc(arr.join(", "))+'</b></div>'):''; };
     var trad=""; if(m.trad&&m.trad.length){ for(var j=0;j<m.trad.length;j++){ trad+='<div class="fk-tradrow">'+esc(m.trad[j])+'</div>'; } } else trad='<div class="fk-roomempty">Inga inlägg.</div>';
+    var stOpts=""; var opts=m.status_options||["Pågående"]; for(var so=0;so<opts.length;so++){ stOpts+='<option value="'+esc(opts[so])+'"'+(opts[so]===m.status?" selected":"")+'>'+esc(opts[so])+'</option>'; }
+    var statusBox='<div class="fk-panel" style="padding:14px 16px;margin-top:12px"><div class="fk-sech">Status</div>'+
+      '<div class="fk-roomadd"><select data-fk="mstatus">'+stOpts+'</select><button class="fk-editbtn sm" data-fk="msave">Ändra</button><span class="msg" data-mstatusmsg></span></div></div>';
+    var commentBox='<div class="fk-roomadd" style="margin-top:10px"><input type="text" data-fk="mcomment" placeholder="Skriv ett inlägg…"><button class="fk-editbtn sm" data-fk="mcommentsave">Kommentera</button><span class="msg" data-mcommentmsg></span></div>';
     return '<div class="fk-body"><div class="fk-hwrap">'+back+
       '<div class="fk-ph" style="margin:2px 0 8px"><div class="fk-avatar" style="background:var(--fl-acc)">🛠</div><h3 style="margin-left:10px">'+esc(m.rubrik||"Ärende")+'</h3>'+st+(m.avvikelse?' <span class="fk-lpill red">Avvikelse</span>':'')+'</div>'+
       '<div class="fk-panel" style="padding:14px 16px"><div class="fk-sech">Beskrivning</div><div class="fk-feedmsg">'+esc(m.beskrivning||"—")+'</div>'+bild+
         '<div class="fk-hmetagrid" style="margin-top:12px">'+mg+team("Team internt",m.team_intern)+team("Team externt",m.team_extern)+'</div></div>'+
-      '<div class="fk-panel" style="padding:14px 16px;margin-top:12px"><div class="fk-sech">Tråd</div>'+trad+'</div>'+
+      statusBox+
+      '<div class="fk-panel" style="padding:14px 16px;margin-top:12px"><div class="fk-sech">Tråd</div>'+trad+commentBox+'</div>'+
       ((m.feedback||m.forbattring)?('<div class="fk-panel" style="padding:14px 16px;margin-top:12px"><div class="fk-sech">Uppföljning</div>'+(m.feedback?'<div class="fk-feedmsg"><b>Feedback:</b> '+esc(m.feedback)+'</div>':'')+(m.forbattring?'<div class="fk-feedmsg"><b>Förbättring:</b> '+esc(m.forbattring)+'</div>':'')+'</div>'):'')+
     '</div></div>';
   }
@@ -1198,6 +1204,24 @@
       STATE.matterDetail=(j&&j.ok&&j.matter)?j.matter:{rubrik:"Kunde inte ladda",beskrivning:"",trad:[]};
       if(STATE.matterOpen===id) renderCard();
     }).catch(function(){ STATE.matterDetail={rubrik:"Nätverksfel",beskrivning:"",trad:[]}; if(STATE.matterOpen===id) renderCard(); });
+  }
+  function updateMatterStatus(){
+    var id=STATE.matterOpen, sel=root.querySelector('[data-fk="mstatus"]'), msg=root.querySelector("[data-mstatusmsg]");
+    var val=sel?sel.value:""; if(!val) return;
+    if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
+    apiPost("/admin/companies/matter/"+encodeURIComponent(id)+"/status", {status:val}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      STATE.matters=null; fetchMatterDetail(id);   // uppdatera badge/lista + detalj
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  function addMatterComment(){
+    var id=STATE.matterOpen, inp=root.querySelector('[data-fk="mcomment"]'), msg=root.querySelector("[data-mcommentmsg]");
+    var txt=inp?inp.value.trim():""; if(!txt){ if(msg){ msg.textContent="Skriv något"; msg.className="msg err"; } return; }
+    if(msg){ msg.textContent="Postar…"; msg.className="msg"; }
+    apiPost("/admin/companies/matter/"+encodeURIComponent(id)+"/comment", {text:txt, author:cfg("user_name")}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      fetchMatterDetail(id);
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
   }
   function fetchQCDetail(id){
     STATE.qcDetail="loading";
@@ -1430,6 +1454,8 @@
       var qop=t.closest?t.closest('[data-fk="qcopen"]'):null;
       if(qop){ STATE.qcOpen=qop.getAttribute("data-id"); STATE.qcDetail=null; fetchQCDetail(STATE.qcOpen); renderCard(); return; }
       if(t.closest && t.closest('[data-fk="driftback"]')){ STATE.matterOpen=null; STATE.qcOpen=null; STATE.matterDetail=null; STATE.qcDetail=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="msave"]')){ updateMatterStatus(); return; }
+      if(t.closest && t.closest('[data-fk="mcommentsave"]')){ addMatterComment(); return; }
       var ssub=t.closest?t.closest('[data-fk="setupsub"]'):null;
       if(ssub){ STATE.setupSub=ssub.getAttribute("data-s"); STATE.officeNew=false; STATE.officeEdit=null; STATE.setupLev=null; STATE.setupHv=null; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="logopick"]')){ var lf=root.querySelector('[data-fk="logofile"]'); if(lf) lf.click(); return; }

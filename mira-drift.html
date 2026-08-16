@@ -58,6 +58,13 @@
   .dr-qcname{font-size:12.5px;font-weight:700;color:var(--dr-acc);}
   .dr-qcimg{width:100%;height:150px;object-fit:cover;display:block;}
   .dr-qccom{font-size:12px;color:var(--dr-mut);padding:8px 12px;line-height:1.4;}
+  .dr-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;}
+  .dr-inline select,.dr-inline input{background:var(--dr-chip);color:var(--dr-txt);border:1px solid var(--dr-line);border-radius:8px;padding:8px 12px;font-size:12.5px;}
+  .dr-inline input{flex:1;min-width:180px;}
+  .dr-btn{background:var(--dr-chip);color:var(--dr-txt);border:1px solid var(--dr-line);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:600;flex-shrink:0;}
+  .dr-btn:hover{border-color:var(--dr-acc);}
+  .dr-imsg{font-size:11.5px;color:var(--dr-mut);}
+  .dr-imsg.err{color:var(--dr-err);}
   .dr-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}
   @media(max-width:720px){ .dr-metagrid,.dr-two{grid-template-columns:1fr;} }
 </style>
@@ -65,6 +72,7 @@
 <div class="dr">
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="user_name"      value=""><!-- bind till Current User's namn (signerar kommentarer) -->
   <div data-dr="root"><div class="dr-msg">Laddar…</div></div>
 </div>
 
@@ -106,7 +114,7 @@
     if(!rows.length) return '<div class="dr-panel"><div class="dr-empty"><b>Inga ärenden</b>Inga ärenden matchar filtret.</div></div>';
     var body="";
     for(var i=0;i<rows.length;i++){ var r=rows[i];
-      var st=r.open?'<span class="dr-pill open">Pågående</span>':'<span class="dr-pill ok">Avslutad</span>';
+      var st='<span class="dr-pill '+(r.open?"open":"ok")+'">'+esc(r.status||(r.open?"Pågående":"Avslutat"))+'</span>';
       var av=r.avvikelse?' <span class="dr-pill red">Avvikelse</span>':'';
       var prio=r.prioritet?'<span class="dr-pill '+prioCls(r.prioritet)+'">'+esc(r.prioritet)+'</span>':'—';
       body+='<tr class="dr-row" data-dr="open-matter" data-id="'+esc(r.id)+'"><td>'+esc(r.datum||"—")+'</td>'+
@@ -136,17 +144,21 @@
   function matterDetail(m){
     var back='<button class="dr-back" data-dr="back">← Drift</button>';
     if(m==="loading"||!m) return back+'<div class="dr-msg">Laddar ärende…</div>';
-    var st=m.open?'<span class="dr-pill open">Pågående</span>':'<span class="dr-pill ok">Avslutad</span>';
+    var st='<span class="dr-pill '+(m.open?"open":"ok")+'">'+esc(m.status||(m.open?"Pågående":"Avslutat"))+'</span>';
     var meta=[["Företag",m.company],["Kontor",m.kontor],["Referens",m.referens],["Datum",m.datum],["Prioritet",m.prioritet],["Kategori",m.kategori]];
     var mg=""; for(var i=0;i<meta.length;i++){ if(meta[i][1]) mg+='<div class="dr-meta"><span>'+esc(meta[i][0])+'</span><b>'+esc(meta[i][1])+'</b></div>'; }
     var team=function(t,arr){ return (arr&&arr.length)?('<div class="dr-meta"><span>'+t+'</span><b>'+esc(arr.join(", "))+'</b></div>'):''; };
     var bild=(m.bilder&&m.bilder.length)?('<img class="dr-img" src="'+esc(m.bilder[0])+'" alt="">'):'';
     var trad=""; if(m.trad&&m.trad.length){ for(var j=0;j<m.trad.length;j++){ trad+='<div class="dr-tradrow">'+esc(m.trad[j])+'</div>'; } } else trad='<div class="dr-txtblk">Inga inlägg.</div>';
+    var stOpts=""; var opts=m.status_options||["Pågående"]; for(var so=0;so<opts.length;so++){ stOpts+='<option value="'+esc(opts[so])+'"'+(opts[so]===m.status?" selected":"")+'>'+esc(opts[so])+'</option>'; }
+    var statusBox='<div class="dr-panel dr-pad dr-mt"><div class="dr-sech">Status</div><div class="dr-inline"><select data-dr="mstatus">'+stOpts+'</select><button class="dr-btn" data-dr="msave">Ändra</button><span class="dr-imsg" data-dr="mstatusmsg"></span></div></div>';
+    var commentBox='<div class="dr-inline"><input type="text" data-dr="mcomment" placeholder="Skriv ett inlägg…"><button class="dr-btn" data-dr="mcommentsave">Kommentera</button><span class="dr-imsg" data-dr="mcommentmsg"></span></div>';
     return '<div class="dr-wrap">'+back+
       '<div class="dr-ph"><h3>'+esc(m.rubrik||"Ärende")+'</h3>'+st+(m.avvikelse?' <span class="dr-pill red">Avvikelse</span>':'')+'</div>'+
       '<div class="dr-panel dr-pad"><div class="dr-sech">Beskrivning</div><div class="dr-txtblk">'+esc(m.beskrivning||"—")+'</div>'+bild+
         '<div class="dr-metagrid dr-mt">'+mg+team("Team internt",m.team_intern)+team("Team externt",m.team_extern)+'</div></div>'+
-      '<div class="dr-panel dr-pad dr-mt"><div class="dr-sech">Tråd</div>'+trad+'</div>'+
+      statusBox+
+      '<div class="dr-panel dr-pad dr-mt"><div class="dr-sech">Tråd</div>'+trad+commentBox+'</div>'+
       ((m.feedback||m.forbattring)?('<div class="dr-panel dr-pad dr-mt"><div class="dr-sech">Uppföljning</div>'+(m.feedback?'<div class="dr-txtblk"><b>Feedback:</b> '+esc(m.feedback)+'</div>':'')+(m.forbattring?'<div class="dr-txtblk"><b>Förbättring:</b> '+esc(m.forbattring)+'</div>':'')+'</div>'):'')+
     '</div>';
   }
@@ -200,6 +212,25 @@
   }
   function openMatter(id){ STATE.open=id; STATE.detailType="matter"; STATE.detail="loading"; render();
     api("/admin/companies/matter/"+encodeURIComponent(id)).then(function(j){ STATE.detail=(j&&j.ok&&j.matter)?j.matter:{rubrik:"Kunde inte ladda",beskrivning:"",trad:[]}; if(STATE.open===id) render(); }).catch(function(){ STATE.detail={rubrik:"Nätverksfel",beskrivning:"",trad:[]}; if(STATE.open===id) render(); }); }
+  function reloadMatterDetail(id){ api("/admin/companies/matter/"+encodeURIComponent(id)).then(function(j){ if(STATE.open===id){ STATE.detail=(j&&j.ok&&j.matter)?j.matter:STATE.detail; render(); } }); }
+  function updateStatus(){
+    var id=STATE.open, sel=root.querySelector('[data-dr="mstatus"]'), msg=root.querySelector('[data-dr="mstatusmsg"]');
+    var val=sel?sel.value:""; if(!val) return;
+    if(msg){ msg.textContent="Sparar…"; msg.className="dr-imsg"; }
+    fetch(HOST+"/admin/companies/matter/"+encodeURIComponent(id)+"/status",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({status:val})}).then(function(r){return r.json();}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="dr-imsg err"; } return; }
+      reloadMatterDetail(id);
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="dr-imsg err"; } });
+  }
+  function addComment(){
+    var id=STATE.open, inp=root.querySelector('[data-dr="mcomment"]'), msg=root.querySelector('[data-dr="mcommentmsg"]');
+    var txt=inp?inp.value.trim():""; if(!txt){ if(msg){ msg.textContent="Skriv något"; msg.className="dr-imsg err"; } return; }
+    if(msg){ msg.textContent="Postar…"; msg.className="dr-imsg"; }
+    fetch(HOST+"/admin/companies/matter/"+encodeURIComponent(id)+"/comment",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({text:txt,author:cfg("user_name")})}).then(function(r){return r.json();}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="dr-imsg err"; } return; }
+      reloadMatterDetail(id);
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="dr-imsg err"; } });
+  }
   function openQC(id){ STATE.open=id; STATE.detailType="qc"; STATE.detail="loading"; render();
     api("/admin/companies/qc/"+encodeURIComponent(id)).then(function(j){ STATE.detail=(j&&j.ok&&j.qc)?j.qc:{titel:"Kunde inte ladda",surfaces:[],summering:{},kundutvardering:{}}; if(STATE.open===id) render(); }).catch(function(){ STATE.detail={titel:"Nätverksfel",surfaces:[],summering:{},kundutvardering:{}}; if(STATE.open===id) render(); }); }
 
@@ -211,6 +242,8 @@
     if(om){ openMatter(om.getAttribute("data-id")); return; }
     var oq=t.closest?t.closest('[data-dr="open-qc"]'):null;
     if(oq){ openQC(oq.getAttribute("data-id")); return; }
+    if(t.closest && t.closest('[data-dr="msave"]')){ updateStatus(); return; }
+    if(t.closest && t.closest('[data-dr="mcommentsave"]')){ addComment(); return; }
     if(t.closest && t.closest('[data-dr="back"]')){ STATE.open=null; STATE.detail=null; render(); return; }
     if(t.closest && t.closest('[data-dr="prev"]')){ if(STATE.page>1){ STATE.page--; load(); } return; }
     if(t.closest && t.closest('[data-dr="next"]')){ if(STATE.page<STATE.pages){ STATE.page++; load(); } return; }

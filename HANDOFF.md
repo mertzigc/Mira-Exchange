@@ -15,7 +15,7 @@
 ### Filer
 - **`companies_api.js`** (NY, ~48k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
 - **`mira-foretag-lista.html`** (NY, ~63k) — ENDA Bubble-blocket (lista + kort + alla flikar). `.fl`/`.fk`-namnrymd, BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` + `planning_token` (INGET company_id — kortet öppnas från raden).
-- **`companies_smoke.mjs`** — 159/159 gröna. `index.js` — wiring + delade cachar + Bubble-wf-callers. `emailer.js` — mallar `password_reset` + `user_welcome`.
+- **`companies_smoke.mjs`** — 165/165 gröna. `index.js` — wiring + delade cachar + Bubble-wf-callers. `emailer.js` — mallar `password_reset` + `user_welcome`.
 
 ### Backend-arkitektur (companies_api.js)
 - **Delade cachar (index.js):** `sharedCompanyFullMap` (CC-list-projektion ur EN 55-sidorsladdning) + `sharedCompanyRevenueMapWarm` (FortnoxInvoice.ft_net/år, **lat** — ingen boot-prewarm, WU-medveten). Listan gör NOLL Bubble-anrop (allt ur cacharna); bara PATCH/skapa skriver.
@@ -66,12 +66,19 @@ Aggregerar ärenden + kvalitetskontroller över ALLA kunder m. sök/filter/pagin
 - **Backend:** `GET /admin/drift/list?type=matters|qc&scope=open|closed|avvikelser&q=&company=&prio=&page=&limit=`. Per-request Bubble-sök m. constraints (scope-default Pågående → WU-bundet). Företagsnamn via delad `companyFullMap`, kontor via `_officeNamesByIds`(bubbleGet sidans Kontor-ids), övriga namn via befintliga mappar. `q`=Rubrik/Titel text-contains; `company`=företagsnamn→id-set (in-memory filter). Prefix `/admin/drift` tillagt i openPrefixes (index.js). Detalj: `/admin/companies/matter/:id` + `/qc/:id` (företags-agnostiska).
 - **Frontend (`mira-drift.html`, NYTT block):** `.dr`-namnrymd, egen CSS (kopierar kortets Drift-look). Flikar Pågående/Avslutade/Avvikelser/Kvalitetskontroller + sök-rubrik + sök-företag + prioritet-facet + paginering. Lista m. Företag-kolumn + samma detalj-vyer (ärende + QC). SWR ej nödvändig (per-request).
 - Verifierat: smoke 159/159 (drift/list open/closed/avvikelser + rubrik-sök[text contains] + företagsfilter + qc + facet) + harness (aggregerad lista över EA/Planhat/Scania, sök, QC-flik, båda detaljvyerna). Deploy: index.js (openPrefix) + companies_api.js + **nytt Bubble-block `mira-drift.html`** på Drift-sidan (data-mira api_host+planning_token).
-- **Kvar Drift: Fas 2 (ärende SKRIV) · Fas 3 (QC SKRIV).**
+### Drift Fas 2 (delvis): status + kommentera + tråd-datumtvätt — KLAR + verifierat 2026-08-16 (ej deployat, BÅDA blocken)
+- **Status-uppdatering:** `POST /admin/companies/matter/:id/status {status}` (sätter status + closed_date vid ≠Pågående). Status-dropdown-värden hämtas ur datan via `_matterStatuses()` (cachad `bubbleFind` första-sida → distinkta `status`-värden → `status_options` i matter-detaljsvaret; INGEN OS-gissning). Status-pill visar nu **faktiska statusvärdet** (färg efter open/closed) — inte bara Pågående/Avslutad — så mellanstatusar (t.ex. Pausad) visas rätt.
+- **Kommentera:** `POST /admin/companies/matter/:id/comment {text, author}` → appendar rad till `Matter.Tråd` (List of texts) m. `author · <ren stämpel>: text`. Author = `data-mira="user_name"` (bind Current User's namn i Bubble; fallback "Carotte").
+- **Tråd-datumtvätt:** matter-detaljen kör `_cleanTrad` på varje trådrad → native-stämpeln `YYMMDD,HH:MM`/`YYMMDD HH:MM` blir uniform **"D mmm YYYY · HH:MM"** (sv). Nya kommentarer stämplas i Europe/Stockholm-tid (`_nowStampSV`).
+- Frontend: status-select+Ändra + kommentera-fält i matter-detaljen i **både** `mira-foretag-lista.html` (Drift-fliken) och `mira-drift.html` (stå-alone). Nytt `data-mira="user_name"` i båda blocken.
+- Verifierat: smoke 165/165 (status set+closed_date, comment append+ren stämpel, tråd-tvätt 260810→"10 aug 2026 · 09:15", status_options ur datan, 400/404) + harness (status→Pausad visas i pill, kommentera→ny rad, tråd unison). Deploy: companies_api.js + klistra om BÅDA blocken + bind data-mira user_name.
+- **Kvar Drift: Fas 2 forts. (skapa ärende + ärendekategorier + team) · Fas 3 (QC SKRIV).**
 
 ### Onboarding/lösenord (LIVE, funkar från start till mål)
 Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mailar länk (SendGrid: `password_reset`-mall vid reset, `user_welcome`-mall m. USP-sektioner vid ny user) → reset_pw-sidan: **API Connector → exchange** (byter token mot engångs-temp via Bubble-wf `assign_temp_password`) → **Log the user in** + **Update password** (valt lösenord). Ny user: Bubble-wf `create_user_account` (Create an account for someone else + sätt Company/Coworker/namn). **Render kan EJ skapa User el. sätta valfritt lösenord via Data API → allt sådant via Bubble-wf** (auth ägs av Bubble).
 
 ### Bubble-delar (byggda av Christian, LIVE): typer `PasswordReset`{email,coworker,token_hash,expires_at,used} · wf `assign_temp_password`(email→temp) · wf `create_user_account`(email/password/firstname/surname/company/coworker_id→user_id) · API Connector-calls (exchange/send/create) · reset_pw-sidan. **Env (Render):** `PW_RESET_TEMPLATE_ID`, `WELCOME_TEMPLATE_ID`, `BUBBLE_ASSIGN_TEMP_WF=assign_temp_password`, `BUBBLE_CREATE_USER_WF=create_user_account`, `APP_BASE_URL=https://mira-fm.com`, `BUBBLE_PW_RESET_WF` (gammal, utgår).
+### Status Ärende-OS (verifierat i bild 2026-08-16): **Pågående · Avslutat · Utkast**. Drift closed-flik = exakt `status=="Avslutat"` (Utkast hamnar i varken öppet/avslutat). counts.drift + open = "Pågående". Status-dropdown härleds ur datan (visar de som finns).
 ### KVAR ATT SKAPA I BUBBLE: **`taggade_personer` (List of Coworker) på activitet_crm** — Aktivitet-fliken hämtar mot det; tom lista tills fältet finns + aktiviteter taggas.
 
 ### Gotchas (nya i detta spår)

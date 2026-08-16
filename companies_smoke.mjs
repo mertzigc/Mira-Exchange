@@ -75,8 +75,8 @@ STORE["Hyresvärd"] = [
 // Drift: ärenden (Matter) + kvalitetskontroller (QualityControl) + ytor (Kommentar-Comment) + Grade
 // Kontor=of2 (aldrig omdöpt) + surface=i2 (aldrig raderad) → drift-testerna oberoende av office/room-mutationer
 STORE.Matter = [
-  { _id: "mt1", "Kundföretag": "cc1", Rubrik: "Kaffemaskin trasig", Beskrivning: "Fungerar ej", Kontor: "of2", Referens: "u1", "Created Date": "2026-08-10", Prioritet: "3 - brådskande", status: "Pågående", Avvikelse: false, "Team åtgärd intern": ["co1"], "Tråd": ["Christian: tittar på det"], Feedback: "" },
-  { _id: "mt2", "Kundföretag": "cc1", Rubrik: "Avfallshantering", Beskrivning: "Glas", Kontor: "of2", "Created Date": "2026-07-20", Prioritet: "2", status: "Avslutad", Avvikelse: false },
+  { _id: "mt1", "Kundföretag": "cc1", Rubrik: "Kaffemaskin trasig", Beskrivning: "Fungerar ej", Kontor: "of2", Referens: "u1", "Created Date": "2026-08-10", Prioritet: "3 - brådskande", status: "Pågående", Avvikelse: false, "Team åtgärd intern": ["co1"], "Tråd": ["Christian Mertzig, Carotte Group, 260810,09:15: tittar på det"], Feedback: "" },
+  { _id: "mt2", "Kundföretag": "cc1", Rubrik: "Avfallshantering", Beskrivning: "Glas", Kontor: "of2", "Created Date": "2026-07-20", Prioritet: "2", status: "Avslutat", Avvikelse: false },
   { _id: "mt3", "Kundföretag": "cc1", Rubrik: "Fel städ", Beskrivning: "Ej torkat", Kontor: "of2", "Created Date": "2026-08-05", Prioritet: "3", status: "Pågående", Avvikelse: true },
   { _id: "mt4", "Kundföretag": "cc2", Rubrik: "Annat bolag", status: "Pågående" },
 ];
@@ -127,7 +127,7 @@ const deps = {
     const arr = STORE[t] || AUX[t] || (t === "ClientCompany" ? Object.values(CC) : []);
     return arr.filter((r) => _cmatch(r, constraints));
   },
-  bubbleFind: async (t) => { fetchedTypes.push(t); return AUX[t] || []; },
+  bubbleFind: async (t) => { fetchedTypes.push(t); return STORE[t] || AUX[t] || []; },
   bubbleCount: async (t, cs = []) => (STORE[t] ? STORE[t].filter((r) => _cmatch(r, cs)).length : 0),
   bubbleGet: async (t, id) => { if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
   bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; } if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); } return {}; },
@@ -493,6 +493,7 @@ const run = async () => {
   ok("matters: avvikelse-flagga (mt3) + status (mt2 avslutad)", mts.body.rows.filter(function(r){return r.id==="mt3";})[0].avvikelse === true && mts.body.rows.filter(function(r){return r.id==="mt2";})[0].open === false);
   var mdet = await call(s.routes, "get", "/admin/companies/matter/:id", { params: { id: "mt1" } });
   ok("matter detalj: team_intern (co1) + tråd + beskrivning", mdet.body.ok && mdet.body.matter.team_intern.length === 1 && mdet.body.matter.team_intern[0] === "Testare Testsson" && mdet.body.matter.trad.length === 1 && mdet.body.matter.beskrivning === "Fungerar ej");
+  ok("matter detalj: tråd-datum tvättat (260810,09:15 → 10 aug 2026 · 09:15) + status_options ur datan", mdet.body.matter.trad[0].indexOf("10 aug 2026 · 09:15") > -1 && mdet.body.matter.trad[0].indexOf("260810") === -1 && mdet.body.matter.status_options.indexOf("Pågående") > -1 && mdet.body.matter.status_options.indexOf("Avslutat") > -1);
   var mdet404 = await call(s.routes, "get", "/admin/companies/matter/:id", { params: { id: "nope" } });
   ok("matter detalj okänt id → 404", mdet404.code === 404);
   var qcs = await call(s.routes, "get", "/admin/companies/:id/qc", { params: { id: "cc1" } });
@@ -507,7 +508,7 @@ const run = async () => {
   var dOpen = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open" } });
   ok("drift open → 3 (mt1/mt3/mt4 över cc1+cc2) + företagsnamn resolvat", dOpen.body.ok && dOpen.body.total === 3 && dOpen.body.rows.some(function(r){return r.id==="mt4" && r.company==="Beta Bygg AB";}) && dOpen.body.rows.some(function(r){return r.id==="mt1" && r.company==="Acme AB";}));
   var dClosed = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "closed" } });
-  ok("drift closed → 1 (mt2 Avslutad)", dClosed.body.total === 1 && dClosed.body.rows[0].id === "mt2");
+  ok("drift closed → 1 (mt2 Avslutat)", dClosed.body.total === 1 && dClosed.body.rows[0].id === "mt2");
   var dAvv = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "avvikelser" } });
   ok("drift avvikelser → 1 (mt3)", dAvv.body.total === 1 && dAvv.body.rows[0].id === "mt3");
   var dQ = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open", q: "kaffe" } });
@@ -518,6 +519,20 @@ const run = async () => {
   ok("drift matters bär prioritet-facet", Array.isArray(dPrio.body.prioriteter));
   var dQC = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc" } });
   ok("drift qc → 1 (qc1) + företagsnamn resolvat", dQC.body.ok && dQC.body.total === 1 && dQC.body.rows[0].id === "qc1" && dQC.body.rows[0].company === "Acme AB");
+
+  // ── DRIFT SKRIV (status + kommentar) — sist för att inte mutera tidigare assertions ──
+  var cLen = STORE.Matter.filter(function(r){return r._id==="mt1";})[0]["Tråd"].length;
+  var cAdd = await call(s.routes, "post", "/admin/companies/matter/:id/comment", { params: { id: "mt1" }, body: { text: "Ny kommentar från test", author: "Testaren" } });
+  var mt1Now = STORE.Matter.filter(function(r){return r._id==="mt1";})[0];
+  ok("matter comment → tråd appendad m. rent datum + författare", cAdd.body.ok && mt1Now["Tråd"].length === cLen + 1 && /^Testaren · \d+ \w+ \d{4} · \d{2}:\d{2}: Ny kommentar/.test(mt1Now["Tråd"][mt1Now["Tråd"].length - 1]));
+  var cTom = await call(s.routes, "post", "/admin/companies/matter/:id/comment", { params: { id: "mt1" }, body: { text: "" } });
+  ok("matter comment tom → 400", cTom.code === 400 && cTom.body.error === "tom_kommentar");
+  var sSet = await call(s.routes, "post", "/admin/companies/matter/:id/status", { params: { id: "mt1" }, body: { status: "Avslutat" } });
+  ok("matter status → satt + closed_date vid avslut", sSet.body.ok && mt1Now.status === "Avslutat" && mt1Now.closed_date);
+  var sNo = await call(s.routes, "post", "/admin/companies/matter/:id/status", { params: { id: "mt1" }, body: {} });
+  ok("matter status utan värde → 400", sNo.code === 400 && sNo.body.error === "missing_status");
+  var s404 = await call(s.routes, "post", "/admin/companies/matter/:id/status", { params: { id: "nope" }, body: { status: "Avslutat" } });
+  ok("matter status okänt id → 404", s404.code === 404);
 
   // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
   var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });

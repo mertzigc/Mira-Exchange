@@ -1192,6 +1192,22 @@ export function registerCompaniesRoutes(app, deps) {
   // = en "Kommentar - Comment" (kvalitetskontroll==QC) m. Betyg(Grade.Värde)/Bild/Beskrivning.
   // Snittbetyg = medel av Grade.Värde där kvalitetskontroll==QC.
   const _img1 = (v) => { if (Array.isArray(v)) return _httpsUrl(v[0]); return _httpsUrl(v); };
+  // Trådkommentarer: tvätta native-datumstämpeln (YYMMDD,HH:MM / YYMMDD HH:MM) → "D mmm YYYY · HH:MM"
+  const _MONTHS_SV = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+  function _prettyStamp(yy, mm, dd, hh, mi) {
+    const year = 2000 + Number(yy), mon = _MONTHS_SV[Number(mm) - 1] || String(mm);
+    return Number(dd) + " " + mon + " " + year + " · " + String(hh).padStart(2, "0") + ":" + String(mi).padStart(2, "0");
+  }
+  function _cleanTrad(line) {
+    return _str(line).replace(/\b(\d{2})(\d{2})(\d{2})[,\s]+(\d{1,2})[:.](\d{2})\b/g, (m, yy, mm, dd, hh, mi) => _prettyStamp(yy, mm, dd, hh, mi)).replace(/,\s*·/g, " ·");
+  }
+  function _nowStampSV() {
+    try {
+      const fmt = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+      const p = {}; for (const x of fmt.formatToParts(new Date())) p[x.type] = x.value;
+      return _prettyStamp(String(p.year).slice(2), p.month, p.day, p.hour, p.minute);
+    } catch (_) { return ""; }
+  }
   const _imgs = (v) => (Array.isArray(v) ? v : (v ? [v] : [])).map(_httpsUrl).filter(Boolean);
   async function _officeNameMap(companyId) {
     const offs = await bubbleFindAll("Office", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }] }).catch(() => []);
@@ -1215,6 +1231,18 @@ export function registerCompaniesRoutes(app, deps) {
       if (r) m.set(id, _str(r.Name || r.Namn));
     }));
     return m;
+  }
+  // Status Ärende-OS: distinkta värden ur datan (cachad första-sida) → status-dropdown utan att gissa OS.
+  let _statusCache = { list: null, ts: 0 };
+  async function _matterStatuses() {
+    if (_statusCache.list && (Date.now() - _statusCache.ts) < 10 * 60 * 1000) return _statusCache.list;
+    const rows = await bubbleFind("Matter", {}).catch(() => []);
+    const set = new Set();
+    for (const r of (rows || [])) { const st = _str(r.status); if (st) set.add(st); }
+    set.add("Pågående");
+    const list = Array.from(set).sort();
+    _statusCache = { list, ts: Date.now() };
+    return list;
   }
   function nMatter(r, um, om) {
     const refId = _ref(r.Referens), kid = _ref(r.Kontor);
@@ -1280,7 +1308,7 @@ export function registerCompaniesRoutes(app, deps) {
       const m = await bubbleGet("Matter", id).catch(() => null);
       if (!m) return res.status(404).json({ ok: false, error: "matter_not_found" });
       const companyId = _ref(m["Kundföretag"]) || "";
-      const [uc, om, cw] = await Promise.all([_users().catch(() => null), _officeNameMap(companyId), _companyCoworkerMap(companyId)]);
+      const [uc, om, cw, statusOptions] = await Promise.all([_users().catch(() => null), _officeNameMap(companyId), _companyCoworkerMap(companyId), _matterStatuses().catch(() => ["Pågående"])]);
       const base = nMatter(m, uc && uc.map, om);
       const internIds = (Array.isArray(m["Team åtgärd intern"]) ? m["Team åtgärd intern"] : (m["Team åtgärd intern"] ? [m["Team åtgärd intern"]] : [])).map(_ref).filter(Boolean);
       const team_intern = internIds.map((cid) => cw.map.get(cid) || "").filter(Boolean);
@@ -1288,17 +1316,62 @@ export function registerCompaniesRoutes(app, deps) {
       const externIds = (Array.isArray(m["Team åtgärd extern"]) ? m["Team åtgärd extern"] : (m["Team åtgärd extern"] ? [m["Team åtgärd extern"]] : [])).map(_ref).filter(Boolean);
       const externRows = await Promise.all(externIds.map((kid) => bubbleGet("Konsult - Consultant", kid).catch(() => null)));
       const team_extern = externRows.filter(Boolean).map((k) => (_str(k["Förnamn"] || k["First Name"]) + " " + _str(k["Efternamn"] || k["Last Name"])).trim() || _str(k.Email || k.email || k["Företagsnamn"])).filter(Boolean);
-      const trad = (Array.isArray(m["Tråd"]) ? m["Tråd"] : (m["Tråd"] ? [m["Tråd"]] : [])).map(_str).filter(Boolean);
+      const trad = (Array.isArray(m["Tråd"]) ? m["Tråd"] : (m["Tråd"] ? [m["Tråd"]] : [])).map(_str).filter(Boolean).map(_cleanTrad);
       const detail = Object.assign(base, {
         team_intern, team_extern, trad,
         feedback: _str(m.Feedback), forbattring: _str(m["Förbättring"]),
         internservice: m.Internservice === true,
         bilder: _imgs(m.Bild),
+        status_options: statusOptions,
       });
       return res.json({ ok: true, matter: detail });
     } catch (e) {
       console.error("[/admin/companies/matter/:id]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // POST /admin/companies/matter/:id/status {status} — uppdatera ärendets status
+  app.options("/admin/companies/matter/:id/status", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/matter/:id/status", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    const status = _str((req.body || {}).status).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (!status) return res.status(400).json({ ok: false, error: "missing_status" });
+    try {
+      const m = await bubbleGet("Matter", id).catch(() => null);
+      if (!m) return res.status(404).json({ ok: false, error: "matter_not_found" });
+      const patch = { status };
+      if (status !== "Pågående") patch["closed_date"] = new Date().toISOString();
+      await bubblePatch("Matter", id, patch);
+      return res.json({ ok: true, id, status });
+    } catch (e) {
+      console.error("[/admin/companies/matter/:id/status]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // POST /admin/companies/matter/:id/comment {text, author} — lägg inlägg i tråden (Tråd = List of texts)
+  app.options("/admin/companies/matter/:id/comment", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/matter/:id/comment", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    const text = _str((req.body || {}).text).trim();
+    const author = _str((req.body || {}).author).trim() || "Carotte";
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (!text) return res.status(400).json({ ok: false, error: "tom_kommentar" });
+    try {
+      const m = await bubbleGet("Matter", id).catch(() => null);
+      if (!m) return res.status(404).json({ ok: false, error: "matter_not_found" });
+      const cur = (Array.isArray(m["Tråd"]) ? m["Tråd"] : (m["Tråd"] ? [m["Tråd"]] : [])).map(_str);
+      const line = author + " · " + _nowStampSV() + ": " + text;
+      cur.push(line);
+      await bubblePatch("Matter", id, { "Tråd": cur });
+      return res.json({ ok: true, id, line: _cleanTrad(line) });
+    } catch (e) {
+      console.error("[/admin/companies/matter/:id/comment]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });
 
@@ -1425,7 +1498,7 @@ export function registerCompaniesRoutes(app, deps) {
       // matters
       const constraints = [];
       if (scope === "open") constraints.push({ key: "status", constraint_type: "equals", value: "Pågående" });
-      else if (scope === "closed") { constraints.push({ key: "status", constraint_type: "not equal", value: "Pågående" }); constraints.push({ key: "status", constraint_type: "is_not_empty" }); }   // allt utom öppet (OS-värdet för avslutat varierar; tom status = ej avslutad)
+      else if (scope === "closed") constraints.push({ key: "status", constraint_type: "equals", value: "Avslutat" });   // Status Ärende-OS: Pågående/Avslutat/Utkast — Utkast hamnar korrekt i varken öppet/avslutat
       else if (scope === "avvikelser") constraints.push({ key: "Avvikelse", constraint_type: "equals", value: "true" });
       if (prio) constraints.push({ key: "Prioritet", constraint_type: "equals", value: prio });
       if (q) constraints.push({ key: "Rubrik", constraint_type: "text contains", value: q });
