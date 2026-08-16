@@ -73,8 +73,10 @@
   .fk-card{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:16px;overflow:hidden;}
   .fk-hero{padding:20px 24px 0;}
   .fk-herotop{display:flex;align-items:flex-start;gap:16px;}
-  .fk-logo{width:44px;height:44px;border-radius:10px;background:var(--fl-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex-shrink:0;overflow:hidden;}
-  .fk-logo img{width:100%;height:100%;object-fit:cover;}
+  .fk-logo{width:56px;height:56px;border-radius:12px;background:var(--fl-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;flex-shrink:0;overflow:hidden;}
+  /* Riktig logga: bred pill med fast höjd + auto bredd → rektangulära wordmarks syns i full bredd */
+  .fk-herologo{height:56px;max-width:300px;background:#fff;border-radius:12px;padding:8px 14px;box-sizing:border-box;display:flex;align-items:center;flex-shrink:0;}
+  .fk-herologo img{height:100%;width:auto;max-width:100%;object-fit:contain;display:block;}
   .fk-avatar{width:52px;height:52px;border-radius:50%;background:var(--fl-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;flex-shrink:0;overflow:hidden;}
   .fk-avatar img{width:100%;height:100%;object-fit:cover;}
   .fk-photorow{display:flex;align-items:center;gap:14px;margin:2px 0 4px;}
@@ -93,9 +95,9 @@
   .fk-feedtyp{font-size:12.5px;font-weight:600;color:var(--fl-txt);}
   .fk-feedmsg{font-size:12.5px;color:var(--fl-mut);line-height:1.45;white-space:pre-wrap;}
   .fk-hwrap{max-width:900px;}
-  .fk-logobox{margin-top:10px;width:220px;height:120px;border:1px dashed var(--fl-line);border-radius:12px;background:var(--fl-chip);display:flex;align-items:center;justify-content:center;overflow:hidden;}
-  .fk-logobox img{max-width:90%;max-height:90%;object-fit:contain;}
-  .fk-logoinit{font-size:34px;font-weight:800;color:var(--fl-acc);}
+  .fk-logobox{margin-top:10px;width:420px;max-width:100%;height:220px;border:1px dashed var(--fl-line);border-radius:12px;background:var(--fl-chip);display:flex;align-items:center;justify-content:center;overflow:hidden;padding:22px;box-sizing:border-box;}
+  .fk-logobox img{max-width:100%;max-height:100%;object-fit:contain;}
+  .fk-logoinit{font-size:52px;font-weight:800;color:var(--fl-acc);}
   .fk-owrap{max-width:1080px;}
   .fk-olist{display:flex;flex-direction:column;gap:10px;}
   .fk-otile{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:14px 16px;}
@@ -511,7 +513,9 @@
 
   function cardHero(){
     var c=STATE.card.company, k=STATE.card.kpi, ready=STATE.card.revenue_ready;
-    var logo=c.logotyp?('<img src="'+esc(c.logotyp)+'" alt="">'):esc(initials(c.name));
+    var logo=c.logotyp
+      ? '<div class="fk-herologo"><img src="'+esc(c.logotyp)+'" alt="'+esc(c.name)+'"></div>'
+      : '<div class="fk-logo">'+esc(initials(c.name))+'</div>';
     var meta=[];
     if(c.orgnr) meta.push('Org.nr <b>'+esc(c.orgnr)+'</b>');
     if(c.ansvarig) meta.push('Ansvarig <b>'+esc(c.ansvarig)+'</b>');
@@ -520,7 +524,7 @@
     if(c.potential) meta.push('Potential <b>'+esc(c.potential)+'</b>');
     var omsNow=ready?numc(k.omsattning_now):'<span class="fk-calc">beräknar…</span>';
     return '<div class="fk-hero"><div class="fk-herotop">'+
-      '<div class="fk-logo">'+logo+'</div>'+
+      logo+
       '<div><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+'</div>'+
       '<div class="fk-hmeta">'+meta.map(function(m){return '<span>'+m+'</span>';}).join("")+'</div></div></div>'+
       '<div class="fk-strip">'+
