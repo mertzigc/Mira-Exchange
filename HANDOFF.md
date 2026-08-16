@@ -15,7 +15,7 @@
 ### Filer
 - **`companies_api.js`** (NY, ~48k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
 - **`mira-foretag-lista.html`** (NY, ~63k) — ENDA Bubble-blocket (lista + kort + alla flikar). `.fl`/`.fk`-namnrymd, BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` + `planning_token` (INGET company_id — kortet öppnas från raden).
-- **`companies_smoke.mjs`** — 152/152 gröna. `index.js` — wiring + delade cachar + Bubble-wf-callers. `emailer.js` — mallar `password_reset` + `user_welcome`.
+- **`companies_smoke.mjs`** — 159/159 gröna. `index.js` — wiring + delade cachar + Bubble-wf-callers. `emailer.js` — mallar `password_reset` + `user_welcome`.
 
 ### Backend-arkitektur (companies_api.js)
 - **Delade cachar (index.js):** `sharedCompanyFullMap` (CC-list-projektion ur EN 55-sidorsladdning) + `sharedCompanyRevenueMapWarm` (FortnoxInvoice.ft_net/år, **lat** — ingen boot-prewarm, WU-medveten). Listan gör NOLL Bubble-anrop (allt ur cacharna); bara PATCH/skapa skriver.
@@ -59,7 +59,14 @@ Historik = `activitet_crm` där **`company==id`** via `_companyActivityRows(id)`
 - **QC:** varje yta = en **`Kommentar - Comment`** (typnamn m. mellanslag+bindestreck!) där `kvalitetskontroll`==QC, m. `Intern_lokal`(Internal_room)/`Mötesrum`(MeetingRoom)-ref, `Betyg`(→`Grade`), `Bild`, `Beskrivning`. **Snittbetyg = medel av `Grade.Värde` där `kvalitetskontroll`==QC.** QC-fält: `Avtal`(Contract Housekeeping)/`Kontor`/`kontrolldatum`/`Kontrollant`(User)/`Leverantör`/`Kundreferens`(Coworkers)/arbetskläder/servicekort/städförråd/`Meddelande`/betyg_client/feedback_client.
 - **Backend (`companies_api.js`):** `GET /admin/companies/:id/matters` · `GET /admin/companies/matter/:id` · `GET /admin/companies/:id/qc` · `GET /admin/companies/qc/:id`. Ref-namn resolvas via `_officeNameMap`/`_contractNameMap`/`_supplierNameMap`/`_roomNameMap`/`_users`/`_companyCoworkerMap`. counts.drift via `bubbleCount Matter [Kundföretag,status=Pågående]`.
 - **Frontend (`mira-foretag-lista.html`):** `driftBody`(subtabs)→`matterListBody`/`qcListBody` + `matterDetailBody`/`qcDetailBody`(`.fk-qgrid`-ytkort). fetch: matters/qc/matterDetail/qcDetail. STATE driftSub/matters/qcList/matterOpen/matterDetail/qcOpen/qcDetail.
-- Verifierat: smoke 152/152 + harness (ärendelista m. avvikelse/status-pills, ärende-detalj m. tråd+team, QC-lista, QC-detalj m. ytor+snittbetyg+summering+kundutvärdering). **Kvar Drift: Fas 2 (ärende SKRIV) · Fas 3 (QC SKRIV) · Fas 4 (stå-alone huvudsektion).**
+- Verifierat: smoke 152/152 + harness. 
+
+### Drift stå-alone (Fas 4) — eget block `mira-drift.html` — KLAR + verifierat 2026-08-16 (ej deployat)
+Aggregerar ärenden + kvalitetskontroller över ALLA kunder m. sök/filter/paginering; detalj återanvänder samma endpoints som kortet.
+- **Backend:** `GET /admin/drift/list?type=matters|qc&scope=open|closed|avvikelser&q=&company=&prio=&page=&limit=`. Per-request Bubble-sök m. constraints (scope-default Pågående → WU-bundet). Företagsnamn via delad `companyFullMap`, kontor via `_officeNamesByIds`(bubbleGet sidans Kontor-ids), övriga namn via befintliga mappar. `q`=Rubrik/Titel text-contains; `company`=företagsnamn→id-set (in-memory filter). Prefix `/admin/drift` tillagt i openPrefixes (index.js). Detalj: `/admin/companies/matter/:id` + `/qc/:id` (företags-agnostiska).
+- **Frontend (`mira-drift.html`, NYTT block):** `.dr`-namnrymd, egen CSS (kopierar kortets Drift-look). Flikar Pågående/Avslutade/Avvikelser/Kvalitetskontroller + sök-rubrik + sök-företag + prioritet-facet + paginering. Lista m. Företag-kolumn + samma detalj-vyer (ärende + QC). SWR ej nödvändig (per-request).
+- Verifierat: smoke 159/159 (drift/list open/closed/avvikelser + rubrik-sök[text contains] + företagsfilter + qc + facet) + harness (aggregerad lista över EA/Planhat/Scania, sök, QC-flik, båda detaljvyerna). Deploy: index.js (openPrefix) + companies_api.js + **nytt Bubble-block `mira-drift.html`** på Drift-sidan (data-mira api_host+planning_token).
+- **Kvar Drift: Fas 2 (ärende SKRIV) · Fas 3 (QC SKRIV).**
 
 ### Onboarding/lösenord (LIVE, funkar från start till mål)
 Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mailar länk (SendGrid: `password_reset`-mall vid reset, `user_welcome`-mall m. USP-sektioner vid ny user) → reset_pw-sidan: **API Connector → exchange** (byter token mot engångs-temp via Bubble-wf `assign_temp_password`) → **Log the user in** + **Update password** (valt lösenord). Ny user: Bubble-wf `create_user_account` (Create an account for someone else + sätt Company/Coworker/namn). **Render kan EJ skapa User el. sätta valfritt lösenord via Data API → allt sådant via Bubble-wf** (auth ägs av Bubble).

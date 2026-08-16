@@ -453,6 +453,7 @@ function requireApiKey(req, res, next) {
     "/admin/produktion",           // Produktionsmodul (dagsvy per kök), x-admin-token-grindad (produktion_api.js)
     "/admin/salj",                 // Sälj — mötestratt + säljmål, x-admin-token-grindad (salj_api.js)
     "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad
+    "/admin/drift",                // Drift stå-alone (ärenden+kvalitetskontroller aggregerat), x-admin-token-grindad
     "/admin/reset-password",       // Lösenords-reset exchange (token-grindad, publik — reset_pw-sidan) (companies_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",

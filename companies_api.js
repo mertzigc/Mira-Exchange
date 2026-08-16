@@ -1221,6 +1221,7 @@ export function registerCompaniesRoutes(app, deps) {
     const st = _str(r.status) || "Pågående";
     return {
       id: bubbleId(r),
+      company_id: _ref(r["Kundföretag"]) || null,
       rubrik: _str(r.Rubrik) || _str(r.case_title) || "Ärende",
       beskrivning: _str(r.Beskrivning) || _str(r.case_description_clean),
       datum: _day(r.reported_at || r["Created Date"]),
@@ -1238,6 +1239,7 @@ export function registerCompaniesRoutes(app, deps) {
     const kid = _ref(r.Kontor), avId = _ref(r.Avtal), leId = _ref(r.Leverantör), ktId = _ref(r.Kontrollant);
     return {
       id: bubbleId(r),
+      company_id: _ref(r["Kundföretag"]) || null,
       titel: _str(r.Titel) || "Kvalitetskontroll",
       datum: _day(r.kontrolldatum || r["Created Date"]),
       kontor: (kid && om) ? (om.get(kid) || "") : "",
@@ -1374,6 +1376,74 @@ export function registerCompaniesRoutes(app, deps) {
       });
     } catch (e) {
       console.error("[/admin/companies/qc/:id]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── DRIFT stå-alone (Fas 4): aggregerar ärenden/QC över ALLA kunder + sök/filter/paginering ──
+  // Per-request Bubble-sök m. constraints (WU-bundet via scope-default Pågående). Detalj återanvänder
+  // /admin/companies/matter/:id + /qc/:id. Namn: företag via delad companyFullMap, kontor via bubbleGet
+  // på sidans Kontor-ids (bounded), referens/kontrollant via _users, leverantör/avtal via små mappar.
+  async function _officeNamesByIds(ids) {
+    const uniq = Array.from(new Set((ids || []).filter(Boolean)));
+    const m = new Map();
+    await Promise.all(uniq.map(async (id) => { const o = await bubbleGet("Office", id).catch(() => null); if (o) m.set(id, _str(o.Office_title || o.name || o.Name)); }));
+    return m;
+  }
+  app.options("/admin/drift/list", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/drift/list", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const type = _str(req.query.type).trim() || "matters";
+      const q = _str(req.query.q).trim().toLowerCase();
+      const companyQ = _str(req.query.company).trim().toLowerCase();
+      const prio = _str(req.query.prio).trim();
+      const scope = _str(req.query.scope).trim() || "open";
+      const page = Math.max(1, parseInt(_str(req.query.page), 10) || 1);
+      const limit = Math.min(100, Math.max(10, parseInt(_str(req.query.limit), 10) || 40));
+      const full = await companyFullMap().catch(() => new Map());
+      // företagsnamn-sök → id-set
+      let companyIds = null;
+      if (companyQ) { companyIds = new Set(); for (const [id, c] of full) { if (c && c.name && c.name.toLowerCase().indexOf(companyQ) > -1) companyIds.add(id); } }
+
+      if (type === "qc") {
+        const raw = await bubbleFindAll("QualityControl", {}).catch(() => []);
+        const [uc, sm] = await Promise.all([_users().catch(() => null), _supplierNameMap()]);
+        const okIds = await _officeNamesByIds((raw || []).map((r) => _ref(r.Kontor)));
+        let rows = (raw || []).map((r) => {
+          const o = nQC(r, uc && uc.map, okIds, new Map(), sm);
+          o.company = (o.company_id && full.get(o.company_id)) ? full.get(o.company_id).name : "";
+          return o;
+        });
+        if (companyIds) rows = rows.filter((r) => r.company_id && companyIds.has(r.company_id));
+        if (q) rows = rows.filter((r) => (r.titel || "").toLowerCase().indexOf(q) > -1);
+        rows.sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
+        const total = rows.length, pages = Math.max(1, Math.ceil(total / limit));
+        return res.json({ ok: true, type, total, pages, page, rows: rows.slice((page - 1) * limit, page * limit) });
+      }
+
+      // matters
+      const constraints = [];
+      if (scope === "open") constraints.push({ key: "status", constraint_type: "equals", value: "Pågående" });
+      else if (scope === "closed") constraints.push({ key: "status", constraint_type: "equals", value: "Avslutad" });
+      else if (scope === "avvikelser") constraints.push({ key: "Avvikelse", constraint_type: "equals", value: "true" });
+      if (prio) constraints.push({ key: "Prioritet", constraint_type: "equals", value: prio });
+      if (q) constraints.push({ key: "Rubrik", constraint_type: "text contains", value: q });
+      const raw = await bubbleFindAll("Matter", { constraints }).catch(() => []);
+      const uc = await _users().catch(() => null);
+      const okIds = await _officeNamesByIds((raw || []).map((r) => _ref(r.Kontor)));
+      let rows = (raw || []).map((r) => {
+        const o = nMatter(r, uc && uc.map, okIds);
+        o.company = (o.company_id && full.get(o.company_id)) ? full.get(o.company_id).name : "";
+        return o;
+      });
+      if (companyIds) rows = rows.filter((r) => r.company_id && companyIds.has(r.company_id));
+      const prioSet = Array.from(new Set(rows.map((r) => r.prioritet).filter(Boolean))).sort();
+      rows.sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
+      const total = rows.length, pages = Math.max(1, Math.ceil(total / limit));
+      return res.json({ ok: true, type, scope, total, pages, page, prioriteter: prioSet, rows: rows.slice((page - 1) * limit, page * limit) });
+    } catch (e) {
+      console.error("[/admin/drift/list]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

@@ -1,0 +1,229 @@
+<!--
+  mira-drift.html — stå-alone Drift-modul (ärenden + kvalitetskontroller) aggregerat över ALLA kunder.
+  Speglar kundkortets Drift-flik men med sök/filter/paginering. Detalj återanvänder samma endpoints.
+  Backend: /admin/drift/list (list) + /admin/companies/matter/:id + /admin/companies/qc/:id (detalj).
+  data-mira: api_host + planning_token. Konventioner: INGEN ?./??, IIFE, BROOT-claim, .dr-namnrymd.
+-->
+<style>
+  .dr{--dr-bg:#0f1830;--dr-card:#16223d;--dr-line:#243456;--dr-txt:#e7ecf6;--dr-mut:#8ea0c2;--dr-acc:#df6f39;--dr-ok:#2ecc71;--dr-chip:#1c2b4d;--dr-err:#e5533c;
+      color:var(--dr-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
+  .dr *{box-sizing:border-box;}
+  .dr-head{display:flex;align-items:center;gap:10px;margin:0 0 14px;}
+  .dr-head h1{font-size:20px;font-weight:800;margin:0;}
+  .dr-count{color:var(--dr-mut);font-size:12.5px;}
+  .dr-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;}
+  .dr-tab{background:var(--dr-chip);color:var(--dr-txt);border:1px solid var(--dr-line);border-radius:20px;padding:8px 16px;cursor:pointer;font-size:12.5px;font-weight:600;}
+  .dr-tab.on{background:var(--dr-acc);color:#0f1830;border-color:var(--dr-acc);}
+  .dr-filters{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;}
+  .dr-filters input,.dr-filters select{background:var(--dr-chip);color:var(--dr-txt);border:1px solid var(--dr-line);border-radius:9px;padding:9px 12px;font-size:12.5px;min-width:180px;}
+  .dr-filters input::placeholder{color:var(--dr-mut);}
+  .dr-panel{background:var(--dr-card);border:1px solid var(--dr-line);border-radius:14px;}
+  .dr-tbl{width:100%;border-collapse:collapse;}
+  .dr-tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--dr-mut);padding:12px 14px;border-bottom:1px solid var(--dr-line);font-weight:600;}
+  .dr-tbl td{padding:12px 14px;border-bottom:1px solid var(--dr-line);font-size:12.5px;vertical-align:top;}
+  .dr-tbl tr:last-child td{border-bottom:none;}
+  .dr-row{cursor:pointer;}
+  .dr-row:hover td{background:var(--dr-chip);}
+  .dr-sub{font-size:11px;color:var(--dr-mut);margin-top:2px;}
+  .dr-pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600;white-space:nowrap;}
+  .dr-pill.ok{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .dr-pill.open{background:rgba(223,111,57,.18);color:#f0a071;}
+  .dr-pill.wait{background:var(--dr-chip);color:var(--dr-mut);}
+  .dr-pill.red{background:rgba(229,83,60,.18);color:#f08a76;}
+  .dr-pag{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;color:var(--dr-mut);font-size:12px;}
+  .dr-pag button{background:var(--dr-chip);color:var(--dr-txt);border:1px solid var(--dr-line);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:600;}
+  .dr-pag button[disabled]{opacity:.4;cursor:default;}
+  .dr-msg{padding:26px;text-align:center;color:var(--dr-mut);}
+  .dr-empty{padding:34px 20px;text-align:center;color:var(--dr-mut);}
+  .dr-empty b{display:block;color:var(--dr-txt);font-size:14px;margin-bottom:4px;}
+  /* detalj */
+  .dr-back{background:var(--dr-chip);color:var(--dr-txt);border:1px solid var(--dr-line);border-radius:9px;padding:8px 15px;cursor:pointer;font-size:12.5px;font-weight:600;margin-bottom:14px;}
+  .dr-wrap{max-width:1000px;}
+  .dr-ph{display:flex;align-items:center;gap:10px;margin:2px 0 10px;}
+  .dr-ph h3{font-size:16px;font-weight:700;margin:0;}
+  .dr-sech{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--dr-acc);font-weight:700;margin-bottom:8px;}
+  .dr-pad{padding:14px 16px;}
+  .dr-mt{margin-top:12px;}
+  .dr-metagrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 18px;}
+  .dr-meta{display:flex;flex-direction:column;gap:1px;}
+  .dr-meta span{font-size:10px;color:var(--dr-mut);text-transform:uppercase;letter-spacing:.4px;}
+  .dr-meta b{font-size:12.5px;color:var(--dr-txt);font-weight:600;}
+  .dr-txtblk{font-size:12.5px;color:var(--dr-mut);line-height:1.5;white-space:pre-wrap;}
+  .dr-img{max-width:300px;max-height:220px;border-radius:10px;margin-top:12px;display:block;object-fit:cover;}
+  .dr-tradrow{font-size:12.5px;color:var(--dr-txt);padding:8px 0;border-bottom:1px solid var(--dr-line);line-height:1.45;white-space:pre-wrap;}
+  .dr-tradrow:last-child{border-bottom:none;}
+  .dr-qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:14px;}
+  .dr-qcard{background:var(--dr-card);border:1px solid var(--dr-line);border-radius:12px;overflow:hidden;}
+  .dr-qchead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;}
+  .dr-qcname{font-size:12.5px;font-weight:700;color:var(--dr-acc);}
+  .dr-qcimg{width:100%;height:150px;object-fit:cover;display:block;}
+  .dr-qccom{font-size:12px;color:var(--dr-mut);padding:8px 12px;line-height:1.4;}
+  .dr-two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;}
+  @media(max-width:720px){ .dr-metagrid,.dr-two{grid-template-columns:1fr;} }
+</style>
+
+<div class="dr">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <div data-dr="root"><div class="dr-msg">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".dr"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-dr-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-dr-claimed","1");
+  var $=function(k){ return root.querySelector('[data-dr="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+
+  var TABS=[{k:"open",lbl:"Pågående ärenden"},{k:"closed",lbl:"Avslutade ärenden"},{k:"avvikelser",lbl:"Avvikelser"},{k:"qc",lbl:"Kvalitetskontroller"}];
+  var STATE={ tab:"open", q:"", companyQ:"", prio:"", page:1, rows:[], total:0, pages:1, prioriteter:[], loading:false,
+              open:null, detail:null, detailType:null };
+  var _deb=null;
+
+  function prioCls(p){ p=String(p||""); if(/1/.test(p)) return "wait"; if(/2/.test(p)) return "open"; if(/3/.test(p)) return "red"; return "wait"; }
+  function betygCls(v){ v=Number(v); if(!v) return "wait"; if(v>=4) return "ok"; if(v>=3) return "open"; return "red"; }
+
+  function filtersHtml(){
+    var prioOpts='<option value="">Alla prioriteter</option>';
+    for(var i=0;i<STATE.prioriteter.length;i++){ var p=STATE.prioriteter[i]; prioOpts+='<option value="'+esc(p)+'"'+(p===STATE.prio?" selected":"")+'>'+esc(p)+'</option>'; }
+    var isQC=(STATE.tab==="qc");
+    return '<div class="dr-filters">'+
+      '<input type="text" data-dr="q" placeholder="'+(isQC?"Sök titel…":"Sök ärende (rubrik)…")+'" value="'+esc(STATE.q)+'">'+
+      '<input type="text" data-dr="companyq" placeholder="Sök företagsnamn…" value="'+esc(STATE.companyQ)+'">'+
+      (isQC?'':'<select data-dr="prio">'+prioOpts+'</select>')+
+    '</div>';
+  }
+  function tabsHtml(){
+    var h=""; for(var i=0;i<TABS.length;i++){ var t=TABS[i]; h+='<span class="dr-tab'+(STATE.tab===t.k?" on":"")+'" data-dr="tab" data-t="'+t.k+'">'+esc(t.lbl)+'</span>'; }
+    return '<div class="dr-tabs">'+h+'</div>';
+  }
+  function matterTable(rows){
+    if(!rows.length) return '<div class="dr-panel"><div class="dr-empty"><b>Inga ärenden</b>Inga ärenden matchar filtret.</div></div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var st=r.open?'<span class="dr-pill open">Pågående</span>':'<span class="dr-pill ok">Avslutad</span>';
+      var av=r.avvikelse?' <span class="dr-pill red">Avvikelse</span>':'';
+      var prio=r.prioritet?'<span class="dr-pill '+prioCls(r.prioritet)+'">'+esc(r.prioritet)+'</span>':'—';
+      body+='<tr class="dr-row" data-dr="open-matter" data-id="'+esc(r.id)+'"><td>'+esc(r.datum||"—")+'</td>'+
+        '<td><b>'+esc(r.rubrik||"—")+'</b>'+(r.beskrivning?'<div class="dr-sub">'+esc(r.beskrivning.slice(0,70))+(r.beskrivning.length>70?"…":"")+'</div>':'')+'</td>'+
+        '<td>'+esc(r.company||"—")+'</td><td>'+esc(r.referens||"—")+'</td><td>'+prio+'</td><td>'+esc(r.kontor||"—")+'</td><td>'+st+av+'</td></tr>';
+    }
+    return '<div class="dr-panel"><table class="dr-tbl"><thead><tr><th>Datum</th><th>Rubrik</th><th>Företag</th><th>Referens</th><th>Prioritet</th><th>Kontor</th><th>Status</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  function qcTable(rows){
+    if(!rows.length) return '<div class="dr-panel"><div class="dr-empty"><b>Inga kvalitetskontroller</b>Inga kontroller matchar filtret.</div></div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var b=r.snittbetyg==null?"—":'<span class="dr-pill '+betygCls(r.snittbetyg)+'">'+esc(String(r.snittbetyg))+'</span>';
+      body+='<tr class="dr-row" data-dr="open-qc" data-id="'+esc(r.id)+'"><td>'+esc(r.datum||"—")+'</td>'+
+        '<td><b>'+esc(r.titel||"—")+'</b></td><td>'+esc(r.company||"—")+'</td><td>'+esc(r.avtal||"—")+'</td>'+
+        '<td>'+esc(r.kontor||"—")+'</td><td>'+b+'</td><td>'+esc(r.leverantor||"—")+'</td></tr>';
+    }
+    return '<div class="dr-panel"><table class="dr-tbl"><thead><tr><th>Datum</th><th>Titel</th><th>Företag</th><th>Avtal</th><th>Kontor</th><th>Snittbetyg</th><th>Leverantör</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  function pagerHtml(){
+    if(STATE.pages<=1) return "";
+    return '<div class="dr-pag"><button data-dr="prev"'+(STATE.page<=1?" disabled":"")+'>← Föregående</button>'+
+      '<span>Sida '+STATE.page+' av '+STATE.pages+' · '+STATE.total+' st</span>'+
+      '<button data-dr="next"'+(STATE.page>=STATE.pages?" disabled":"")+'>Nästa →</button></div>';
+  }
+
+  function matterDetail(m){
+    var back='<button class="dr-back" data-dr="back">← Drift</button>';
+    if(m==="loading"||!m) return back+'<div class="dr-msg">Laddar ärende…</div>';
+    var st=m.open?'<span class="dr-pill open">Pågående</span>':'<span class="dr-pill ok">Avslutad</span>';
+    var meta=[["Företag",m.company],["Kontor",m.kontor],["Referens",m.referens],["Datum",m.datum],["Prioritet",m.prioritet],["Kategori",m.kategori]];
+    var mg=""; for(var i=0;i<meta.length;i++){ if(meta[i][1]) mg+='<div class="dr-meta"><span>'+esc(meta[i][0])+'</span><b>'+esc(meta[i][1])+'</b></div>'; }
+    var team=function(t,arr){ return (arr&&arr.length)?('<div class="dr-meta"><span>'+t+'</span><b>'+esc(arr.join(", "))+'</b></div>'):''; };
+    var bild=(m.bilder&&m.bilder.length)?('<img class="dr-img" src="'+esc(m.bilder[0])+'" alt="">'):'';
+    var trad=""; if(m.trad&&m.trad.length){ for(var j=0;j<m.trad.length;j++){ trad+='<div class="dr-tradrow">'+esc(m.trad[j])+'</div>'; } } else trad='<div class="dr-txtblk">Inga inlägg.</div>';
+    return '<div class="dr-wrap">'+back+
+      '<div class="dr-ph"><h3>'+esc(m.rubrik||"Ärende")+'</h3>'+st+(m.avvikelse?' <span class="dr-pill red">Avvikelse</span>':'')+'</div>'+
+      '<div class="dr-panel dr-pad"><div class="dr-sech">Beskrivning</div><div class="dr-txtblk">'+esc(m.beskrivning||"—")+'</div>'+bild+
+        '<div class="dr-metagrid dr-mt">'+mg+team("Team internt",m.team_intern)+team("Team externt",m.team_extern)+'</div></div>'+
+      '<div class="dr-panel dr-pad dr-mt"><div class="dr-sech">Tråd</div>'+trad+'</div>'+
+      ((m.feedback||m.forbattring)?('<div class="dr-panel dr-pad dr-mt"><div class="dr-sech">Uppföljning</div>'+(m.feedback?'<div class="dr-txtblk"><b>Feedback:</b> '+esc(m.feedback)+'</div>':'')+(m.forbattring?'<div class="dr-txtblk"><b>Förbättring:</b> '+esc(m.forbattring)+'</div>':'')+'</div>'):'')+
+    '</div>';
+  }
+  function qcDetail(q){
+    var back='<button class="dr-back" data-dr="back">← Drift</button>';
+    if(q==="loading"||!q) return back+'<div class="dr-msg">Laddar kvalitetskontroll…</div>';
+    var hd=[["Datum",q.datum],["Kontor",q.kontor],["Avtal",q.avtal],["Kund",q.kund],["Leverantör",q.leverantor],["Kontrollant",q.kontrollant]];
+    var hg=""; for(var i=0;i<hd.length;i++){ if(hd[i][1]) hg+='<div class="dr-meta"><span>'+esc(hd[i][0])+'</span><b>'+esc(hd[i][1])+'</b></div>'; }
+    if(q.kundreferens&&q.kundreferens.length) hg+='<div class="dr-meta"><span>Mottagare</span><b>'+esc(q.kundreferens.join(", "))+'</b></div>';
+    var cards="";
+    for(var j=0;j<q.surfaces.length;j++){ var s=q.surfaces[j];
+      cards+='<div class="dr-qcard"><div class="dr-qchead"><span class="dr-qcname">'+esc(s.namn||"Yta")+'</span>'+(s.betyg!=null?'<span class="dr-pill '+betygCls(s.betyg)+'">Betyg '+esc(String(s.betyg))+'</span>':'')+'</div>'+
+        (s.bild?'<img class="dr-qcimg" src="'+esc(s.bild)+'" alt="">':'')+(s.kommentar?'<div class="dr-qccom">'+esc(s.kommentar)+'</div>':'')+'</div>';
+    }
+    if(!q.surfaces.length) cards='<div class="dr-txtblk">Inga kontrollerade ytor.</div>';
+    var sm=q.summering||{}, summ='<div class="dr-txtblk">Arbetskläder: <b>'+(sm.arbetsklader?"ja":"nej")+'</b> · Servicekort: <b>'+(sm.servicekort?"ja":"nej")+'</b> · Städförråd: <b>'+(sm.stadforrad?"ja":"nej")+'</b></div>'+(sm.meddelande?'<div class="dr-txtblk dr-mt">'+esc(sm.meddelande)+'</div>':'');
+    var ku=q.kundutvardering||{}, kub=(ku.betyg||ku.feedback)?('<div class="dr-txtblk">'+(ku.betyg?'<b>'+esc(ku.betyg)+'</b> · ':'')+esc(ku.feedback||"")+'</div>'):'<div class="dr-txtblk">Ingen kundutvärdering.</div>';
+    return '<div class="dr-wrap">'+back+
+      '<div class="dr-ph"><h3>'+esc(q.titel)+'</h3>'+(q.snittbetyg!=null?'<span class="dr-pill '+betygCls(q.snittbetyg)+'">Snitt '+esc(String(q.snittbetyg))+'</span>':'')+'</div>'+
+      '<div class="dr-panel dr-pad"><div class="dr-metagrid">'+hg+'</div></div>'+
+      '<div class="dr-qgrid">'+cards+'</div>'+
+      '<div class="dr-two"><div class="dr-panel dr-pad"><div class="dr-sech">Summering kontrollant</div>'+summ+'</div>'+
+        '<div class="dr-panel dr-pad"><div class="dr-sech">Kundutvärdering</div>'+kub+'</div></div>'+
+    '</div>';
+  }
+
+  function render(){
+    if(STATE.open){ $("root").innerHTML=(STATE.detailType==="qc")?qcDetail(STATE.detail):matterDetail(STATE.detail); return; }
+    var head='<div class="dr-head"><h1>Drift</h1><span class="dr-count">'+(STATE.loading?"laddar…":(STATE.total+" st"))+'</span></div>';
+    var list;
+    if(STATE.loading) list='<div class="dr-panel"><div class="dr-msg">Laddar…</div></div>';
+    else list=(STATE.tab==="qc")?qcTable(STATE.rows):matterTable(STATE.rows);
+    $("root").innerHTML=head+tabsHtml()+filtersHtml()+list+pagerHtml();
+  }
+  function qstr(){
+    var p=["type="+(STATE.tab==="qc"?"qc":"matters"),"page="+STATE.page];
+    if(STATE.tab!=="qc") p.push("scope="+STATE.tab);
+    if(STATE.q) p.push("q="+encodeURIComponent(STATE.q));
+    if(STATE.companyQ) p.push("company="+encodeURIComponent(STATE.companyQ));
+    if(STATE.prio && STATE.tab!=="qc") p.push("prio="+encodeURIComponent(STATE.prio));
+    return "/admin/drift/list?"+p.join("&");
+  }
+  function load(){
+    STATE.loading=true; render();
+    api(qstr()).then(function(j){
+      STATE.loading=false;
+      if(j&&j.ok){ STATE.rows=j.rows||[]; STATE.total=j.total||0; STATE.pages=j.pages||1; if(j.prioriteter) STATE.prioriteter=j.prioriteter; }
+      else { STATE.rows=[]; STATE.total=0; STATE.pages=1; }
+      render();
+    }).catch(function(){ STATE.loading=false; STATE.rows=[]; render(); });
+  }
+  function openMatter(id){ STATE.open=id; STATE.detailType="matter"; STATE.detail="loading"; render();
+    api("/admin/companies/matter/"+encodeURIComponent(id)).then(function(j){ STATE.detail=(j&&j.ok&&j.matter)?j.matter:{rubrik:"Kunde inte ladda",beskrivning:"",trad:[]}; if(STATE.open===id) render(); }).catch(function(){ STATE.detail={rubrik:"Nätverksfel",beskrivning:"",trad:[]}; if(STATE.open===id) render(); }); }
+  function openQC(id){ STATE.open=id; STATE.detailType="qc"; STATE.detail="loading"; render();
+    api("/admin/companies/qc/"+encodeURIComponent(id)).then(function(j){ STATE.detail=(j&&j.ok&&j.qc)?j.qc:{titel:"Kunde inte ladda",surfaces:[],summering:{},kundutvardering:{}}; if(STATE.open===id) render(); }).catch(function(){ STATE.detail={titel:"Nätverksfel",surfaces:[],summering:{},kundutvardering:{}}; if(STATE.open===id) render(); }); }
+
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    var tab=t.closest?t.closest('[data-dr="tab"]'):null;
+    if(tab){ STATE.tab=tab.getAttribute("data-t"); STATE.page=1; STATE.prio=""; load(); return; }
+    var om=t.closest?t.closest('[data-dr="open-matter"]'):null;
+    if(om){ openMatter(om.getAttribute("data-id")); return; }
+    var oq=t.closest?t.closest('[data-dr="open-qc"]'):null;
+    if(oq){ openQC(oq.getAttribute("data-id")); return; }
+    if(t.closest && t.closest('[data-dr="back"]')){ STATE.open=null; STATE.detail=null; render(); return; }
+    if(t.closest && t.closest('[data-dr="prev"]')){ if(STATE.page>1){ STATE.page--; load(); } return; }
+    if(t.closest && t.closest('[data-dr="next"]')){ if(STATE.page<STATE.pages){ STATE.page++; load(); } return; }
+  });
+  root.addEventListener("input", function(e){
+    var t=e.target, k=t.getAttribute?t.getAttribute("data-dr"):null;
+    if(k==="q"||k==="companyq"){ if(k==="q") STATE.q=t.value; else STATE.companyQ=t.value; STATE.page=1; if(_deb) clearTimeout(_deb); _deb=setTimeout(load, 350); }
+  });
+  root.addEventListener("change", function(e){
+    var t=e.target, k=t.getAttribute?t.getAttribute("data-dr"):null;
+    if(k==="prio"){ STATE.prio=t.value; STATE.page=1; load(); }
+  });
+
+  load();
+})();
+</script>

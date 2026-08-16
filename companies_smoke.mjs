@@ -96,6 +96,7 @@ let _idc = 0;
 const _cmatch = (r, cs) => (cs || []).every((c) => {
   const v = r[c.key];
   if (c.constraint_type === "contains") { const a = Array.isArray(v) ? v : (v == null ? [] : [v]); return a.map(String).includes(String(c.value)); }
+  if (c.constraint_type === "text contains") return String(v == null ? "" : v).toLowerCase().includes(String(c.value).toLowerCase());
   return String(v == null ? "" : v) === String(c.value);
 });
 
@@ -498,6 +499,22 @@ const run = async () => {
   ok("qc detalj: header (kund/avtal/leverantör) + summering + kundutvärdering + mottagare", qdet.body.qc.kund === "Acme AB" && qdet.body.qc.summering.arbetsklader === true && qdet.body.qc.summering.servicekort === false && qdet.body.qc.summering.stadforrad === true && qdet.body.qc.kundutvardering.feedback === "Nöjda" && qdet.body.qc.kundreferens[0] === "Testare Testsson");
   var qdet404 = await call(s.routes, "get", "/admin/companies/qc/:id", { params: { id: "nope" } });
   ok("qc detalj okänt id → 404", qdet404.code === 404);
+
+  // ── DRIFT stå-alone: aggregerar över ALLA kunder + sök/filter ──
+  var dOpen = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open" } });
+  ok("drift open → 3 (mt1/mt3/mt4 över cc1+cc2) + företagsnamn resolvat", dOpen.body.ok && dOpen.body.total === 3 && dOpen.body.rows.some(function(r){return r.id==="mt4" && r.company==="Beta Bygg AB";}) && dOpen.body.rows.some(function(r){return r.id==="mt1" && r.company==="Acme AB";}));
+  var dClosed = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "closed" } });
+  ok("drift closed → 1 (mt2 Avslutad)", dClosed.body.total === 1 && dClosed.body.rows[0].id === "mt2");
+  var dAvv = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "avvikelser" } });
+  ok("drift avvikelser → 1 (mt3)", dAvv.body.total === 1 && dAvv.body.rows[0].id === "mt3");
+  var dQ = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open", q: "kaffe" } });
+  ok("drift sök rubrik (text contains) → 1 (mt1)", dQ.body.total === 1 && dQ.body.rows[0].id === "mt1");
+  var dCo = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open", company: "beta" } });
+  ok("drift företagsnamn-filter (Beta) → 1 (mt4)", dCo.body.total === 1 && dCo.body.rows[0].id === "mt4");
+  var dPrio = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open" } });
+  ok("drift matters bär prioritet-facet", Array.isArray(dPrio.body.prioriteter));
+  var dQC = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc" } });
+  ok("drift qc → 1 (qc1) + företagsnamn resolvat", dQC.body.ok && dQC.body.total === 1 && dQC.body.rows[0].id === "qc1" && dQC.body.rows[0].company === "Acme AB");
 
   // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
   var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });
