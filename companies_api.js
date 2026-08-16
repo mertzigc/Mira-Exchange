@@ -870,6 +870,39 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
+  // ── POST /admin/companies/:id/logo — sätt/ta bort företagets logotyp (ClientCompany.logotyp) ──
+  // Multipart: fält "file" (bild) → Bubble file storage → logotyp=url. Rensa: fält "clear"=1.
+  app.options("/admin/companies/:id/logo", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/:id/logo", _photoMw, async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const cc = await bubbleGet("ClientCompany", id).catch(() => null);
+      if (!cc) return res.status(404).json({ ok: false, error: "company_not_found" });
+      const clear = req.body && (req.body.clear === "1" || req.body.clear === 1 || req.body.clear === true || req.body.clear === "true");
+      const file = req.file;
+      if (clear && !file) {
+        await bubblePatch("ClientCompany", id, { logotyp: "" });
+        return res.json({ ok: true, url: "" });
+      }
+      if (!file || !file.buffer || !file.buffer.length) return res.status(400).json({ ok: false, error: "no_file" });
+      const ct = _str(file.mimetype || "image/png");
+      if (!/^image\//i.test(ct)) return res.status(400).json({ ok: false, error: "not_image" });
+      if (file.buffer.length > 8 * 1024 * 1024) return res.status(413).json({ ok: false, error: "too_large" });
+      if (typeof bubbleUploadFile !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+      const ext = /png/i.test(ct) ? "png" : (/webp/i.test(ct) ? "webp" : (/svg/i.test(ct) ? "svg" : "jpg"));
+      const filename = ("logo_" + id + "." + ext).replace(/[^\w.\-]/g, "_");
+      const url = _httpsUrl(await bubbleUploadFile({ filename, contentType: ct, buffer: file.buffer }));
+      if (!url) return res.status(502).json({ ok: false, error: "upload_failed" });
+      await bubblePatch("ClientCompany", id, { logotyp: url });
+      return res.json({ ok: true, url });
+    } catch (e) {
+      console.error("[/admin/companies/:id/logo]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
   // ── Rum i ett kontor (Kontor 1b): MeetingRoom (office) + Internal_room (kontor) ──
   const _ROOM = { meeting: { type: "MeetingRoom", ref: "office", nameKey: "Name", companyKey: "Company", list: "Mötesrum" },
                   internal: { type: "Internal_room", ref: "kontor", nameKey: "Namn", companyKey: "kundföretag", list: "intern_lokal" } };
@@ -959,6 +992,195 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, id: rid });
     } catch (e) {
       console.error("[/admin/companies/office/:oid/room/:rid DELETE]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ══════════════ INSTÄLLNINGAR — LEVERANTÖRER (dotterbolag) ══════════════
+  // Koppling ligger på leverantören: `Leverantör - Supplier`.`Kundföretag` (List of ClientCompany).
+  // "Våra dotterbolag" = leverantörer där Kundföretag contains företaget. Add/remove = patcha den listan.
+  const SUPPLIER_TYPE = "Leverantör - Supplier";
+  function nSupplier(s) { return { id: bubbleId(s), name: _str(s["Företagsnamn"] || s.name || s.Name), category: _str(s.Kategori || s.Category || s.kategori) }; }
+  async function _suppliers(companyId) {
+    const [linked, all] = await Promise.all([
+      bubbleFindAll(SUPPLIER_TYPE, { constraints: [{ key: "Kundföretag", constraint_type: "contains", value: companyId }] }).catch(() => []),
+      bubbleFindAll(SUPPLIER_TYPE, {}).catch(() => []),
+    ]);
+    const linkedIds = new Set((linked || []).map(bubbleId));
+    const suppliers = (linked || []).map(nSupplier).sort(_byName);
+    const available = (all || []).filter((s) => !linkedIds.has(bubbleId(s))).map(nSupplier).sort(_byName);
+    return { suppliers, available };
+  }
+
+  // Personal-koppling: User.`Associated_company` (List of ClientCompany) — styr notiser m.m.
+  // "Vår personal" = Users där Associated_company contains företaget. Add-pool = Users vars
+  // Company == inloggad Carotte-users company (skickas som ?user_company= från blocket).
+  function nStaff(u) { return { id: bubbleId(u), name: (_str(u["First Name"] || u["Förnamn"]) + " " + _str(u["Surname"] || u["Last Name"] || u["Efternamn"])).trim() || _str(u.email || u.Email), email: _str(u.email || u.Email) }; }
+  async function _personnel(companyId, userCompanyId) {
+    const [linked, pool] = await Promise.all([
+      bubbleFindAll("User", { constraints: [{ key: "Associated_company", constraint_type: "contains", value: companyId }] }).catch(() => []),
+      userCompanyId ? bubbleFindAll("User", { constraints: [{ key: "Company", constraint_type: "equals", value: userCompanyId }] }).catch(() => []) : Promise.resolve([]),
+    ]);
+    const linkedIds = new Set((linked || []).map(bubbleId));
+    const personnel = (linked || []).map(nStaff).sort(_byName);
+    const personnel_available = (pool || []).filter((u) => !linkedIds.has(bubbleId(u))).map(nStaff).sort(_byName);
+    return { personnel, personnel_available };
+  }
+
+  // GET /admin/companies/:id/leverantorer?user_company= — dotterbolag + personal (+ tillgängliga)
+  app.options("/admin/companies/:id/leverantorer", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/leverantorer", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const [sup, staff] = await Promise.all([_suppliers(id), _personnel(id, _str(req.query.user_company).trim())]);
+      return res.json({ ok: true, suppliers: sup.suppliers, available: sup.available, personnel: staff.personnel, personnel_available: staff.personnel_available });
+    } catch (e) {
+      console.error("[/admin/companies/:id/leverantorer]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // POST /admin/companies/:id/personal {user_id} — koppla Carotte-personal (append company → user.Associated_company)
+  app.options("/admin/companies/:id/personal", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/:id/personal", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim();
+    const uid = _str((req.body || {}).user_id).trim();
+    if (!cid || !uid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const u = await bubbleGet("User", uid).catch(() => null);
+      if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+      const cur = (Array.isArray(u["Associated_company"]) ? u["Associated_company"] : []).map(_ref).filter(Boolean);
+      if (cur.indexOf(cid) === -1) cur.push(cid);
+      await bubblePatch("User", uid, { "Associated_company": cur });
+      return res.json({ ok: true, id: uid, user: nStaff(u) });
+    } catch (e) {
+      console.error("[/admin/companies/:id/personal]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // DELETE /admin/companies/:id/personal/:uid — koppla bort personal (remove company ur Associated_company)
+  app.options("/admin/companies/:id/personal/:uid", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.delete("/admin/companies/:id/personal/:uid", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim(), uid = _str(req.params.uid).trim();
+    if (!cid || !uid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const u = await bubbleGet("User", uid).catch(() => null);
+      if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+      const cur = (Array.isArray(u["Associated_company"]) ? u["Associated_company"] : []).map(_ref).filter((x) => x && x !== cid);
+      await bubblePatch("User", uid, { "Associated_company": cur });
+      return res.json({ ok: true, id: uid });
+    } catch (e) {
+      console.error("[/admin/companies/:id/personal/:uid DELETE]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // POST /admin/companies/:id/leverantor {supplier_id} — koppla dotterbolag (append company → supplier.Kundföretag)
+  app.options("/admin/companies/:id/leverantor", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/:id/leverantor", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim();
+    const sid = _str((req.body || {}).supplier_id).trim();
+    if (!cid || !sid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const sup = await bubbleGet(SUPPLIER_TYPE, sid).catch(() => null);
+      if (!sup) return res.status(404).json({ ok: false, error: "supplier_not_found" });
+      const cur = (Array.isArray(sup["Kundföretag"]) ? sup["Kundföretag"] : []).map(_ref).filter(Boolean);
+      if (cur.indexOf(cid) === -1) cur.push(cid);
+      await bubblePatch(SUPPLIER_TYPE, sid, { "Kundföretag": cur });
+      return res.json({ ok: true, id: sid, supplier: nSupplier(sup) });
+    } catch (e) {
+      console.error("[/admin/companies/:id/leverantor]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // DELETE /admin/companies/:id/leverantor/:sid — koppla bort (remove company ur supplier.Kundföretag)
+  app.options("/admin/companies/:id/leverantor/:sid", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.delete("/admin/companies/:id/leverantor/:sid", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim(), sid = _str(req.params.sid).trim();
+    if (!cid || !sid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const sup = await bubbleGet(SUPPLIER_TYPE, sid).catch(() => null);
+      if (!sup) return res.status(404).json({ ok: false, error: "supplier_not_found" });
+      const cur = (Array.isArray(sup["Kundföretag"]) ? sup["Kundföretag"] : []).map(_ref).filter((x) => x && x !== cid);
+      await bubblePatch(SUPPLIER_TYPE, sid, { "Kundföretag": cur });
+      return res.json({ ok: true, id: sid });
+    } catch (e) {
+      console.error("[/admin/companies/:id/leverantor/:sid DELETE]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ══════════════ INSTÄLLNINGAR — FASTIGHETSÄGARE (Hyresvärd) ══════════════
+  // Koppling ligger på hyresvärden: `Hyresvärd`.`Hyresgäster` (List of ClientCompany). Att knyta
+  // företaget som hyresgäst → append company till hyresvärdens Hyresgäster-lista. Styr t.ex. vilka
+  // erbjudanden som visas för en fastighetsägares hyresgäster (Vasakronan etc.).
+  const HYRESVARD_TYPE = "Hyresvärd";
+  function nLandlord(h) { return { id: bubbleId(h), name: _str(h.Namn || h.name || h.Name) }; }
+  async function _landlords(companyId) {
+    const [linked, all] = await Promise.all([
+      bubbleFindAll(HYRESVARD_TYPE, { constraints: [{ key: "Hyresgäster", constraint_type: "contains", value: companyId }] }).catch(() => []),
+      bubbleFindAll(HYRESVARD_TYPE, {}).catch(() => []),
+    ]);
+    const linkedIds = new Set((linked || []).map(bubbleId));
+    return { landlords: (linked || []).map(nLandlord).sort(_byName), available: (all || []).filter((h) => !linkedIds.has(bubbleId(h))).map(nLandlord).sort(_byName) };
+  }
+
+  // GET /admin/companies/:id/fastighetsagare — kopplade hyresvärdar + tillgängliga
+  app.options("/admin/companies/:id/fastighetsagare", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/fastighetsagare", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const ll = await _landlords(id);
+      return res.json({ ok: true, landlords: ll.landlords, available: ll.available });
+    } catch (e) {
+      console.error("[/admin/companies/:id/fastighetsagare]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // POST /admin/companies/:id/fastighetsagare {landlord_id} — knyt som hyresgäst (append company → Hyresvärd.Hyresgäster)
+  app.post("/admin/companies/:id/fastighetsagare", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim();
+    const hid = _str((req.body || {}).landlord_id).trim();
+    if (!cid || !hid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const h = await bubbleGet(HYRESVARD_TYPE, hid).catch(() => null);
+      if (!h) return res.status(404).json({ ok: false, error: "landlord_not_found" });
+      const cur = (Array.isArray(h["Hyresgäster"]) ? h["Hyresgäster"] : []).map(_ref).filter(Boolean);
+      if (cur.indexOf(cid) === -1) cur.push(cid);
+      await bubblePatch(HYRESVARD_TYPE, hid, { "Hyresgäster": cur });
+      return res.json({ ok: true, id: hid, landlord: nLandlord(h) });
+    } catch (e) {
+      console.error("[/admin/companies/:id/fastighetsagare]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // DELETE /admin/companies/:id/fastighetsagare/:hid — koppla bort (remove company ur Hyresgäster)
+  app.options("/admin/companies/:id/fastighetsagare/:hid", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.delete("/admin/companies/:id/fastighetsagare/:hid", async (req, res) => {
+    if (!guard(req, res)) return;
+    const cid = _str(req.params.id).trim(), hid = _str(req.params.hid).trim();
+    if (!cid || !hid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const h = await bubbleGet(HYRESVARD_TYPE, hid).catch(() => null);
+      if (!h) return res.status(404).json({ ok: false, error: "landlord_not_found" });
+      const cur = (Array.isArray(h["Hyresgäster"]) ? h["Hyresgäster"] : []).map(_ref).filter((x) => x && x !== cid);
+      await bubblePatch(HYRESVARD_TYPE, hid, { "Hyresgäster": cur });
+      return res.json({ ok: true, id: hid });
+    } catch (e) {
+      console.error("[/admin/companies/:id/fastighetsagare/:hid DELETE]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });

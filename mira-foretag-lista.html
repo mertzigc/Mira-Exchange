@@ -93,6 +93,9 @@
   .fk-feedtyp{font-size:12.5px;font-weight:600;color:var(--fl-txt);}
   .fk-feedmsg{font-size:12.5px;color:var(--fl-mut);line-height:1.45;white-space:pre-wrap;}
   .fk-hwrap{max-width:900px;}
+  .fk-logobox{margin-top:10px;width:220px;height:120px;border:1px dashed var(--fl-line);border-radius:12px;background:var(--fl-chip);display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .fk-logobox img{max-width:90%;max-height:90%;object-fit:contain;}
+  .fk-logoinit{font-size:34px;font-weight:800;color:var(--fl-acc);}
   .fk-owrap{max-width:1080px;}
   .fk-olist{display:flex;flex-direction:column;gap:10px;}
   .fk-otile{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:14px 16px;}
@@ -116,7 +119,7 @@
   .fk-roomdel:hover{border-color:var(--fl-err);color:var(--fl-err);}
   .fk-roomempty{font-size:12px;color:var(--fl-mut);padding:4px 2px;}
   .fk-roomadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-  .fk-roomadd input{flex:1;min-width:120px;}
+  .fk-roomadd input,.fk-roomadd select{flex:1;min-width:120px;}
   .fk-hrowtoggle{cursor:pointer;user-select:none;}
   .fk-caret{margin-left:auto;color:var(--fl-mut);font-size:10px;}
   .fk-hdetail{margin-top:10px;padding-top:10px;border-top:1px dashed var(--fl-line);}
@@ -228,6 +231,7 @@
 <div class="fl">
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="user_company"   value=""><!-- bind till Current User's Company's unique id (för personal-dropdown i Leverantörer) -->
 
   <div data-fl="listview">
     <div class="fl-head">
@@ -272,7 +276,7 @@
               revenue_ready:true, revTries:0, listDirty:false,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false,
-              setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null };
+              setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -844,6 +848,69 @@
       renderCard();
     }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
   }
+  // ── Inställningar/Logo: företagslogotyp (ClientCompany.logotyp), original-fil (behåll transparens) ──
+  function logoMsg(txt, err){ var m=root.querySelector("[data-logomsg]"); if(m){ m.textContent=txt||""; m.style.color=err?"var(--fl-err)":"var(--fl-mut)"; } }
+  function onLogoPick(input){
+    var file=input.files&&input.files[0]; input.value="";
+    if(!file){ return; }
+    if(!/^image\//.test(file.type)){ logoMsg("✗ välj en bildfil", true); return; }
+    logoMsg("Laddar upp…");
+    var fd=new FormData(); fd.append("file", file, file.name||"logo.png");
+    fetch(HOST+"/admin/companies/"+encodeURIComponent(STATE.cardId)+"/logo",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+      .then(function(r){ return r.json(); }).then(function(j){
+        if(!j||!j.ok){ logoMsg("✗ "+((j&&j.error)||"fel"), true); return; }
+        if(STATE.card&&STATE.card.company) STATE.card.company.logotyp=j.url||"";
+        renderCard(); logoMsg("Sparat ✓");
+      }).catch(function(){ logoMsg("✗ nätverksfel", true); });
+  }
+  function removeLogo(){
+    logoMsg("Tar bort…");
+    var fd=new FormData(); fd.append("clear","1");
+    fetch(HOST+"/admin/companies/"+encodeURIComponent(STATE.cardId)+"/logo",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+      .then(function(r){ return r.json(); }).then(function(j){
+        if(!j||!j.ok){ logoMsg("✗ "+((j&&j.error)||"fel"), true); return; }
+        if(STATE.card&&STATE.card.company) STATE.card.company.logotyp="";
+        renderCard(); logoMsg("Borttaget ✓");
+      }).catch(function(){ logoMsg("✗ nätverksfel", true); });
+  }
+  // ── Inställningar/Leverantörer: dotterbolag (Leverantör.Kundföretag) + personal (User.Associated_company) ──
+  function fetchLeverantorer(){
+    if(STATE.setupLev==="loading" || (STATE.setupLev && STATE.setupLev.suppliers!==undefined)) return;
+    STATE.setupLev="loading";
+    var uc=cfg("user_company");
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/leverantorer"+(uc?("?user_company="+encodeURIComponent(uc)):"")).then(function(j){
+      STATE.setupLev=(j&&j.ok)?{suppliers:j.suppliers||[],available:j.available||[],personnel:j.personnel||[],personnel_available:j.personnel_available||[]}:{suppliers:[],available:[],personnel:[],personnel_available:[]};
+      if(STATE.view==="card"&&STATE.cardTab==="installningar"&&STATE.setupSub==="leverantorer") renderCard();
+    }).catch(function(){ STATE.setupLev={suppliers:[],available:[],personnel:[],personnel_available:[]}; if(STATE.setupSub==="leverantorer") renderCard(); });
+  }
+  var LEV_EP={supplier:{path:"/leverantor",key:"supplier_id",st:"setupLev"},staff:{path:"/personal",key:"user_id",st:"setupLev"},landlord:{path:"/fastighetsagare",key:"landlord_id",st:"setupHv"}};
+  function addLev(kind){
+    var ep=LEV_EP[kind]; if(!ep) return;
+    var sel=root.querySelector('[data-levadd="'+kind+'"]'), msg=root.querySelector('[data-levmsg="'+kind+'"]');
+    var id=sel?sel.value:"";
+    if(!id){ if(msg){ msg.textContent="Välj i listan"; msg.className="msg err"; } return; }
+    if(msg){ msg.textContent="Lägger till…"; msg.className="msg"; }
+    var body={}; body[ep.key]=id;
+    apiPost("/admin/companies/"+encodeURIComponent(STATE.cardId)+ep.path, body).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      STATE[ep.st]=null; renderCard();
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  function delLev(kind, id){
+    var ep=LEV_EP[kind]; if(!ep) return;
+    fetch(HOST+"/admin/companies/"+encodeURIComponent(STATE.cardId)+ep.path+"/"+encodeURIComponent(id),{method:"DELETE",headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }).then(function(j){
+      if(!j||!j.ok) return;
+      STATE[ep.st]=null; renderCard();
+    }).catch(function(){});
+  }
+  function fetchFastighetsagare(){
+    if(STATE.setupHv==="loading" || (STATE.setupHv && STATE.setupHv.landlords!==undefined)) return;
+    STATE.setupHv="loading";
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/fastighetsagare").then(function(j){
+      STATE.setupHv=(j&&j.ok)?{landlords:j.landlords||[],available:j.available||[]}:{landlords:[],available:[]};
+      if(STATE.view==="card"&&STATE.cardTab==="installningar"&&STATE.setupSub==="fastighetsagare") renderCard();
+    }).catch(function(){ STATE.setupHv={landlords:[],available:[]}; if(STATE.setupSub==="fastighetsagare") renderCard(); });
+  }
   // ── Inställningar/Kontor: hämta, skapa (+auto-rum), redigera ──
   function fetchOffices(){
     if(STATE.offices==="loading" || (STATE.offices && STATE.offices.length!==undefined)) return;
@@ -1008,7 +1075,12 @@
   function installningarBody(){
     var sub=STATE.setupSub||"kontor", tabs="";
     for(var i=0;i<SETUP_SUBS.length;i++){ var s=SETUP_SUBS[i]; tabs+='<span class="fk-subtab'+(sub===s.k?" on":"")+'" data-fk="setupsub" data-s="'+s.k+'">'+esc(s.lbl)+'</span>'; }
-    var inner=(sub==="kontor")?kontorBody():'<div class="fk-hwrap"><div class="fk-placeholder"><b>'+esc((SETUP_SUBS.filter(function(x){return x.k===sub;})[0]||{}).lbl||"")+'</b>Byggs härnäst.</div></div>';
+    var inner;
+    if(sub==="kontor") inner=kontorBody();
+    else if(sub==="logo") inner=logoBody();
+    else if(sub==="leverantorer") inner=leverantorerBody();
+    else if(sub==="fastighetsagare") inner=fastighetsagareBody();
+    else inner='<div class="fk-hwrap"><div class="fk-placeholder"><b>'+esc((SETUP_SUBS.filter(function(x){return x.k===sub;})[0]||{}).lbl||"")+'</b>Byggs härnäst.</div></div>';
     return '<div class="fk-body"><div class="fk-subtabs" style="margin-bottom:14px">'+tabs+'</div>'+inner+'</div>';
   }
   function officeForm(o){
@@ -1034,6 +1106,54 @@
       (isNew?'<div class="fl-lsub" style="margin:2px 0 8px">En default-uppsättning rum (1 mötesrum + 8 interna lokaler) skapas automatiskt för kvalitetskontroller.</div>':'')+
       '<div class="fk-formbtns"><button class="save" data-fk="'+(isNew?"officecreate":"officesave")+'">'+(isNew?"Skapa kontor":"Spara")+'</button>'+
         '<button class="fk-cancel" data-fk="'+(isNew?"officenewcancel":"officeeditcancel")+'">Avbryt</button><span class="msg" data-omsg></span></div>'+
+    '</div>';
+  }
+  function logoBody(){
+    var co=(STATE.card&&STATE.card.company)||{};
+    var lg=co.logotyp||"";
+    var preview=lg?('<img src="'+esc(lg)+'" alt="logotyp">'):'<div class="fk-logoinit">'+esc(initials(co.name))+'</div>';
+    return '<div class="fk-hwrap"><div class="fk-panel" style="padding:18px 20px">'+
+      '<div class="fk-sech">Företagslogotyp</div>'+
+      '<div class="fk-logobox">'+preview+'</div>'+
+      '<div class="fk-photobtns" style="flex-direction:row;margin-top:14px">'+
+        '<button data-fk="logopick">'+(lg?"Byt logotyp":"Ladda upp logotyp")+'</button>'+
+        (lg?'<button class="del" data-fk="logodel">Ta bort</button>':'')+
+      '</div>'+
+      '<input type="file" accept="image/*" data-fk="logofile" style="display:none">'+
+      '<div class="fk-photomsg" data-logomsg></div>'+
+    '</div></div>';
+  }
+  function levSection(title, kind, items, available, addLbl){
+    var rows="";
+    for(var i=0;i<items.length;i++){ var it=items[i];
+      var sub=(kind==="supplier")?(it.category||""):(it.email||"");
+      rows+='<div class="fk-roomrow"><span class="fk-roomname">'+esc(it.name||"—")+(sub?' <span class="fk-roomsub">'+esc(sub)+'</span>':'')+'</span>'+
+        '<button class="fk-roomdel" data-fk="levdel" data-kind="'+kind+'" data-id="'+esc(it.id)+'">Ta bort</button></div>';
+    }
+    if(!items.length) rows='<div class="fk-roomempty">Inget kopplat ännu.</div>';
+    var opts='<option value="">'+esc(addLbl)+'</option>';
+    for(var j=0;j<available.length;j++){ var a=available[j]; var al=a.name+((kind==="supplier"&&a.category)?(" · "+a.category):""); opts+='<option value="'+esc(a.id)+'">'+esc(al)+'</option>'; }
+    return '<div class="fk-roomsec"><div class="fk-sech">'+esc(title)+'</div><div class="fk-roomlist">'+rows+'</div>'+
+      '<div class="fk-roomadd"><select data-levadd="'+kind+'">'+opts+'</select><button class="fk-editbtn sm" data-fk="levaddbtn" data-kind="'+kind+'">Lägg till</button><span class="msg" data-levmsg="'+kind+'"></span></div></div>';
+  }
+  function leverantorerBody(){
+    if(STATE.setupLev===null){ fetchLeverantorer(); return '<div class="fk-owrap"><div class="fl-msg">Laddar…</div></div>'; }
+    if(STATE.setupLev==="loading") return '<div class="fk-owrap"><div class="fl-msg">Laddar…</div></div>';
+    var L=STATE.setupLev, noUC=(cfg("user_company")==="");
+    return '<div class="fk-owrap"><div class="fk-rooms">'+
+      levSection("Våra dotterbolag","supplier",L.suppliers||[],L.available||[],"Lägg till leverantör…")+
+      levSection("Vår personal","staff",L.personnel||[],L.personnel_available||[],"Lägg till Carotte-personal…")+
+    '</div>'+
+      (noUC?'<div class="fl-lsub" style="margin-top:10px">Personal-dropdownen är tom tills <b style="display:inline">data-mira="user_company"</b> binds till Current User\'s Company i Bubble.</div>':'')+
+    '</div>';
+  }
+  function fastighetsagareBody(){
+    if(STATE.setupHv===null){ fetchFastighetsagare(); return '<div class="fk-owrap"><div class="fl-msg">Laddar…</div></div>'; }
+    if(STATE.setupHv==="loading") return '<div class="fk-owrap"><div class="fl-msg">Laddar…</div></div>';
+    var H=STATE.setupHv;
+    return '<div class="fk-owrap">'+
+      '<div class="fl-lsub" style="margin:0 0 12px">Knyt företaget som hyresgäst till en eller flera fastighetsägare — styr t.ex. vilka erbjudanden som visas för deras hyresgäster.</div>'+
+      levSection("Fastighetsägare","landlord",H.landlords||[],H.available||[],"Lägg till fastighetsägare…")+
     '</div>';
   }
   function roomList(title, type, rooms, ph){
@@ -1095,7 +1215,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -1166,7 +1286,13 @@
       var hrow=t.closest?t.closest('[data-fk="histrow"]'):null;
       if(hrow){ var rid=hrow.getAttribute("data-id"); STATE.histOpen=(STATE.histOpen===rid?null:rid); renderCard(); return; }
       var ssub=t.closest?t.closest('[data-fk="setupsub"]'):null;
-      if(ssub){ STATE.setupSub=ssub.getAttribute("data-s"); STATE.officeNew=false; STATE.officeEdit=null; renderCard(); return; }
+      if(ssub){ STATE.setupSub=ssub.getAttribute("data-s"); STATE.officeNew=false; STATE.officeEdit=null; STATE.setupLev=null; STATE.setupHv=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="logopick"]')){ var lf=root.querySelector('[data-fk="logofile"]'); if(lf) lf.click(); return; }
+      if(t.closest && t.closest('[data-fk="logodel"]')){ removeLogo(); return; }
+      var laddb=t.closest?t.closest('[data-fk="levaddbtn"]'):null;
+      if(laddb){ addLev(laddb.getAttribute("data-kind")); return; }
+      var ldel=t.closest?t.closest('[data-fk="levdel"]'):null;
+      if(ldel){ delLev(ldel.getAttribute("data-kind"), ldel.getAttribute("data-id")); return; }
       if(t.closest && t.closest('[data-fk="officenew"]')){ STATE.officeNew=!STATE.officeNew; STATE.officeEdit=null; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="officenewcancel"]')){ STATE.officeNew=false; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="officeeditcancel"]')){ STATE.officeEdit=null; STATE.officeRooms=null; renderCard(); return; }
@@ -1203,6 +1329,7 @@
   root.addEventListener("change", function(e){
     var t=e.target;
     if(t.getAttribute && t.getAttribute("data-fk")==="photofile"){ onPhotoPick(t); return; }
+    if(t.getAttribute && t.getAttribute("data-fk")==="logofile"){ onLogoPick(t); return; }
     var hf=t.getAttribute?t.getAttribute("data-hf"):null;
     if(hf==="type"||hf==="done"){ var hb=t.closest(".fk-hedit"); if(hb) toggleHistCond(hb); return; }
     if(STATE.view!=="list") return;

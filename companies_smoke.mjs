@@ -10,7 +10,6 @@ const CC = {
 };
 const REV = new Map([["cc1", { 2025: 146750, 2026: 40992 }], ["cc2", { 2026: 7600 }]]);
 const AUX = {
-  User: [{ _id: "u1", "First Name": "Anna", "Surname": "Andersson", email: "christian.mertzig@gmail.com", Company: "cc1" }, { _id: "u2", "First Name": "Bo", "Surname": "Berg", Company: "cc2" }],
   ClientGroup: [{ _id: "g1", name: "Acme-koncernen" }],
   Fastighet: [{ _id: "f1", Namn: "Kungsgatan 1" }, { _id: "f2", Namn: "Vasagatan 5" }],
 };
@@ -58,6 +57,21 @@ const STORE = {
     { _id: "act5", company: "cc1", activity_type: "Möte", beskrivning: "Möte", "Datum_bokning": "2026-01-04", "Created Date": "2026-01-04" },
   ],
 };
+// User i STORE (behövs för bubbleGet/patch i personal-koppling); u1 kopplad till cc1 via Associated_company
+STORE.User = [
+  { _id: "u1", "First Name": "Anna", "Surname": "Andersson", email: "christian.mertzig@gmail.com", Company: "cc1", "Associated_company": ["cc1"] },
+  { _id: "u2", "First Name": "Bo", "Surname": "Berg", email: "bo@x.se", Company: "cc2" },
+];
+// Dotterbolag: sup1 kopplad till cc1 (via Kundföretag-listan), sup2 tillgänglig
+STORE["Leverantör - Supplier"] = [
+  { _id: "sup1", "Företagsnamn": "Carotte Housekeeping AB", "Kategori": "Housekeeping", "Kundföretag": ["cc1"] },
+  { _id: "sup2", "Företagsnamn": "Carotte Food & Event AB", "Kategori": "Food & Event", "Kundföretag": [] },
+];
+// Fastighetsägare: hv1 har cc1 som hyresgäst, hv2 tillgänglig
+STORE["Hyresvärd"] = [
+  { _id: "hv1", Namn: "Vasakronan", "Hyresgäster": ["cc1"] },
+  { _id: "hv2", Namn: "Fabege", "Hyresgäster": [] },
+];
 STORE.PasswordReset = []; STORE.emailqueue = [];   // token-flödet skapar rader här
 let _idc = 0;
 const _cmatch = (r, cs) => (cs || []).every((c) => {
@@ -410,6 +424,45 @@ const run = async () => {
   ok("room DELETE ok + borttagen ur STORE + ur Office-listan", rd.body.ok && STORE.Internal_room.length === delBefore - 1 && !STORE.Internal_room.some(function(r){return r._id === "i1";}) && (STORE.Office[0]["intern_lokal"] || []).indexOf("i1") === -1);
   var rdBad = await call(s.routes, "delete", "/admin/companies/office/:oid/room/:rid", { params: { oid: "of1", rid: "i2" }, query: { type: "x" } });
   ok("room DELETE bad_type → 400", rdBad.code === 400 && rdBad.body.error === "bad_type");
+
+  // ── LOGO (ClientCompany.logotyp) ──
+  var lg = await call(s.routes, "post", "/admin/companies/:id/logo", { params: { id: "cc1" }, file: { buffer: Buffer.from("abc"), mimetype: "image/png" } });
+  ok("logo upload ok → url + ClientCompany.logotyp satt", lg.body.ok && lg.body.url === "https://files/logo_cc1.png" && CC.cc1.logotyp === "https://files/logo_cc1.png");
+  var lgClr = await call(s.routes, "post", "/admin/companies/:id/logo", { params: { id: "cc1" }, body: { clear: "1" } });
+  ok("logo clear → logotyp tömt", lgClr.body.ok && lgClr.body.url === "" && CC.cc1.logotyp === "");
+  var lgNo = await call(s.routes, "post", "/admin/companies/:id/logo", { params: { id: "cc1" }, body: {} });
+  ok("logo utan fil (ej clear) → 400", lgNo.code === 400 && lgNo.body.error === "no_file");
+  var lg404 = await call(s.routes, "post", "/admin/companies/:id/logo", { params: { id: "nope" }, file: { buffer: Buffer.from("x"), mimetype: "image/png" } });
+  ok("logo okänt företag → 404", lg404.code === 404);
+
+  // ── LEVERANTÖRER: dotterbolag (supplier.Kundföretag) + personal (User.Associated_company) ──
+  var lev = await call(s.routes, "get", "/admin/companies/:id/leverantorer", { params: { id: "cc1" }, query: { user_company: "cc2" } });
+  ok("leverantörer: dotterbolag kopplat (sup1) + tillgängligt (sup2)", lev.body.ok && lev.body.suppliers.length === 1 && lev.body.suppliers[0].name === "Carotte Housekeeping AB" && lev.body.suppliers[0].category === "Housekeeping" && lev.body.available.some(function(x){return x.id==="sup2";}));
+  ok("leverantörer: personal kopplad (u1) + pool via Company==user_company (u2)", lev.body.personnel.length === 1 && lev.body.personnel[0].name === "Anna Andersson" && lev.body.personnel_available.length === 1 && lev.body.personnel_available[0].id === "u2");
+  // koppla dotterbolag sup2
+  var addSup = await call(s.routes, "post", "/admin/companies/:id/leverantor", { params: { id: "cc1" }, body: { supplier_id: "sup2" } });
+  ok("leverantor add → company appendad till supplier.Kundföretag", addSup.body.ok && (STORE["Leverantör - Supplier"][1]["Kundföretag"] || []).indexOf("cc1") > -1);
+  var delSup = await call(s.routes, "delete", "/admin/companies/:id/leverantor/:sid", { params: { id: "cc1", sid: "sup1" } });
+  ok("leverantor delete → company borttagen ur supplier.Kundföretag", delSup.body.ok && (STORE["Leverantör - Supplier"][0]["Kundföretag"] || []).indexOf("cc1") === -1);
+  var addSup404 = await call(s.routes, "post", "/admin/companies/:id/leverantor", { params: { id: "cc1" }, body: { supplier_id: "nope" } });
+  ok("leverantor add okänd → 404", addSup404.code === 404);
+  // koppla personal u2
+  var addP = await call(s.routes, "post", "/admin/companies/:id/personal", { params: { id: "cc1" }, body: { user_id: "u2" } });
+  ok("personal add → company appendad till User.Associated_company", addP.body.ok && (STORE.User[1]["Associated_company"] || []).indexOf("cc1") > -1);
+  var delP = await call(s.routes, "delete", "/admin/companies/:id/personal/:uid", { params: { id: "cc1", uid: "u1" } });
+  ok("personal delete → company borttagen ur Associated_company", delP.body.ok && (STORE.User[0]["Associated_company"] || []).indexOf("cc1") === -1);
+  var addP404 = await call(s.routes, "post", "/admin/companies/:id/personal", { params: { id: "cc1" }, body: { user_id: "nope" } });
+  ok("personal add okänd user → 404", addP404.code === 404);
+
+  // ── FASTIGHETSÄGARE (Hyresvärd.Hyresgäster) ──
+  var fa = await call(s.routes, "get", "/admin/companies/:id/fastighetsagare", { params: { id: "cc1" } });
+  ok("fastighetsägare: kopplad (Vasakronan) + tillgänglig (Fabege)", fa.body.ok && fa.body.landlords.length === 1 && fa.body.landlords[0].name === "Vasakronan" && fa.body.available.some(function(x){return x.id==="hv2";}));
+  var addHv = await call(s.routes, "post", "/admin/companies/:id/fastighetsagare", { params: { id: "cc1" }, body: { landlord_id: "hv2" } });
+  ok("fastighetsägare add → company appendad till Hyresvärd.Hyresgäster", addHv.body.ok && (STORE["Hyresvärd"][1]["Hyresgäster"] || []).indexOf("cc1") > -1);
+  var delHv = await call(s.routes, "delete", "/admin/companies/:id/fastighetsagare/:hid", { params: { id: "cc1", hid: "hv1" } });
+  ok("fastighetsägare delete → company borttagen ur Hyresgäster", delHv.body.ok && (STORE["Hyresvärd"][0]["Hyresgäster"] || []).indexOf("cc1") === -1);
+  var addHv404 = await call(s.routes, "post", "/admin/companies/:id/fastighetsagare", { params: { id: "cc1" }, body: { landlord_id: "nope" } });
+  ok("fastighetsägare add okänd → 404", addHv404.code === 404);
 
   // ── Aktivitet-fliken: aktiviteter där personen är taggad (taggade_personer contains) ──
   var av1 = await call(s.routes, "get", "/admin/companies/coworker/:id/activities", { params: { id: "co1" } });
