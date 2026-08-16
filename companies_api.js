@@ -1425,7 +1425,7 @@ export function registerCompaniesRoutes(app, deps) {
       // matters
       const constraints = [];
       if (scope === "open") constraints.push({ key: "status", constraint_type: "equals", value: "Pågående" });
-      else if (scope === "closed") constraints.push({ key: "status", constraint_type: "equals", value: "Avslutad" });
+      else if (scope === "closed") { constraints.push({ key: "status", constraint_type: "not equal", value: "Pågående" }); constraints.push({ key: "status", constraint_type: "is_not_empty" }); }   // allt utom öppet (OS-värdet för avslutat varierar; tom status = ej avslutad)
       else if (scope === "avvikelser") constraints.push({ key: "Avvikelse", constraint_type: "equals", value: "true" });
       if (prio) constraints.push({ key: "Prioritet", constraint_type: "equals", value: prio });
       if (q) constraints.push({ key: "Rubrik", constraint_type: "text contains", value: q });

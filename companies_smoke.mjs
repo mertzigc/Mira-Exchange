@@ -97,6 +97,9 @@ const _cmatch = (r, cs) => (cs || []).every((c) => {
   const v = r[c.key];
   if (c.constraint_type === "contains") { const a = Array.isArray(v) ? v : (v == null ? [] : [v]); return a.map(String).includes(String(c.value)); }
   if (c.constraint_type === "text contains") return String(v == null ? "" : v).toLowerCase().includes(String(c.value).toLowerCase());
+  if (c.constraint_type === "not equal") return String(v == null ? "" : v) !== String(c.value);
+  if (c.constraint_type === "is_not_empty") return v != null && String(v) !== "";
+  if (c.constraint_type === "is_empty") return v == null || String(v) === "";
   return String(v == null ? "" : v) === String(c.value);
 });
 
