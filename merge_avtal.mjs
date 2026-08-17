@@ -5,6 +5,13 @@
 //
 // Kör:  node merge_avtal.mjs            (skriver mira-foretag-lista.html)
 //       node merge_avtal.mjs --dry      (skriver bara .merged.html för diff)
+//
+// ⚠️ HISTORIK: kördes EN gång 2026-08-17 mot den då omergade filen. Sen dess är
+// mira-foretag-lista.html committad och redigerad direkt — skriptet kan INTE köras
+// om mot HEAD (assertions failar). Det ligger här som dokumentation av porten.
+// CSS-scopingen nedan (scopeCss) lades till EFTER första körningen, som efterfix
+// via scope_avtal_css.mjs — se den filen och HANDOFF §0k.
+
 import fs from "node:fs";
 
 const DIR = "/Users/christianmertzig/Documents/GitHub/Mira-Exchange";
@@ -20,6 +27,55 @@ function rep(s, find, replace, label) {
   steps++;
   return s.slice(0, i) + replace + s.slice(i + find.length);
 }
+
+// ── CSS-scoping ────────────────────────────────────────────────────────────
+// Källblocken kör ensamma på egna sidor/popups och har därför en mängd HELT
+// generiska selektorer (.field, .pill, .drop, .btn-primary, .err … och värst
+// `.hidden{display:none !important}`). Inne på Företag-sidan läcker de ut över
+// hela Bubble-appen — `.hidden` släckte alla omgivande Bubble-element (2026-08-17).
+// Samma lärdom som multiblock-krocken: byt/scopa HELA namnrymden.
+// Vi scopar CSS:en i st.f. att döpa om klasser i markup+JS (lägre risk): varje
+// selektor som inte redan bär en egen namnrymd prefixas med panelens rot.
+const KEEP = /^(\.ab-|\.ac-|\.aa-|\.wt-|\.fl|\.fk|:root|html\b|body\b|\*)/;
+function scopeCss(css, rootSel) {
+  // Skydda kommentarer (kan innehålla { }) under parsningen.
+  const comments = [];
+  css = css.replace(/\/\*[\s\S]*?\*\//g, (m) => `/*__C${comments.push(m) - 1}__*/`);
+
+  function block(s, open) {          // hitta matchande }
+    let d = 0;
+    for (let i = open; i < s.length; i++) {
+      if (s[i] === "{") d++;
+      else if (s[i] === "}") { d--; if (!d) return { inner: s.slice(open + 1, i), end: i }; }
+    }
+    throw new Error("obalanserad CSS");
+  }
+  function walk(s) {
+    let out = "", i = 0;
+    while (i < s.length) {
+      const b = s.indexOf("{", i);
+      if (b < 0) { out += s.slice(i); break; }
+      const prelude = s.slice(i, b), t = prelude.trim();
+      const blk = block(s, b);
+      if (t.startsWith("@")) {
+        // @media/@supports: scopa innehållet. @keyframes/@font-face: verbatim.
+        out += prelude + "{" + (/^@(media|supports)/i.test(t) ? walk(blk.inner) : blk.inner) + "}";
+      } else {
+        out += prelude.split(",").map((part) => {
+          const sel = part.trim();
+          if (!sel || KEEP.test(sel)) return part;
+          scoped++;
+          return part.replace(sel, rootSel + " " + sel);
+        }).join(",") + "{" + blk.inner + "}";
+      }
+      i = blk.end + 1;
+    }
+    return out;
+  }
+  const res = walk(css);
+  return res.replace(/\/\*__C(\d+)__\*\//g, (m, n) => comments[Number(n)]);
+}
+let scoped = 0;
 
 const AB = rd("mira-abonnemang-kund.html");
 const AC = rd("mira-approval-create.html");
@@ -202,9 +258,13 @@ ${acHtml}
   </div>`, "fl: panel-hållare");
 
 // CSS från källblocken (egna namnrymder .ab-/.aa-/.wt-/.ac- → krockar ej med .fl/.fk)
-FL = rep(FL, `<div class="fl">`, `<!-- ══ PORTAT 2026-08-17: CSS för Avtal-flikens paneler ══ -->
-${abCss}
-${acCss}
+FL = rep(FL, `<div class="fl">`, `<!-- ══ PORTAT 2026-08-17: CSS för Avtal-flikens paneler ══
+     Generiska selektorer (.field/.pill/.drop/.btn-primary/.hidden …) är
+     scopade under .ab-wrap/.ac-wrap av merge_avtal.mjs. UTAN det läcker de
+     ut på hela Bubble-sidan — ".hidden{display:none!important}" släckte alla
+     omgivande Bubble-element. Lägg ALDRIG till en oscopad regel här. ══ -->
+${scopeCss(abCss, ".ab-wrap")}
+${scopeCss(acCss, ".ac-wrap")}
 
 <div class="fl">`, "fl: css");
 
@@ -325,5 +385,5 @@ FL = FL.slice(0, tail) + modules + FL.slice(tail);
 if (/\?\./.test(FL.replace(/^\s*(\/\/|\*).*$/gm, ""))) console.warn("VARNING: ?. i koden (Bubbles parser)");
 const out = process.argv.includes("--dry") ? `${DIR}/.merged.html` : `${DIR}/mira-foretag-lista.html`;
 fs.writeFileSync(out, FL);
-console.log(`✅ ${steps} omskrivningar OK → ${out}`);
+console.log(`✅ ${steps} omskrivningar + ${scoped} CSS-selektorer scopade → ${out}`);
 console.log(`   ${(FL.length / 1024).toFixed(0)} kB, ${FL.split("\n").length} rader`);
