@@ -25,7 +25,7 @@ export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate, bubbleDelete,
     bubbleUploadFile, photoUpload,
-    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyTouchMapWarm, companyPatchEntry,
+    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyTouchMapWarm, companyPatchEntry, companyForget,
     assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
@@ -360,8 +360,17 @@ export function registerCompaniesRoutes(app, deps) {
       if (!proj) return res.status(404).json({ ok: false, error: "company_not_found" });
 
       const nowYear = new Date().getUTCFullYear();
+      // ⚠️ Cachen kan ligga FÖRE verkligheten: delta-refreshen ser inte raderingar,
+      // så ett företag som raderats i Bubble finns kvar i `full` upp till 12 h. Då
+      // 400:ar varje referens-constraintad query på id:t (se _deadRefId i index.js)
+      // och kortet blir ett tomt skal. Verifiera mot Bubble och glöm det i stället.
+      const recProbe = await bubbleGet("ClientCompany", id).catch(() => null);
+      if (!recProbe) {
+        if (companyForget) companyForget(id);
+        return res.status(404).json({ ok: false, error: "company_not_found", stale_cache: true });
+      }
       const [rec, u, g, f] = await Promise.all([
-        bubbleGet("ClientCompany", id).catch(() => null),
+        Promise.resolve(recProbe),
         _users(), _groups(), _fastigheter(),
       ]);
       const rev = companyRevenueMapWarm ? companyRevenueMapWarm() : (await companyRevenueMap());

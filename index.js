@@ -1197,6 +1197,20 @@ async function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0, s
   throw err;
 }
 
+// ── DÖD REFERENS (2026-08-17) ────────────────────────────────────────────────
+// Constraintar man ett REFERENSFÄLT med ett id som inte längre finns svarar Bubble
+// 400 MISSING_DATA: "object with this id does not exist: <id>". Det är INTE ett
+// kodfel — det betyder att raden vi pekar på är borta (typiskt ett företag som
+// raderats i Bubble men som ligger kvar i en cache). Läs-endpoints ska svara
+// "tomt", inte spränga. ⚠️ Matcha SMALT: fel FÄLTNAMN ger ett annat Bubble-fel och
+// måste fortsätta braka, annars döljer vi äkta bugs (jfr Internal_room-tabben).
+function _deadRefId(e) {
+  const d = e && e.detail;
+  if (!d || d.status !== 400) return null;
+  const m = String(d.body || "").match(/object with this id does not exist:\s*([0-9]+x[0-9]+)/);
+  return m ? m[1] : null;
+}
+
 async function bubbleFindAll(typeName, { constraints = [], sort_field = null, descending = false } = {}) {
   const out = [];
   let cursor = 0;
@@ -17944,11 +17958,21 @@ app.get("/admin/approval/list", async (req, res) => {
       constraints.push({ key: "Created Date", constraint_type: "less than", value: toIso });
     }
 
-    const requests = await bubbleFindAll("OfferApprovalRequest", {
-      constraints,
-      sort_field: "Created Date",
-      descending: true,
-    });
+    let requests;
+    try {
+      requests = await bubbleFindAll("OfferApprovalRequest", {
+        constraints,
+        sort_field: "Created Date",
+        descending: true,
+      });
+    } catch (e) {
+      // Dött företags-/deal-id (raderat i Bubble) → tom historik, inte 500.
+      const dead = _deadRefId(e);
+      if (!dead) throw e;
+      sharedCompanyForget(dead);
+      console.warn(`[/admin/approval/list] dött id ${dead} → tom lista`);
+      return res.json({ ok: true, count: 0, total: 0, items: [], stale_ref: dead });
+    }
 
     let trimmed = requests.slice(0, limit).map((r) => ({
       id:               r._id,
@@ -18182,9 +18206,19 @@ app.get("/admin/approval/users-by-company", async (req, res) => {
     const ccId = String(req.query.clientcompany || "").trim();
     if (!ccId) return res.json({ ok: true, count: 0, items: [] });
 
-    const users = await bubbleFindAll("User", {
-      constraints: [{ key: "Associated_company", constraint_type: "contains", value: ccId }],
-    });
+    let users;
+    try {
+      users = await bubbleFindAll("User", {
+        constraints: [{ key: "Associated_company", constraint_type: "contains", value: ccId }],
+      });
+    } catch (e) {
+      // Dött företags-id → tom kontaktlista, inte 500 (dropdownen döljs bara).
+      const dead = _deadRefId(e);
+      if (!dead) throw e;
+      sharedCompanyForget(dead);
+      console.warn(`[/admin/approval/users-by-company] dött id ${dead} → tom lista`);
+      return res.json({ ok: true, count: 0, items: [], stale_ref: dead });
+    }
 
     const items = (users || []).map((u) => {
       const email = String(
@@ -20028,6 +20062,18 @@ function sharedCompanyPatchEntry(id, fresh) {
   const ka = _ccRef(fresh.Kundansvarig); if (ka) c.owner.set(id, ka); else c.owner.delete(id);
   c.full.set(id, _projectCompany(fresh));
 }
+// ⚠️ Raderade företag: delta-refreshen ser BARA ändrade rader, aldrig raderade
+// (se CC_FULL_TTL). Ett företag som raderats i Bubble ligger därför kvar i listan
+// upp till 12 h, och varje referens-constraintad query på det ger Bubble-400
+// (se _deadRefId) — det var exakt felstormen i Render 17 aug. Upptäcker vi ett
+// dött id kastar vi det ur cachen direkt så listan slutar erbjuda det.
+function sharedCompanyForget(id) {
+  const c = _ccSharedCache;
+  if (!c || !c.full || !id || !c.full.has(id)) return false;
+  c.full.delete(id); c.name.delete(id); c.owner.delete(id);
+  console.warn(`[cc-cache] glömde raderat/okänt företag ${id} (fanns kvar efter delta-refresh)`);
+  return true;
+}
 _loadSharedCC().catch(() => {});                                      // prewarm vid boot (icke-blockerande)
 // INGEN setInterval här — se WU-fällan i blockkommentaren ovan. Refresh sker lat via SWR.
 
@@ -20227,6 +20273,7 @@ registerCompaniesRoutes(app, {
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
   companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen
   companyTouchMapWarm: sharedCompanyTouchMapWarm,      // "senast ändrad" (aktivitet/person/ärende/lead/affär/todo)
+  companyForget: sharedCompanyForget,                   // kasta raderat företag ur cachen (dött id)
   companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit
   bubbleCreate,                                // skapar PasswordReset- + emailqueue-rader
   appBaseUrl: process.env.APP_BASE_URL || "https://mira-fm.com",   // för reset-länkens bas
