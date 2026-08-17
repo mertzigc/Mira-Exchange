@@ -147,6 +147,18 @@ Listan sorterade bara på bokstav/kolumn. Nu finns en **fristående växlare "A�
 - **Semantik att känna till:** aggregatet bygger på **Modified Date** (fallback Created Date). Alltså "senast rörd", inte "senaste händelse i tiden" — redigerar man en två år gammal aktivitet hamnar företaget högst. Och **bara** de sex typerna + ClientCompany räknas: offert, order, faktura, avtal/Contract, kvalitetskontroll och Office bumpar INTE (per Christians spec).
 - **Deploy:** `index.js` + `companies_api.js` + klistra om `mira-foretag-lista.html`. Ingen Bubble-bindning behövs. Första gången någon sorterar på "Senast ändrad" görs sex helsvep (lat) — därefter delta.
 
+### ⚠️ DÖTT FÖRETAGS-ID: Bubble-400-storm i Render (löst 2026-08-17)
+**Symptom (Render-logg 17 aug, ~1,5 h):** upprepade `[/admin/approval/list] failed` och `[/admin/approval/users-by-company] failed` med Bubble **400 MISSING_DATA**: `"Invalid data for endpoint OfferApprovalRequest, key clientcompany: object with this id does not exist: 1786973695006x…"` (och samma för `User.Associated_company`). Två olika id:n, båda skapade samma dag.
+- **Rotorsak:** Bubble svarar 400 när man constraintar ett **referensfält** med ett id som inte finns. Företaget var raderat i Bubble men låg kvar i den delade CC-cachen → syntes i listan → klick öppnade kortet → varje referens-query på id:t 400:ade.
+- **⚠️ Detta är en följdeffekt av delta-refreshen (samma dag):** förut svepte cachen om HELA ClientCompany var 10:e minut, så ett raderat företag försvann inom 10 min. Med delta ser vi bara ÄNDRADE rader → raderade ligger kvar till nästa helsvep (`CC_FULL_TTL` 12 h). Det nya kortets Avtal-flik gjorde bara problemet synligt som hårda fel.
+- **Fixar:**
+  1. **`_deadRefId(e)`** (index.js, vid `bubbleFind`) — plockar ut id:t ur Bubbles felkropp. **Matchar SMALT** (`status 400` + `object with this id does not exist: <id>`): fel FÄLTNAMN, fel typnamn och 5xx måste fortsätta braka, annars döljer vi äkta bugs (jfr `Internal_room`-fällan).
+  2. **`sharedCompanyForget(id)`** — kastar företaget ur alla tre CC-kartorna direkt, så listan slutar erbjuda det utan att man behöver vänta ut de 12 timmarna. Loggar `[cc-cache] glömde raderat/okänt företag <id>`.
+  3. **De två approval-endpointsen** svarar nu `{ok:true, items:[], stale_ref:<id>}` i st.f. 500 vid dött id, och evictar.
+  4. **`/admin/companies/:id/card`** verifierar företaget mot Bubble (`bubbleGet`) innan kortet byggs → `404 {error:"company_not_found", stale_cache:true}` + evictering, i st.f. ett tomt skal där varje flik tyst returnerar noll.
+- **Verifierat:** companies_smoke **193/193** (+4: 404+stale_cache, evictering, andra anropet 404 direkt ur cachen, levande företag opåverkat) · cc_cache_smoke **61/61** (+13: `_deadRefId` mot Christians VERKLIGA felkroppar + att fältnamnsfel/404/5xx INTE matchas, plus evictering ur alla tre kartorna och no-op-fallen).
+- **Kvar att välja:** om fler fantomföretag dyker upp kan `CC_FULL_TTL` sänkas 12 h → t.ex. 4 h (kostar ~90 WU per helsvep). Evicteringen gör det troligen onödigt.
+
 ### Onboarding/lösenord (LIVE, funkar från start till mål)
 Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mailar länk (SendGrid: `password_reset`-mall vid reset, `user_welcome`-mall m. USP-sektioner vid ny user) → reset_pw-sidan: **API Connector → exchange** (byter token mot engångs-temp via Bubble-wf `assign_temp_password`) → **Log the user in** + **Update password** (valt lösenord). Ny user: Bubble-wf `create_user_account` (Create an account for someone else + sätt Company/Coworker/namn). **Render kan EJ skapa User el. sätta valfritt lösenord via Data API → allt sådant via Bubble-wf** (auth ägs av Bubble).
 

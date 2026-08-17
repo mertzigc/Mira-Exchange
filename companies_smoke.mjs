@@ -264,6 +264,27 @@ const run = async () => {
     lt.body.touch_ready === false && lt.body.rows.map((r) => r.id).join(",") === "cc2,cc1,cc3" &&
     lt.body.rows[0].modified_src === "grunddata");
 
+  // ── DÖTT FÖRETAGS-ID: cachen ligger före verkligheten (2026-08-17) ─────────
+  // Delta-refreshen ser inte raderingar → ett företag raderat i Bubble finns kvar
+  // i companyFullMap upp till 12 h. Kortet ska då 404:a och GLÖMMA id:t, inte
+  // rendera ett tomt skal (och inte låta referens-queries braka mot Bubble-400).
+  var forgotten = [];
+  var ghostFull = new Map(FULL);
+  ghostFull.set("ccGhost", { id: "ccGhost", name: "Raderat AB", orgnr: "", kundstatus: "", bransch: "", potential: "", lojalitet: "", region: "", customer_type: "", nki: null, antal_medarbetare: null, omsattning_field: null, ansvarig_id: null, group_id: null, fastighet_ids: [], modified: "2026-08-17T09:00:00.000Z" });
+  var ghostDeps = Object.assign({}, deps, {
+    companyFullMap: async () => ghostFull,
+    companyForget: function (id) { forgotten.push(id); ghostFull.delete(id); return true; },
+  });
+  var gs = mk(); registerCompaniesRoutes(gs.app, ghostDeps);
+  var gcard = await call(gs.routes, "get", "/admin/companies/:id/card", { params: { id: "ccGhost" } });
+  ok("dött id → 404 company_not_found + stale_cache", gcard.code === 404 && gcard.body.error === "company_not_found" && gcard.body.stale_cache === true);
+  ok("dött id glöms ur delade cachen", forgotten.indexOf("ccGhost") > -1 && !ghostFull.has("ccGhost"));
+  var gcard2 = await call(gs.routes, "get", "/admin/companies/:id/card", { params: { id: "ccGhost" } });
+  ok("efter evictering → 404 direkt ur cachen (ingen ny Bubble-slagning)", gcard2.code === 404);
+  // Ett LEVANDE företag ska fortfarande ge kort
+  var glive = await call(gs.routes, "get", "/admin/companies/:id/card", { params: { id: "cc1" } });
+  ok("levande företag opåverkat av evicterings-kontrollen", glive.body.ok === true && glive.body.company.name === "Acme AB");
+
   // ── PAGINERING ──
   const p1 = await call(s.routes, "get", "/admin/companies/list", { query: { limit: "2", page: "1" } });
   const p2 = await call(s.routes, "get", "/admin/companies/list", { query: { limit: "2", page: "2" } });
