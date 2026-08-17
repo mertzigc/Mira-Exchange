@@ -5048,6 +5048,10 @@ const state = {
 (function(){
   function findMask(){ return document.querySelector('[data-aa="wiz-mask-k"]'); }
   function raiseAncestors(m){
+    // PORT-FIX 2026-08-17: dubbel-skydd. Utan detta sparar en andra öppning det
+    // REDAN höjda värdet (2147483000) som "original" → restoreAncestors återställer
+    // till det, och blockets container ligger kvar ovanpå Bubbles sidomeny för alltid.
+    if (m._raised) return;
     m._raised = [];
     var a = m.parentElement;
     while (a && a !== document.body && a !== document.documentElement){
@@ -5090,6 +5094,37 @@ const state = {
       if (m && m.classList.contains('on')) closeWiz(true);
     }
   });
+
+  // ── PORT-FIX 2026-08-17: EN enda stäng-väg ────────────────────────────────
+  // Wizardens egna knappar ("Avbryt", "Klar — stäng") anropar window.wtCloseModal_k,
+  // som bara tog bort .on + body-overflow men ALDRIG återställde z-index. På en sida
+  // med Bubble-chrome runt blocket (Företag-sidan) betyder det att blockets container
+  // ligger kvar på 2147483000 och täcker sidomenyn tills sidan laddas om.
+  // (Samma defekt finns i mira-abonnemang-admin.html men syns inte där — det blocket
+  // ÄR hela sidan, så det finns inget att täcka över.)
+  // Vi kedjar in restoreAncestors i den befintliga funktionen i st.f. att duplicera den.
+  var _wtCloseInner = window.wtCloseModal_k;
+  window.wtCloseModal_k = function(){
+    var m = findMask();
+    if (typeof _wtCloseInner === 'function') { try { _wtCloseInner(); } catch(_){} }
+    else if (m) { m.classList.remove('on'); document.body.style.overflow = ''; }
+    if (m) restoreAncestors(m);
+  };
+
+  // ── PORT-FIX 2026-08-17: samma stacking-fälla för skapa/redigera/import-modalen ──
+  // .ab-mask är position:fixed z-index:9000 men lyfte ALDRIG sina föräldrar. Inuti
+  // Bubble-chromens stacking-context (positionerade Group-föräldrar med låga z-index)
+  // stackas den INOM den contexten → Bubbles sidomeny målas ovanpå och äter klicken.
+  // Verifierat i harness: elementFromPoint över menyn gav sidomenyn, inte masken.
+  // Modalen öppnas/stängs från många ställen i modulen (skapa/redigera/import/spara/
+  // avbryt) → vi observerar .on-klassen i stället för att patcha varje anropsställe.
+  var _abMask = document.querySelector('.ab-wrap [data-ab="create-mask"]');
+  if (_abMask && window.MutationObserver) {
+    new MutationObserver(function(){
+      if (_abMask.classList.contains('on')) raiseAncestors(_abMask);
+      else restoreAncestors(_abMask);
+    }).observe(_abMask, { attributes: true, attributeFilter: ['class'] });
+  }
 
   console.log('[wiz] öppna/stäng-handler klar');
 })();
