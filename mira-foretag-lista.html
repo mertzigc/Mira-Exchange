@@ -246,10 +246,858 @@
   @media(max-width:820px){.fk-grid{grid-template-columns:1fr;}.fk-strip{grid-template-columns:repeat(2,1fr);}.fk-form{grid-template-columns:1fr;}}
 </style>
 
+<!-- ══ PORTAT 2026-08-17: CSS för Avtal-flikens paneler ══ -->
+<style>
+  .ab-wrap, .ab-wrap * { box-sizing: border-box; }
+  .ab-wrap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    width: 100%;
+    --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
+    --line:rgba(255,255,255,0.07); --line-strong:rgba(255,255,255,0.14);
+    --acc:#db6923; --acc-soft:rgba(219,105,35,0.15);
+    --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35); --t4:rgba(255,255,255,0.20);
+    --ok:#10b981; --warn:#facc15; --err:#f87171; --info:#6366f1;
+    color: var(--t1);
+    background: var(--bg-deep);
+    padding: 22px 24px;
+    border-radius: 12px;
+  }
+  .ab-wrap input[type=hidden] { display:none; }
+
+  /* Header */
+  .ab-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    margin-bottom:18px; padding-bottom:14px; border-bottom:0.5px solid var(--line); }
+  .ab-head-l h2 { font-family:Georgia,serif; font-size:24px; font-weight:700; margin:0;
+    letter-spacing:-0.01em; color:#fff; line-height:1.1; }
+  .ab-head-l .ab-cust { font-size:12px; color:var(--t3); margin-top:4px;
+    text-transform:uppercase; letter-spacing:0.08em; }
+  .ab-head-r { display:flex; align-items:center; gap:18px; }
+  .ab-sumblock { text-align:right; }
+  .ab-sumblock .ab-sk-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; }
+  .ab-sumblock .ab-sk-v { font-size:18px; font-weight:800; color:var(--acc); letter-spacing:-0.01em; }
+  .ab-btn { padding:9px 15px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+    font-family:inherit; transition:all 0.15s; border:none; line-height:1; }
+  .ab-btn.primary { background:var(--acc); color:#1c1206; font-weight:700; }
+  .ab-btn.primary:hover { background:#ff8c45; }
+  .ab-btn.ghost { background:transparent; border:0.5px solid var(--line-strong); color:var(--t1); }
+  .ab-btn.ghost:hover { border-color:var(--t2); }
+  .ab-btn.danger { background:rgba(248,113,113,0.10); border:0.5px solid rgba(248,113,113,0.35); color:var(--err); }
+  .ab-btn.danger:hover { background:rgba(248,113,113,0.18); }
+  .ab-btn.tiny { padding:6px 10px; font-size:11px; }
+
+  /* Office-sektioner */
+  .ab-sect { margin-bottom:24px; }
+  .ab-sect-h { display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:10px; padding:0 4px; }
+  .ab-sect-l { display:flex; align-items:baseline; gap:10px; }
+  .ab-sect-name { font-size:13px; font-weight:600; color:var(--t1); }
+  .ab-sect-id { font-size:11px; color:var(--t3); font-weight:500; }
+  .ab-sect-addr { font-size:11px; color:var(--t3); }
+
+  /* Contract-rader */
+  .ab-rows { display:flex; flex-direction:column; gap:6px; }
+  .ab-row { background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; transition:border-color 0.15s; }
+  .ab-row:hover { border-color:var(--line-strong); }
+  .ab-row.open { border-color:rgba(219,105,35,0.40); }
+
+  .ab-rowhead { display:grid; grid-template-columns:1.6fr 1.2fr 0.8fr 1fr auto; gap:14px;
+    align-items:center; padding:13px 16px; cursor:pointer; }
+  @media (max-width:920px){
+    .ab-rowhead { grid-template-columns:1fr 1fr; gap:10px; }
+    .ab-rowhead .ab-rh-end { grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; }
+  }
+
+  /* Cell: tjänst + typ */
+  .ab-rh-svc { min-width:0; }
+  .ab-rh-svc .ab-svcname { font-size:13px; font-weight:600; color:var(--t1);
+    letter-spacing:-0.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ab-rh-svc .ab-svcvar { font-size:11px; color:var(--t3); margin-top:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* Cell: typ + kategori */
+  .ab-rh-meta { display:flex; flex-direction:column; gap:5px; }
+  .ab-pills { display:flex; flex-wrap:wrap; gap:5px; }
+  .ab-pill { font-size:10px; padding:3px 8px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; line-height:1.3; }
+  .ab-pill.t-sub { background:rgba(219,105,35,0.18); color:var(--acc); border:0.5px solid rgba(219,105,35,0.35); }
+  .ab-pill.t-rate { background:rgba(99,102,241,0.18); color:#a5a8f0; border:0.5px solid rgba(99,102,241,0.35); }
+  .ab-pill.t-hyb { background:rgba(168,85,247,0.18); color:#c4a4f5; border:0.5px solid rgba(168,85,247,0.35); }
+  .ab-cat { font-size:11px; color:var(--t3); }
+
+  /* Cell: status */
+  .ab-rh-status .ab-st { font-size:11px; padding:4px 10px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:0.06em; font-weight:600; display:inline-block; line-height:1.3; }
+  .ab-st.s-aktiv { background:rgba(16,185,129,0.15); color:var(--ok); border:0.5px solid rgba(16,185,129,0.35); }
+  .ab-st.s-utgar_snart { background:rgba(250,204,21,0.15); color:var(--warn); border:0.5px solid rgba(250,204,21,0.45); }
+  .ab-st.s-avslutad { background:rgba(255,255,255,0.05); color:var(--t3); border:0.5px solid var(--line); }
+  .ab-st.s-okand { background:rgba(255,255,255,0.04); color:var(--t3); border:0.5px dashed var(--line-strong); }
+  .ab-st.s-pausat,
+  .ab-st.s-vilande,
+  .ab-st.s-tvistig { background:rgba(248,113,113,0.12); color:var(--err); border:0.5px solid rgba(248,113,113,0.40); }
+
+  /* Cell: pris + slutdatum */
+  .ab-rh-cost { text-align:right; }
+  .ab-cost-v { font-size:14px; font-weight:700; color:var(--t1); letter-spacing:-0.01em; }
+  .ab-cost-v small { font-size:11px; font-weight:500; color:var(--t3); margin-left:2px; }
+  .ab-cost-end { font-size:11px; color:var(--t3); margin-top:2px; }
+
+  /* Cell: actions */
+  .ab-rh-act { display:flex; align-items:center; gap:6px; }
+  .ab-chev { width:22px; height:22px; display:flex; align-items:center; justify-content:center;
+    color:var(--t3); transition:transform 0.2s, color 0.2s; }
+  .ab-row.open .ab-chev { transform:rotate(180deg); color:var(--acc); }
+
+  /* Expand-panel */
+  .ab-rowbody { display:none; border-top:0.5px solid var(--line); padding:18px 20px;
+    background:var(--bg-deep); }
+  .ab-row.open .ab-rowbody { display:block; }
+
+  .ab-bgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:18px; }
+  @media (max-width:820px){ .ab-bgrid { grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:560px){ .ab-bgrid { grid-template-columns:1fr; } }
+
+  .ab-fld { }
+  .ab-fld-l { font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em;
+    font-weight:600; margin-bottom:4px; }
+  .ab-fld-v { font-size:13px; color:var(--t1); }
+  .ab-fld-v.muted { color:var(--t3); }
+  .ab-fld-v a { color:var(--acc); text-decoration:none; }
+  .ab-fld-v a:hover { text-decoration:underline; }
+
+  /* Bilagor */
+  .ab-att { background:var(--bg); border:0.5px solid var(--line); border-radius:9px;
+    padding:14px 16px; margin-bottom:14px; }
+  .ab-att-h { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .ab-att-t { font-size:11px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em;
+    font-weight:600; }
+  .ab-att-list { display:flex; flex-direction:column; gap:6px; }
+  .ab-att-row { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 11px; background:rgba(255,255,255,0.02); border:0.5px solid var(--line);
+    border-radius:7px; }
+  .ab-att-meta { display:flex; align-items:center; gap:10px; min-width:0; }
+  .ab-att-ic { width:24px; height:30px; background:rgba(219,105,35,0.10);
+    border:0.5px solid rgba(219,105,35,0.30); border-radius:4px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; color:var(--acc); letter-spacing:0.05em; }
+  .ab-att-tx { min-width:0; }
+  .ab-att-name { font-size:12px; font-weight:600; color:var(--t1); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .ab-att-sub { font-size:10px; color:var(--t3); margin-top:1px; }
+  .ab-att-act { display:flex; gap:6px; flex-shrink:0; }
+  .ab-att-empty { font-size:12px; color:var(--t3); text-align:center; padding:14px 0;
+    font-style:italic; }
+
+  .ab-rowact { display:flex; gap:8px; justify-content:flex-end; padding-top:14px;
+    border-top:0.5px solid var(--line); }
+
+  /* Empty state */
+  .ab-empty { text-align:center; padding:48px 16px; color:var(--t3); font-size:13px;
+    background:var(--bg); border:1px dashed var(--line); border-radius:10px; }
+  .ab-empty .ab-empty-t { font-size:14px; color:var(--t2); margin-bottom:6px; }
+
+  /* Account-scope rad-variant (för Mira-abonnemang) */
+  .ab-row.account { background:linear-gradient(180deg,var(--bg) 0%,var(--bg-row) 100%); }
+
+  /* Create-modal */
+  .ab-mask { display:none; position:fixed; inset:0; background:rgba(10,12,22,0.78);
+    z-index:9000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto; }
+  .ab-mask.on { display:flex; }
+  .ab-modal { background:var(--bg); border:1px solid var(--line-strong); border-radius:14px;
+    width:100%; max-width:680px; overflow:hidden; }
+  .ab-modal-h { padding:18px 22px; border-bottom:0.5px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; }
+  .ab-modal-h h3 { font-family:Georgia,serif; font-size:20px; margin:0; font-weight:700; color:#fff; }
+  .ab-modal-close { width:30px; height:30px; border-radius:50%; background:rgba(255,255,255,0.06);
+    border:0.5px solid var(--line-strong); color:var(--t1); cursor:pointer; font-size:16px;
+    line-height:28px; text-align:center; font-family:inherit; }
+  .ab-modal-b { padding:20px 22px; }
+
+  /* Type-väljare i create-modal */
+  .ab-typesel { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:18px; }
+  @media (max-width:560px){ .ab-typesel { grid-template-columns:1fr; } }
+  .ab-typecard { padding:14px 12px; background:rgba(255,255,255,0.02); border:1px solid var(--line);
+    border-radius:9px; cursor:pointer; transition:all 0.15s; }
+  .ab-typecard:hover { border-color:var(--line-strong); }
+  .ab-typecard.on { border-color:var(--acc); background:var(--acc-soft); }
+  .ab-typecard-t { font-size:13px; font-weight:600; color:var(--t1); margin-bottom:3px; }
+  .ab-typecard-d { font-size:11px; color:var(--t3); line-height:1.4; }
+
+  .ab-form-row { margin-bottom:13px; }
+  .ab-form-row label { display:block; font-size:10px; color:var(--t3); text-transform:uppercase;
+    letter-spacing:0.08em; font-weight:600; margin-bottom:5px; }
+  .ab-form-row input,
+  .ab-form-row select,
+  .ab-form-row textarea {
+    width:100%; padding:9px 11px; background:rgba(255,255,255,0.03);
+    border:0.5px solid var(--line-strong); border-radius:7px; color:var(--t1);
+    font-size:13px; font-family:inherit; outline:none; }
+  .ab-form-row input:focus,
+  .ab-form-row select:focus,
+  .ab-form-row textarea:focus { border-color:var(--acc); }
+  .ab-form-row textarea { resize:vertical; min-height:60px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; }
+  .ab-form-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:480px){ .ab-form-2 { grid-template-columns:1fr; } }
+  .ab-modal-foot { display:flex; justify-content:space-between; gap:10px;
+    padding:14px 22px; border-top:0.5px solid var(--line); background:var(--bg-deep); }
+
+  /* Rate-card-builder (Fas 3a) */
+  .ab-rc-list { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+  .ab-rc-row { display:grid; grid-template-columns:1fr 130px 36px; gap:8px; align-items:center; }
+  .ab-rc-row input { padding:8px 11px; background:rgba(255,255,255,0.03);
+    border:0.5px solid var(--line-strong); border-radius:6px; color:var(--t1);
+    font-size:12px; font-family:inherit; outline:none; }
+  .ab-rc-row input:focus { border-color:var(--acc); }
+  .ab-rc-rm { width:36px; height:36px; border-radius:6px;
+    background:transparent; border:0.5px solid var(--line-strong); color:var(--t3);
+    cursor:pointer; font-size:16px; font-family:inherit; line-height:1; transition:all 0.15s; }
+  .ab-rc-rm:hover { color:var(--err); border-color:var(--err); }
+  .ab-rc-add { padding:7px 12px; border-radius:6px; font-size:11px; font-weight:600;
+    background:transparent; border:0.5px dashed var(--line-strong); color:var(--t2);
+    cursor:pointer; font-family:inherit; transition:all 0.15s; }
+  .ab-rc-add:hover { border-color:var(--acc); color:var(--acc); }
+  .ab-rc-hint { font-size:11px; color:var(--t3); margin-bottom:8px; line-height:1.4; }
+</style>
+<style>
+  :root{--acc-strong:#ff8c45;--ok-soft:rgba(16,185,129,0.15);--info-soft:rgba(99,102,241,0.15);}
+  .aa-wiz-mask {
+    display: none; position: fixed; inset: 0;
+    background: rgba(10,12,22,0.82); z-index: 2147483000; padding: 20px;
+    overflow-y: auto;
+  }
+  .aa-wiz-mask.on { display: flex; align-items: flex-start; justify-content: center; }
+  .aa-wiz-modal {
+    background: #1e2235; border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 14px; width: 100%; max-width: 1140px;
+    overflow: hidden; position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .aa-wiz-close {
+    position: absolute; top: 14px; right: 16px; z-index: 10;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    border: 0.5px solid rgba(255,255,255,0.14);
+    color: rgba(255,255,255,0.85);
+    font-size: 18px; line-height: 28px; text-align: center;
+    cursor: pointer; font-family: inherit; transition: all 0.15s;
+  }
+  .aa-wiz-close:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.28); }
+  .aa-wiz-modal .wt-wrap { max-width: none !important; margin: 0 !important; padding: 0 !important; }
+  .aa-wiz-modal .wt-proto { margin: 0; border-radius: 14px 14px 0 0; border-left: none; border-right: none; border-top: none; }
+</style>
+<style>
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     Design-system följer mira-abonnemang-kund.html (§0f/§0g). Mörk Mira-
+     bas, Carotte-orange accent, Georgia-serif för rubriker, system-sans
+     för brödtext. Prefix .wt-wrap ("WizardTemplate") så blocket är
+     multi-instance-säkert när det bäddas in i Bubble.
+     ═══════════════════════════════════════════════════════════════════════ */
+  .wt-wrap, .wt-wrap * { box-sizing: border-box; }
+  .wt-wrap {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    width: 100%;
+    max-width: 1140px;
+    margin: 24px auto;
+    padding: 0 20px;
+    --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
+    --line:rgba(255,255,255,0.07); --line-strong:rgba(255,255,255,0.14);
+    --acc:#db6923; --acc-soft:rgba(219,105,35,0.15); --acc-strong:#ff8c45;
+    --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55);
+    --t3:rgba(255,255,255,0.35); --t4:rgba(255,255,255,0.20);
+    --ok:#10b981; --ok-soft:rgba(16,185,129,0.15);
+    --warn:#facc15; --warn-soft:rgba(250,204,21,0.15);
+    --err:#f87171; --info:#6366f1; --info-soft:rgba(99,102,241,0.15);
+    color: var(--t1);
+  }
+  .wt-wrap input, .wt-wrap button, .wt-wrap select, .wt-wrap textarea {
+    font-family: inherit; color: var(--t1);
+  }
+  .wt-wrap input, .wt-wrap select, .wt-wrap textarea {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Prototype banner (only in this preview, not in Bubble version) ── */
+  .wt-proto {
+    background: linear-gradient(180deg, rgba(250,204,21,0.14) 0%, rgba(250,204,21,0.08) 100%);
+    border: 0.5px solid rgba(250,204,21,0.35);
+    color: var(--warn);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    text-align: center;
+    letter-spacing: 0.02em;
+  }
+  .wt-proto strong { color: #fef3c7; font-weight: 700; }
+
+  /* ── Wizard shell ─────────────────────────────────────────────── */
+  .wt {
+    background: var(--bg-deep);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    min-height: 620px;
+  }
+  @media (max-width: 920px) {
+    .wt { grid-template-columns: 1fr; min-height: 0; }
+  }
+
+  /* ── Rail (progress + tips) ───────────────────────────────────── */
+  .wt-rail {
+    background: var(--bg);
+    border-right: 0.5px solid var(--line);
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  @media (max-width: 920px) {
+    .wt-rail { border-right: none; border-bottom: 0.5px solid var(--line); padding: 18px 20px; gap: 14px; }
+  }
+
+  .wt-brand { padding-bottom: 18px; border-bottom: 0.5px solid var(--line); }
+  @media (max-width: 920px) { .wt-brand { border-bottom: none; padding-bottom: 0; } }
+  .wt-brand-h {
+    font-family: Georgia, serif;
+    font-size: 20px; font-weight: 700; color: #fff;
+    letter-spacing: -0.01em; line-height: 1;
+  }
+  .wt-brand-s {
+    font-size: 10px; color: var(--t3); text-transform: uppercase;
+    letter-spacing: 0.08em; margin-top: 5px;
+  }
+
+  .wt-steps { list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: 2px; }
+  @media (max-width: 920px) {
+    .wt-steps { flex-direction: row; overflow-x: auto; padding-bottom: 4px; gap: 4px; }
+    .wt-steps::-webkit-scrollbar { display: none; }
+  }
+  .wt-step {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 10px; border-radius: 8px;
+    transition: background 0.15s; position: relative;
+  }
+  @media (max-width: 920px) { .wt-step { flex-shrink: 0; padding: 7px 9px; } }
+  .wt-step-n {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(255,255,255,0.04); color: var(--t3);
+    border: 0.5px solid var(--line-strong);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; transition: all 0.15s;
+  }
+  .wt-step-body { display: flex; flex-direction: column; gap: 1px; padding-top: 2px; }
+  @media (max-width: 920px) { .wt-step-body { display: none; } }
+  .wt-step-t { font-size: 12.5px; font-weight: 600; color: var(--t2); line-height: 1.3; }
+  .wt-step-s { font-size: 11px; color: var(--t3); line-height: 1.3; }
+  .wt-step.is-active { background: var(--acc-soft); }
+  .wt-step.is-active .wt-step-n { background: var(--acc); color: #1c1206; border-color: var(--acc); }
+  .wt-step.is-active .wt-step-t { color: #fff; }
+  .wt-step.is-done .wt-step-n { background: var(--ok); color: #052e1a; border-color: var(--ok); }
+  .wt-step.is-done .wt-step-n .n { display: none; }
+  .wt-step.is-done .wt-step-n::after { content: "✓"; font-size: 13px; font-weight: 700; }
+  .wt-step.is-done .wt-step-t { color: var(--t1); }
+
+  .wt-tip {
+    margin-top: auto; background: rgba(255,255,255,0.03);
+    border: 0.5px solid var(--line); border-radius: 8px;
+    padding: 12px 13px; display: flex; flex-direction: column; gap: 5px;
+  }
+  @media (max-width: 920px) { .wt-tip { display: none; } }
+  .wt-tip-l {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--acc); font-weight: 700;
+  }
+  .wt-tip-b { font-size: 12px; color: var(--t2); line-height: 1.45; }
+  .wt-tip-b strong { color: var(--t1); font-weight: 600; }
+
+  /* ── Panel ────────────────────────────────────────────────────── */
+  .wt-panel { display: flex; flex-direction: column; min-height: 620px; }
+  @media (max-width: 920px) { .wt-panel { min-height: 0; } }
+
+  .wt-head {
+    padding: 26px 32px 20px; border-bottom: 0.5px solid var(--line);
+    display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;
+  }
+  @media (max-width: 720px) { .wt-head { padding: 20px 22px 14px; } }
+  .wt-eyebrow {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--acc); font-weight: 700;
+  }
+  .wt-title {
+    font-family: Georgia, serif; font-size: 26px; font-weight: 700;
+    color: #fff; margin: 0; line-height: 1.15; letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  .wt-sub { font-size: 14px; color: var(--t2); line-height: 1.5; text-wrap: balance; }
+
+  .wt-body {
+    padding: 24px 32px; flex: 1; overflow-y: auto;
+  }
+  @media (max-width: 720px) { .wt-body { padding: 18px 22px; } }
+
+  .wt-foot {
+    padding: 14px 32px; border-top: 0.5px solid var(--line);
+    background: rgba(0,0,0,0.15);
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    flex-shrink: 0;
+  }
+  @media (max-width: 720px) { .wt-foot { padding: 12px 22px; } }
+  .wt-foot-note { font-size: 12px; color: var(--t3); }
+
+  /* ── Buttons (Mira-style: .ab-btn i abonnemang-blocket) ────── */
+  .wt-btn {
+    padding: 10px 16px; border-radius: 8px; font-size: 12.5px;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: all 0.15s; border: none; line-height: 1;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .wt-btn:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+  .wt-btn.primary { background: var(--acc); color: #1c1206; font-weight: 700; }
+  .wt-btn.primary:hover:not(:disabled) { background: var(--acc-strong); }
+  .wt-btn.primary:disabled { opacity: 0.35; cursor: not-allowed; }
+  .wt-btn.ghost { background: transparent; border: 0.5px solid var(--line-strong); color: var(--t1); }
+  .wt-btn.ghost:hover { border-color: var(--t2); background: rgba(255,255,255,0.03); }
+  .wt-btn.plain { background: transparent; color: var(--t3); border: none; padding: 8px 12px; }
+  .wt-btn.plain:hover { color: var(--t1); }
+  .wt-btn.tiny { padding: 6px 10px; font-size: 11px; }
+
+  /* ── Form primitives (matchar .ab-form-row) ──────────────────── */
+  .wt-fset { margin-bottom: 26px; }
+  .wt-fset:last-child { margin-bottom: 0; }
+  .wt-fset-t {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--t3); font-weight: 700; margin: 0 0 14px;
+    padding-bottom: 8px; border-bottom: 0.5px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .wt-frow-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .wt-frow-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .wt-frow-2, .wt-frow-3 { grid-template-columns: 1fr; } }
+
+  .wt-f { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+  .wt-f:last-child { margin-bottom: 0; }
+  .wt-frow-2 .wt-f, .wt-frow-3 .wt-f { margin-bottom: 0; }
+  .wt-f-l {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 10px; color: var(--t3); text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 700;
+  }
+  .wt-f-l .req { color: var(--acc); font-size: 11px; }
+  .wt-f input, .wt-f textarea, .wt-f select {
+    width: 100%; padding: 9px 11px;
+    background: rgba(255,255,255,0.03);
+    border: 0.5px solid var(--line-strong); border-radius: 7px;
+    color: var(--t1); font-size: 13px; outline: none;
+    transition: border-color 0.15s;
+  }
+  .wt-f input::placeholder, .wt-f textarea::placeholder { color: var(--t4); }
+  .wt-f input:focus, .wt-f textarea:focus, .wt-f select:focus { border-color: var(--acc); }
+  .wt-f textarea { min-height: 60px; resize: vertical; }
+  .wt-f.has-err input, .wt-f.has-err textarea { border-color: var(--err); }
+  .wt-f-err { font-size: 12px; color: var(--err); display: none; }
+  .wt-f.has-err .wt-f-err { display: block; }
+
+  /* ── Help (?)-cirklar ─────────────────────────────────────────── */
+  .wt-help {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: rgba(255,255,255,0.08); color: var(--t2);
+    font-size: 10px; font-weight: 700; cursor: pointer;
+    border: none; padding: 0; transition: all 0.12s;
+  }
+  .wt-help:hover, .wt-help.on { background: var(--acc); color: #1c1206; }
+  .wt-hb {
+    margin-top: 6px; background: var(--acc-soft);
+    border: 0.5px solid rgba(219,105,35,0.30);
+    border-left: 2px solid var(--acc);
+    border-radius: 6px; padding: 9px 12px;
+    font-size: 12px; color: var(--t1); line-height: 1.55;
+    display: none;
+  }
+  .wt-hb.on { display: block; }
+  .wt-hb strong { color: #fff; font-weight: 600; }
+
+  /* ── Card-selection (steg 1 mallar + steg 5 delnings-val) ──── */
+  .wt-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .wt-cards.two { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 640px) { .wt-cards.two { grid-template-columns: 1fr; } }
+
+  .wt-card {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 18px 16px;
+    cursor: pointer; text-align: left;
+    color: inherit; display: flex; flex-direction: column;
+    gap: 8px; transition: all 0.15s; position: relative;
+  }
+  .wt-card:hover { border-color: var(--line-strong); background: rgba(255,255,255,0.04); }
+  .wt-card.on {
+    border-color: var(--acc); background: var(--acc-soft);
+    box-shadow: 0 0 0 1px var(--acc) inset;
+  }
+  .wt-card.on::after {
+    content: "✓"; position: absolute; top: 12px; right: 12px;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--acc); color: #1c1206;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800;
+  }
+  .wt-card-name {
+    font-family: Georgia, serif; font-size: 17px; font-weight: 700;
+    color: #fff; padding-right: 28px; letter-spacing: -0.005em;
+  }
+  .wt-card-sub { font-size: 12.5px; color: var(--t2); line-height: 1.45; }
+  .wt-pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+  .wt-pill {
+    display: inline-flex; align-items: center;
+    font-size: 10px; padding: 3px 8px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+    background: rgba(255,255,255,0.05); color: var(--t2);
+    border: 0.5px solid var(--line);
+  }
+  .wt-pill.brand {
+    background: var(--acc-soft); color: var(--acc);
+    border-color: rgba(219,105,35,0.35);
+  }
+  .wt-card-when {
+    font-size: 12px; color: var(--t2); background: rgba(0,0,0,0.20);
+    border-radius: 7px; padding: 8px 10px; line-height: 1.5;
+    margin-top: 4px;
+  }
+  .wt-card-when strong { color: var(--t1); font-weight: 600; }
+
+  /* ── Attachment list ──────────────────────────────────────────── */
+  .wt-att-list { display: flex; flex-direction: column; gap: 6px; }
+  .wt-att-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 13px; background: rgba(255,255,255,0.02);
+    border: 0.5px solid var(--line); border-radius: 8px;
+    cursor: pointer; transition: border-color 0.12s;
+  }
+  .wt-att-row:hover { border-color: var(--line-strong); }
+  .wt-att-row input[type="checkbox"] {
+    accent-color: var(--acc); width: 16px; height: 16px; cursor: pointer;
+    margin: 0;
+  }
+  .wt-att-ic {
+    width: 28px; height: 34px;
+    background: rgba(219,105,35,0.10);
+    border: 0.5px solid rgba(219,105,35,0.30);
+    border-radius: 4px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; color: var(--acc); letter-spacing: 0.05em;
+  }
+  .wt-att-info { flex: 1; min-width: 0; }
+  .wt-att-name { font-size: 12.5px; font-weight: 600; color: var(--t1); }
+  .wt-att-meta { font-size: 11px; color: var(--t3); margin-top: 1px; }
+  .wt-att-upload {
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; margin-top: 10px;
+    border: 1px dashed var(--line-strong); border-radius: 8px;
+    background: rgba(255,255,255,0.02); color: var(--t3);
+    font-size: 12.5px; cursor: pointer; transition: all 0.12s;
+  }
+  .wt-att-upload:hover {
+    border-color: var(--acc); color: var(--acc); background: var(--acc-soft);
+  }
+  .wt-att-upload.busy { opacity: 0.6; pointer-events: none; }
+  /* Fas 5b spår 2: borttag-knapp + tomläge för uppladdade bilagor */
+  .wt-att-rm {
+    border: none; background: none; color: var(--t3); cursor: pointer;
+    font-size: 15px; padding: 0 4px; flex-shrink: 0; line-height: 1;
+  }
+  .wt-att-rm:hover { color: var(--err); }
+  .wt-att-empty {
+    font-size: 12px; color: var(--t3); padding: 12px 13px;
+    border: 0.5px dashed var(--line); border-radius: 8px; background: rgba(255,255,255,0.01);
+  }
+
+  /* ── Preview box (steg 4) ─────────────────────────────────────── */
+  .wt-prev {
+    background: rgba(0,0,0,0.20); border: 0.5px solid var(--line);
+    border-radius: 10px; padding: 22px 24px; text-align: center;
+    color: var(--t3); font-size: 13px;
+  }
+  .wt-prev.on { padding: 0; text-align: left; }
+  .wt-prev-hint {
+    background: var(--info-soft); border: 0.5px solid rgba(99,102,241,0.35);
+    border-left: 2px solid var(--info); color: var(--t1);
+    padding: 10px 14px; border-radius: 7px; font-size: 12.5px;
+    margin-bottom: 12px; line-height: 1.5;
+  }
+  .wt-prev-hint strong { color: #fff; }
+  .wt-prev-mock {
+    background: #fdfdfd; color: #1e2235; border-radius: 10px;
+    padding: 26px 32px; max-height: 460px; overflow-y: auto;
+    text-align: left; font-size: 11px; line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  .wt-prev-mock * { color: #1e2235; }
+  .wt-prev-mock header { border-bottom: 3px solid var(--acc); padding-bottom: 10px; margin-bottom: 18px; }
+  .wt-prev-mock .brand-h { font-size: 11.5px; font-weight: 800; color: var(--acc); letter-spacing: 0.5px; }
+  .wt-prev-mock .brand-s { font-size: 9px; color: #64748b; margin-top: 1px; }
+  .wt-prev-mock h1 { font-family: Georgia, serif; font-size: 14px; margin: 8px 0 2px; color: #1e2235; }
+  .wt-prev-mock .parties {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px;
+    padding: 9px 12px; margin: 12px 0;
+  }
+  .wt-prev-mock .parties .row { display: flex; gap: 20px; margin: 2px 0; }
+  .wt-prev-mock .parties .k {
+    color: #64748b; width: 70px; font-size: 8.5px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .wt-prev-mock .parties .v { color: #1e2235; font-size: 10px; }
+  .wt-prev-mock section { margin: 10px 0; }
+  .wt-prev-mock section h2 {
+    font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--acc); margin: 0 0 4px; font-weight: 700;
+  }
+  .wt-prev-mock section p { margin: 3px 0; font-size: 10px; color: #334155; }
+  .wt-prev-mock .foot { text-align: center; color: #94a3b8; margin-top: 16px; font-size: 9px; }
+
+  /* ── Recipients (steg 5) ──────────────────────────────────────── */
+  .wt-rcp-row {
+    display: grid; grid-template-columns: 1fr 1fr 150px 30px; gap: 10px;
+    padding: 12px; background: rgba(255,255,255,0.02);
+    border: 0.5px solid var(--line); border-radius: 8px;
+    align-items: end;
+  }
+  @media (max-width: 640px) { .wt-rcp-row { grid-template-columns: 1fr; } }
+  .wt-rcp-row + .wt-rcp-row { margin-top: 6px; }
+  .wt-rcp-row .wt-f { margin-bottom: 0; gap: 3px; }
+  .wt-rcp-row .wt-f-l { font-size: 9.5px; }
+  .wt-rcp-row .wt-f input, .wt-rcp-row .wt-f select { padding: 7px 10px; font-size: 12.5px; }
+  .wt-rcp-rm {
+    background: transparent; border: none; color: var(--t3);
+    cursor: pointer; padding: 6px; border-radius: 4px;
+    font-size: 14px; align-self: end; margin-bottom: 5px;
+  }
+  .wt-rcp-rm:hover { color: var(--err); background: rgba(248,113,113,0.10); }
+
+  /* ── Summary box (steg 5) ─────────────────────────────────────── */
+  .wt-sum {
+    background: var(--acc-soft); border: 0.5px solid rgba(219,105,35,0.30);
+    border-radius: 10px; padding: 16px 20px; margin-top: 24px;
+  }
+  .wt-sum h4 {
+    margin: 0 0 10px; font-size: 11px; font-weight: 700;
+    color: var(--acc); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .wt-sum ul { list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: 4px; }
+  .wt-sum li {
+    font-size: 12.5px; display: flex; justify-content: space-between;
+    gap: 12px; padding: 3px 0;
+  }
+  .wt-sum li .k { color: var(--t3); }
+  .wt-sum li .v { color: var(--t1); font-weight: 600; }
+
+  /* ── Success view ─────────────────────────────────────────────── */
+  .wt-done {
+    padding: 60px 40px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  .wt-done-check {
+    width: 68px; height: 68px; border-radius: 50%;
+    background: var(--ok-soft); color: var(--ok);
+    border: 0.5px solid rgba(16,185,129,0.35);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 34px; font-weight: 800;
+  }
+  .wt-done-check.internal {
+    background: var(--info-soft); color: var(--info);
+    border-color: rgba(99,102,241,0.40);
+  }
+  .wt-done-t {
+    font-family: Georgia, serif; font-size: 26px; font-weight: 700;
+    color: #fff; letter-spacing: -0.01em; margin: 8px 0 0;
+  }
+  .wt-done-s {
+    font-size: 14px; color: var(--t2); max-width: 460px;
+    text-wrap: balance; line-height: 1.5;
+  }
+  .wt-done-sum {
+    background: rgba(0,0,0,0.20); border: 0.5px solid var(--line);
+    border-radius: 10px; padding: 18px 22px; margin-top: 14px;
+    text-align: left; min-width: 320px; max-width: 500px;
+  }
+  .wt-done-sum ul { list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: 4px; }
+  .wt-done-sum li { font-size: 12.5px; display: flex;
+    justify-content: space-between; gap: 12px; padding: 3px 0; }
+  .wt-done-sum li .k { color: var(--t3); }
+  .wt-done-sum li .v { color: var(--t1); font-weight: 600; }
+  .wt-done-sum li .v.ok { color: var(--ok); }
+  .wt-done-sum li .v.info { color: var(--info); }
+  .wt-done-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; justify-content: center; }
+
+  /* ── Views ────────────────────────────────────────────────────── */
+  .wt-view { display: none; }
+  .wt-view.on { display: block; }
+
+  /* ── Callout for "share internally" hint on step 5 ───────────── */
+  .wt-callout {
+    background: var(--info-soft); border: 0.5px solid rgba(99,102,241,0.35);
+    border-left: 2px solid var(--info); border-radius: 7px;
+    padding: 10px 13px; font-size: 12.5px; color: var(--t1);
+    line-height: 1.5; margin-bottom: 18px;
+  }
+  .wt-callout strong { color: #fff; }
+
+</style>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .ac-wrap, .ac-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .ac-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e; --input:#2e3350;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --red:#E05A5A; --blue:#5B8DEF;
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
+    background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;width:100%;border-radius:14px;padding:0 20px 30px;
+  }
+  .ac-wrap input[type=hidden]{display:none}
+  .ac-top{display:flex;align-items:center;justify-content:space-between;padding:16px 0 14px;border-bottom:1px solid var(--border);margin-bottom:20px}
+  .ac-h1{font-family:'DM Serif Display',Georgia,serif;font-size:24px;line-height:1.1;letter-spacing:-.01em}
+  .ac-h1 span{color:var(--orange)}
+  .ac-sub{font-size:11px;color:var(--w40);letter-spacing:.4px;margin-top:3px;text-transform:uppercase}
+
+  .ac-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px 26px;margin-bottom:14px}
+  .ac-panel h2{font-family:'DM Serif Display',Georgia,serif;font-size:18px;margin-bottom:14px}
+
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px}
+  .field input,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .field textarea{min-height:90px;resize:vertical}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  @media (max-width:560px){.row2{grid-template-columns:1fr}}
+
+  /* Drop zone — display:block kritiskt eftersom <label> är inline by default */
+  .drop{display:block;width:100%;
+    border:1.5px dashed rgba(255,255,255,.18);border-radius:12px;padding:24px;text-align:center;
+    cursor:pointer;transition:.15s;background:var(--card)}
+  .drop:hover, .drop.drag{border-color:var(--orange);background:var(--orange-dim)}
+  .drop .ic{font-size:34px;line-height:1;margin-bottom:8px;color:var(--w40)}
+  .drop .pri{font-size:14px;font-weight:700;margin-bottom:3px;color:var(--white)}
+  .drop .sec{font-size:11px;color:var(--w40)}
+  .drop input[type=file]{display:none}
+
+  ul.files{list-style:none;margin:12px 0 0;padding:0}
+  li.file{display:flex;align-items:center;justify-content:space-between;background:var(--card);
+    border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:6px;font-size:12px}
+  li.file .meta{color:var(--w40);margin-right:auto;margin-left:10px;font-size:11px}
+  li.file .rm{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 6px}
+
+  /* Recipients */
+  .rcp-row{display:grid;grid-template-columns:1fr 1fr 110px auto;gap:8px;margin-bottom:8px;align-items:center}
+  @media (max-width:560px){.rcp-row{grid-template-columns:1fr 110px auto}.rcp-row .rcp-name{display:none}}
+  .rcp-row input, .rcp-row select{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;
+    color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb)}
+  .rcp-row input:focus, .rcp-row select:focus{outline:none;border-color:var(--orange)}
+  .rcp-row select{cursor:pointer}
+  .rcp-rm{background:none;border:1px solid var(--border);color:var(--w40);width:32px;height:34px;
+    border-radius:8px;cursor:pointer;font-size:14px}
+  .rcp-rm:hover{color:var(--red);border-color:var(--red)}
+  .rcp-add{background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    padding:9px 13px;border-radius:8px;font-size:12px;cursor:pointer;margin-top:4px}
+  .rcp-add:hover{border-color:var(--orange);color:var(--orange)}
+
+  /* Historik-lista (Deal-aware / CC-aware mode) */
+  .hist-list{list-style:none;padding:0;margin:0}
+  .hist-row{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    margin-bottom:8px;overflow:hidden}
+  .hist-head{display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;
+    transition:background .15s}
+  .hist-head:hover{background:var(--deep)}
+  .hist-head .rubrik{font-weight:700;font-size:13px;flex:1;min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .hist-head .meta{font-size:11px;color:var(--w40);flex-shrink:0}
+  .hist-head .arrow{color:var(--w40);font-size:13px;flex-shrink:0;transition:transform .15s}
+  .hist-row.open .arrow{transform:rotate(180deg)}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;
+    letter-spacing:.4px;text-transform:uppercase;padding:3px 9px;border-radius:999px;
+    border:1px solid;flex-shrink:0}
+  .pill .dot{width:5px;height:5px;border-radius:50%}
+  .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green);border-color:rgba(76,175,125,.35)}
+  .pill.s-Approved .dot{background:var(--green)}
+  .pill.s-Sent,.pill.s-OTP_Sent,.pill.s-Viewed{background:var(--orange-dim);color:var(--orange);border-color:rgba(244,123,48,.35)}
+  .pill.s-Sent .dot,.pill.s-OTP_Sent .dot,.pill.s-Viewed .dot{background:var(--orange)}
+  .pill.s-Draft{background:var(--w10);color:var(--w70);border-color:var(--border)}
+  .pill.s-Draft .dot{background:var(--w40)}
+  .pill.s-Expired,.pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red);border-color:rgba(224,90,90,.35)}
+  .pill.s-Expired .dot,.pill.s-Revoked .dot{background:var(--red)}
+  .hist-detail{display:none;border-top:1px solid var(--border);padding:14px 16px;
+    background:var(--panel);font-size:12px}
+  .hist-row.open .hist-detail{display:block}
+  .hist-detail .meta-grid{display:grid;grid-template-columns:120px 1fr;gap:6px 14px;
+    margin-bottom:14px;color:var(--w70)}
+  .hist-detail .meta-grid .k{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  .hist-detail h4{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--w40);
+    margin:14px 0 8px;font-weight:700}
+  .rcp-table{width:100%;border-collapse:collapse;font-size:12px}
+  .rcp-table th,.rcp-table td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+  .rcp-table th{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--w40);font-weight:700}
+  .rcp-table td{color:var(--w70)}
+  .rcp-table td.email{color:var(--white);font-weight:700}
+  .rcp-table td a{color:var(--orange);text-decoration:none;font-size:11px;font-weight:700}
+  .rcp-table td a:hover{text-decoration:underline}
+  .doc-row{display:flex;align-items:center;justify-content:space-between;background:var(--card);
+    border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px}
+  .doc-row a{color:var(--w70);text-decoration:none;font-size:11px;font-weight:700;
+    background:var(--input);border:1px solid var(--border);padding:5px 10px;border-radius:6px;
+    text-transform:uppercase;letter-spacing:.3px}
+  .doc-row a:hover{color:var(--orange);border-color:var(--orange)}
+  .hist-empty{text-align:center;color:var(--w40);font-size:12px;padding:28px 16px;
+    border:1px dashed var(--border);border-radius:10px}
+  .hist-loading{text-align:center;color:var(--w40);font-size:12px;padding:18px}
+
+  .toggle-create{display:flex;align-items:center;justify-content:center;width:100%;
+    background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    padding:14px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;
+    margin:14px 0 0;letter-spacing:.3px}
+  .toggle-create:hover{border-color:var(--orange);color:var(--orange)}
+
+  /* Footer / submit */
+  .ac-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 20px}
+  .ac-foot .count{font-size:12px;color:var(--w40)}
+  .ac-foot .count b{color:var(--white)}
+  .btn-primary{background:var(--orange);color:#1c1206;border:none;border-radius:10px;
+    padding:12px 22px;font-size:13px;font-weight:700;cursor:pointer}
+  .btn-primary:disabled{opacity:.4;cursor:not-allowed}
+  .btn-secondary{background:var(--input);border:1px solid var(--border);color:var(--white);
+    border-radius:10px;padding:10px 18px;font-size:12px;cursor:pointer}
+
+  .err{color:var(--red);font-size:12px;margin-top:10px;min-height:16px}
+  .ok-block{background:var(--panel);border:1px solid var(--green);border-radius:14px;padding:22px 26px}
+  .ok-block h2{font-family:'DM Serif Display',Georgia,serif;color:var(--green);font-size:20px;margin-bottom:8px}
+  .ok-list{list-style:none;padding:0;margin:14px 0 0}
+  .ok-list li{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;
+    margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    word-break:break-all}
+  .ok-list li a{color:var(--blue);text-decoration:none;font-family:Menlo,Consolas,monospace;font-size:11px}
+  .ok-list li a:hover{text-decoration:underline}
+  .hidden{display:none !important}
+</style>
+
 <div class="fl">
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
   <input type="hidden" data-mira="user_company"   value=""><!-- bind till Current User's Company's unique id (för personal-dropdown i Leverantörer) -->
+  <input type="hidden" data-mira="sender_email"   value=""><!-- Current User's e-post (avsändare för signeringar) -->
+  <input type="hidden" data-mira="sender_name"    value=""><!-- Current User's namn (avsändare för signeringar) -->
   <input type="hidden" data-mira="user_name"      value=""><!-- bind till Current User's namn (signerar drift-kommentarer) -->
 
   <div data-fl="listview">
@@ -262,6 +1110,690 @@
     <div data-fl="body"><div class="fl-msg">Laddar…</div></div>
   </div>
   <div data-fl="cardview" style="display:none"></div>
+
+  <!-- ══ PORTAT 2026-08-17: Avtal-flikens paneler ══════════════════════════
+       Ligger UTANFÖR data-fl="cardview" med flit: renderCard() gör innerHTML=
+       på cardview vid varje state-ändring, vilket skulle radera formulär/
+       wizard/uppladdningar mitt i inmatning. Panelerna flyttas in i kortets
+       mount-punkt med appendChild (flytt bevarar både lyssnare och DOM-state)
+       och stashas tillbaka hit före varje re-render. Se mountPanes/stashPanes. -->
+  <div data-fl="panes" style="display:none">
+<div class="ab-wrap">
+
+  <!-- ⚠️ Bubble STRIPPAR value på hidden inputs (även literaler) → bär värdet i
+       data-val och bootstrap:a till .value i script #1. Sätt data-val="" via
+       Bubble dynamic data (INTE value). Se reference-bubble-hidden-input-strip. -->
+  <input type="hidden" data-mira="api_host"         data-val="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"   data-val="">
+  <input type="hidden" data-mira="clientcompany"    data-val="">
+  <input type="hidden" data-mira="clientcompany_nm" data-val="">
+  <!-- Affär-ryggrad: sätt ENDAST när blocket bäddas i affärs-popupens Avtal-flik.
+       Bubble dynamic: Parent group's Deal's unique id. Tom på Företag-kortet. -->
+  <input type="hidden" data-mira="deal"             data-val="">
+
+  <div class="ab-head">
+    <div class="ab-head-l">
+      <h2 data-ab="cust-name">Electronic Arts AB</h2>
+      <div class="ab-cust">Abonnemang &amp; avtal</div>
+    </div>
+    <div class="ab-head-r">
+      <div class="ab-sumblock">
+        <div class="ab-sk-l">Aktiva</div>
+        <div class="ab-sk-v" data-ab="sum-count">5 st</div>
+      </div>
+      <div class="ab-sumblock">
+        <div class="ab-sk-l">Per månad</div>
+        <div class="ab-sk-v" data-ab="sum-cost">258 412 kr</div>
+      </div>
+      <button class="ab-btn ghost" data-ab="import-btn" title="Importera befintligt avtal (PDF) — LLM parsar fälten">+ Importera avtal</button>
+      <button class="ab-btn ghost" data-aa="wiz-btn-k">+ Avtal från mall</button>
+      <button class="ab-btn primary" data-ab="create-btn">+ Nytt abonnemang</button>
+    </div>
+  </div>
+
+  <div data-ab="sections"></div>
+
+  <!-- Create-modal -->
+  <div class="ab-mask" data-ab="create-mask">
+    <div class="ab-modal" role="dialog" aria-modal="true">
+      <div class="ab-modal-h">
+        <h3 data-ab="create-title">Nytt abonnemang för Electronic Arts AB</h3>
+        <button class="ab-modal-close" data-ab="create-close" aria-label="Stäng">&times;</button>
+      </div>
+      <div class="ab-modal-b">
+        <div style="font-size:10px; color:var(--t3); text-transform:uppercase; letter-spacing:0.08em; font-weight:600; margin-bottom:8px;">Kontraktstyp</div>
+        <div class="ab-typesel" data-ab="typesel">
+          <div class="ab-typecard on" data-type="Subscription">
+            <div class="ab-typecard-t">Subscription</div>
+            <div class="ab-typecard-d">Fast månadskostnad. HK, Reception, Mira.</div>
+          </div>
+          <div class="ab-typecard" data-type="RateCard">
+            <div class="ab-typecard-t">RateCard</div>
+            <div class="ab-typecard-d">Roller × kr/h. Staff Bemanning.</div>
+          </div>
+          <div class="ab-typecard" data-type="Hybrid">
+            <div class="ab-typecard-t">Hybrid</div>
+            <div class="ab-typecard-d">Fast bas + rörlig debitering.</div>
+          </div>
+        </div>
+
+        <div class="ab-form-2">
+          <div class="ab-form-row">
+            <label>Avtalstitel</label>
+            <input type="text" placeholder="housekeeping ox2 ab" data-ab="f-title">
+          </div>
+          <div class="ab-form-row">
+            <label>Leverantör</label>
+            <select data-ab="f-supplier"><option value="">— välj (förvald från kategori) —</option></select>
+          </div>
+        </div>
+
+        <div class="ab-form-2">
+          <div class="ab-form-row">
+            <label>Erbjudande</label>
+            <select data-ab="f-offer"><option value="">Laddar erbjudanden...</option></select>
+          </div>
+          <div class="ab-form-row">
+            <label>Kontor</label>
+            <select data-ab="f-office"><option value="">Account-scope (oavsett kontor)</option></select>
+          </div>
+        </div>
+
+        <div class="ab-form-2" data-ab="sub-fields">
+          <div class="ab-form-row" data-ab="monthly-wrap">
+            <label>Månadskostnad (SEK, exkl. moms)</label>
+            <input type="number" placeholder="188 282" data-ab="f-monthly">
+          </div>
+          <div class="ab-form-row">
+            <label>Antal</label>
+            <input type="number" value="1" data-ab="f-qty">
+          </div>
+          <div class="ab-form-row">
+            <label>Startdatum</label>
+            <input type="date" data-ab="f-start">
+          </div>
+          <div class="ab-form-row">
+            <label>Slutdatum</label>
+            <input type="date" data-ab="f-end">
+          </div>
+          <div class="ab-form-row">
+            <label>Bindning (mån)</label>
+            <input type="number" value="36" data-ab="f-binding">
+          </div>
+          <div class="ab-form-row">
+            <label>Uppsägningstid (mån)</label>
+            <input type="number" value="3" data-ab="f-notice">
+          </div>
+          <div class="ab-form-row">
+            <label>Auto-förlängning (mån, valfritt)</label>
+            <input type="number" placeholder="0 = ingen" data-ab="f-autorenew">
+          </div>
+          <div class="ab-form-row">
+            <label>Prisreglering</label>
+            <select data-ab="f-pricereg">
+              <option value="">— välj —</option>
+              <option value="index_cleaning">Cleaning Index (SCB/Almega)</option>
+              <option value="index_kpi">KPI</option>
+              <option value="lon_kollektiv">Lönekollektiv</option>
+              <option value="fast">Fast pris</option>
+              <option value="ingen">Ingen</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="ab-form-row" data-ab="ratecard-wrap" style="display:none;">
+          <label>Rate-card (roller × kr/h)</label>
+          <div class="ab-rc-hint">Lägg till roller med pris per timme. Tomma rader ignoreras vid spara.</div>
+          <div class="ab-rc-list" data-ab="ratecard-list"></div>
+          <button type="button" class="ab-rc-add" data-ab="ratecard-add">+ Lägg till roll</button>
+        </div>
+
+        <div class="ab-form-row">
+          <label>Volym (JSON — strukturerad: kvm, housekeepers, hours_mf…)</label>
+          <textarea rows="2" placeholder='{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}' data-ab="f-volume"></textarea>
+        </div>
+      </div>
+      <div class="ab-modal-foot">
+        <button class="ab-btn ghost" data-ab="create-cancel">Avbryt</button>
+        <div style="display:flex; gap:8px;">
+          <button class="ab-btn ghost" data-ab="create-draft">Spara som utkast</button>
+          <button class="ab-btn primary" data-ab="create-save">Skapa abonnemang</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden file-input för bilageupload (delas av alla rader) -->
+  <input type="file" data-ab="att-file" style="display:none;">
+  <!-- Hidden file-input för PDF-import (Fas 4) -->
+  <input type="file" data-ab="import-file" accept="application/pdf,.pdf" style="display:none;">
+  <div class="aa-wiz-mask" data-aa="wiz-mask-k">
+    <div class="aa-wiz-modal">
+      <button class="aa-wiz-close" data-aa="wiz-close-k" title="Stäng">&times;</button>
+<div class="wt-wrap">
+  <div class="wt-proto">
+    🧪 <strong>Prototyp</strong> — testklickbar, inga avtal skickas. Klicka igenom hela flödet, klicka på <strong>?</strong> bredvid fält.
+  </div>
+
+  <div class="wt" id="wt">
+
+    <!-- ═══════════════ RAIL ═══════════════ -->
+    <aside class="wt-rail">
+      <div class="wt-brand">
+        <div class="wt-brand-h">Avtal från mall</div>
+        <div class="wt-brand-s">Carotte · Mira</div>
+      </div>
+      <ol class="wt-steps">
+        <li class="wt-step is-active" data-step="1">
+          <span class="wt-step-n"><span class="n">1</span></span>
+          <div class="wt-step-body">
+            <div class="wt-step-t">Välj mall</div>
+            <div class="wt-step-s">Vilken sorts avtal?</div>
+          </div>
+        </li>
+        <li class="wt-step" data-step="2">
+          <span class="wt-step-n"><span class="n">2</span></span>
+          <div class="wt-step-body">
+            <div class="wt-step-t">Om kunden</div>
+            <div class="wt-step-s">Namn, org.nr, adress</div>
+          </div>
+        </li>
+        <li class="wt-step" data-step="3">
+          <span class="wt-step-n"><span class="n">3</span></span>
+          <div class="wt-step-body">
+            <div class="wt-step-t">Om avtalet</div>
+            <div class="wt-step-s">Datum och priser</div>
+          </div>
+        </li>
+        <li class="wt-step" data-step="4">
+          <span class="wt-step-n"><span class="n">4</span></span>
+          <div class="wt-step-body">
+            <div class="wt-step-t">Bilagor + granska</div>
+            <div class="wt-step-s">Se avtalet först</div>
+          </div>
+        </li>
+        <li class="wt-step" data-step="5">
+          <span class="wt-step-n"><span class="n">5</span></span>
+          <div class="wt-step-body">
+            <div class="wt-step-t">Skicka</div>
+            <div class="wt-step-s">Internt eller till kund</div>
+          </div>
+        </li>
+      </ol>
+      <div class="wt-tip">
+        <div class="wt-tip-l">Tips</div>
+        <div class="wt-tip-b">Osäker på ett fält? Klicka på lilla <strong>?</strong> så förklaras det.</div>
+      </div>
+    </aside>
+
+    <!-- ═══════════════ PANEL ═══════════════ -->
+    <main class="wt-panel">
+
+      <!-- ─── STEG 1 ─── -->
+      <div class="wt-view on" data-view="1">
+        <div class="wt-head">
+          <div class="wt-eyebrow">Steg 1 av 5</div>
+          <h1 class="wt-title">Välj vilken sorts avtal du vill skapa</h1>
+          <div class="wt-sub">Klicka på en mall nedan. Alla mallar är förskrivna standardavtal — du fyller i kundens uppgifter i nästa steg.</div>
+        </div>
+        <div class="wt-body">
+          <div class="wt-cards" id="tplGrid">
+            <button class="wt-card" data-tpl="hk-hybrid-sv" type="button">
+              <div class="wt-card-name">HK Timpris</div>
+              <div class="wt-card-sub">Städtjänst med timpris och Städindex-reglering.</div>
+              <div class="wt-pills">
+                <span class="wt-pill brand">Housekeeping</span>
+                <span class="wt-pill">Svenska</span>
+              </div>
+              <div class="wt-card-when"><strong>Passar när:</strong> Kunden är ett mindre bolag och vi debiterar per faktisk arbetad timme (330 kr/tim standard) med OB-tillägg för kvälls- och nattarbete. Uppstartskostnad tillkommer.</div>
+            </button>
+
+            <button class="wt-card" data-tpl="hk-subscription-en" type="button">
+              <div class="wt-card-name">HK Månadsavgift</div>
+              <div class="wt-card-sub">Fast månadskostnad med Cleaning Index. Engelska.</div>
+              <div class="wt-pills">
+                <span class="wt-pill brand">Housekeeping</span>
+                <span class="wt-pill">Engelska</span>
+              </div>
+              <div class="wt-card-when"><strong>Passar när:</strong> Kunden är ett större bolag som vill ha förutsägbara månadskostnader — t.ex. EA, DICE, Spotify. Cleaning Index-reglering årligen.</div>
+            </button>
+
+            <button class="wt-card" data-tpl="staff-ratecard-sv" type="button">
+              <div class="wt-card-name">Staff Bemanning</div>
+              <div class="wt-card-sub">Timpris per roll (reception, konsult m.fl.) + OB.</div>
+              <div class="wt-pills">
+                <span class="wt-pill brand">Staff</span>
+                <span class="wt-pill">Svenska</span>
+              </div>
+              <div class="wt-card-when"><strong>Passar när:</strong> Kunden hyr in personal på timme till kontor eller reception — t.ex. längre uppdrag för en receptionist. Olika roller har olika timpris.</div>
+            </button>
+
+            <button class="wt-card" data-tpl="staff-recruitment-sv" type="button">
+              <div class="wt-card-name">Rekrytering</div>
+              <div class="wt-card-sub">Vi hittar rätt person — kunden betalar först när tillsättning skett.</div>
+              <div class="wt-pills">
+                <span class="wt-pill brand">Staff</span>
+                <span class="wt-pill">Svenska</span>
+              </div>
+              <div class="wt-card-when"><strong>Passar när:</strong> Kunden vill anställa någon permanent (t.ex. reception, kock, koordinator). Carotte söker kandidater. Ingen kostnad förrän kandidaten tackat ja. Arvode: <strong>2,3 × månadslön</strong>.</div>
+            </button>
+
+            <button class="wt-card" data-tpl="fe-framework-sv" type="button">
+              <div class="wt-card-name">Food &amp; Event ramavtal</div>
+              <div class="wt-card-sub">För återkommande catering, drinkar och event-personal.</div>
+              <div class="wt-pills">
+                <span class="wt-pill brand">Food &amp; Event</span>
+                <span class="wt-pill">Svenska</span>
+              </div>
+              <div class="wt-card-when"><strong>Passar när:</strong> Kunden bokar mat, dryck eller event-personal regelbundet. Roller som bartender, servitör, kock enligt Carottes prislista. Varje uppdrag bokas separat vid behov — ramavtalet sätter bara villkoren.</div>
+            </button>
+          </div>
+        </div>
+        <footer class="wt-foot">
+          <button class="wt-btn plain" onclick="wtCloseModal_k()">Avbryt</button>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span class="wt-foot-note" id="tplHint">Välj en mall för att fortsätta</span>
+            <button class="wt-btn primary" id="btnNext1" disabled onclick="goNext_k(1)">Nästa →</button>
+          </div>
+        </footer>
+      </div>
+
+      <!-- ─── STEG 2 ─── -->
+      <div class="wt-view" data-view="2">
+        <div class="wt-head">
+          <div class="wt-eyebrow">Steg 2 av 5</div>
+          <h1 class="wt-title">Fyll i uppgifter om kunden</h1>
+          <div class="wt-sub">Avtalet gäller den här kunden. Bolagsnamn, org.nr och adress är förifyllda från kundregistret — justera vid behov. Röd stjärna = obligatoriskt fält.</div>
+        </div>
+        <div class="wt-body">
+          <div class="wt-fset">
+            <div class="wt-f">
+              <label class="wt-f-l">Kund</label>
+              <div id="wt-clientLocked" style="padding:10px 13px;background:var(--acc-soft);border:0.5px solid rgba(219,105,35,0.35);border-radius:7px;font-size:13.5px;color:var(--t1)"><strong style="color:#fff" data-wt="locked-name">Kunden</strong> — förvald från kundkortet.</div>
+            </div>
+
+            <div class="wt-f">
+              <label class="wt-f-l">Företagsnamn — så det skrivs i avtalet <span class="req">*</span>
+                <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="Förklaring">?</button>
+              </label>
+              <div class="wt-hb">Fylls in automatiskt från vald kund. Kan justeras — kundens <strong>registrerade bolagsnamn</strong> (t.ex. "Electronic Arts Sverige AB", inte "EA") ska stå i avtalstexten.</div>
+              <input type="text" id="wt-clientName" placeholder="Väljs i sökrutan ovan">
+            </div>
+
+            <div class="wt-f">
+              <label class="wt-f-l">Organisationsnummer <span class="req">*</span>
+                <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="Förklaring">?</button>
+              </label>
+              <div class="wt-hb">10 siffror med bindestreck efter de 6 första, t.ex. <strong>556123-4567</strong>. Osäker? Slå upp företaget på <strong>allabolag.se</strong>.</div>
+              <input type="text" id="wt-clientOrg" placeholder="556123-4567">
+            </div>
+
+            <div class="wt-f">
+              <label class="wt-f-l">Adress
+                <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="Förklaring">?</button>
+              </label>
+              <div class="wt-hb">Kundens leveransadress — gatuadress, postnummer, ort. Om avtalet gäller flera adresser: skriv huvudkontoret här och lista de andra i en bilaga.</div>
+              <textarea id="wt-clientAddress" rows="2" placeholder="t.ex. Södermalmsallén 36, 118 28 Stockholm"></textarea>
+            </div>
+          </div>
+        </div>
+        <footer class="wt-foot">
+          <button class="wt-btn ghost" onclick="goBack_k(2)">← Tillbaka</button>
+          <button class="wt-btn primary" onclick="goNext_k(2)">Nästa →</button>
+        </footer>
+      </div>
+
+      <!-- ─── STEG 3 ─── -->
+      <div class="wt-view" data-view="3">
+        <div class="wt-head">
+          <div class="wt-eyebrow">Steg 3 av 5</div>
+          <h1 class="wt-title">Fyll i uppgifter om avtalet</h1>
+          <div class="wt-sub">Datum, avtalslängd och priser. Klicka <strong>?</strong> bredvid ett fält om du är osäker.</div>
+        </div>
+        <div class="wt-body">
+          <div id="wt-step3-body">
+            <div style="padding:30px;text-align:center;color:var(--t3);font-size:13px">Välj en mall först — formuläret anpassas efter din valda mall.</div>
+          </div>
+        
+        </div>
+        <footer class="wt-foot">
+          <button class="wt-btn ghost" onclick="goBack_k(3)">← Tillbaka</button>
+          <button class="wt-btn primary" onclick="goNext_k(3)">Nästa →</button>
+        </footer>
+      </div>
+
+      <!-- ─── STEG 4 ─── -->
+      <div class="wt-view" data-view="4">
+        <div class="wt-head">
+          <div class="wt-eyebrow">Steg 4 av 5</div>
+          <h1 class="wt-title">Bilagor och förhandsgranskning</h1>
+          <div class="wt-sub">Bifoga extra dokument om det behövs. Klicka sedan på "Förhandsgranska" — då ser du hela avtalet innan du skickar det.</div>
+        </div>
+        <div class="wt-body">
+
+          <div class="wt-fset">
+            <h3 class="wt-fset-t">Bilagor
+              <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
+            </h3>
+            <div class="wt-hb">Extra dokument som ska följa med avtalet — t.ex. offert, planritning, prislista. Bilagor läggs sist i det signerade PDF-paketet.</div>
+
+            <div class="wt-att-list" id="wtAttList"></div>
+            <input type="file" id="wtAttFile" accept="application/pdf,image/*" multiple style="display:none" onchange="wtUploadAttachment_k(this)">
+            <div class="wt-att-upload" id="wtAttUploadBtn" onclick="wtTriggerUpload_k()">+ Ladda upp ny bilaga (PDF eller bild)</div>
+          </div>
+
+          <div class="wt-fset">
+            <h3 class="wt-fset-t">Förhandsgranska avtalet</h3>
+            <div class="wt-prev-hint">
+              💡 <strong>Kolla noga innan du skickar.</strong> Se att kundnamn, datum och priser stämmer. Något fel? Gå tillbaka och ändra.
+            </div>
+            <div id="prevBox" class="wt-prev">
+              <button class="wt-btn ghost" onclick="showPreview_k()">Skapa förhandsgranskning</button>
+              <div style="margin-top:8px;font-size:12px;color:var(--t3)">Klicka för att se hur avtalet blir i PDF.</div>
+            </div>
+          </div>
+
+        </div>
+        <footer class="wt-foot">
+          <button class="wt-btn ghost" onclick="goBack_k(4)">← Tillbaka</button>
+          <button class="wt-btn primary" onclick="goNext_k(4)">Nästa →</button>
+        </footer>
+      </div>
+
+      <!-- ─── STEG 5 ─── -->
+      <div class="wt-view" data-view="5">
+        <div class="wt-head">
+          <div class="wt-eyebrow">Steg 5 av 5 — Sista steget</div>
+          <h1 class="wt-title">Vad vill du göra nu?</h1>
+          <div class="wt-sub">Välj om avtalet ska skickas direkt till kunden — eller om en kollega ska granska det internt först.</div>
+        </div>
+        <div class="wt-body">
+
+          <div class="wt-fset">
+            <div class="wt-cards two" id="modeGrid">
+              <button class="wt-card on" data-mode="client" type="button">
+                <div class="wt-card-name">Skicka till kunden</div>
+                <div class="wt-card-sub">Kunden får ett mail direkt med en säker signeringslänk.</div>
+                <div class="wt-pills">
+                  <span class="wt-pill brand">Signering</span>
+                </div>
+                <div class="wt-card-when"><strong>Passar när:</strong> Avtalet är genomkollat och du är säker på innehållet. Vanligast när du gjort samma sorts avtal tidigare.</div>
+              </button>
+
+              <button class="wt-card" data-mode="internal" type="button">
+                <div class="wt-card-name">Dela internt först</div>
+                <div class="wt-card-sub">En kollega granskar avtalet innan kunden får se det.</div>
+                <div class="wt-pills">
+                  <span class="wt-pill">Intern granskning</span>
+                </div>
+                <div class="wt-card-when"><strong>Passar när:</strong> Nytt kundsegment, osäkerhet kring priser, eller helt enkelt när du vill ha ett par extra ögon på det innan det går till kund.</div>
+              </button>
+            </div>
+          </div>
+
+          <!-- CLIENT MODE PANEL -->
+          <div id="clientPanel">
+            <div class="wt-fset">
+              <h3 class="wt-fset-t">Vem hos kunden ska signera?</h3>
+              <div id="clientRcps">
+                <div class="wt-rcp-row">
+                  <div class="wt-f">
+                    <label class="wt-f-l">Mailadress <span class="req">*</span></label>
+                    <input type="email" placeholder="namn@kundföretag.se">
+                  </div>
+                  <div class="wt-f">
+                    <label class="wt-f-l">Namn <span class="req">*</span></label>
+                    <input type="text" placeholder="För- och efternamn">
+                  </div>
+                  <div class="wt-f">
+                    <label class="wt-f-l">Roll
+                      <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
+                    </label>
+                    <div class="wt-hb"><strong>Signerar</strong> = skriver på avtalet juridiskt. <strong>Granskar</strong> = godkänner utan att bli juridiskt bunden (t.ex. jurist).</div>
+                    <select><option>Signerar</option><option>Granskar</option></select>
+                  </div>
+                  <button class="wt-rcp-rm" onclick="removeRcp_k(this)" aria-label="Ta bort">✕</button>
+                </div>
+              </div>
+              <button class="wt-btn ghost tiny" onclick="addRcp_k('clientRcps')" style="margin-top:10px">+ Lägg till en till person hos kunden</button>
+            </div>
+
+            <div class="wt-fset">
+              <div class="wt-f">
+                <label class="wt-f-l">Meddelande i mailet till kunden
+                  <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
+                </label>
+                <div class="wt-hb">Kort personligt meddelande som visas i mailet. Håll det vänligt. Ingen text? Lämna tomt.</div>
+                <textarea rows="3" placeholder="Hej! Här kommer avtalet för städning. Vänligen granska och signera."></textarea>
+              </div>
+            </div>
+
+            <div class="wt-sum">
+              <h4>Sammanfattning innan du skickar till kund</h4>
+              <ul>
+                <li><span class="k">Mall:</span> <span class="v" id="sumTpl">—</span></li>
+                <li><span class="k">Kund:</span> <span class="v">Ifylld i steg 2</span></li>
+                <li><span class="k">Avtalslängd:</span> <span class="v">Enligt steg 3</span></li>
+                <li><span class="k">Bilagor:</span> <span class="v" id="sumAtt">1 vald</span></li>
+                <li><span class="k">Skickas till:</span> <span class="v" id="sumRcpsClient">1 person hos kunden</span></li>
+                <li><span class="k">Avtalet skapas automatiskt när signerat:</span> <span class="v" style="color:var(--ok)">Ja</span></li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- INTERNAL MODE PANEL -->
+          <div id="internalPanel" style="display:none">
+            <div class="wt-callout">
+              💬 <strong>Så här funkar intern granskning:</strong> Din kollega får en länk till PDF:en och kan godkänna eller kommentera. När hen sagt OK kommer du tillbaka hit och skickar avtalet till kunden. <strong>Kunden får ingenting förrän du bestämmer.</strong>
+            </div>
+
+            <div class="wt-fset">
+              <h3 class="wt-fset-t">Vem inom Carotte ska granska?</h3>
+              <div id="internalRcps">
+                <div class="wt-rcp-row">
+                  <div class="wt-f">
+                    <label class="wt-f-l">Kollega — mail <span class="req">*</span></label>
+                    <input type="email" placeholder="namn@carotte.se">
+                  </div>
+                  <div class="wt-f">
+                    <label class="wt-f-l">Namn <span class="req">*</span></label>
+                    <input type="text" placeholder="För- och efternamn">
+                  </div>
+                  <div class="wt-f">
+                    <label class="wt-f-l">Ordning
+                      <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
+                    </label>
+                    <div class="wt-hb">Alla granskare får mailet samtidigt. Ordningen är bara för dig så du ser vem som är primär.</div>
+                    <select><option>Primär</option><option>Sekundär</option></select>
+                  </div>
+                  <button class="wt-rcp-rm" onclick="removeRcp_k(this)" aria-label="Ta bort">✕</button>
+                </div>
+              </div>
+              <button class="wt-btn ghost tiny" onclick="addRcp_k('internalRcps')" style="margin-top:10px">+ Lägg till en till kollega</button>
+            </div>
+
+            <div class="wt-fset">
+              <div class="wt-f">
+                <label class="wt-f-l">Meddelande till kollegan
+                  <button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?">?</button>
+                </label>
+                <div class="wt-hb">Vad ska hen kolla på? Skriv gärna om det finns särskilda punkter du är osäker på — t.ex. "Kolla priserna", "Är bindningen rätt?".</div>
+                <textarea rows="3" placeholder="Hej! Skulle uppskatta om du kunde ta en titt på detta avtal, framför allt priserna. Tack!"></textarea>
+              </div>
+            </div>
+
+            <div class="wt-sum" style="background:var(--info-soft); border-color:rgba(99,102,241,0.35)">
+              <h4 style="color:var(--info)">Sammanfattning intern granskning</h4>
+              <ul>
+                <li><span class="k">Mall:</span> <span class="v" id="sumTplInt">—</span></li>
+                <li><span class="k">Kund (som avtalet gäller):</span> <span class="v">Ifylld i steg 2</span></li>
+                <li><span class="k">Bilagor:</span> <span class="v" id="sumAttInt">1 vald</span></li>
+                <li><span class="k">Skickas till:</span> <span class="v" id="sumRcpsInt">1 kollega för granskning</span></li>
+                <li><span class="k">Kunden får se det:</span> <span class="v" style="color:var(--info)">Först när du säger till</span></li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+        <footer class="wt-foot">
+          <button class="wt-btn ghost" onclick="goBack_k(5)">← Tillbaka</button>
+          <button class="wt-btn primary" id="btnSend" onclick="submitFinal_k()">Skicka till kunden ✉️</button>
+        </footer>
+      </div>
+
+      <!-- ─── DONE (client mode) ─── -->
+      <div class="wt-view" data-view="done-client">
+        <div class="wt-done">
+          <div class="wt-done-check">✓</div>
+          <h1 class="wt-done-t">Klart! Avtalet är på väg till kunden.</h1>
+          <div class="wt-done-s">
+            Kunden får ett mail inom några sekunder med en säker signeringslänk. Så snart alla har signerat får du en bekräftelse — och avtalet dyker upp som "Aktivt" på kundens kort.
+          </div>
+          <div class="wt-done-sum">
+            <ul>
+              <li><span class="k">Mall:</span> <span class="v" id="doneTplClient">—</span></li>
+              <li><span class="k">Skickat till:</span> <span class="v" id="doneRcpsClient">1 person</span></li>
+              <li><span class="k">Status:</span> <span class="v ok">Väntar på signering</span></li>
+            </ul>
+          </div>
+          <div class="wt-done-actions">
+            <button class="wt-btn ghost" onclick="resetWizard_k()">Skapa ett till avtal</button>
+            <button class="wt-btn primary" onclick="wtCloseModal_k()">Klar — stäng</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── DONE (internal mode) ─── -->
+      <div class="wt-view" data-view="done-internal">
+        <div class="wt-done">
+          <div class="wt-done-check internal">👥</div>
+          <h1 class="wt-done-t">Skickat internt för granskning</h1>
+          <div class="wt-done-s">
+            Din kollega har fått ett mail med en länk till avtalet. När hen godkänt det kan du komma tillbaka hit och skicka det vidare till kunden. <strong>Kunden har inte fått något än.</strong>
+          </div>
+          <div class="wt-done-sum">
+            <ul>
+              <li><span class="k">Mall:</span> <span class="v" id="doneTplInt">—</span></li>
+              <li><span class="k">Skickat till:</span> <span class="v" id="doneRcpsInt">1 kollega</span></li>
+              <li><span class="k">Status:</span> <span class="v info">Väntar på intern granskning</span></li>
+            </ul>
+          </div>
+          <div class="wt-done-actions">
+            <button class="wt-btn ghost" onclick="alert('Pågående interngranskningar visas snart under Avtal → filter Status → \'Pågår granskning\'. Kommer i nästa uppdatering.')">Se pågående granskningar</button>
+            <button class="wt-btn primary" onclick="wtCloseModal_k()">Klar — stäng</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="ac-wrap">
+
+  <!-- Bubble-config: sätt value="" via dynamic data. Hidden inputs lever
+       inuti .ac-wrap så de scopas tillsammans med resten. -->
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="sender_email"   value="">
+  <input type="hidden" data-mira="sender_name"    value="">
+  <input type="hidden" data-mira="clientcompany"  value="">
+  <input type="hidden" data-mira="deal"           value="">
+
+  <div class="ac-top">
+    <div>
+      <div class="ac-h1" data-ac="title">Skicka för <span>signering</span></div>
+      <div class="ac-sub" data-ac="subtitle">OfferApproval-flöde · Mira-Exchange</div>
+    </div>
+  </div>
+
+  <!-- HISTORIK (visas bara i Deal-aware / CC-aware mode) -->
+  <div data-ac="history-view" class="hidden">
+    <div class="ac-panel">
+      <h2>Signeringsprocesser</h2>
+      <div data-ac="history-body">
+        <div class="hist-loading">Hämtar historik…</div>
+      </div>
+    </div>
+    <button class="toggle-create" data-ac="toggle-create">+ Skicka ny signering</button>
+  </div>
+
+  <!-- INIT-formuläret -->
+  <div data-ac="form-view">
+    <div class="ac-panel">
+      <h2>1. Dokument</h2>
+      <label class="drop" data-ac="drop">
+        <div class="ic">⬆</div>
+        <div class="pri">Dra hit filer eller klicka för att välja</div>
+        <div class="sec">PDF, JPG eller PNG · max 25 MB per fil · max 20 filer totalt</div>
+        <input type="file" data-ac="files" accept="application/pdf,image/jpeg,image/png" multiple>
+      </label>
+      <ul class="files" data-ac="file-list"></ul>
+    </div>
+
+    <div class="ac-panel">
+      <h2>2. Mottagare</h2>
+      <div data-ac="user-picker-wrap" class="hidden" style="margin-bottom:10px;">
+        <label style="display:block;font-size:10px;letter-spacing:1.3px;text-transform:uppercase;color:var(--w40);margin-bottom:6px;font-weight:700;">Snabbval — kontakter på företaget</label>
+        <select data-ac="user-picker" style="width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:9px 11px;font-size:12px;font-family:var(--fb);cursor:pointer;">
+          <option value="">Välj från befintliga kontakter…</option>
+        </select>
+      </div>
+      <div data-ac="recipients"></div>
+      <button type="button" class="rcp-add" data-ac="rcp-add">+ Lägg till mottagare</button>
+    </div>
+
+    <div class="ac-panel">
+      <h2>3. Meddelande</h2>
+      <div class="field">
+        <label>Rubrik (visas i mail + på signeringssidan)</label>
+        <input type="text" data-ac="rubrik" placeholder="t.ex. Tilläggsavtal Lokalvård" maxlength="120">
+      </div>
+      <div class="field">
+        <label>Personligt meddelande (valfritt)</label>
+        <textarea data-ac="meddelande" placeholder="Hej, här kommer avtalet…"></textarea>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Avsändarnamn (visas som From)</label>
+          <input type="text" data-ac="sender-name" placeholder="Carotte">
+        </div>
+        <div class="field">
+          <label>Sista signeringsdag (valfritt)</label>
+          <input type="date" data-ac="expires">
+        </div>
+      </div>
+      <div class="err" data-ac="err"></div>
+    </div>
+
+    <div class="ac-foot">
+      <div class="count">
+        <b data-ac="cnt-files">0</b> filer · <b data-ac="cnt-rcp">0</b> mottagare
+      </div>
+      <button class="btn-primary" data-ac="submit" disabled>Skicka signeringsbegäran</button>
+    </div>
+  </div>
+
+  <!-- BEKRÄFTELSEVY (efter lyckad skapa) -->
+  <div data-ac="done-view" class="hidden">
+    <div class="ok-block">
+      <h2>✓ Skickat</h2>
+      <p style="color:var(--w70);font-size:13px;">
+        <b data-ac="done-cnt">0</b> mottagare har fått ett invite-mail. Du kan stänga den här vyn
+        eller skicka fler.
+      </p>
+      <ul class="ok-list" data-ac="done-list"></ul>
+      <div style="margin-top:18px;display:flex;gap:10px;">
+        <button class="btn-secondary" data-ac="new">Skicka ny signering</button>
+      </div>
+    </div>
+  </div>
+</div>
+  </div>
 </div>
 
 <script>
@@ -289,6 +1821,11 @@
     {key:"oms_prev",   label:"Omsättning",   sort:"oms_prev",   edit:null,         kind:"kr",     num:true, yearlbl:"prev"}
   ];
   var FACET_OF={kundstatus:"kundstatus", potential:"potential", lojalitet:"lojalitet", bransch:"bransch", region:"region", customer_type:"customer_type"};
+
+  // ── PORTAT 2026-08-17: Avtal-panelerna registrerar sig här (se modulerna
+  // längst ned i denna IIFE). FLROOT ger dem kortets rot utan egen claim.
+  var FLROOT = root;
+  var FKAVTAL = {};
 
   var STATE={ view:"list", q:"", sort:"name", dir:"asc", page:1, limit:100,
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
@@ -1067,15 +2604,15 @@
       return coworkerBody(STATE.coworkers);
     }
     if(STATE.cardTab==="avtal"){
+      // PORTAT 2026-08-17: full CRUD via de inflyttade panelerna (.ab-wrap /
+      // .ac-wrap). Bara mount-punkten renderas här; mountPanes() flyttar in
+      // rätt panel efter render. Gamla läsvyn (avtalTableBody/signTableBody)
+      // används inte längre för fliken.
       var sub=STATE.avtalSub||"avtal";
       var toggle='<div class="fk-subtabs">'+
         '<span class="fk-subtab'+(sub==="avtal"?" on":"")+'" data-fk="avsub" data-s="avtal">Abonnemang</span>'+
         '<span class="fk-subtab'+(sub==="signeringar"?" on":"")+'" data-fk="avsub" data-s="signeringar">Signeringar</span></div>';
-      var rows=STATE.chain[sub], inner;
-      if(rows===undefined){ fetchChain(sub); inner='<div class="fl-msg">Laddar…</div>'; }
-      else if(rows==="loading") inner='<div class="fl-msg">Laddar…</div>';
-      else inner=(sub==="avtal"?avtalTableBody(rows):signTableBody(rows));
-      return '<div class="fk-body">'+toggle+inner+'</div>';
+      return '<div class="fk-body">'+toggle+'<div data-fk="avtalmount"></div></div>';
     }
     if(STATE.cardTab==="historik"){
       var hrows=STATE.chain.historik;
@@ -1364,10 +2901,47 @@
     }
     return '<div class="fk-owrap">'+head+'<div class="fk-olist">'+body+'</div></div>';
   }
+  // ── PORTAT 2026-08-17: panel-flytt ────────────────────────────────────
+  // appendChild FLYTTAR noden — lyssnare och ifyllda fält följer med. Före
+  // varje re-render stashas panelerna tillbaka till hållaren så de inte ligger
+  // kvar i cardview när innerHTML= nollställer det.
+  function paneEl(sub){ return root.querySelector(sub==="signeringar" ? ".ac-wrap" : ".ab-wrap"); }
+  function stashPanes(){
+    var holder=$("panes"); if(!holder) return;
+    var a=root.querySelector(".ab-wrap"), c=root.querySelector(".ac-wrap");
+    if(a && a.parentNode!==holder){ a.style.display="none"; holder.appendChild(a); }
+    if(c && c.parentNode!==holder){ c.style.display="none"; holder.appendChild(c); }
+  }
+  function mountPanes(){
+    if(STATE.view!=="card" || STATE.cardTab!=="avtal") return;
+    var mount=root.querySelector('[data-fk="avtalmount"]'); if(!mount) return;
+    var sub=STATE.avtalSub||"avtal", pane=paneEl(sub); if(!pane) return;
+    pane.style.display="";
+    mount.appendChild(pane);
+    syncAvtalCompany(sub);
+  }
+  // Panelerna hämtar bara när kunden faktiskt bytts (eller första gången).
+  var _avtalFor={avtal:null, signeringar:null};
+  function syncAvtalCompany(sub){
+    var id=STATE.cardId, nm=(STATE.card && STATE.card.company && STATE.card.company.name) || "";
+    if(!id) return;
+    if(_avtalFor[sub]===id) return;
+    _avtalFor[sub]=id;
+    if(sub==="signeringar"){
+      if(FKAVTAL.sign){ FKAVTAL.sign.setCompany(id, nm); FKAVTAL.sign.reload(); }
+    } else {
+      if(FKAVTAL.ab){ FKAVTAL.ab.setCompany(id, nm); FKAVTAL.ab.clear(); FKAVTAL.ab.reload(); }
+      if(FKAVTAL.wiz) FKAVTAL.wiz.setCompany(id, nm);
+    }
+  }
+  function resetAvtalPanes(){ _avtalFor.avtal=null; _avtalFor.signeringar=null; }
+
   function renderCard(){
+    stashPanes();
     if(!STATE.card){ $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-msg">Laddar kundkort…</div>'; return; }
     $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button>'+
       '<div class="fk-card">'+cardHero()+cardTabs()+cardBody()+'</div>';
+    mountPanes();   // PORTAT 2026-08-17
   }
 
   function cardKey(id){ return "fl:card:"+id; }
@@ -1393,6 +2967,7 @@
   }
   function closeCard(){
     STATE.view="list"; STATE.cardEditing=false;
+    stashPanes(); resetAvtalPanes();   // PORTAT 2026-08-17: rädda panelerna före wipe
     $("cardview").style.display="none"; $("cardview").innerHTML=""; $("listview").style.display="";
     if(STATE.listDirty){ STATE.listDirty=false; cacheClearAll(); reload(); }   // reflektera kort-redigering i listan
     else { renderTable(); scheduleRevenueRefetch(); }
@@ -1512,5 +3087,2500 @@
   });
 
   load(false);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PORTAT 2026-08-17 — Avtal-fliken: abonnemang + mall-wizard + PDF-import
+  // (ur mira-abonnemang-kund.html) samt signeringar (ur mira-approval-create.html).
+  // Modulerna ligger INNE i kortets IIFE så de ser root/FLROOT/FKAVTAL utan
+  // window-globaler (undviker multiblock-krock). Varje modul har sin egen IIFE
+  // → deras lokala $/esc/cfg skuggar kortets utan konflikt. Bootstrap-raderna
+  // (claim + data-mira-config + auto-init) är omskrivna; allt annat är verbatim.
+  //
+  // Monterades EN gång av merge_avtal.mjs (ligger i repot för spårbarhet).
+  // Denna fil är nu källan — redigera HÄR, inte i skriptet. Skriptet är inte
+  // idempotent: en andra körning failar på sina assertions i st.f. att dubblera.
+  // Ändras källblocken (mira-abonnemang-kund.html / mira-approval-create.html)
+  // slår det INTE igenom hit automatiskt.
+  // ══════════════════════════════════════════════════════════════════════════
+(function () {
+  // ── Bubble value-strip bootstrap (2026-08-05) ───────────────────
+  // Bubble strippar value på hidden inputs → värdet bärs i data-val och
+  // kopieras till .value här, INNAN någon config läses. Global + idempotent.
+  (function(){
+    var ins = document.querySelectorAll('[data-mira][data-val]');
+    for (var k = 0; k < ins.length; k++) {
+      if (!ins[k].value) { ins[k].value = ins[k].getAttribute('data-val') || ''; }
+    }
+  })();
+
+  // ── Multi-instance support ──────────────────────────────────────
+  // Claim första oclaim:ade .ab-wrap. Varje IIFE-instans (en per HTML-block)
+  // tar sin egen root. Detta gör att flera block kan samsas i samma DOM
+  // utan att deras event listeners eller config blandas ihop.
+  // PORT 2026-08-17: kortet äger roten — ingen egen claim.
+  var root = FLROOT;
+
+  // Scoped query-helpers: alla lookups går mot just denna instans root.
+  function $(key) { return root.querySelector('[data-ab="' + key + '"]'); }
+  function $$(key) { return root.querySelectorAll('[data-ab="' + key + '"]'); }
+  function cfg(key) {
+    var el = root.querySelector('[data-mira="' + key + '"]');
+    return (el && el.value) || '';
+  }
+
+  var HOST          = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+  var TOKEN         = cfg('planning_token');
+  var CLIENTCOMPANY = '';   // PORT: sätts av kortet via FKAVTAL.ab.setCompany
+  var CC_NAME       = '';
+  // Affär-ryggrad: satt ENDAST i affärs-popupen → då visas BARA avtal knutna till
+  // denna deal (Contract.deal). Tom på Företag-kortet → hela kundens avtal visas.
+  var DEAL_ID       = '';   // kortet är alltid företags-scopat
+
+  // ── Demo-data ─────────────────────────────────────────────────────────────
+  // Strukturen speglar /services/dashboard:s active_account + active_by_office
+  // plus full Contract-data per rad (med Fas 1-fälten).
+  var SAMPLE = {
+    customer: { id:'ea-demo', name:'Electronic Arts AB' },
+    offices: [
+      { id:'o1', kontors_id:'01', name:'Huvudkontoret', address:'Södermalmsallén 36, 118 28 Stockholm' },
+      { id:'o2', kontors_id:'02', name:'Filial Sundbyberg', address:'Esplanaden 14, 172 67 Sundbyberg' }
+    ],
+    account_contracts: [
+      { id:'c-mira-pro', service_name:'Mira-abonnemang', variant:'Pro · obegränsat användare',
+        contract_type:'Subscription', category:'platform',
+        monthly_cost:0, status:'aktiv',
+        startdatum:'2024-09-01', slutdatum:'2027-08-31',
+        binding_months:36, notice_months:3, auto_renew_months:12,
+        price_regulation_type:'ingen', price_regulation_next:null,
+        volume_json:'{"users": "unlimited"}', rate_card_json:null,
+        signed_at:'2024-08-25', signed_pdf:'mira-2024.pdf',
+        attachments:[
+          { name:'Avtal Mira Pro.pdf', kind:'huvuddok', size:'132 KB', uploaded:'2024-08-25' }
+        ],
+        offer_approval_id:'oar-mira-1', commission_id:null }
+    ],
+    contracts_by_office: {
+      o1: [
+        { id:'c-hk-01', service_name:'Housekeeping', variant:'5 dgr/vecka · 12 600 kvm',
+          contract_type:'Subscription', category:'Housekeeping',
+          monthly_cost:188282, status:'aktiv',
+          startdatum:'2025-12-01', slutdatum:'2028-11-30',
+          binding_months:36, notice_months:3, auto_renew_months:null,
+          price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+          volume_json:'{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}',
+          rate_card_json:null,
+          signed_at:'2025-09-05', signed_pdf:'hk-ea-dice-signed.pdf',
+          attachments:[
+            { name:'Huvudavtal HK x EA.pdf', kind:'huvuddok', size:'344 KB', uploaded:'2025-09-05' },
+            { name:'Appendix 2 - Floor Plan.pdf', kind:'bilaga', size:'2.7 MB', uploaded:'2025-08-01' },
+            { name:'Appendix 4 - Price List 20250825.docx', kind:'bilaga', size:'62 KB', uploaded:'2025-08-25' },
+            { name:'Appendix 5 - KPI & SLA.pdf', kind:'bilaga', size:'90 KB', uploaded:'2025-07-24' },
+            { name:'Appendix 7 - Consumables Price List.xlsx', kind:'bilaga', size:'23 KB', uploaded:'2026-01-08' }
+          ],
+          offer_approval_id:'oar-hk-1', commission_id:'c-1' },
+
+        { id:'c-rec-01', service_name:'Reception', variant:'Concierge · 1 person',
+          contract_type:'Subscription', category:'Other facility services',
+          monthly_cost:79990, status:'utgar_snart',
+          startdatum:'2025-01-15', slutdatum:'2026-07-14',
+          binding_months:12, notice_months:3, auto_renew_months:12,
+          price_regulation_type:'lon_kollektiv', price_regulation_next:'2026-07-01',
+          volume_json:'{"persons": 1, "hours_per_week": 40}', rate_card_json:null,
+          signed_at:'2024-12-10', signed_pdf:'rec-ea-2025.pdf',
+          attachments:[
+            { name:'Huvudavtal Reception.pdf', kind:'huvuddok', size:'180 KB', uploaded:'2024-12-10' }
+          ],
+          offer_approval_id:'oar-rec-1', commission_id:'c-2' },
+
+        { id:'c-staff-01', service_name:'Staff Bemanning', variant:'Ramavtal · 10 roller',
+          contract_type:'RateCard', category:'Service & People',
+          monthly_cost:0, status:'aktiv',
+          startdatum:'2025-05-01', slutdatum:'2027-05-01',
+          binding_months:24, notice_months:3, auto_renew_months:null,
+          price_regulation_type:'lon_kollektiv', price_regulation_next:'2027-07-01',
+          volume_json:null,
+          rate_card_json:'[{"role":"Hovmästare","price_per_h":428},{"role":"Bartender Trend","price_per_h":400},{"role":"Servering","price_per_h":365},{"role":"Restaurangbiträde","price_per_h":315},{"role":"Kock","price_per_h":402},{"role":"Souschef","price_per_h":440},{"role":"Köksbiträde","price_per_h":315},{"role":"Diskare","price_per_h":300},{"role":"Reception","price_per_h":375},{"role":"Housekeeping","price_per_h":350}]',
+          signed_at:'2025-04-15', signed_pdf:'staff-ea-bemanning.pdf',
+          attachments:[
+            { name:'Bemanningsavtal EA.pdf', kind:'huvuddok', size:'180 KB', uploaded:'2025-04-15' }
+          ],
+          offer_approval_id:'oar-staff-1', commission_id:'c-3' }
+      ],
+      o2: [
+        { id:'c-hk-02', service_name:'Housekeeping', variant:'3 dgr/vecka · 4 800 kvm',
+          contract_type:'Subscription', category:'Housekeeping',
+          monthly_cost:67450, status:'aktiv',
+          startdatum:'2026-02-01', slutdatum:'2029-01-31',
+          binding_months:36, notice_months:3, auto_renew_months:null,
+          price_regulation_type:'index_cleaning', price_regulation_next:'2026-06-01',
+          volume_json:'{"kvm": 4800, "housekeepers": 3, "hours_mf": 12}',
+          rate_card_json:null,
+          signed_at:'2026-01-20', signed_pdf:'hk-sundbyberg-2026.pdf',
+          attachments:[
+            { name:'Avtal HK Sundbyberg.pdf', kind:'huvuddok', size:'298 KB', uploaded:'2026-01-20' }
+          ],
+          offer_approval_id:'oar-hk-2', commission_id:'c-4' }
+      ]
+    }
+  };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function fmtKr(v) {
+    var n = Math.round(Number(v) || 0);
+    return n.toLocaleString('sv-SE') + ' kr';
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('sv-SE', { year:'numeric', month:'short', day:'numeric' });
+  }
+  function daysUntil(s) {
+    if (!s) return null;
+    var d = new Date(s).getTime();
+    if (isNaN(d)) return null;
+    return Math.round((d - Date.now()) / 86400000);
+  }
+
+  function typePillHtml(t) {
+    var cls = 'ab-pill ' + (t === 'Subscription' ? 't-sub' : t === 'RateCard' ? 't-rate' : 't-hyb');
+    return '<span class="' + cls + '">' + esc(t) + '</span>';
+  }
+  function statusPillHtml(s, slutdatum) {
+    var d = daysUntil(slutdatum);
+    var label = s;
+    if (s === 'aktiv') label = 'Aktiv';
+    else if (s === 'utgar_snart') label = 'Utgår ' + (d != null ? 'om ' + d + ' d' : 'snart');
+    else if (s === 'avslutad') label = 'Avslutad';
+    else if (s === 'pausat') label = 'Pausat';
+    else if (s === 'vilande') label = 'Vilande';
+    else if (s === 'tvistig') label = 'Tvistig';
+    else if (s === 'okand') label = 'Okänd';
+    return '<span class="ab-st s-' + esc(s) + '">' + esc(label) + '</span>';
+  }
+
+  function rowHtml(ct) {
+    var costLine = ct.contract_type === 'RateCard'
+      ? '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · ' + (ct.rate_card_json ? JSON.parse(ct.rate_card_json).length : 0) + ' roller</div>'
+      : '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div><div class="ab-cost-end">Utgår ' + fmtDate(ct.slutdatum) + '</div>';
+
+    var attList = ct.attachments || [];
+    var attCount = attList.length;
+    var attListHtml = attCount === 0
+      ? '<div class="ab-att-empty">Inga bilagor ännu. Ladda upp för att koppla Floor Plan, Price List, KPI/SLA m.fl.</div>'
+      : (attList.map(function (a) {
+          var label = a.kind === 'huvuddok' ? 'Huvuddok' : 'Bilaga';
+          return '<div class="ab-att-row">'
+            + '<div class="ab-att-meta">'
+            +   '<div class="ab-att-ic">PDF</div>'
+            +   '<div class="ab-att-tx">'
+            +     '<div class="ab-att-name">' + esc(a.name) + '</div>'
+            +     '<div class="ab-att-sub">' + esc(label) + (a.size ? ' · ' + esc(a.size) : '') + (a.uploaded ? ' · uppladdad ' + fmtDate(a.uploaded) : '') + '</div>'
+            +   '</div>'
+            + '</div>'
+            + '<div class="ab-att-act">'
+            +   '<button class="ab-btn ghost tiny" data-act="att-view" data-att-url="' + esc(a.file_url || '') + '">Visa</button>'
+            +   '<button class="ab-btn danger tiny" data-act="att-del" data-ct-id="' + esc(ct.id) + '" data-doc-id="' + esc(a.id || '') + '">Ta bort</button>'
+            + '</div>'
+          + '</div>';
+        }).join(''));
+
+    var rateCardPreview = '';
+    if (ct.contract_type === 'RateCard' && ct.rate_card_json) {
+      try {
+        var arr = JSON.parse(ct.rate_card_json);
+        rateCardPreview = '<div class="ab-att" style="margin-top:0;">'
+          + '<div class="ab-att-h"><div class="ab-att-t">Rate-card (' + arr.length + ' roller)</div></div>'
+          + '<div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px 16px;">'
+          + arr.slice(0, 10).map(function (r) {
+              return '<div style="display:flex; justify-content:space-between; font-size:12px; padding:4px 0; border-bottom:0.5px solid var(--line);">'
+                + '<span style="color:var(--t2);">' + esc(r.role) + '</span>'
+                + '<span style="color:var(--t1); font-weight:600;">' + fmtKr(r.price_per_h) + '<small style="color:var(--t3); font-weight:500;">/h</small></span>'
+                + '</div>';
+            }).join('')
+          + '</div></div>';
+      } catch (_) {}
+    }
+
+    return ''
+      + '<div class="ab-row" data-id="' + esc(ct.id) + '">'
+      +   '<div class="ab-rowhead">'
+      +     '<div class="ab-rh-svc">'
+      +       '<div class="ab-svcname">' + esc(ct.service_name) + '</div>'
+      +       '<div class="ab-svcvar">' + esc(ct.variant) + '</div>'
+      +     '</div>'
+      +     '<div class="ab-rh-meta">'
+      +       '<div class="ab-pills">' + typePillHtml(ct.contract_type) + '</div>'
+      +       '<div class="ab-cat">' + esc(ct.category) + '</div>'
+      +     '</div>'
+      +     '<div class="ab-rh-status">' + statusPillHtml(ct.status, ct.slutdatum) + '</div>'
+      +     '<div class="ab-rh-cost">' + costLine + '</div>'
+      +     '<div class="ab-rh-act">'
+      +       '<div class="ab-chev">'
+      +         '<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      +       '</div>'
+      +     '</div>'
+      +   '</div>'
+      +   '<div class="ab-rowbody">'
+      +     '<div class="ab-bgrid">'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Startdatum</div><div class="ab-fld-v">' + fmtDate(ct.startdatum) + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Slutdatum</div><div class="ab-fld-v">' + fmtDate(ct.slutdatum) + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Signerat</div><div class="ab-fld-v">' + fmtDate(ct.signed_at) + (ct.signed_pdf ? ' · <a href="#">' + esc(ct.signed_pdf) + '</a>' : '') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Bindning</div><div class="ab-fld-v">' + (ct.binding_months ? ct.binding_months + ' mån' : '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Uppsägning</div><div class="ab-fld-v">' + (ct.notice_months ? ct.notice_months + ' mån' : '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Auto-förlängning</div><div class="ab-fld-v ' + (ct.auto_renew_months ? '' : 'muted') + '">' + (ct.auto_renew_months ? ct.auto_renew_months + ' mån' : 'Ingen') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Prisreglering</div><div class="ab-fld-v">' + esc(ct.price_regulation_type || '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Nästa prisrev.</div><div class="ab-fld-v ' + (ct.price_regulation_next ? '' : 'muted') + '">' + (ct.price_regulation_next ? fmtDate(ct.price_regulation_next) : '—') + '</div></div>'
+      +       '<div class="ab-fld"><div class="ab-fld-l">Signeringsprocess</div><div class="ab-fld-v">' + (ct.offer_approval_id ? '<a href="#">' + esc(ct.offer_approval_id) + '</a>' : '<span class="muted">—</span>') + '</div></div>'
+      +     '</div>'
+      +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">' + esc(ct.volume_json) + '</div></div>' : '')
+      +     rateCardPreview
+      +     '<div class="ab-att" data-att-wrap data-ct-id="' + esc(ct.id) + '">'
+      +       '<div class="ab-att-h">'
+      +         '<div class="ab-att-t">Bilagor (<span data-att-count>' + attCount + '</span>)</div>'
+      +         '<button class="ab-btn ghost tiny" data-act="att-upload" data-ct-id="' + esc(ct.id) + '">+ Ladda upp</button>'
+      +       '</div>'
+      +       '<div class="ab-att-list" data-att-list>' + attListHtml + '</div>'
+      +     '</div>'
+      +     '<div class="ab-rowact">'
+      +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="' + esc(ct.id) + '">Redigera</button>'
+      +       (ct.status === 'pausat'
+              ? '<button class="ab-btn ghost tiny" data-act="resume" data-id="' + esc(ct.id) + '">Återuppta</button>'
+              : '<button class="ab-btn ghost tiny" data-act="pause" data-id="' + esc(ct.id) + '">Pausa</button>')
+      +       (ct.status === 'avslutad'
+              ? '<button class="ab-btn ghost tiny" data-act="reopen" data-id="' + esc(ct.id) + '">Återöppna</button>'
+              : '<button class="ab-btn danger tiny" data-act="end" data-id="' + esc(ct.id) + '">Avsluta</button>')
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+  }
+
+  function sectionHtml(title, kontorsId, addr, contracts, isAccount) {
+    var rows = contracts.map(rowHtml).join('');
+    var idLabel = kontorsId ? '<span class="ab-sect-id">' + esc(kontorsId) + '</span>' : '';
+    var addrLabel = addr ? '<div class="ab-sect-addr">' + esc(addr) + '</div>' : '';
+    return ''
+      + '<div class="ab-sect">'
+      +   '<div class="ab-sect-h">'
+      +     '<div class="ab-sect-l">'
+      +       '<div class="ab-sect-name">' + esc(title) + '</div>'
+      +       idLabel
+      +     '</div>'
+      +     addrLabel
+      +   '</div>'
+      +   '<div class="ab-rows">' + rows + '</div>'
+      + '</div>';
+  }
+
+  function renderAll() {
+    var sections = [];
+
+    // Account-scope (Mira) — alltid överst om finns
+    if (SAMPLE.account_contracts && SAMPLE.account_contracts.length > 0) {
+      sections.push(sectionHtml('Account-scope', 'Account', 'Gäller hela kunden — oavsett kontor',
+        SAMPLE.account_contracts, true));
+    }
+
+    // Office-scope
+    SAMPLE.offices.forEach(function (of) {
+      var list = (SAMPLE.contracts_by_office[of.id] || []);
+      // Affär-ryggrad: i deal-läge döljs kontor utan avtal knutna till affären (annars
+      // vräks kundens alla tomma kontor in). På Företag-kortet visas tomma som förr.
+      if (DEAL_ID && list.length === 0) { return; }
+      if (list.length === 0) {
+        sections.push('<div class="ab-sect">'
+          + '<div class="ab-sect-h"><div class="ab-sect-l"><div class="ab-sect-name">' + esc(of.name) + '</div><span class="ab-sect-id">' + esc(of.kontors_id) + '</span></div><div class="ab-sect-addr">' + esc(of.address) + '</div></div>'
+          + '<div class="ab-empty"><div class="ab-empty-t">Inga abonnemang för detta kontor</div>Klicka "+ Nytt abonnemang" för att lägga till.</div>'
+          + '</div>');
+      } else {
+        sections.push(sectionHtml(of.name, of.kontors_id, of.address, list, false));
+      }
+    });
+
+    // Affär-ryggrad: tom-vy när affären ännu saknar avtal (skapa via "+ Avtal från mall").
+    if (DEAL_ID && sections.length === 0) {
+      sections.push('<div class="ab-sect"><div class="ab-empty"><div class="ab-empty-t">Inga avtal för denna affär än</div>Klicka "+ Avtal från mall" för att skapa ett avtal kopplat till affären.</div></div>');
+    }
+
+    $('sections').innerHTML = sections.join('');
+
+    // Sätt total + count
+    var allCt = (SAMPLE.account_contracts || []).slice();
+    SAMPLE.offices.forEach(function (of) { allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
+    var aktiva = allCt.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
+    var totMonthly = allCt
+      .filter(function (c) { return c.contract_type === 'Subscription' && (c.status === 'aktiv' || c.status === 'utgar_snart'); })
+      .reduce(function (sum, c) { return sum + Number(c.monthly_cost || 0); }, 0);
+    $('sum-count').textContent = aktiva.length + ' st';
+    $('sum-cost').textContent = fmtKr(totMonthly);
+
+    var custName = (SAMPLE.customer && SAMPLE.customer.name) || CC_NAME || '';
+    if (custName) {
+      $('cust-name').textContent = custName;
+      var ct = $('create-title');
+      if (ct) ct.textContent = 'Nytt abonnemang för ' + custName;
+    }
+
+    // Bind click → expand (scoped till denna instans)
+    root.querySelectorAll('.ab-rowhead').forEach(function (head) {
+      head.addEventListener('click', function () {
+        var row = head.parentElement;
+        row.classList.toggle('open');
+        // 2d: lazy-loada bilagor första gången raden öppnas
+        if (row.classList.contains('open') && row.getAttribute('data-att-loaded') !== '1') {
+          var ctId = row.getAttribute('data-id');
+          if (ctId) loadAttachments(ctId, row);
+        }
+      });
+    });
+    // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna + 2d-actions)
+    bindActions();
+  }
+
+  // Create-modal
+  var createBtn = $('create-btn');
+  var createMask = $('create-mask');
+  var createClose = $('create-close');
+  var createCancel = $('create-cancel');
+  if (createBtn && createMask) {
+    createBtn.addEventListener('click', function () { createMask.classList.add('on'); });
+  }
+  if (createClose && createMask) {
+    createClose.addEventListener('click', function () { createMask.classList.remove('on'); });
+  }
+  if (createCancel && createMask) {
+    createCancel.addEventListener('click', function () { createMask.classList.remove('on'); });
+  }
+  root.querySelectorAll('.ab-typesel .ab-typecard').forEach(function (card) {
+    card.addEventListener('click', function () {
+      root.querySelectorAll('.ab-typesel .ab-typecard').forEach(function (c) { c.classList.remove('on'); });
+      card.classList.add('on');
+    });
+  });
+
+  // ── Live data-fetch (Fas 2a) ────────────────────────────────────────────
+  // Om hidden inputs planning_token + clientcompany är satta av Bubble:
+  // hämta verklig data från Render. Annars kör demo-SAMPLE.
+  async function loadLive() {
+    if (!TOKEN || !CLIENTCOMPANY) return; // demo-läge
+
+    try {
+      var r = await fetch(HOST + '/admin/contracts/by-company?company_id=' + encodeURIComponent(CLIENTCOMPANY), {
+        headers: { 'x-admin-token': TOKEN }
+      });
+      if (!r.ok) { console.warn('[ab] fetch failed', r.status); return; }
+      var data = await r.json();
+      if (!data.ok) { console.warn('[ab] api error', data.error); return; }
+
+      // Mappa backend-format → SAMPLE (samma struktur sedan grunden — minimal anpassning)
+      SAMPLE.customer = data.customer || SAMPLE.customer;
+      SAMPLE.offices  = (data.offices || []).map(function (o) {
+        return { id:o.id, kontors_id:o.kontors_id || '—', name:o.name || 'Kontor', address:o.address || '' };
+      });
+      // attachments från BE är ID-array. För kund-fliken visar vi count tills Fas 2d
+      // lägger till per-Dokument meta. Mappa till tom-array-objekt med rätt count.
+      function mapCt(c) {
+        var ids = Array.isArray(c.attachments) ? c.attachments : [];
+        c.attachments = ids.map(function (id, i) {
+          return { name:'Bilaga ' + (i + 1), kind: i === 0 ? 'huvuddok' : 'bilaga', size:'—', uploaded:c.signed_at };
+        });
+        // Backend ger service_name/service_variant; SAMPLE använder samma → ingen ompackning
+        return c;
+      }
+      // Affär-ryggrad: om DEAL_ID är satt (blocket bäddat i affärs-popupen) visa
+      // BARA avtal knutna till denna deal. Tom → hela kundens avtal (Företag-kortet).
+      function keepDeal(c) { return !DEAL_ID || String(c.deal_id || '') === String(DEAL_ID); }
+      SAMPLE.account_contracts = (data.account_contracts || []).map(mapCt).filter(keepDeal);
+      SAMPLE.contracts_by_office = {};
+      Object.keys(data.contracts_by_office || {}).forEach(function (oid) {
+        var kept = (data.contracts_by_office[oid] || []).map(mapCt).filter(keepDeal);
+        if (kept.length) SAMPLE.contracts_by_office[oid] = kept;   // dölj tomma kontor i deal-läge
+      });
+
+      console.log('[ab] live-data laddad' + (DEAL_ID ? ' (deal-scopad: ' + DEAL_ID + ')' : '') + ': ' + (data.total_contracts || 0) + ' contracts (visar ' + (SAMPLE.account_contracts.length + Object.keys(SAMPLE.contracts_by_office).reduce(function(n,k){return n+SAMPLE.contracts_by_office[k].length;},0)) + ')');
+      renderAll();
+    } catch (e) {
+      console.warn('[ab] live-fetch fail', e && e.message);
+      // Fallback: SAMPLE-data redan renderad
+    }
+  }
+
+  // ── Action-handlers (Fas 2c-1) ──────────────────────────────────────────
+  // Pausa / Återuppta / Avsluta / Återöppna — alla via PATCH /admin/contracts/:id
+  // Redigera triggar placeholder tills 2c-2.
+  async function patchContractAction(id, body) {
+    if (!TOKEN) {
+      alert('Demo-läge: ingen PATCH skickas (data-mira="planning_token" saknas i Bubble-bindningen).');
+      return null;
+    }
+    try {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        headers: { 'x-admin-token': TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      var data = await r.json();
+      if (!data.ok) {
+        alert('Fel: ' + (data.error || ('HTTP ' + r.status)));
+        return null;
+      }
+      return data;
+    } catch (e) {
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+      return null;
+    }
+  }
+
+  function bindActions() {
+    root.querySelectorAll('[data-act]').forEach(function (btn) {
+      // Skip om redan bunden (re-bindActions efter lazy attachment-load)
+      if (btn.getAttribute('data-act-bound') === '1') return;
+      btn.setAttribute('data-act-bound', '1');
+      btn.addEventListener('click', async function (ev) {
+        ev.stopPropagation(); // Annars toggleas expand-panelen
+        var act = btn.getAttribute('data-act');
+        var id  = btn.getAttribute('data-id');
+
+        // 2d: bilagor-actions har egna data-attribut
+        if (act === 'att-view') {
+          var url = btn.getAttribute('data-att-url');
+          if (url) window.open(url, '_blank');
+          else alert('Ingen URL — bilagan är troligen demo-data.');
+          return;
+        }
+        if (act === 'att-del') {
+          var ctId  = btn.getAttribute('data-ct-id');
+          var docId = btn.getAttribute('data-doc-id');
+          if (!ctId || !docId) return;
+          if (!confirm('Ta bort bilagan?')) return;
+          await deleteAttachment(ctId, docId, btn);
+          return;
+        }
+        if (act === 'att-upload') {
+          var ctId = btn.getAttribute('data-ct-id');
+          if (!ctId) return;
+          triggerUpload(ctId);
+          return;
+        }
+
+        if (!id) return;
+
+        var body = null;
+        if (act === 'pause')        body = { status_override: 'Pausat' };
+        else if (act === 'resume')  body = { status_override: null };
+        else if (act === 'end') {
+          if (!confirm('Avsluta abonnemanget? Slutdatum sätts till dagens datum.')) return;
+          body = { slutdatum: new Date().toISOString().slice(0, 10) };
+        }
+        else if (act === 'reopen') {
+          if (!confirm('Återöppna abonnemanget? Slutdatum tas bort.')) return;
+          body = { slutdatum: null };
+        }
+        else if (act === 'edit') {
+          var ct = findContractById(id);
+          if (ct) openModal('edit', ct);
+          else alert('Hittade inte abonnemanget i state.');
+          return;
+        }
+        if (!body) return;
+
+        var original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '...';
+        var result = await patchContractAction(id, body);
+        btn.disabled = false;
+        btn.textContent = original;
+        if (result && result.ok) {
+          // Re-fetch + re-render. Behåll vilken rad som är öppen.
+          await loadLive();
+        }
+      });
+    });
+  }
+
+  // ── 2c-2: Create + Edit-modal med live-dropdowns ─────────────────────────
+  var CATALOG = [];        // [{id, label, category, price, unit}]
+  var OFFICES_PICK = [];   // [{id, label}]
+  var SUPPLIERS = [];      // [{id, name}] — Leverantör - Supplier
+  var SUPPLIER_DEFAULTS = {}; // kategori → default-leverantör-id
+  var MODAL_MODE = 'create';
+  var EDITING_ID = null;
+
+  async function loadSuppliers() {
+    if (!TOKEN) return;
+    try {
+      var r = await fetch(HOST + '/admin/suppliers', { headers: { 'x-admin-token': TOKEN } });
+      if (!r.ok) { console.warn('[ab] suppliers fetch failed', r.status); return; }
+      var d = await r.json();
+      if (!d.ok) return;
+      SUPPLIERS = d.suppliers || [];
+      SUPPLIER_DEFAULTS = d.default_by_category || {};
+      populateSuppliers();
+    } catch (e) { console.warn('[ab] suppliers fetch fail', e && e.message); }
+  }
+  function populateSuppliers() {
+    var sel = $('f-supplier');
+    if (!sel) return;
+    var cur = sel.value;
+    sel.innerHTML = '<option value="">— välj (förvald från kategori) —</option>' +
+      SUPPLIERS.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>';
+      }).join('');
+    if (cur) sel.value = cur;
+  }
+  // Sätt leverantör-default från kategori (bara om fältet är tomt eller matchar en default).
+  function setSupplierForCategory(cat) {
+    var sel = $('f-supplier');
+    if (!sel || !cat) return;
+    var def = SUPPLIER_DEFAULTS[cat];
+    if (!def) return;
+    var isDefaultVal = !sel.value || Object.values(SUPPLIER_DEFAULTS).indexOf(sel.value) >= 0;
+    if (isDefaultVal) sel.value = def;
+  }
+
+  function findContractById(id) {
+    var list = (SAMPLE.account_contracts || []).slice();
+    Object.keys(SAMPLE.contracts_by_office || {}).forEach(function (oid) {
+      list = list.concat(SAMPLE.contracts_by_office[oid] || []);
+    });
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  async function loadCatalog() {
+    if (!CLIENTCOMPANY) return;
+    try {
+      var r = await fetch(HOST + '/services/dashboard?company_id=' + encodeURIComponent(CLIENTCOMPANY));
+      if (!r.ok) { console.warn('[ab] catalog fetch failed', r.status); return; }
+      var d = await r.json();
+      if (!d.ok) return;
+
+      CATALOG = [];
+      (d.catalog || []).forEach(function (svc) {
+        (svc.options || []).forEach(function (opt) {
+          CATALOG.push({
+            id: opt.id,
+            label: (svc.name || svc.slug) + ' — ' + (opt.name || ''),
+            category: svc.category || null,
+            price: opt.price,
+            unit: opt.unit
+          });
+        });
+      });
+      OFFICES_PICK = (d.offices || []).map(function (o) {
+        return { id: o.id, label: (o.kontors_id ? o.kontors_id + ' — ' : '') + (o.name || 'Kontor') };
+      });
+      populateDropdowns();
+      console.log('[ab] catalog: ' + CATALOG.length + ' erbjudanden, ' + OFFICES_PICK.length + ' kontor');
+    } catch (e) {
+      console.warn('[ab] catalog fetch fail', e && e.message);
+    }
+  }
+
+  function populateDropdowns() {
+    var offerSel = $('f-offer');
+    if (offerSel) {
+      var offerHtml = '<option value="">— välj erbjudande —</option>';
+      offerHtml += CATALOG.map(function (o) {
+        return '<option value="' + esc(o.id) + '" data-cat="' + esc(o.category || '') + '">' + esc(o.label) + '</option>';
+      }).join('');
+      offerSel.innerHTML = offerHtml;
+    }
+    var officeSel = $('f-office');
+    if (officeSel) {
+      var officeHtml = '<option value="">Account-scope (oavsett kontor)</option>';
+      officeHtml += OFFICES_PICK.map(function (o) {
+        return '<option value="' + esc(o.id) + '">' + esc(o.label) + '</option>';
+      }).join('');
+      officeSel.innerHTML = officeHtml;
+    }
+  }
+
+  function setVal(key, value) {
+    var el = $(key);
+    if (el) el.value = value == null ? '' : value;
+  }
+  function readVal(key) {
+    var el = $(key);
+    return el ? String(el.value || '').trim() : '';
+  }
+  function setActiveTypecard(type) {
+    root.querySelectorAll('.ab-typecard').forEach(function (c) {
+      if (c.getAttribute('data-type') === type) c.classList.add('on');
+      else c.classList.remove('on');
+    });
+    updateFormVisibility(type);
+  }
+  function getActiveTypecard() {
+    var on = root.querySelector('.ab-typecard.on');
+    return on ? on.getAttribute('data-type') : 'Subscription';
+  }
+
+  // ── Fas 3a: RateCard-builder + Hybrid-toggle ─────────────────────────────
+  // Subscription → visa monthly, dölj rate-card
+  // RateCard    → dölj monthly, visa rate-card
+  // Hybrid      → visa båda (fast bas + rörlig debitering)
+  function updateFormVisibility(type) {
+    var monthlyWrap = $('monthly-wrap');
+    var rcWrap = $('ratecard-wrap');
+    if (type === 'RateCard') {
+      if (monthlyWrap) monthlyWrap.style.display = 'none';
+      if (rcWrap)      rcWrap.style.display = '';
+    } else if (type === 'Hybrid') {
+      if (monthlyWrap) monthlyWrap.style.display = '';
+      if (rcWrap)      rcWrap.style.display = '';
+    } else {
+      if (monthlyWrap) monthlyWrap.style.display = '';
+      if (rcWrap)      rcWrap.style.display = 'none';
+    }
+  }
+
+  function addRateCardRow(role, price) {
+    var list = $('ratecard-list');
+    if (!list) return;
+    var rowEl = document.createElement('div');
+    rowEl.className = 'ab-rc-row';
+    rowEl.innerHTML =
+      '<input type="text" placeholder="Roll (t.ex. Hovmästare)" data-rc-role value="' + esc(role || '') + '">' +
+      '<input type="number" placeholder="Kr/h" data-rc-price value="' + (price != null ? price : '') + '">' +
+      '<button type="button" class="ab-rc-rm" title="Ta bort rad">&times;</button>';
+    list.appendChild(rowEl);
+    rowEl.querySelector('.ab-rc-rm').addEventListener('click', function () {
+      rowEl.parentNode.removeChild(rowEl);
+    });
+  }
+
+  function loadRateCardJson(jsonStr) {
+    var list = $('ratecard-list');
+    if (list) list.innerHTML = '';
+    if (!jsonStr) return;
+    try {
+      var arr = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+      if (Array.isArray(arr)) {
+        arr.forEach(function (it) { addRateCardRow(it.role, it.price_per_h); });
+      }
+    } catch (e) { /* ogiltig JSON → tom */ }
+  }
+
+  function getRateCardJson() {
+    var list = $('ratecard-list');
+    if (!list) return null;
+    var rows = list.querySelectorAll('.ab-rc-row');
+    var items = [];
+    for (var i = 0; i < rows.length; i++) {
+      var roleEl  = rows[i].querySelector('[data-rc-role]');
+      var priceEl = rows[i].querySelector('[data-rc-price]');
+      var role  = roleEl ? String(roleEl.value || '').trim() : '';
+      var price = priceEl ? Number(priceEl.value) : NaN;
+      if (role && !isNaN(price)) items.push({ role: role, price_per_h: price });
+    }
+    return items.length > 0 ? JSON.stringify(items) : null;
+  }
+
+  function resetForm() {
+    setActiveTypecard('Subscription');
+    setVal('f-offer', '');
+    setVal('f-office', '');
+    setVal('f-monthly', '');
+    setVal('f-qty', 1);
+    setVal('f-start', '');
+    setVal('f-end', '');
+    setVal('f-binding', 36);
+    setVal('f-notice', 3);
+    setVal('f-autorenew', '');
+    setVal('f-pricereg', '');
+    setVal('f-volume', '');
+    setVal('f-title', '');
+    setVal('f-supplier', '');
+    loadRateCardJson(null);
+  }
+
+  function openModal(mode, ct) {
+    MODAL_MODE = mode || 'create';
+    EDITING_ID = (mode === 'edit' && ct) ? ct.id : null;
+
+    var titleEl = $('create-title');
+    var saveBtn = $('create-save');
+    if (titleEl) {
+      titleEl.textContent = mode === 'edit'
+        ? 'Redigera abonnemang'
+        : ('Nytt abonnemang för ' + (CC_NAME || 'kund'));
+    }
+    if (saveBtn) saveBtn.textContent = mode === 'edit' ? 'Spara ändringar' : 'Skapa abonnemang';
+
+    resetForm();
+    populateSuppliers();
+    if (mode === 'edit' && ct) {
+      setActiveTypecard(ct.contract_type || 'Subscription');
+      setVal('f-offer', ct.offer_id || '');
+      setVal('f-office', ct.office_id || '');
+      setVal('f-monthly', ct.monthly_cost != null ? ct.monthly_cost : '');
+      setVal('f-qty', ct.qty || 1);
+      setVal('f-start', (ct.startdatum || '').slice(0, 10));
+      setVal('f-end', (ct.slutdatum || '').slice(0, 10));
+      setVal('f-binding', ct.binding_months || '');
+      setVal('f-notice', ct.notice_months || '');
+      setVal('f-autorenew', ct.auto_renew_months || '');
+      setVal('f-pricereg', ct.price_regulation_type || '');
+      setVal('f-volume', ct.volume_json || '');
+      loadRateCardJson(ct.rate_card_json || null);
+      setVal('f-title', ct.contract_title || '');
+      setVal('f-supplier', ct['leverantör'] || '');
+    }
+
+    var mask = $('create-mask');
+    if (mask) mask.classList.add('on');
+  }
+
+  function readSelectedCategory() {
+    var sel = $('f-offer');
+    if (!sel || !sel.value) return null;
+    var opts = sel.options;
+    for (var i = 0; i < opts.length; i++) {
+      if (opts[i].value === sel.value) return opts[i].getAttribute('data-cat') || null;
+    }
+    return null;
+  }
+
+  async function submitForm() {
+    if (!TOKEN) {
+      alert('Demo-läge: skickas inte (planning_token saknas).');
+      return;
+    }
+    var ctype = getActiveTypecard();
+    // Monthly_cost: 0 för RateCard (ingen fast månadskostnad), annars läs form
+    var monthly = (ctype === 'RateCard') ? 0 : (readVal('f-monthly') ? Number(readVal('f-monthly')) : 0);
+    // Rate-card: hämta från builder för RateCard + Hybrid, annars null
+    var rateCardJson = (ctype === 'RateCard' || ctype === 'Hybrid') ? getRateCardJson() : null;
+
+    var payload = {
+      contract_type: ctype,
+      offer_id: readVal('f-offer') || null,
+      office_id: readVal('f-office') || null,
+      monthly_cost: monthly,
+      qty: readVal('f-qty') ? Number(readVal('f-qty')) : 1,
+      startdatum: readVal('f-start') || null,
+      slutdatum: readVal('f-end') || null,
+      binding_months: readVal('f-binding') ? Number(readVal('f-binding')) : null,
+      notice_months: readVal('f-notice') ? Number(readVal('f-notice')) : null,
+      auto_renew_months: readVal('f-autorenew') ? Number(readVal('f-autorenew')) : null,
+      price_regulation_type: readVal('f-pricereg') || null,
+      rate_card_json: rateCardJson,
+      volume_json: readVal('f-volume') || null,
+      category: readSelectedCategory(),
+      contract_title: readVal('f-title') || null,
+      "leverantör": readVal('f-supplier') || null
+    };
+
+    var url, method;
+    if (MODAL_MODE === 'edit' && EDITING_ID) {
+      url = HOST + '/admin/contracts/' + encodeURIComponent(EDITING_ID);
+      method = 'PATCH';
+    } else if (MODAL_MODE === 'import') {
+      payload.company_id        = CLIENTCOMPANY;
+      payload.file_doc_id       = IMPORT_STATE.file_doc_id;
+      payload.file_url          = IMPORT_STATE.file_url;
+      payload.parsed_confidence = IMPORT_STATE.parsed_confidence;
+      // Import saknar offer → kategori kommer från LLM-parsen (annars null → ingen kategori/leverantör)
+      if (!payload.category && IMPORT_STATE.category) payload.category = IMPORT_STATE.category;
+      url = HOST + '/admin/contracts/import/commit';
+      method = 'POST';
+    } else {
+      payload.company_id = CLIENTCOMPANY;
+      url = HOST + '/admin/contracts/create';
+      method = 'POST';
+    }
+
+    var saveBtn = $('create-save');
+    var original = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Sparar...'; }
+
+    try {
+      var r = await fetch(url, {
+        method: method,
+        headers: { 'x-admin-token': TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var data = await r.json();
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
+      if (!data.ok) {
+        alert('Fel: ' + (data.error || ('HTTP ' + r.status)));
+        return;
+      }
+      var mask = $('create-mask');
+      if (mask) mask.classList.remove('on');
+      await loadLive();
+    } catch (e) {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  function bindModal() {
+    var openBtn = $('create-btn');
+    if (openBtn) openBtn.addEventListener('click', function () { openModal('create', null); });
+    var close = $('create-close');
+    if (close) close.addEventListener('click', function () { $('create-mask').classList.remove('on'); });
+    var cancel = $('create-cancel');
+    if (cancel) cancel.addEventListener('click', function () { $('create-mask').classList.remove('on'); });
+    var save = $('create-save');
+    if (save) save.addEventListener('click', submitForm);
+    root.querySelectorAll('.ab-typecard').forEach(function (c) {
+      c.addEventListener('click', function () { setActiveTypecard(c.getAttribute('data-type')); });
+    });
+    var rcAdd = $('ratecard-add');
+    if (rcAdd) rcAdd.addEventListener('click', function () { addRateCardRow('', ''); });
+    // Byte av erbjudande → kategori kan ändras → förvälj leverantör (om ej manuellt satt)
+    var offerSel = $('f-offer');
+    if (offerSel) offerSel.addEventListener('change', function () { setSupplierForCategory(readSelectedCategory()); });
+  }
+
+  // ── 2d: Bilagor (upload/list/delete) ─────────────────────────────────────
+  var PENDING_UPLOAD_CT_ID = null;
+
+  function attRowHtml(a, ctId) {
+    var sub = a.beskrivning ? a.beskrivning : 'Bilaga';
+    if (a.latest_update) sub += ' · uppladdad ' + fmtDate(a.latest_update);
+    return '<div class="ab-att-row">'
+      + '<div class="ab-att-meta">'
+      +   '<div class="ab-att-ic">PDF</div>'
+      +   '<div class="ab-att-tx">'
+      +     '<div class="ab-att-name">' + esc(a.titel) + '</div>'
+      +     '<div class="ab-att-sub">' + esc(sub) + '</div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="ab-att-act">'
+      +   '<button class="ab-btn ghost tiny" data-act="att-view" data-att-url="' + esc(a.file_url || '') + '">Visa</button>'
+      +   '<button class="ab-btn danger tiny" data-act="att-del" data-ct-id="' + esc(ctId) + '" data-doc-id="' + esc(a.id) + '">Ta bort</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function renderAttachmentsInRow(rowEl, ctId, items) {
+    var countEl = rowEl.querySelector('[data-att-count]');
+    var listEl  = rowEl.querySelector('[data-att-list]');
+    if (countEl) countEl.textContent = items.length;
+    if (listEl) {
+      if (items.length === 0) {
+        listEl.innerHTML = '<div class="ab-att-empty">Inga bilagor ännu. Ladda upp för att koppla Floor Plan, Price List, KPI/SLA m.fl.</div>';
+      } else {
+        listEl.innerHTML = items.map(function (a) { return attRowHtml(a, ctId); }).join('');
+      }
+    }
+    rowEl.setAttribute('data-att-loaded', '1');
+    // Re-bind nya knappar inom listan
+    bindActions();
+  }
+
+  async function loadAttachments(ctId, rowEl) {
+    if (!TOKEN) {
+      // Demo-läge: visa SAMPLE-bilagor om de finns (men utan URL → "Visa" alert:ar)
+      var ct = findContractById(ctId);
+      var demoItems = (ct && Array.isArray(ct.attachments) ? ct.attachments : []).map(function (a, i) {
+        return {
+          id: 'demo-' + i,
+          titel: a.name || 'Bilaga',
+          beskrivning: a.kind === 'huvuddok' ? 'Huvuddok' : 'Bilaga',
+          file_url: null,
+          latest_update: a.uploaded || null,
+        };
+      });
+      renderAttachmentsInRow(rowEl, ctId, demoItems);
+      return;
+    }
+    try {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachments', {
+        headers: { 'x-admin-token': TOKEN }
+      });
+      var d = await r.json();
+      if (!d.ok) { console.warn('[ab] attachments api error', d.error); return; }
+      renderAttachmentsInRow(rowEl, ctId, d.items || []);
+    } catch (e) {
+      console.warn('[ab] attachments fetch fail', e && e.message);
+    }
+  }
+
+  function triggerUpload(ctId) {
+    if (!TOKEN) { alert('Demo-läge: ingen upload skickas.'); return; }
+    PENDING_UPLOAD_CT_ID = ctId;
+    var fileEl = $('att-file');
+    if (fileEl) {
+      fileEl.value = ''; // reset så samma fil kan väljas igen
+      fileEl.click();
+    }
+  }
+
+  async function uploadAttachmentFile(ctId, file) {
+    var rowEl = root.querySelector('.ab-row[data-id="' + ctId + '"]');
+    var btn = rowEl && rowEl.querySelector('[data-act="att-upload"]');
+    var orig = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Laddar upp...'; }
+
+    try {
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      fd.append('titel', file.name);
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachment', {
+        method: 'POST',
+        headers: { 'x-admin-token': TOKEN },
+        body: fd
+      });
+      var d = await r.json();
+      if (!d.ok) { alert('Upload misslyckades: ' + (d.error || ('HTTP ' + r.status))); return; }
+      // Re-loada bilagor på den specifika raden
+      if (rowEl) {
+        rowEl.setAttribute('data-att-loaded', '');
+        await loadAttachments(ctId, rowEl);
+      }
+    } catch (e) {
+      alert('Upload-fel: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+  }
+
+  async function deleteAttachment(ctId, docId, btn) {
+    var orig = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachment/' + encodeURIComponent(docId), {
+        method: 'DELETE',
+        headers: { 'x-admin-token': TOKEN }
+      });
+      var d = await r.json();
+      if (!d.ok) { alert('Borttagning misslyckades: ' + (d.error || ('HTTP ' + r.status))); return; }
+      var rowEl = root.querySelector('.ab-row[data-id="' + ctId + '"]');
+      if (rowEl) {
+        rowEl.setAttribute('data-att-loaded', '');
+        await loadAttachments(ctId, rowEl);
+      }
+    } catch (e) {
+      alert('Delete-fel: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+  }
+
+  function bindFileInput() {
+    var fileEl = $('att-file');
+    if (!fileEl) return;
+    fileEl.addEventListener('change', function (ev) {
+      var files = ev.target.files;
+      if (!files || !files[0]) return;
+      var ctId = PENDING_UPLOAD_CT_ID;
+      PENDING_UPLOAD_CT_ID = null;
+      if (!ctId) return;
+      uploadAttachmentFile(ctId, files[0]);
+    });
+  }
+
+  // ── Fas 4: PDF-import + LLM-parsning ─────────────────────────────────────
+  // Drag-drop befintligt avtal → POST /admin/contracts/import/parse →
+  // Claude Haiku 4.5 returnerar strukturerade fält → modal öppnas i 'import'-
+  // mode (samma som edit men commitar via /import/commit istället för create).
+  var IMPORT_STATE = { file_doc_id: null, file_url: null, parsed_confidence: null, category: null };
+
+  function triggerImport() {
+    if (!TOKEN) { alert('Demo-läge: import-knappen kräver planning_token.'); return; }
+    var fileEl = $('import-file');
+    if (!fileEl) return;
+    fileEl.value = '';
+    fileEl.click();
+  }
+
+  async function parseImportFile(file) {
+    var importBtn = $('import-btn');
+    var orig = importBtn ? importBtn.textContent : null;
+    if (importBtn) { importBtn.disabled = true; importBtn.textContent = 'Parsar avtal...'; }
+    try {
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      var r = await fetch(HOST + '/admin/contracts/import/parse', {
+        method: 'POST',
+        headers: { 'x-admin-token': TOKEN },
+        body: fd
+      });
+      var d = await r.json();
+      if (importBtn) { importBtn.disabled = false; importBtn.textContent = orig; }
+      if (!d.ok) {
+        alert('LLM-parsning misslyckades: ' + (d.error || ('HTTP ' + r.status)) + (d.detail ? '\n' + d.detail : ''));
+        return;
+      }
+      // Stoppa file_doc_id + file_url i state, öppna modal i 'import'-mode
+      IMPORT_STATE.file_doc_id = d.file && d.file.doc_id;
+      IMPORT_STATE.file_url    = d.file && d.file.file_url;
+      IMPORT_STATE.parsed_confidence = (d.parsed && d.parsed.confidence) || null;
+      console.log('[ab] import parsed:', d.parsed, 'tokens:', d.tokens);
+      openModalForImport(d.parsed || {}, d.file);
+    } catch (e) {
+      if (importBtn) { importBtn.disabled = false; importBtn.textContent = orig; }
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  function openModalForImport(parsed, fileInfo) {
+    MODAL_MODE = 'import';
+    EDITING_ID = null;
+
+    var titleEl = $('create-title');
+    var saveBtn = $('create-save');
+    if (titleEl) {
+      titleEl.textContent = 'Granska importerat avtal' + (fileInfo && fileInfo.filename ? ' — ' + fileInfo.filename : '');
+    }
+    if (saveBtn) saveBtn.textContent = 'Skapa Contract från import';
+
+    resetForm();
+    populateSuppliers();
+
+    // Pre-fyll från LLM-output. Sätter bara om värdet finns.
+    var ctype = parsed.contract_type || 'Subscription';
+    setActiveTypecard(ctype);
+    if (parsed.contract_title) setVal('f-title', parsed.contract_title);
+    // Leverantör: förvald från LLM-kategori (överskrivbar). Kategorin sparas via IMPORT_STATE.
+    IMPORT_STATE.category = parsed.category || null;
+    if (parsed.category) setSupplierForCategory(parsed.category);
+    // offer_id + office_id kan inte gissas av LLM (kräver Bubble-id) → Carotte väljer manuellt
+    if (parsed.monthly_cost != null) setVal('f-monthly', parsed.monthly_cost);
+    if (parsed.qty != null)          setVal('f-qty', parsed.qty);
+    if (parsed.startdatum)           setVal('f-start', String(parsed.startdatum).slice(0, 10));
+    if (parsed.slutdatum)            setVal('f-end',   String(parsed.slutdatum).slice(0, 10));
+    if (parsed.binding_months != null)    setVal('f-binding',   parsed.binding_months);
+    if (parsed.notice_months != null)     setVal('f-notice',    parsed.notice_months);
+    if (parsed.auto_renew_months != null) setVal('f-autorenew', parsed.auto_renew_months);
+    if (parsed.price_regulation_type)     setVal('f-pricereg',  parsed.price_regulation_type);
+    if (parsed.price_regulation_next)     setVal('f-pricereg-next', String(parsed.price_regulation_next).slice(0, 10));
+
+    if (parsed.rate_card && parsed.rate_card.length) loadRateCardJson(parsed.rate_card);
+    if (parsed.volume) setVal('f-volume', JSON.stringify(parsed.volume));
+
+    // Visa kort info om vad LLM:n hittade (kund-namn, org.nr) som hint
+    if (parsed.customer_name || parsed.customer_org_no) {
+      var conf = parsed.confidence || {};
+      console.log('[ab] LLM tyckte kunden är:', parsed.customer_name, parsed.customer_org_no,
+        'confidence:', conf);
+    }
+
+    var mask = $('create-mask');
+    if (mask) mask.classList.add('on');
+  }
+
+  function bindImportInput() {
+    var importBtn = $('import-btn');
+    if (importBtn) importBtn.addEventListener('click', triggerImport);
+    var fileEl = $('import-file');
+    if (!fileEl) return;
+    fileEl.addEventListener('change', function (ev) {
+      var files = ev.target.files;
+      if (!files || !files[0]) return;
+      parseImportFile(files[0]);
+    });
+  }
+
+  // ── Init ────────────────────────────────────────────────────────
+  bindModal();
+  bindFileInput();
+  bindImportInput();
+  loadSuppliers();   // företags-oberoende (/admin/suppliers) → OK vid init
+
+  // ── PORT 2026-08-17: kort-API. Ingen auto-loadLive/loadCatalog vid init —
+  // ingen kund är vald då, och loadCatalog() ÄR företags-scopad
+  // (/services/dashboard?company_id=) och fyller BÅDE erbjudande- OCH
+  // kontorsdropdownen i skapa-formen. Körs den utan kund blir kontorsvalet
+  // tomt (bara Account-scope). Därför: reload() kör båda.
+  // Ingen renderAll() vid init heller — annars blinkar demo-SAMPLE förbi.
+  FKAVTAL.ab = {
+    setCompany: function (id, nm) { CLIENTCOMPANY = id || ''; CC_NAME = nm || ''; DEAL_ID = ''; },
+    clear: function () {
+      SAMPLE.offices = []; SAMPLE.account_contracts = []; SAMPLE.contracts_by_office = {};
+      var cn = $('cust-name'); if (cn) cn.textContent = CC_NAME || 'Kund';
+      renderAll();
+    },
+    reload: function () { loadCatalog(); return loadLive(); },
+    render: renderAll
+  };
+})();
+
+(function(){
+  // Fas 5b spår 3: scopa ALL DOM-åtkomst till kundkortets block (.ab-wrap) så
+  // wizarden inte krockar med admin-blockets wizard på samma sida.
+  var BROOT = FLROOT;   // PORT 2026-08-17: kortets rot
+  function byId(id){ return (BROOT||document).querySelector('#'+id); }
+  // Wizard-scope: IIFE så $, $$, state osv. inte överskriver Bubbles jQuery ($.ajax)
+
+  // ── Live API config (Fas 5 Steg A, 2026-07-14) ───────────────────
+  // Läser api_host + planning_token från admin-blockets hidden inputs.
+  // Båda finns → LIVE-mode (fetch mallar, POST preview + skicka).
+  // Annars MOCK-mode (hardkodade mallar + fake preview + alert).
+  const API_HOST  = (((BROOT||document).querySelector('[data-mira="api_host"]')       || {}).value || '') || 'https://mira-exchange.onrender.com';
+  const API_TOKEN = ((BROOT||document).querySelector('[data-mira="planning_token"]') || {}).value || '';
+  const IS_LIVE = !!(API_HOST && API_TOKEN);
+  console.log('[wiz] mode:', IS_LIVE ? 'LIVE (' + API_HOST + ')' : 'MOCK');
+  // Dölj prototyp-banderollen i skarpt läge — den är kvar från /prototyp-previewen
+  // och är vilseledande ("inga avtal skickas") när blocket kör LIVE i Bubble.
+  if (IS_LIVE) { var _pb = (BROOT||document).querySelector('.wt-proto'); if (_pb) { _pb.style.display = 'none'; } }
+
+  // Fas 5b spår 3: på kundkortet är kunden FÖRVALD (data-mira="clientcompany").
+  // Ingen kund-picker — Steg 2 visar bara kunden och förifyllda uppgifter.
+  let WIZ_CC_ID   = '';   // PORT: sätts av kortet
+  let WIZ_CC_NAME = '';
+  // Affär-ryggrad (2026-08-02): om wizarden bäddas i affärs-popupen sätts data-mira="deal"
+  // → skickas till render-and-send → OAR.deal → auto-create sätter Contract.deal.
+  let WIZ_DEAL_ID = '';
+
+  // Client-state — förvald kund (inte via autocomplete som i admin-vyn)
+  const CLIENT = { id: WIZ_CC_ID || null, name: WIZ_CC_NAME || null };
+
+  // ── Schema-driven Steg 3 (2026-07-14) ─────────────────────────
+  // Varje mall bär sitt eget form_schema i default_spec_json. Wizarden
+  // renderar Steg 3 dynamiskt: sektioner + fält med paths som mappar
+  // direkt till spec:en. Fallback-schema visas om mall saknar form_schema.
+
+  const FALLBACK_SCHEMA = {
+    sections: [{
+      title: "Kontraktsvillkor",
+      layout: "grid-2",
+      fields: [
+        { path: "spec.contract.startdatum", type: "date", label: "Startdatum", required: true },
+        { path: "spec.contract.slutdatum",  type: "date", label: "Slutdatum" },
+        { path: "spec.contract.payment_terms_days", type: "number", label: "Betalning (dagar)", placeholder: "20" },
+        { path: "spec.contract.notice_months", type: "number", label: "Uppsägning (mån)", placeholder: "3" },
+      ]
+    }]
+  };
+
+  // Nuvarande mallens form_schema (sätts när mall väljs)
+  let CURRENT_SCHEMA = null;
+
+  function _fieldId(path) { return 'wt-f-' + path.replace(/\./g, '-'); }
+
+  function _setPath(obj, path, value) {
+    const parts = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
+      cur = cur[parts[i]];
+    }
+    cur[parts[parts.length - 1]] = value;
+  }
+
+  function _getPath(obj, path) {
+    return path.split('.').reduce((o, p) => (o == null ? o : o[p]), obj);
+  }
+
+  function _renderField(f) {
+    const id = _fieldId(f.path);
+    const req = f.required ? ' <span class="req">*</span>' : '';
+    const helpBtn = f.help ? '<button class="wt-help" onclick="toggleHelp_k(this)" aria-label="?" type="button">?</button>' : '';
+    const helpBox = f.help ? `<div class="wt-hb">${escHtml(f.help)}</div>` : '';
+    const ph = escHtml(f.placeholder || '');
+    let input;
+    if (f.type === 'textarea') {
+      input = `<textarea id="${id}" rows="${f.rows || 2}" placeholder="${ph}"></textarea>`;
+    } else if (f.type === 'select') {
+      const opts = (f.options || []).map(o =>
+        `<option value="${escHtml(o.value)}">${escHtml(o.label)}</option>`).join('');
+      input = `<select id="${id}"><option value="">— välj —</option>${opts}</select>`;
+    } else {
+      const t = f.type === 'number' ? 'number' : (f.type === 'date' ? 'date' : 'text');
+      input = `<input type="${t}" id="${id}" placeholder="${ph}">`;
+    }
+    return `
+      <div class="wt-f" data-fpath="${escHtml(f.path)}" data-freq="${f.required ? '1' : ''}">
+        <label class="wt-f-l">${escHtml(f.label)}${req}${helpBtn}</label>
+        ${helpBox}
+        ${input}
+        <div class="wt-f-err">⚠ ${escHtml(f.error || 'Fältet är obligatoriskt.')}</div>
+      </div>
+    `;
+  }
+
+  function _renderSection(sec) {
+    const layout = sec.layout || 'stack';
+    const wrapCls = layout === 'grid-2' ? 'wt-frow-2' :
+                    layout === 'grid-3' ? 'wt-frow-3' : '';
+    const fieldsHtml = (sec.fields || []).map(_renderField).join('');
+    const secHelp = sec.help
+      ? `<div style="background:var(--info-soft);border:0.5px solid rgba(99,102,241,0.35);border-left:2px solid var(--info);border-radius:6px;padding:9px 12px;font-size:12px;color:var(--t1);margin-bottom:14px">💡 ${escHtml(sec.help)}</div>`
+      : '';
+    return `
+      <div class="wt-fset">
+        <h3 class="wt-fset-t">${escHtml(sec.title)}</h3>
+        ${secHelp}
+        ${wrapCls ? `<div class="${wrapCls}">${fieldsHtml}</div>` : fieldsHtml}
+      </div>
+    `;
+  }
+
+  function renderStep3(schema) {
+    CURRENT_SCHEMA = schema || FALLBACK_SCHEMA;
+    const body = byId('wt-step3-body');
+    if (!body) return;
+    const sections = CURRENT_SCHEMA.sections || [];
+    if (!sections.length) {
+      body.innerHTML = '<div style="padding:20px;color:var(--err);font-size:13px">⚠ Mallen saknar formulär-schema. Kontakta admin.</div>';
+      return;
+    }
+    body.innerHTML = sections.map(_renderSection).join('');
+  }
+
+  function readForm() {
+    const schema = CURRENT_SCHEMA || FALLBACK_SCHEMA;
+    const root = { spec: {}, contract_specs: [] };
+
+    // Steg 2 kund-fält (alltid samma)
+    _setPath(root, 'spec.client.name',    (byId('wt-clientName')    || {}).value || null);
+    _setPath(root, 'spec.client.org_nr',  (byId('wt-clientOrg')     || {}).value || null);
+    _setPath(root, 'spec.client.address', (byId('wt-clientAddress') || {}).value || null);
+
+    // Steg 3 schema-baserade fält
+    for (const sec of (schema.sections || [])) {
+      for (const f of (sec.fields || [])) {
+        const el = byId(_fieldId(f.path));
+        if (!el) continue;
+        let value = el.value;
+        if (f.type === 'number') {
+          const num = Number(value);
+          value = (value === '' || isNaN(num)) ? null : num;
+        } else if (value === '') {
+          value = null;
+        }
+        _setPath(root, f.path, value);
+      }
+    }
+
+    // contract_specs — härled från spec + template-defaults
+    // Använd defaults från template.default_spec_json.contract_specs som bas,
+    // överskriv med startdatum/slutdatum/binding/notice från formuläret om finns.
+    const tpl = _tplCache[state.tpl];
+    let baseSpecs = [];
+    if (tpl && tpl.default_spec_json) {
+      try {
+        const parsed = typeof tpl.default_spec_json === 'string'
+          ? JSON.parse(tpl.default_spec_json) : tpl.default_spec_json;
+        if (Array.isArray(parsed.contract_specs)) baseSpecs = parsed.contract_specs;
+      } catch (_) {}
+    }
+    if (!baseSpecs.length) {
+      baseSpecs = [{ service_slug: 'unknown', contract_type: 'RateCard',
+                     category: 'Other facility services', monthly_cost: 0, qty: 1 }];
+    }
+    root.contract_specs = baseSpecs.map(base => ({
+      ...base,
+      startdatum:     _getPath(root, 'spec.contract.startdatum')     || _getPath(root, 'spec.contract.start_date') || base.startdatum || null,
+      slutdatum:      _getPath(root, 'spec.contract.slutdatum')      || _getPath(root, 'spec.contract.end_date')   || base.slutdatum  || null,
+      binding_months: _getPath(root, 'spec.contract.binding_months') || base.binding_months || null,
+      notice_months:  _getPath(root, 'spec.contract.notice_months')  || base.notice_months  || null,
+      monthly_cost:   _getPath(root, 'spec.pricing.monthly_fee_sek') || _getPath(root, 'spec.pricing.monthly_fee') || base.monthly_cost   || 0,
+    }));
+
+    return root;
+  }
+
+  function validateStep3() {
+    const body = byId('wt-step3-body');
+    if (!body) return true;
+    let firstErr = null;
+    body.querySelectorAll('.wt-f').forEach(f => f.classList.remove('has-err'));
+    body.querySelectorAll('.wt-f[data-freq="1"]').forEach(f => {
+      const input = f.querySelector('input, select, textarea');
+      if (!input || !input.value.trim()) {
+        f.classList.add('has-err');
+        if (!firstErr) firstErr = f;
+      }
+    });
+    if (firstErr) {
+      firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return false;
+    }
+    return true;
+  }
+
+  async function apiGet(path) {
+    const r = await fetch(API_HOST + path, { headers: { 'x-admin-token': API_TOKEN } });
+    if (!r.ok) throw new Error('GET ' + path + ' → HTTP ' + r.status);
+    return r.json();
+  }
+  async function apiPost(path, body) {
+    const r = await fetch(API_HOST + path, {
+      method: 'POST',
+      headers: { 'x-admin-token': API_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok || json.ok === false) throw new Error(json.error || ('POST ' + path + ' → HTTP ' + r.status));
+    return json;
+  }
+  function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+  // ── Fas 5b spår 2: bilage-upload i Steg 4 ─────────────────────────
+  async function apiUpload(path, formData) {
+    // INGEN Content-Type-header — browsern sätter multipart-boundary själv
+    const r = await fetch(API_HOST + path, {
+      method: 'POST',
+      headers: { 'x-admin-token': API_TOKEN },
+      body: formData
+    });
+    const json = await r.json().catch(() => ({}));
+    if (!r.ok || json.ok === false) throw new Error(json.error || ('UPLOAD ' + path + ' → HTTP ' + r.status));
+    return json;
+  }
+
+  function renderAttachments() {
+    const box = $('#wtAttList');
+    if (!box) return;
+    if (!state.attachments.length) {
+      box.innerHTML = '<div class="wt-att-empty">Inga egna bilagor tillagda. Mallens standardbilagor följer med automatiskt.</div>';
+    } else {
+      box.innerHTML = state.attachments.map(function(a, i) {
+        const ic = (a.mime && a.mime.indexOf('image/') === 0) ? 'BILD' : 'PDF';
+        return '<div class="wt-att-row">'
+          + '<div class="wt-att-ic">' + ic + '</div>'
+          + '<div class="wt-att-info"><div class="wt-att-name">' + escHtml(a.titel) + '</div>'
+          + '<div class="wt-att-meta">Bifogas sist i det signerade PDF-paketet</div></div>'
+          + '<button class="wt-att-rm" onclick="wtRemoveAttachment_k(' + i + ')" aria-label="Ta bort bilaga">&times;</button>'
+          + '</div>';
+      }).join('');
+    }
+    const n = state.attachments.length;
+    const label = n === 0 ? 'Inga (utöver mallens)' : n + (n === 1 ? ' bilaga' : ' bilagor');
+    ['#sumAtt', '#sumAttInt'].forEach(function(sel){ const el = $(sel); if (el) el.textContent = label; });
+  }
+
+  window.wtTriggerUpload_k = function() {
+    const f = $('#wtAttFile');
+    if (f) f.click();
+  };
+
+  window.wtRemoveAttachment_k = function(idx) {
+    // Tar bara bort ur listan — Dokument-raden behålls (orphan accepterat, v1)
+    state.attachments.splice(idx, 1);
+    renderAttachments();
+  };
+
+  window.wtUploadAttachment_k = async function(input) {
+    const files = Array.prototype.slice.call(input.files || []);
+    input.value = '';   // så samma fil kan väljas igen
+    if (!files.length) return;
+
+    const btn = $('#wtAttUploadBtn');
+    const origText = btn ? btn.textContent : '';
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const okType = f.type === 'application/pdf' || (f.type || '').indexOf('image/') === 0;
+      if (!okType) { alert('Bara PDF och bilder kan bifogas:\n' + f.name); continue; }
+      if (f.size > 15 * 1024 * 1024) { alert('Max 15 MB per bilaga:\n' + f.name); continue; }
+
+      // MOCK-läge (ingen token): lägg bara till lokalt så prototypen funkar
+      if (!IS_LIVE) {
+        state.attachments.push({ doc_id: 'mock-' + i + '-' + f.name, titel: f.name, mime: f.type });
+        renderAttachments();
+        continue;
+      }
+
+      if (btn) { btn.classList.add('busy'); btn.textContent = 'Laddar upp ' + f.name + '...'; }
+      try {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await apiUpload('/admin/dokument/upload', fd);
+        state.attachments.push({ doc_id: res.doc_id, titel: res.titel, mime: res.mime });
+        renderAttachments();
+      } catch (e) {
+        alert('Kunde inte ladda upp ' + f.name + ':\n' + e.message);
+      }
+    }
+    if (btn) { btn.classList.remove('busy'); btn.textContent = origText; }
+  };
+
+const state = {
+    step: 1,
+    tpl: null,
+    mode: "client",
+    attachments: [],   // Fas 5b spår 2: [{doc_id, titel, mime}] uppladdade bilagor
+
+    tplNames: {
+      "hk-hybrid-sv":         "HK Timpris (SV)",
+      "hk-subscription-en":   "HK Månadsavgift (EN)",
+      "staff-ratecard-sv":    "Staff Bemanning (SV)",
+      "staff-recruitment-sv": "Rekrytering (SV)",
+      "fe-framework-sv":      "Food & Event ramavtal (SV)",
+    },
+  };
+
+  function $(sel) { return (BROOT||document).querySelector(sel); }
+  function $$(sel) { return (BROOT||document).querySelectorAll(sel); }
+
+  function showStep(n) {
+    state.step = n;
+    $$(".wt-view").forEach(v => v.classList.remove("on"));
+    let selector = `.wt-view[data-view="${n}"]`;
+    const target = (BROOT||document).querySelector(selector);
+    if (target) target.classList.add("on");
+
+    $$(".wt-step").forEach(s => {
+      const stepNum = Number(s.dataset.step);
+      s.classList.remove("is-active", "is-done");
+      if (String(n).startsWith("done")) { s.classList.add("is-done"); return; }
+      if (stepNum < n) s.classList.add("is-done");
+      else if (stepNum === n) s.classList.add("is-active");
+    });
+
+    // Fas 5b spår 2: rendera bilage-listan när Steg 4 visas
+    if (Number(n) === 4) renderAttachments();
+
+    $$(".wt-body").forEach(b => b.scrollTop = 0);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function goNext(from) {
+    if (from >= 5) return;
+    // Validera Steg 3 required-fält innan Steg 4
+    if (from === 3 && !validateStep3()) return;
+    showStep(from + 1);
+  }
+  function goBack(from) {
+    if (typeof from === "string" && from.startsWith("done")) { showStep(5); return; }
+    if (from <= 1) return; showStep(from - 1);
+  }
+
+  // Template selection — bindas dynamiskt (efter LIVE-fetch OCH för mock-korten)
+  // Cache av hela mall-objekten så vi kan pre-fylla från default_spec_json
+  const _tplCache = {};
+
+  function bindTemplateCards() {
+    $$(".wt-card[data-tpl]").forEach(card => {
+      // undvik dubbel-binding om vi re-renderar
+      if (card.dataset.wtBound) return;
+      card.dataset.wtBound = "1";
+      card.addEventListener("click", () => {
+        $$(".wt-card[data-tpl]").forEach(c => c.classList.remove("on"));
+        card.classList.add("on");
+        state.tpl = card.dataset.tpl;
+        const name = state.tplNames[state.tpl] || "mall";
+        $("#btnNext1").disabled = false;
+        $("#tplHint").textContent = "Vald: " + name;
+        $("#sumTpl").textContent = name;
+        $("#sumTplInt").textContent = name;
+        $("#doneTplClient").textContent = name;
+        $("#doneTplInt").textContent = name;
+        // Pre-fyll Steg 3 från default_spec_json om vi har full mall-data
+        if (_tplCache[state.tpl]) prefillFromTemplate(_tplCache[state.tpl]);
+      });
+    });
+  }
+  bindTemplateCards();
+
+  // ── Kund-picker (Steg B) ────────────────────────────────────────
+  let _companies = null;      // cache — hämtas första gången admin öppnar Steg 2
+  let _companiesFetch = null; // in-flight-promise (undvik dubbel-fetch)
+
+  async function ensureCompanies() {
+    if (!IS_LIVE) return [];
+    if (_companies) return _companies;
+    if (_companiesFetch) return _companiesFetch;
+    _companiesFetch = apiGet('/admin/planning/companies')
+      .then(res => { _companies = (res.results || []); return _companies; })
+      .catch(e => { console.warn('[wiz] companies fetch:', e.message); _companies = []; return _companies; });
+    return _companiesFetch;
+  }
+
+  async function setClient(id, name) {
+    CLIENT.id = id; CLIENT.name = name;
+    const chosen = byId('wt-clientChosen');
+    const results = byId('wt-clientResults');
+    const search = byId('wt-clientSearch');
+    if (chosen) {
+      chosen.style.display = name ? 'block' : 'none';
+      chosen.innerHTML = name
+        ? '<strong style="color:#fff">✓ ' + escHtml(name) + '</strong> — vald från kundregistret. ' +
+          '<button class="wt-btn plain tiny" style="margin-left:8px" onclick="wtClearClient_k()">Byt kund</button>'
+        : '';
+    }
+    if (results) results.style.display = 'none';
+    if (search)  search.value = name || '';
+    // Kundbyte: rensa de gamla kundfälten först så föregående kunds uppgifter
+    // inte fastnar. Fylls sedan med den nya kundens data (eller lämnas tomma
+    // om kunden saknar värdet). Ett manuellt val = ladda den kundens uppgifter.
+    const nameField = byId('wt-clientName');
+    const orgField  = byId('wt-clientOrg');
+    const addrField = byId('wt-clientAddress');
+    if (nameField) nameField.value = name || '';
+    if (orgField)  orgField.value  = '';
+    if (addrField) addrField.value = '';
+
+    // Rensa kund (id=null via "Byt kund") eller MOCK → inget att hämta
+    if (!id || !IS_LIVE) return;
+    try {
+      const res = await apiGet('/admin/clientcompany/' + encodeURIComponent(id) + '/details');
+      const d = res.details || {};
+      // Skriv ÖVER med kundregistrets data (inte fyll-bara-tomma)
+      if (nameField && d.name)    nameField.value = d.name;
+      if (orgField  && d.org_nr)  orgField.value  = d.org_nr;
+      if (addrField && d.address) addrField.value = d.address;
+      console.log('[wiz] kund-detaljer:', d);
+    } catch (e) {
+      console.warn('[wiz] kund-detaljer failed:', e.message);
+    }
+  }
+  window.wtClearClient_k = function(){ /* kundkortet: kunden är förvald, ingen "byt kund" */ };
+
+  // Fas 5b spår 3: förvald kund — fyll lås-displayen + namn/org/adress-fälten.
+  async function prefillFixedClient(){
+    var lock = (BROOT||document).querySelector('[data-wt="locked-name"]');
+    if (lock) lock.textContent = CLIENT.name || 'Kunden';
+    if (CLIENT.id) { try { await setClient(CLIENT.id, CLIENT.name); } catch(_){} }
+  }
+
+  function bindClientPicker() {
+    const search = byId('wt-clientSearch');
+    const results = byId('wt-clientResults');
+    if (!search || !results) return;
+    if (search.dataset.wtBound) return;
+    search.dataset.wtBound = "1";
+
+    let timer = null;
+    search.addEventListener('input', async () => {
+      const q = search.value.trim().toLowerCase();
+      if (!q) { results.style.display = 'none'; return; }
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const list = await ensureCompanies();
+        const matches = list
+          .filter(c => (c.name || '').toLowerCase().includes(q))
+          .slice(0, 20);
+        if (!matches.length) {
+          results.innerHTML = '<div style="padding:12px 14px;color:var(--t3);font-size:13px">Inga kunder matchar. Skapa upp kunden i CRM först.</div>';
+          results.style.display = 'block';
+          return;
+        }
+        results.innerHTML = matches.map(c =>
+          '<div class="wt-client-hit" data-id="' + escHtml(c.id) + '" data-name="' + escHtml(c.name) + '" ' +
+          'style="padding:10px 14px;cursor:pointer;border-bottom:0.5px solid var(--line);color:var(--t1);font-size:13.5px">' +
+          escHtml(c.name) + '</div>'
+        ).join('');
+        results.style.display = 'block';
+        results.querySelectorAll('.wt-client-hit').forEach(hit => {
+          hit.addEventListener('mouseenter', () => hit.style.background = 'rgba(255,255,255,0.05)');
+          hit.addEventListener('mouseleave', () => hit.style.background = '');
+          hit.addEventListener('click', () => setClient(hit.dataset.id, hit.dataset.name));
+        });
+      }, 150);
+    });
+
+    // Klick utanför → stäng dropdown
+    document.addEventListener('click', (e) => {
+      if (!search.contains(e.target) && !results.contains(e.target)) {
+        results.style.display = 'none';
+      }
+    });
+  }
+  prefillFixedClient(); // förvald kund — fyll Steg 2 direkt vid init
+
+  // ── Stäng wizard-modalen (för done-knappar + Avbryt) ────────────
+  window.wtCloseModal_k = function() {
+    const mask = (BROOT||document).querySelector('[data-aa="wiz-mask-k"]');
+    if (mask) { mask.classList.remove('on'); document.body.style.overflow = ''; }
+    if (typeof window.resetWizard_k === 'function') { try { window.resetWizard_k(); } catch(_){} }
+  };
+
+  // ── Pre-fyll + rendera Steg 3 från mallens default_spec_json ────
+  // 1. Parsa default_spec_json (JSON-sträng eller redan-objekt)
+  // 2. Rendera Steg 3 från form_schema (fallback om saknas)
+  // 3. Pre-fyll varje fält från spec.<path> som schemat pekar på
+  function prefillFromTemplate(tpl) {
+    if (!tpl) { renderStep3(FALLBACK_SCHEMA); return; }
+    let data = {};
+    if (tpl.default_spec_json) {
+      try {
+        data = typeof tpl.default_spec_json === 'string'
+          ? JSON.parse(tpl.default_spec_json) : tpl.default_spec_json;
+      } catch (e) {
+        console.warn('[wiz] default_spec_json parse-fel:', e.message);
+      }
+    }
+    const schema = data.form_schema || FALLBACK_SCHEMA;
+    renderStep3(schema);
+
+    // Pre-fyll varje fält om värdet finns i spec (och fältet är tomt)
+    let filled = 0;
+    for (const sec of (schema.sections || [])) {
+      for (const f of (sec.fields || [])) {
+        const el = byId(_fieldId(f.path));
+        if (!el) continue;
+        const val = _getPath(data, f.path);
+        if (val != null && val !== '' && !el.value) {
+          el.value = String(val);
+          filled++;
+        }
+      }
+    }
+    if (filled) console.log('[wiz] pre-fyllde', filled, 'fält från default_spec_json');
+    else       console.log('[wiz] rendered Steg 3 (' + (schema.sections || []).length + ' sektioner)');
+  }
+
+  // LIVE-mode: fetch aktiva mallar och re-rendera Steg 1-grid:et
+  async function loadTemplatesLive() {
+    if (!IS_LIVE) return;
+    try {
+      const res = await apiGet('/admin/contract-templates');
+      const templates = (res.templates || []).filter(t => t.is_active !== false);
+      if (!templates.length) {
+        console.warn('[wiz] inga aktiva mallar — behåller mock-korten');
+        return;
+      }
+      const grid = byId('tplGrid');
+      if (!grid) return;
+      state.tplNames = {};
+      grid.innerHTML = templates.map(t => {
+        state.tplNames[t._id] = t.name;
+        _tplCache[t._id] = t;   // cache hela objektet för prefill
+        const lang = (t.language === 'en' ? 'Engelska' : 'Svenska');
+        const cat  = t.category || 'Övrigt';
+        const sub  = t.subtitle || '';
+        const desc = t.description || '';
+        return `
+          <button class="wt-card" data-tpl="${escHtml(t._id)}" type="button">
+            <div class="wt-card-name">${escHtml(t.name)}</div>
+            <div class="wt-card-sub">${escHtml(sub)}</div>
+            <div class="wt-pills">
+              <span class="wt-pill brand">${escHtml(cat)}</span>
+              <span class="wt-pill">${escHtml(lang)}</span>
+            </div>
+            ${desc ? `<div class="wt-card-when">${escHtml(desc)}</div>` : ''}
+          </button>`;
+      }).join('');
+      bindTemplateCards();
+      console.log('[wiz] laddade', templates.length, 'aktiva mallar från API');
+    } catch (e) {
+      console.warn('[wiz] mall-fetch failed, behåller mock-korten:', e.message);
+    }
+  }
+  loadTemplatesLive();
+
+  // Mode selection (steg 5)
+  $$(".wt-card[data-mode]").forEach(card => {
+    card.addEventListener("click", () => {
+      $$(".wt-card[data-mode]").forEach(c => c.classList.remove("on"));
+      card.classList.add("on");
+      state.mode = card.dataset.mode;
+      const isClient = state.mode === "client";
+      $("#clientPanel").style.display = isClient ? "" : "none";
+      $("#internalPanel").style.display = isClient ? "none" : "";
+      $("#btnSend").textContent = isClient
+        ? "Skicka till kunden ✉️"
+        : "Skicka för intern granskning →";
+    });
+  });
+
+  // Help (?)
+  function toggleHelp(btn) {
+    const parent = btn.closest(".wt-f-l, .wt-fset-t");
+    const box = parent ? parent.parentElement.querySelector(".wt-hb") : null;
+    if (!box) return;
+    const isOn = box.classList.toggle("on");
+    btn.classList.toggle("on", isOn);
+  }
+
+  // Preview — mall-specifikt innehåll
+  const previewByTpl = {
+    "hk-hybrid-sv": `
+      <div class="wt-prev-mock">
+        <header>
+          <div class="brand-h">CAROTTE HOUSEKEEPING</div>
+          <div class="brand-s">Städ- och kontorstjänster</div>
+          <h1>Avtal Städtjänst</h1>
+          <div style="font-size:9px;color:#94a3b8">Timprisbaserat avtal · Städindex</div>
+        </header>
+        <div class="parties">
+          <div class="row"><div class="k">Leverantör</div><div class="v">Carotte Housekeeping AB (556858-0392)</div></div>
+          <div class="row"><div class="k">Kund</div><div class="v">Electronic Arts Sverige AB (556710-6520)</div></div>
+          <div class="row"><div class="k">Adress</div><div class="v">Södermalmsallén 36, 118 28 Stockholm</div></div>
+        </div>
+        <section><h2>1. Allmänt</h2><p>Avtal mellan Carotte Housekeeping AB (556858-0392) nedan kallad "Leverantören" och Electronic Arts Sverige AB (556710-6520) nedan kallad "Kunden".</p></section>
+        <section><h2>2. Avtalstid</h2><p>Avtalet löper inledningsvis under en fast period om 24 månader med en ömsesidig uppsägningstid om 3 månader.</p></section>
+        <section><h2>4. Fakturering och betalningsvillkor</h2><p>Fakturering sker två gånger per månad. Betalningsvillkor är 20 dagar netto...</p></section>
+        <section><h2>5. Priser</h2><p>För den överenskomna tjänsten faktureras Kunden en timkostnad om 330 kr per faktiskt arbetad timme exklusive moms. För tid från kl 19.00 till kl 22.00 på vardag tillkommer ett Ob-tillägg om 40 kr. För tid från kl 22.00 till kl 24.00 måndag till torsdag tillkommer ett Ob-tillägg om 75 kr. Vid första leveransen tillkommer en uppstartskostnad om 5 500 kr...</p></section>
+        <div class="foot">— Sida 1 av 4 — Avtalet fortsätter med §6–17 —</div>
+      </div>`,
+
+    "fe-framework-sv": `
+      <div class="wt-prev-mock">
+        <header>
+          <div class="brand-h">CAROTTE CATERING</div>
+          <div class="brand-s">Allmänna leveransvillkor</div>
+          <h1>Food &amp; Event ramavtal</h1>
+          <div style="font-size:9px;color:#94a3b8">Ramavtal · Cateringtjänster</div>
+        </header>
+        <div class="parties">
+          <div class="row"><div class="k">Leverantör</div><div class="v">Carotte Catering AB (559172-3258)</div></div>
+          <div class="row"><div class="k">Kund</div><div class="v">Electronic Arts Sverige AB (556710-6520)</div></div>
+          <div class="row"><div class="k">Adress</div><div class="v">Södermalmsallén 36, 118 28 Stockholm</div></div>
+        </div>
+
+        <section style="margin-top:6px;color:#475569;font-style:italic;">
+          <p style="font-size:9.5px;">Dessa allmänna leveransvillkor gäller då Carotte Catering AB (org.nr. 559172-3258) tillhandahåller cateringtjänster och utgör bilaga till av parterna träffat avtal.</p>
+        </section>
+
+        <section><h2>1. Allmänt</h2>
+          <p>1.1 Dessa allmänna leveransvillkor ("Villkoren") gäller mellan kunden och Carotte Catering AB (org.nr. 559172-3258) ("Carotte") och tillämpas på köp av Carottes vid var tid erbjudna cateringtjänster ("Tjänster"). För det fall kunden och Carotte i ett enskilt fall avtalat skriftligen om villkor som avviker från Villkoren, ska sådana villkor gälla utan hinder av dessa Villkor.</p>
+        </section>
+
+        <section><h2>2. Beställning och leverans</h2>
+          <p>2.1 Kunden kan lägga beställningar på Carotte.se eller genom direkt kontakt med Carottes personal. Kunden anses ha accepterat Villkoren när kunden lägger sin beställning alternativt skriftligen bekräftar offert från Carotte.</p>
+          <p>2.2 Carotte erbjuder leverans genom bud eller avhämtning på Tegeluddsvägen 92, 115 28 Stockholm. Normala transporttider: vardagar kl. 07.30–17.00 och lördagar kl. 07.30–16.00. I transportpriset ingår 15 min last och lossning. För tillkommande tid debiteras 500 kr per påbörjade 15 minuter.</p>
+        </section>
+
+        <section><h2>3. Pris och betalning</h2>
+          <p>3.1 Prisuppgifter anges i svenska kronor, exklusive moms för näringsidkare. Uthyrd personal debiteras enligt faktisk tidsåtgång, minimum fyra timmar per medarbetare. OB-ersättning: 50 kr/tim vardagar 20.00–24.00 samt lördagar 16.00–24.00. OB-ersättning 100 kr/tim: alla dagar 24.00–07.00 samt söndagar och helgdagar.</p>
+          <p>3.2 Betalning kan ske med kort eller faktura. Faktura ska vara Carotte tillhanda tio (10) dagar från fakturadatum. Dröjsmålsränta 12 % per månad. Vid arrangemang &gt; 30 000 kr exkl. moms krävs 50 % förskottsbetalning.</p>
+        </section>
+
+        <section><h2>4. Avbokning och ändring</h2>
+          <p>4.1 Ordervärde under 5 000 kr: avbokning senast 5 vardagar före leverans. Vid för sen avbokning debiteras 100 % av ordervärdet.</p>
+          <p>4.2 Ordervärde 5 000–50 000 kr: avbokning senast 10 vardagar före leverans.</p>
+          <p>4.3 Ordervärde &gt; 50 000 kr: 9–30 dagar före = 50 % debitering, mindre än 10 dagar = 100 % debitering. Ändring av beställning (utan väsentlig prisändring) senast 5 vardagar före leverans.</p>
+        </section>
+
+        <div class="foot">— Sida 1 av 3 — Avtalet fortsätter med §5 Ansvar &amp; reklamation, §6 Ansvar för Carottes egendom, §7 Force majeure, §8 Personuppgifter, §9 Övrigt, §10 Tillämplig lag —</div>
+      </div>`,
+
+    "_placeholder": (nameLabel) => `
+      <div class="wt-prev-mock" style="padding:60px 40px;text-align:center;">
+        <div style="font-size:36px;margin-bottom:14px">📝</div>
+        <h1 style="font-family:Georgia,serif;font-size:16px;margin:0 0 8px;color:#1e2235">Förhandsgranskning för <span style="color:#db6923">${nameLabel}</span></h1>
+        <p style="font-size:11px;color:#64748b;max-width:360px;margin:8px auto 0;line-height:1.5">
+          I den skarpa versionen visas hela avtalstexten här med värdena från Steg 2 och 3 ifyllda. I denna prototyp har vi bara hunnit skriva ut två av mallarna — <strong>HK Timpris</strong> och <strong>Food &amp; Event ramavtal</strong>. Klicka på någon av dem i Steg 1 för att se en färdig förhandsgranskning.
+        </p>
+      </div>`,
+  };
+
+  async function showPreview() {
+    const box = $("#prevBox");
+    box.classList.add("on");
+
+    // LIVE-mode: rendera riktig PDF via backend, ladda i iframe
+    // (Bubble-mall-id:er börjar med "17..." — mock-ids är "hk-hybrid-sv" etc)
+    if (IS_LIVE && state.tpl && /^\d/.test(state.tpl)) {
+      box.innerHTML = '<div style="padding:40px;text-align:center;color:var(--t2);font-size:13px">⏳ Genererar förhandsgranskning...</div>';
+      try {
+        const form = readForm();
+        const res = await apiPost('/admin/contracts/render-preview', {
+          template_id: state.tpl,
+          spec: form.spec,
+          attachment_dokument_ids: state.attachments.map(function(a){ return a.doc_id; }),
+        });
+        const url = res.preview && res.preview.file_url;
+        if (!url) throw new Error('inget file_url i svaret');
+        box.innerHTML = `<iframe src="${escHtml(url)}" style="width:100%;height:540px;border:none;border-radius:10px;background:white" title="Förhandsgranskning"></iframe>`;
+        console.log('[wiz] preview:', res.preview);
+      } catch (e) {
+        box.innerHTML = `<div style="padding:20px;color:var(--err);font-size:13px">⚠ Kunde inte generera förhandsgranskning: ${escHtml(e.message)}</div>`;
+      }
+      return;
+    }
+
+    // MOCK-mode: hardkodad HTML-preview
+    const html = previewByTpl[state.tpl]
+              || previewByTpl["_placeholder"](state.tplNames[state.tpl] || "vald mall");
+    box.innerHTML = html;
+  }
+
+  // Recipients
+  function addRcp(containerId) {
+    const container = byId(containerId);
+    const clone = container.firstElementChild.cloneNode(true);
+    clone.querySelectorAll("input").forEach(i => i.value = "");
+    clone.querySelectorAll("select").forEach(s => s.selectedIndex = 0);
+    clone.querySelectorAll(".wt-hb").forEach(h => h.classList.remove("on"));
+    clone.querySelectorAll(".wt-help").forEach(h => h.classList.remove("on"));
+    container.appendChild(clone);
+    updateRcpSummary();
+  }
+  function removeRcp(btn) {
+    const container = btn.closest(".wt-rcp-row").parentElement;
+    if (container.children.length <= 1) return;
+    btn.closest(".wt-rcp-row").remove();
+    updateRcpSummary();
+  }
+  function updateRcpSummary() {
+    const nC = (BROOT||document).querySelectorAll("#clientRcps .wt-rcp-row").length;
+    const nI = (BROOT||document).querySelectorAll("#internalRcps .wt-rcp-row").length;
+    $("#sumRcpsClient").textContent = nC + (nC === 1 ? " person hos kunden" : " personer hos kunden");
+    $("#sumRcpsInt").textContent    = nI + (nI === 1 ? " kollega för granskning" : " kollegor för granskning");
+    $("#doneRcpsClient").textContent = nC + (nC === 1 ? " person" : " personer");
+    $("#doneRcpsInt").textContent    = nI + (nI === 1 ? " kollega" : " kollegor");
+  }
+
+  async function submitFinal() {
+    const btn = $("#btnSend");
+    const origText = btn ? btn.textContent : '';
+
+    // MOCK-mode: hoppa direkt till done-vy
+    if (!IS_LIVE || !state.tpl || !/^\d/.test(state.tpl)) {
+      showStep(state.mode === "internal" ? "done-internal" : "done-client");
+      return;
+    }
+
+    // LIVE-mode: bygg payload från formulär + Steg A-mock (kund/spec)
+    if (btn) { btn.textContent = "Skickar..."; btn.disabled = true; }
+
+    try {
+      const containerId = state.mode === "internal" ? "internalRcps" : "clientRcps";
+      const container = byId(containerId);
+      const rcps = Array.from(container.querySelectorAll('.wt-rcp-row')).map(row => {
+        const email = row.querySelector('input[type="email"]').value.trim();
+        const name  = row.querySelector('input[type="text"]').value.trim();
+        // Client: dropdown "Signerar"/"Granskar" → Signer/Reviewer
+        // Internal: alla är Reviewer (kollegor granskar)
+        let role;
+        if (state.mode === "internal") { role = "Reviewer"; }
+        else {
+          const sel = row.querySelector('select');
+          role = (sel && sel.selectedIndex === 1) ? "Reviewer" : "Signer";
+        }
+        return { email, name, role };
+      }).filter(r => r.email);
+
+      if (!rcps.length) { alert("Fyll i minst en mailadress för mottagaren."); return; }
+
+      const panel = state.mode === "internal" ? "#internalPanel" : "#clientPanel";
+      const messageEl = (BROOT||document).querySelector(panel + " textarea");
+      const meddelande = messageEl ? messageEl.value.trim() : '';
+
+      const senderEmail = ((BROOT||document).querySelector('[data-mira="sender_email"]') || {}).value
+                       || 'christian@carotte.se';
+      const senderName  = ((BROOT||document).querySelector('[data-mira="sender_name"]') || {}).value
+                       || 'Carotte';
+
+      // Intern granskning → auto_create_contract="no" (kollegans OK skapar inget Contract)
+      // Kund-signering → "yes" (Contract auto-skapas när kunden signerat)
+      const autoCreate = state.mode === "internal" ? "no" : "yes";
+
+      // Bygg spec + contract_specs från formulär (Steg B+C)
+      const form = readForm();
+      if (!form.spec.client.name) { alert('Fyll i kundens företagsnamn (Steg 2).'); return; }
+
+      const payload = {
+        template_id:            state.tpl,
+        spec:                   form.spec,
+        contract_specs:         form.contract_specs,
+        rubrik:                 "Avtal — " + form.spec.client.name,
+        meddelande,
+        sender_email:           senderEmail,
+        sender_name:            senderName,
+        clientcompany:          CLIENT.id || null,   // Bubble ClientCompany-ref (valfri)
+        deal:                   WIZ_DEAL_ID || null, // Affär-ryggrad: kopplar avtalet till affären
+        auto_create_contract:   autoCreate,
+        recipients:             rcps,
+        attachment_dokument_ids: state.attachments.map(function(a){ return a.doc_id; }),
+      };
+
+      const res = await apiPost('/admin/contracts/render-and-send', payload);
+      console.log('[wiz] skickat:', res);
+      showStep(state.mode === "internal" ? "done-internal" : "done-client");
+    } catch (e) {
+      alert('Kunde inte skicka avtalet:\n' + e.message);
+      if (btn) { btn.textContent = origText; btn.disabled = false; }
+    }
+  }
+
+  function resetWizard() {
+    state.tpl = null;
+    state.mode = "client";
+    state.attachments = [];   // Fas 5b spår 2: nollställ uppladdade bilagor
+
+    $$(".wt-card").forEach(c => c.classList.remove("on"));
+    $$(".wt-card[data-mode='client']")[0].classList.add("on");
+    $("#btnNext1").disabled = true;
+    $("#tplHint").textContent = "Välj en mall för att fortsätta";
+    $("#clientPanel").style.display = "";
+    $("#internalPanel").style.display = "none";
+    $("#btnSend").textContent = "Skicka till kunden ✉️";
+    $$("input, textarea").forEach(i => { if (i.type !== "checkbox") i.value = ""; });
+    $$(".wt-hb").forEach(b => b.classList.remove("on"));
+    $$(".wt-help").forEach(h => h.classList.remove("on"));
+    const pv = $("#prevBox");
+    pv.classList.remove("on");
+    pv.innerHTML = `<button class="wt-btn ghost" onclick="showPreview_k()">Skapa förhandsgranskning</button><div style="margin-top:8px;font-size:12px;color:var(--t3)">Klicka för att se hur avtalet blir i PDF.</div>`;
+    ["clientRcps", "internalRcps"].forEach(id => {
+      const c = byId(id);
+      while (c.children.length > 1) c.lastElementChild.remove();
+    });
+    updateRcpSummary();
+    prefillFixedClient(); // återfyll den förvalda kunden efter rensning
+    showStep(1);
+  }
+
+  // Exponera onclick-targets på window (attributen behöver globala funktioner)
+  window.goNext_k = goNext;
+  window.goBack_k = goBack;
+  window.toggleHelp_k = toggleHelp;
+  window.showPreview_k = showPreview;
+  window.addRcp_k = addRcp;
+  window.removeRcp_k = removeRcp;
+  window.submitFinal_k = submitFinal;
+  window.resetWizard_k = resetWizard;
+
+  // ── PORT 2026-08-17: kortet sätter förvald kund innan wizarden öppnas.
+  // CLIENT är ett objekt → muteras (inga const-problem).
+  FKAVTAL.wiz = {
+    setCompany: function (id, nm) {
+      WIZ_CC_ID = id || ''; WIZ_CC_NAME = nm || ''; WIZ_DEAL_ID = '';
+      CLIENT.id = WIZ_CC_ID || null; CLIENT.name = WIZ_CC_NAME || null;
+      var nEl = byId('wt-clientName'); if (nEl) nEl.value = WIZ_CC_NAME || '';
+    }
+  };
+})();
+
+// Wizard öppna/stäng — event-delegation på document så vi inte förlitar oss på
+// att .aa-wrap-scope har rendered när scripten körs (Bubbles injektion är
+// ibland async). Selectors matchar data-aa-attributen i HTML-blocken.
+(function(){
+  function findMask(){ return document.querySelector('[data-aa="wiz-mask-k"]'); }
+  function raiseAncestors(m){
+    m._raised = [];
+    var a = m.parentElement;
+    while (a && a !== document.body && a !== document.documentElement){
+      var cs = getComputedStyle(a);
+      if (cs.position !== 'static'){ m._raised.push([a, a.style.zIndex]); a.style.zIndex = '2147483000'; }
+      a = a.parentElement;
+    }
+  }
+  function restoreAncestors(m){
+    if (!m._raised) return;
+    for (var i = 0; i < m._raised.length; i++){ m._raised[i][0].style.zIndex = m._raised[i][1]; }
+    m._raised = null;
+  }
+  function openWiz(){
+    var m = findMask(); if (!m) { console.warn('[wiz] mask saknas'); return; }
+    raiseAncestors(m);
+    m.classList.add('on'); document.body.style.overflow = 'hidden';
+  }
+  function closeWiz(force){
+    var m = findMask(); if (!m) return;
+    if (!force && !confirm('Stänga wizarden? Alla ifyllda uppgifter försvinner.')) return;
+    m.classList.remove('on'); document.body.style.overflow = '';
+    restoreAncestors(m);
+    if (typeof window.resetWizard_k === 'function') { try { window.resetWizard_k(); } catch(_){} }
+  }
+
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest && e.target.closest('[data-aa="wiz-btn-k"]');
+    if (btn) { e.preventDefault(); openWiz(); return; }
+    var closeBtn = e.target.closest && e.target.closest('[data-aa="wiz-close-k"]');
+    if (closeBtn) { e.preventDefault(); closeWiz(); return; }
+    // Backdrop-click: bara stäng om klick direkt på mask (inte på modal-innehåll)
+    var mask = findMask();
+    if (mask && mask.classList.contains('on') && e.target === mask) { closeWiz(); }
+  }, false);
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') {
+      var m = findMask();
+      if (m && m.classList.contains('on')) closeWiz(true);
+    }
+  });
+
+  console.log('[wiz] öppna/stäng-handler klar');
+})();
+
+(function(){
+  // ── Multi-instance support ──────────────────────────────────────
+  // Claim första oclaim:ade .ac-wrap. Varje IIFE-instans (en per HTML-block)
+  // tar sin egen root. Detta gör att flera block kan samsas i samma DOM
+  // (t.ex. Deal-popup + Company-popup) utan att deras event listeners eller
+  // config blandas ihop.
+  // PORT 2026-08-17: kortet äger roten — ingen egen claim.
+  const root = FLROOT;
+
+  // Scoped query-helpers: alla lookups går mot just denna instans root.
+  const $   = (key) => root.querySelector(`[data-ac="${key}"]`);
+  const $$  = (key) => root.querySelectorAll(`[data-ac="${key}"]`);
+  const cfg = (key) => { const el = root.querySelector(`[data-mira="${key}"]`); return (el && el.value) || ""; };
+
+  const HOST          = cfg("api_host").replace(/\/+$/, "");
+  const TOKEN         = cfg("planning_token");
+  const SENDER_EMAIL  = cfg("sender_email");
+  const SENDER_NAME   = cfg("sender_name") || "Carotte";
+  // PORT 2026-08-17: kunden kommer från kortet, inte från hidden inputs.
+  let CLIENTCOMPANY = "";
+  let DEAL          = "";
+  let DEAL_MODE     = false;
+  let CC_MODE       = false;
+  let LIST_MODE     = false;
+
+  // ── State ──────────────────────────────────────────────────────
+  const state = {
+    files: [],       // [{file, id}]
+    recipients: [],  // [{email, name, id}]
+  };
+  let nextId = 1;
+
+  // ── Filhantering ────────────────────────────────────────────────
+  const drop     = $("drop");
+  const fileEl   = $("files");
+  const fileList = $("file-list");
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (!f) continue;
+      if (f.size > 25 * 1024 * 1024) { setErr(`"${f.name}" är större än 25 MB`); continue; }
+      if (state.files.length >= 20) { setErr("Max 20 filer"); break; }
+      state.files.push({ file: f, id: nextId++ });
+    }
+    renderFiles();
+    updateCounts();
+    setErr("");
+  }
+
+  function renderFiles() {
+    fileList.innerHTML = "";
+    for (const item of state.files) {
+      const li = document.createElement("li");
+      li.className = "file";
+      li.innerHTML =
+        `<span>${escapeHtml(item.file.name)}</span>` +
+        `<span class="meta">${(item.file.size/1024).toFixed(1)} kB</span>` +
+        `<button class="rm" data-id="${item.id}">Ta bort</button>`;
+      fileList.appendChild(li);
+    }
+    fileList.querySelectorAll(".rm").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = Number(b.dataset.id);
+        state.files = state.files.filter((x) => x.id !== id);
+        renderFiles();
+        updateCounts();
+      });
+    });
+  }
+
+  fileEl.addEventListener("change", () => {
+    addFiles(fileEl.files);
+    fileEl.value = "";
+  });
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault();
+    drop.classList.remove("drag");
+    addFiles(e.dataTransfer.files);
+  });
+
+  // ── Mottagare ──────────────────────────────────────────────────
+  const rcpWrap = $("recipients");
+
+  function addRecipient(email, name, role) {
+    state.recipients.push({
+      email: email || "",
+      name:  name || "",
+      role:  role === "Reviewer" ? "Reviewer" : "Signer",
+      id:    nextId++,
+    });
+    renderRecipients();
+    updateCounts();
+  }
+
+  function renderRecipients() {
+    rcpWrap.innerHTML = "";
+    for (const r of state.recipients) {
+      const row = document.createElement("div");
+      row.className = "rcp-row";
+      row.innerHTML =
+        `<input type="email" placeholder="e-post" value="${escapeAttr(r.email)}" data-id="${r.id}" data-k="email">` +
+        `<input class="rcp-name" type="text" placeholder="namn (valfritt)" value="${escapeAttr(r.name)}" data-id="${r.id}" data-k="name">` +
+        `<select data-id="${r.id}" data-k="role" title="Roll">
+           <option value="Signer"${r.role === "Signer" ? " selected" : ""}>Signerar</option>
+           <option value="Reviewer"${r.role === "Reviewer" ? " selected" : ""}>Granskar</option>
+         </select>` +
+        `<button class="rcp-rm" data-id="${r.id}" title="Ta bort">×</button>`;
+      rcpWrap.appendChild(row);
+    }
+    rcpWrap.querySelectorAll("input, select").forEach((inp) => {
+      const ev = inp.tagName === "SELECT" ? "change" : "input";
+      inp.addEventListener(ev, () => {
+        const id = Number(inp.dataset.id);
+        const k  = inp.dataset.k;
+        const r  = state.recipients.find((x) => x.id === id);
+        if (r) { r[k] = inp.value; updateCounts(); }
+      });
+    });
+    rcpWrap.querySelectorAll(".rcp-rm").forEach((b) => {
+      b.addEventListener("click", () => {
+        const id = Number(b.dataset.id);
+        state.recipients = state.recipients.filter((x) => x.id !== id);
+        renderRecipients();
+        updateCounts();
+      });
+    });
+  }
+
+  $("rcp-add").addEventListener("click", () => addRecipient("", ""));
+
+  // ── User-picker (snabbval bland företagets kontakter) ──────────────────
+  // Aktiveras när CLIENTCOMPANY är satt (Deal-mode, CC-mode, eller om
+  // standalone-mode mot framtiden får cc via config). Fetchar Users vars
+  // Associated_company innehåller cc-id:t.
+  async function loadUserPicker() {
+    if (!CLIENTCOMPANY) return;
+    const wrap   = $("user-picker-wrap");
+    const select = $("user-picker");
+    if (!wrap || !select) return;
+    try {
+      const r = await fetch(HOST + "/admin/approval/users-by-company?clientcompany=" + encodeURIComponent(CLIENTCOMPANY),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok || !(j.items && j.items.length)) return;   // tyst om inga kontakter
+      for (const u of j.items) {
+        const opt = document.createElement("option");
+        opt.value = u.email;
+        opt.dataset.name = u.name || "";
+        opt.textContent = u.name && u.name !== u.email ? `${u.name} · ${u.email}` : u.email;
+        select.appendChild(opt);
+      }
+      wrap.classList.remove("hidden");
+      select.addEventListener("change", () => {
+        const opt = select.selectedOptions[0];
+        if (!opt || !opt.value) return;
+        addRecipient(opt.value, opt.dataset.name || "");
+        select.value = "";    // reset så user kan picka fler
+      });
+    } catch (e) {
+      // tyst — om endpoint failar visar vi bara inte dropdown
+      console.warn("[user-picker] fetch failed", (e && e.message) || e);
+    }
+  }
+
+  // ── Counts + submit-state ──────────────────────────────────────
+  function updateCounts() {
+    $("cnt-files").textContent = state.files.length;
+    const validRcps = state.recipients.filter((r) => /\S+@\S+\.\S+/.test(r.email));
+    $("cnt-rcp").textContent = validRcps.length;
+    const rubrik = $("rubrik").value.trim();
+    $("submit").disabled = !(state.files.length && validRcps.length && rubrik);
+  }
+  $("rubrik").addEventListener("input", updateCounts);
+
+  // ── Submit ─────────────────────────────────────────────────────
+  $("submit").addEventListener("click", async () => {
+    setErr("");
+    const rubrik     = $("rubrik").value.trim();
+    const meddelande = $("meddelande").value.trim();
+    const senderName = $("sender-name").value.trim() || SENDER_NAME;
+    const expIso     = $("expires").value
+      ? new Date($("expires").value + "T23:59:59").toISOString()
+      : null;
+    const recipients = state.recipients
+      .filter((r) => /\S+@\S+\.\S+/.test(r.email))
+      .map((r) => ({
+        email: r.email.trim(),
+        name:  (r.name || "").trim(),
+        role:  r.role === "Reviewer" ? "Reviewer" : "Signer",
+      }));
+
+    if (!state.files.length) return setErr("Lägg till minst en PDF.");
+    if (!recipients.length)  return setErr("Lägg till minst en mottagare med giltig e-post.");
+    if (!rubrik)             return setErr("Skriv en rubrik.");
+
+    const payload = {
+      rubrik, meddelande,
+      sender_email: SENDER_EMAIL,
+      sender_name:  senderName,
+      recipients,
+      clientcompany: CLIENTCOMPANY || null,
+      deal:          DEAL || null,
+      expires_at:    expIso,
+    };
+
+    const fd = new FormData();
+    fd.append("payload", JSON.stringify(payload));
+    for (const f of state.files) fd.append("files", f.file, f.file.name);
+
+    const submitBtn = $("submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Skickar…";
+
+    try {
+      const r = await fetch(HOST + "/approval/create", {
+        method: "POST",
+        headers: { "x-admin-token": TOKEN },
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        setErr("Skapande misslyckades: " + (j.error || r.status));
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Skicka signeringsbegäran";
+        return;
+      }
+      showDone(j);
+    } catch (e) {
+      setErr("Nätverksfel: " + (e.message || e));
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Skicka signeringsbegäran";
+    }
+  });
+
+  function showDone(j) {
+    $("form-view").classList.add("hidden");
+    $("done-view").classList.remove("hidden");
+    $("done-cnt").textContent = j.recipients_count || (j.approvals && j.approvals.length) || 0;
+    const list = $("done-list");
+    list.innerHTML = "";
+    for (const a of (j.approvals || [])) {
+      const li = document.createElement("li");
+      li.innerHTML =
+        `<span>${escapeHtml(a.recipient_email)}</span>` +
+        `<a href="${escapeAttr(a.view_url)}" target="_blank" rel="noopener">öppna länk ↗</a>`;
+      list.appendChild(li);
+    }
+    if (LIST_MODE && typeof fetchHistory === "function") fetchHistory();
+  }
+
+  $("new").addEventListener("click", () => {
+    state.files = [];
+    state.recipients = [];
+    renderFiles();
+    renderRecipients();
+    $("rubrik").value = "";
+    $("meddelande").value = "";
+    $("expires").value = "";
+    $("sender-name").value = SENDER_NAME;
+    updateCounts();
+    $("done-view").classList.add("hidden");
+    $("form-view").classList.remove("hidden");
+    setErr("");
+    $("submit").textContent = "Skicka signeringsbegäran";
+  });
+
+  // ── Helpers ─────────────────────────────────────────────────────
+  function setErr(m) { $("err").textContent = m || ""; }
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+    })[c]);
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  // ── Historik (Deal-aware / CC-aware mode) ───────────────────────
+  function fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleDateString("sv-SE", { year: "numeric", month: "short", day: "numeric" });
+  }
+  function fmtDateTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return String(iso);
+    return d.toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" });
+  }
+  function statusPill(status) {
+    const s = String(status || "").trim() || "Draft";
+    return `<span class="pill s-${escapeAttr(s)}"><span class="dot"></span>${escapeHtml(s)}</span>`;
+  }
+
+  async function fetchHistory() {
+    const body = $("history-body");
+    const filterParam = DEAL_MODE
+      ? "deal=" + encodeURIComponent(DEAL)
+      : "clientcompany=" + encodeURIComponent(CLIENTCOMPANY);
+    try {
+      const r = await fetch(HOST + "/admin/approval/list?" + filterParam + "&limit=50",
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        body.innerHTML = `<div class="hist-empty">Kunde inte hämta historik: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      if (!j.items || !j.items.length) {
+        const scope = DEAL_MODE ? "denna affär" : "detta bolag";
+        body.innerHTML = `<div class="hist-empty">Inga signeringsprocesser för ${escapeHtml(scope)} än.<br>Klicka "Skicka ny signering" nedan.</div>`;
+        return;
+      }
+      const ul = document.createElement("ul");
+      ul.className = "hist-list";
+      for (const it of j.items) {
+        const li = document.createElement("li");
+        li.className = "hist-row";
+        li.dataset.id = it.id;
+        const created = fmtDate(it.created_date);
+        const counts  = `${it.signed_count}/${it.recipients_count} signerat`;
+        li.innerHTML =
+          `<div class="hist-head">
+             <div class="rubrik">${escapeHtml(it.rubrik || "(utan rubrik)")}</div>
+             ${statusPill(it.status)}
+             <div class="meta">${escapeHtml(counts)} · ${escapeHtml(created)}</div>
+             <div class="arrow">▾</div>
+           </div>
+           <div class="hist-detail" data-loaded="0"></div>`;
+        ul.appendChild(li);
+      }
+      body.innerHTML = "";
+      body.appendChild(ul);
+
+      ul.querySelectorAll(".hist-head").forEach((head) => {
+        head.addEventListener("click", () => {
+          const row = head.closest(".hist-row");
+          const detail = row.querySelector(".hist-detail");
+          const open = row.classList.toggle("open");
+          if (open && detail.dataset.loaded === "0") {
+            loadDetail(row.dataset.id, detail);
+          }
+        });
+      });
+    } catch (e) {
+      body.innerHTML = `<div class="hist-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }
+
+  async function loadDetail(reqId, container) {
+    container.innerHTML = `<div class="hist-loading">Hämtar detaljer…</div>`;
+    try {
+      const r = await fetch(HOST + "/admin/approval/request/" + encodeURIComponent(reqId),
+        { headers: { "x-admin-token": TOKEN } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) {
+        container.innerHTML = `<div class="hist-empty">Kunde inte hämta: ${escapeHtml(j.error || r.status)}</div>`;
+        return;
+      }
+      const req = j.request || {};
+      const apps = j.approvals || [];
+      const docs = j.documents || [];
+
+      const metaRows = [
+        ["Avsändare",       (req.sender_name || "") + (req.sender_email ? " · " + req.sender_email : "")],
+        ["Skickat",         fmtDateTime(req.created_date)],
+        ["Status",          req.status || "—"],
+        req.expires_at ? ["Sista signeringsdag", fmtDate(req.expires_at)] : null,
+        req.meddelande ? ["Meddelande", req.meddelande] : null,
+      ].filter(Boolean);
+
+      const rcpRowsHtml = apps.map((a) => {
+        const role = a.role || "Signer";
+        const isReviewer = role === "Reviewer";
+        const completedAt = isReviewer ? a.reviewed_at : a.approved_at;
+        return `
+          <tr>
+            <td class="email">${escapeHtml(a.recipient_email)}</td>
+            <td>${isReviewer ? '<span class="pill s-Draft"><span class="dot"></span>Granskare</span>' : '<span class="pill s-Sent"><span class="dot"></span>Signerare</span>'}</td>
+            <td>${statusPill(a.status)}</td>
+            <td>${completedAt ? escapeHtml(fmtDateTime(completedAt)) : "—"}</td>
+            <td>${a.signed_document
+                    ? `<a href="${escapeAttr(a.signed_document)}" target="_blank" rel="noopener">PDF ↗</a>`
+                    : (a.approval_link
+                        ? `<a href="${escapeAttr(a.approval_link)}" target="_blank" rel="noopener">länk ↗</a>`
+                        : "—")}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const anyPending = apps.some((a) =>
+        (a.role === "Reviewer") ? !a.reviewed_at : !a.approved_at
+      );
+
+      container.innerHTML = `
+        <div class="meta-grid">
+          ${metaRows.map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div>${escapeHtml(String(v))}</div>`).join("")}
+        </div>
+
+        ${anyPending ? `<div style="margin-bottom:14px;">
+          <button class="rcp-add ac-remind" data-req="${escapeAttr(reqId)}" style="background:var(--input);">Skicka påminnelse till de som inte slutfört</button>
+          <span class="ac-remind-status" style="margin-left:10px;font-size:11px;color:var(--w40);"></span>
+        </div>` : ""}
+
+        <h4>Dokument (${docs.length})</h4>
+        ${docs.length
+          ? docs.map((d) => `<div class="doc-row"><span>${escapeHtml(d.titel)}</span>${d.file ? `<a href="${escapeAttr(d.file)}" target="_blank" rel="noopener">Öppna</a>` : ""}</div>`).join("")
+          : `<div class="hist-empty" style="padding:10px;">Inga dokument</div>`}
+
+        <h4>Mottagare (${apps.length})</h4>
+        <table class="rcp-table">
+          <thead><tr><th>E-post</th><th>Roll</th><th>Status</th><th>Slutfört</th><th>Dokument</th></tr></thead>
+          <tbody>${rcpRowsHtml || `<tr><td colspan="5" style="text-align:center;color:var(--w40);">Inga mottagare</td></tr>`}</tbody>
+        </table>
+      `;
+      container.dataset.loaded = "1";
+
+      // Bind påminnelse-knapp
+      const remindBtn = container.querySelector(".ac-remind");
+      if (remindBtn) {
+        remindBtn.addEventListener("click", async () => {
+          const status = container.querySelector(".ac-remind-status");
+          remindBtn.disabled = true;
+          remindBtn.textContent = "Skickar…";
+          try {
+            const r = await fetch(HOST + "/admin/approval/remind/" + encodeURIComponent(reqId), {
+              method: "POST", headers: { "x-admin-token": TOKEN },
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !j.ok) {
+              if (status) status.textContent = "Fel: " + (j.error || r.status);
+              remindBtn.disabled = false;
+              remindBtn.textContent = "Försök igen";
+              return;
+            }
+            if (status) status.textContent = `Skickade ${j.sent} påminnelser`;
+            remindBtn.textContent = "Skickat ✓";
+            container.dataset.loaded = "0";  // tvinga refresh nästa expand
+          } catch (e) {
+            if (status) status.textContent = "Nätverksfel";
+            remindBtn.disabled = false;
+            remindBtn.textContent = "Försök igen";
+          }
+        });
+      }
+    } catch (e) {
+      container.innerHTML = `<div class="hist-empty">Nätverksfel: ${escapeHtml(e.message || e)}</div>`;
+    }
+  }
+
+  // Toggle create-form i LIST_MODE
+  $("toggle-create").addEventListener("click", () => {
+    const form = $("form-view");
+    const btn  = $("toggle-create");
+    const open = !form.classList.contains("hidden");
+    if (open) {
+      form.classList.add("hidden");
+      btn.textContent = "+ Skicka ny signering";
+    } else {
+      form.classList.remove("hidden");
+      btn.textContent = "× Avbryt";
+      form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  });
+
+  // ── Init ────────────────────────────────────────────────────────
+  $("sender-name").value = SENDER_NAME;
+  addRecipient("", "");
+  updateCounts();
+  loadUserPicker();
+
+  // ── PORT 2026-08-17: kort-API i st.f. auto-init. Kortet är alltid
+  // företags-scopat (aldrig deal), så CC_MODE/LIST_MODE sätts av setCompany.
+  FKAVTAL.sign = {
+    setCompany: function (id, nm) {
+      CLIENTCOMPANY = id || ""; DEAL = ""; DEAL_MODE = false;
+      CC_MODE = !!CLIENTCOMPANY; LIST_MODE = CC_MODE;
+      state.clientcompany = CLIENTCOMPANY;
+      const t = $("title");
+      // escapeHtml (ej strip) — annars försvinner & ur t.ex. "Fröberg & Lundholm".
+      if (t) t.innerHTML = 'Signering för <span>' + (nm ? escapeHtml(String(nm)) : "detta bolag") + '</span>';
+      const s = $("subtitle");
+      if (s) s.textContent = "Historik + ny utskick · scopad till ClientCompany";
+      const hv = $("history-view"), fv = $("form-view");
+      if (hv) hv.classList.remove("hidden");
+      if (fv) fv.classList.add("hidden");
+      loadUserPicker();
+    },
+    reload: fetchHistory
+  };
+})();
+
 })();
 </script>
