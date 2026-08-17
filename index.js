@@ -19952,6 +19952,9 @@ function _projectCompany(c) {
     ansvarig_id: _ccRef(c.Kundansvarig),
     group_id: _ccRef(c.group),
     fastighet_ids: _ccRefList(c.Fastighet),
+    // Företagets EGEN ändringstid — basen i "senast ändrad"-sorteringen (kombineras
+    // med relaterade typer via sharedCompanyTouchMapWarm). Gratis: redan hämtad.
+    modified: c["Modified Date"] || c["Created Date"] || null,
   };
 }
 // Skriv EN rå CC-post in i cachens tre Maps (används av både helsvep och delta).
@@ -20080,6 +20083,94 @@ function sharedCompanyRevenueMapWarm() {
   return c.map || null;                                                 // stale→servera, kall→null
 }
 
+// ── Delad "senast ändrad"-cache: när hände något på företaget SENAST? ────────
+// Företagslistan sorterar på bokstav ELLER senaste aktivitet. "Senaste aktivitet"
+// är inte bara ClientCompany.Modified Date — det ska räknas om NÅGON av de
+// relaterade typerna rörts. Företagsfälten nedan är VERIFIERADE (se HANDOFF §0k
+// "Företagsfält per typ" + [[reference-bubble-todo-fields]]) — gissa aldrig här:
+// fel fältnamn ger tysta nollresultat, inte fel.
+//
+// ⚠️ WU: sex helsvep är inte gratis → LAT laddning, INGEN boot-prewarm/setInterval
+// (se WU-fällan vid CC-cachen). Efter första svepet räcker DELTA på Modified Date,
+// och det är exakt rätt här: aggregatet är ett MAX, så nyare rader kan bara flytta
+// värdet FRAMÅT — en delta kan aldrig ge ett för gammalt svar. (Raderade rader kan
+// lämna en för ny tidsstämpel kvar; harmlöst för en "senast rörd"-sortering.)
+const CC_TOUCH_TTL = 15 * 60 * 1000;        // hur färsk sorteringen är (lag vid ny händelse)
+// Delta läser aldrig om gamla rader → RADERINGAR upptäcks aldrig, och en raderad
+// nyaste-rad skulle lämna företaget för högt i "senast ändrad" för alltid. Därför
+// ett periodiskt HELSVEP som nollställer aggregatet. Kostar ett svep per 12 h
+// AKTIV användning (idle = noll, cachen refreshas bara på request).
+const CC_TOUCH_FULL_TTL = 12 * 60 * 60 * 1000;
+const CC_TOUCH_SOURCES = [
+  { type: "activitet_crm", key: "company",        label: "aktivitet" },
+  { type: "Coworker",      key: "Kundföretag",    label: "person" },
+  { type: "Matter",        key: "Kundföretag",    label: "ärende" },
+  { type: "Lead",          key: "client_company", label: "lead" },
+  { type: "deal",          key: "kundföretag",    label: "affär" },
+  { type: "Todo",          key: "Företag",        label: "todo" },
+];
+let _ccTouchCache = { map: null, ts: 0, fullTs: 0, since: {} };   // since: per typ, senast sedda Modified Date
+let _ccTouchInflight = null;
+function _rowTouchTs(r) {
+  const t = Date.parse(r["Modified Date"] || r["Created Date"] || "");
+  return Number.isFinite(t) ? t : 0;
+}
+async function _loadCompanyTouch() {
+  if (_ccTouchInflight) return _ccTouchInflight;
+  _ccTouchInflight = (async () => {
+    try {
+      const prev = _ccTouchCache;
+      // Dags för helsvep? Då börjar vi om från tom karta + tomma `since` så att
+      // raderade rader försvinner ur aggregatet.
+      const wantFull = !prev.map || (Date.now() - prev.fullTs) >= CC_TOUCH_FULL_TTL;
+      const map = wantFull ? new Map() : prev.map;       // delta muterar befintlig karta
+      const since = wantFull ? {} : Object.assign({}, prev.since);
+      const perType = [];
+      let scanned = 0, delta = 0;
+      for (const src of CC_TOUCH_SOURCES) {
+        const cons = [];
+        if (since[src.type]) {
+          cons.push({ key: "Modified Date", constraint_type: "greater than", value: new Date(since[src.type]).toISOString() });
+          delta++;
+        }
+        const rows = await bubbleFindAll(src.type, { constraints: cons }).catch((e) => {
+          console.warn(`[cc-touch] ${src.type} misslyckades:`, e && e.message);
+          return null;                                    // null → rör inte `since`, försök igen nästa varv
+        });
+        if (rows == null) continue;
+        scanned += rows.length;
+        perType.push(`${src.type}:${rows.length}`);   // per typ i loggen → syns vilken som dominerar
+        let maxSeen = since[src.type] || 0;
+        for (const r of rows) {
+          const ts = _rowTouchTs(r);
+          if (ts > maxSeen) maxSeen = ts;
+          const cid = _ccRef(r[src.key]);
+          if (!cid || !ts) continue;
+          const cur = map.get(cid);
+          if (!cur || ts > cur.ts) map.set(cid, { ts, src: src.label });
+        }
+        if (maxSeen) since[src.type] = maxSeen;
+      }
+      const now = Date.now();
+      _ccTouchCache = { map, ts: now, fullTs: wantFull ? now : prev.fullTs, since };
+      // Rader per typ loggas så att faktisk WU-kostnad går att läsa av i Render
+      // (sidor ≈ Σ ceil(rader/100)+1 per typ, ~1,65 WU/sida uppmätt) i st.f. att gissas.
+      console.log(`[cc-touch] ${wantFull ? "HELSVEP" : "delta"}: ${scanned} rader (${perType.join(" ")}), ${map.size} företag med aktivitet`);
+      return _ccTouchCache;
+    } finally { _ccTouchInflight = null; }
+  })();
+  return _ccTouchInflight;
+}
+// Icke-blockerande (som omsättnings-cachen): listan ska aldrig vänta på svepen.
+// Returnerar kartan om varm/stale, annars null + bg-laddning. Frontenden visar
+// "beräknar…" och hämtar om när `touch_ready` blir true.
+function sharedCompanyTouchMapWarm() {
+  const c = _ccTouchCache;
+  if (c.map && (Date.now() - c.ts) < CC_TOUCH_TTL) return c.map;
+  _loadCompanyTouch().catch(() => {});
+  return c.map || null;
+}
+
 // Affär samlad vy (P1+P2) — routes i affar_api.js.
 registerAffarRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubbleCount, bubblePatch, bubbleCreate, bubbleDelete,
@@ -20135,6 +20226,7 @@ registerCompaniesRoutes(app, {
   companyFullMap: sharedCompanyFullMap,        // delad förvärmd CC-cache (list-projektion)
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
   companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen
+  companyTouchMapWarm: sharedCompanyTouchMapWarm,      // "senast ändrad" (aktivitet/person/ärende/lead/affär/todo)
   companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit
   bubbleCreate,                                // skapar PasswordReset- + emailqueue-rader
   appBaseUrl: process.env.APP_BASE_URL || "https://mira-fm.com",   // för reset-länkens bas

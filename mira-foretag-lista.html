@@ -65,6 +65,16 @@
   .fl-revbanner{margin:8px 2px 0;font-size:11.5px;color:var(--fl-mut);display:flex;align-items:center;gap:7px;}
   .fl-revbanner .fl-dot{width:7px;height:7px;border-radius:50%;background:var(--fl-acc);animation:fl-pulse 1.1s ease-in-out infinite;}
   .fl-calc{color:var(--fl-mut);font-size:11px;font-style:italic;opacity:.75;animation:fl-pulse 1.4s ease-in-out infinite;}
+  /* Sorteringsväxlare (A–Ö / Senast ändrad) — fristående från kolumnrubrikerna */
+  .fl-sortbar{display:inline-flex;align-items:center;gap:4px;margin-left:auto;color:var(--fl-mut);
+    font-size:11px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;}
+  .fl-sortbtn{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;
+    padding:7px 12px;cursor:pointer;font-size:12px;text-transform:none;letter-spacing:0;word-break:normal;}
+  .fl-sortbtn:hover{color:var(--fl-txt);border-color:var(--fl-acc);}
+  .fl-sortbtn.on{background:var(--fl-acc);border-color:var(--fl-acc);color:#fff;font-weight:600;}
+  /* "Ändrad"-cell: relativ tid + vad som rörde företaget */
+  .fl-mod{display:inline-flex;align-items:baseline;gap:6px;word-break:normal;}
+  .fl-modsrc{font-size:10px;color:var(--fl-mut);text-transform:uppercase;letter-spacing:.05em;}
   @keyframes fl-pulse{0%,100%{opacity:.35}50%{opacity:1}}
 
   /* ── KORT (kundkort-vy i samma block) ── */
@@ -1823,7 +1833,8 @@
     {key:"lojalitet",  label:"Lojalitet",    sort:"lojalitet",  edit:"lojalitet",  kind:"loyalty"},
     {key:"nki",        label:"NKI",          sort:"nki",        edit:"nki",        kind:"number", num:true},
     {key:"oms_now",    label:"Omsättning",   sort:"oms_now",    edit:null,         kind:"kr",     num:true, yearlbl:"now"},
-    {key:"oms_prev",   label:"Omsättning",   sort:"oms_prev",   edit:null,         kind:"kr",     num:true, yearlbl:"prev"}
+    {key:"oms_prev",   label:"Omsättning",   sort:"oms_prev",   edit:null,         kind:"kr",     num:true, yearlbl:"prev"},
+    {key:"modified",   label:"Ändrad",       sort:"modified",   edit:null,         kind:"modified"}
   ];
   var FACET_OF={kundstatus:"kundstatus", potential:"potential", lojalitet:"lojalitet", bransch:"bransch", region:"region", customer_type:"customer_type"};
 
@@ -1835,11 +1846,12 @@
   var STATE={ view:"list", q:"", sort:"name", dir:"asc", page:1, limit:100,
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
+              touch_ready:true, touchTries:0,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
-  var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null;
+  var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function kr(n){ if(n==null) return '<span class="fl-edit fl-empty">—</span>'; return esc(Math.round(n).toLocaleString("sv-SE")); }
@@ -1895,7 +1907,24 @@
     h+='<select class="fl-sel" data-flf="region">'+selOpts(fac.region||[], STATE.f.region, "Alla regioner")+'</select>';
     h+='<select class="fl-sel" data-flf="fastighet">'+selOpts(m.fastigheter||[], STATE.f.fastighet, "Alla fastigheter")+'</select>';
     h+='<button class="fl-clear" data-fl="clear">Rensa</button>';
+    // Sorteringsväxlare: fristående från kolumnrubrikerna och oberoende av filtren
+    // (servern sorterar EFTER filtreringen, så växeln gäller alltid hela träffmängden).
+    var onName=(STATE.sort==="name"), onMod=(STATE.sort==="modified");
+    h+='<span class="fl-sortbar">Sortera'+
+       '<button class="fl-sortbtn'+(onName?" on":"")+'" data-flsort="name" title="A–Ö på företagsnamn">A–Ö</button>'+
+       '<button class="fl-sortbtn'+(onMod?" on":"")+'" data-flsort="modified" title="Senaste händelse: grunddata, aktivitet, person, ärende, lead, affär eller todo">Senast ändrad</button>'+
+       '</span>';
     $("filters").innerHTML=h;
+  }
+  // Filterraden renderas BARA en gång (annars tappar sökfältet fokus/caret mitt i
+  // skrivning, eftersom debounce→reload skulle re-rendera den). Därför måste
+  // växlarens aktiv-markering uppdateras separat vid varje sorteringsbyte.
+  function syncSortBar(){
+    var bs=root.querySelectorAll('[data-flsort]');
+    for(var i=0;i<bs.length;i++){
+      var on=(bs[i].getAttribute("data-flsort")===STATE.sort);
+      if(on) bs[i].classList.add("on"); else bs[i].classList.remove("on");
+    }
   }
 
   // ── TABELL ──
@@ -1912,9 +1941,30 @@
     return '<span class="fl-pill '+cls+'">'+esc(v)+'</span>';
   }
   function loyaltyCell(v){ if(!v) return '<span class="fl-edit fl-empty">—</span>'; return '<span class="fl-star">★</span> '+esc(v); }
+  // Relativ tid + VAD som rörde företaget senast. Under uppvärmningen (touch_ready
+  // false) visar servern bara grunddata-datumet → markera det så siffran inte
+  // misstolkas som "inget har hänt".
+  function agoText(ts){
+    var d=Math.floor((Date.now()-ts)/86400000);
+    if(d<=0) return "idag";
+    if(d===1) return "igår";
+    if(d<7) return d+" dagar sedan";
+    if(d<30) return Math.floor(d/7)+" v sedan";
+    if(d<365) return Math.floor(d/30)+" mån sedan";
+    return Math.floor(d/365)+" år sedan";
+  }
+  function modifiedCell(r){
+    var t=r.modified?Date.parse(r.modified):0;
+    if(!t) return '<span class="fl-edit fl-empty">—</span>';
+    var src=r.modified_src||"";
+    var warm=STATE.touch_ready?"":' fl-calc';
+    return '<span class="fl-mod'+warm+'" title="'+esc(r.modified)+'">'+esc(agoText(t))+
+           (src?'<span class="fl-modsrc">'+esc(src)+'</span>':'')+'</span>';
+  }
   function cellHtml(c, r){
     if(c.kind==="name")     return '<span class="fl-name fl-open" data-flopen="'+esc(r.id)+'">'+esc(r.name||"—")+'</span>';
     if(c.kind==="kr"){ if(!STATE.revenue_ready) return '<span class="fl-calc">beräknar…</span>'; return kr(c.key==="oms_now"?r.oms_now:r.oms_prev); }
+    if(c.kind==="modified") return modifiedCell(r);
     if(c.kind==="status")   return statusPill(r.kundstatus);
     if(c.kind==="loyalty")  return loyaltyCell(r.lojalitet);
     if(c.kind==="userref")  return r.ansvarig?esc(r.ansvarig):'<span class="fl-edit fl-empty">—</span>';
@@ -1931,6 +1981,7 @@
   }
   function rowInner(r){ var h=""; for(var i=0;i<COLS.length;i++) h+=tdOf(COLS[i], r); return h; }
   function renderTable(){
+    syncSortBar();
     var head=""; for(var i=0;i<COLS.length;i++) head+=th(COLS[i]);
     var body="";
     for(var j=0;j<STATE.rows.length;j++){ var r=STATE.rows[j]; body+='<tr data-id="'+esc(r.id)+'">'+rowInner(r)+'</tr>'; }
@@ -2002,6 +2053,7 @@
     if(!j||!j.ok) return false;
     STATE.total=j.total; STATE.pages=j.pages; STATE.year=j.year; STATE.prev=j.prev;
     STATE.revenue_ready=(j.revenue_ready!==false);
+    STATE.touch_ready=(j.touch_ready!==false);
     if(j.meta) STATE.meta=j.meta;
     if(append) STATE.rows=STATE.rows.concat(j.rows||[]); else STATE.rows=j.rows||[];
     return true;
@@ -2012,6 +2064,15 @@
     _revTimer=setTimeout(function(){ STATE.revTries++;
       api(qstr()).then(function(j){ if(applyResp(j,false)){ cacheSet(ckey(),j); if(STATE.view==="list") renderTable(); scheduleRevenueRefetch(); } });
     }, Math.min(4000+STATE.revTries*1000, 12000));
+  }
+  // Samma mönster för "senast ändrad"-svepen. Viktigt när man sorterar på ändrad:
+  // ORDNINGEN ändras när svepen blir klara, inte bara cellernas innehåll.
+  function scheduleTouchRefetch(){
+    if(_touchTimer){ clearTimeout(_touchTimer); _touchTimer=null; }
+    if(STATE.touch_ready || STATE.touchTries>20 || STATE.view!=="list") return;
+    _touchTimer=setTimeout(function(){ STATE.touchTries++;
+      api(qstr()).then(function(j){ if(applyResp(j,false)){ cacheSet(ckey(),j); if(STATE.view==="list") renderTable(); scheduleTouchRefetch(); } });
+    }, Math.min(3000+STATE.touchTries*1000, 12000));
   }
   function load(append){
     var path=qstr(), key=ckey(), painted=false;
@@ -2026,7 +2087,7 @@
       cacheSet(key, j);
       if(STATE.meta && !$("filters").innerHTML) renderFilters();
       if(STATE.view==="list") renderTable();
-      if(!append){ STATE.revTries=0; scheduleRevenueRefetch(); }
+      if(!append){ STATE.revTries=0; scheduleRevenueRefetch(); STATE.touchTries=0; scheduleTouchRefetch(); }
     }).catch(function(){ stopProg(); if(!STATE.rows.length) $("body").innerHTML='<div class="fl-err">Nätverksfel — kontrollera api_host/token.</div>'; });
   }
   function reload(){ STATE.page=1; load(false); }
@@ -3071,8 +3132,15 @@
     // LIST-vy
     var op=t.closest?t.closest('[data-flopen]'):null;
     if(op){ openCard(op.getAttribute("data-flopen")); return; }
+    // Sorteringsväxlaren: sätter nyckel + naturlig riktning (A–Ö asc, ändrad desc).
+    // Klick på redan aktiv knapp vänder riktningen, så man kommer åt "äldst först".
+    var sb=t.closest?t.closest("[data-flsort]"):null;
+    if(sb){ var sk=sb.getAttribute("data-flsort");
+      if(STATE.sort===sk) STATE.dir=(STATE.dir==="asc"?"desc":"asc");
+      else { STATE.sort=sk; STATE.dir=(sk==="modified"?"desc":"asc"); }
+      reload(); return; }
     var soRt=t.closest?t.closest("th[data-sort]"):null;
-    if(soRt){ var s=soRt.getAttribute("data-sort"); if(STATE.sort===s) STATE.dir=(STATE.dir==="asc"?"desc":"asc"); else { STATE.sort=s; STATE.dir="asc"; } reload(); return; }
+    if(soRt){ var s=soRt.getAttribute("data-sort"); if(STATE.sort===s) STATE.dir=(STATE.dir==="asc"?"desc":"asc"); else { STATE.sort=s; STATE.dir=(s==="modified"?"desc":"asc"); } reload(); return; }
     if(t.closest && t.closest('[data-fl="more"]')){ STATE.page++; load(true); return; }
     if(t.closest && t.closest('[data-fl="refresh"]')){ cacheClearAll(); reload(); return; }
     if(t.closest && t.closest('[data-fl="clear"]')){ STATE.q=""; for(var k in STATE.f) STATE.f[k]=""; renderFilters(); reload(); return; }

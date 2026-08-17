@@ -4,10 +4,17 @@ import { registerCompaniesRoutes } from "./companies_api.js";
 
 // ── Rå ClientCompany-DB (för bubbleGet/patch + re-projektion i companyPatchEntry) ──
 const CC = {
-  cc1: { _id: "cc1", Name_company: "Acme AB",   Org_Number: "556000-1111", Kundstatus: "Aktiv kund", Bransch: "IT", Potential: "A-kund", Lojalitet: "3", Region: "Stockholm", customer_type: "Direkt", NKI_carotte: 8, antal_medarbetare: 40, "omsättning": 5000, Kundansvarig: "u1", group: "g1", Fastighet: ["f1", "f2"], Email: "info@acme.se", Telefon: 733716298, hemsida_crm: "acme.se", kundinfo_crm: "Bra kund", Fakturainfo: "Ref 42", "Grundat_år": "1999-01-01", Adress: { address: "Storgatan 1, Stockholm" }, logotyp: "//img/acme.png" },
-  cc2: { _id: "cc2", Name_company: "Beta Bygg",  Org_Number: "556000-2222", Kundstatus: "Prospekt",   Bransch: "Bygg", Potential: "B-kund", Lojalitet: "2", Region: "Göteborg", customer_type: "", NKI_carotte: null, antal_medarbetare: 10, "omsättning": null, Kundansvarig: "u2", group: null, Fastighet: ["f1"] },
-  cc3: { _id: "cc3", Name_company: "Zeta Zoo",   Org_Number: "556000-3333", Kundstatus: "",          Bransch: "", Potential: "", Lojalitet: "", Region: "", customer_type: "", NKI_carotte: null, antal_medarbetare: null, "omsättning": null, Kundansvarig: null, group: null, Fastighet: [] },
+  cc1: { _id: "cc1", "Modified Date": "2026-08-01T09:00:00.000Z", Name_company: "Acme AB",   Org_Number: "556000-1111", Kundstatus: "Aktiv kund", Bransch: "IT", Potential: "A-kund", Lojalitet: "3", Region: "Stockholm", customer_type: "Direkt", NKI_carotte: 8, antal_medarbetare: 40, "omsättning": 5000, Kundansvarig: "u1", group: "g1", Fastighet: ["f1", "f2"], Email: "info@acme.se", Telefon: 733716298, hemsida_crm: "acme.se", kundinfo_crm: "Bra kund", Fakturainfo: "Ref 42", "Grundat_år": "1999-01-01", Adress: { address: "Storgatan 1, Stockholm" }, logotyp: "//img/acme.png" },
+  cc2: { _id: "cc2", "Modified Date": "2026-08-10T09:00:00.000Z", Name_company: "Beta Bygg",  Org_Number: "556000-2222", Kundstatus: "Prospekt",   Bransch: "Bygg", Potential: "B-kund", Lojalitet: "2", Region: "Göteborg", customer_type: "", NKI_carotte: null, antal_medarbetare: 10, "omsättning": null, Kundansvarig: "u2", group: null, Fastighet: ["f1"] },
+  cc3: { _id: "cc3", "Modified Date": "2026-06-01T09:00:00.000Z", Name_company: "Zeta Zoo",   Org_Number: "556000-3333", Kundstatus: "",          Bransch: "", Potential: "", Lojalitet: "", Region: "", customer_type: "", NKI_carotte: null, antal_medarbetare: null, "omsättning": null, Kundansvarig: null, group: null, Fastighet: [] },
 };
+// "Senast ändrad" — relaterade typers senaste rörelse per företag (index.js
+// sharedCompanyTouchMapWarm). cc1: aktivitet NYARE än egen Modified Date;
+// cc2: lead ÄLDRE än egen → grunddata vinner; cc3: ingen relaterad rörelse.
+const TOUCH = new Map([
+  ["cc1", { ts: Date.parse("2026-08-15T12:00:00.000Z"), src: "aktivitet" }],
+  ["cc2", { ts: Date.parse("2026-07-01T12:00:00.000Z"), src: "lead" }],
+]);
 const REV = new Map([["cc1", { 2025: 146750, 2026: 40992 }], ["cc2", { 2026: 7600 }]]);
 const AUX = {
   ClientGroup: [{ _id: "g1", name: "Acme-koncernen" }],
@@ -114,6 +121,7 @@ function project(c) {
     lojalitet: String(c.Lojalitet || ""), region: String(c.Region || ""), customer_type: String(c.customer_type || ""),
     nki: _num(c.NKI_carotte), antal_medarbetare: _num(c.antal_medarbetare), omsattning_field: _num(c["omsättning"]),
     ansvarig_id: _ref(c.Kundansvarig), group_id: _ref(c.group), fastighet_ids: _refList(c.Fastighet),
+    modified: c["Modified Date"] || c["Created Date"] || null,
   };
 }
 const FULL = new Map(Object.values(CC).map((c) => [c._id, project(c)]));
@@ -141,6 +149,7 @@ const deps = {
   companyFullMap: async () => FULL,
   companyRevenueMap: async () => REV,
   companyRevenueMapWarm: () => REV,
+  companyTouchMapWarm: () => TOUCH,
   companyPatchEntry: (id, fresh) => { FULL.set(id, project(fresh)); },
   assignTempPassword: async ({ email }) => ({ ok: true, temp_password: "TMP-" + email }),
   createUserAccount: async (args) => { createUserCalls.push(args); return { ok: true, user_id: "newuser1" }; },
@@ -227,6 +236,33 @@ const run = async () => {
   // ── SORT: oms_now numeriskt ──
   const sO = await call(s.routes, "get", "/admin/companies/list", { query: { sort: "oms_now", dir: "desc" } });
   ok("sort oms_now desc → Acme(40992) först", sO.body.rows[0].id === "cc1");
+
+  // ── SORT: senast ändrad (grunddata + relaterade typer) 2026-08-17 ──
+  const sM = await call(s.routes, "get", "/admin/companies/list", { query: { sort: "modified" } });
+  ok("sort modified utan dir → desc (nyast först): cc1, cc2, cc3",
+    sM.body.rows.map((r) => r.id).join(",") === "cc1,cc2,cc3");
+  ok("modified = MAX(egen, relaterad) + källa när relaterad vinner",
+    sM.body.rows[0].modified_src === "aktivitet" && /^2026-08-15/.test(sM.body.rows[0].modified));
+  ok("egen Modified Date vinner → källa 'grunddata'",
+    sM.body.rows[1].modified_src === "grunddata" && /^2026-08-10/.test(sM.body.rows[1].modified));
+  ok("företag utan relaterad rörelse faller tillbaka på egen tid",
+    sM.body.rows[2].id === "cc3" && sM.body.rows[2].modified_src === "grunddata" && /^2026-06-01/.test(sM.body.rows[2].modified));
+  ok("list bär touch_ready=true när cachen är varm", sM.body.touch_ready === true);
+  const sMa = await call(s.routes, "get", "/admin/companies/list", { query: { sort: "modified", dir: "asc" } });
+  ok("explicit dir=asc vänder → äldst först", sMa.body.rows.map((r) => r.id).join(",") === "cc3,cc2,cc1");
+  // Sorteringen ska gälla OAVSETT filter (den körs efter filtreringen)
+  const sMf = await call(s.routes, "get", "/admin/companies/list", { query: { sort: "modified", fastighet: "f1" } });
+  ok("sort modified + filter fastighet=f1 → 2 rader, nyast först",
+    sMf.body.total === 2 && sMf.body.rows.map((r) => r.id).join(",") === "cc1,cc2");
+  const sMfa = await call(s.routes, "get", "/admin/companies/list", { query: { sort: "modified", dir: "asc", fastighet: "f1" } });
+  ok("samma filter + asc → omvänd ordning", sMfa.body.rows.map((r) => r.id).join(",") === "cc2,cc1");
+  // Kall touch-cache: touch_ready=false och bara grunddata-datum
+  var coldTouch = Object.assign({}, deps, { companyTouchMapWarm: function () { return null; } });
+  var ts2 = mk(); registerCompaniesRoutes(ts2.app, coldTouch);
+  var lt = await call(ts2.routes, "get", "/admin/companies/list", { query: { sort: "modified" } });
+  ok("kall touch-cache → touch_ready=false + grunddata-ordning (cc2 nyast)",
+    lt.body.touch_ready === false && lt.body.rows.map((r) => r.id).join(",") === "cc2,cc1,cc3" &&
+    lt.body.rows[0].modified_src === "grunddata");
 
   // ── PAGINERING ──
   const p1 = await call(s.routes, "get", "/admin/companies/list", { query: { limit: "2", page: "1" } });

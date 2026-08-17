@@ -25,7 +25,7 @@ export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate, bubbleDelete,
     bubbleUploadFile, photoUpload,
-    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyPatchEntry,
+    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyTouchMapWarm, companyPatchEntry,
     assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
@@ -167,6 +167,21 @@ export function registerCompaniesRoutes(app, deps) {
       fastigheter: (c.fastighet_ids || []).map((id) => ctx.fast.get(id)).filter(Boolean),
       oms_now: rev[yearNow] != null ? rev[yearNow] : null,
       oms_prev: rev[yearPrev] != null ? rev[yearPrev] : null,
+      // ── Senast ändrad ──────────────────────────────────────────────
+      // MAX(företagets egen Modified Date, senaste relaterade rad). `modified_src`
+      // säger VAD som rörde det ("aktivitet"/"person"/"ärende"/"lead"/"affär"/"todo"
+      // eller "grunddata") så listan kan visa varför raden ligger högt.
+      ...(function () {
+        const own = Date.parse(c.modified || "") || 0;
+        const t = ctx.touch.get(c.id);
+        const rel = t ? t.ts : 0;
+        const ts = Math.max(own, rel);
+        return {
+          modified_ts: ts || null,
+          modified: ts ? new Date(ts).toISOString() : "",
+          modified_src: !ts ? "" : (rel > own ? t.src : "grunddata"),
+        };
+      })(),
     };
   }
 
@@ -184,8 +199,12 @@ export function registerCompaniesRoutes(app, deps) {
     nki:        (r) => r.nki,
     oms_now:    (r) => r.oms_now,
     oms_prev:   (r) => r.oms_prev,
+    modified:   (r) => r.modified_ts,
   };
-  const NUMERIC_SORT = new Set(["nki", "oms_now", "oms_prev"]);
+  const NUMERIC_SORT = new Set(["nki", "oms_now", "oms_prev", "modified"]);
+  // Sorteras man på "senast ändrad" vill man nyast först → desc som default.
+  // (Bokstavsordning fortsätter defaulta till asc.)
+  const DEFAULT_DESC = new Set(["modified"]);
 
   function guard(req, res) {
     if (planningCors) planningCors(req, res);
@@ -203,7 +222,12 @@ export function registerCompaniesRoutes(app, deps) {
       companyFullMap(), _users(), _groups(), _fastigheter(),
     ]);
     const rev = companyRevenueMapWarm ? companyRevenueMapWarm() : (await companyRevenueMap());
-    return { full, rev: rev || new Map(), revenueReady: !!rev, users: u.map, groups: g.map, fast: f.map };
+    // "Senast ändrad": icke-blockerande som omsättningen. null → touchReady=false,
+    // listan faller tillbaka på företagets egen Modified Date tills svepen är klara.
+    const touch = companyTouchMapWarm ? companyTouchMapWarm() : null;
+    return { full, rev: rev || new Map(), revenueReady: !!rev,
+             touch: touch || new Map(), touchReady: !!touch,
+             users: u.map, groups: g.map, fast: f.map };
   }
 
   // ── GET /admin/companies/meta ──────────────────────────────────────
@@ -275,7 +299,9 @@ export function registerCompaniesRoutes(app, deps) {
 
       // Sortering (tomma alltid sist, oavsett riktning)
       const sortKey = SORT_GETTERS[_str(req.query.sort)] ? _str(req.query.sort) : "name";
-      const dir = _str(req.query.dir) === "desc" ? -1 : 1;
+      const dirQ = _str(req.query.dir);
+      // Ingen explicit riktning → asc, utom för nycklar där desc är det naturliga (modified).
+      const dir = (dirQ === "desc" || (!dirQ && DEFAULT_DESC.has(sortKey))) ? -1 : 1;
       const getv = SORT_GETTERS[sortKey];
       const isNum = NUMERIC_SORT.has(sortKey);
       rows.sort((a, b) => {
@@ -299,6 +325,7 @@ export function registerCompaniesRoutes(app, deps) {
         pages: Math.max(1, Math.ceil(total / limit)),
         year: yearNow, prev: yearPrev,
         revenue_ready: ctx.revenueReady,   // false = faktura-scanningen värms fortf. → oms-kolumnerna kommer strax
+        touch_ready: ctx.touchReady,       // false = "senast ändrad"-svepen värms → visar bara grunddata-datum tills klart
         rows: pageRows,
       };
       if (_str(req.query.meta) === "1" || page === 1) {
