@@ -13,7 +13,7 @@
 #              ./sync_v2_cron.sh pdf        (drän needs_pdf_sync, kräver SYNC_V2_ORDERS=1)
 #
 # Env (Render): HOST, MIRA_RENDER_API_KEY, SYNC_SECRET.
-#   MODIFIED_DAYS_BACK (default 3), SYNC_YEAR (default innevarande år, för full).
+#   MODIFIED_DAYS_BACK (default 2), SYNC_YEAR (default innevarande år, för full).
 #   SYNC_V2_ORDERS (default 0): sätt =1 för att aktivera order/offer/workorder + PDF.
 #     ⚠️ CUTOVER (9e): innan du sätter =1, STÄNG AV gamla order/offer/workorder-cron
 #        (fortnox_cron_v1.sh, tengella_cron.sh, fortnox_offers_recent_10min.sh) så de
@@ -36,7 +36,7 @@ GROUP="1771579485842x995491391876972200"   # Group (Fortnox-native; exkl i KPI m
 # hitta fakturan") — HK-PDF hämtas via /tengella/enrich/invoice-pdfs.
 FORTNOX_NATIVE="$FE $STAFF $GROUP"
 TENGELLA_ORGNO="${TENGELLA_ORGNO:-746-0509}"   # Tengella-tenant (för kund-synk)
-CUST_DAYS="${CUST_DAYS:-${MODIFIED_DAYS_BACK:-3}}"  # lastmodified-fönster för kund-synk
+CUST_DAYS="${CUST_DAYS:-${MODIFIED_DAYS_BACK:-2}}"  # lastmodified-fönster för kund-synk (WU P4: 3→2 2026-08-17)
 CUST_PAGES="${CUST_PAGES:-3}"                       # max sidor/kund-synk (inkrementell → litet)
 # WU-fix P0: full-läget skannar bara SENASTE fönstret (gamla ordrar/offerter/fakturor
 # ändras aldrig; nattens modified-sweep fångar alla ändringar oavsett dokumentålder).
@@ -207,7 +207,9 @@ if [ "$MODE" = "full" ]; then
   done
   post /tengella/enrich/invoice-pdfs "{\"pause_ms\":150,\"max_enrich\":300}"
 else
-  DB="${MODIFIED_DAYS_BACK:-3}"
+  # WU P4 (2026-08-17): default 3→2 dygn. Cronen kör nattligt, så 2 dygn ger fortfarande
+  # ett dygns överlapp om en körning missas/faller. Höj via Render-env vid behov.
+  DB="${MODIFIED_DAYS_BACK:-2}"
   # Tengella saknar modified-filter → synka senaste ~2 mån (Linux date; macOS-fallback).
   TSINCE="$(date -u -d '40 days ago' +%Y-%m 2>/dev/null || date -u -v-40d +%Y-%m)"
   echo "[sync_v2] NIGHTLY modified=${DB}d tengella_since=${TSINCE} @ $(date -u +%FT%TZ)"

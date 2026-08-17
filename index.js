@@ -10826,7 +10826,12 @@ const FE_CONNECTION_ID = "1771579463578x385222043661358460";
 let offertEngine = null;
 
 let _salesCache = { data: null, ts: 0 };
-const SALES_TTL = 4 * 60 * 60 * 1000; // 4h
+// WU (P3, sänkt 4h→24h 2026-08-17): computeSalesKpi sveper HELA FortnoxInvoice
+// (~10k rader inkl ft_raw_json) → ~100+ sidhämtningar per körning. Med 4h TTL kunde
+// den gå upp till 6 ggr/dygn så fort någon öppnade dashboard/portal dagtid. KPI:t är
+// ett årsvärde som inte rör sig nämnvärt inom ett dygn. Behöver man färska siffror:
+// `POST /kpi/sales/flush` eller `?force=1`. Lat laddning — ingen prewarm.
+const SALES_TTL = 24 * 60 * 60 * 1000; // 24h
 
 async function computeSalesKpi(year) {
   const yearStartTs     = new Date(`${year}-01-01T00:00:00Z`).getTime();
