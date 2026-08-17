@@ -119,17 +119,20 @@ function project(c) {
 const FULL = new Map(Object.values(CC).map((c) => [c._id, project(c)]));
 
 const fetchedTypes = [];
+const findAllCalls = [];   // {t, constraints} — för att bevisa att filter går NER i Bubble
+const getCalls = [];       // {t, id} — för att mäta N+1 (kontorsnamn per rad)
 const createUserCalls = [];
 const deps = {
   bubbleId: (r) => (r ? r._id : null),
   bubbleFindAll: async (t, { constraints = [] } = {}) => {
     fetchedTypes.push(t);
+    findAllCalls.push({ t, constraints });
     const arr = STORE[t] || AUX[t] || (t === "ClientCompany" ? Object.values(CC) : []);
     return arr.filter((r) => _cmatch(r, constraints));
   },
   bubbleFind: async (t) => { fetchedTypes.push(t); return STORE[t] || AUX[t] || []; },
   bubbleCount: async (t, cs = []) => (STORE[t] ? STORE[t].filter((r) => _cmatch(r, cs)).length : 0),
-  bubbleGet: async (t, id) => { if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
+  bubbleGet: async (t, id) => { getCalls.push({ t, id }); if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
   bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; } if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); } return {}; },
   bubbleCreate: async (t, payload) => { const id = "new_" + (++_idc); (STORE[t] = STORE[t] || []).push(Object.assign({ _id: id }, payload)); return id; },
   bubbleDelete: async (t, id) => { if (STORE[t]) { const i = STORE[t].findIndex((r) => r._id === id); if (i >= 0) STORE[t].splice(i, 1); } return {}; },
@@ -519,6 +522,42 @@ const run = async () => {
   ok("drift matters bär prioritet-facet", Array.isArray(dPrio.body.prioriteter));
   var dQC = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc" } });
   ok("drift qc → 1 (qc1) + företagsnamn resolvat", dQC.body.ok && dQC.body.total === 1 && dQC.body.rows[0].id === "qc1" && dQC.body.rows[0].company === "Acme AB");
+
+  // ── DRIFT-lista: paginering / facet / N+1 på kontorsnamn (WU-fix 2026-08-17) ──
+  // 90 bulk-ärenden på cc3 (Zeta Zoo), VARJE med eget Kontor → gamla koden gjorde en
+  // bubbleGet per distinkt kontor i HELA träffmängden (90 st) för att rendera 40 rader.
+  // reported_at faller med i → i=1 nyast (sida 1), i=90 äldst (sista sidan).
+  for (var bi = 1; bi <= 90; bi++) {
+    STORE.Matter.push({
+      _id: "bm" + bi, "Kundföretag": "cc3", Rubrik: "Bulkärende " + bi, status: "Pågående",
+      Prioritet: (bi === 90 ? "1 - låg" : "3 - brådskande"),   // "1 - låg" finns BARA på sista sidan
+      Kontor: "ofb" + bi,
+      reported_at: new Date(Date.UTC(2026, 0, 1) + (90 - bi) * 86400000).toISOString().slice(0, 10),
+    });
+  }
+  var getsBefore = getCalls.filter(function (c) { return c.t === "Office"; }).length;
+  var pg1 = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open", company: "zeta" } });
+  var officeGets = getCalls.filter(function (c) { return c.t === "Office"; }).length - getsBefore;
+  ok("drift paginering: total=90, pages=3, men bara 40 rader i svaret", pg1.body.total === 90 && pg1.body.pages === 3 && pg1.body.rows.length === 40);
+  ok("drift resolvar kontorsnamn BARA för sidans rader (" + officeGets + " bubbleGet, ej 90)", officeGets > 0 && officeGets <= 40);
+  ok("drift sida 1 sorterad nyast först (bm1 överst)", pg1.body.rows[0].id === "bm1");
+  var pg3 = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open", company: "zeta", page: "3" } });
+  ok("drift sida 3 = 10 rader utan överlapp mot sida 1", pg3.body.rows.length === 10 && !pg3.body.rows.some(function (r) { return pg1.body.rows.some(function (x) { return x.id === r.id; }); }));
+  ok("drift prioritet-facet räknas på HELA träffmängden, inte bara sidan", pg1.body.prioriteter.indexOf("1 - låg") > -1 && pg1.body.prioriteter.indexOf("3 - brådskande") > -1);
+  var pgPrio = await call(s.routes, "get", "/admin/drift/list", { query: { type: "matters", scope: "open", company: "zeta", prio: "1 - låg" } });
+  ok("drift prioritet-filter → 1 (bm90)", pgPrio.body.total === 1 && pgPrio.body.rows[0].id === "bm90");
+  // QC: `q` ska gå NER i Bubble som constraint på Titel (inte helsvep + filter i minnet)
+  findAllCalls.length = 0;
+  var qcQ = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc", q: "regelmässigt" } });
+  var qcCall = findAllCalls.filter(function (c) { return c.t === "QualityControl"; })[0];
+  ok("drift qc-sök skickar Titel-constraint till Bubble", !!qcCall && qcCall.constraints.some(function (c) { return c.key === "Titel" && c.constraint_type === "text contains"; }));
+  ok("drift qc-sök → 1 (qc1)", qcQ.body.total === 1 && qcQ.body.rows[0].id === "qc1");
+  var qcMiss = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc", q: "finnsinte" } });
+  ok("drift qc-sök utan träff → 0", qcMiss.body.total === 0 && qcMiss.body.rows.length === 0);
+  var qcCo = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc", company: "acme" } });
+  ok("drift qc företagsfilter (på rådata) → 1 (qc1)", qcCo.body.total === 1 && qcCo.body.rows[0].id === "qc1");
+  var qcCoMiss = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc", company: "zeta" } });
+  ok("drift qc företagsfilter utan träff → 0", qcCoMiss.body.total === 0);
 
   // ── DRIFT SKRIV (status + kommentar) — sist för att inte mutera tidigare assertions ──
   var cLen = STORE.Matter.filter(function(r){return r._id==="mt1";})[0]["Tråd"].length;

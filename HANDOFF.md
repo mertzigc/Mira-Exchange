@@ -8,14 +8,15 @@
 
 ---
 
-## 0k. FÖRETAGSLISTA + KUNDKORT (render-omtag av Bubble-native företagsvyn) — LIVE & VERIFIERAT 2026-08-14
+## 0k. FÖRETAGSLISTA + KUNDKORT + DRIFT (render-omtag av Bubble-native företagsvyn) — byggt 2026-08-13→16
 
-**Mål:** ersätta Bubbles native företagslista + expanderat kundkort med EETT render-baserat HTML-block (samma DI-mönster som affär/sälj/produktion). Ingen Bubble-popup/workflow för kortet — allt är vy-växling i samma block. **Allt deployat + skarpt testat.**
+**Mål:** ersätta Bubbles native företagslista + expanderat kundkort (+ Drift-modul) med render-baserade HTML-block (samma DI-mönster som affär/sälj/produktion). Ingen Bubble-popup/workflow för kortet — allt är vy-växling i samma block. **Deploy-läge blandat:** Christian deployar per feature (git→Render + klistrar om HTML-block). De flesta sektioner nedan är "ej deployat" när de skrevs men Christian har deployat kontinuerligt — fråga vid osäkerhet vad som är live.
 
 ### Filer
-- **`companies_api.js`** (NY, ~48k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
-- **`mira-foretag-lista.html`** (NY, ~63k) — ENDA Bubble-blocket (lista + kort + alla flikar). `.fl`/`.fk`-namnrymd, BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` + `planning_token` (INGET company_id — kortet öppnas från raden).
-- **`companies_smoke.mjs`** — 165/165 gröna. `index.js` — wiring + delade cachar + Bubble-wf-callers. `emailer.js` — mallar `password_reset` + `user_welcome`.
+- **`companies_api.js`** (NY, ~70k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
+- **`mira-foretag-lista.html`** (NY, ~90k) — Bubble-blocket för lista + kort + ALLA flikar (inkl Drift-fliken). `.fl`/`.fk`-namnrymd, BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` + `planning_token` + `user_company` (Leverantörer/personal) + `user_name` (Drift-kommentarer).
+- **`mira-drift.html`** (NY, ~14k) — stå-alone Drift-modul (aggregerat över alla kunder + sök/filter). `.dr`-namnrymd. data-mira: `api_host` + `planning_token` + `user_name`. Återanvänder detalj-endpoints.
+- **`companies_smoke.mjs`** — 176/176 gröna. **`cc_cache_smoke.mjs`** (NY) — 26/26, testar den delade CC-cachen i index.js genom att klippa ut blocket ur källkoden och räkna Bubble-sidhämtningar (se WU-städningen). `index.js` — wiring + delade cachar + Bubble-wf-callers + openPrefixes (`/admin/companies`, `/admin/drift`, `/admin/reset-password`). `emailer.js` — mallar `password_reset` + `user_welcome`.
 
 ### Backend-arkitektur (companies_api.js)
 - **Delade cachar (index.js):** `sharedCompanyFullMap` (CC-list-projektion ur EN 55-sidorsladdning) + `sharedCompanyRevenueMapWarm` (FortnoxInvoice.ft_net/år, **lat** — ingen boot-prewarm, WU-medveten). Listan gör NOLL Bubble-anrop (allt ur cacharna); bara PATCH/skapa skriver.
@@ -34,7 +35,9 @@ Hem ✅ (kunddata läs/redigera + KPI + snabbåtgärder: "+ Ny aktivitet"→Hist
 - **Logo:** `POST /admin/companies/:id/logo` (multipart `file`, `clear=1`; original-fil, behåller transparens) → `ClientCompany.logotyp`. Frontend `logoBody` (Logo-subtab): förhandsvisning + Ladda upp/Byt/Ta bort. Kort-headern speglar direkt (`STATE.card.company.logotyp`).
 - **Leverantörer — kopplingar bekräftade via native RG-filter (skärmdump):** (1) **Dotterbolag** = `Leverantör - Supplier` där `Kundföretag`(List of ClientCompany) contains företaget → add/remove = patcha **leverantörens** Kundföretag-lista. (2) **Personal** = `User` där `Associated_company`(List of ClientCompany) contains företaget → add/remove = patcha **Userns** Associated_company (styr notiser). Pool för personal-dropdown = Users vars `Company` == inloggad Carotte-users company → skickas som `?user_company=` (nytt `data-mira="user_company"`-hidden-input, bind Current User's Company i Bubble).
 - **Backend:** `GET /admin/companies/:id/leverantorer?user_company=` (suppliers+available+personnel+personnel_available) · `POST .../leverantor {supplier_id}` · `DELETE .../leverantor/:sid` · `POST .../personal {user_id}` · `DELETE .../personal/:uid`. Frontend `leverantorerBody`/`levSection` (2 sektioner, dropdown-add + Ta bort), `fetchLeverantorer`/`addLev`/`delLev`, STATE.setupLev.
-- Verifierat: smoke 140/140 (logo set/clear/404 + suppliers add/remove + personal add/remove via Associated_company + pool via Company==user_company) + harness (Logo upload→header uppdaterad; dotterbolag+personal add/remove). Deploy: index.js oförändrad; companies_api.js + klistra om mira-foretag-lista.html + **bind data-mira user_company** i Bubble.
+- Verifierat: smoke (logo set/clear/404 + suppliers add/remove + personal add/remove via Associated_company + pool via Company==user_company) + harness (Logo upload→header uppdaterad; dotterbolag+personal add/remove). Deploy: index.js oförändrad; companies_api.js + klistra om mira-foretag-lista.html + **bind data-mira user_company** i Bubble.
+- **Fastighetsägare:** knyt företaget som hyresgäst till en/flera **`Hyresvärd`** via dess `Hyresgäster`(List of ClientCompany)-lista (samma mönster som dotterbolag). `GET/POST /admin/companies/:id/fastighetsagare` + `DELETE .../:hid`. Frontend återanvänder `levSection`("landlord") via generaliserad `LEV_EP`-map (supplier/staff/landlord → path/key/state). Kund-nivå-notiser: styr t.ex. vilka erbjudanden som visas för en fastighetsägares hyresgäster.
+- **Logo i kort-huvudet:** rektangulär logga visas i full bredd (vit pill, `.fk-herologo` fast höjd 56px + auto bredd, `object-fit:contain`) uppe till HÖGER; initial-ruta som fallback när logga saknas.
 
 ### Inställningar → Kontor (Office) — KLAR + verifierat 2026-08-15 (ej deployat)
 Underflikar (`STATE.setupSub`): Kontor · Leverantörer · Logo · Fastighetsägare · Medarbetarportal (Avtal skippat). Kontor byggd; övriga = placeholder.
@@ -74,6 +77,23 @@ Aggregerar ärenden + kvalitetskontroller över ALLA kunder m. sök/filter/pagin
 - Verifierat: smoke 165/165 (status set+closed_date, comment append+ren stämpel, tråd-tvätt 260810→"10 aug 2026 · 09:15", status_options ur datan, 400/404) + harness (status→Pausad visas i pill, kommentera→ny rad, tråd unison). Deploy: companies_api.js + klistra om BÅDA blocken + bind data-mira user_name.
 - **Kvar Drift: Fas 2 forts. (skapa ärende + ärendekategorier + team) · Fas 3 (QC SKRIV).**
 
+### ⚠️ WU-STÄDNING 2026-08-17 (P0–P2) — idle-golvet halverat, deploy-straffet borta
+**Symptom:** Bubble-WU gick från ~1,5–3,5k/dygn (idle, juli) till 26–49k/dygn — även på helger då bara Christian var igång. Diagnos ur App Metrics → Workload by activity + timgrafen:
+- **16 aug (söndag):** 34 891 WU totalt, varav `Data: clientcompany` **23 474 WU (68,8 %) på 14 221 runs ≈ 1,65 WU per 100-radssida.** Timgrafen visade ett platt **idle-golv ~700 WU/h** som INTE fanns i juli.
+- **Roten:** `setInterval(_loadSharedCC, 10 min)` (införd 13 aug i commit `7cdd28a` "snabbare laddning") svepte hela ClientCompany (5413 poster = 55 sidor) **144 ggr/dygn dygnet runt** = ~7 900 sidhämtningar ≈ **13 000 WU/dygn = 78 % av idle-golvet**, oavsett om någon var inloggad.
+- **Varför extra när Christian jobbade:** (1) varje Render-deploy startar om processen → **boot-prewarm = nytt 55-sidorssvep** (+ intervallklockan nollställdes → fler än 6 svep/h vid täta deploys); (2) `/admin/planning/companies` och `/admin/clientcompany/all` gjorde **egna helsvep per anrop** (~89 WU per sidladdning).
+
+**Fixar:**
+- **P0 (`index.js`):** `setInterval` BORTTAGEN. `CC_SHARED_TTL` 15→**60 min**, nytt `CC_FULL_TTL` **12 h**, `CC_DELTA_MARGIN` 5 min. SWR räcker (stale serveras direkt, refresh i bg). **Lägg ALDRIG tillbaka en setInterval på ett helsvep** — blockkommentaren ovanför cachen dokumenterar fällan.
+- **P0c delta-refresh (`index.js`):** helsvep bara vid boot + var `CC_FULL_TTL` (enda sättet att se **raderade** poster). Däremellan `bubbleFindAll ClientCompany [Modified Date > senast sedda − marginal]` → **1 sida i st.f. 55**. `_ccApply` skriver in poster, `_ccBumpMod` flyttar fönstret — **bara från riktiga svep, aldrig från `sharedCompanyPatchEntry`** (annars kan våra egna PATCH:ar hoppa förbi externa native-ändringar). Delta-fel → fallback till helsvep (aldrig tyst gammal kunddata).
+- **P0b (`index.js`):** `/admin/planning/companies` + `/admin/clientcompany/all` läser nu `sharedCompanyMap()` → **noll** Bubble-anrop. OBS: namn kommer ur `Name_company || name` (de gamla fallbacken `Name`/`company_name`/`Företagsnamn` m.fl. var döda — listan renderar redan på samma två fält).
+- **P1 (`companies_api.js`):** `AUX_TTL` 5→**60 min** (`_users()` är ett HELSVEP av User — flera tusen rader — och anropas av drift-list/matter-detalj/historik/QC; färskhetskritiska frågor som `has_user` kör egna constraintade queries). Nya cachade `_allSuppliers()` (delas av `_suppliers` + `_supplierNameMap` — sveptes förut TVÅ ggr per anrop) och `_allLandlords()`. **`/admin/drift/list`:** filtrera/sortera/paginera på **rådatan**, resolva kontorsnamn först för sidan som faktiskt returneras (dolt N+1: gamla koden gjorde **91 `bubbleGet` för att rendera 40 rader**). QC-sökningen går nu ner som Bubble-constraint `Titel text contains` i st.f. helsvep + filter i minnet. Prioritet-facetten räknas fortfarande på HELA träffmängden (`raw`), inte sidan.
+- **P2 (`emailer.js`):** `error_message is_empty` BORTTAGEN ur pollerns query — `is_empty` kan inte indexeras → heltabellsskanning av emailqueue **720 ggr/dygn**. Nu bara indexerbart `email_sent=false` + bortsortering i minnet, med bounded framåtbläddring (3 sidor × 60) så kön inte fastnar bakom gamla failade rader.
+
+**Verifierat:** `companies_smoke.mjs` **176/176** (33 nya rader: paginering/total/pages, facet över hela mängden, N+1-mätning via `getCalls`, QC-constraint via `findAllCalls`, prio-filter, QC-företagsfilter). **Mutationstest:** med gamla `companies_api.js` faller exakt de två WU-testerna (`91 bubbleGet` + saknad Titel-constraint) → testerna bevisar fixen, inte bara att koden kör. Nytt fristående `cc_cache_smoke.mjs`-mönster (26/26) klipper ut cache-blocket ur `index.js` och **räknar sidhämtningar** (kall=helsvep, varm=0 anrop, stale=1 delta-sida, `CC_FULL_TTL`→helsvep som rensar raderade, delta-fel→fallback, in-flight-dedup, regressionsvakt mot setInterval). Browser-harness körde **riktiga** routes bakom `mira-drift.html`: 92 ärenden → sida 1/2/3, facetten visade `1 - låg` trots att raden låg på sida 3, **131 Office-`bubbleGet` totalt = exakt en per visad rad** (gamla: ~91 per sidladdning), QC-flik + sök + ärendedetalj intakta.
+
+**Förväntad effekt:** idle-golv ~700 → ~150 WU/h; CC-cachen ~13 000 → ≤200 WU/dygn. **Deploy:** `index.js` + `companies_api.js` + `emailer.js` (bara Render — inga HTML-block ändrade, inget att klistra om). Följ upp i App Metrics: golvet på lugna timmar ska falla direkt efter deploy.
+
 ### Onboarding/lösenord (LIVE, funkar från start till mål)
 Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mailar länk (SendGrid: `password_reset`-mall vid reset, `user_welcome`-mall m. USP-sektioner vid ny user) → reset_pw-sidan: **API Connector → exchange** (byter token mot engångs-temp via Bubble-wf `assign_temp_password`) → **Log the user in** + **Update password** (valt lösenord). Ny user: Bubble-wf `create_user_account` (Create an account for someone else + sätt Company/Coworker/namn). **Render kan EJ skapa User el. sätta valfritt lösenord via Data API → allt sådant via Bubble-wf** (auth ägs av Bubble).
 
@@ -82,6 +102,10 @@ Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mai
 ### KVAR ATT SKAPA I BUBBLE: **`taggade_personer` (List of Coworker) på activitet_crm** — Aktivitet-fliken hämtar mot det; tom lista tills fältet finns + aktiviteter taggas.
 
 ### Gotchas (nya i detta spår)
+- **⚠️ ALDRIG `setInterval` på ett helsvep.** En bakgrundsloop som sveper en hel Bubble-typ kostar dygnet runt även när appen är tom. Bubble tar ~**1,65 WU per 100-radssida** → 5 400 rader = ~89 WU per svep. Var 10:e min = ~13k WU/dygn. Använd stale-while-revalidate (lat) + delta på `Modified Date`. Se WU-städningen 2026-08-17 ovan.
+- **Deploy = boot-prewarm.** Varje Render-omstart kör om prewarm-svepen. Många deploys på en kväll ⇒ många helsvep. Håll prewarm billig.
+- **`is_empty`/`is_not_empty` kan inte indexeras** av Bubble → heltabellsskanning. Aldrig i en återkommande poller (se `emailer.js`).
+- **Namnresolvning ≠ gratis.** `_users()`/leverantörslistor är helsvep av hela typen. Cacha länge (60 min) och håll färskhetskritiska frågor i egna constraintade queries.
 - **Global-grind:** nya `/admin/*`-endpoints MÅSTE i `openPrefixes` (index.js ~443) annars `Unauthorized (bad x-api-key)` FÖRE route-auth. Prefix `/admin/companies` + `/admin/reset-password` tillagda.
 - **`fl-edit`-klass (display:inline-block) på `<td>` bryter tabell-layout** → egen `fl-ecell`. Aldrig inline-block på table-celler.
 - **Lat-laddade underflikar:** `fetchChain` re-renderar bara om synlig → `chainVisible()` (direkt flik ELLER Avtal-underflik).

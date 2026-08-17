@@ -53,8 +53,13 @@ export function registerCompaniesRoutes(app, deps) {
   function nContract(r) { const end = r["slutdatum"] ? Date.parse(r["slutdatum"]) : 0; const active = !(end && !Number.isNaN(end) && end < Date.now()); return { type: "Avtal", source: "mira", title: _str(r.contract_title) || _str(r["kategori"]) || "Avtal", contract_type: _str(r.contract_type) || "Subscription", amount: _num(r["månadskostnad"]), date: _day(r["slutdatum"]), status: active ? "Aktiv" : "Avslutad", status_cls: active ? "ok" : "wait", id: bubbleId(r) }; }
   function nApproval(r) { const s = _str(r.status); const cls = s === "Approved" ? "ok" : ((s === "Expired" || s === "Revoked") ? "red" : "open"); return { type: "Signering", source: "mira", title: _str(r.rubrik) || "Signering", status: s || "Utkast", status_cls: cls, signed: _num(r.signed_count) || 0, recipients: _num(r.recipients_count) || 0, date: _day(r["Created Date"]), id: bubbleId(r) }; }
 
-  // ── Hjälp-cachar för namn-resolvning (små typer, egen TTL) ──────────
-  const AUX_TTL = 5 * 60 * 1000;
+  // ── Hjälp-cachar för namn-resolvning (egen TTL) ──────────
+  // ⚠️ WU: dessa är HELSVEP av hela typen (User är inte liten — flera tusen rader).
+  // TTL var 5 min → varje aktiv arbetstimme kostade upp till 12 User-helsvep bara för
+  // att resolva namn. Namn ändras i praktiken aldrig under en session → 60 min.
+  // Färskhetskritiska frågor (has_user, personal-pool) kör EGNA constraintade queries,
+  // så den här cachen påverkar bara namnvisning. (WU-städning 2026-08-17.)
+  const AUX_TTL = 60 * 60 * 1000;
   let _uCache = { list: null, map: null, ts: 0 };
   async function _users() {
     if (_uCache.map && (Date.now() - _uCache.ts) < AUX_TTL) return _uCache;
@@ -1002,10 +1007,20 @@ export function registerCompaniesRoutes(app, deps) {
   // "Våra dotterbolag" = leverantörer där Kundföretag contains företaget. Add/remove = patcha den listan.
   const SUPPLIER_TYPE = "Leverantör - Supplier";
   function nSupplier(s) { return { id: bubbleId(s), name: _str(s["Företagsnamn"] || s.name || s.Name), category: _str(s.Kategori || s.Category || s.kategori) }; }
+  // WU: hela leverantörstabellen sveptes tidigare TVÅ gånger per anrop (här + _supplierNameMap),
+  // ocachat. Add/remove skriver bara leverantörens Kundföretag-lista och påverkar inte den här
+  // id+namn-listan → säkert att cacha. Nyskapade leverantörer syns inom AUX_TTL. (2026-08-17.)
+  let _supCache = { rows: null, ts: 0 };
+  async function _allSuppliers() {
+    if (_supCache.rows && (Date.now() - _supCache.ts) < AUX_TTL) return _supCache.rows;
+    const rows = await bubbleFindAll(SUPPLIER_TYPE, {}).catch(() => []);
+    _supCache = { rows, ts: Date.now() };
+    return rows;
+  }
   async function _suppliers(companyId) {
     const [linked, all] = await Promise.all([
       bubbleFindAll(SUPPLIER_TYPE, { constraints: [{ key: "Kundföretag", constraint_type: "contains", value: companyId }] }).catch(() => []),
-      bubbleFindAll(SUPPLIER_TYPE, {}).catch(() => []),
+      _allSuppliers(),
     ]);
     const linkedIds = new Set((linked || []).map(bubbleId));
     const suppliers = (linked || []).map(nSupplier).sort(_byName);
@@ -1125,10 +1140,18 @@ export function registerCompaniesRoutes(app, deps) {
   // erbjudanden som visas för en fastighetsägares hyresgäster (Vasakronan etc.).
   const HYRESVARD_TYPE = "Hyresvärd";
   function nLandlord(h) { return { id: bubbleId(h), name: _str(h.Namn || h.name || h.Name) }; }
+  // WU: samma mönster som _allSuppliers — add/remove skriver Hyresgäster-listan, inte id+namn.
+  let _hvCache = { rows: null, ts: 0 };
+  async function _allLandlords() {
+    if (_hvCache.rows && (Date.now() - _hvCache.ts) < AUX_TTL) return _hvCache.rows;
+    const rows = await bubbleFindAll(HYRESVARD_TYPE, {}).catch(() => []);
+    _hvCache = { rows, ts: Date.now() };
+    return rows;
+  }
   async function _landlords(companyId) {
     const [linked, all] = await Promise.all([
       bubbleFindAll(HYRESVARD_TYPE, { constraints: [{ key: "Hyresgäster", constraint_type: "contains", value: companyId }] }).catch(() => []),
-      bubbleFindAll(HYRESVARD_TYPE, {}).catch(() => []),
+      _allLandlords(),
     ]);
     const linkedIds = new Set((linked || []).map(bubbleId));
     return { landlords: (linked || []).map(nLandlord).sort(_byName), available: (all || []).filter((h) => !linkedIds.has(bubbleId(h))).map(nLandlord).sort(_byName) };
@@ -1223,7 +1246,7 @@ export function registerCompaniesRoutes(app, deps) {
     const m = new Map(); for (const c of (cs || [])) { const id = bubbleId(c); if (id) m.set(id, _str(c.contract_title || c["kategori"] || c.title)); } return m;
   }
   async function _supplierNameMap() {
-    const all = await bubbleFindAll("Leverantör - Supplier", {}).catch(() => []);
+    const all = await _allSuppliers();   // WU: delad, cachad leverantörslista (se _allSuppliers)
     const m = new Map(); for (const s of (all || [])) { const id = bubbleId(s); if (id) m.set(id, _str(s["Företagsnamn"] || s.name || s.Name)); } return m;
   }
   async function _roomNameMap(ids) {
@@ -1484,20 +1507,32 @@ export function registerCompaniesRoutes(app, deps) {
       let companyIds = null;
       if (companyQ) { companyIds = new Set(); for (const [id, c] of full) { if (c && c.name && c.name.toLowerCase().indexOf(companyQ) > -1) companyIds.add(id); } }
 
+      // WU: filtrera/sortera/paginera på RÅDATAN och resolva kontorsnamn först för den
+      // sida vi faktiskt returnerar. Tidigare kördes `_officeNamesByIds` över HELA
+      // resultatet → en bubbleGet per distinkt Kontor i hela tabellen (dolt N+1).
+      // Nu ≤ `limit` distinkta kontor per request. (2026-08-17.)
+      const _rawCompany = (r) => _ref(r["Kundföretag"]) || null;
+      const _pageOf = (arr) => arr.slice((page - 1) * limit, page * limit);
+
       if (type === "qc") {
-        const raw = await bubbleFindAll("QualityControl", {}).catch(() => []);
-        const [uc, sm] = await Promise.all([_users().catch(() => null), _supplierNameMap()]);
-        const okIds = await _officeNamesByIds((raw || []).map((r) => _ref(r.Kontor)));
-        let rows = (raw || []).map((r) => {
+        // `q` går ner i Bubble som constraint (samma mönster som matters) i st.f. helsvep + filter i minnet.
+        const qcConstraints = [];
+        if (q) qcConstraints.push({ key: "Titel", constraint_type: "text contains", value: q });
+        let raw = await bubbleFindAll("QualityControl", { constraints: qcConstraints }).catch(() => []);
+        if (companyIds) raw = raw.filter((r) => { const cid = _rawCompany(r); return cid && companyIds.has(cid); });
+        raw.sort((a, b) => (Date.parse(_str(b.kontrolldatum || b["Created Date"])) || 0) - (Date.parse(_str(a.kontrolldatum || a["Created Date"])) || 0));
+        const total = raw.length, pages = Math.max(1, Math.ceil(total / limit));
+        const pageRaw = _pageOf(raw);
+        const [uc, sm, okIds] = await Promise.all([
+          _users().catch(() => null), _supplierNameMap(),
+          _officeNamesByIds(pageRaw.map((r) => _ref(r.Kontor))),
+        ]);
+        const rows = pageRaw.map((r) => {
           const o = nQC(r, uc && uc.map, okIds, new Map(), sm);
           o.company = (o.company_id && full.get(o.company_id)) ? full.get(o.company_id).name : "";
           return o;
         });
-        if (companyIds) rows = rows.filter((r) => r.company_id && companyIds.has(r.company_id));
-        if (q) rows = rows.filter((r) => (r.titel || "").toLowerCase().indexOf(q) > -1);
-        rows.sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
-        const total = rows.length, pages = Math.max(1, Math.ceil(total / limit));
-        return res.json({ ok: true, type, total, pages, page, rows: rows.slice((page - 1) * limit, page * limit) });
+        return res.json({ ok: true, type, total, pages, page, rows });
       }
 
       // matters
@@ -1507,19 +1542,23 @@ export function registerCompaniesRoutes(app, deps) {
       else if (scope === "avvikelser") constraints.push({ key: "Avvikelse", constraint_type: "equals", value: "true" });
       if (prio) constraints.push({ key: "Prioritet", constraint_type: "equals", value: prio });
       if (q) constraints.push({ key: "Rubrik", constraint_type: "text contains", value: q });
-      const raw = await bubbleFindAll("Matter", { constraints }).catch(() => []);
-      const uc = await _users().catch(() => null);
-      const okIds = await _officeNamesByIds((raw || []).map((r) => _ref(r.Kontor)));
-      let rows = (raw || []).map((r) => {
+      let raw = await bubbleFindAll("Matter", { constraints }).catch(() => []);
+      if (companyIds) raw = raw.filter((r) => { const cid = _rawCompany(r); return cid && companyIds.has(cid); });
+      raw.sort((a, b) => (Date.parse(_str(b.reported_at || b["Created Date"])) || 0) - (Date.parse(_str(a.reported_at || a["Created Date"])) || 0));
+      const mTotal = raw.length, mPages = Math.max(1, Math.ceil(mTotal / limit));
+      const mPageRaw = _pageOf(raw);
+      const [uc, okIds] = await Promise.all([
+        _users().catch(() => null),
+        _officeNamesByIds(mPageRaw.map((r) => _ref(r.Kontor))),
+      ]);
+      let rows = mPageRaw.map((r) => {
         const o = nMatter(r, uc && uc.map, okIds);
         o.company = (o.company_id && full.get(o.company_id)) ? full.get(o.company_id).name : "";
         return o;
       });
-      if (companyIds) rows = rows.filter((r) => r.company_id && companyIds.has(r.company_id));
-      const prioSet = Array.from(new Set(rows.map((r) => r.prioritet).filter(Boolean))).sort();
-      rows.sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
-      const total = rows.length, pages = Math.max(1, Math.ceil(total / limit));
-      return res.json({ ok: true, type, scope, total, pages, page, prioriteter: prioSet, rows: rows.slice((page - 1) * limit, page * limit) });
+      // Prioritet-facetten måste räknas på HELA träffmängden (raw), inte bara sidan.
+      const prioSet = Array.from(new Set(raw.map((r) => _str(r.Prioritet)).filter(Boolean))).sort();
+      return res.json({ ok: true, type, scope, total: mTotal, pages: mPages, page, prioriteter: prioSet, rows });
     } catch (e) {
       console.error("[/admin/drift/list]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });

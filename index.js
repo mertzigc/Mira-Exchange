@@ -18002,15 +18002,14 @@ app.get("/admin/clientcompany/all", async (req, res) => {
 
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 2000, 1), 5000);
-    const all = await bubbleFindAll("ClientCompany", {});
+    // WU: läser den DELADE CC-cachen i st.f. ett eget 55-sidorssvep per anrop
+    // (~89 WU varje autocomplete-laddning innan 2026-08-17). Cachens namn kommer ur
+    // `Name_company || name` — samma två fält som företagslistan renderar på.
+    const nameMap = await sharedCompanyMap();
     const items = [];
-    for (const cc of (all || [])) {
-      if (!cc?._id) continue;
-      const name = cc.Name_company   // Bubble-konvention i Carottes ClientCompany
-                || cc.name || cc.Name || cc.company_name || cc.Company_name
-                || cc.namn || cc.Namn || cc.företagsnamn || cc.Företagsnamn || "";
-      if (!name) continue;
-      items.push({ id: cc._id, name });
+    for (const [id, name] of nameMap) {
+      if (!id || !name) continue;
+      items.push({ id, name });
       if (items.length >= limit) break;
     }
     items.sort((a, b) => a.name.localeCompare(b.name, "sv"));
@@ -18339,9 +18338,11 @@ app.get("/admin/planning/companies", async (req, res) => {
   if (_publicRateLimited(_clientIp(req), 120)) return res.status(429).json({ ok: false, error: "rate_limited" });
   if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
   try {
-    const all = await bubbleFindAll("ClientCompany", {});
+    // WU: läser den DELADE CC-cachen i st.f. ett eget 55-sidorssvep per anrop
+    // (~89 WU varje sidladdning innan 2026-08-17). Noll Bubble-anrop här nu.
+    const nameMap = await sharedCompanyMap();
     const q = String(req.query.q || "").trim().toLowerCase();
-    let rows = all.map((c) => ({ id: bubbleId(c), name: c.Name_company || c.name || "(namnlöst företag)" }));
+    let rows = Array.from(nameMap, ([id, name]) => ({ id, name: name || "(namnlöst företag)" }));
     if (q) rows = rows.filter((r) => r.name.toLowerCase().includes(q));
     rows.sort((a, b) => String(a.name).localeCompare(String(b.name), "sv"));
     return res.json({ ok: true, count: rows.length, results: rows });
@@ -19908,8 +19909,19 @@ offertEngine = registerOffertRoutes(app, {
 // Byggs EN gång + bakgrundsuppdateras; delas av affär/sälj/produktion så ingen vy betalar
 // 55-sidorsladdningen. Stale-while-revalidate: färsk→direkt, stale→servera stale+refresh i bg,
 // kall→vänta (bara allra första requesten före prewarm). In-flight-dedup mot dubbel-load.
-const CC_SHARED_TTL = 15 * 60 * 1000;
-let _ccSharedCache = { name: null, owner: null, full: null, ts: 0 };
+//
+// ⚠️ WU-FÄLLA (löst 2026-08-17, P0): fram till nu kördes `setInterval(_loadSharedCC, 10 min)`
+// = 144 helsvep/dygn × 55 sidor = ~7 900 Data API-anrop/dygn DYGNET RUNT, oavsett om någon
+// var inloggad. Bubble-metrics 16 aug: `Data: clientcompany` = 23 474 WU (68,8 % av dygnet)
+// på 14 221 runs (~1,65 WU/sida). Svepet ensamt ≈ 545 WU/h = 78 % av det platta idle-golvet
+// på ~700 WU/h. Intervallet är BORTA — SWR nedan räcker (stale svar går ut direkt, refresh
+// i bakgrunden), och refreshen är nu INKREMENTELL: bara `Modified Date > senast sedda`
+// (~1 sida i st.f. 55). Helsvep sker bara vid boot + var CC_FULL_TTL (fångar raderade poster).
+// Lägg ALDRIG tillbaka en setInterval/prewarm-loop på den här typen av helsvep.
+const CC_SHARED_TTL   = 60 * 60 * 1000;        // cachen räknas som färsk så länge
+const CC_FULL_TTL     = 12 * 60 * 60 * 1000;   // hur ofta vi gör ett HELSVEP (enda sättet att se raderade)
+const CC_DELTA_MARGIN = 5 * 60 * 1000;         // marginal bakåt i delta-fönstret (klockskew + skrivningar under svepet)
+let _ccSharedCache = { name: null, owner: null, full: null, ts: 0, fullTs: 0, modTs: 0 };
 let _ccSharedInflight = null;
 // Företagslistan (companies_api) behöver fler fält än namn+ägare. Vi bygger en
 // list-projektion ur SAMMA enda laddning så listan aldrig betalar en egen 55-sidorshämtning.
@@ -19937,22 +19949,57 @@ function _projectCompany(c) {
     fastighet_ids: _ccRefList(c.Fastighet),
   };
 }
+// Skriv EN rå CC-post in i cachens tre Maps (används av både helsvep och delta).
+function _ccApply(cache, c) {
+  const id = bubbleId(c); if (!id) return;
+  cache.name.set(id, c.Name_company || c.name || "");
+  const ka = _ccRef(c.Kundansvarig);
+  if (ka) cache.owner.set(id, ka); else cache.owner.delete(id);
+  cache.full.set(id, _projectCompany(c));
+}
+// Flytta delta-fönstret framåt. Görs BARA från riktiga Bubble-svep — aldrig från
+// sharedCompanyPatchEntry, för då skulle våra egna PATCH:ar kunna hoppa förbi
+// externa (native) ändringar som ligger mellan förra svepet och vår skrivning.
+function _ccBumpMod(cache, c) {
+  const t = Date.parse(c["Modified Date"] || "");
+  if (Number.isFinite(t) && t > cache.modTs) cache.modTs = t;
+}
+// HELSVEP: ~55 sidor. Bara vid kall start och var CC_FULL_TTL (ser raderade poster).
+async function _loadSharedCCFull() {
+  const all = await bubbleFindAll("ClientCompany", {});
+  const cache = { name: new Map(), owner: new Map(), full: new Map(), ts: 0, fullTs: 0, modTs: 0 };
+  for (const c of all) { _ccApply(cache, c); _ccBumpMod(cache, c); }
+  const now = Date.now();
+  cache.ts = now; cache.fullTs = now;
+  _ccSharedCache = cache;
+  console.log(`[cc-cache] helsvep: ${cache.full.size} företag, ${Math.ceil(all.length / 100)} sidor`);
+  return cache;
+}
+// DELTA: bara poster ändrade sedan senast sedda Modified Date → normalt 0-1 sidor.
+async function _refreshSharedCC() {
+  const c = _ccSharedCache;
+  if (!c.name || !c.modTs) return _loadSharedCCFull();                      // kall, el. ingen Modified Date att gå på
+  if ((Date.now() - c.fullTs) >= CC_FULL_TTL) return _loadSharedCCFull();   // dags för helsvep
+  const since = new Date(c.modTs - CC_DELTA_MARGIN).toISOString();
+  let rows;
+  try {
+    rows = await bubbleFindAll("ClientCompany", {
+      constraints: [{ key: "Modified Date", constraint_type: "greater than", value: since }],
+    });
+  } catch (e) {
+    // Hellre ett dyrt helsvep än att tysta servera 12h gammal kunddata.
+    console.error("[cc-cache] delta misslyckades, faller tillbaka på helsvep:", e?.message || e);
+    return _loadSharedCCFull();
+  }
+  for (const r of rows) { _ccApply(c, r); _ccBumpMod(c, r); }
+  c.ts = Date.now();
+  if (rows.length) console.log(`[cc-cache] delta: ${rows.length} ändrade företag sedan ${since}`);
+  return c;
+}
 async function _loadSharedCC() {
   if (_ccSharedInflight) return _ccSharedInflight;
   _ccSharedInflight = (async () => {
-    try {
-      const all = await bubbleFindAll("ClientCompany", {});
-      const name = new Map(), owner = new Map(), full = new Map();
-      for (const c of all) {
-        const id = bubbleId(c); if (!id) continue;
-        name.set(id, c.Name_company || c.name || "");
-        const ka = c.Kundansvarig ? (typeof c.Kundansvarig === "string" ? c.Kundansvarig : bubbleId(c.Kundansvarig)) : null;
-        if (ka) owner.set(id, ka);
-        full.set(id, _projectCompany(c));
-      }
-      _ccSharedCache = { name, owner, full, ts: Date.now() };
-      return _ccSharedCache;
-    } finally { _ccSharedInflight = null; }
+    try { return await _refreshSharedCC(); } finally { _ccSharedInflight = null; }
   })();
   return _ccSharedInflight;
 }
@@ -19974,7 +20021,7 @@ function sharedCompanyPatchEntry(id, fresh) {
   c.full.set(id, _projectCompany(fresh));
 }
 _loadSharedCC().catch(() => {});                                      // prewarm vid boot (icke-blockerande)
-setInterval(() => { _loadSharedCC().catch(() => {}); }, 10 * 60 * 1000).unref?.();   // bakgrundsrefresh
+// INGEN setInterval här — se WU-fällan i blockkommentaren ovan. Refresh sker lat via SWR.
 
 // ── Delad omsättnings-cache (FortnoxInvoice.ft_net per linked_company + år). ──
 // EN faktura-scan (~10k rader, ~20-60s) → Map(companyId → {2024,2025,2026,…}). Speglar

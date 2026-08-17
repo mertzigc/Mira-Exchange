@@ -61,15 +61,28 @@ async function processEmailQueue() {
   // Filtrera bort failande rader (error_message satt) så kön inte fastnar på
   // sega gamla rows. Christian kan reviewa dem i Bubble admin (search:
   // email_sent=false AND error_message is not empty) och manuellt åtgärda.
-  const queue = await _bubbleFind("emailqueue", {
-    constraints: [
-      { key: "email_sent",    constraint_type: "equals",   value: false },
-      { key: "error_message", constraint_type: "is_empty", value: true  },
-    ],
-    limit: 20,
-    sort_field: "Created Date",
-    descending: false
-  });
+  //
+  // ⚠️ WU-FÄLLA (löst 2026-08-17): `error_message is_empty` KAN INTE indexeras av Bubble
+  // → heltabellsskanning av emailqueue, och pollern kör var 2:a minut = 720 skanningar/dygn.
+  // Vi constraintar nu bara på det indexerbara `email_sent=false` och sorterar bort failade
+  // rader i minnet. Bounded framåtbläddring så kön inte fastnar bakom gamla failade rader.
+  const WINDOW = 60, MAX_PAGES = 3, WANT = 20;
+  const queue = [];
+  for (let page = 0; page < MAX_PAGES && queue.length < WANT; page++) {
+    const batch = await _bubbleFind("emailqueue", {
+      constraints: [{ key: "email_sent", constraint_type: "equals", value: false }],
+      limit: WINDOW,
+      cursor: page * WINDOW,
+      sort_field: "Created Date",
+      descending: false
+    });
+    for (const r of (batch || [])) {
+      if (String(r.error_message || "").trim()) continue;   // failad → hoppa över
+      queue.push(r);
+      if (queue.length >= WANT) break;
+    }
+    if (!batch || batch.length < WINDOW) break;             // sista sidan
+  }
 
   if (!queue.length) return;
   console.log(`[email] ${queue.length} mail i kö`);
