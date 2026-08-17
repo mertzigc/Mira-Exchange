@@ -1100,6 +1100,7 @@
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
   <input type="hidden" data-mira="user_company"   value=""><!-- bind till Current User's Company's unique id (för personal-dropdown i Leverantörer) -->
+  <input type="hidden" data-mira="current_user"   value=""><!-- bind till Current User's unique id → sätts som activitet_crm.writer (ägare) vid ny historik -->
   <input type="hidden" data-mira="sender_email"   value=""><!-- Current User's e-post (avsändare för signeringar) -->
   <input type="hidden" data-mira="sender_name"    value=""><!-- Current User's namn (avsändare för signeringar) -->
   <input type="hidden" data-mira="user_name"      value=""><!-- bind till Current User's namn (signerar drift-kommentarer) -->
@@ -2392,6 +2393,10 @@
   }
   function createHist(box){
     var msg=box.querySelector("[data-hmsg]"), p=histPayload(box);
+    // Ägare: writer sätts från Current User (data-mira="current_user"). Utan den
+    // får aktiviteten ingen ansvarig i mötestratten/kortet — "Created By" blir
+    // API-nyckelns user via Data API och duger inte. (2026-08-17)
+    p.by_user=cfg("current_user");
     if(!p.beskrivning && !p.activity_type){ if(msg){ msg.textContent="Fyll i beskrivning eller typ"; msg.className="msg err"; } return; }
     if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
     apiPost("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/historik/create", p).then(function(j){

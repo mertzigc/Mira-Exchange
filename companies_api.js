@@ -719,6 +719,13 @@ export function registerCompaniesRoutes(app, deps) {
       // company (ClientCompany) = det ENDA kund-fältet på activitet_crm → native/affär/kort läser detta.
       const p = { company: cid };
       _aktWrite(p, b);
+      // ⚠️ ÄGARSKAP (2026-08-17): `writer` (User) är ENDA användbara ägarfältet.
+      // Bubbles "Created By" blir API-nyckelns user för allt vi skapar via Data API
+      // → oanvändbart. Utan writer saknar aktiviteten ansvarig i mötestratten
+      // (salj_api: `_ref(r.writer) || _ref(r["Created By"])`) och i kort/affärsvy.
+      // Sätts BARA vid create — en senare redigering ska inte flytta ägarskapet.
+      const byUser = _str(b.by_user);
+      if (byUser) p["writer"] = byUser;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
       const id = await bubbleCreate("activitet_crm", p);
       if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });

@@ -738,6 +738,11 @@ export function registerAffarRoutes(app, deps) {
       } else if (b.genomfort !== undefined) {
         p["genomfört"] = (b.genomfort === true || b.genomfort === "true");
       }
+      // ⚠️ ÄGARSKAP (2026-08-17): se companies_api historik/create. `writer` (User) är
+      // enda användbara ägarfältet — "Created By" blir API-nyckelns user via Data API.
+      // Utan den saknar mötet ansvarig i mötestratten (salj_api aktRep = writer||Created By).
+      const byUser = _str(b.by_user);
+      if (byUser) p["writer"] = byUser;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
       const id = await bubbleCreate("activitet_crm", p);
       if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });

@@ -212,6 +212,7 @@
   <input type="hidden" data-mira="api_host"            value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token"      value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
   <input type="hidden" data-mira="current_user_company" value="">
+  <input type="hidden" data-mira="current_user" value=""><!-- Current User's unique id → sätts som activitet_crm.writer (ägare) vid ny aktivitet -->
 
   <h1>Affär <span>·</span> samlad vy</h1>
   <div class="sub">Sälj → faktura · Mira · Fortnox · Tengella i en yta</div>
@@ -1284,7 +1285,9 @@
   function saveNewAkt(btn){
     var box=btn.closest(".af-na"); if(!box) return;
     var type=box.querySelector(".af-na-type").value;
-    var payload={ activity_type:type, beskrivning:box.querySelector(".af-na-besk").value, company_id:box.querySelector(".af-na-co-id").value, deal_id:box.querySelector(".af-na-deal-id").value };
+    // by_user → activitet_crm.writer (ägare). Utan den saknar mötet ansvarig i
+    // mötestratten; "Created By" blir API-nyckelns user via Data API. (2026-08-17)
+    var payload={ activity_type:type, beskrivning:box.querySelector(".af-na-besk").value, company_id:box.querySelector(".af-na-co-id").value, deal_id:box.querySelector(".af-na-deal-id").value, by_user:cfg("current_user") };
     if(type==="Kundmöte"){ payload.fas=box.querySelector(".af-na-fas").value; payload.motesdatum=box.querySelector(".af-na-date").value; var done=box.querySelector(".af-na-done").checked; payload.genomfort=done; if(done){ payload.motesanteckning=box.querySelector(".af-na-note").value; } }
     var msg=box.querySelector(".af-na-msg");
     if(!payload.beskrivning && !payload.activity_type){ msg.textContent="Fyll i beskrivning eller typ."; return; }

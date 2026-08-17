@@ -388,6 +388,19 @@ const run = async () => {
   ok("ny aktivitet: company=cc1 + Kundmöte-fält (display-nycklar)", newAkt.company === "cc1" && newAkt.clientcompany === undefined && newAkt.activity_type === "Kundmöte" && newAkt["Kundmöte"] === "Fas 3" && newAkt["genomfört"] === true && newAkt["mötesantecking"] === "Genomgång" && /^2026-08-20/.test(newAkt["Datum_bokning"]));
   var hcTom = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: {} });
   ok("historik/create tom → 400", hcTom.code === 400 && hcTom.body.error === "tom_aktivitet");
+  // ── ÄGARSKAP: by_user → writer (2026-08-17) ────────────────────────────────
+  // Utan writer saknar aktiviteten ansvarig i mötestratten (salj_api: writer||Created By);
+  // "Created By" blir API-nyckelns user via Data API och duger inte som ägare.
+  var hcW = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Säljsamtal", beskrivning: "Ringde Hugo", by_user: "u2" } });
+  var newW = STORE.activitet_crm[STORE.activitet_crm.length - 1];
+  ok("historik/create sätter writer från by_user", hcW.body.ok && newW.writer === "u2");
+  ok("historik/create: writer resolvas till ansvarig i svaret", hcW.body.row && hcW.body.row.ansvarig === "Bo Berg");
+  var hcNoW = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kommentar", beskrivning: "Utan användare" } });
+  ok("historik/create utan by_user → ingen tom writer skrivs", hcNoW.body.ok && !("writer" in STORE.activitet_crm[STORE.activitet_crm.length - 1]));
+  // patch får INTE flytta ägarskapet
+  var wOwner = STORE.activitet_crm.filter(function (r) { return r._id === hcW.body.id; })[0];
+  await call(s.routes, "post", "/admin/companies/historik/:id/patch", { params: { id: hcW.body.id }, body: { beskrivning: "Redigerad av annan", by_user: "u1" } });
+  ok("historik/patch flyttar INTE writer", wOwner.writer === "u2" && wOwner["beskrivning"] === "Redigerad av annan");
   // icke-Kundmöte skickar inte fas/datum
   var hc2 = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kommentar", beskrivning: "Bara en kommentar" } });
   var newAkt2 = STORE.activitet_crm[STORE.activitet_crm.length - 1];

@@ -59,6 +59,16 @@ const run = async () => {
   const a3 = await call("post", "/admin/affar/aktivitet/create", { body: {} });
   ok("tom aktivitet → 400", a3.code === 400);
 
+  // ── ÄGARSKAP: by_user → writer (2026-08-17) ──
+  // Utan writer saknar mötet ansvarig i mötestratten (salj_api aktRep = writer||Created By);
+  // Bubbles "Created By" blir API-nyckelns user via Data API och duger inte som ägare.
+  const a4 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Bokat möte", fas: "Fas 1", motesdatum: "2026-09-01", by_user: "u1" } });
+  const c4 = created.filter((c) => c.t === "activitet_crm").pop();
+  ok("aktivitet: by_user sätts som writer", a4.body.ok && c4.payload.writer === "u1");
+  const a5 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Säljsamtal", beskrivning: "Utan användare" } });
+  const c5 = created.filter((c) => c.t === "activitet_crm").pop();
+  ok("aktivitet utan by_user → ingen tom writer skrivs", a5.body.ok && !("writer" in c5.payload));
+
   // ── todo: full + deal-append ──
   patched = [];
   const t1 = await call("post", "/admin/affar/todo/create", { body: { titel: "Följ upp", beskrivning: "desc", kategori: "Food & Event", status: "Planerad", starttid: "2026-08-07T22:00", sluttid: "2026-08-07T23:00", company_id: "cc1", coworker_id: "co1", user_id: "u1", deal_id: "d1" } });
