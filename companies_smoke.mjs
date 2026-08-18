@@ -68,8 +68,8 @@ const STORE = {
 };
 // User i STORE (behövs för bubbleGet/patch i personal-koppling); u1 kopplad till cc1 via Associated_company
 STORE.User = [
-  { _id: "u1", "First Name": "Anna", "Surname": "Andersson", email: "christian.mertzig@gmail.com", Company: "cc1", "Associated_company": ["cc1"] },
-  { _id: "u2", "First Name": "Bo", "Surname": "Berg", email: "bo@x.se", Company: "cc2" },
+  { _id: "u1", "First Name": "Anna", "Surname": "Andersson", email: "christian.mertzig@gmail.com", Company: "cc1", "Associated_company": ["cc1"], User_role: "Ansvarig" },
+  { _id: "u2", "First Name": "Bo", "Surname": "Berg", email: "bo@x.se", Company: "cc2", User_role: { display: "Medarbetare" } },   // objekt-form: option-set kan komma som {display}
 ];
 // Dotterbolag: sup1 kopplad till cc1 (via Kundföretag-listan), sup2 tillgänglig
 STORE["Leverantör - Supplier"] = [
@@ -436,10 +436,18 @@ const run = async () => {
 
   // ── skapa login-konto + välkomstmail för en ren CRM-kontakt (co2) ──
   STORE.emailqueue.length = 0; createUserCalls.length = 0;
-  var ca = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "co2" } });
+  var ca = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "co2" }, body: { role: "Ansvarig" } });
+  // Rollerna HÄRLEDS ur User-datan (som _matterStatuses) — inget hårdkodat option-set.
+  var cwRoles = await call(s.routes, "get", "/admin/companies/:id/coworkers", { params: { id: "cc1" } });
+  ok("coworkers bär roles härledda ur datan, sorterade", JSON.stringify(cwRoles.body.roles || null) === JSON.stringify(["Ansvarig", "Medarbetare"]));
+  ok("option-set som objekt ({display}) läses också", (cwRoles.body.roles || []).indexOf("Medarbetare") > -1);
   ok("create-account ok (user_id + mail)", ca.body.ok && ca.body.user_id === "newuser1" && ca.body.mail === true);
   ok("create-account anropade Bubble-wf med email+firstname/surname+company+coworker", createUserCalls.length === 1 && createUserCalls[0].email === "rena@acme.se" && createUserCalls[0].firstname === "Rena" && createUserCalls[0].surname === "Kontakt" && createUserCalls[0].company === "cc1" && createUserCalls[0].coworker_id === "co2");
+  // ── User_role (2026-08-18): utan roll kastar dashboard_crm ut användaren till /index ──
+  ok("create-account skickar role till Bubble-wf", (createUserCalls[0] || {}).role === "Ansvarig" && ca.body.role === "Ansvarig");
   ok("create-account skickade VÄLKOMST-mailet", STORE.emailqueue.length === 1 && STORE.emailqueue[0].template_id === "tpl_welcome" && STORE.emailqueue[0].to_email === "rena@acme.se");
+  var caNoRole = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "co2" } });
+  ok("utan role skickas tom sträng (wf:en kan defaulta) + role:null i svaret", caNoRole.body.ok && (createUserCalls[1] || {}).role === "" && caNoRole.body.role === null);
   var ca404 = await call(s.routes, "post", "/admin/companies/coworker/:id/create-account", { params: { id: "nope" } });
   ok("create-account okänd coworker → 404", ca404.code === 404);
 

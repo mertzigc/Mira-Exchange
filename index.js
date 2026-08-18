@@ -20316,14 +20316,14 @@ registerCompaniesRoutes(app, {
   }) : undefined,
   // Skapar login-konto för en person via Bubble-wf create_user_account (auth ägs av Bubble).
   // Returnerar user_id. Injiceras bara om env satt.
-  createUserAccount: process.env.BUBBLE_CREATE_USER_WF ? (async ({ email, password, firstname, surname, company, coworker_id }) => {
+  createUserAccount: process.env.BUBBLE_CREATE_USER_WF ? (async ({ email, password, firstname, surname, company, coworker_id, role }) => {
     const wf = process.env.BUBBLE_CREATE_USER_WF;
     for (const base of BUBBLE_BASES) {
       try {
         const r = await fetch(`${base}/api/1.1/wf/${wf}`, {
           method: "POST",
           headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, firstname, surname, company, coworker_id }),
+          body: JSON.stringify({ email, password, firstname, surname, company, coworker_id, role }),
         });
         if (!r.ok) {
           // Samma som assign_temp_password: utan Bubbles felkropp blir varje fel bara

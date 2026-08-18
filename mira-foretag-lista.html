@@ -214,6 +214,11 @@
   .fk-cdrow{display:flex;justify-content:flex-end;margin-top:10px;}
   .fk-cdcell{padding:0 8px 8px !important;}
   .fk-linked{font-size:11.5px;color:var(--fl-ok);font-weight:600;word-break:normal;}
+  /* Roll-väljare i "Skapa konto" (2026-08-18) */
+  .fk-acct{display:inline-flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;}
+  .fk-acct select{background:var(--fl-bg);border:1px solid var(--fl-line);color:var(--fl-txt);
+    border-radius:8px;padding:5px 8px;font-size:11.5px;font-family:inherit;}
+  .fk-key.ghost{color:var(--fl-mut);}
   .fk-note{margin-top:14px;padding:11px 13px;background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:10px;color:var(--fl-mut);font-size:12.5px;line-height:1.5;}
   .fk-note b{color:var(--fl-txt);font-weight:600;display:block;margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
   .fk-kpi{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -1855,7 +1860,7 @@
               revenue_ready:true, revTries:0, listDirty:false,
               touch_ready:true, touchTries:0,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false, dealFor:null,
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
@@ -2372,7 +2377,7 @@
     STATE.coworkers="loading";
     api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/coworkers").then(function(j){
       STATE.coworkers=(j&&j.ok&&j.rows)?j.rows:[];
-      STATE.coworkerOffices=(j&&j.offices)||[]; STATE.coworkerDepartments=(j&&j.departments)||[];
+      STATE.coworkerOffices=(j&&j.offices)||[]; STATE.coworkerDepartments=(j&&j.departments)||[]; STATE.coworkerRoles=(j&&j.roles)||[];
       if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard();
     }).catch(function(){ STATE.coworkers=[]; if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard(); });
   }
@@ -2394,9 +2399,16 @@
     var body="";
     for(var i=0;i<rows.length;i++){ var r=rows[i];
       var badge=r.has_user?'<span class="fk-ubadge on">Konto</span>':'<span class="fk-ubadge off">CRM-kontakt</span>';
-      var action=r.has_user
-        ? '<button class="fk-key" data-fk="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>'
-        : '<button class="fk-key" data-fk="createaccount" data-cid="'+esc(r.id)+'">+ Skapa konto</button>';
+      // ⚠️ User_role MÅSTE sättas: dashboard_crm har en page-load-guard
+      // ("Current User's User_role is empty" → index) som annars kastar ut
+      // personen direkt efter inloggning. Rollerna härleds ur datan. (2026-08-18)
+      var action;
+      if(r.has_user) action='<button class="fk-key" data-fk="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>';
+      else if(STATE.acctFor===r.id) action='<span class="fk-acct"><select data-fk="acctrole" data-cid="'+esc(r.id)+'">'+
+        selOpts(STATE.coworkerRoles||[], "", "— välj roll —")+'</select>'+
+        '<button class="fk-key" data-fk="acctgo" data-cid="'+esc(r.id)+'">Skapa</button>'+
+        '<button class="fk-key ghost" data-fk="acctcancel">Avbryt</button></span>';
+      else action='<button class="fk-key" data-fk="createaccount" data-cid="'+esc(r.id)+'">+ Skapa konto</button>';
       body+='<tr><td><span style="display:flex;align-items:center;gap:9px"><span class="fk-avatar" style="width:28px;height:28px;font-size:11px">'+avatarInner(r)+'</span><span class="fl-open" data-fk="openperson" data-cid="'+esc(r.id)+'">'+esc(r.name||"—")+'</span></span></td><td>'+esc(r.title||"—")+'</td>'+
         '<td>'+esc(r.email||"—")+'</td><td>'+(r.phone?esc(formatPhone(r.phone)):"—")+'</td>'+
         '<td>'+badge+'</td><td class="num">'+action+'<span class="fk-kmsg" data-kmsg="'+esc(r.id)+'"></span></td></tr>';
@@ -2699,11 +2711,19 @@
   }
   function createAccount(cid, btn){
     var msg=root.querySelector('[data-kmsg="'+cid+'"]');
-    if(!window.confirm("Skapa ett användarkonto och skicka välkomstmail till denna person?")) return;
+    var sel=root.querySelector('[data-fk="acctrole"][data-cid="'+cid+'"]');
+    var role=sel?sel.value:"";
+    // Roll är obligatorisk NÄR det finns roller att välja bland — annars skapas ett
+    // konto som dashboard_crm omedelbart kastar ut till /index. Saknas rolldata helt
+    // (tom lista) släpper vi igenom, så flödet inte blockeras av en tom option-set.
+    if((STATE.coworkerRoles||[]).length && !role){
+      if(msg){ msg.textContent="Välj roll först"; msg.className="fk-kmsg err"; } return;
+    }
+    if(!window.confirm("Skapa ett användarkonto"+(role?(" som "+role):"")+" och skicka välkomstmail till denna person?")) return;
     btn.disabled=true; if(msg){ msg.textContent="Skapar…"; msg.className="fk-kmsg"; }
-    apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/create-account").then(function(j){
+    apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/create-account", { role: role }).then(function(j){
       btn.disabled=false;
-      if(j&&j.ok){ STATE.coworkers=null; renderCard(); }   // refetch → badge Konto + Nytt lösenord-knapp
+      if(j&&j.ok){ STATE.acctFor=null; STATE.coworkers=null; renderCard(); }   // refetch → badge Konto + Nytt lösenord-knapp
       else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="fk-kmsg err"; } }
     }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="fk-kmsg err"; } });
   }
@@ -3103,7 +3123,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
@@ -3156,7 +3176,10 @@
       if(t.closest && t.closest('[data-fk="cancelperson"]')){ STATE.newPerson=false; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="saveperson"]')){ savePerson(); return; }
       var ca=t.closest?t.closest('[data-fk="createaccount"]'):null;
-      if(ca){ createAccount(ca.getAttribute("data-cid"), ca); return; }
+      if(ca){ STATE.acctFor=ca.getAttribute("data-cid"); renderCard(); return; }   // fäll ut roll-väljaren
+      var cag=t.closest?t.closest('[data-fk="acctgo"]'):null;
+      if(cag){ createAccount(cag.getAttribute("data-cid"), cag); return; }
+      if(t.closest && t.closest('[data-fk="acctcancel"]')){ STATE.acctFor=null; renderCard(); return; }
       var op=t.closest?t.closest('[data-fk="openperson"]'):null;
       if(op){ STATE.personDetail=op.getAttribute("data-cid"); STATE.personTab="profil"; STATE.personActs=null; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="backperson"]')){ STATE.personDetail=null; renderCard(); return; }

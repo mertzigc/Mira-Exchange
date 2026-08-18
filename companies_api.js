@@ -63,11 +63,17 @@ export function registerCompaniesRoutes(app, deps) {
   // så den här cachen påverkar bara namnvisning. (WU-städning 2026-08-17.)
   const AUX_TTL = 60 * 60 * 1000;
   let _uCache = { list: null, map: null, ts: 0 };
+  // Option-set-värden läses som display-strängar; vissa Bubble-svar ger objekt.
+  const _osVal = (v) => (v == null ? "" : (typeof v === "string" ? v : _str(v.display || v.Display || v)));
   async function _users() {
     if (_uCache.map && (Date.now() - _uCache.ts) < AUX_TTL) return _uCache;
     const all = await bubbleFindAll("User", {}).catch(() => []);
-    const map = new Map(), list = [];
+    const map = new Map(), list = [], roleSet = new Set();
     for (const u of all) {
+      // User_role härleds UR DATAN (som _matterStatuses) i st.f. att hårdkodas —
+      // vi gissar aldrig option-set-värden (jfr Avslutad→Avslutat, Internal_room).
+      // Gratis: samma svep som redan görs för namnen. (2026-08-18)
+      const role = _osVal(u.User_role); if (role) roleSet.add(role);
       const id = bubbleId(u); if (!id) continue;
       const first = _str(u["First Name"] || u["Förnamn"]);
       const last  = _str(u["Last Name"]  || u["Efternamn"] || u["Surname"]);
@@ -76,7 +82,8 @@ export function registerCompaniesRoutes(app, deps) {
       map.set(id, nm); list.push({ id, name: nm });
     }
     list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
-    _uCache = { list, map, ts: Date.now() };
+    const roles = Array.from(roleSet).sort((a, b) => a.localeCompare(b, "sv"));
+    _uCache = { list, map, roles, ts: Date.now() };
     return _uCache;
   }
 
@@ -546,7 +553,10 @@ export function registerCompaniesRoutes(app, deps) {
         };
       });
       rows.sort((a, b) => (a.last || a.first).localeCompare(b.last || b.first, "sv") || a.first.localeCompare(b.first, "sv"));
-      return res.json({ ok: true, count: rows.length, rows, offices, departments: DEPARTMENTS });
+      // roles = distinkta User_role ur datan → fyller roll-väljaren i "Skapa konto".
+      // Tom lista betyder att ingen User har en roll satt ännu (då döljs väljaren).
+      const uc0 = await _users().catch(() => null);
+      return res.json({ ok: true, count: rows.length, rows, offices, departments: DEPARTMENTS, roles: (uc0 && uc0.roles) || [] });
     } catch (e) {
       console.error("[/admin/companies/:id/coworkers]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -601,11 +611,15 @@ export function registerCompaniesRoutes(app, deps) {
         return res.status(501).json({ ok: false, error: "not_configured", hint: "Sätt env BUBBLE_CREATE_USER_WF + bygg Bubble-wf create_user_account.", email });
       }
       const pw = crypto.randomBytes(18).toString("hex") + "Aa1!";   // slump (Steg 1 använder ingen — ersätts vid reset)
-      const r = await createUserAccount({ email, password: pw, firstname, surname, company, coworker_id: id });
+      // ⚠️ role: utan User_role kastar dashboard_crm ut användaren till /index vid
+      // page load ("Current User's User_role is empty"-guard). Varje konto som
+      // skapades härifrån föddes trasigt innan detta. (2026-08-18)
+      const role = _str((req.body && req.body.role) || "");
+      const r = await createUserAccount({ email, password: pw, firstname, surname, company, coworker_id: id, role });
       if (!r || !r.ok) return res.status(502).json({ ok: false, error: (r && r.error) || "create_failed", hint: (r && r.hint) || null, email });
       // välkomstmail (samma som ny-user-flödet)
       const m = await _sendSetPassword({ email, coworkerId: id, toName: name, templateId: welcomeTemplateId || pwResetTemplateId });
-      return res.json({ ok: true, email, user_id: r.user_id || null, mail: m.ok === true });
+      return res.json({ ok: true, email, user_id: r.user_id || null, role: role || null, mail: m.ok === true });
     } catch (e) {
       console.error("[/admin/companies/coworker/:id/create-account]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
