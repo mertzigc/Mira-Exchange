@@ -20290,7 +20290,14 @@ registerCompaniesRoutes(app, {
           headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ email }),
         });
-        if (r.ok) {
+        if (!r.ok) {
+          // Logga Bubbles faktiska svar — annars blir alla fel bara "workflow_failed"
+          // och man kan inte se VARFÖR (fel wf-namn, saknad user, privacy rule …). 2026-08-18
+          const errBody = (await r.text().catch(() => "")).slice(0, 400);
+          console.error(`[assign_temp_password] ${base} HTTP ${r.status}: ${errBody}`);
+          continue;
+        }
+        {
           // Stödjer BÅDE Plain text (rå = temp-lösenordet) och Structured JSON ({response:{temp_password}}).
           const raw = (await r.text().catch(() => "")).trim();
           if (!raw) return { ok: false, error: "empty_response" };
@@ -20303,9 +20310,9 @@ registerCompaniesRoutes(app, {
             return { ok: true, temp_password: raw };               // ren text = lösenordet
           }
         }
-      } catch (_) {}
+      } catch (e) { console.error(`[assign_temp_password] ${base} nätverksfel:`, e?.message); }
     }
-    return { ok: false, error: "workflow_failed" };
+    return { ok: false, error: "workflow_failed", hint: "se [assign_temp_password] i Render-loggen för Bubbles svar" };
   }) : undefined,
   // Skapar login-konto för en person via Bubble-wf create_user_account (auth ägs av Bubble).
   // Returnerar user_id. Injiceras bara om env satt.
@@ -20318,14 +20325,21 @@ registerCompaniesRoutes(app, {
           headers: { Authorization: "Bearer " + BUBBLE_API_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({ email, password, firstname, surname, company, coworker_id }),
         });
-        if (r.ok) {
+        if (!r.ok) {
+          // Samma som assign_temp_password: utan Bubbles felkropp blir varje fel bara
+          // "workflow_failed" och odiagnostiserbart (t.ex. "email already in use"). 2026-08-18
+          const errBody = (await r.text().catch(() => "")).slice(0, 400);
+          console.error(`[create_user_account] ${base} HTTP ${r.status}: ${errBody}`);
+          continue;
+        }
+        {
           const raw = (await r.text().catch(() => "")).trim();
           try { const j = JSON.parse(raw); const uid = (j && j.response && j.response.user_id) || (j && j.user_id); return { ok: true, user_id: uid || null }; }
           catch (_) { return { ok: true, user_id: raw || null }; }
         }
-      } catch (_) {}
+      } catch (e) { console.error(`[create_user_account] ${base} nätverksfel:`, e?.message); }
     }
-    return { ok: false, error: "workflow_failed" };
+    return { ok: false, error: "workflow_failed", hint: "se [create_user_account] i Render-loggen för Bubbles svar" };
   }) : undefined,
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,

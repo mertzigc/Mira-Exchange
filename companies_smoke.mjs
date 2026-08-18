@@ -128,6 +128,11 @@ function project(c) {
 }
 const FULL = new Map(Object.values(CC).map((c) => [c._id, project(c)]));
 
+// Verifierade Bubble-scheman (skärmdump/HANDOFF). Används av mocken för att avvisa
+// okända fält precis som Bubble gör. Utöka när fler typer verifierats.
+const KNOWN_FIELDS = {
+  PasswordReset: ["email", "coworker", "token_hash", "expires_at", "used"],
+};
 const fetchedTypes = [];
 const findAllCalls = [];   // {t, constraints} — för att bevisa att filter går NER i Bubble
 const getCalls = [];       // {t, id} — för att mäta N+1 (kontorsnamn per rad)
@@ -143,7 +148,21 @@ const deps = {
   bubbleFind: async (t) => { fetchedTypes.push(t); return STORE[t] || AUX[t] || []; },
   bubbleCount: async (t, cs = []) => (STORE[t] ? STORE[t].filter((r) => _cmatch(r, cs)).length : 0),
   bubbleGet: async (t, id) => { getCalls.push({ t, id }); if (t === "ClientCompany") return CC[id] || null; if (STORE[t]) return STORE[t].find((r) => r._id === id) || null; return null; },
-  bubblePatch: async (t, id, payload) => { if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; } if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); } return {}; },
+  // ⚠️ Bubble avvisar HELA patchen om ETT fält är okänt ("Unrecognized field: x") —
+  // mocken gjorde tidigare Object.assign rakt av och var alltså mer tillåtande än
+  // verkligheten. Det dolde att exchange patchade `used_at` (finns inte på
+  // PasswordReset) → `used` sattes aldrig → token brändes aldrig, live. (2026-08-18)
+  // Typer med känt schema valideras därför här; övriga är fortsatt fria.
+  bubblePatch: async (t, id, payload) => {
+    const known = KNOWN_FIELDS[t];
+    if (known) {
+      const bad = Object.keys(payload || {}).filter((k) => known.indexOf(k) < 0);
+      if (bad.length) { const e = new Error("bubblePatch failed"); e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "Unrecognized field: " + bad[0] } }) }; throw e; }
+    }
+    if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; }
+    if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); }
+    return {};
+  },
   bubbleCreate: async (t, payload) => { const id = "new_" + (++_idc); (STORE[t] = STORE[t] || []).push(Object.assign({ _id: id }, payload)); return id; },
   bubbleDelete: async (t, id) => { if (STORE[t]) { const i = STORE[t].findIndex((r) => r._id === id); if (i >= 0) STORE[t].splice(i, 1); } return {}; },
   bubbleUploadFile: async ({ filename }) => "//files/" + filename,   // fejkad Bubble file storage

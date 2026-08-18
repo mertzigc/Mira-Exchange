@@ -602,7 +602,7 @@ export function registerCompaniesRoutes(app, deps) {
       }
       const pw = crypto.randomBytes(18).toString("hex") + "Aa1!";   // slump (Steg 1 använder ingen — ersätts vid reset)
       const r = await createUserAccount({ email, password: pw, firstname, surname, company, coworker_id: id });
-      if (!r || !r.ok) return res.status(502).json({ ok: false, error: (r && r.error) || "create_failed", email });
+      if (!r || !r.ok) return res.status(502).json({ ok: false, error: (r && r.error) || "create_failed", hint: (r && r.hint) || null, email });
       // välkomstmail (samma som ny-user-flödet)
       const m = await _sendSetPassword({ email, coworkerId: id, toName: name, templateId: welcomeTemplateId || pwResetTemplateId });
       return res.json({ ok: true, email, user_id: r.user_id || null, mail: m.ok === true });
@@ -1715,9 +1715,20 @@ export function registerCompaniesRoutes(app, deps) {
         return !(exp && exp < now);
       });
       if (!row) return res.status(400).json({ ok: false, error: "invalid_or_expired" });
-      await bubblePatch("PasswordReset", bubbleId(row), { used: true, used_at: new Date(now).toISOString() }).catch(() => {});
+      // ⚠️ BRÄNN TOKEN — måste lyckas innan vi lämnar ut ett temp-lösenord.
+      // PasswordReset-typen har BARA {email, coworker, token_hash, expires_at, used}.
+      // Tidigare patchades även `used_at` (finns inte) → Bubble avvisade HELA patchen,
+      // så `used` sattes aldrig och länken gick att återanvända i 24 h. Felet doldes
+      // dessutom av ett .catch(() => {}). Fail-closed: kan vi inte bränna token så
+      // delar vi inte ut lösenord. (2026-08-18)
+      try {
+        await bubblePatch("PasswordReset", bubbleId(row), { used: true });
+      } catch (e) {
+        console.error("[/admin/reset-password/exchange] kunde inte bränna token:", e?.message, e?.detail);
+        return res.status(500).json({ ok: false, error: "burn_failed", hint: "token ej markerad som använd — inget lösenord utlämnat" });
+      }
       const r = await assignTempPassword({ email: _str(row.email) });
-      if (!r || !r.ok || !r.temp_password) return res.status(502).json({ ok: false, error: (r && r.error) || "assign_failed" });
+      if (!r || !r.ok || !r.temp_password) return res.status(502).json({ ok: false, error: (r && r.error) || "assign_failed", hint: (r && r.hint) || null });
       return res.json({ ok: true, email: _str(row.email), temp_password: r.temp_password });
     } catch (e) {
       console.error("[/admin/reset-password/exchange]", e?.message);
