@@ -159,6 +159,17 @@ Listan sorterade bara på bokstav/kolumn. Nu finns en **fristående växlare "A�
 - **Verifierat:** companies_smoke **193/193** (+4: 404+stale_cache, evictering, andra anropet 404 direkt ur cachen, levande företag opåverkat) · cc_cache_smoke **61/61** (+13: `_deadRefId` mot Christians VERKLIGA felkroppar + att fältnamnsfel/404/5xx INTE matchas, plus evictering ur alla tre kartorna och no-op-fallen).
 - **Kvar att välja:** om fler fantomföretag dyker upp kan `CC_FULL_TTL` sänkas 12 h → t.ex. 4 h (kostar ~90 WU per helsvep). Evicteringen gör det troligen onödigt.
 
+### Skapa affär av lead/aktivitet på kundkortet (KLAR + verifierat 2026-08-18)
+Affärsvyns "skapa affär av lead/aktivitet" finns nu även på kortets **Leads**- och **Historik**-avsnitt. **Ingen ny backend** — `POST /admin/affar/deal/create` (affar_api) är redan företags-agnostisk, tar `source_type: lead|aktivitet` + `source_id`, sätter källradens `deal`-fält och lead→`Delegerad`. `/admin/affar` ligger redan i openPrefixes.
+- **`companies_api.js`:** `nLead` och `nActivity` returnerar nu **`deal_id`** — kortet ska bara erbjuda "skapa affär" på rader som INTE redan är kopplade.
+- **Leads-fliken:** ny **Affär-kolumn** (bara för `tab==="leads"`) — `✓ Affär` om kopplad, annars `+ Skapa affär` som fäller ut formuläret i en rad under.
+- **Historik:** samma knapp i den expanderade rad-detaljen (`histDetail`), eller `✓ Kopplad till affär`.
+- **Formuläret** (`dealFormHtml`) är avskalat mot affärsvyns: Titel*/Kategori/Prel. värde/Ägare/Beskrivning. **Ingen företagssökning** — kunden är redan känd, och headern visar vilken. Titel + belopp förifylls från källraden. Återanvänder kortets `.fk-form`/`.fk-fld`/`.fk-formbtns`-konvention.
+- **⚠️ Klick-ordning:** `cdopen`/`cdsave`/`cdcancel` hanteras FÖRE `histrow` i den delegerade klick-hanteraren + `stopPropagation`, plus en `if (t.closest(".fk-cd")) return;`-vakt. Utan det bubblar klick i formuläret upp till rad-toggeln och **kollapsar raden man just öppnade formuläret i**. Verifierat i harness att raden förblir öppen och att text man skrivit ligger kvar (ingen re-render mitt i inmatning — bara öppna/spara är committade övergångar).
+- **Efter sparning:** källraden markeras kopplad lokalt, `counts.deals++`, `STATE.chain.deals` nollas så Deals-fliken hämtas om, list-cachen rensas (`listDirty`) eftersom nya affären påverkar företagets "senast ändrad".
+- **Verifierat:** companies_smoke **197/197** (+4 `deal_id` på båda källtyperna, kopplad vs okopplad; **mutationstestat** — alla fyra faller mot gammal kod) + harness: Affär-kolumnen skiljer kopplat/okopplat, lead→affär (prefill titel+belopp, ägarlista ur meta, Deals-badge 1→2), aktivitet→affär (raden förblir öppen, text kvar, badge→3), båda affärerna syns i Deals-fliken.
+- **Deploy:** `companies_api.js` + klistra om `mira-foretag-lista.html`. Ingen Bubble-bindning.
+
 ### Onboarding/lösenord (LIVE, funkar från start till mål)
 Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mailar länk (SendGrid: `password_reset`-mall vid reset, `user_welcome`-mall m. USP-sektioner vid ny user) → reset_pw-sidan: **API Connector → exchange** (byter token mot engångs-temp via Bubble-wf `assign_temp_password`) → **Log the user in** + **Update password** (valt lösenord). Ny user: Bubble-wf `create_user_account` (Create an account for someone else + sätt Company/Coworker/namn). **Render kan EJ skapa User el. sätta valfritt lösenord via Data API → allt sådant via Bubble-wf** (auth ägs av Bubble).
 

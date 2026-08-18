@@ -31,7 +31,9 @@ const STORE = {
   Contract: CONTRACTS,
   activitet_crm: ACTS,
   deal: [{ _id: "d1", "kundföretag": "cc1", titel: "CMIAB fruktlåda", value_brutto: 5000, Status: "Avtal", "Created Date": "2026-08-12" }],
-  Lead: [{ _id: "l1", client_company: "cc1", Name: "Lead X", estimated_service_cost_monthly: 92880, status: "Ny", "Created Date": "2026-06-22" }],
+  // l1 = redan kopplad till affär (kortet ska visa "✓ Affär"), l2 = okopplad (får skapa-knapp)
+  Lead: [{ _id: "l1", client_company: "cc1", Name: "Lead X", estimated_service_cost_monthly: 92880, status: "Ny", "Created Date": "2026-06-22", deal: "d1" },
+         { _id: "l2", client_company: "cc1", Name: "Lead Y", estimated_service_cost_monthly: 5000, status: "Ny", "Created Date": "2026-06-21" }],
   Offert: [{ _id: "of1", kundforetag: "cc1", offertnr: "MO-1", total: 12000, status: "Approved", offertdatum: "2026-07-01" }],
   FortnoxOffer: [{ _id: "ff1", linked_company: "cc1", ft_document_number: "FE-2026-0004", ft_total: 8000, ft_sent: true, ft_offer_date: "2026-07-31" }],
   MiraOrder: [{ _id: "mo1", kundforetag: "cc1", ordernr: "O-1", total: 9000, orderstatus: "Levererad", orderdatum: "2026-08-01" }],
@@ -58,7 +60,7 @@ const STORE = {
   // kund-koppling = fältet `company` (ClientCompany) — enda kund-fältet på activitet_crm (Bubble-schema 2026-08-14)
   activitet_crm: [
     { _id: "act1", company: "cc1", taggade_personer: ["co1"], writer: "u1", "Datum_bokning": "2026-08-10", activity_type: "Kundmöte", "Kundmöte": "Fas 2", beskrivning: "Möte om frukten", "mötesantecking": "Bra möte", "genomfört": true, "Created Date": "2026-08-01" },
-    { _id: "act2", company: "cc1", taggade_personer: ["co1", "co2"], "Datum_bokning": "2026-06-20", activity_type: "Samtal", beskrivning: "Uppföljning", "Created Date": "2026-06-20" },
+    { _id: "act2", company: "cc1", taggade_personer: ["co1", "co2"], "Datum_bokning": "2026-06-20", activity_type: "Samtal", beskrivning: "Uppföljning", "Created Date": "2026-06-20", deal: "d1" },
     { _id: "act3", company: "cc2", taggade_personer: ["co2"], "Datum_bokning": "2026-07-01", activity_type: "Mail", "Created Date": "2026-07-01" },
     { _id: "act4", company: "cc1", activity_type: "Kommentar", beskrivning: "Kommentar", "Datum_bokning": "2026-01-05", "Created Date": "2026-01-05" },
     { _id: "act5", company: "cc1", activity_type: "Möte", beskrivning: "Möte", "Datum_bokning": "2026-01-04", "Created Date": "2026-01-04" },
@@ -327,7 +329,7 @@ const run = async () => {
   ok("card KPI MRR=273985 (aktiva 2) + total 3", card.body.kpi.mrr === 273985 && card.body.kpi.active_contracts === 2 && card.body.kpi.contracts_total === 3);
   ok("card KPI omsättning nu/prev", card.body.kpi.omsattning_now === 40992 && card.body.kpi.omsattning_prev === 146750 && card.body.kpi.nki === 8);
   ok("card counts avtal/historik(company-fältet)/deals", card.body.counts.avtal === 3 && card.body.counts.historik === 4 && card.body.counts.deals === 1);
-  ok("card counts leads/offerter/ordrar/fakturor", card.body.counts.leads === 1 && card.body.counts.offerter === 2 && card.body.counts.ordrar === 2 && card.body.counts.fakturor === 2);
+  ok("card counts leads/offerter/ordrar/fakturor", card.body.counts.leads === 2 && card.body.counts.offerter === 2 && card.body.counts.ordrar === 2 && card.body.counts.fakturor === 2);
   ok("card counts personer=2", card.body.counts.personer === 2);
   ok("card counts drift = öppna ärenden (Pågående) = 2", card.body.counts.drift === 2);
 
@@ -335,7 +337,10 @@ const run = async () => {
   var chD = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "deals" } });
   ok("chain deals → 1 (Deal/mira, status Avtal→ok)", chD.body.ok && chD.body.count === 1 && chD.body.rows[0].type === "Deal" && chD.body.rows[0].status_cls === "ok" && chD.body.rows[0].amount === 5000);
   var chL = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "leads" } });
-  ok("chain leads → 1", chL.body.count === 1 && chL.body.rows[0].title === "Lead X" && chL.body.rows[0].amount === 92880);
+  ok("chain leads → 2 (nyast först)", chL.body.count === 2 && chL.body.rows[0].title === "Lead X" && chL.body.rows[0].amount === 92880);
+  // ── deal_id på källrader: styr om kortet visar "✓ Affär" eller skapa-knappen (2026-08-18) ──
+  ok("lead med befintlig affär bär deal_id", chL.body.rows[0].deal_id === "d1");
+  ok("okopplat lead har deal_id null (→ skapa-knapp)", chL.body.rows[1].title === "Lead Y" && chL.body.rows[1].deal_id === null);
   var chO = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "offerter" } });
   ok("chain offerter → 2 (Mira+Fortnox), nyast först", chO.body.count === 2 && chO.body.rows[0].date === "2026-07-31" && chO.body.rows.filter(function(r){return r.source==="fortnox";}).length === 1);
   var chOr = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "ordrar" } });
@@ -348,6 +353,8 @@ const run = async () => {
   ok("chain signeringar → 2 (Approved→ok, Sent→open)", chS.body.count === 2 && chS.body.rows.some(function(r){return r.status==="Approved"&&r.status_cls==="ok";}) && chS.body.rows.some(function(r){return r.status==="Sent"&&r.status_cls==="open";}) && chS.body.rows[0].recipients === 1);
   var chH = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "historik" } });
   ok("chain historik → 4 (company-fältet), nyast först", chH.body.count === 4 && chH.body.rows[0].id === "act1" && chH.body.rows[0].typ === "Kundmöte" && chH.body.rows[0].fas === "Fas 2" && chH.body.rows[0].genomfort === true && chH.body.rows[1].id === "act2");
+  ok("aktivitet med affär bär deal_id (→ \"Kopplad\" i kortet)", chH.body.rows.filter(function(r){return r.id==="act2";})[0].deal_id === "d1");
+  ok("okopplad aktivitet har deal_id null (→ skapa-knapp)", chH.body.rows[0].id === "act1" && chH.body.rows[0].deal_id === null);
   ok("chain historik tar bara detta företags aktiviteter (act3 på cc2 utesluts)", chH.body.rows.every(function(r){return r.id!=="act3";}) && chH.body.rows.some(function(r){return r.id==="act4";}));
   ok("chain historik: full edit-prefill (ansvarig via writer, motesanteckning, motesdatum_iso)", chH.body.rows[0].ansvarig === "Anna Andersson" && chH.body.rows[0].motesanteckning === "Bra möte" && chH.body.rows[0].motesdatum_iso === "2026-08-10" && chH.body.rows[0].beskrivning === "Möte om frukten");
   var chBad = await call(s.routes, "get", "/admin/companies/:id/chain", { params: { id: "cc1" }, query: { type: "nope" } });

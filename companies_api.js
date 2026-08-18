@@ -44,7 +44,9 @@ export function registerCompaniesRoutes(app, deps) {
   // ── Kedje-normaliserare (kundkortets Deals/Leads/Offerter/Ordrar/Fakturor-flikar) ──
   // Speglar affar_api.js-normaliserarna men kompakt. status_cls: ok|open|wait|red.
   function nDeal(r)  { const s = _str(r.Status); const cls = s === "Avtal" ? "ok" : (s === "Offert" ? "open" : (s === "Avslutad" ? "red" : "wait")); return { type: "Deal", source: "mira", title: _str(r.titel) || "Affär", amount: _num(r.value_brutto), date: _day(r["Created Date"]), status: s || "—", status_cls: cls, url: "", id: bubbleId(r) }; }
-  function nLead(r)  { return { type: "Lead", source: "mira", title: _str(r.Name) || "Lead", amount: _num(r.estimated_service_cost_monthly), date: _day(r["Created Date"]), status: _str(r.status) || "Ny", status_cls: "wait", url: "", id: bubbleId(r) }; }
+  // deal_id (2026-08-18): kortet erbjuder "skapa affär av leadet" bara när raden inte
+  // redan är kopplad — samma deal-fält som affärsvyns /admin/affar/deal/create sätter.
+  function nLead(r)  { return { type: "Lead", source: "mira", title: _str(r.Name) || "Lead", amount: _num(r.estimated_service_cost_monthly), date: _day(r["Created Date"]), status: _str(r.status) || "Ny", status_cls: "wait", url: "", id: bubbleId(r), deal_id: _ref(r.deal) || null }; }
   function nOffM(r)  { const s = _str(r.status); const cls = s === "Approved" ? "ok" : ((s === "Expired" || s === "Revoked") ? "red" : "open"); return { type: "Offert", source: "mira", title: _str(r.offertnr) || "Offert", amount: _num(r.total), date: _day(r.offertdatum || r["Created Date"]), status: s || "Utkast", status_cls: cls, url: "", id: bubbleId(r) }; }
   function nOffF(r)  { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", title: _str(r.ft_document_number), amount: _num(r.ft_total), date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
   function nOrdM(r)  { const s = _str(r.orderstatus); const cls = (s === "Levererad" || s === "Fakturerad") ? "ok" : "open"; return { type: "Order", source: "mira", title: _str(r.ordernr) || "Order", amount: _num(r.total), date: _day(r.orderdatum || r["Created Date"]), status: s || "Bekräftad", status_cls: cls, url: "", id: bubbleId(r) }; }
@@ -710,6 +712,9 @@ export function registerCompaniesRoutes(app, deps) {
       motesanteckning: _str(r["mötesantecking"]),
       genomfort: r["genomfört"] === true,
       ansvarig: (um && wId) ? (um.get(wId) || "") : "",
+      // Affärskoppling (2026-08-18): kortet erbjuder "skapa affär av aktiviteten"
+      // bara när raden INTE redan är kopplad. Samma deal-fält som affärsvyn sätter.
+      deal_id: _ref(r.deal) || null,
     };
   }
   app.options("/admin/companies/coworker/:id/activities", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });

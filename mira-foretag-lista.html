@@ -207,6 +207,13 @@
   .fk-formbtns .cancel{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12.5px;}
   .fk-formbtns .msg{font-size:12px;color:var(--fl-mut);}
   .fk-formbtns .msg.err{color:#ff8080;}
+  /* Skapa affär av lead/aktivitet (2026-08-18) */
+  .fk-cd{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:10px;padding:13px 15px;margin:6px 0;}
+  .fk-cdhead{font-size:12px;font-weight:700;color:var(--fl-txt);margin-bottom:10px;word-break:normal;}
+  .fk-cdhead span{font-weight:500;color:var(--fl-mut);}
+  .fk-cdrow{display:flex;justify-content:flex-end;margin-top:10px;}
+  .fk-cdcell{padding:0 8px 8px !important;}
+  .fk-linked{font-size:11.5px;color:var(--fl-ok);font-weight:600;word-break:normal;}
   .fk-note{margin-top:14px;padding:11px 13px;background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:10px;color:var(--fl-mut);font-size:12.5px;line-height:1.5;}
   .fk-note b{color:var(--fl-txt);font-weight:600;display:block;margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;}
   .fk-kpi{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -1848,7 +1855,7 @@
               revenue_ready:true, revTries:0, listDirty:false,
               touch_ready:true, touchTries:0,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false,
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
@@ -2215,18 +2222,86 @@
       '</div></div>';
   }
   function tabLbl(k){ var t=TABS.filter(function(x){return x.k===k;})[0]; return t?t.lbl:k; }
+  // ── Skapa affär av lead/aktivitet (2026-08-18) ────────────────────────────
+  // Samma endpoint som affärsvyn: POST /admin/affar/deal/create (företags-agnostisk,
+  // sätter källradens deal-fält och lead→Delegerad). På kortet är kunden redan känd
+  // → ingen företagssökning, till skillnad från affärsvyns variant.
+  // Formen renderas som en del av kortets vanliga re-render; inmatning triggar ingen
+  // re-render (bara öppna/spara gör det), så inget skrivet försvinner.
+  var CD_CATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+  function dealFormHtml(sourceType, sourceId, titelPrefill, beloppPrefill){
+    var users=(STATE.meta&&STATE.meta.users)||[];
+    var uOpts='<option value="">— ägare —</option>';
+    for(var i=0;i<users.length;i++) uOpts+='<option value="'+esc(users[i].id)+'">'+esc(users[i].name)+'</option>';
+    var kOpts='<option value="">— kategori —</option>';
+    for(var k=0;k<CD_CATS.length;k++) kOpts+='<option value="'+esc(CD_CATS[k])+'">'+esc(CD_CATS[k])+'</option>';
+    return '<div class="fk-cd" data-cdtype="'+esc(sourceType)+'" data-cdid="'+esc(sourceId)+'">'+
+      '<div class="fk-cdhead">Ny affär av '+(sourceType==="lead"?"leadet":"aktiviteten")+
+      ' <span>· kopplas till '+esc((STATE.card&&STATE.card.company&&STATE.card.company.name)||"kunden")+'</span></div>'+
+      '<div class="fk-form">'+
+        '<div class="fk-fld"><label>Titel *</label><input data-cd="titel" value="'+esc(titelPrefill||"")+'" placeholder="Affärens namn"></div>'+
+        '<div class="fk-fld"><label>Kategori</label><select data-cd="kat">'+kOpts+'</select></div>'+
+        '<div class="fk-fld"><label>Prel. värde (kr)</label><input type="number" data-cd="brutto" value="'+esc(beloppPrefill==null?"":beloppPrefill)+'"></div>'+
+        '<div class="fk-fld"><label>Ägare</label><select data-cd="owner">'+uOpts+'</select></div>'+
+        '<div class="fk-fld" style="grid-column:1 / -1"><label>Beskrivning</label><textarea data-cd="besk" rows="2" placeholder="Kort om affären…"></textarea></div>'+
+        '<div class="fk-formbtns"><button class="save" data-fk="cdsave">Skapa &amp; koppla</button>'+
+        '<button class="cancel" data-fk="cdcancel">Avbryt</button><span class="msg" data-cdmsg></span></div>'+
+      '</div>'+
+    '</div>';
+  }
+  function createDealFrom(btn){
+    var box=btn.closest(".fk-cd"); if(!box) return;
+    var g=function(k){ var e=box.querySelector('[data-cd="'+k+'"]'); return e?e.value:""; };
+    var msg=box.querySelector("[data-cdmsg]"), titel=g("titel").trim();
+    if(!titel){ if(msg){ msg.textContent="Titel krävs"; msg.className="msg err"; } return; }
+    var sourceType=box.getAttribute("data-cdtype"), sourceId=box.getAttribute("data-cdid");
+    if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
+    btn.disabled=true;
+    apiPost("/admin/affar/deal/create", { titel:titel, beskrivning:g("besk"),
+      kundforetag_id:STATE.cardId, kategori:g("kat"), value_brutto:g("brutto"),
+      deal_owner:g("owner"), source_type:sourceType, source_id:sourceId
+    }).then(function(j){
+      btn.disabled=false;
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+esc((j&&(j.hint||j.error))||"fel"); msg.className="msg err"; } return; }
+      // Markera källraden som kopplad lokalt + nolla formen, och låt Deals-fliken
+      // och antalsbadgen hämtas om (nya affären ska synas där).
+      markSourceLinked(sourceType, sourceId, j.deal_id);
+      STATE.dealFor=null;
+      if(STATE.card && STATE.card.counts && STATE.card.counts.deals!=null) STATE.card.counts.deals++;
+      delete STATE.chain.deals;
+      cacheClearAll(); STATE.listDirty=true;
+      renderCard();
+    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  function markSourceLinked(sourceType, sourceId, dealId){
+    var arr=(sourceType==="lead")?STATE.chain.leads:STATE.chain.historik;
+    if(!arr||!arr.length) return;
+    for(var i=0;i<arr.length;i++){ if(arr[i].id===sourceId){ arr[i].deal_id=dealId||"1"; break; } }
+  }
+
   function chainBody(tab, rows){
     if(!rows.length) return '<div class="fk-body"><div class="fk-placeholder"><b>Inga '+esc(tabLbl(tab).toLowerCase())+'</b>Inget kopplat till detta företag ännu.</div></div>';
+    var isLead=(tab==="leads");   // bara leads får affärs-kolumnen
+    var cols=isLead?5:4;
     var body="";
     for(var i=0;i<rows.length;i++){ var r=rows[i];
       var pdf=r.url?'<a class="fk-llink" href="'+esc(r.url)+'" target="_blank" rel="noopener">PDF ↗</a>':'';
+      var act="";
+      if(isLead){
+        act=r.deal_id
+          ? '<td><span class="fk-linked">✓ Affär</span></td>'
+          : '<td><button class="fk-editbtn" data-fk="cdopen" data-cdtype="lead" data-cdid="'+esc(r.id)+'" data-cdtitel="'+esc(r.title||"")+'" data-cdbelopp="'+esc(r.amount==null?"":r.amount)+'">+ Skapa affär</button></td>';
+      }
       body+='<tr><td>'+esc(r.date||"—")+'</td>'+
         '<td>'+esc(r.title||"—")+'<div class="fk-src">'+esc(r.source==="fortnox"?"Fortnox":"Mira")+'</div></td>'+
         '<td class="num">'+(r.amount==null?"—":krc(r.amount))+'</td>'+
-        '<td><span class="fk-lpill '+esc(r.status_cls||"wait")+'">'+esc(r.status||"—")+'</span>'+pdf+'</td></tr>';
+        '<td><span class="fk-lpill '+esc(r.status_cls||"wait")+'">'+esc(r.status||"—")+'</span>'+pdf+'</td>'+act+'</tr>';
+      if(isLead && STATE.dealFor && STATE.dealFor.type==="lead" && STATE.dealFor.id===r.id){
+        body+='<tr><td colspan="'+cols+'" class="fk-cdcell">'+dealFormHtml("lead", r.id, r.title, r.amount)+'</td></tr>';
+      }
     }
     return '<div class="fk-body"><div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
-      '<thead><tr><th>Datum</th><th>Nr / namn</th><th class="num">Belopp</th><th>Status</th></tr></thead>'+
+      '<thead><tr><th>Datum</th><th>Nr / namn</th><th class="num">Belopp</th><th>Status</th>'+(isLead?'<th>Affär</th>':'')+'</tr></thead>'+
       '<tbody>'+body+'</tbody></table></div></div>';
   }
   // Historik = activity_crm-flödet för HELA företaget (inlägg + mötesanteckningar), nyast först.
@@ -2258,7 +2333,12 @@
     var rows=[["Typ",r.typ||"—"],["Fas",r.fas||"—"],["Mötesdatum",r.motesdatum_iso||"—"],["Registrerad",r.created||"—"],["Ansvarig",r.ansvarig||"—"],["Status",r.genomfort?"Genomförd":"Planerad"]];
     var meta=""; for(var i=0;i<rows.length;i++){ meta+='<div class="fk-hmeta"><span>'+esc(rows[i][0])+'</span><b>'+esc(rows[i][1])+'</b></div>'; }
     var note=r.motesanteckning?('<div class="fk-hnote"><label>Mötesanteckning</label><div>'+esc(r.motesanteckning)+'</div></div>'):'';
-    return '<div class="fk-hdetail"><div class="fk-hmetagrid">'+meta+'</div>'+note+'</div>';
+    // Skapa affär av aktiviteten — samma flöde som i affärsvyn (2026-08-18)
+    var deal;
+    if(r.deal_id) deal='<div class="fk-cdrow"><span class="fk-linked">✓ Kopplad till affär</span></div>';
+    else if(STATE.dealFor && STATE.dealFor.type==="aktivitet" && STATE.dealFor.id===r.id) deal=dealFormHtml("aktivitet", r.id, r.meddelande||r.typ, null);
+    else deal='<div class="fk-cdrow"><button class="fk-editbtn" data-fk="cdopen" data-cdtype="aktivitet" data-cdid="'+esc(r.id)+'" data-cdtitel="'+esc(r.meddelande||r.typ||"")+'">+ Skapa affär av aktiviteten</button></div>';
+    return '<div class="fk-hdetail"><div class="fk-hmetagrid">'+meta+'</div>'+note+deal+'</div>';
   }
   function historikBody(rows){
     var head='<div style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="fk-editbtn" data-fk="histnew">+ Ny historik</button></div>'+
@@ -3023,7 +3103,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
@@ -3093,6 +3173,18 @@
       if(t.closest && t.closest('[data-fk="qa-kontakt"]')){ STATE.cardTab="personer"; STATE.personDetail=null; STATE.newPerson=true; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="histnew"]')){ STATE.histNew=!STATE.histNew; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="histnewcancel"]')){ STATE.histNew=false; renderCard(); return; }
+      // Skapa affär av lead/aktivitet (2026-08-18). OBS före histrow-hanteraren:
+      // knappen ligger INUTI den expanderade historik-raden, och en träff där
+      // skulle annars bubbla vidare och kollapsa raden man just öppnade formen i.
+      var cdo=t.closest?t.closest('[data-fk="cdopen"]'):null;
+      if(cdo){ e.stopPropagation();
+        STATE.dealFor={ type:cdo.getAttribute("data-cdtype"), id:cdo.getAttribute("data-cdid"),
+                        titel:cdo.getAttribute("data-cdtitel")||"", belopp:cdo.getAttribute("data-cdbelopp")||"" };
+        renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="cdcancel"]')){ e.stopPropagation(); STATE.dealFor=null; renderCard(); return; }
+      var cds=t.closest?t.closest('[data-fk="cdsave"]'):null;
+      if(cds){ e.stopPropagation(); createDealFrom(cds); return; }
+      if(t.closest && t.closest(".fk-cd")) return;   // klick i formen ska aldrig toggla raden
       var hrow=t.closest?t.closest('[data-fk="histrow"]'):null;
       if(hrow){ var rid=hrow.getAttribute("data-id"); STATE.histOpen=(STATE.histOpen===rid?null:rid); renderCard(); return; }
       var dsub=t.closest?t.closest('[data-fk="driftsub"]'):null;
