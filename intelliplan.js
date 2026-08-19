@@ -261,6 +261,77 @@ function sniffDelimiter(text) {
 }
 
 /**
+ * Kolumnprofil: beskriv VARJE kolumn utan att avslöja innehållet.
+ *
+ * Steg 4 kräver att man förstår kolumnerna — är `Consultant1`/`Consultant2` två
+ * olika personer på samma rad, eller namn och id för samma? Är `Order1` ett
+ * ordernummer eller en ordertext? Det går att svara på utan att läsa ett enda
+ * riktigt värde: fyllnadsgrad, antal distinkta värden och FORMEN på värdena
+ * räcker.
+ *
+ * Maskering: bokstäver → a/A, siffror → 9, allt annat behålls.
+ *   "Natalie - reception" → "Aaaaaaa - aaaaaaaaa"
+ *   "-1341.2800"          → "-9999.9999"
+ * Mönstret visar strukturen, aldrig identiteten.
+ *
+ * Numeriska kolumner får min/max/summa. Det är aggregat på företagsnivå, inte
+ * persondata, och behövs för att avgöra om en kolumn är belopp eller antal.
+ */
+export function profileCsvColumns(raw, opts = {}) {
+  const topPatterns = opts.topPatterns || 3;
+  const delim = sniffDelimiter(raw);
+  const rows = parseCsv(raw, { delimiter: delim });
+  const header = rows[0] || [];
+  const body = rows.slice(1).filter((r) => r.some((v) => (v || "").trim() !== ""));
+
+  const maskOf = (v) => String(v).replace(/[A-ZÅÄÖ]/g, "A").replace(/[a-zåäö]/g, "a").replace(/[0-9]/g, "9");
+  const numRe = /^-?\d+([.,]\d+)?$/;
+  const dateRe = /^\d{4}-\d{2}-\d{2}([T ].*)?$/;
+
+  const cols = header.map((name, ci) => {
+    const vals = body.map((r) => (r[ci] == null ? "" : String(r[ci]).trim()));
+    const filled = vals.filter((v) => v !== "");
+    const distinct = new Set(filled);
+    const nums = filled.filter((v) => numRe.test(v)).map((v) => Number(v.replace(",", ".")));
+    const pat = new Map();
+    for (const v of filled) { const m = maskOf(v); pat.set(m, (pat.get(m) || 0) + 1); }
+    const patterns = [...pat.entries()].sort((a, b) => b[1] - a[1]).slice(0, topPatterns)
+      .map(([pattern, count]) => ({ pattern: pattern.slice(0, 60), count }));
+
+    const c = {
+      name, filled: filled.length, empty: vals.length - filled.length,
+      distinct: distinct.size,
+      // Hög andel unika värden = fritext/identifierare; låg = kategori/dimension.
+      distinct_ratio: filled.length ? Number((distinct.size / filled.length).toFixed(3)) : 0,
+      numeric_share: filled.length ? Number((nums.length / filled.length).toFixed(3)) : 0,
+      looks_date: filled.length ? filled.filter((v) => dateRe.test(v)).length / filled.length > 0.8 : false,
+      min_len: filled.length ? Math.min(...filled.map((v) => v.length)) : 0,
+      max_len: filled.length ? Math.max(...filled.map((v) => v.length)) : 0,
+      top_patterns: patterns,
+    };
+    if (nums.length && nums.length === filled.length) {
+      c.numeric = { min: Math.min(...nums), max: Math.max(...nums),
+                    sum: Number(nums.reduce((a, b) => a + b, 0).toFixed(4)),
+                    negatives: nums.filter((n) => n < 0).length, zeros: nums.filter((n) => n === 0).length };
+    }
+    return c;
+  });
+
+  // Kolumnpar med samma kardinalitet är kandidater för "id + namn för samma sak"
+  // (t.ex. Consultant1/Consultant2). Bara en ledtråd — verifieras med Intelliplan.
+  const pairs = [];
+  for (let i = 0; i < cols.length; i++) {
+    for (let k = i + 1; k < cols.length; k++) {
+      if (cols[i].filled && cols[i].distinct === cols[k].distinct && cols[i].filled === cols[k].filled) {
+        pairs.push([cols[i].name, cols[k].name]);
+      }
+    }
+  }
+  return { rows: body.length, columns: cols.length, delimiter: delim === "\t" ? "tab" : delim,
+           same_cardinality_pairs: pairs, cols };
+}
+
+/**
  * Rekognosering: beskriv ett okänt svar utan att dumpa allt.
  * Guiden säger ingenting om svarsformatet, så steg 2 handlar om att ta reda på
  * det — form, storlek, kolumnnamn — innan vi designar någon datamodell.

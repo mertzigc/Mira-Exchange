@@ -12,7 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { createIntelliplanClient, describeReportPayload } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, profileCsvColumns } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -7749,6 +7749,13 @@ app.get("/admin/intelliplan/report/:id", async (req, res) => {
     console.log(`[intelliplan] rapport ${req.params.id}: ${shape.shape}, ${shape.row_count != null ? shape.row_count + " rader" : shape.bytes + " byte"}${shape.column_count ? ", " + shape.column_count + " kolumner" : ""}`);
     if (req.query.raw === "1") {
       return res.json({ ok: true, url: r.url, content_type: r.content_type, shape, data: r.parsed ? r.data : r.raw });
+    }
+    // profile=1: per-kolumn-statistik för att designa mappningen. Visar
+    // fyllnadsgrad, kardinalitet och MASKERADE värdemönster ("Aaaaaaa - aaaaaaaaa")
+    // — aldrig ett riktigt namn eller belopp per rad. Kräver därför inte sample.
+    if (req.query.profile === "1" && shape.shape === "csv") {
+      return res.json({ ok: true, url: r.url, content_type: r.content_type,
+                        rows: shape.row_count, profile: profileCsvColumns(r.raw) });
     }
     return res.json({ ok: true, url: r.url, content_type: r.content_type, shape });
   } catch (e) {

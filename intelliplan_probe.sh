@@ -52,6 +52,9 @@ if [ $# -ge 1 ]; then
   echo "═══ 3. Rapport $ID — form och kolumner ═══"
   curl -sS --max-time 120 "${H[@]}" "$HOST/admin/intelliplan/report/$ID?$Q" | j
   echo
+  echo "═══ 4. Kolumnprofil (maskerad — inga riktiga värden) ═══"
+  curl -sS --max-time 120 "${H[@]}" "$HOST/admin/intelliplan/report/$ID?$Q&profile=1" | j
+  echo
   echo "(sample=1 ger en exempelrad, raw=1 hela svaret — båda innehåller persondata.)"
 else
   # Rapport-id är fyrsiffriga och tilldelade per tenant (1063 är Carottes första

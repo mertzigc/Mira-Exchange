@@ -4,7 +4,7 @@
 // Mockad fetch → vi kan verifiera exakt vad som går på tråden: URL-mönster,
 // token-cache, förnyelse, 401-retry, cookie-hantering och att client_secret
 // aldrig läcker ut i något svar.
-import { createIntelliplanClient, describeReportPayload, parseCsv } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns } from "./intelliplan.js";
 import fs from "node:fs";
 
 let pass = 0, fail = 0;
@@ -264,6 +264,40 @@ const run = async () => {
   ok("en ensam rad utan avgränsare är inte CSV", describeReportPayload({ parsed: false, raw: "bara text" }).shape === "raw");
 
   // ══════════════════════════════════════════════════════════════════════════
+  sec("Kolumnprofil — struktur utan innehåll");
+  // ══════════════════════════════════════════════════════════════════════════
+  const PROF = 'Note,Consultant,ConsultantId,Cost,Empty\n'
+             + 'Kan ej jobba,Natalie Ek - reception,1001,-1341.2800,\n'
+             + 'Förskott,Anna Lund - kontor,1002,0.0000,\n'
+             + 'Förskott,Bo Berg - reception,1003,-5640.0000,\n';
+  const pr = profileCsvColumns(PROF);
+  ok("radantal", pr.rows === 3);
+  ok("kolumnantal", pr.columns === 5);
+  const byName = Object.fromEntries(pr.cols.map((c) => [c.name, c]));
+  ok("tom kolumn syns som tom", byName.Empty.filled === 0 && byName.Empty.empty === 3);
+  ok("kategorikolumn har låg unikhet", byName.Note.distinct === 2 && byName.Note.distinct_ratio < 0.7);
+  ok("identifierarkolumn har hög unikhet", byName.ConsultantId.distinct_ratio === 1);
+  ok("numerisk kolumn känns igen", byName.Cost.numeric_share === 1 && !!byName.Cost.numeric);
+  ok("numeriska aggregat (företagsnivå, ej persondata)",
+     byName.Cost.numeric.min === -5640 && byName.Cost.numeric.negatives === 2 && byName.Cost.numeric.zeros === 1);
+  ok("id-kolumn är numerisk men får eget mönster", byName.ConsultantId.top_patterns[0].pattern === "9999");
+
+  // ⚠️ HELA poängen: profilen får aldrig innehålla ett riktigt värde.
+  const pj = JSON.stringify(pr);
+  ok("inget konsultnamn i profilen", !pj.includes("Natalie") && !pj.includes("Anna") && !pj.includes("Bo Berg"));
+  ok("ingen lönerad i profilen", !pj.includes("-1341.2800"));
+  ok("ingen fritext i profilen", !pj.includes("Kan ej jobba"));
+  ok("mönstret visar FORMEN, inte värdet",
+     byName.Consultant.top_patterns[0].pattern === "Aaaaaaa Aa - aaaaaaaaa"
+     || /^A/.test(byName.Consultant.top_patterns[0].pattern));
+  ok("mönster räknas och sorteras", byName.Note.top_patterns[0].count === 2);
+  ok("kolumner med samma kardinalitet flaggas som möjliga par",
+     pr.same_cardinality_pairs.some((p) => p.includes("Consultant") && p.includes("ConsultantId")));
+
+  const dp = profileCsvColumns('D\n2026-07-01\n2026-07-02\n');
+  ok("datumkolumn känns igen", dp.cols[0].looks_date === true);
+
+  // ══════════════════════════════════════════════════════════════════════════
   sec("Endpoints i index.js");
   // ══════════════════════════════════════════════════════════════════════════
   const SRC = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
@@ -283,6 +317,7 @@ const run = async () => {
      /shape\.shape.*row_count.*bytes/.test(ipBlock) && !/first_row|shape\.preview/.test(ipBlock));
   ok("datarader kräver uttryckligt sample=1/raw=1", /sample: req\.query\.sample === "1" \|\| req\.query\.raw === "1"/.test(ipBlock));
   ok("probe visar aldrig datarader", /describeReportPayload\(r\);\s*\/\/ aldrig sample/.test(ipBlock));
+  ok("profile=1 finns och kräver INTE sample", /req\.query\.profile === "1"/.test(ipBlock) && /profileCsvColumns\(r\.raw\)/.test(ipBlock));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
