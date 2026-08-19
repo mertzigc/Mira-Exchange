@@ -529,7 +529,12 @@
           <button class="ck-chip" data-r="Syd" aria-pressed="false">Syd</button>
           <button class="ck-chip" data-r="Nord" aria-pressed="false">Nord</button>
         </div>
-        <div class="ck-hint">Lämna tomt för att räkna alla. Filtren nedan kombineras (region + fastighet + företag).</div>
+        <div class="ck-hint">Lämna tomt för att räkna alla. Filtren nedan kombineras (region + kundansvarig + fastighet + företag).</div>
+
+        <p class="ck-sl" style="margin-top:16px">Kundansvarig (valfritt)</p>
+        <div id="audOwnChips" class="ck-chips" style="margin-bottom:8px"></div>
+        <select class="ea-fsel" id="audOwnSel"><option value="">— Lägg till kundansvarig —</option></select>
+        <div class="ck-hint">Tar med alla företag där personen står som kundansvarig. Flera kan kombineras.</div>
 
         <p class="ck-sl" style="margin-top:16px">Fastighet (valfritt)</p>
         <div id="audFastChips" class="ck-chips" style="margin-bottom:8px"></div>
@@ -1125,6 +1130,14 @@
 <script>
 (function() {
   var HOST = "https://mira-exchange.onrender.com";
+  // ⚠️ Deklareras HÄR, överst: både Målgrupp-fliken och deltagarverktygen registrerar
+  // refreshers, och Målgrupp-koden ligger tidigare i filen. `var`-hoisting ger bara
+  // `undefined` — en deklaration längre ned hade kraschat med "cannot read push".
+  var _audToolRefreshers = [];
+  // Kundansvariga (users som äger minst ett bolag) — hämtas EN gång och delas av
+  // Målgrupp-fliken OCH alla tre deltagarpanelerna. OWNERS_LOADING hindrar
+  // parallella anrop när flera paneler initieras samtidigt.
+  var OWNERS = [], OWNERS_LOADING = false, OWNERS_ERR = false;
   var PUBLIC_INVITE_URL = "https://mira-fm.com/invite";
   var PUBLIC_SURVEY_URL = "https://mira-fm.com/undersokning";
   var T = [], Q = [], S = {};
@@ -1416,18 +1429,49 @@
   }
 
   // ════════ MÅLGRUPP ════════
+  // Kundansvarig-filter (samma chip-mönster som fastigheter). OWNERS fylls av
+  // deltagarverktygens delade hämtning — här väntar vi bara in den.
+  var AUD_OWN = [];   // [{id, name}]
+  function renderOwnChips(){
+    g('audOwnChips').innerHTML = AUD_OWN.map(function(o){
+      return '<span class="ck-chip" aria-pressed="true" data-oid="'+esc(o.id)+'">'+esc(o.name)+' <span style="opacity:.7;margin-left:4px">✕</span></span>';
+    }).join('');
+  }
+  function fillAudOwnSel(){
+    var sel=g('audOwnSel'); if(!sel) return;
+    if(!(OWNERS||[]).length){ sel.innerHTML='<option value="">'+(OWNERS_ERR?'— Kunde inte hämta kundansvariga —':'— Laddar kundansvariga —')+'</option>'; return; }
+    var chosen={}; AUD_OWN.forEach(function(o){ chosen[o.id]=1; });
+    sel.innerHTML='<option value="">— Lägg till kundansvarig —</option>' +
+      OWNERS.filter(function(o){ return !chosen[o.id]; })
+            .map(function(o){ return '<option value="'+esc(o.id)+'">'+esc(o.name)+' ('+o.companies+' bolag)</option>'; }).join('');
+  }
+  _audToolRefreshers.push(fillAudOwnSel);
+  g('audOwnSel').addEventListener('change', function(){
+    var id=this.value; if(!id) return;
+    var o=(OWNERS||[]).filter(function(x){return x.id===id;})[0];
+    if(o) AUD_OWN.push({ id:o.id, name:o.name });
+    renderOwnChips(); fillAudOwnSel(); this.value='';
+  });
+  g('audOwnChips').addEventListener('click', function(e){
+    var c=e.target.closest('[data-oid]'); if(!c) return;
+    AUD_OWN = AUD_OWN.filter(function(o){ return o.id!==c.dataset.oid; });
+    renderOwnChips(); fillAudOwnSel();
+  });
+
   document.querySelectorAll('#regionChips .ck-chip').forEach(function(c){ c.addEventListener('click', function(){ c.setAttribute('aria-pressed', c.getAttribute('aria-pressed')==='true'?'false':'true'); }); });
   g('audBtn').addEventListener('click', function(){
     var regions=[].slice.call(document.querySelectorAll('#regionChips .ck-chip[aria-pressed="true"]')).map(function(c){return c.dataset.r;});
     var fastigheter = AUD_FAST.map(function(f){return f.id;});
     var company = g('audCo').value || '';
+    var owners = AUD_OWN.map(function(o){return o.id;});
     g('audStatus').textContent='Hämtar…'; g('audBtn').disabled=true;
-    fetch(api('/admin/audience/preview'),{method:'POST',headers:H(),body:JSON.stringify({regions:regions,fastigheter:fastigheter,company:company})})
+    fetch(api('/admin/audience/preview'),{method:'POST',headers:H(),body:JSON.stringify({regions:regions,fastigheter:fastigheter,company:company,owners:owners})})
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j.ok) throw new Error(j.error||'fel');
         var filterTxt = [];
         if(regions.length) filterTxt.push(regions.join(', '));
+        if(AUD_OWN.length) filterTxt.push('kundansvarig: '+AUD_OWN.map(function(o){return o.name;}).join(', '));
         if(AUD_FAST.length) filterTxt.push(AUD_FAST.length+(AUD_FAST.length===1?' fastighet':' fastigheter'));
         if(company) filterTxt.push('1 företag');
         g('audResult').style.display='block';
@@ -1436,7 +1480,7 @@
         g('audUsers').innerHTML=u.length
           ? u.slice(0,100).map(function(x){return '<div class="ck-item"><div><div class="ck-item-t" style="font-size:12.5px">'+esc(x.name)+'</div><div class="ck-item-m">'+esc(x.email)+'</div></div><span class="ck-item-m">'+esc(x.company_name)+(x.region?' · '+esc(x.region):'')+'</span></div>';}).join('') + (u.length>100?'<div class="ck-mut" style="padding-top:10px">…och '+(u.length-100)+' till</div>':'')
           : '<div class="ea-empty">Inga mottagare matchade.</div>';
-        LAST_AUD_REGIONS = regions; LAST_AUD_FAST = fastigheter; LAST_AUD_CO = company; LAST_AUD_COUNT = j.user_count;
+        LAST_AUD_REGIONS = regions; LAST_AUD_FAST = fastigheter; LAST_AUD_CO = company; LAST_AUD_OWN = owners; LAST_AUD_COUNT = j.user_count;
         g('dlCard').style.display='block'; g('dlStats').style.display='none'; g('dlProgWrap').style.display='none';
         loadDlInvites();
       })
@@ -1445,7 +1489,7 @@
   });
 
   // ──── Deltagarlista: skapa InviteGuest per mottagare (batchat med progress) ────
-  var LAST_AUD_REGIONS=[], LAST_AUD_FAST=[], LAST_AUD_CO='', LAST_AUD_COUNT=0, DL_BUSY=false;
+  var LAST_AUD_REGIONS=[], LAST_AUD_FAST=[], LAST_AUD_CO='', LAST_AUD_OWN=[], LAST_AUD_COUNT=0, DL_BUSY=false;
   function loadDlInvites(){
     fetch(api('/admin/invite/list?kind=all'),{headers:H()})
       .then(function(r){return r.json();})
@@ -1470,7 +1514,7 @@
     var created=0, skipped=0;
     function step(offset){
       fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/build'),
-        {method:'POST',headers:H(),body:JSON.stringify({regions:LAST_AUD_REGIONS,fastigheter:LAST_AUD_FAST,company:LAST_AUD_CO,offset:offset,limit:100})})
+        {method:'POST',headers:H(),body:JSON.stringify({regions:LAST_AUD_REGIONS,fastigheter:LAST_AUD_FAST,company:LAST_AUD_CO,owners:LAST_AUD_OWN,offset:offset,limit:100})})
         .then(function(r){return r.json();})
         .then(function(j){
           if(!j.ok) throw new Error(j.error||'fel');
@@ -2236,6 +2280,7 @@
     g('segList').innerHTML = SEGMENTS.map(function(s){
       var parts=[];
       if(s.regions && s.regions.length) parts.push('<b>'+s.regions.length+'</b> region'+(s.regions.length===1?'':'er'));
+      if(s.owners && s.owners.length) parts.push('<b>'+s.owners.length+'</b> kundansvarig'+(s.owners.length===1?'':'a'));
       if(s.fastigheter && s.fastigheter.length) parts.push('<b>'+s.fastigheter.length+'</b> fastighet'+(s.fastigheter.length===1?'':'er'));
       if(s.company) parts.push('<b>1</b> företag');
       var meta = parts.length ? parts.join(' · ') : '(tomt filter)';
@@ -2250,7 +2295,7 @@
   function applySegment(seg){
     // Rensa alla nuvarande filter
     document.querySelectorAll('#regionChips .ck-chip').forEach(function(c){ c.setAttribute('aria-pressed','false'); });
-    AUD_FAST = [];
+    AUD_FAST = []; AUD_OWN = [];
     g('audCo').value=''; g('audCoSearch').value='';
 
     // Applicera region
@@ -2258,6 +2303,13 @@
       var chip=document.querySelector('#regionChips .ck-chip[data-r="'+r+'"]');
       if(chip) chip.setAttribute('aria-pressed','true');
     });
+
+    // Applicera kundansvariga (namn ur den delade OWNERS-listan om den hunnit laddas)
+    (seg.owners||[]).forEach(function(oid){
+      var o = (OWNERS||[]).filter(function(x){ return x.id===oid; })[0];
+      AUD_OWN.push({ id:oid, name: o ? o.name : '(okänd användare)' });
+    });
+    renderOwnChips(); fillAudOwnSel();
 
     // Applicera fastigheter (slå upp namn i FASTS-cachen om möjligt)
     (seg.fastigheter||[]).forEach(function(fid){
@@ -2284,15 +2336,19 @@
     var regions = [].slice.call(document.querySelectorAll('#regionChips .ck-chip[aria-pressed="true"]')).map(function(c){return c.dataset.r;});
     var fastigheter = AUD_FAST.map(function(f){return f.id;});
     var company = g('audCo').value || null;
-    if(!regions.length && !fastigheter.length && !company){
-      info.innerHTML='<span style="color:#f0883e">Inget filter satt — välj region, fastighet eller företag först.</span>';
+    var owners = AUD_OWN.map(function(o){return o.id;});
+    if(!regions.length && !fastigheter.length && !company && !owners.length){
+      info.innerHTML='<span style="color:#f0883e">Inget filter satt — välj region, kundansvarig, fastighet eller företag först.</span>';
       return;
     }
     var btn=g('segSaveBtn'); btn.disabled=true; info.textContent='Sparar…';
-    fetch(api('/admin/audience/segments'),{method:'POST',headers:H(),body:JSON.stringify({name:name,regions:regions,fastigheter:fastigheter,company:company})})
+    fetch(api('/admin/audience/segments'),{method:'POST',headers:H(),body:JSON.stringify({name:name,regions:regions,fastigheter:fastigheter,company:company,owners:owners})})
       .then(function(r){return r.json();})
       .then(function(j){
-        if(!j.ok) throw new Error(j.error||'fel');
+        if(!j.ok){
+          if(j.error==='owners_field_missing') throw new Error('Urvalet sparades inte: textfältet "owners" saknas på datatypen AudienceSegment i Bubble.');
+          throw new Error(j.error||'fel');
+        }
         info.innerHTML='<span style="color:#3fb950">Sparat.</span>';
         g('segName').value='';
         loadSegments();
@@ -3255,10 +3311,6 @@
   // den inbjudan/nyhet/undersökning som för tillfället redigeras.
   // Återanvänder de FUNGERANDE endpointarna /guests/build och /guests/import
   // samt segment-listan (SEGMENTS) — samma som Målgrupp-fliken.
-  var _audToolRefreshers = [];
-  // Kundansvariga (users som äger minst ett bolag) — hämtas EN gång och delas av
-  // alla tre deltagarpanelerna. OWNERS_LOADING hindrar tre parallella anrop vid start.
-  var OWNERS = [], OWNERS_LOADING = false;
   function refreshAllAudToolSegs(){ _audToolRefreshers.forEach(function(fn){ try{ fn(); }catch(_){} }); }
 
   function attachAudienceTools(cfg){
@@ -3319,7 +3371,7 @@
     // ── Kundansvarig-väljare ──
     function fillOwners(){
       var sel = g(P+'-own-sel'); if(!sel) return;
-      if(!(OWNERS||[]).length){ sel.innerHTML='<option value="">— Inga kundansvariga hittades —</option>'; return; }
+      if(!(OWNERS||[]).length){ sel.innerHTML='<option value="">'+(OWNERS_ERR?'— Kunde inte hämta —':'— Inga kundansvariga hittades —')+'</option>'; return; }
       var mine = String((g('ck_current_user_email')||{}).value||'').trim().toLowerCase();
       sel.innerHTML = '<option value="">— Välj kundansvarig —</option>' + OWNERS.map(function(o){
         return '<option value="'+esc(o.id)+'">'+esc(o.name)+' ('+o.companies+' bolag)'+(o.email&&o.email===mine?' — dina kunder':'')+'</option>';
@@ -3335,7 +3387,7 @@
       fetch(api('/admin/audience/owners'),{headers:H()})
         .then(function(r){return r.json();})
         .then(function(j){ if(j.ok){ OWNERS=j.owners||[]; _audToolRefreshers.forEach(function(f){ try{f();}catch(_){} }); } })
-        .catch(function(){ var sel=g(P+'-own-sel'); if(sel) sel.innerHTML='<option value="">— Kunde inte hämta —</option>'; });
+        .catch(function(){ OWNERS_ERR = true; _audToolRefreshers.forEach(function(f){ try{f();}catch(_){} }); });
     }
     g(P+'-own-sel').addEventListener('change', function(){ g(P+'-own-btn').disabled = !this.value; });
     g(P+'-own-btn').addEventListener('click', function(){
@@ -3409,7 +3461,7 @@
 
       // Dynamiskt filter → samma paginerade väg som kundansvarig-väljaren
       g(P+'-seg-btn').disabled=false; g(P+'-seg-sel').disabled=false;
-      runBuild({ regions:seg.regions||[], fastigheter:seg.fastigheter||[], company:seg.company||'' }, 'Startar…');
+      runBuild({ regions:seg.regions||[], fastigheter:seg.fastigheter||[], company:seg.company||'', owners:seg.owners||[] }, 'Startar…');
     });
 
     // ── Spara nuvarande mottagarlista som målgrupp (statisk lista) ──

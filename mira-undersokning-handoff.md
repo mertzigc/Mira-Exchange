@@ -139,9 +139,12 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
   - **⚠️ WU:** namn/e-post lånas ur `companies_api.js` cachade User-svep. `registerCompaniesRoutes` **returnerar nu** `{ userDirectory }` och `index.js` fångar returen (`const _companiesApi = registerCompaniesRoutes(...)`). Utan det hade endpointen behövt ett EGET helsvep av User (flera tusen rader) vid varje panelöppning. `_users()` bär nu även e-post (gratis, samma svep) + `byEmail`-map.
 - **Förval "mina kunder":** nytt `data-mira="current_user_email"` i blocket. Matchar mot users e-post → förväljs och märks "— dina kunder". **Binds den inte fungerar väljaren ändå**, bara utan förval. Hidden input har `data-*` → Bubble strippar inte `value` (se [[reference-bubble-hidden-input-strip]]).
 - **Refaktor:** ägar-vägen och sparade filter-urval delar nu EN paginerad `runBuild()` inne i `attachAudienceTools` (tidigare två kopior av samma pagineringsloop).
-- **Medvetet utanför scope:** Målgrupp-*fliken* har ingen ägar-chip. Att spara ett filter-urval med ägare skulle kräva ett `owners`-fält på `AudienceSegment` — utan det droppas det tyst av `safeCreate` och urvalet skulle *se* rätt ut men ge fel personer (jfr [[reference-bubble-tysta-faltdrop]]). Halvstöd vore värre än inget. Lägg till fältet först om detta behövs.
+- **Målgrupp-fliken (tillagt 2026-08-19 på Christians begäran):** ägar-chips även där, under region. Chip-mönstret speglar fastighetsväljaren (dropdown lägger till, ✕ tar bort). Filtret går in i förhandsgranskningen, i "Skapa deltagarlista" (`LAST_AUD_OWN` — exakt det filter förhandsgranskningen visade) och **sparas i urvalet**. Ett urval med enbart ägarfilter räknas som ett giltigt filter. Sparade urval bär ägarfiltret hela vägen ut i deltagarpanelernas `runBuild`.
+  - **⚠️ KRÄVER nytt TEXT-fält `owners` (JSON-array) på `AudienceSegment` i Bubble.** Utan det droppas filtret tyst och urvalet skulle *se* rätt ut men ge fel personer i nästa utskick. Skrivvägen läser därför tillbaka raden och jämför **antalet** — avviker det svarar den `502 owners_field_missing` och UI:t säger rakt ut vad som saknas (samma härdning som `members`, se [[reference-bubble-tysta-faltdrop]]).
+  - **⚠️ HOISTING-BUGG som harnessen fångade:** Målgrupp-fliken ligger TIDIGARE i filen än deltagarverktygen men registrerar en refresher i samma `_audToolRefreshers`. Deklarationen låg kvar nere hos deltagarverktygen → `var`-hoisting gav `undefined` → **TypeError vid sidladdning, hela blocket dött**. `_audToolRefreshers` + `OWNERS`/`OWNERS_LOADING`/`OWNERS_ERR` ligger nu överst i IIFE:n. Smoke-testet vaktar ordningen (deklaration före första `push`). Generellt: delad state som två sektioner i olika delar av filen använder hör hemma överst.
 - **Verifierat:** `malgrupp_smoke.mjs` (delad med region-svepet nedan) + browser-harness: väljaren listar ägare med antal, förval + "— dina kunder" slår igenom i alla tre panelerna, Andriettes 3 kontakter läggs till, **omkörning ger "0 tillagda, 3 fanns redan"**, ytterligare en ägare **kompletterar** till 4, och det refaktorerade segment-urvalet fungerar oförändrat.
-- **Deploy:** `index.js` + `companies_api.js` (Render) + klistra om `mira-kommunikation-admin.html` + **bind `data-mira="current_user_email"`** till Current User's e-post. Inga Bubble-schemaändringar.
+- **Deploy:** (1) **Bubble: nytt TEXT-fält `owners` på `AudienceSegment`** (behövs bara för att SPARA urval med ägarfilter — allt annat funkar utan). (2) `index.js` + `companies_api.js` (Render). (3) Klistra om `mira-kommunikation-admin.html` + **bind `data-mira="current_user_email"`** till Current User's e-post.
+- **Verifierat (Målgrupp-fliken):** `malgrupp_smoke.mjs` **86/86**, mutationstestat även på de nya raderna (flyttas `_audToolRefreshers`-deklarationen tillbaka ned faller hoisting-vakten; kopplas owners-verifieringen bort faller antals-assertionen). Harness: chip läggs till och försvinner ur dropdownen · förhandsgranskning "3 mottagare i 2 företag (kundansvarig: Andriette Andersson)" · spara med ENBART ägarfilter · urvalslistan visar "1 kundansvarig" · rensa + ladda tillbaka återställer chipet och auto-förhandsgranskar samma 3 · saknat Bubble-fält ger läsbart fel och sparar inget · det sparade urvalet valt i inbjudningspanelen lägger till exakt de 3 kontakterna.
 
 ---
 
@@ -160,6 +163,7 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 | Ny datatyp `MediaAsset` | fält: `url` (text), `name` (text), `content_type` (text) | mediaarkiv (3j) |
 | Fält på `AudienceSegment` | `members` (text — JSON-array med {name,email,company,region}) | statiska list-målgrupper (3b) |
 | Fält på `Invitation` | **`content_blocks` (text — JSON-array med designblocken)** | designblock (3l) — utan fältet sparas inga block |
+| Fält på `AudienceSegment` | **`owners` (text — JSON-array med User-id)** | spara målgruppsurval med kundansvarig-filter (3m) |
 
 > Den **inbyggda** avprickningen (3i a) kräver ingen Bubble-setup. Den **fristående** sidan (3i b) kräver `checkin_token` + `checkin_code` ovan.
 >
@@ -240,7 +244,7 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 - **Benchmarksiffra per fråga** — inputfält per fråga med målsiffra; sammanställning jämförs mot den. (Relaterar till projekt om benchmark = föregående period.) Bekräftat: manuellt inmatad målsiffra.
 - **WYSIWYG-editor** — enkel rich-text på beskrivningsfält (landningssidor för undersökning/invite). Bekräftat scope: bara där man skriver löptext.
 - ~~Nyhetsbrev med block~~ ✅ **klart 2026-08-19 (3l)** — designblock finns i alla tre utskickstyperna.
-- **Målgruppsmodulen:** ✅ kundansvarig-väljaren klar (3m). Kvar: fler filtreringsvägar i deltagarlistan, och ev. `owners`-fält på `AudienceSegment` om ägarfiltret ska gå att spara som urval.
+- **Målgruppsmodulen:** ✅ kundansvarig-filter klart i BÅDE deltagarpanelerna och Målgrupp-fliken, inkl. sparade urval (3m). Kvar: fler filtreringsvägar i deltagarlistan.
 - ~~Mediaarkiv + bildkomprimering~~ ✅ klart (3j).
 
 ### Öppna trådar

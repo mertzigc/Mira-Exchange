@@ -249,6 +249,41 @@ const run = async () => {
      (audTools.match(/function runBuild\(/g) || []).length === 1
      && (audTools.match(/guests\/build'\)/g) || []).length === 1);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Målgrupp-fliken — ägarfiltret sparas i urvalet");
+  // ══════════════════════════════════════════════════════════════════════════
+  const segGet = slice(INDEX_SRC, 'app.get("/admin/audience/segments"', "\n});", "segments GET");
+  ok("GET returnerar sparade ägare", /owners: _segParse\(s\.owners\)/.test(segGet));
+
+  const segPost = slice(INDEX_SRC, 'app.post("/admin/audience/segments"', "\n});", "segments POST");
+  ok("POST normaliserar owners till id-strängar", /const owners = \(Array\.isArray\(b\.owners\) \? b\.owners : \[\]\)\.map\(String\)\.filter\(Boolean\)/.test(segPost));
+  ok("POST persisterar owners", /owners:\s+JSON\.stringify\(owners\)/.test(segPost));
+  // Samma härdning som `members`: ett urval som tappat ägarfiltret ser sparat ut men
+  // ger fel personer i nästa utskick.
+  ok("POST läser tillbaka och flaggar owners_field_missing", segPost.includes("owners_field_missing"));
+  ok("verifieringen jämför ANTALET, inte bara att fältet finns", /_segParse\(check\.owners\)\.length !== owners\.length/.test(segPost));
+  ok("verifieringen körs bara när ägare faktiskt skickats", /if \(members\.length \|\| owners\.length\)/.test(segPost));
+
+  ok("Målgrupp-fliken har en kundansvarig-väljare", ADMIN_SRC.includes('id="audOwnSel"') && ADMIN_SRC.includes('id="audOwnChips"'));
+  ok("förhandsgranskningen skickar owners", /body:JSON\.stringify\(\{regions:regions,fastigheter:fastigheter,company:company,owners:owners\}\)/.test(ADMIN_SRC));
+  ok("deltagarlistan byggs med SAMMA filter som förhandsgranskningen", /owners:LAST_AUD_OWN/.test(ADMIN_SRC));
+  ok("spara urval skickar owners", /company:company,owners:owners\}\)/.test(ADMIN_SRC));
+  ok("bara ägarfilter räknas som ett filter (går att spara)", /!regions\.length && !fastigheter\.length && !company && !owners\.length/.test(ADMIN_SRC));
+  ok("ladda urval återställer ägarchipsen", /\(seg\.owners\|\|\[\]\)\.forEach/.test(ADMIN_SRC));
+  ok("urvalslistan visar antal kundansvariga", /kundansvarig'\+\(s\.owners\.length===1\?'':'a'\)/.test(ADMIN_SRC));
+  ok("sparade urval bär med ägarfiltret till deltagarpanelerna", /owners:seg\.owners\|\|\[\]/.test(ADMIN_SRC));
+  ok("saknat Bubble-fält ger läsbart fel i UI:t", ADMIN_SRC.includes("textfältet \"owners\" saknas"));
+
+  // ⚠️ Målgrupp-fliken ligger TIDIGARE i filen än deltagarverktygen men registrerar
+  // en refresher i samma lista. Deklareras listan längre ned ger var-hoisting
+  // `undefined` → TypeError vid sidladdning. Vakta ordningen.
+  const declIdx = ADMIN_SRC.indexOf("var _audToolRefreshers = []");
+  const firstUse = ADMIN_SRC.indexOf("_audToolRefreshers.push");
+  ok("_audToolRefreshers deklareras FÖRE första push", declIdx > 0 && declIdx < firstUse);
+  const ownersDecl = ADMIN_SRC.indexOf("var OWNERS = []");
+  ok("OWNERS deklareras före Målgrupp-flikens användning", ownersDecl > 0 && ownersDecl < ADMIN_SRC.indexOf("function fillAudOwnSel"));
+  ok("misslyckad hämtning når båda ytorna", /OWNERS_ERR = true; _audToolRefreshers\.forEach/.test(ADMIN_SRC));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

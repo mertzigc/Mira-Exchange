@@ -13273,6 +13273,9 @@ app.get("/admin/audience/segments", async (req, res) => {
         name: s.name || "(utan namn)",
         regions: _segParse(s.regions),
         fastigheter: _segParse(s.fastigheter),
+        // Kundansvariga (User-id). Saknas fältet i Bubble ger _segParse [] → urvalet
+        // beter sig som före, utan ägarfilter. Skrivvägen fångar det saknade fältet.
+        owners: _segParse(s.owners),
         company: s.company || null,
         notes: s.notes || "",
         // Statisk lista (sparad mottagarlista) vs dynamiskt filter
@@ -13302,10 +13305,12 @@ app.post("/admin/audience/segments", async (req, res) => {
       }))
       .filter(m => m.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email))
       .filter(m => (seen.has(m.email) ? false : (seen.add(m.email), true)));
+    const owners = (Array.isArray(b.owners) ? b.owners : []).map(String).filter(Boolean);
     const id = await safeCreate("AudienceSegment", {
       name,
       regions:     JSON.stringify(Array.isArray(b.regions) ? b.regions : []),
       fastigheter: JSON.stringify(Array.isArray(b.fastigheter) ? b.fastigheter : []),
+      owners:      JSON.stringify(owners),
       company:     b.company || null,
       notes:       safeText(b.notes || "", 500),
       members:     JSON.stringify(members)
@@ -13313,14 +13318,20 @@ app.post("/admin/audience/segments", async (req, res) => {
     // Verifiera att members faktiskt persisterades — safeCreate droppar tyst okända
     // fält, så om `members`-fältet saknas i Bubble skulle vi annars rapportera falsk
     // framgång ("sparad med N") medan listan i själva verket är tom.
-    if (members.length) {
+    // Samma härdning för `owners`: ett urval som TROR sig filtrera på kundansvarig
+    // men tappat filtret skulle tyst ge fel personer i nästa utskick.
+    if (members.length || owners.length) {
       const check = await bubbleGet("AudienceSegment", id).catch(() => null);
-      if (!check || !_segParse(check.members).length) {
+      if (members.length && (!check || !_segParse(check.members).length)) {
         console.error("[segments/create] members persisterades inte — saknas fältet 'members' (text) på AudienceSegment i Bubble?");
         return res.status(502).json({ ok: false, error: "members_field_missing", detail: "Lägg till fältet 'members' (text) på datatypen AudienceSegment i Bubble." });
       }
+      if (owners.length && (!check || _segParse(check.owners).length !== owners.length)) {
+        console.error("[segments/create] owners persisterades inte — saknas fältet 'owners' (text) på AudienceSegment i Bubble?");
+        return res.status(502).json({ ok: false, error: "owners_field_missing", detail: "Lägg till fältet 'owners' (text) på datatypen AudienceSegment i Bubble." });
+      }
     }
-    res.json({ ok: true, id, member_count: members.length });
+    res.json({ ok: true, id, member_count: members.length, owner_count: owners.length });
   } catch (e) { console.error("[admin/audience/segments/create]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
 });
 

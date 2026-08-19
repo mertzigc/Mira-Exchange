@@ -4,7 +4,7 @@
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
 >
 > ⭐ **AKTIVT SPÅR (2026-08-13→): Företagslista + Kundkort-omtag** — se §0k nedan + minnet `project-foretagslista-kundkort.md`. Allt LIVE, testat, grönt.
-> 🆕 **Kommunikationsmodulen (inbjudan/nyhetsbrev/undersökning)** lever i `mira-undersokning-handoff.md`. Designblock (`content_blocks`, §3l) **LIVE 2026-08-19**. Senast: **målgrupp per kundansvarig (§3m) — EJ deployat, kräver bindning `data-mira="current_user_email"`.** Se även mass-sättning av Region nedan i §0k.
+> 🆕 **Kommunikationsmodulen (inbjudan/nyhetsbrev/undersökning)** lever i `mira-undersokning-handoff.md`. Designblock (`content_blocks`, §3l) **LIVE 2026-08-19**. Senast: **målgrupp per kundansvarig (§3m) — EJ deployat, kräver bindning `data-mira="current_user_email"` + nytt textfält `owners` på `AudienceSegment`.** Se även mass-sättning av Region nedan i §0k.
 > ⚠️ **Offert/Affär/Avtal-modulen** lever i `OFFERT_PRODUKTION_HANDOFF.md` (⭐ STATUS överst) + minnet `project-offert-produktion-fe.md`. Denna sync-doc är fortsatt referens för faktura/order/workorder-synken. Relevant där: §9d workorder→FortnoxOrder(connection=TENGELLA), §4 connection-IDs, Fortnox-auth (`fortnoxGetBinary` global client_secret), Bubble-gotchas.
 
 ---
