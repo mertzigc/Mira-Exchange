@@ -112,7 +112,7 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 - Nytt fält `video_url` på `Invitation`. Vimeo/YouTube-länk → responsiv 16:9-embed på landningssidan (`mira-undersokning.html` + `invite.html`). Video-fält i event- + survey-formuläret (nyhet saknar landningssida).
 - **Karta:** nyckel-fri Google Maps-embed via eventets `event_address` (ingen API-nyckel). Endast landningssida — *inte* i mejl (skulle kräva Google Static Maps-nyckel; medvetet bortvalt för v1.0).
 
-### 3l. Designblock (`content_blocks`) — inbjudan + nyhetsbrev + undersökning — BYGGT 2026-08-19, EJ DEPLOYAT
+### 3l. Designblock (`content_blocks`) — inbjudan + nyhetsbrev + undersökning — LIVE 2026-08-19
 Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för att skriva en textklump. **Elva blocktyper:** endast text · bild vänster/text höger · text vänster/bild höger · tre bilder på rad · helbredds-bild · citat/stor text · punktlista · CTA-knapp · video (Vimeo/YouTube) · sektionsrubrik · avdelare. Mönstret är lyft ur undersökningens sektionsbyggare (`SV_QUESTIONS`/`renderSvQuestions`): en array, ↑↓✕ per rad, fältbindning utan re-render.
 
 - **`content_blocks.js` (NY modul) = EN källa för datamodell OCH rendering.** Exporterar `normBlocks` (validering/normalisering), `renderBlocksEmail` (tabellbaserad, allt inline), `renderBlocksWeb` + `BLOCK_CSS` (klasser + media queries), `BLOCK_TYPES`, `safeUrl`, `videoEmbedSrc`.
@@ -130,6 +130,18 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 - **Verifierat:** **`komm_blocks_smoke.mjs` 127/127** (normalisering + tomma block droppas + kapning/tak · URL-vitlista + XSS-escaping · mejl-rendering inkl MSO-ghost/kolumnbredder/stycken/ordning bild-vs-text · webb-rendering + BLOCK_CSS · `blocksHtmlFor` cache + alla fail-loud-grenar · `_verifyBlocksSaved` alla utfall · endpoints · admin↔backend-typparitet · landningssidorna). **Mutationstestat:** `git stash push` av `emailer.js` / `index.js` / `mira-kommunikation-admin.html` / `invite.html` / `mira-undersokning.html` fäller 8 / 13 / 24 / 3 / 2 assertions. Regression: samtliga 15 sviter gröna (658 assertions). **Browser-harness** mot riktig `content_blocks.js`: lägg till/fyll/flytta/ta bort block · förhandsgranskning renderar citat + galleri och varnar "1 block visas inte än (saknar innehåll)" · spara → rätt JSON i (mockad) Bubble i rätt ordning med det tomma blocket bortkastat · varningsbannern när fältet saknas · redigeringsläget laddar tillbaka blocken · landningssidan renderar dem med accentfärg · **mejlet mätt i iframe: 600px-mall, 252+252 sida vid sida och 3×160 på en rad vid 760px — staplat vid 375px.**
 - **Deploy:** (1) **Bubble: nytt TEXT-fält `content_blocks` på `Invitation`** — utan det sparas inga block (admin varnar tydligt). (2) Push `index.js` + `emailer.js` + **ny fil `content_blocks.js`** till Render. (3) Klistra om `mira-kommunikation-admin.html` i `dashboard_crm`. (4) Hosta om `invite.html` + `mira-undersokning.html` på mira-fm.com.
 - **Kvar/nästa:** målgruppsmodulen — lättare sätt att bygga kontaktlistor (Christians nästa punkt, ej påbörjad). Blockbiblioteket kan senare få sparade mallar ("återanvänd förra månadens upplägg").
+
+### 3m. Målgrupp per kundansvarig — BYGGT 2026-08-19, EJ DEPLOYAT
+"Lägg till kontakter hos en kundansvarigs bolag" i deltagarpanelen: väljare med alla Carotte-users som **faktiskt äger kunder** (med antal bolag), knapp → alla kontaktpersoner på de företagen läggs till. Kompletterar listan; redan tillagda hoppas över. Monterad i **alla tre** panelerna via `attachAudienceTools`.
+
+- **Filtret:** `owners: [user_id]` genom `_buildCcMap` → matchar `ClientCompany.Kundansvarig`. Kombineras med region/fastighet/företag precis som de andra filtren. Tom `owners`-array = inget filter (bakåtkompatibelt).
+- **`GET /admin/audience/owners`** — bara users med minst ett bolag, med antal. Antalet räknas ur **samma** CC-cache som filtret använder, så siffran i väljaren stämmer alltid med vad urvalet ger.
+  - **⚠️ WU:** namn/e-post lånas ur `companies_api.js` cachade User-svep. `registerCompaniesRoutes` **returnerar nu** `{ userDirectory }` och `index.js` fångar returen (`const _companiesApi = registerCompaniesRoutes(...)`). Utan det hade endpointen behövt ett EGET helsvep av User (flera tusen rader) vid varje panelöppning. `_users()` bär nu även e-post (gratis, samma svep) + `byEmail`-map.
+- **Förval "mina kunder":** nytt `data-mira="current_user_email"` i blocket. Matchar mot users e-post → förväljs och märks "— dina kunder". **Binds den inte fungerar väljaren ändå**, bara utan förval. Hidden input har `data-*` → Bubble strippar inte `value` (se [[reference-bubble-hidden-input-strip]]).
+- **Refaktor:** ägar-vägen och sparade filter-urval delar nu EN paginerad `runBuild()` inne i `attachAudienceTools` (tidigare två kopior av samma pagineringsloop).
+- **Medvetet utanför scope:** Målgrupp-*fliken* har ingen ägar-chip. Att spara ett filter-urval med ägare skulle kräva ett `owners`-fält på `AudienceSegment` — utan det droppas det tyst av `safeCreate` och urvalet skulle *se* rätt ut men ge fel personer (jfr [[reference-bubble-tysta-faltdrop]]). Halvstöd vore värre än inget. Lägg till fältet först om detta behövs.
+- **Verifierat:** `malgrupp_smoke.mjs` (delad med region-svepet nedan) + browser-harness: väljaren listar ägare med antal, förval + "— dina kunder" slår igenom i alla tre panelerna, Andriettes 3 kontakter läggs till, **omkörning ger "0 tillagda, 3 fanns redan"**, ytterligare en ägare **kompletterar** till 4, och det refaktorerade segment-urvalet fungerar oförändrat.
+- **Deploy:** `index.js` + `companies_api.js` (Render) + klistra om `mira-kommunikation-admin.html` + **bind `data-mira="current_user_email"`** till Current User's e-post. Inga Bubble-schemaändringar.
 
 ---
 
@@ -228,7 +240,7 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 - **Benchmarksiffra per fråga** — inputfält per fråga med målsiffra; sammanställning jämförs mot den. (Relaterar till projekt om benchmark = föregående period.) Bekräftat: manuellt inmatad målsiffra.
 - **WYSIWYG-editor** — enkel rich-text på beskrivningsfält (landningssidor för undersökning/invite). Bekräftat scope: bara där man skriver löptext.
 - ~~Nyhetsbrev med block~~ ✅ **klart 2026-08-19 (3l)** — designblock finns i alla tre utskickstyperna.
-- **Målgruppsmodulen: lättare kontaktlistbygge** — Christians nästa punkt efter blocken. Ej påbörjad.
+- **Målgruppsmodulen:** ✅ kundansvarig-väljaren klar (3m). Kvar: fler filtreringsvägar i deltagarlistan, och ev. `owners`-fält på `AudienceSegment` om ägarfiltret ska gå att spara som urval.
 - ~~Mediaarkiv + bildkomprimering~~ ✅ klart (3j).
 
 ### Öppna trådar

@@ -13198,17 +13198,43 @@ app.get("/admin/coworker/sample", async (req, res) => {
 });
 
 // ── Målgrupp: förhandsgranska (region + fastighet + företag) ──────────────────
+// ── GET /admin/audience/owners — kundansvariga att bygga målgrupp utifrån ─────
+// Listar bara users som FAKTISKT äger kunder, med antal, så dropdownen inte blir en
+// vägg av hundratals namn. Antalet räknas ur samma CC-cache som filtret använder →
+// siffran i väljaren stämmer alltid med vad urvalet ger.
+// Namn/e-post lånas ur companies_api:s redan cachade User-svep (deps-returen) —
+// annars hade den här endpointen krävt ett eget helsvep av User (flera tusen rader).
+app.get("/admin/audience/owners", async (req, res) => {
+  try {
+    await _syncCache(ADM_CC, {});
+    const counts = new Map();
+    _cacheRows(ADM_CC).forEach(c => {
+      const oid = _ccOwnerId(c); if (!oid) return;
+      counts.set(oid, (counts.get(oid) || 0) + 1);
+    });
+    let dir = [];
+    try { dir = _companiesApi && _companiesApi.userDirectory ? await _companiesApi.userDirectory() : []; } catch (_) { dir = []; }
+    const byId = new Map(dir.map(u => [u.id, u]));
+    const owners = [...counts.entries()].map(([id, n]) => {
+      const u = byId.get(id);
+      return { id, name: (u && u.name) || "(okänd användare)", email: (u && u.email) || "", companies: n };
+    }).sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    res.json({ ok: true, count: owners.length, owners });
+  } catch (e) { console.error("[admin/audience/owners]", e?.message); res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 app.post("/admin/audience/preview", async (req, res) => {
   try {
     const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
     const fastigheter = Array.isArray(req.body?.fastigheter) ? req.body.fastigheter.filter(Boolean) : [];
     const companyId = String(req.body?.company || "").trim();
+    const owners = Array.isArray(req.body?.owners) ? req.body.owners.filter(Boolean) : [];
     const full = req.body?.refresh === "full";
     // Synka cachen inkrementellt (full vid behov) – hämtar bara det som ändrats sedan sist
     await _syncCache(ADM_CC, { full });
     await _syncCache(ADM_COWORKER, { full });
 
-    const ccMap = _buildCcMap({ regions, fastigheter, companyId });
+    const ccMap = _buildCcMap({ regions, fastigheter, companyId, owners });
     const ccIds = Object.keys(ccMap);
     if (!ccIds.length) return res.json({ ok: true, companies: [], company_count: 0, user_count: 0, users: [], no_email: 0 });
 
@@ -13323,14 +13349,23 @@ app.delete("/admin/audience/segments/:id", async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 
 // Bygg ccMap för en målgrupp (region + fastighet + specifikt företag, kombineras som AND)
-function _buildCcMap({ regions = [], fastigheter = [], companyId = "" } = {}) {
+// `owners` = User-id på Kundansvarig. Låter en Carotte-medarbetare bygga en målgrupp
+// av kontakterna hos SINA kunder (eller en kollegas). Filtren kombineras som de andra.
+function _ccOwnerId(c) {
+  const v = c && (c.Kundansvarig || c.kundansvarig);
+  if (!v) return "";
+  return typeof v === "string" ? v : String(v._id || v.id || "");
+}
+function _buildCcMap({ regions = [], fastigheter = [], companyId = "", owners = [] } = {}) {
   const fastSet = new Set((fastigheter || []).map(String));
+  const ownerSet = new Set((owners || []).map(String).filter(Boolean));
   const ccMap = {};
   _cacheRows(ADM_CC).forEach(c => {
     const id = c._id || c.id;
     if (companyId && id !== companyId) return;
     const region = c.Region || c.region || "";
     if (regions.length && !regions.includes(region)) return;
+    if (ownerSet.size && !ownerSet.has(_ccOwnerId(c))) return;
     if (fastSet.size) {
       const ids = _ccFastIds(c);
       if (!ids.some(fid => fastSet.has(fid))) return;
@@ -13417,6 +13452,7 @@ app.post("/admin/invite/:id/guests/build", async (req, res) => {
     const regions = Array.isArray(req.body?.regions) ? req.body.regions.filter(Boolean) : [];
     const fastigheter = Array.isArray(req.body?.fastigheter) ? req.body.fastigheter.filter(Boolean) : [];
     const companyId = String(req.body?.company || "").trim();
+    const owners = Array.isArray(req.body?.owners) ? req.body.owners.filter(Boolean) : [];
     const offset = Math.max(0, parseInt(req.body?.offset, 10) || 0);
     const limit = Math.min(200, Math.max(1, parseInt(req.body?.limit, 10) || 100));
     const full = req.body?.refresh === "full";
@@ -13427,7 +13463,7 @@ app.post("/admin/invite/:id/guests/build", async (req, res) => {
     await _syncCache(ADM_CC, { full });
     await _syncCache(ADM_COWORKER, { full });
 
-    const audience = _resolveAudience({ regions, fastigheter, companyId });
+    const audience = _resolveAudience({ regions, fastigheter, companyId, owners });
     const total = audience.length;
 
     // Seeda dedup-set vid start eller om det saknas (t.ex. efter omstart)
@@ -20314,7 +20350,7 @@ registerSaljRoutes(app, {
 });
 
 // Företagslista (render-baserad ersättning för Bubble-native företagsvyn) — routes i companies_api.js.
-registerCompaniesRoutes(app, {
+const _companiesApi = registerCompaniesRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleDelete,
   bubbleUploadFile,                            // profilfoto-upload (Coworker.Foto)
   photoUpload: _approvalUpload,                // multer (memory, 25MB) för foto-multipart

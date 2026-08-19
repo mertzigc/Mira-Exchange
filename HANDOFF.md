@@ -4,7 +4,7 @@
 > Syfte: ny session ska kunna ta vid exakt här. Djupdesign finns i ARKITEKTUR_OCH_OMTAG.md.
 >
 > ⭐ **AKTIVT SPÅR (2026-08-13→): Företagslista + Kundkort-omtag** — se §0k nedan + minnet `project-foretagslista-kundkort.md`. Allt LIVE, testat, grönt.
-> 🆕 **Kommunikationsmodulen (inbjudan/nyhetsbrev/undersökning)** lever i `mira-undersokning-handoff.md`. Senast: **designblock (`content_blocks`) byggt 2026-08-19, §3l — EJ deployat, kräver nytt textfält `content_blocks` på `Invitation` i Bubble.**
+> 🆕 **Kommunikationsmodulen (inbjudan/nyhetsbrev/undersökning)** lever i `mira-undersokning-handoff.md`. Designblock (`content_blocks`, §3l) **LIVE 2026-08-19**. Senast: **målgrupp per kundansvarig (§3m) — EJ deployat, kräver bindning `data-mira="current_user_email"`.** Se även mass-sättning av Region nedan i §0k.
 > ⚠️ **Offert/Affär/Avtal-modulen** lever i `OFFERT_PRODUKTION_HANDOFF.md` (⭐ STATUS överst) + minnet `project-offert-produktion-fe.md`. Denna sync-doc är fortsatt referens för faktura/order/workorder-synken. Relevant där: §9d workorder→FortnoxOrder(connection=TENGELLA), §4 connection-IDs, Fortnox-auth (`fortnoxGetBinary` global client_secret), Bubble-gotchas.
 
 ---
@@ -23,6 +23,19 @@ Sessionen började som feature-arbete, blev en WU-jakt, och slutade i tre produk
 6. **Tre produktionsbuggar:** `writer` sattes aldrig på nya aktiviteter · `used_at` sprängde token-bränningen (reset-länkar återanvändbara) · `User_role` saknades på nya konton (utkastad från dashboard_crm).
 
 **Verifieringsläge:** 14 smoke-sviter, **531 assertions, alla gröna**. Nya tester är genomgående **mutationstestade** (`git stash push <fil>` → testerna MÅSTE falla mot gammal kod, annars bevisar de inget).
+
+### Mass-sättning av Region utifrån Kundansvarig — BYGGT 2026-08-19, EJ DEPLOYAT
+Regionsindelningen är gles på ClientCompany men kundansvarig är satt — ansvarig → region är därför en tillräckligt bra härledning för att fylla luckorna. `POST /admin/companies/region-bulk` (companies_api.js) + `region_bulk.sh`.
+
+- **Anrop:** `{ mapping: {"andriette@carotte.se":"Öst", …} | [{email,region}], dry_run, force, limit }`. Mappningen är **indata**, inte hårdkodad — kör om när ansvarsfördelningen ändras.
+- **⚠️ FYLLER BARA TOMMA (Christians beslut).** Bolag som redan har ett regionvärde rörs ALDRIG. De rapporteras ändå som `conflicts` med namn + nuvarande värde, så avvikelserna går att titta på separat. Omkörning är en no-op.
+- **⚠️ Regionvärdet valideras mot de värden som FAKTISKT förekommer i datan** (samma `_facets`-härledning som inline-editen) → felstavning ger `400 unknown_region_value` + `known_regions`, inte 300 företag med skräp i. Nytt värde kräver `force:true`. **Obs:** målgruppsfliken har fortfarande hårdkodade region-chips (`Öst/Väst/Syd/Nord` i `mira-kommunikation-admin.html`) — de är INTE härledda och kan drifta från option-setet.
+- **`dry_run:true` är default** — man måste be om att skriva. Torrkörningen redovisar per ansvarig: antal bolag · skulle sättas · redan rätt · avvikelser, med exempelnamn.
+- **WU:** läser ur `sharedCompanyFullMap()` (`ansvarig_id` + `region` finns redan i `_projectCompany`) → **noll nya helsvep**. Skriver i klumpar om 5 och uppdaterar `companyPatchEntry` så listan/kortet visar nya regionen direkt. `limit` (default 2000) kapar och redovisar `remaining` — ingen tyst avkortning.
+- **Fel på enskild rad stoppar inte resten** (rapporteras i `failed` med företagsnamn).
+- **Kör:** `PLANNING_ADMIN_TOKEN=… ./region_bulk.sh region_map.json` (torrkörning) → `--apply` (frågar "ja"). `/admin/companies` ligger redan i openPrefixes.
+- **Verifierat:** `malgrupp_smoke.mjs` 68/68, **mutationstestat på logiken** (inte bara filborttagning): görs "fyll bara tomma" om till "skriv över allt" faller 8 assertions inkl. "cc3 rördes ALDRIG"; tas regionvalideringen bort faller 2; görs torrkörning icke-default faller 4. Regression: samtliga 16 sviter gröna.
+- **Deploy:** `companies_api.js` + `index.js` (Render). Inga Bubble-ändringar.
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.

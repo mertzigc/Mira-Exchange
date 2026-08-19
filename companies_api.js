@@ -63,12 +63,18 @@ export function registerCompaniesRoutes(app, deps) {
   // så den här cachen påverkar bara namnvisning. (WU-städning 2026-08-17.)
   const AUX_TTL = 60 * 60 * 1000;
   let _uCache = { list: null, map: null, ts: 0 };
+  // User-e-post normaliserad. Bubble lägger inloggningsmejlet på authentication-objektet
+  // på vissa konton och i ett eget fält på andra — läs båda, annars tappas hälften.
+  const _userEmail = (u) => _str(
+    u.email || u.Email ||
+    (u.authentication && u.authentication.email && u.authentication.email.email) || ""
+  ).trim().toLowerCase();
   // Option-set-värden läses som display-strängar; vissa Bubble-svar ger objekt.
   const _osVal = (v) => (v == null ? "" : (typeof v === "string" ? v : _str(v.display || v.Display || v)));
   async function _users() {
     if (_uCache.map && (Date.now() - _uCache.ts) < AUX_TTL) return _uCache;
     const all = await bubbleFindAll("User", {}).catch(() => []);
-    const map = new Map(), list = [], roleSet = new Set();
+    const map = new Map(), byEmail = new Map(), list = [], roleSet = new Set();
     for (const u of all) {
       // User_role härleds UR DATAN (som _matterStatuses) i st.f. att hårdkodas —
       // vi gissar aldrig option-set-värden (jfr Avslutad→Avslutat, Internal_room).
@@ -79,11 +85,13 @@ export function registerCompaniesRoutes(app, deps) {
       const last  = _str(u["Last Name"]  || u["Efternamn"] || u["Surname"]);
       const nm = (first + " " + last).trim() || _str(u.email || u.Email);
       if (!nm) continue;
-      map.set(id, nm); list.push({ id, name: nm });
+      const em = _userEmail(u);
+      map.set(id, nm); list.push({ id, name: nm, email: em });
+      if (em) byEmail.set(em, id);
     }
     list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
     const roles = Array.from(roleSet).sort((a, b) => a.localeCompare(b, "sv"));
-    _uCache = { list, map, roles, ts: Date.now() };
+    _uCache = { list, map, byEmail, roles, ts: Date.now() };
     return _uCache;
   }
 
@@ -1755,6 +1763,134 @@ export function registerCompaniesRoutes(app, deps) {
   // Skriver till Bubble via display-namn, validerar option-set mot facetterna,
   // re-fetchar posten → uppdaterar delade cachen → returnerar färsk rad.
   app.options("/admin/companies/:id", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  // ══════════════ MASS-SÄTT REGION UTIFRÅN KUNDANSVARIG ══════════════
+  // POST /admin/companies/region-bulk
+  //   { mapping: {"andriette@carotte.se":"Öst", ...} | [{email,region}], dry_run, force, limit }
+  //
+  // Bakgrund: regionsindelningen är gles på ClientCompany, men kundansvarig är satt.
+  // Ansvarig → region är därför en tillräckligt bra härledning för att fylla luckorna.
+  //
+  // ⚠️ FYLLER BARA TOMMA (Christians beslut 2026-08-19). Bolag som redan har ett
+  // regionvärde rörs ALDRIG — men rapporteras som `conflict` när värdet avviker från
+  // det mappningen skulle satt, så avvikelserna går att titta på separat.
+  // ⚠️ Målregionerna valideras mot de värden som FAKTISKT förekommer i datan (samma
+  // `_facets`-härledning som inline-editen) — vi gissar aldrig option-set-värden.
+  // Behöver man införa ett helt nytt regionvärde krävs `force:true`, medvetet.
+  // Default är `dry_run:true`: man måste be om att skriva.
+  app.options("/admin/companies/region-bulk", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/region-bulk", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const body = req.body || {};
+      const dryRun = body.dry_run !== false;                 // default: torrkörning
+      const force = body.force === true;
+      const limit = Math.min(5000, Math.max(1, parseInt(body.limit, 10) || 2000));
+
+      // Mappning: objekt {email: region} ELLER array [{email, region}]
+      const pairs = [];
+      if (Array.isArray(body.mapping)) {
+        for (const m of body.mapping) if (m) pairs.push([_low(m.email).trim(), _str(m.region).trim()]);
+      } else if (body.mapping && typeof body.mapping === "object") {
+        for (const [k, v] of Object.entries(body.mapping)) pairs.push([_low(k).trim(), _str(v).trim()]);
+      }
+      const clean = pairs.filter(([e, r]) => e && r);
+      if (!clean.length) return res.status(400).json({ ok: false, error: "empty_mapping" });
+
+      const [full, uc] = await Promise.all([companyFullMap(), _users()]);
+      const facets = _facets(full);
+      const knownRegions = facets.region || [];
+
+      // Okända regionvärden → stopp med listan på vad som finns, om inte force.
+      const unknownRegions = [...new Set(clean.map(([, r]) => r))].filter((r) => !knownRegions.includes(r));
+      if (unknownRegions.length && !force) {
+        return res.status(400).json({
+          ok: false, error: "unknown_region_value", unknown: unknownRegions, known_regions: knownRegions,
+          hint: "Regionvärdet finns inte på något företag idag. Kontrollera stavningen mot known_regions, eller skicka force:true om det är ett nytt värde i option-setet.",
+        });
+      }
+
+      // E-post → User-id. Okända mejl stoppar INTE körningen, men rapporteras —
+      // annars ser en felstavad adress ut som "0 bolag" och tystnar.
+      const byEmail = uc.byEmail || new Map();
+      const owners = [], unknownEmails = [];
+      for (const [email, region] of clean) {
+        const uid = byEmail.get(email);
+        if (!uid) { unknownEmails.push(email); continue; }
+        owners.push({ email, region, user_id: uid, name: uc.map.get(uid) || email });
+      }
+      if (!owners.length) {
+        return res.status(400).json({ ok: false, error: "no_matching_users", unknown_emails: unknownEmails });
+      }
+
+      // Gruppera företagen per ansvarig. Läser ur den delade CC-cachen → NOLL nya
+      // Bubble-svep (både Kundansvarig och Region ligger i _projectCompany).
+      const byOwner = new Map(owners.map((o) => [o.user_id, o]));
+      const plan = new Map();   // user_id → { ...owner, total, would_set:[], already:0, conflict:[] }
+      for (const o of owners) plan.set(o.user_id, Object.assign({}, o, { total: 0, would_set: [], already: 0, conflict: [] }));
+      let noOwner = 0;
+      for (const c of full.values()) {
+        const oid = c.ansvarig_id;
+        if (!oid) { noOwner++; continue; }
+        const o = byOwner.get(oid); if (!o) continue;
+        const p = plan.get(oid);
+        p.total++;
+        const cur = _str(c.region).trim();
+        if (!cur) p.would_set.push({ id: c.id, name: c.name });
+        else if (cur === o.region) p.already++;
+        else p.conflict.push({ id: c.id, name: c.name, region: cur });
+      }
+
+      const report = [...plan.values()].map((p) => ({
+        email: p.email, name: p.name, user_id: p.user_id, region: p.region,
+        companies: p.total, would_set: p.would_set.length, already_correct: p.already,
+        conflicts: p.conflict.length,
+        // Namn på de som skulle ändras / avviker — så man kan stickprova innan skarp körning.
+        would_set_examples: p.would_set.slice(0, 10).map((x) => x.name),
+        conflict_examples: p.conflict.slice(0, 10).map((x) => x.name + " (" + x.region + ")"),
+      })).sort((a, b) => b.would_set - a.would_set);
+
+      const targets = [].concat(...[...plan.values()].map((p) => p.would_set.map((x) => ({ id: x.id, name: x.name, region: p.region }))));
+      const totals = {
+        would_set: targets.length,
+        already_correct: report.reduce((n, r) => n + r.already_correct, 0),
+        conflicts: report.reduce((n, r) => n + r.conflicts, 0),
+        companies_without_owner: noOwner,
+      };
+
+      if (dryRun) {
+        return res.json({ ok: true, dry_run: true, known_regions: knownRegions, unknown_emails: unknownEmails, unknown_regions: unknownRegions, owners: report, totals, capped: targets.length > limit ? limit : null });
+      }
+
+      // ── Skarp körning ──────────────────────────────────────────────
+      // Sekventiellt i små klumpar: Bubbles Data API blir ostabilt vid hög parallellism
+      // och en halvskriven mängd är svårare att reda ut än en långsam körning.
+      const slice = targets.slice(0, limit);
+      const failed = [];
+      let updated = 0;
+      for (let i = 0; i < slice.length; i += 5) {
+        const chunk = slice.slice(i, i + 5);
+        await Promise.all(chunk.map(async (t) => {
+          try {
+            await bubblePatch("ClientCompany", t.id, { Region: t.region });
+            updated++;
+            // Håll den delade cachen i takt så listan/kortet visar nya regionen direkt.
+            if (companyPatchEntry) {
+              const fresh = await bubbleGet("ClientCompany", t.id).catch(() => null);
+              if (fresh) companyPatchEntry(t.id, fresh);
+            }
+          } catch (e) {
+            failed.push({ id: t.id, name: t.name, error: e?.message || String(e) });
+          }
+        }));
+      }
+      console.log("[region-bulk] uppdaterade " + updated + "/" + slice.length + " företag, " + failed.length + " fel");
+      return res.json({ ok: true, dry_run: false, updated, attempted: slice.length, failed, remaining: Math.max(0, targets.length - slice.length), known_regions: knownRegions, unknown_emails: unknownEmails, owners: report, totals });
+    } catch (e) {
+      console.error("[/admin/companies/region-bulk]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
   app.patch("/admin/companies/:id", async (req, res) => {
     if (!guard(req, res)) return;
     const id = _str(req.params.id).trim();
@@ -1811,4 +1947,14 @@ export function registerCompaniesRoutes(app, deps) {
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
   });
+
+  // Delas med index.js (kommunikationsmodulens kundansvarig-väljare). Återanvänder
+  // den redan cachade User-svepningen — utan detta hade comms-modulen behövt ett
+  // EGET helsvep av User (flera tusen rader) för att få namn/e-post.
+  return {
+    async userDirectory() {
+      const uc = await _users();
+      return (uc.list || []).map((u) => ({ id: u.id, name: u.name, email: u.email || "" }));
+    },
+  };
 }

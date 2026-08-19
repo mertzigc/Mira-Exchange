@@ -314,6 +314,9 @@
 </style>
 
 <!-- En delad nyckel för hela Kommunikation-blocket -->
+<!-- Bind till Current User's e-post i Bubble → kundansvarig-väljaren förvaljer
+     "mina kunder". Lämnas den tom fungerar väljaren ändå, bara utan förval. -->
+<input type="hidden" id="ck_current_user_email" data-mira="current_user_email" value="">
 <input type="hidden" id="ea_api_key" value="392fb02fb27c004d2faa5211303aa84cd1e3f1141f879b5f973f966bce7907ba">
 
 <div class="ea-wrap" style="position:relative;height:880px">
@@ -3253,6 +3256,9 @@
   // Återanvänder de FUNGERANDE endpointarna /guests/build och /guests/import
   // samt segment-listan (SEGMENTS) — samma som Målgrupp-fliken.
   var _audToolRefreshers = [];
+  // Kundansvariga (users som äger minst ett bolag) — hämtas EN gång och delas av
+  // alla tre deltagarpanelerna. OWNERS_LOADING hindrar tre parallella anrop vid start.
+  var OWNERS = [], OWNERS_LOADING = false;
   function refreshAllAudToolSegs(){ _audToolRefreshers.forEach(function(fn){ try{ fn(); }catch(_){} }); }
 
   function attachAudienceTools(cfg){
@@ -3261,7 +3267,13 @@
     var P = cfg.prefix;
     box.innerHTML =
       '<div style="border-top:1px solid var(--bd2);margin:4px 0 12px;padding-top:14px">' +
-        '<p class="ck-sl" style="font-size:12px;margin-bottom:8px">Lägg till från sparad målgrupp</p>' +
+        '<p class="ck-sl" style="font-size:12px;margin-bottom:8px">Lägg till kontakter hos en kundansvarigs bolag</p>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+          '<select class="ea-fsel" id="'+P+'-own-sel" style="flex:1"><option value="">— Laddar kundansvariga —</option></select>' +
+          '<button class="ck-btn-gh" id="'+P+'-own-btn" disabled>Lägg till</button>' +
+        '</div>' +
+        '<div class="ck-mut" id="'+P+'-own-info" style="font-size:11px;margin-top:6px">Hämtar alla kontaktpersoner på de företag där personen står som kundansvarig. Redan tillagda hoppas över.</div>' +
+        '<p class="ck-sl" style="font-size:12px;margin:16px 0 8px">Lägg till från sparad målgrupp</p>' +
         '<div style="display:flex;gap:8px;align-items:center">' +
           '<select class="ea-fsel" id="'+P+'-seg-sel" style="flex:1"><option value="">— Välj sparat urval —</option></select>' +
           '<button class="ck-btn-gh" id="'+P+'-seg-btn" disabled>Lägg till</button>' +
@@ -3276,6 +3288,62 @@
         '<div class="ck-row-actions" style="margin-top:8px"><button class="ck-btn-gh" id="'+P+'-imp-btn" disabled>Importera</button></div>' +
         '<div id="'+P+'-aud-prog" style="display:none;margin-top:10px"><div class="ck-prog"><div class="ck-prog-bar" id="'+P+'-aud-bar"></div></div><div class="ck-mut" id="'+P+'-aud-text" style="margin-top:6px;font-size:11.5px"></div></div>' +
       '</div>';
+
+    // Delad paginerad körning mot /guests/build. Används av BÅDE kundansvarig-väljaren
+    // och sparade filter-urval — samma progress, samma dedup, en kodväg.
+    function runBuild(filters, startedLabel){
+      var invId = cfg.getInvId();
+      if(!invId){ alert('Spara först (så utskicket finns) innan du lägger till mottagare.'); return; }
+      var prog=g(P+'-aud-prog'), bar=g(P+'-aud-bar'), txt=g(P+'-aud-text');
+      prog.style.display='block'; bar.style.width='0%'; txt.textContent=startedLabel||'Startar…';
+      var created=0, skipped=0;
+      function fin(msg){ txt.textContent=msg; cfg.reload(); }
+      function step(offset){
+        var b = { regions:filters.regions||[], fastigheter:filters.fastigheter||[], company:filters.company||'', owners:filters.owners||[], offset:offset, limit:100 };
+        fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/build'),{method:'POST',headers:H(),body:JSON.stringify(b)})
+          .then(function(r){return r.json();})
+          .then(function(j){
+            if(!j.ok) throw new Error(j.error||'fel');
+            created+=j.created||0; skipped+=j.skipped||0;
+            bar.style.width=(j.total?Math.round(j.processed/j.total*100):100)+'%';
+            txt.textContent='Bearbetar '+j.processed+'/'+j.total+' · '+created+' tillagda'+(skipped?' · '+skipped+' fanns redan':'');
+            if(!j.done && j.next_offset!=null) step(j.next_offset);
+            else fin(j.total ? ('Klart — '+created+' tillagda'+(skipped?', '+skipped+' fanns redan':'')+'.')
+                             : 'Inga kontakter matchade — bolagen saknar kontaktpersoner med e-post.');
+          })
+          .catch(function(e){ txt.textContent='Fel: '+((e&&e.message)||''); });
+      }
+      step(0);
+    }
+
+    // ── Kundansvarig-väljare ──
+    function fillOwners(){
+      var sel = g(P+'-own-sel'); if(!sel) return;
+      if(!(OWNERS||[]).length){ sel.innerHTML='<option value="">— Inga kundansvariga hittades —</option>'; return; }
+      var mine = String((g('ck_current_user_email')||{}).value||'').trim().toLowerCase();
+      sel.innerHTML = '<option value="">— Välj kundansvarig —</option>' + OWNERS.map(function(o){
+        return '<option value="'+esc(o.id)+'">'+esc(o.name)+' ('+o.companies+' bolag)'+(o.email&&o.email===mine?' — dina kunder':'')+'</option>';
+      }).join('');
+      // Förval: den inloggade, om Bubble-bindningen finns och personen äger kunder.
+      if(mine){ var me=OWNERS.filter(function(o){return o.email===mine;})[0]; if(me) sel.value=me.id; }
+      g(P+'-own-btn').disabled = !sel.value;
+    }
+    _audToolRefreshers.push(fillOwners);
+    if((OWNERS||[]).length) fillOwners();
+    else if(!OWNERS_LOADING){
+      OWNERS_LOADING = true;
+      fetch(api('/admin/audience/owners'),{headers:H()})
+        .then(function(r){return r.json();})
+        .then(function(j){ if(j.ok){ OWNERS=j.owners||[]; _audToolRefreshers.forEach(function(f){ try{f();}catch(_){} }); } })
+        .catch(function(){ var sel=g(P+'-own-sel'); if(sel) sel.innerHTML='<option value="">— Kunde inte hämta —</option>'; });
+    }
+    g(P+'-own-sel').addEventListener('change', function(){ g(P+'-own-btn').disabled = !this.value; });
+    g(P+'-own-btn').addEventListener('click', function(){
+      var oid=g(P+'-own-sel').value; if(!oid) return;
+      var o=(OWNERS||[]).filter(function(x){return x.id===oid;})[0]; if(!o) return;
+      if(!confirm('Lägg till kontaktpersonerna hos '+o.name+'s '+o.companies+' bolag?\n(Redan tillagda hoppas över.)')) return;
+      runBuild({ owners:[oid] }, 'Hämtar kontakter hos '+o.name+'s bolag…');
+    });
 
     // ── Fyll segment-dropdown ──
     function fillSegs(){
@@ -3339,24 +3407,9 @@
         return;
       }
 
-      // Dynamiskt filter → /guests/build (paginerad)
-      var created=0, skipped=0;
-      function step(offset){
-        fetch(api('/admin/invite/'+encodeURIComponent(invId)+'/guests/build'),
-          {method:'POST',headers:H(),body:JSON.stringify({regions:seg.regions||[],fastigheter:seg.fastigheter||[],company:seg.company||'',offset:offset,limit:100})})
-          .then(function(r){return r.json();})
-          .then(function(j){
-            if(!j.ok) throw new Error(j.error||'fel');
-            created+=j.created||0; skipped+=j.skipped||0;
-            var pct=j.total?Math.round(j.processed/j.total*100):100;
-            bar.style.width=pct+'%';
-            txt.textContent='Bearbetar '+j.processed+'/'+j.total+' · '+created+' tillagda'+(skipped?' · '+skipped+' fanns redan':'');
-            if(!j.done && j.next_offset!=null){ step(j.next_offset); }
-            else done('Klart — '+created+' tillagda'+(skipped?', '+skipped+' fanns redan':'')+'.');
-          })
-          .catch(fail);
-      }
-      step(0);
+      // Dynamiskt filter → samma paginerade väg som kundansvarig-väljaren
+      g(P+'-seg-btn').disabled=false; g(P+'-seg-sel').disabled=false;
+      runBuild({ regions:seg.regions||[], fastigheter:seg.fastigheter||[], company:seg.company||'' }, 'Startar…');
     });
 
     // ── Spara nuvarande mottagarlista som målgrupp (statisk lista) ──
