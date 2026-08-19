@@ -7767,7 +7767,7 @@ app.get("/admin/intelliplan/probe", async (req, res) => {
       const shape = describeReportPayload(r);
       out.push({ id, ok: true, shape: shape.shape, rows: shape.row_count ?? null, bytes: shape.bytes, columns: shape.columns });
     } catch (e) {
-      out.push({ id, ok: false, status: e?.status || null, error: e?.message, detail: (e?.body || "").slice(0, 200) });
+      out.push({ id, ok: false, status: e?.status || null, error: e?.message, detail: (e?.body || "").slice(0, 900) });
     }
     await new Promise((r2) => setTimeout(r2, 300));
   }

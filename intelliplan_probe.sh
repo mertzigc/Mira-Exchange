@@ -12,6 +12,30 @@ API_KEY="${API_KEY:?Missing API_KEY (samma x-api-key som övriga Render-anrop)}"
 H=(-H "x-api-key: $API_KEY")
 j() { python3 -m json.tool 2>/dev/null || cat; }
 
+# Grinden (x-api-key) körs FÖRE routingen — en 401 säger alltså ingenting om
+# Intelliplan-koden, bara att nyckeln inte matchar. Stanna direkt i stället för
+# att köra vidare och ge tre likadana fel.
+echo "═══ 0. Nyckelkoll ═══"
+CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${H[@]}" "$HOST/tengella/debug-env" || echo 000)
+if [ "$CODE" = "401" ]; then
+  cat >&2 <<'MSG'
+✗ x-api-key avvisad av Render (401).
+
+  Felet kommer från den globala grinden, före routingen — det har inget med
+  Intelliplan att göra. Servern läser nyckeln som:
+      pick(MIRA_RENDER_API_KEY, MIRA_EXCHANGE_API_KEY)   ← första icke-tomma
+
+  Kolla:
+   1. Finns BÅDA i Render? Då gäller MIRA_RENDER_API_KEY.
+   2. Följde ett osynligt tecken med vid kopieringen?
+        printf %s "$API_KEY" | wc -c     och jämför med värdet i Render.
+MSG
+  exit 1
+fi
+if [ "$CODE" = "000" ]; then echo "✗ Fick inget svar från $HOST — nere eller fel URL?" >&2; exit 1; fi
+echo "✓ nyckeln accepteras (HTTP $CODE)"
+echo
+
 echo "═══ 1. Env på Render (visar aldrig hemligheten) ═══"
 curl -sS --max-time 30 "${H[@]}" "$HOST/admin/intelliplan/debug-env" | j
 echo

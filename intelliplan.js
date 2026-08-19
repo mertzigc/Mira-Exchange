@@ -176,7 +176,11 @@ export function createIntelliplanClient(deps = {}) {
     const text = await res.text().catch(() => "");
     if (!res.ok) {
       const e = new Error(`intelliplan_request_failed: HTTP ${res.status}`);
-      e.status = res.status; e.body = text.slice(0, 1000); e.url = url;
+      // Generöst tak: Intelliplans fel kommer inpackade i flera lager
+      // ("Shuffler error -> ... -> with response: {...errors:[{userMessage}]}")
+      // och den upplysande delen ligger LÄNGST IN. Kapar man för tidigt får man
+      // bara höljet och står utan diagnos.
+      e.status = res.status; e.body = text.slice(0, 4000); e.url = url;
       throw e;
     }
     const ctype = String((res.headers && res.headers.get && res.headers.get("content-type")) || "");
