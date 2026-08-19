@@ -556,6 +556,20 @@ const run = async () => {
   // gamla rader fortfarande på ingenting.
   ok("svaret påminner om att köra om perioderna", /Kör om berörda perioder/.test(omBlock));
 
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Mappningsskriptet");
+  // ══════════════════════════════════════════════════════════════════════════
+  const MAP_SH = fs.readFileSync(new URL("./intelliplan_map.sh", import.meta.url), "utf8");
+  ok("fyra kommandon", ["status", "draft", "apply", "confident"].every((c) => MAP_SH.includes(c + ")")));
+  ok("draft hämtar BARA omappade", /accounts\?unmapped=1/.test(MAP_SH));
+  ok("draft sorterar bästa förslag först", /out\.sort\(key=lambda x: \(-\(x\['_poäng'\] or 0\)/.test(MAP_SH));
+  // Tomt client_company_id = "hoppa över", inte "koppla till ingenting".
+  ok("apply filtrerar bort tomma kopplingar", /if str\(r\.get\('client_company_id'\) or ''\)\.strip\(\)/.test(MAP_SH));
+  ok("confident skickar apply_confident", /"apply_confident":true/.test(MAP_SH));
+  // ⚠️ Den viktigaste raden i filen: många-till-en är förväntat.
+  ok("dokumenterar att flera konton får peka på samma kund", /många-till-en|Gothia Towers har fem konton/.test(MAP_SH));
+  ok("påminner om omkörning efter mappning", /kör om berörda perioder|Kör om berörda perioder/i.test(MAP_SH));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };
