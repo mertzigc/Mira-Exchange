@@ -410,6 +410,13 @@ const run = async () => {
   ok("saknad datatyp → 502 med läsbar orsak", /kunde_inte_lasa_befintliga/.test(syncBlock));
   // Bubble droppar okända fält TYST — utan läs-tillbaka ser synken lyckad ut.
   ok("verifierar att fälten persisterade", /fields_missing_on_type/.test(syncBlock));
+  // ⚠️ FALSK POSITIV 2026-08-19: Bubble lagrar inte null, så ett fält vi skickade
+  // som null kommer tillbaka `undefined` fast fältet finns. Rapportens FÖRSTA rad
+  // är "No connection" (kontor = null) → naiv koll på toCreate[0] flaggade
+  // ip_office/ip_office_id som saknade trots att de var korrekt skapade.
+  ok("probe-raden väljs efter flest ifyllda värden", /toCreate\.reduce\(\(best, r2\) => \(nonNull\(r2\) > nonNull\(best\)/.test(syncBlock));
+  ok("bara fält vi skickade ett VÄRDE för verifieras", /sentKeys = Object\.keys\(probe\)\.filter\(\(k\) => probe\[k\] != null\)/.test(syncBlock));
+  ok("kollar inte längre blint på första raden", !/Object\.keys\(toCreate\[0\]\)\.filter/.test(syncBlock));
   ok("föräldralösa rader rapporteras", /orphans/.test(syncBlock));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);

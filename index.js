@@ -22172,10 +22172,20 @@ app.post("/admin/intelliplan/sync/revenue-day", async (req, res) => {
       // ⚠️ safeCreate/bulk droppar okända fält TYST. Läs tillbaka en rad och
       // verifiera att fälten finns — annars ser synken lyckad ut medan Bubble
       // lagrat tomma rader. (Se reference-bubble-tysta-faltdrop.)
+      //
+      // ⚠️ Välj probe-raden med FLEST ifyllda värden, och jämför bara fält vi
+      // faktiskt skickade ett värde för. Bubble lagrar inte null — ett fält vi
+      // skickade som null kommer tillbaka `undefined` fast fältet finns.
+      // Första raden i rapporten är "No connection" (kontor = null), så en naiv
+      // koll på toCreate[0] flaggade ip_office/ip_office_id som saknade trots
+      // att de fanns. (Falsk positiv 2026-08-19.)
+      const nonNull = (o) => Object.values(o).filter((v) => v != null).length;
+      const probe = toCreate.reduce((best, r2) => (nonNull(r2) > nonNull(best) ? r2 : best), toCreate[0]);
       const check = await bubbleFindAll(IP_REVDAY_TYPE, { constraints: [
-        { key: "ip_key", constraint_type: "equals", value: toCreate[0].ip_key } ] }).catch(() => []);
+        { key: "ip_key", constraint_type: "equals", value: probe.ip_key } ] }).catch(() => []);
       const got = (check || [])[0];
-      const lost = got ? Object.keys(toCreate[0]).filter((k) => got[k] === undefined) : Object.keys(toCreate[0]);
+      const sentKeys = Object.keys(probe).filter((k) => probe[k] != null);
+      const lost = got ? sentKeys.filter((k) => got[k] === undefined) : sentKeys;
       if (lost.length) {
         console.error("[intelliplan-sync] fält droppades tyst av Bubble:", lost.join(", "));
         return res.status(502).json({ ok: false, error: "fields_missing_on_type", missing: lost,
