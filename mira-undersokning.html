@@ -339,6 +339,7 @@
     var accent = (cfg.brand && cfg.brand.accent_color) || '#df6f39';
     document.documentElement.style.setProperty('--accent', accent);
     accentBar.style.background = accent;
+    injectBlocksCss(cfg.blocks_css);
 
     // Stängd: inaktiverad manuellt eller efter slutdatum
     if (cfg.active === false || cfg.deadline_passed === true) {
@@ -372,6 +373,9 @@
       html += '<div class="lead">' + esc(cfg.event.description) + '</div>';
     }
     if (cfg.event.video_url) { html += videoEmbedHtml(cfg.event.video_url); }
+    // Designblock: server-renderad HTML ur /invite/config (content_blocks.js).
+    // CSS:en injiceras separat nedan så mejl/landningssida/preview delar design.
+    if (cfg.blocks_html) { html += cfg.blocks_html; }
     if (cfg.event.address)   { html += mapEmbedHtml(cfg.event.address); }
     if (cfg.anonymous) {
       html += '<div class="sv-anon-note">🔒 <b>Dina svar är anonyma.</b> Svaren lagras helt frikopplat från dig — det går inte att se vem som svarat vad.</div>';
@@ -393,6 +397,16 @@
 
     content.innerHTML = html;
     wireForm(cfg);
+  }
+
+  // Designblockens CSS levereras av /invite/config (content_blocks.js BLOCK_CSS)
+  // — en källa för mejl, landningssidor och admins förhandsgranskning.
+  function injectBlocksCss(css) {
+    if (!css || document.getElementById('sv-blocks-css')) return;
+    var st = document.createElement('style');
+    st.id = 'sv-blocks-css';
+    st.textContent = css;
+    document.head.appendChild(st);
   }
 
   function renderQuestion(q, i, savedResponses, surveyAnon) {

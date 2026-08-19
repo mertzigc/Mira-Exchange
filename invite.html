@@ -168,6 +168,10 @@
 
       <div id="mp-video" class="mp-media mp-hidden"></div>
 
+      <!-- Designblock (content_blocks) — HTML + CSS kommer färdigrenderade ur
+           /invite/config så mejl, landningssida och admin-preview inte driftar isär. -->
+      <div id="mp-blocks" class="mp-hidden"></div>
+
       <dl id="mp-facts" class="mp-facts"></dl>
 
       <div id="mp-map" class="mp-media mp-map mp-hidden"></div>
@@ -309,6 +313,9 @@ function render(){
   // video (Vimeo/YouTube)
   const vsrc = videoEmbedSrc(ev.video_url);
   if (vsrc){ $("mp-video").innerHTML = `<iframe src="${esc(vsrc)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen loading="lazy"></iframe>`; show("mp-video"); }
+
+  // designblock: server-renderad HTML + CSS ur /invite/config
+  renderBlocks(CFG);
 
   // karta (nyckel-fri Google Maps-embed via adress)
   if (ev.address){ $("mp-map").innerHTML = `<iframe src="https://maps.google.com/maps?q=${encodeURIComponent(ev.address)}&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`; show("mp-map"); }
@@ -535,6 +542,23 @@ function done(coming){
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
 
 // Vimeo/YouTube-länk → embed-src. Okänt format → "".
+// Designblocken renderas server-side (content_blocks.js) och levereras som färdig
+// HTML + CSS i /invite/config. Sidan injicerar dem rakt av — ingen layoutlogik här,
+// så mejlet och landningssidan alltid visar samma blockdesign.
+function renderBlocks(cfg){
+  const html = String((cfg && cfg.blocks_html) || "");
+  if (!html) return;
+  const css = String((cfg && cfg.blocks_css) || "");
+  if (css && !document.getElementById("mp-blocks-css")){
+    const st = document.createElement("style");
+    st.id = "mp-blocks-css";
+    st.textContent = css;
+    document.head.appendChild(st);
+  }
+  $("mp-blocks").innerHTML = html;
+  show("mp-blocks");
+}
+
 function videoEmbedSrc(url){
   url = String(url||"").trim(); if(!url) return "";
   let m;

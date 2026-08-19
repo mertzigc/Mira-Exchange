@@ -11,6 +11,7 @@ import { registerAffarRoutes } from "./affar_api.js";
 import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
+import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -12965,6 +12966,32 @@ app.get("/admin/cc/list", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
 });
 
+// ── Designblock (content_blocks) ──────────────────────────────────────────────
+// Blocken lagras som JSON i TEXT-fältet `Invitation.content_blocks` (samma mönster
+// som `form_schema`). Saknas fältet i Bubble droppas det TYST av safeCreate/bubblePatch
+// → vi läser tillbaka raden och rapporterar `content_blocks_field_missing` i stället
+// för att låtsas ha sparat. Se §1-fällan i mira-undersokning-handoff.md.
+async function _verifyBlocksSaved(invId, expectedCount) {
+  if (!invId || !expectedCount) return null;          // inga block skickade → inget att verifiera
+  try {
+    const row = await bubbleGet(ADM_INVITATION, invId);
+    return _normBlocks(row && row.content_blocks).length === expectedCount;
+  } catch (e) {
+    console.warn("[content_blocks] kunde inte verifiera:", e?.message);
+    return null;                                       // okänt ≠ saknat fält
+  }
+}
+
+// POST /admin/blocks/preview {blocks} → renderad webb-HTML + CSS.
+// Driver admins live-förhandsgranskning. Renderingen ligger i content_blocks.js så
+// preview, landningssida och mejl garanterat visar samma sak. Rör ingen data.
+app.post("/admin/blocks/preview", (req, res) => {
+  try {
+    const blocks = _normBlocks((req.body || {}).blocks);
+    res.json({ ok: true, count: blocks.length, blocks, html: _renderBlocksWeb(blocks), css: _BLOCK_CSS, types: _BLOCK_TYPES });
+  } catch (e) { res.status(500).json({ ok: false, error: e?.message }); }
+});
+
 // ── Skapa inbjudan ────────────────────────────────────────────────────────────
 app.post("/admin/invite/create", async (req, res) => {
   try {
@@ -12989,6 +13016,7 @@ app.post("/admin/invite/create", async (req, res) => {
       allow_plus_ones: d.allow_plus_ones !== false,
       max_plus_ones:   asNumberOrNull(d.max_plus_ones) ?? 0,
       form_schema:     typeof d.form_schema === "string" ? d.form_schema : JSON.stringify(d.form_schema || []),
+      content_blocks:  JSON.stringify(_normBlocks(d.content_blocks)),
       host_name:       safeText(d.host_name || "", 120),
       cta_label:       safeText(d.cta_label || "", 80),
       cta_url:         _admAbs(d.cta_url || ""),
@@ -13001,7 +13029,11 @@ app.post("/admin/invite/create", async (req, res) => {
     // emot en extern URL via Data API. Lägg ev. till ett TEXT-fält image_url så fastnar URL:en.
     const uncertain = (d.image || d.image_url) ? { image_url: _admAbs(d.image || d.image_url) } : {};
     const id = await safeCreate(ADM_INVITATION, exact, uncertain);
-    res.json({ ok: true, id, token });
+    // Designblock: verifiera att fältet faktiskt landade. safeCreate droppar okända
+    // fält TYST (§1-fällan) → utan denna koll skulle admin få "sparat" men blocken
+    // vore borta. Samma härdning som `members` på AudienceSegment.
+    const blocksSaved = await _verifyBlocksSaved(id, _normBlocks(d.content_blocks).length);
+    res.json({ ok: true, id, token, blocks_saved: blocksSaved, ...(blocksSaved === false ? { warning: "content_blocks_field_missing" } : {}) });
   } catch (e) {
     const detail = _bubbleErrText(e);
     console.error("[admin/invite/create]", e?.message, detail, e?.detail);
@@ -13020,6 +13052,7 @@ app.patch("/admin/invite/update", async (req, res) => {
       event_address: v => safeText(v, 300), location_name: v => safeText(v, 200),
       host_name: v => safeText(v, 120), max_plus_ones: v => asNumberOrNull(v) ?? 0,
       form_schema: v => (typeof v === "string" ? v : JSON.stringify(v || [])),
+      content_blocks: v => JSON.stringify(_normBlocks(v)),
       cta_label: v => safeText(v, 80), cta_url: v => _admAbs(v || ""),
       linkedin_url: v => _admAbs(v || ""),
       facebook_url: v => _admAbs(v || ""),
@@ -13036,7 +13069,10 @@ app.patch("/admin/invite/update", async (req, res) => {
     if (b.client_company !== undefined) f.client_company = b.client_company || null;
     if (b.image !== undefined || b.image_url !== undefined) f.image_url = _admAbs(b.image || b.image_url || "");
     await bubblePatch(ADM_INVITATION, b.id, f);
-    res.json({ ok: true });
+    const blocksSaved = b.content_blocks === undefined
+      ? null
+      : await _verifyBlocksSaved(b.id, _normBlocks(b.content_blocks).length);
+    res.json({ ok: true, blocks_saved: blocksSaved, ...(blocksSaved === false ? { warning: "content_blocks_field_missing" } : {}) });
   } catch (e) {
     const detail = _bubbleErrText(e);
     console.error("[admin/invite/update]", e?.message, detail, e?.detail);
@@ -13090,6 +13126,7 @@ app.get("/admin/invite/:id", async (req, res) => {
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
       allow_plus_ones: i.allow_plus_ones !== false, max_plus_ones: asNumberOrNull(i.max_plus_ones) ?? 0,
       image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]",
+      content_blocks: _normBlocks(i.content_blocks),
       cta_label: i.cta_label || "", cta_url: i.cta_url || "",
       linkedin_url: i.linkedin_url || "", facebook_url: i.facebook_url || "", instagram_url: i.instagram_url || "",
       video_url: i.video_url || ""
@@ -13817,6 +13854,13 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       cta_label: inv.cta_label || (isSurvey ? "Svara på undersökningen" : (isNews ? "Läs mer" : "Svara på inbjudan")),
       cta_url: isNews ? _admAbs(inv.cta_url || "") : "",
       published_at: inv["Created Date"] || inv.created_date || "",
+      // Designblock skickas INTE med per mottagare — ett nyhetsbrev till 500 personer
+      // skulle duplicera hela JSON:en 500 ggr i EmailQueue. emailer.js hämtar
+      // Invitation en gång (cachad) via invitation_id. `blocks_count` är kontrakt:
+      // stämmer det inte vid rendering failar raden högljutt i stället för att
+      // skicka ut ett urholkat utskick.
+      invitation_id: invId,
+      blocks_count: _normBlocks(inv.content_blocks).length,
       linkedin_url:  isNews ? _admAbs(inv.linkedin_url  || "") : "",
       facebook_url:  isNews ? _admAbs(inv.facebook_url  || "") : "",
       instagram_url: isNews ? _admAbs(inv.instagram_url || "") : ""
@@ -13966,6 +14010,11 @@ function inviteConfigPayload(inv, cc, guest) {
     allow_plus_ones: inv.allow_plus_ones !== false,
     max_plus_ones:   asNumberOrNull(inv.max_plus_ones) ?? 0,
     form_schema:     _jArr(inv.form_schema),
+    // Designblocken renderas HÄR, inte i landningssidan: samma modul driver mejlet
+    // och admins förhandsgranskning, så de tre kan inte drifta isär.
+    content_blocks:  _normBlocks(inv.content_blocks),
+    blocks_html:     _renderBlocksWeb(inv.content_blocks),
+    blocks_css:      _BLOCK_CSS,
     deadline_passed: deadlinePassed,
     footer:          _footerData(),
     guest: guest ? {

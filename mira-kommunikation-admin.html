@@ -265,6 +265,20 @@
 .ck-share-row code { flex:1;min-width:0;background:var(--sf);border:1px solid var(--bd);border-radius:7px;padding:9px 11px;font-family:ui-monospace,monospace;font-size:12px;color:var(--tx);word-break:break-all; }
 .ck-share-code { letter-spacing:.2em;font-weight:700;font-size:16px!important;text-align:center;color:var(--ac)!important; }
 
+/* ── Designblock (byggare + förhandsgranskning) ── */
+.ck-bb-item { border:1px solid var(--bd);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--bg); }
+.ck-bb-item.ck-bb-struct { background:var(--acb); }
+.ck-bb-head { display:flex;gap:8px;align-items:center;margin-bottom:9px; }
+.ck-bb-num { font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--mu); }
+.ck-bb-t { font-size:12.5px;font-weight:600;color:var(--tx); }
+.ck-bb-btn { padding:4px 8px;font-size:11px;line-height:1; }
+.ck-bb-btn.ck-bb-del { color:#c33; }
+.ck-bb-empty { padding:16px;text-align:center;border:1px dashed var(--bd);border-radius:10px;font-size:12.5px;color:var(--mu); }
+.ck-bb-imgrow { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;align-items:end; }
+.ck-bprev { margin-top:14px;border:1px solid var(--bd);border-radius:12px;padding:20px 22px;background:#0d1117;
+            --accent:#df6f39;--mb-head:#e8eaf0;--mb-text:#c0c4d6;--mb-mut:#8892aa;--mb-bd:#262b42; }
+.ck-bprev-h { font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8892aa;margin:0 0 14px; }
+
 /* ── Mediaarkiv ── */
 .ck-media-row { display:flex;gap:8px;align-items:center; }
 .ck-media-row input { flex:1;min-width:0; }
@@ -388,6 +402,23 @@
             <div class="ck-row-actions"><button class="ck-btn-gh" id="addQ">+ Lägg till fråga</button></div>
             <hr class="ck-sep">
             <details><summary class="ck-mut" style="cursor:pointer">Visa form_schema (JSON)</summary><div class="ck-mono" id="schemaPrev"></div></details>
+          </div>
+
+          <!-- Designblock: fritt komponerat innehåll (bild/text-block, citat, galleri …).
+               Renderas server-side av content_blocks.js → identiskt i mejl + landningssida. -->
+          <div class="ck-card" id="iv-blocks-card">
+            <div class="ck-sl-row" data-collapsible><p class="ck-sl">Designblock <span class="ck-mut" id="iv-b-count" style="font-weight:400">(0)</span></p><span class="ck-chev">▾</span></div>
+            <div class="ck-stack">
+              <span class="ea-fh">Blocken visas efter beskrivningen — både i inbjudningsmejlet och på landningssidan. Lägg till, flytta och ta bort fritt.</span>
+              <div id="iv-blocks"></div>
+              <div class="ck-row-actions">
+                <select class="ea-fsel" id="iv-b-type" style="max-width:240px"></select>
+                <button class="ck-btn-gh" id="iv-b-add">+ Lägg till block</button>
+                <button class="ck-btn-gh" id="iv-b-prevbtn">👁 Förhandsgranska</button>
+                <span class="ck-mut" id="iv-b-msg"></span>
+              </div>
+              <div id="iv-b-prev" class="ck-bprev" style="display:none"></div>
+            </div>
           </div>
 
           <div class="ck-card" id="iv-guests-card" style="display:none">
@@ -611,6 +642,23 @@
             </div>
           </div>
 
+          <!-- Designblock: fritt komponerat innehåll (bild/text-block, citat, galleri …).
+               Renderas server-side av content_blocks.js → identiskt i mejl + landningssida. -->
+          <div class="ck-card" id="nv-blocks-card">
+            <div class="ck-sl-row" data-collapsible><p class="ck-sl">Designblock <span class="ck-mut" id="nv-b-count" style="font-weight:400">(0)</span></p><span class="ck-chev">▾</span></div>
+            <div class="ck-stack">
+              <span class="ea-fh">Blocken visas efter brödtexten i nyhetsmejlet. Lägg till, flytta och ta bort fritt.</span>
+              <div id="nv-blocks"></div>
+              <div class="ck-row-actions">
+                <select class="ea-fsel" id="nv-b-type" style="max-width:240px"></select>
+                <button class="ck-btn-gh" id="nv-b-add">+ Lägg till block</button>
+                <button class="ck-btn-gh" id="nv-b-prevbtn">👁 Förhandsgranska</button>
+                <span class="ck-mut" id="nv-b-msg"></span>
+              </div>
+              <div id="nv-b-prev" class="ck-bprev" style="display:none"></div>
+            </div>
+          </div>
+
           <div class="ck-card" id="nv-recipients-card" style="display:none">
             <div class="ck-sl-row" data-collapsible><p class="ck-sl">Mottagare <span class="ck-mut" id="nv-r-count" style="font-weight:400">(0)</span></p>
               <span style="display:flex;gap:8px;align-items:center">
@@ -723,6 +771,23 @@
             <div id="sv-questions" style="display:flex;flex-direction:column;gap:10px"></div>
             <button class="ck-btn-gh" id="sv-add-q" style="margin-top:10px">+ Lägg till fråga</button>
             <p class="ck-mut" style="margin-top:8px;font-size:11.5px">Frågetyper: kort text, lång text, e-post, siffra, datum, dropdown (1 val), flerval (checkboxes), stjärnbetyg, NPS-skala (0–10), skala, ja/nej.</p>
+          </div>
+
+          <!-- Designblock: fritt komponerat innehåll (bild/text-block, citat, galleri …).
+               Renderas server-side av content_blocks.js → identiskt i mejl + landningssida. -->
+          <div class="ck-card" id="sv-blocks-card">
+            <div class="ck-sl-row" data-collapsible><p class="ck-sl">Designblock <span class="ck-mut" id="sv-b-count" style="font-weight:400">(0)</span></p><span class="ck-chev">▾</span></div>
+            <div class="ck-stack">
+              <span class="ea-fh">Blocken visas efter beskrivningen — i mejlet och överst på undersökningssidan, före frågorna.</span>
+              <div id="sv-blocks"></div>
+              <div class="ck-row-actions">
+                <select class="ea-fsel" id="sv-b-type" style="max-width:240px"></select>
+                <button class="ck-btn-gh" id="sv-b-add">+ Lägg till block</button>
+                <button class="ck-btn-gh" id="sv-b-prevbtn">👁 Förhandsgranska</button>
+                <span class="ck-mut" id="sv-b-msg"></span>
+              </div>
+              <div id="sv-b-prev" class="ck-bprev" style="display:none"></div>
+            </div>
           </div>
 
           <div class="ck-card" id="sv-recipients-card" style="display:none">
@@ -1264,6 +1329,7 @@
     g('iv-cc-search').value=co?co.name:'';
     var schema=[]; try{ schema=JSON.parse(inv.form_schema||'[]'); }catch(e){}
     fillSchema(schema);
+    bbSet('iv', inv.content_blocks);
     g('iv-formhead').textContent='Redigera inbjudan';
     g('iv-save').textContent='Spara ändringar';
     g('iv-reset').style.display='';
@@ -1280,6 +1346,7 @@
     g('iv-active').checked=true; g('iv-maxplus').value=2;
     g('q-plus').checked=false; g('q-allerg').checked=false; g('q-plus-max').style.display='none';
     customQs=[]; renderCustom(); renderSchema();
+    bbSet('iv', []);
     g('iv-formhead').textContent='Skapa inbjudan'; g('iv-save').textContent='Skapa inbjudan';
     g('iv-reset').style.display='none'; g('iv-status').textContent='';
     g('iv-ok').classList.remove('show'); g('iv-err').classList.remove('show');
@@ -1307,7 +1374,8 @@
       start_date:toISO(g('iv-start').value), end_date:toISO(g('iv-end').value), rsvp_deadline:toISO(g('iv-deadline').value),
       image:g('iv-image').value||'', image_url:g('iv-image').value||'', video_url:g('iv-video').value||'', host_name:g('iv-host').value, active:g('iv-active').checked,
       allow_plus_ones:g('q-plus').checked, max_plus_ones:Number(g('iv-maxplus').value)||0,
-      form_schema:JSON.stringify(buildSchema())
+      form_schema:JSON.stringify(buildSchema()),
+      content_blocks:bbGet('iv')
     };
     var editing=!!EDIT_ID, url, method;
     if(editing){ body.id=EDIT_ID; url='/admin/invite/update'; method='PATCH'; }
@@ -1317,6 +1385,7 @@
       .then(function(j){
         if(!j.ok) throw new Error(j.error||'fel');
         var ok=g('iv-ok');
+        bbWarnIfMissing('iv', j);
         if(editing){ ok.textContent='Ändringar sparade.'; ok.classList.add('show'); g('iv-status').textContent='Redigerar: '+title; }
         else { ok.innerHTML='Inbjudan skapad. Öppen länk: <code>'+esc(PUBLIC_INVITE_URL)+'?t='+esc(j.token)+'</code>'; ok.classList.add('show'); g('iv-title').value=''; g('iv-desc').value=''; }
         loadInvites();
@@ -2009,6 +2078,15 @@
 
   // ── Mediaarkiv: ladda upp bild (klient-komprimerad) + återanvänd ──
   var MEDIA_TARGET=null, MEDIA_ITEMS=[];
+  // Arkivet skriver rakt i ett input-fält. Designblockens bildfält renderas dynamiskt
+  // och lyssnar på 'input' för att uppdatera sin modell — en ren .value-tilldelning
+  // triggar inget event, så URL:en skulle synas i fältet men aldrig sparas.
+  function mediaSetTarget(url){
+    if(!MEDIA_TARGET) return;
+    var el=g(MEDIA_TARGET); if(!el) return;
+    el.value=url;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+  }
   function openMedia(targetId){
     MEDIA_TARGET=targetId;
     g('media-overlay').style.display='flex'; document.body.style.overflow='hidden';
@@ -2036,7 +2114,7 @@
       return;
     }
     var cell=e.target.closest('[data-url]'); if(!cell) return;
-    if(MEDIA_TARGET) g(MEDIA_TARGET).value=cell.getAttribute('data-url');
+    mediaSetTarget(cell.getAttribute('data-url'));
     closeMedia();
   });
   // Klient-komprimering: skala till max 1600px och exportera JPEG
@@ -2064,15 +2142,17 @@
       return fetch(api('/admin/media/upload'),{method:'POST',headers:H(),body:JSON.stringify({filename:file.name||'bild.jpg', content_type:'image/jpeg', data_base64:dataUrl})});
     }).then(function(r){return r.json();}).then(function(j){
       if(!j.ok) throw new Error(j.error==='too_large'?'Bilden är för stor.':(j.error||'fel'));
-      if(MEDIA_TARGET) g(MEDIA_TARGET).value=j.url;
+      mediaSetTarget(j.url);
       closeMedia();
     }).catch(function(err){ g('media-upinfo').textContent='Kunde inte ladda upp: '+(err.message||''); })
       .finally(function(){ drop.classList.remove('busy'); g('media-file').value=''; });
   });
   g('media-close').addEventListener('click', closeMedia);
   g('media-overlay').addEventListener('click', function(e){ if(e.target===g('media-overlay')) closeMedia(); });
-  Array.prototype.forEach.call(document.querySelectorAll('.ck-media-btn'), function(btn){
-    btn.addEventListener('click', function(){ openMedia(btn.getAttribute('data-media-target')); });
+  // Delegerad: designblockens Arkiv-knappar finns inte i DOM:en vid start.
+  document.addEventListener('click', function(e){
+    var btn=e.target.closest && e.target.closest('.ck-media-btn'); if(!btn) return;
+    openMedia(btn.getAttribute('data-media-target'));
   });
 
   // Lägg till enskild (återanvänder /guests/import med en rad)
@@ -2301,6 +2381,7 @@
       facebook_url:g('nv-facebook').value,
       instagram_url:g('nv-instagram').value,
       active:g('nv-active').checked,
+      content_blocks:bbGet('nv'),
       // dessa fält är meningslösa för news men patcha defaults så fältet på Bubble inte protesterar:
       form_schema:'[]', allow_plus_ones:false, max_plus_ones:0
     };
@@ -2311,6 +2392,7 @@
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j.ok) throw new Error(j.error||'fel');
+        bbWarnIfMissing('nv', j);
         var ok=g('nv-ok');
         if(editing){ ok.textContent='Ändringar sparade.'; ok.classList.add('show'); g('nv-status').textContent='Redigerar: '+title; }
         else { ok.textContent='Nyhetsutskick skapat. Bygg mottagarlista i Målgrupp eller lägg till individuellt nedan.'; ok.classList.add('show'); }
@@ -2354,6 +2436,7 @@
     g('nv-cc').value=inv.client_company||'';
     var co=(CCS||[]).filter(function(c){return c.id===inv.client_company;})[0];
     g('nv-cc-search').value=co?co.name:'';
+    bbSet('nv', inv.content_blocks);
     g('nv-formhead').textContent='Redigera nyhetsutskick';
     g('nv-save').textContent='Spara ändringar';
     g('nv-reset').style.display='';
@@ -2367,6 +2450,7 @@
     ['nv-title','nv-desc','nv-tags','nv-cta-label','nv-cta-url','nv-image','nv-host','nv-cc','nv-cc-search','nv-linkedin','nv-facebook','nv-instagram'].forEach(function(id){ g(id).value=''; });
     g('nv-accent').value='#df6f39'; g('nv-accent-hex').value='#df6f39';
     g('nv-active').checked=true;
+    bbSet('nv', []);
     g('nv-formhead').textContent='Skapa nyhetsutskick'; g('nv-save').textContent='Skapa nyhetsutskick';
     g('nv-reset').style.display='none'; g('nv-status').textContent='';
     g('nv-ok').classList.remove('show'); g('nv-err').classList.remove('show');
@@ -2688,6 +2772,7 @@
       anonymous:g('sv-anon').checked,
       rsvp_deadline: toISO(g('sv-deadline').value),
       form_schema: JSON.stringify(schema),
+      content_blocks: bbGet('sv'),
       allow_plus_ones:false, max_plus_ones:0
     };
     var editing = !!SV_EDIT_ID, url, method;
@@ -2697,6 +2782,7 @@
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j.ok){ var er=new Error(j.error||'fel'); er.detail=j.detail||''; throw er; }
+        bbWarnIfMissing('sv', j);
         g('sv-status').textContent='';
         g('sv-ok').textContent = editing?'Ändringar sparade.':'Undersökning skapad. Bygg mottagarlista i Målgrupp eller lägg till individuellt nedan.';
         g('sv-ok').classList.add('show');
@@ -2770,6 +2856,7 @@
     // Säkerställ att varje fråga har id + type
     SV_QUESTIONS.forEach(function(q){ if(!q.id) q.id=svNewQid(); if(!q.type) q.type='text'; });
     renderSvQuestions();
+    bbSet('sv', inv.content_blocks);
     g('sv-save').textContent = 'Spara ändringar';
     g('sv-reset').style.display = '';
     g('sv-formhead').textContent = 'Redigerar: ' + (inv.title || '(utan rubrik)');
@@ -2785,6 +2872,7 @@
     g('sv-accent').value='#df6f39'; g('sv-accent-hex').value='#df6f39';
     g('sv-active').checked=true; g('sv-anon').checked=false;
     SV_QUESTIONS = []; renderSvQuestions();
+    bbSet('sv', []);
     g('sv-save').textContent='Skapa undersökning';
     g('sv-reset').style.display='none'; g('sv-status').textContent='';
     g('sv-ok').classList.remove('show'); g('sv-err').classList.remove('show');
@@ -3354,6 +3442,211 @@
   }
 
   // Montera på alla tre flikar (event, nyheter, undersökning)
+  // ════════════════════════════════════════════════════════════
+  // ═════════════════════ DESIGNBLOCK (byggare) ════════════════
+  // ════════════════════════════════════════════════════════════
+  // Samma återanvändningsmönster som attachAudienceTools: EN byggare monteras i
+  // inbjudan- (iv), nyhet- (nv) och undersöknings-panelen (sv).
+  //
+  // ⚠️ Ingen rendering sker här. Blocken är ren data som skickas till
+  // /admin/blocks/preview och renderas av content_blocks.js på servern — samma
+  // modul som bygger mejlet och landningssidan. Det är hela poängen: det du ser i
+  // förhandsgranskningen ÄR det mottagaren får.
+  //
+  // ⚠️ Typvärdena (v) MÅSTE matcha BLOCK_TYPES i content_blocks.js. En typ som
+  // inte finns där droppas tyst av normBlocks → innehållet försvinner utan fel.
+  // komm_blocks_smoke.mjs vaktar att listorna är identiska.
+  var BB_TYPES = [
+    { v:'text',        l:'Endast text',               f:[['heading','Rubrik (valfri)','text'],['body','Brödtext','textarea']] },
+    { v:'image_left',  l:'Bild vänster / text höger', f:[['image','Bild','media'],['heading','Rubrik (valfri)','text'],['body','Text','textarea'],['link_url','Länk (valfri)','text'],['link_label','Länktext','text']] },
+    { v:'image_right', l:'Text vänster / bild höger', f:[['image','Bild','media'],['heading','Rubrik (valfri)','text'],['body','Text','textarea'],['link_url','Länk (valfri)','text'],['link_label','Länktext','text']] },
+    { v:'gallery3',    l:'Tre bilder på rad',         f:[['images','Bilder','images3']] },
+    { v:'image',       l:'Helbredds-bild',            f:[['image','Bild','media'],['caption','Bildtext (valfri)','text'],['link_url','Länk (valfri)','text']] },
+    { v:'quote',       l:'Citat / stor text',         f:[['quote','Citat','textarea'],['source','Källa (valfri)','text']] },
+    { v:'list',        l:'Punktlista',                f:[['heading','Rubrik (valfri)','text'],['items','Punkter (en per rad)','textarea']] },
+    { v:'cta',         l:'CTA-knapp',                 f:[['label','Knapptext','text'],['url','Länk','text']] },
+    { v:'video',       l:'Video (Vimeo/YouTube)',     f:[['url','Video-länk','text'],['caption','Bildtext (valfri)','text'],['poster','Omslagsbild i mejl (valfri)','media']] },
+    { v:'heading',     l:'— Sektionsrubrik —',        f:[['heading','Rubriktext','text']] },
+    { v:'divider',     l:'— Avdelare —',              f:[] }
+  ];
+  var BB = { iv:[], nv:[], sv:[] };
+  var BB_PREV_TIMER = {};
+  var BB_CSS_DONE = false;
+
+  function bbDef(t){ for(var i=0;i<BB_TYPES.length;i++){ if(BB_TYPES[i].v===t) return BB_TYPES[i]; } return null; }
+  function bbNewId(){ return 'b'+Math.random().toString(36).slice(2,8); }
+  function bbGet(p){ return BB[p]||[]; }
+  function bbSet(p, arr){
+    BB[p] = (Array.isArray(arr)?arr:[]).filter(function(b){ return b && bbDef(b.type); })
+      .map(function(b){ var c=JSON.parse(JSON.stringify(b)); if(!c.id) c.id=bbNewId(); return c; });
+    bbRender(p);
+  }
+
+  function bbFieldHtml(p, i, b, f){
+    var key=f[0], label=f[1], kind=f[2];
+    var val=b[key];
+    if(key==='items') val=(Array.isArray(val)?val:[]).join('\n');
+    val = (val==null?'':String(val));
+    var attrs=' data-bb-f="'+key+'" data-bb-i="'+i+'"';
+    if(kind==='textarea'){
+      return '<div class="ea-fg" style="margin:0 0 8px"><label class="ea-fl">'+esc(label)+'</label>'+
+             '<textarea class="ea-fta"'+attrs+' style="min-height:78px">'+esc(val)+'</textarea></div>';
+    }
+    if(kind==='media'){
+      // Unikt id per fält → Arkiv-knappens data-media-target kan peka på det.
+      var mid='bbm-'+p+'-'+i+'-'+key;
+      return '<div class="ea-fg" style="margin:0 0 8px"><label class="ea-fl">'+esc(label)+'</label>'+
+             '<div class="ck-media-row"><input class="ea-fi" id="'+mid+'"'+attrs+' value="'+esc(val)+'" placeholder="https://… eller ladda upp">'+
+             '<button type="button" class="ck-btn-gh ck-media-btn" data-media-target="'+mid+'">📤 Arkiv</button></div></div>';
+    }
+    if(kind==='images3'){
+      var imgs=Array.isArray(b.images)?b.images:[];
+      var out='<label class="ea-fl">'+esc(label)+'</label>';
+      for(var k=0;k<3;k++){
+        var im=imgs[k]||{}, mid2='bbm-'+p+'-'+i+'-img'+k;
+        out+='<div class="ck-bb-imgrow">'+
+          '<div class="ea-fg" style="margin:0"><label class="ea-fl">Bild '+(k+1)+'</label>'+
+          '<div class="ck-media-row"><input class="ea-fi" id="'+mid2+'" data-bb-img="'+k+'" data-bb-k="url" data-bb-i="'+i+'" value="'+esc(im.url||'')+'" placeholder="https://…">'+
+          '<button type="button" class="ck-btn-gh ck-media-btn" data-media-target="'+mid2+'">📤</button></div></div>'+
+          '<div class="ea-fg" style="margin:0"><label class="ea-fl">Bildtext</label>'+
+          '<input class="ea-fi" data-bb-img="'+k+'" data-bb-k="caption" data-bb-i="'+i+'" value="'+esc(im.caption||'')+'" placeholder="Valfri"></div>'+
+          '</div>';
+      }
+      return '<div class="ea-fg" style="margin:0 0 8px">'+out+'</div>';
+    }
+    return '<div class="ea-fg" style="margin:0 0 8px"><label class="ea-fl">'+esc(label)+'</label>'+
+           '<input class="ea-fi"'+attrs+' value="'+esc(val)+'"></div>';
+  }
+
+  function bbRender(p){
+    var list=BB[p]||[], box=g(p+'-blocks');
+    if(!box) return;
+    var cnt=g(p+'-b-count'); if(cnt) cnt.textContent='('+list.length+')';
+    if(!list.length){
+      box.innerHTML='<div class="ck-bb-empty">Inga designblock än. Välj en blocktyp nedan och klicka "+ Lägg till block".</div>';
+      bbSchedulePreview(p); return;
+    }
+    var html='';
+    list.forEach(function(b,i){
+      var def=bbDef(b.type); if(!def) return;
+      var struct=(b.type==='heading'||b.type==='divider');
+      html+='<div class="ck-bb-item'+(struct?' ck-bb-struct':'')+'">';
+      html+='<div class="ck-bb-head"><span class="ck-bb-num">Block '+(i+1)+'</span>'+
+            '<span class="ck-bb-t">'+esc(def.l)+'</span><div style="flex:1"></div>'+
+            '<button class="ck-btn-gh ck-bb-btn" data-bb-up="'+i+'"'+(i===0?' disabled':'')+' title="Flytta upp">↑</button>'+
+            '<button class="ck-btn-gh ck-bb-btn" data-bb-dn="'+i+'"'+(i===list.length-1?' disabled':'')+' title="Flytta ner">↓</button>'+
+            '<button class="ck-btn-gh ck-bb-btn ck-bb-del" data-bb-del="'+i+'" title="Ta bort">✕</button></div>';
+      def.f.forEach(function(f){ html+=bbFieldHtml(p,i,b,f); });
+      html+='</div>';
+    });
+    box.innerHTML=html;
+
+    // Fält-bindning: modellen uppdateras i stället för att re-rendera, annars tappar
+    // man markör och fokus mitt i inmatningen (samma lärdom som frågebyggaren).
+    box.querySelectorAll('[data-bb-f]').forEach(function(el){
+      el.addEventListener('input', function(){
+        var i=parseInt(el.getAttribute('data-bb-i'),10), key=el.getAttribute('data-bb-f'), b=BB[p][i];
+        if(!b) return;
+        if(key==='items') b.items=String(el.value||'').split('\n').map(function(x){return x.trim();}).filter(Boolean);
+        else b[key]=el.value;
+        bbSchedulePreview(p);
+      });
+    });
+    box.querySelectorAll('[data-bb-img]').forEach(function(el){
+      el.addEventListener('input', function(){
+        var i=parseInt(el.getAttribute('data-bb-i'),10), k=parseInt(el.getAttribute('data-bb-img'),10);
+        var f=el.getAttribute('data-bb-k'), b=BB[p][i];
+        if(!b) return;
+        if(!Array.isArray(b.images)) b.images=[];
+        while(b.images.length<=k) b.images.push({url:'',caption:''});
+        b.images[k][f]=el.value;
+        bbSchedulePreview(p);
+      });
+    });
+    box.querySelectorAll('[data-bb-up]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var i=parseInt(btn.getAttribute('data-bb-up'),10); if(i<=0) return;
+        var t=BB[p][i-1]; BB[p][i-1]=BB[p][i]; BB[p][i]=t; bbRender(p);
+      });
+    });
+    box.querySelectorAll('[data-bb-dn]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var i=parseInt(btn.getAttribute('data-bb-dn'),10); if(i>=BB[p].length-1) return;
+        var t=BB[p][i+1]; BB[p][i+1]=BB[p][i]; BB[p][i]=t; bbRender(p);
+      });
+    });
+    box.querySelectorAll('[data-bb-del]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var i=parseInt(btn.getAttribute('data-bb-del'),10);
+        if(!confirm('Ta bort block '+(i+1)+'?')) return;
+        BB[p].splice(i,1); bbRender(p);
+      });
+    });
+    bbSchedulePreview(p);
+  }
+
+  // Förhandsgranskning: debouncad så varje tangenttryck inte blir ett anrop.
+  // Endpointen rör ingen data — den renderar bara payloaden man skickar in.
+  function bbSchedulePreview(p){
+    var wrap=g(p+'-b-prev');
+    if(!wrap || wrap.style.display==='none') return;   // stängd → hoppa över anropet
+    clearTimeout(BB_PREV_TIMER[p]);
+    BB_PREV_TIMER[p]=setTimeout(function(){ bbPreview(p); }, 450);
+  }
+  function bbPreview(p){
+    var wrap=g(p+'-b-prev'); if(!wrap) return;
+    fetch(api('/admin/blocks/preview'),{method:'POST',headers:H(),body:JSON.stringify({blocks:BB[p]||[]})})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(!j.ok) throw new Error(j.error||'fel');
+        if(j.css && !BB_CSS_DONE){
+          var st=document.createElement('style'); st.id='bb-blocks-css'; st.textContent=j.css;
+          document.head.appendChild(st); BB_CSS_DONE=true;
+        }
+        var accent=(g(p+'-accent') && g(p+'-accent').value) || '#df6f39';
+        wrap.style.setProperty('--accent', accent);
+        wrap.innerHTML='<p class="ck-bprev-h">Förhandsgranskning · så här ser blocken ut</p>'+
+          (j.html || '<p style="color:#8892aa;font-size:13px;margin:0">Inget att visa än.</p>');
+        var msg=g(p+'-b-msg');
+        // Skillnad = block som servern kastat (t.ex. bild utan URL, knapp utan länk).
+        if(msg) msg.textContent = (j.count < (BB[p]||[]).length)
+          ? ((BB[p].length-j.count)+' block visas inte än (saknar innehåll)') : '';
+      })
+      .catch(function(e){ wrap.innerHTML='<p class="ck-bprev-h">Kunde inte förhandsgranska: '+esc(e.message||'')+'</p>'; });
+  }
+
+  function attachBlockBuilder(p){
+    var sel=g(p+'-b-type'); if(!sel) return;
+    sel.innerHTML=BB_TYPES.map(function(t){ return '<option value="'+t.v+'">'+esc(t.l)+'</option>'; }).join('');
+    g(p+'-b-add').addEventListener('click', function(){
+      var t=sel.value, def=bbDef(t); if(!def) return;
+      var b={ id:bbNewId(), type:t };
+      if(t==='gallery3') b.images=[{url:'',caption:''},{url:'',caption:''},{url:'',caption:''}];
+      if(t==='list') b.items=[];
+      BB[p].push(b); bbRender(p);
+      var box=g(p+'-blocks'), items=box.querySelectorAll('.ck-bb-item');
+      if(items.length) items[items.length-1].scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+    g(p+'-b-prevbtn').addEventListener('click', function(){
+      var wrap=g(p+'-b-prev'), open=(wrap.style.display!=='none');
+      wrap.style.display = open ? 'none' : '';
+      g(p+'-b-prevbtn').textContent = open ? '👁 Förhandsgranska' : '👁 Dölj förhandsgranskning';
+      if(!open) bbPreview(p);
+    });
+    bbRender(p);
+  }
+  attachBlockBuilder('iv');
+  attachBlockBuilder('nv');
+  attachBlockBuilder('sv');
+
+  // Varnar när Bubble-fältet content_blocks saknas — annars ser det ut som att
+  // blocken sparades fast de droppades tyst av safeCreate (§1-fällan).
+  function bbWarnIfMissing(p, j){
+    if(!j || j.blocks_saved !== false) return;
+    var el=g(p+'-err');
+    if(el){ el.textContent='⚠️ Designblocken sparades INTE: textfältet "content_blocks" saknas på datatypen Invitation i Bubble. Allt annat är sparat.'; el.classList.add('show'); }
+  }
+
   attachAudienceTools({ prefix:'iv', getInvId:function(){ return IVG_INVITE_ID; }, reload:function(){ if(IVG_INVITE_ID) loadGuests(IVG_INVITE_ID); } });
   attachAudienceTools({ prefix:'nv', getInvId:function(){ return NVR_INVITE_ID; }, reload:function(){ if(NVR_INVITE_ID) loadNvRecipients(NVR_INVITE_ID); } });
   attachAudienceTools({ prefix:'sv', getInvId:function(){ return SVR_INVITE_ID; }, reload:function(){ if(SVR_INVITE_ID) loadSvRecipients(SVR_INVITE_ID); } });

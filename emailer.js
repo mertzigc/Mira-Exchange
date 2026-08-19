@@ -18,6 +18,7 @@
 // ────────────────────────────────────────────────────────────
 
 import nodeCron from "node-cron";
+import { normBlocks, renderBlocksEmail } from "./content_blocks.js";
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL       = process.env.EMAIL_FROM      || "support@mira-fm.com";
@@ -140,6 +141,49 @@ async function processEmailQueue() {
 //   cta_label       – knapptext (override)
 //   accent_color    – hex t.ex. "#db6923" (Eventinbjudan/Nyhet)
 // ────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
+// Designblock (content_blocks) i utskicksmallarna
+// ────────────────────────────────────────────────────────────
+// Köraden bär bara `invitation_id` + `blocks_count` — inte blocken själva. Ett
+// nyhetsbrev till 500 mottagare skulle annars duplicera hela block-JSON:en i 500
+// EmailQueue-rader. Invitation hämtas en gång och cachas; pollern jobbar av kön i
+// klumpar om 20 var 2:a minut, så ett stort utskick kostar en handfull läsningar.
+//
+// FAIL-LOUD: säger köraden att det finns N block men vi får fram ett annat antal
+// (fältet borta, raden raderad, Bubble nere) kastar vi. Raden får error_message och
+// stannar i kön — bättre än att tyst skicka ut ett nyhetsbrev utan sitt innehåll.
+const _BLOCKS_TTL = 5 * 60 * 1000;
+const _blocksCache = new Map();   // invitation_id → { blocks, ts }
+
+async function blocksHtmlFor(extra, accent) {
+  const x = extra || {};
+  const want = Number(x.blocks_count || 0);
+  if (!Number.isFinite(want) || want <= 0) return "";
+  const invId = String(x.invitation_id || "").trim();
+  if (!invId) throw new Error(`content_blocks: blocks_count=${want} men invitation_id saknas i extra_data`);
+
+  const hit = _blocksCache.get(invId);
+  let blocks;
+  if (hit && (Date.now() - hit.ts) < _BLOCKS_TTL) {
+    blocks = hit.blocks;
+  } else {
+    let inv;
+    try {
+      inv = await _bubbleGet("Invitation", invId);
+    } catch (e) {
+      throw new Error(`content_blocks: kunde inte hämta Invitation ${invId} – ${e?.message || e}`);
+    }
+    if (!inv) throw new Error(`content_blocks: Invitation ${invId} hittades inte`);
+    blocks = normBlocks(inv.content_blocks);
+    _blocksCache.set(invId, { blocks, ts: Date.now() });
+  }
+  if (blocks.length !== want) {
+    _blocksCache.delete(invId);   // cacha aldrig ett svar vi underkänt
+    throw new Error(`content_blocks: förväntade ${want} block på Invitation ${invId}, fick ${blocks.length} – fältet content_blocks saknas eller har ändrats sedan utskicket köades`);
+  }
+  return renderBlocksEmail(blocks, accent);
+}
+
 async function buildEmail(item) {
   // Hämta EmailTemplate-posten via template_id (Bubble-relation = ID-sträng)
   let tmpl = {};
@@ -1187,11 +1231,13 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
     ? esc(x.description).replace(/\n/g, "<br>")
     : "Du \u00e4r varmt v\u00e4lkommen! H\u00e4r \u00e4r detaljerna:";
 
+  const blocks = await blocksHtmlFor(x, accent);
+
   const html = wrapLayout({
     toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
     tag: "Inbjudan",
     headline: title,
-    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">' + intro + '</p>',
+    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">' + intro + '</p>' + blocks,
     details: detailRows([
       when && ["N\u00e4r", esc(when)],
       x.event_location && ["Plats", esc(x.event_location)],
@@ -1230,13 +1276,15 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
   // Sociala ikoner i mailfot (om angivna)
   const socialBlock = buildSocialBlock(x.linkedin_url, x.facebook_url, x.instagram_url);
 
+  const blocks = await blocksHtmlFor(x, accent);
+
   const html = wrapLayout({
     // toName tomt = ingen "Hej Namn,"-hälsning för nyhetsutskick
     toName: "", logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
     tag: "Nyhetsutskick",
     headline: title,
     subhead,
-    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>',
+    body: (body ? '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>' : '') + blocks,
     details: null,
     ctaLabel: ctaUrl ? finalCtaLabel : null,
     ctaUrl: ctaUrl || null,
@@ -1264,11 +1312,13 @@ async function tmplSurveyInvitation(e, extra, toName, ctaLabel, item) {
   // CTA: per-utskick (x.cta_label) > template-default > hårdkodad fallback
   const finalCtaLabel = (x.cta_label || ctaLabel || "Svara på undersökningen").trim();
 
+  const blocks = await blocksHtmlFor(x, accent);
+
   const html = wrapLayout({
     toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
     tag: "Undersökning",
     headline: title,
-    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>',
+    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>' + blocks,
     details: null,
     ctaLabel: finalCtaLabel,
     ctaUrl: x.invite_link || null,

@@ -30,6 +30,7 @@
 | Admin | `mira-kommunikation-admin.html` | survey-flik, deltagarverktyg, livscykel, anonymisering |
 | Survey-landning | `mira-undersokning.html` | publik svarssida, 10 frågetyper, anonymitet, footer |
 | Invite-landning | `mira-invite.html` | **EJ uppdaterad med footer** — Christians live-version kan vara nyare; väntar på uppladdning |
+| Designblock | `content_blocks.js` (NY 2026-08-19) | normalisering + mejl-/webbrendering av blocken. Delas av `index.js` och `emailer.js`. |
 
 **Numrerings-mappning som bekräftats:**
 - Christians `index-80` ≈ assistentens `index-85` funktionellt, MEN Christians är nyare (har `/sync/v2/:source` + `/sync/v2-pdf/:source`, saknar gamla `/fortnox/enrich/*`). Bygg på Christians.
@@ -111,6 +112,25 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 - Nytt fält `video_url` på `Invitation`. Vimeo/YouTube-länk → responsiv 16:9-embed på landningssidan (`mira-undersokning.html` + `invite.html`). Video-fält i event- + survey-formuläret (nyhet saknar landningssida).
 - **Karta:** nyckel-fri Google Maps-embed via eventets `event_address` (ingen API-nyckel). Endast landningssida — *inte* i mejl (skulle kräva Google Static Maps-nyckel; medvetet bortvalt för v1.0).
 
+### 3l. Designblock (`content_blocks`) — inbjudan + nyhetsbrev + undersökning — BYGGT 2026-08-19, EJ DEPLOYAT
+Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för att skriva en textklump. **Elva blocktyper:** endast text · bild vänster/text höger · text vänster/bild höger · tre bilder på rad · helbredds-bild · citat/stor text · punktlista · CTA-knapp · video (Vimeo/YouTube) · sektionsrubrik · avdelare. Mönstret är lyft ur undersökningens sektionsbyggare (`SV_QUESTIONS`/`renderSvQuestions`): en array, ↑↓✕ per rad, fältbindning utan re-render.
+
+- **`content_blocks.js` (NY modul) = EN källa för datamodell OCH rendering.** Exporterar `normBlocks` (validering/normalisering), `renderBlocksEmail` (tabellbaserad, allt inline), `renderBlocksWeb` + `BLOCK_CSS` (klasser + media queries), `BLOCK_TYPES`, `safeUrl`, `videoEmbedSrc`.
+  - **⚠️ Varför server-renderat:** blocken ska se likadana ut i mejlet, på landningssidan och i admins förhandsgranskning. Låg renderingen i varje HTML-block skulle ~150 rader layoutkod ligga i tre filer som driftar isär — samma fälla som [[reference-bubble-multiblock-collision]] fast för layout. **Landningssidorna får färdig HTML + CSS ur `/invite/config` och injicerar dem rakt av** (två rader per sida).
+  - **Mejl-varianten** använder "fluid hybrid": `display:inline-block` + `max-width` på kolumnerna (staplar automatiskt på smala skärmar) plus MSO-ghost-tabeller för Outlook, som inte kan `max-width`. Innehållsbredd = 600 − 2×36 = **528px** → två kolumner 252+24+252, galleri 3×160+2×24. Ingen `grid`/`flex` (mejlklienter struntar i dem). Video blir **klickbar bild/länk** i mejlet (iframes körs inte) men iframe-embed på webben.
+  - **Säkerhet:** all text `escapeHtml`:as, alla URL:er går genom `safeUrl` (vitlista `http(s)`/`mailto` — `javascript:`/`data:` nollas). Innehållet går ut i mejl till externa mottagare, därför vitlista i stället för svartlista.
+- **Lagring: `Invitation.content_blocks` = TEXT-fält med JSON-array** (exakt samma mönster som `form_schema` → `safeCreate` kastar aldrig på option-set-fel).
+  - **⚠️ FÄLTET MÅSTE SKAPAS I BUBBLE.** Saknas det droppar `safeCreate`/`bubblePatch` det **TYST** (§1-fällan). Därför läser `_verifyBlocksSaved(id, antal)` tillbaka raden efter varje skrivning → svaret bär `blocks_saved:false` + `warning:"content_blocks_field_missing"`, och admin visar en röd banner ("Designblocken sparades INTE …"). Bubble-fel vid verifieringen ger `null`, inte `false` — okänt ≠ saknat fält.
+- **Backend (`index.js`):** `create`/`update` normaliserar in, `GET /admin/invite/:id` returnerar **normaliserad array** (byggaren laddar direkt), `inviteConfigPayload` bär `content_blocks` + `blocks_html` + `blocks_css`. Ny **`POST /admin/blocks/preview {blocks}`** → `{html, css, count}` (renderar bara payloaden, rör ingen data, inga Bubble-anrop) som driver admins live-förhandsgranskning.
+- **⚠️ Mejl-vägen: blocken skickas INTE per mottagare.** `baseExtra` bär bara `invitation_id` + `blocks_count`; `emailer.js` `blocksHtmlFor()` hämtar Invitation **en gång** (cache 5 min) och renderar. Ett nyhetsbrev till 500 mottagare skulle annars duplicera hela block-JSON:en i 500 EmailQueue-rader. **FAIL-LOUD:** stämmer inte antalet (fältet borta, raden raderad, Bubble nere) **kastar** funktionen → raden får `error_message` och stannar i kön, i stället för att ett urholkat nyhetsbrev går ut. Underkända svar cachas aldrig. Inkopplat i `tmplInviteInvitation`, `tmplNewsAnnouncement` och `tmplSurveyInvitation`.
+- **Admin (`mira-kommunikation-admin.html`):** `attachBlockBuilder(p)` monterad i **alla tre** panelerna (`iv`/`nv`/`sv`) — samma återanvändningsmönster som `attachAudienceTools`. Blocktypsväljare + "+ Lägg till block", ↑↓✕ per block, fältformulär per typ, debouncad (450 ms) live-förhandsgranskning som visar den **skarpa** renderingen. Fältändringar uppdaterar modellen **utan re-render** (annars tappas markör/fokus mitt i inmatning — samma lärdom som frågebyggaren); bara flytt/borttagning re-renderar.
+  - **Mediaarkivet gjordes dynamik-säkert:** Arkiv-knapparna binds nu **delegerat** (blockens fält finns inte i DOM:en vid start) och arkivet `dispatchEvent(new Event('input'))` efter att ha satt URL:en — en ren `.value`-tilldelning triggar inget event, så URL:en hade synts i fältet men aldrig sparats.
+  - **⚠️ `BB_TYPES` i admin måste matcha `BLOCK_TYPES` i modulen.** En typ som bara finns i UI:t droppas tyst av `normBlocks` → innehållet försvinner utan fel. Smoke-testet vaktar att mängderna är identiska åt båda håll.
+- **Landningssidor:** `invite.html` (`#mp-blocks` + `renderBlocks(CFG)`) och `mira-undersokning.html` (`cfg.blocks_html` efter beskrivningen, `injectBlocksCss`). Blocken **kompletterar** dagens Beskrivning/Brödtext (som blir intro) — inget befintligt utskick påverkas.
+- **Verifierat:** **`komm_blocks_smoke.mjs` 127/127** (normalisering + tomma block droppas + kapning/tak · URL-vitlista + XSS-escaping · mejl-rendering inkl MSO-ghost/kolumnbredder/stycken/ordning bild-vs-text · webb-rendering + BLOCK_CSS · `blocksHtmlFor` cache + alla fail-loud-grenar · `_verifyBlocksSaved` alla utfall · endpoints · admin↔backend-typparitet · landningssidorna). **Mutationstestat:** `git stash push` av `emailer.js` / `index.js` / `mira-kommunikation-admin.html` / `invite.html` / `mira-undersokning.html` fäller 8 / 13 / 24 / 3 / 2 assertions. Regression: samtliga 15 sviter gröna (658 assertions). **Browser-harness** mot riktig `content_blocks.js`: lägg till/fyll/flytta/ta bort block · förhandsgranskning renderar citat + galleri och varnar "1 block visas inte än (saknar innehåll)" · spara → rätt JSON i (mockad) Bubble i rätt ordning med det tomma blocket bortkastat · varningsbannern när fältet saknas · redigeringsläget laddar tillbaka blocken · landningssidan renderar dem med accentfärg · **mejlet mätt i iframe: 600px-mall, 252+252 sida vid sida och 3×160 på en rad vid 760px — staplat vid 375px.**
+- **Deploy:** (1) **Bubble: nytt TEXT-fält `content_blocks` på `Invitation`** — utan det sparas inga block (admin varnar tydligt). (2) Push `index.js` + `emailer.js` + **ny fil `content_blocks.js`** till Render. (3) Klistra om `mira-kommunikation-admin.html` i `dashboard_crm`. (4) Hosta om `invite.html` + `mira-undersokning.html` på mira-fm.com.
+- **Kvar/nästa:** målgruppsmodulen — lättare sätt att bygga kontaktlistor (Christians nästa punkt, ej påbörjad). Blockbiblioteket kan senare få sparade mallar ("återanvänd förra månadens upplägg").
+
 ---
 
 ## 4. Bubble-setup som KRÄVS (förutsättningar)
@@ -127,6 +147,7 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 | Fält på `Invitation` | `video_url` (text) | video på landningssida (3k) |
 | Ny datatyp `MediaAsset` | fält: `url` (text), `name` (text), `content_type` (text) | mediaarkiv (3j) |
 | Fält på `AudienceSegment` | `members` (text — JSON-array med {name,email,company,region}) | statiska list-målgrupper (3b) |
+| Fält på `Invitation` | **`content_blocks` (text — JSON-array med designblocken)** | designblock (3l) — utan fältet sparas inga block |
 
 > Den **inbyggda** avprickningen (3i a) kräver ingen Bubble-setup. Den **fristående** sidan (3i b) kräver `checkin_token` + `checkin_code` ovan.
 >
@@ -206,7 +227,8 @@ Backend delar logik: `_buildGuestList(invId)` (gästlista) + `PATCH .../guest/:i
 - **Undersökningar i projekt:** gruppera flera undersökningar, aggregera över tid, **jämför föregående period**. Ny datatyp (t.ex. `SurveyProject`) + ny analysvy. Största posten.
 - **Benchmarksiffra per fråga** — inputfält per fråga med målsiffra; sammanställning jämförs mot den. (Relaterar till projekt om benchmark = föregående period.) Bekräftat: manuellt inmatad målsiffra.
 - **WYSIWYG-editor** — enkel rich-text på beskrivningsfält (landningssidor för undersökning/invite). Bekräftat scope: bara där man skriver löptext.
-- **Nyhetsbrev med block** (bild/text/CTA-sektioner). Besläktat med WYSIWYG.
+- ~~Nyhetsbrev med block~~ ✅ **klart 2026-08-19 (3l)** — designblock finns i alla tre utskickstyperna.
+- **Målgruppsmodulen: lättare kontaktlistbygge** — Christians nästa punkt efter blocken. Ej påbörjad.
 - ~~Mediaarkiv + bildkomprimering~~ ✅ klart (3j).
 
 ### Öppna trådar
