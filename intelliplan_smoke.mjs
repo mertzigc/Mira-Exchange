@@ -4,7 +4,7 @@
 // Mockad fetch → vi kan verifiera exakt vad som går på tråden: URL-mönster,
 // token-cache, förnyelse, 401-retry, cookie-hantering och att client_secret
 // aldrig läcker ut i något svar.
-import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT } from "./intelliplan.js";
 import fs from "node:fs";
 
 let pass = 0, fail = 0;
@@ -39,6 +39,13 @@ function mkFetch(plan) {
   return f;
 }
 const tokenBody = (over) => Object.assign({ access_token: "eyJTOKEN", expires_in: 3600, token_type: "Bearer", scope: "processengine" }, over || {});
+
+function slice(src, a, b, label) {
+  const i = src.indexOf(a);
+  const j = i < 0 ? -1 : src.indexOf(b, i);
+  if (i < 0 || j < 0) { fail++; console.log(`  ✗ [utklipp saknas] ${label} — hittade inte "${a}"`); return ""; }
+  return src.slice(i, j + b.length);
+}
 
 const run = async () => {
 
@@ -297,6 +304,62 @@ const run = async () => {
   const dp = profileCsvColumns('D\n2026-07-01\n2026-07-02\n');
   ok("datumkolumn känns igen", dp.cols[0].looks_date === true);
 
+  // ⚠️ SKARP LÄCKA (juni-profilen 2026-08-19): [a-zåäö] släpper igenom é/ü/ø/ł
+  // omaskerade, så delar av riktiga namn syntes i "mönstret".
+  const uni = profileCsvColumns('N\nJosé Müller\nBjörn Ångström\nŁukasz Nowak\n');
+  const upat = JSON.stringify(uni.cols[0].top_patterns);
+  ok("accenttecken maskeras (é/ü/ø/ł läcker inte)", !/[éüøłöåÅÖ]/.test(upat));
+  ok("bara A/a/9 och skiljetecken i mönstret", /^[Aa9 \-\/.,:;()"'\[\]{}+*&%#@!?_|\\]*$/.test(uni.cols[0].top_patterns[0].pattern));
+  ok("versal/gemen-strukturen bevaras ändå", uni.cols[0].top_patterns[0].pattern.startsWith("A"));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Normaliserare 1081 — intäkt per dag och kontor");
+  // ══════════════════════════════════════════════════════════════════════════
+  // Kolumnnamn verifierade mot skarp data 2026-08-19.
+  const H = "Date1,Date2,ConsultantOffice1,ConsultantOffice2,Revenue1\n";
+  const REV = H
+    + "20605,2026-06-01,3,Stockholm,451194.0000\n"
+    + "20605,2026-06-01,,,0.0000\n"          // "No connection" — kontor saknas
+    + "20606,2026-06-02,1,Göteborg,76664.5000\n"
+    + "20606,2026-06-02,4,Malmö,-128555.9100\n";
+  const n1 = normalizeRevenueDay(REV);
+  ok("rapport-id exporteras", IP_REVENUE_DAY_REPORT === 1081);
+  ok("alla rader normaliseras", n1.count === 4);
+  ok("nyckeln är datum + kontor", n1.rows[0].key === "2026-06-01|3");
+  // ⚠️ Utan "none" hade alla kontorslösa rader kolliderat på samma nyckel och
+  // skrivit över varandra — "No connection"-raden finns varje dag.
+  ok("kontorslös rad får nyckeln none", n1.rows[1].key === "2026-06-01|none" && n1.rows[1].office_id === null);
+  ok("negativa belopp bevaras (krediteringar)", n1.rows[3].revenue === -128555.91);
+  ok("summan stämmer", n1.revenue_total === Number((451194 + 0 + 76664.5 - 128555.91).toFixed(4)));
+  ok("distinkta datum räknas", n1.dates.length === 2);
+  ok("kontorslistan tar med none", n1.offices.includes("none"));
+  ok("inga varningar på ren data", n1.warnings.length === 0);
+
+  // ── Skyddsräcken ──
+  let te = null;
+  try { normalizeRevenueDay("Datum,Kontor,Belopp\n2026-06-01,Sthlm,100\n"); } catch (e) { te = e; }
+  ok("ändrade kolumnnamn → STANNAR (lagrar inte nollor tyst)",
+     te && /unexpected_columns/.test(te.message) && /Date2/.test(te.message));
+  ok("felet listar vad som faktiskt kom", te && /fick: Datum,Kontor,Belopp/.test(te.message));
+
+  // Date1 (dagar sedan epok) korskontrollerar Date2 — spretar de har vi läst fel kolumn
+  te = null;
+  try { normalizeRevenueDay(H + "20605,2026-09-09,3,Stockholm,100.0000\n"); } catch (e) { te = e; }
+  ok("datumkolumnerna korskontrolleras", te && /date_mismatch/.test(te.message));
+  const lax = normalizeRevenueDay(H + "20605,2026-09-09,3,Stockholm,100.0000\n", { strict: false });
+  ok("strict:false varnar i stället för att kasta",
+     lax.count === 1 && ((lax.warnings || [])[0] || {}).reason === "date_mismatch");
+
+  te = null;
+  try { normalizeRevenueDay(H + "20605,2026-06-01,3,Stockholm,100.0000\n20605,2026-06-01,3,Stockholm,200.0000\n"); } catch (e) { te = e; }
+  ok("dubbel nyckel → STANNAR (kornigheten är inte den vi tror)", te && /duplicate_key/.test(te.message));
+
+  const bad = normalizeRevenueDay(H + "20605,inte-ett-datum,3,Stockholm,100.0000\n20606,2026-06-02,1,GBG,50.0000\n", { strict: false });
+  ok("ogiltigt datum hoppas över men RAPPORTERAS",
+     bad.count === 1 && ((bad.warnings || [])[0] || {}).reason === "ogiltigt_datum");
+  ok("tomt belopp blir 0, inte null", normalizeRevenueDay(H + "20605,2026-06-01,3,Sthlm,\n").rows[0].revenue === 0);
+  ok("tom fil ger tomt resultat, ingen krasch", normalizeRevenueDay(H).count === 0);
+
   // ══════════════════════════════════════════════════════════════════════════
   sec("Endpoints i index.js");
   // ══════════════════════════════════════════════════════════════════════════
@@ -318,6 +381,20 @@ const run = async () => {
   ok("datarader kräver uttryckligt sample=1/raw=1", /sample: req\.query\.sample === "1" \|\| req\.query\.raw === "1"/.test(ipBlock));
   ok("probe visar aldrig datarader", /describeReportPayload\(r\);\s*\/\/ aldrig sample/.test(ipBlock));
   ok("profile=1 finns och kräver INTE sample", /req\.query\.profile === "1"/.test(ipBlock) && /profileCsvColumns\(r\.raw\)/.test(ipBlock));
+
+  const syncBlock = slice(SRC, "// INTELLIPLAN steg 4 —", "// ── Bilagor (Fas 2d)", "sync-blocket");
+  ok("synk-endpoint finns", /app\.post\("\/admin\/intelliplan\/sync\/revenue-day"/.test(syncBlock));
+  // ⚠️ En synk som skriver by default är en synk som skriver fel by default.
+  ok("torrkörning är default", /const dryRun = b\.dry_run !== false/.test(syncBlock));
+  ok("kräver ISO-datum", /from_och_to_krävs_som_YYYY-MM-DD/.test(syncBlock));
+  ok("idempotent på ip_key", /byKey\.set\(k, r\)/.test(syncBlock) && /byKey\.get\(row\.key\)/.test(syncBlock));
+  // Utan detta patchas 120 rader varje natt bara för att synced_at ändrats.
+  ok("patchar bara när ett mätvärde ändrats", /if \(same\) \{ unchanged\+\+; continue; \}/.test(syncBlock));
+  ok("läser befintliga CONSTRAINTAT på datum, inte helsvep", /constraint_type: "greater than or equal"/.test(syncBlock));
+  ok("saknad datatyp → 502 med läsbar orsak", /kunde_inte_lasa_befintliga/.test(syncBlock));
+  // Bubble droppar okända fält TYST — utan läs-tillbaka ser synken lyckad ut.
+  ok("verifierar att fälten persisterade", /fields_missing_on_type/.test(syncBlock));
+  ok("föräldralösa rader rapporteras", /orphans/.test(syncBlock));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

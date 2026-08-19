@@ -114,6 +114,48 @@ Guidens `gridreport/1/sv` är alltså ett EXEMPEL, precis som `tenant-name` och 
 
 **⚠️ PERSONDATA.** Rapporten bär konsultnamn och lönekostnader (`SalaryCost1`). Därför: `describeReportPayload` returnerar **aldrig** en datarad utan `sample:true`, endpointen kräver `?sample=1` (eller `raw=1`), probe-läget visar aldrig rader, och **loggen skriver bara form/volym/kolumnantal — aldrig radinnehåll**. Kolumnnamn + antal räcker för att designa datamodellen.
 
+### ⭐ RÄTT RAPPORT ÄR 1058 (kartlagt 2026-08-19)
+Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporting-vy. `1063` (SalaryCost) var fel startpunkt — den saknar kund, nyckel och användbar kornighet.
+
+**`1058` "Intäkt totalt (ink kund och uppdrag)" är källan.** 13 kolumner, 232 rader för juni 2026:
+`DeliveryOffice1/2` (id+namn, 4 kontor) · `Account1/2` (**id+namn, 84 kunder — KUNDNYCKELN**) · `Order1/2` (id+namn, `"999 - Ordernamn"`) · `SalesPerson1/2` · `Revenue1` · `Cost1` · `Hours1` · `GrossMargin1` · `GrossMarginPercentage1`.
+
+- **⭐ KORNIGHETEN ÄR EN RAD PER ORDER OCH PERIOD.** `Order1` har `distinct_ratio: 1.0` (231 distinkta av 231 ifyllda). Naturlig nyckel = **`(period, order_id)`** → periodomläsning blir idempotent utan rad-id. Det löser luckan jag flaggade mot 1063.
+- **⭐ `Account1` är ett numeriskt kund-id** (3–1302, 84 distinkta), inte ett namn. Kopplingen till `ClientCompany` kan alltså gå på ett stabilt id som överlever namnbyten — men mappningen Account→ClientCompany måste byggas en gång (84 kunder).
+- **⚠️ `GrossMarginPercentage1` är en ANDEL, inte procent.** max = 1, min = -56,16. UI:t visar 27 % där CSV:n har 0,27. Multiplicera inte två gånger.
+- **⚠️ En rad saknar Account/Order/DeliveryOffice** (231 av 232 ifyllda) — "No connection"-raden i UI:t. Bär ändå Revenue. Ska mappas som "utan order", inte tyst droppas.
+- **⚠️ `SalesPerson1/2` är i praktiken tom** (2 av 232). UI:t visar "No connection" på varje rad. Räkna inte med säljarkopplingen.
+- Summorna stämmer exakt mot UI:t: Revenue 6 850 058,36 · Hours 17 641,77 · GrossMargin 1 742 484,14 · Cost 5 107 574,22.
+
+**`1039` "Timmar och intäkter" är en delmängd av 1058** — identisk kornighet (232 rader, 84 konton, 231 ordrar, samma Revenue-summa) med bara `Account/Order/Revenue/InvoiceHours1/Hours1`. Enda mervärdet är **`InvoiceHours1`** (17 637,77 mot Hours 17 641,77 — debiterbart vs totalt). Bäst: lägg till InvoiceHours som kolumn i 1058 via **"Add columns"** och kör EN rapport.
+
+**⭐ Mallarna är användarredigerbara** ("Add columns"-knappen i Reporting-vyn) — frågan om att utöka behöver inte gå via Intelliplans support.
+
+**Volym:** 232 rader/månad ≈ 2 800/år. Fullt hanterbart i Bubble, till skillnad från 1063:s 28 000.
+
+### STEG 4 BYGGT 2026-08-19 — synk av rapport 1081 → Bubble (EJ deployat)
+**`1081` "mira-rapport-1"** (skapad av Christian): `Date1` · `Date2` · `ConsultantOffice1` · `ConsultantOffice2` · `Revenue1`. 121 rader för juni 2026. **En rad per (datum, kontor).**
+- **⭐ Ingen persondata alls** — bara datum, kontor, belopp. Därför får den här synken logga fritt, till skillnad från 1058/1063.
+- **⭐ Revenue1 summerar till 6 850 058,36 — EXAKT samma som 1058.** Två olika rapporter, olika kornighet, identisk total. Bekräftar auth, CSV-parsern och Intelliplans aggregering på en gång.
+- **`Date2`** är ISO och den vi använder. **`Date1` är dagar sedan 1970-01-01** (verifierat: 20605 = 2026-06-01, 20634 = 2026-06-30) och används som **korskontroll** — spretar de har vi läst fel kolumn och normaliseraren KASTAR.
+- Kontor kan saknas ("No connection", 23 av 121 rader) → nyckeln får `none`. **Utan det hade alla kontorslösa rader kolliderat på samma nyckel** och skrivit över varandra, en per dag.
+
+**`normalizeRevenueDay(csv)` (intelliplan.js):** rader `{key, date, office_id, office, revenue}` + `revenue_total`, `dates`, `offices`, `warnings`. **Stannar** vid ändrade kolumnnamn (felet listar vad som faktiskt kom), datumspret och dubbel nyckel — det sista betyder att kornighetsantagandet inte håller och ska aldrig tystas. `strict:false` varnar i stället för att kasta.
+
+**`POST /admin/intelliplan/sync/revenue-day {from,to,dry_run}`:** **torrkörning är default.** Upsert på `ip_key` = `"<ISO-datum>|<kontor-id|none>"` → periodomläsning är idempotent. Patchar BARA när ett mätvärde faktiskt ändrats (annars skrivs 120 rader varje natt bara för att `synced_at` rört sig). Befintliga rader läses **constraintat på datum**, inte helsvep. Rader i Bubble som inte längre finns i rapporten rapporteras som `orphans`. Efter första create läses en rad tillbaka och fälten verifieras → `502 fields_missing_on_type` om Bubble droppat något tyst (se [[reference-bubble-tysta-faltdrop]]).
+
+**⚠️ BUBBLE-DATATYP SOM MÅSTE SKAPAS: `IntelliplanRevenueDay`** — fält (exakta namn): `ip_key` (text) · `ip_date` (date) · `ip_office_id` (number) · `ip_office` (text) · `revenue` (number) · `ip_report_id` (number) · `synced_at` (date). Typen måste vara API-modify-bar.
+
+**`intelliplan_sync.sh`:** torrkörning som default, `--apply` för skarpt, senaste `MONTHS` (default 3) hela månader eller explicit period. Nattlig cron: utan datum + `--apply`.
+
+**⚠️ Varför periodomläsning och inte delta:** en månad VÄXER efter månadsskiftet. Juli mitt i månaden hade 1 024 rader/1,56 Mkr mot junis 2 315/3,2 Mkr. En engångsläsning skulle frysa halva sanningen.
+
+**⚠️ Volymvarning inför 1058:** frestelsen är att lägga `Date` på 1058 och få kund + dag på en gång. Men Date **exploderar** rapporten: 232 ordrar × ~22 arbetsdagar ≈ 5 000 rader/mån = 60 000/år. Månadsgrain per kund/order (232/mån ≈ 2 800/år) räcker för kundkortet. Gör inte det tillägget i förbifarten.
+
+**Verifierat:** `intelliplan_smoke.mjs` **125/125**. **Mutationstestat:** borttagen `none`-nyckel fäller 1 · ingen kolumnkontroll 2 · ingen datum-korskontroll 2 · synk som skriver by default 1. Regression: samtliga 19 sviter gröna.
+
+**Deploy:** (1) **Bubble: skapa `IntelliplanRevenueDay`** enligt fältlistan. (2) `index.js` + `intelliplan.js` till Render. (3) Torrkör `./intelliplan_sync.sh 2026-06-01 2026-06-30`, jämför `revenue_total` mot 6 850 058,36. (4) `--apply`. (5) Cron.
+
 **Nästa steg:** `./intelliplan_probe.sh 1063 2026-07-01 2026-07-31` → kolumnkarta → be Intelliplan om ÖVRIGA rapport-id (och om det finns en endpoint som listar dem) → **steg 4:** normaliserare + Bubble-datatyp, där kundmatchningen mot `ClientCompany` är den svåra biten (samma problem som `resolveInvoiceCustomer` löser för Tengella). Kolumnnamnens `1`/`2`-suffix antyder grupperade kolumner — behöver förstås innan mappning → **steg 5:** cron med nattligt delta + `_bulkCreate`.
 
 **Deploy:** `index.js` + nya `intelliplan.js` till Render. Inga Bubble-ändringar, inga HTML-block.

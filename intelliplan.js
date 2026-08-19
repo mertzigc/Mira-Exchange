@@ -284,7 +284,13 @@ export function profileCsvColumns(raw, opts = {}) {
   const header = rows[0] || [];
   const body = rows.slice(1).filter((r) => r.some((v) => (v || "").trim() !== ""));
 
-  const maskOf = (v) => String(v).replace(/[A-ZÅÄÖ]/g, "A").replace(/[a-zåäö]/g, "a").replace(/[0-9]/g, "9");
+  // ⚠️ Unicode-medveten: en teckenklass som [a-zåäö] släpper igenom é, ü, ø, ł …
+  // omaskerade — och då läcker delar av riktiga namn ut i "mönstret".
+  // (Upptäckt 2026-08-19: juni-profilen visade "Aaaaaa/Aaaaé".)
+  const maskOf = (v) => String(v)
+    .replace(/\p{Lu}/gu, "A").replace(/\p{Ll}/gu, "a")
+    .replace(/\p{Lo}|\p{Lt}|\p{Lm}/gu, "a")   // skript utan versal/gemen-skillnad
+    .replace(/\p{Nd}/gu, "9");
   const numRe = /^-?\d+([.,]\d+)?$/;
   const dateRe = /^\d{4}-\d{2}-\d{2}([T ].*)?$/;
 
@@ -405,4 +411,84 @@ export function describeReportPayload(result, opts = {}) {
     if (sample) out.preview = String(d).slice(0, 400);
   }
   return out;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// NORMALISERARE — rapport 1081 "mira-rapport-1": intäkt per dag och kontor
+// ────────────────────────────────────────────────────────────────────────────
+// CSV-kolumner (verifierade 2026-08-19): Date1, Date2, ConsultantOffice1,
+// ConsultantOffice2, Revenue1. Samma id+namn-parmönster som övriga rapporter.
+//
+// `Date2` är ISO (YYYY-MM-DD) och den vi använder. `Date1` är dagar sedan
+// 1970-01-01 (verifierat: 20605 = 2026-06-01, 20634 = 2026-06-30) och används
+// som KORSKONTROLL — spretar de har vi tolkat fel kolumn, och det ska braka
+// högljutt i stället för att tyst lagra fel datum.
+//
+// Kornighet: en rad per (datum, kontor). Kontor kan saknas ("No connection" i
+// UI:t) → nyckeln får "none". 121 rader för juni 2026.
+export const IP_REVENUE_DAY_REPORT = 1081;
+
+export function normalizeRevenueDay(csvText, opts = {}) {
+  const strict = opts.strict !== false;
+  const rows = parseCsv(csvText, { delimiter: sniffDelimiter(csvText) });
+  const header = (rows[0] || []).map((h) => String(h || "").trim());
+  const idx = (name) => header.indexOf(name);
+  const iDateSerial = idx("Date1"), iDateIso = idx("Date2");
+  const iOfficeId = idx("ConsultantOffice1"), iOfficeName = idx("ConsultantOffice2");
+  const iRevenue = idx("Revenue1");
+
+  const missing = [["Date2", iDateIso], ["ConsultantOffice1", iOfficeId],
+                   ["ConsultantOffice2", iOfficeName], ["Revenue1", iRevenue]]
+    .filter(([, i]) => i < 0).map(([n]) => n);
+  if (missing.length) {
+    // Ändrar någon mallens kolumner ska synken STANNA, inte tyst lagra nollor.
+    const e = new Error("intelliplan_unexpected_columns: saknar " + missing.join(", ") + " (fick: " + header.join(",") + ")");
+    e.status = 502; throw e;
+  }
+
+  const num = (v) => { const s2 = String(v == null ? "" : v).trim().replace(",", "."); if (!s2) return null; const n = Number(s2); return Number.isFinite(n) ? n : null; };
+  const out = [], warnings = [];
+  const seen = new Map();
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || !row.some((v) => String(v || "").trim() !== "")) continue;
+    const iso = String(row[iDateIso] || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { warnings.push({ row: r, reason: "ogiltigt_datum", value: iso.slice(0, 20) }); continue; }
+
+    // Korskontroll mot dagnumret. Bara när serien finns — den är inte obligatorisk.
+    if (iDateSerial >= 0) {
+      const serial = num(row[iDateSerial]);
+      if (serial != null) {
+        const fromSerial = new Date(serial * 864e5).toISOString().slice(0, 10);
+        if (fromSerial !== iso) {
+          const msg = `datumkolumnerna spretar på rad ${r}: Date1=${serial} (${fromSerial}) vs Date2=${iso}`;
+          if (strict) { const e = new Error("intelliplan_date_mismatch: " + msg); e.status = 502; throw e; }
+          warnings.push({ row: r, reason: "date_mismatch", value: msg });
+        }
+      }
+    }
+
+    const officeId = num(row[iOfficeId]);
+    const officeName = String(row[iOfficeName] || "").trim();
+    const revenue = num(row[iRevenue]);
+    const key = iso + "|" + (officeId == null ? "none" : String(officeId));
+
+    // Dubblettnyckel = vår kornighetsantagande stämmer inte. Måste synas.
+    if (seen.has(key)) {
+      const msg = `dubbel nyckel ${key} (rad ${seen.get(key)} och ${r}) — kornigheten är inte (datum, kontor)`;
+      if (strict) { const e = new Error("intelliplan_duplicate_key: " + msg); e.status = 502; throw e; }
+      warnings.push({ row: r, reason: "duplicate_key", value: msg });
+      continue;
+    }
+    seen.set(key, r);
+
+    out.push({ key, date: iso, office_id: officeId, office: officeName || null, revenue: revenue == null ? 0 : revenue });
+  }
+
+  const total = out.reduce((a, b) => a + (b.revenue || 0), 0);
+  return { report_id: IP_REVENUE_DAY_REPORT, rows: out, count: out.length,
+           revenue_total: Number(total.toFixed(4)), warnings,
+           dates: [...new Set(out.map((r) => r.date))].sort(),
+           offices: [...new Set(out.map((r) => (r.office_id == null ? "none" : r.office_id + " " + r.office)))].sort() };
 }

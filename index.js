@@ -12,7 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { createIntelliplanClient, describeReportPayload, profileCsvColumns } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -22072,6 +22072,113 @@ app.post("/admin/contracts/:id/send-for-signing", async (req, res) => {
   } catch (e) {
     console.error("[/admin/contracts/:id/send-for-signing] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// INTELLIPLAN steg 4 — synk av rapport 1081 (intäkt per dag och kontor) → Bubble
+// ════════════════════════════════════════════════════════════════════════════
+// Bubble-datatyp: `IntelliplanRevenueDay` med fälten
+//   ip_key (text) · ip_date (date) · ip_office_id (number) · ip_office (text)
+//   revenue (number) · ip_report_id (number) · synced_at (date)
+//
+// ⚠️ IDEMPOTENS: nyckeln är `ip_key` = "<ISO-datum>|<kontor-id|none>". En period
+// kan läsas om hur många gånger som helst — befintliga rader patchas, nya skapas.
+// Det behövs: en månad VÄXER efter månadsskiftet (juli hade halva juni-volymen
+// mitt i månaden), så en engångsläsning skulle frysa fel siffror.
+//
+// ⚠️ Rapport 1081 innehåller INGEN persondata (bara datum, kontor, belopp) —
+// därför får den här synken logga fritt, till skillnad från 1063/1058.
+const IP_REVDAY_TYPE = "IntelliplanRevenueDay";
+
+// POST /admin/intelliplan/sync/revenue-day { from, to, dry_run }
+// dry_run (default TRUE) → visar vad som skulle hända utan att skriva.
+app.post("/admin/intelliplan/sync/revenue-day", async (req, res) => {
+  const b = req.body || {};
+  const dryRun = b.dry_run !== false;
+  const from = String(b.from || "").trim(), to = String(b.to || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ ok: false, error: "from_och_to_krävs_som_YYYY-MM-DD" });
+  }
+  try {
+    const rep = await intelliplan.getGridReport({ id: IP_REVENUE_DAY_REPORT, lang: "sv", dateFrom: from, dateTo: to });
+    const norm = normalizeRevenueDay(rep.raw);
+
+    // Hämta befintliga rader för perioden → en Map på nyckeln. Constraintat på
+    // datum, inte helsvep: perioden är ~120 rader, hela typen växer med åren.
+    const existingRows = await bubbleFindAll(IP_REVDAY_TYPE, { constraints: [
+      { key: "ip_date", constraint_type: "greater than or equal", value: from },
+      { key: "ip_date", constraint_type: "less than or equal", value: to },
+    ] }).catch((e) => { console.warn("[intelliplan-sync] kunde inte läsa befintliga:", e?.message); return null; });
+    if (existingRows === null) {
+      return res.status(502).json({ ok: false, error: "kunde_inte_lasa_befintliga",
+        hint: `Finns datatypen ${IP_REVDAY_TYPE} i Bubble och är den API-exponerad?` });
+    }
+    const byKey = new Map();
+    for (const r of existingRows) { const k = String(r.ip_key || ""); if (k) byKey.set(k, r); }
+
+    const toCreate = [], toPatch = [];
+    let unchanged = 0;
+    const nowIso = new Date().toISOString();
+    for (const row of norm.rows) {
+      const cur = byKey.get(row.key);
+      const payload = {
+        ip_key: row.key, ip_date: row.date, ip_office_id: row.office_id,
+        ip_office: row.office, revenue: row.revenue,
+        ip_report_id: IP_REVENUE_DAY_REPORT, synced_at: nowIso,
+      };
+      if (!cur) { toCreate.push(payload); continue; }
+      // Patcha bara när ett mätvärde faktiskt ändrats — synced_at ensamt är
+      // ingen anledning att skriva (WU).
+      const same = Number(cur.revenue || 0) === Number(row.revenue || 0)
+        && String(cur.ip_office || "") === String(row.office || "")
+        && (cur.ip_office_id == null ? null : Number(cur.ip_office_id)) === row.office_id;
+      if (same) { unchanged++; continue; }
+      toPatch.push({ id: cur._id || cur.id, payload });
+    }
+    // Rader i Bubble som inte längre finns i rapporten (t.ex. korrigerad dag)
+    const reportKeys = new Set(norm.rows.map((r) => r.key));
+    const orphans = existingRows.filter((r) => !reportKeys.has(String(r.ip_key || "")));
+
+    const summary = {
+      period: { from, to }, report_id: IP_REVENUE_DAY_REPORT,
+      report_rows: norm.count, revenue_total: norm.revenue_total,
+      dates: norm.dates.length, offices: norm.offices,
+      existing_in_bubble: existingRows.length,
+      to_create: toCreate.length, to_update: toPatch.length, unchanged,
+      orphans: orphans.length, warnings: norm.warnings,
+    };
+    if (dryRun) return res.json({ ok: true, dry_run: true, ...summary });
+
+    let created = 0;
+    if (toCreate.length) {
+      const r2 = await _bulkCreate(IP_REVDAY_TYPE, toCreate);
+      created = r2.created;
+      // ⚠️ safeCreate/bulk droppar okända fält TYST. Läs tillbaka en rad och
+      // verifiera att fälten finns — annars ser synken lyckad ut medan Bubble
+      // lagrat tomma rader. (Se reference-bubble-tysta-faltdrop.)
+      const check = await bubbleFindAll(IP_REVDAY_TYPE, { constraints: [
+        { key: "ip_key", constraint_type: "equals", value: toCreate[0].ip_key } ] }).catch(() => []);
+      const got = (check || [])[0];
+      const lost = got ? Object.keys(toCreate[0]).filter((k) => got[k] === undefined) : Object.keys(toCreate[0]);
+      if (lost.length) {
+        console.error("[intelliplan-sync] fält droppades tyst av Bubble:", lost.join(", "));
+        return res.status(502).json({ ok: false, error: "fields_missing_on_type", missing: lost,
+          hint: `Lägg till fälten på datatypen ${IP_REVDAY_TYPE} i Bubble (exakta namn) och kör om.`, ...summary });
+      }
+    }
+    let updated = 0;
+    for (let i = 0; i < toPatch.length; i += 5) {
+      await Promise.all(toPatch.slice(i, i + 5).map(async (p) => {
+        try { await bubblePatch(IP_REVDAY_TYPE, p.id, p.payload); updated++; }
+        catch (e) { console.error("[intelliplan-sync] patch misslyckades", p.id, e?.message); }
+      }));
+    }
+    console.log(`[intelliplan-sync] ${from}..${to}: ${created} nya, ${updated} uppdaterade, ${unchanged} oförändrade, ${orphans.length} föräldralösa (omsättning ${norm.revenue_total})`);
+    return res.json({ ok: true, dry_run: false, created, updated, ...summary });
+  } catch (e) {
+    console.error("[intelliplan/sync/revenue-day]", e?.message, e?.status || "", (e?.body || "").slice(0, 300));
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.body || null });
   }
 });
 
