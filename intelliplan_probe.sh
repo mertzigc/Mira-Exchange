@@ -52,10 +52,10 @@ if [ $# -ge 1 ]; then
   echo "═══ 3. Rapport $ID — form och kolumner ═══"
   curl -sS --max-time 120 "${H[@]}" "$HOST/admin/intelliplan/report/$ID?$Q" | j
   echo
-  echo "(Lägg till &raw=1 på URL:en ovan för hela svaret.)"
+  echo "(sample=1 ger en exempelrad, raw=1 hela svaret — båda innehåller persondata.)"
 else
-  echo "═══ 3. Vilka rapport-id svarar? (1–8) ═══"
-  curl -sS --max-time 180 "${H[@]}" "$HOST/admin/intelliplan/probe?ids=1,2,3,4,5,6,7,8" | j
-  echo
-  echo "Kör om med ett id för detaljer:  ./intelliplan_probe.sh 4 2026-01-01 2026-01-31"
+  # Rapport-id är fyrsiffriga och tilldelade per tenant (1063 är Carottes första
+  # kända) — att skanna blint är meningslöst. Ange id:t du fått av Intelliplan.
+  echo "Ange ett rapport-id. Kända: 1063"
+  echo "  ./intelliplan_probe.sh 1063 2026-07-01 2026-07-31"
 fi

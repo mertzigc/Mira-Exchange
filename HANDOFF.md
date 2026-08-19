@@ -102,9 +102,19 @@ Fjärde datakällan jämte Fortnox/Tengella/Caspeco. Förhandlingen klar; nu lä
 
 **Env (Render, inlagda 2026-08-19):** `INTELLIPLAN_TENANT=carotte-se` · `INTELLIPLAN_CLIENT_ID` · `INTELLIPLAN_CLIENT_SECRET`. Valfria: `INTELLIPLAN_SCOPE` (default `processengine`), `INTELLIPLAN_IDP_BASE`, `INTELLIPLAN_API_BASE` (om värdarna flyttar).
 
-**Verifierat:** `intelliplan_smoke.mjs` **60/60** med mockad fetch (URL-mönster, token-cache/marginal/dedup, 401-retry, 500 utan retry, cookie-fångst, datumfilter, felkroppar bevarade, hemligheten aldrig i svar eller fel). **Mutationstestat:** secret i klartext i config fäller 2 · borttagen förnyelsemarginal 1 · borttagen `overrideDatePeriodFilter` 1 · cookies som inte skickas vidare 2.
+**Verifierat:** `intelliplan_smoke.mjs` **80/80** med mockad fetch (URL-mönster, token-cache/marginal/dedup, 401-retry, 500 utan retry, cookie-fångst, datumfilter, felkroppar bevarade, hemligheten aldrig i svar eller fel). **Mutationstestat:** secret i klartext i config fäller 2 · borttagen förnyelsemarginal 1 · borttagen `overrideDatePeriodFilter` 1 · cookies som inte skickas vidare 2 · persondata-grinden alltid öppen 5 · naiv `split(",")` i st.f. CSV-parser 1 · ingen avgränsar-sniffning 1.
 
-**Nästa steg (kräver riktig data):** kör `./intelliplan_probe.sh` → kartlägg vilka rapport-id som finns och vad de innehåller → välj första rapporten → **steg 4:** normaliserare + Bubble-datatyp, där kundmatchningen mot `ClientCompany` är den svåra biten (samma problem som `resolveInvoiceCustomer` löser för Tengella) → **steg 5:** cron med nattligt delta + `_bulkCreate`.
+**Steg 1–2 KÖRDA SKARPT 2026-08-19 — auth verifierad.** `/debug-env` + `/auth/test` gröna mot live: tenant `carotte-se`, båda värdmönstren stämmer, `client_credentials` + `scope=processengine` beviljas, `refresh_in_seconds: 3240` (marginalen fungerar). Secret-fingeravtryck: `289ef8f0`.
+
+**⚠️ RAPPORT-ID ÄR FYRSIFFRIGA, INTE 1–8.** Probe över 1–8 gav 503 på alla:
+`Shuffler error -> GET /grid-report/v2/download -> "sv[Failed to read GridReport2Template.]. Data kunde inte hittas"` / `developerMessage: "Could not find GridReportTemplateDto"`.
+Guidens `gridreport/1/sv` är alltså ett EXEMPEL, precis som `tenant-name` och `{YOUR_CLIENT_ID}`. **Carottes första kända rapport-id: `1063`** (ur Intelliplans egen Postman-samling "Carotte BI-access"). Blind skanning är meningslös — id:n måste komma från Intelliplan. Att felet blir `503` och inte `404` är deras felinpackning; tolka det inte som att tjänsten är nere.
+
+**⚠️ SVARET ÄR CSV, INTE JSON.** Bekräftat mot 1063 (81 kB, 200 OK): rubrikrad `FinancialItemNote1,Article1,Article2,Consultant1,Consultant2,Order1,Order2,SalaryCost1` + kommaseparerade rader. `describeReportPayload` har därför en CSV-gren med **riktig parser** (citerade fält, inbäddade kommatecken, `""`-escape) — en `split(",")` hade tyst förskjutit alla kolumner efter ett textfält med komma i. Avgränsare sniffas (komma/semikolon/tab). `rows_with_other_column_count` rapporteras: avviker radernas kolumnantal är det ett tecken på feltolkad citering eller grupperade sektioner, och det ska synas.
+
+**⚠️ PERSONDATA.** Rapporten bär konsultnamn och lönekostnader (`SalaryCost1`). Därför: `describeReportPayload` returnerar **aldrig** en datarad utan `sample:true`, endpointen kräver `?sample=1` (eller `raw=1`), probe-läget visar aldrig rader, och **loggen skriver bara form/volym/kolumnantal — aldrig radinnehåll**. Kolumnnamn + antal räcker för att designa datamodellen.
+
+**Nästa steg:** `./intelliplan_probe.sh 1063 2026-07-01 2026-07-31` → kolumnkarta → be Intelliplan om ÖVRIGA rapport-id (och om det finns en endpoint som listar dem) → **steg 4:** normaliserare + Bubble-datatyp, där kundmatchningen mot `ClientCompany` är den svåra biten (samma problem som `resolveInvoiceCustomer` löser för Tengella). Kolumnnamnens `1`/`2`-suffix antyder grupperade kolumner — behöver förstås innan mappning → **steg 5:** cron med nattligt delta + `_bulkCreate`.
 
 **Deploy:** `index.js` + nya `intelliplan.js` till Render. Inga Bubble-ändringar, inga HTML-block.
 

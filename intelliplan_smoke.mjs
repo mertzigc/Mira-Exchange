@@ -4,7 +4,7 @@
 // Mockad fetch → vi kan verifiera exakt vad som går på tråden: URL-mönster,
 // token-cache, förnyelse, 401-retry, cookie-hantering och att client_secret
 // aldrig läcker ut i något svar.
-import { createIntelliplanClient, describeReportPayload } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, parseCsv } from "./intelliplan.js";
 import fs from "node:fs";
 
 let pass = 0, fail = 0;
@@ -206,7 +206,7 @@ const run = async () => {
   // ══════════════════════════════════════════════════════════════════════════
   sec("describeReportPayload — rekognosering utan att dumpa allt");
   // ══════════════════════════════════════════════════════════════════════════
-  let d = describeReportPayload({ parsed: true, data: ROWS, raw: JSON.stringify(ROWS), content_type: "application/json" });
+  let d = describeReportPayload({ parsed: true, data: ROWS, raw: JSON.stringify(ROWS), content_type: "application/json" }, { sample: true });
   ok("hittar rader i {rows:[]}", d.shape === "wrapped_array" && d.row_count === 2);
   ok("listar kolumnnamnen", JSON.stringify(d.columns) === JSON.stringify(["Konsult", "Timmar", "Kund"]));
   ok("visar en exempelrad", d.first_row.Konsult === "Anna");
@@ -218,9 +218,50 @@ const run = async () => {
   ok("hittar rader i {data:[]}", d.row_count === 1);
   d = describeReportPayload({ parsed: true, data: { meta: 1 }, raw: "{}" });
   ok("objekt utan rader → nycklar i stället", d.shape === "object" && d.top_level_keys[0] === "meta");
-  d = describeReportPayload({ parsed: false, raw: "kolumn;kolumn2\n1;2", content_type: "text/csv" });
-  ok("oparsat (t.ex. CSV) → preview, ingen krasch", d.shape === "raw" && d.preview.includes("kolumn"));
+  d = describeReportPayload({ parsed: false, raw: "inte ens en tabell", content_type: "text/plain" }, { sample: true });
+  ok("oparsat utan tabellform → preview, ingen krasch", d.shape === "raw" && d.preview.includes("inte ens"));
   ok("tomt svar kraschar inte", describeReportPayload(null).shape === "raw");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("CSV — det format gridreport faktiskt svarar med");
+  // ══════════════════════════════════════════════════════════════════════════
+  // Bekräftat mot rapport 1063: rubrikrad + kommaseparerade rader, INTE JSON.
+  const CSV = 'FinancialItemNote1,Article1,Consultant1,SalaryCost1\n'
+            + 'Kan ej jobba,Arena Extrapersonal,Natalie - reception,-1341.2800\n'
+            + '"Not, med komma",Kontorsarbete GBG,Anna Ek,0.0000\n'
+            + '"Han sa ""hej""",Pentry,Bo Lund,-5640.0000\n';
+  let csvRes = { parsed: false, raw: CSV, content_type: "text/csv" };
+  let d2 = describeReportPayload(csvRes);
+  ok("CSV känns igen (inte 'raw')", d2.shape === "csv");
+  ok("kolumnnamnen läses ur rubrikraden",
+     JSON.stringify(d2.columns) === JSON.stringify(["FinancialItemNote1", "Article1", "Consultant1", "SalaryCost1"]));
+  ok("radantal exkl. rubrik", d2.row_count === 3);
+  ok("avgränsare rapporteras", d2.delimiter === ",");
+  // ⚠️ En split(",") hade förskjutit alla kolumner efter ett fält med komma i.
+  ok("citerat fält med komma bryter inte kolumnerna", d2.rows_with_other_column_count === 0);
+  ok("redovisar vilka kolumner som har data alls", d2.non_empty_columns.length === 4);
+
+  // ── Persondata-grinden ──
+  ok("INGEN datarad utan sample", d2.first_row === undefined && /persondata/.test(d2.note || ""));
+  ok("ingen lönesiffra i svaret", !JSON.stringify(d2).includes("-1341.2800"));
+  ok("inget konsultnamn i svaret", !JSON.stringify(d2).includes("Natalie"));
+  let d3 = describeReportPayload(csvRes, { sample: true });
+  ok("sample=true ger exempelrad", d3.first_row && d3.first_row.Consultant1 === "Natalie - reception");
+  ok("citerade tecken avkodas", describeReportPayload(csvRes, { sample: true }).columns.length === 4
+     && parseCsv(CSV)[3][0] === 'Han sa "hej"');
+
+  ok("JSON-grenen döljer också rader utan sample",
+     describeReportPayload({ parsed: true, data: ROWS, raw: "{}" }).first_row === undefined);
+  ok("JSON-grenen visar rad med sample",
+     describeReportPayload({ parsed: true, data: ROWS, raw: "{}" }, { sample: true }).first_row.Konsult === "Anna");
+  ok("rå text döljs utan sample",
+     describeReportPayload({ parsed: false, raw: "hemligt" }).preview === null);
+
+  // Avvikande kolumnantal ska SYNAS, inte tystas
+  d2 = describeReportPayload({ parsed: false, raw: "a,b,c\n1,2,3\n4,5\n" });
+  ok("rader med annat kolumnantal rapporteras", d2.rows_with_other_column_count === 1);
+  ok("semikolon-CSV klaras också", describeReportPayload({ parsed: false, raw: "a;b\n1;2\n" }).delimiter === ";");
+  ok("en ensam rad utan avgränsare är inte CSV", describeReportPayload({ parsed: false, raw: "bara text" }).shape === "raw");
 
   // ══════════════════════════════════════════════════════════════════════════
   sec("Endpoints i index.js");
@@ -237,6 +278,11 @@ const run = async () => {
   ok("steg 2 skriver ingenting till Bubble", !/bubbleCreate|bubblePatch|safeCreate/.test(ipBlock));
   ok("probe pausar mellan id:n (vi vet inget om rate limits)", /setTimeout\(r2, 300\)/.test(ipBlock));
   ok("felsvar bär status + detail för felsökning", /detail: e\?\.body/.test(ipBlock));
+  // ⚠️ Rapporterna bär konsultnamn och lönekostnader — loggen får inte innehålla rader.
+  ok("loggen skriver bara form och volym, aldrig radinnehåll",
+     /shape\.shape.*row_count.*bytes/.test(ipBlock) && !/first_row|shape\.preview/.test(ipBlock));
+  ok("datarader kräver uttryckligt sample=1/raw=1", /sample: req\.query\.sample === "1" \|\| req\.query\.raw === "1"/.test(ipBlock));
+  ok("probe visar aldrig datarader", /describeReportPayload\(r\);\s*\/\/ aldrig sample/.test(ipBlock));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

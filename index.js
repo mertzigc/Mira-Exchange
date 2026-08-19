@@ -7741,8 +7741,12 @@ app.get("/admin/intelliplan/report/:id", async (req, res) => {
       dateFrom: req.query.from || req.query.dateFrom || null,
       dateTo: req.query.to || req.query.dateTo || null,
     });
-    const shape = describeReportPayload(r);
-    console.log(`[intelliplan] rapport ${req.params.id}: ${shape.shape}, ${shape.row_count != null ? shape.row_count + " rader" : shape.bytes + " byte"}`);
+    // ⚠️ sample=1 / raw=1 släpper ut riktiga datarader — rapporterna bär
+    // konsultnamn och lönekostnader. Default är kolumnnamn + antal, som räcker
+    // för att designa datamodellen och är ofarligt att skicka runt.
+    const shape = describeReportPayload(r, { sample: req.query.sample === "1" || req.query.raw === "1" });
+    // Loggen får ALDRIG radinnehåll — bara form och volym.
+    console.log(`[intelliplan] rapport ${req.params.id}: ${shape.shape}, ${shape.row_count != null ? shape.row_count + " rader" : shape.bytes + " byte"}${shape.column_count ? ", " + shape.column_count + " kolumner" : ""}`);
     if (req.query.raw === "1") {
       return res.json({ ok: true, url: r.url, content_type: r.content_type, shape, data: r.parsed ? r.data : r.raw });
     }
@@ -7764,7 +7768,7 @@ app.get("/admin/intelliplan/probe", async (req, res) => {
   for (const id of ids) {
     try {
       const r = await intelliplan.getGridReport({ id, lang, dateFrom: req.query.from || null, dateTo: req.query.to || null });
-      const shape = describeReportPayload(r);
+      const shape = describeReportPayload(r);   // aldrig sample i probe-läget
       out.push({ id, ok: true, shape: shape.shape, rows: shape.row_count ?? null, bytes: shape.bytes, columns: shape.columns });
     } catch (e) {
       out.push({ id, ok: false, status: e?.status || null, error: e?.message, detail: (e?.body || "").slice(0, 900) });

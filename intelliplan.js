@@ -217,17 +217,93 @@ export function createIntelliplanClient(deps = {}) {
 }
 
 /**
+ * Minimal CSV-parser: hanterar citerade fält, inbäddade kommatecken och "" som
+ * escapad citattecken. Grid-reporten levererar CSV där textfält (kundnamn,
+ * noteringar) mycket väl kan innehålla kommatecken — en split(",") skulle tysta
+ * förskjuta alla kolumner efter det första sådana fältet.
+ */
+export function parseCsv(text, { limit = 0, delimiter = "," } = {}) {
+  const rows = []; let row = []; let field = ""; let quoted = false; let i = 0;
+  const s = String(text == null ? "" : text);
+  const push = () => { row.push(field); field = ""; };
+  const endRow = () => { push(); rows.push(row); row = []; };
+  while (i < s.length) {
+    const c = s[i];
+    if (quoted) {
+      if (c === '"') {
+        if (s[i + 1] === '"') { field += '"'; i += 2; continue; }
+        quoted = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"' && field === "") { quoted = true; i++; continue; }
+    if (c === delimiter) { push(); i++; continue; }
+    if (c === "\r") { i++; continue; }
+    if (c === "\n") {
+      endRow(); i++;
+      if (limit && rows.length >= limit) return rows;
+      continue;
+    }
+    field += c; i++;
+  }
+  if (field !== "" || row.length) endRow();
+  return rows;
+}
+
+/** Gissa avgränsare ur rubrikraden — Intelliplan kör komma, men semikolon är
+ *  vanligt i svenska exporter och kostar inget att klara av. */
+function sniffDelimiter(text) {
+  const head = String(text || "").split(/\r?\n/)[0] || "";
+  const counts = [[",", (head.match(/,/g) || []).length], [";", (head.match(/;/g) || []).length],
+                  ["\t", (head.match(/\t/g) || []).length]];
+  counts.sort((a, b) => b[1] - a[1]);
+  return counts[0][1] > 0 ? counts[0][0] : ",";
+}
+
+/**
  * Rekognosering: beskriv ett okänt svar utan att dumpa allt.
  * Guiden säger ingenting om svarsformatet, så steg 2 handlar om att ta reda på
  * det — form, storlek, kolumnnamn — innan vi designar någon datamodell.
+ *
+ * ⚠️ PERSONDATA: gridreport 1063 bär konsultnamn och lönekostnader. Därför
+ * returneras ALDRIG innehållet i en datarad om inte anroparen uttryckligen ber
+ * om det (`sample:true`). Kolumnnamn och radantal räcker för att designa en
+ * datamodell — och de är ofarliga att logga.
  */
-export function describeReportPayload(result) {
+export function describeReportPayload(result, opts = {}) {
+  const sample = opts.sample === true;
   const out = { parsed: !!(result && result.parsed), content_type: (result && result.content_type) || null,
                 bytes: result && result.raw ? Buffer.byteLength(result.raw, "utf8") : 0 };
   const d = result && result.data;
+
+  // CSV-grenen: oparsat svar som ändå har en vettig rubrikrad
+  if (result && !result.parsed && result.raw && String(result.raw).trim()) {
+    const raw = String(result.raw);
+    const delim = sniffDelimiter(raw);
+    const rows = parseCsv(raw, { delimiter: delim });
+    const header = rows[0] || [];
+    const body = rows.slice(1).filter((r) => r.length > 1 || (r[0] || "").trim() !== "");
+    if (header.length > 1) {
+      out.shape = "csv";
+      out.delimiter = delim === "\t" ? "tab" : delim;
+      out.columns = header;
+      out.column_count = header.length;
+      out.row_count = body.length;
+      // Rader vars kolumnantal avviker → citering/avgränsare tolkas fel, eller
+      // så har rapporten grupperade sektioner. Måste synas, inte döljas.
+      const odd = body.filter((r) => r.length !== header.length).length;
+      out.rows_with_other_column_count = odd;
+      out.non_empty_columns = header.filter((_, ci) => body.some((r) => (r[ci] || "").trim() !== ""));
+      if (sample) out.first_row = body.length ? Object.fromEntries(header.map((h, ci) => [h, body[0][ci] ?? null])) : null;
+      else out.note = "Datarader utelämnade (persondata). Lägg till sample=1 för en exempelrad.";
+      return out;
+    }
+  }
+
   if (!result || !result.parsed || d == null) {
     out.shape = "raw";
-    out.preview = result && result.raw ? String(result.raw).slice(0, 800) : null;
+    out.preview = sample && result && result.raw ? String(result.raw).slice(0, 800) : null;
+    if (!sample) out.note = "Innehåll utelämnat. Lägg till sample=1 för att se början av svaret.";
     return out;
   }
   const rowsOf = (v) => {
@@ -247,14 +323,15 @@ export function describeReportPayload(result) {
     out.top_level_keys = Array.isArray(d) ? null : Object.keys(d).slice(0, 30);
     const first = rows.find((r) => r && typeof r === "object" && !Array.isArray(r));
     out.columns = first ? Object.keys(first).slice(0, 60) : null;
-    out.first_row = first ? JSON.parse(JSON.stringify(first)) : (rows.length ? rows[0] : null);
+    if (sample) out.first_row = first ? JSON.parse(JSON.stringify(first)) : (rows.length ? rows[0] : null);
+    else out.note = "Datarader utelämnade (persondata). Lägg till sample=1 för en exempelrad.";
   } else if (typeof d === "object") {
     out.shape = "object";
     out.top_level_keys = Object.keys(d).slice(0, 40);
-    out.preview = JSON.stringify(d).slice(0, 800);
+    if (sample) out.preview = JSON.stringify(d).slice(0, 800);
   } else {
     out.shape = typeof d;
-    out.preview = String(d).slice(0, 400);
+    if (sample) out.preview = String(d).slice(0, 400);
   }
   return out;
 }
