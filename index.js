@@ -22106,13 +22106,28 @@ app.post("/admin/intelliplan/sync/revenue-day", async (req, res) => {
 
     // Hämta befintliga rader för perioden → en Map på nyckeln. Constraintat på
     // datum, inte helsvep: perioden är ~120 rader, hela typen växer med åren.
+    //
+    // ⚠️ Bubbles Data API stöder INTE "greater than or equal"/"less than or equal"
+    // — bara `greater than`/`less than` (plus equals, in, contains, is_empty …).
+    // En ogiltig constraint_type avvisar HELA frågan. Vi gör intervallet inklusivt
+    // med exklusiva gränser i stället: dagen före respektive dagen efter.
+    const dayBefore = new Date(Date.parse(from + "T00:00:00Z") - 864e5).toISOString();
+    const dayAfter  = new Date(Date.parse(to   + "T00:00:00Z") + 864e5).toISOString();
+    let bubbleErr = null;
     const existingRows = await bubbleFindAll(IP_REVDAY_TYPE, { constraints: [
-      { key: "ip_date", constraint_type: "greater than or equal", value: from },
-      { key: "ip_date", constraint_type: "less than or equal", value: to },
-    ] }).catch((e) => { console.warn("[intelliplan-sync] kunde inte läsa befintliga:", e?.message); return null; });
+      { key: "ip_date", constraint_type: "greater than", value: dayBefore },
+      { key: "ip_date", constraint_type: "less than", value: dayAfter },
+    ] }).catch((e) => {
+      bubbleErr = e;
+      console.error("[intelliplan-sync] kunde inte läsa befintliga:", e?.message, JSON.stringify(e?.detail || "").slice(0, 400));
+      return null;
+    });
     if (existingRows === null) {
+      // Ta med Bubbles egen felkropp — utan den blir "bubbleFind failed." en
+      // återvändsgränd (och var det, första gången: ogiltig constraint_type).
       return res.status(502).json({ ok: false, error: "kunde_inte_lasa_befintliga",
-        hint: `Finns datatypen ${IP_REVDAY_TYPE} i Bubble och är den API-exponerad?` });
+        detail: bubbleErr?.detail || bubbleErr?.message || null,
+        hint: `Finns datatypen ${IP_REVDAY_TYPE} i Bubble och är den API-exponerad? Kolla även fältnamnet ip_date.` });
     }
     const byKey = new Map();
     for (const r of existingRows) { const k = String(r.ip_key || ""); if (k) byKey.set(k, r); }

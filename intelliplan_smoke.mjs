@@ -390,7 +390,23 @@ const run = async () => {
   ok("idempotent på ip_key", /byKey\.set\(k, r\)/.test(syncBlock) && /byKey\.get\(row\.key\)/.test(syncBlock));
   // Utan detta patchas 120 rader varje natt bara för att synced_at ändrats.
   ok("patchar bara när ett mätvärde ändrats", /if \(same\) \{ unchanged\+\+; continue; \}/.test(syncBlock));
-  ok("läser befintliga CONSTRAINTAT på datum, inte helsvep", /constraint_type: "greater than or equal"/.test(syncBlock));
+  ok("läser befintliga CONSTRAINTAT på datum, inte helsvep",
+     /constraint_type: "greater than"/.test(syncBlock) && /constraint_type: "less than"/.test(syncBlock));
+  // ⚠️ SKARP BUGG 2026-08-19: Bubbles Data API stöder INTE "greater than or equal"
+  // / "less than or equal" — en ogiltig constraint_type avvisar HELA frågan, och
+  // felet kom tillbaka som ett intetsägande "bubbleFind failed.".
+  // Kommentaren ovanför fixen nämner strängen — testa koden, inte prosan.
+  const syncCode = syncBlock.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("använder INTE constraint-typer som Bubble saknar",
+     !/greater than or equal|less than or equal/.test(syncCode));
+  ok("intervallet görs inklusivt med dagen före/efter",
+     /Date\.parse\(from \+ "T00:00:00Z"\) - 864e5/.test(syncBlock) && /Date\.parse\(to\s+\+ "T00:00:00Z"\) \+ 864e5/.test(syncBlock));
+  ok("Bubbles egen felkropp når svaret", /detail: bubbleErr\?\.detail/.test(syncBlock));
+
+  // Hela kodbasen ska hålla sig till de constraint-typer Bubble faktiskt har.
+  const srcCode = SRC.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  const badCt = (srcCode.match(/constraint_type: "(greater|less) than or equal"/g) || []).length;
+  ok("inga 'or equal'-constraints någonstans i index.js", badCt === 0);
   ok("saknad datatyp → 502 med läsbar orsak", /kunde_inte_lasa_befintliga/.test(syncBlock));
   // Bubble droppar okända fält TYST — utan läs-tillbaka ser synken lyckad ut.
   ok("verifierar att fälten persisterade", /fields_missing_on_type/.test(syncBlock));
