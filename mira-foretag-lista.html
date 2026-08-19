@@ -326,6 +326,21 @@
     overflow:hidden; transition:border-color 0.15s; }
   .ab-row:hover { border-color:var(--line-strong); }
   .ab-row.open { border-color:rgba(219,105,35,0.40); }
+  /* Väntar på signering — egen ton så den går att skilja från datum-statusarna. */
+  .ab-st.s-vantar_signering { background:rgba(219,105,35,0.14); color:#e8935a;
+    border:1px solid rgba(219,105,35,0.32); }
+  .ab-sign { margin-top:14px; padding:14px 16px; border:1px solid var(--line);
+    border-radius:10px; background:rgba(0,0,0,0.16); }
+  .ab-sign h4 { margin:0 0 10px; font-size:12.5px; font-weight:600; color:var(--t1); }
+  .ab-sign .rowlbl { display:block; font-size:11.5px; color:var(--t3); margin:0 0 4px; }
+  .ab-sign input[type=text], .ab-sign textarea { width:100%; background:var(--bg);
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; color:var(--t1);
+    font-size:12.5px; font-family:inherit; box-sizing:border-box; }
+  .ab-sign .rcp { display:flex; align-items:center; gap:8px; font-size:12.5px;
+    color:var(--t2); padding:4px 0; }
+  .ab-sign .fld { margin-bottom:10px; }
+  .ab-sign .note { font-size:11.5px; color:var(--t3); line-height:1.5; margin-top:8px; }
+  .ab-sign .acts { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
 
   .ab-rowhead { display:grid; grid-template-columns:1.6fr 1.2fr 0.8fr 1fr auto; gap:14px;
     align-items:center; padding:13px 16px; cursor:pointer; }
@@ -1278,6 +1293,20 @@
         <div class="ab-form-row">
           <label>Volym (JSON — strukturerad: kvm, housekeepers, hours_mf…)</label>
           <textarea rows="2" placeholder='{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}' data-ab="f-volume"></textarea>
+        </div>
+
+        <!-- Bara i import-läge: styr om PDF:en tolkas som ett påskrivet avtal
+             (signed_at stämplas) eller som underlag som ska signeras. -->
+        <div class="ab-form-row" data-ab="f-signed-row" style="display:none">
+          <label style="display:flex; align-items:center; gap:9px; cursor:pointer;">
+            <input type="checkbox" data-ab="f-is-signed" checked style="width:16px; height:16px; accent-color:var(--acc); cursor:pointer;">
+            <span>Avtalet är redan signerat</span>
+          </label>
+          <div style="font-size:11.5px; color:var(--t3); margin-top:6px; line-height:1.5;">
+            Bocka ur om avtalet ska signeras av kunden. Då sparas PDF:en som bilaga
+            och avtalet markeras inte som signerat — du kan skicka det för signering
+            direkt från avtalsraden efteråt.
+          </div>
         </div>
       </div>
       <div class="ab-modal-foot">
@@ -3452,6 +3481,7 @@
     else if (s === 'vilande') label = 'Vilande';
     else if (s === 'tvistig') label = 'Tvistig';
     else if (s === 'okand') label = 'Okänd';
+    else if (s === 'vantar_signering') label = 'Väntar på signering';
     return '<span class="ab-st s-' + esc(s) + '">' + esc(label) + '</span>';
   }
 
@@ -3538,7 +3568,15 @@
       +       '</div>'
       +       '<div class="ab-att-list" data-att-list>' + attListHtml + '</div>'
       +     '</div>'
+      +     (ct.awaiting_signature
+              ? '<div class="ab-sign"><h4>Signering pågår</h4>'
+                + '<div class="note">Avtalet är skickat för signering. När alla skrivit på stämplas det automatiskt som signerat och signeringsbeviset landar på avtalet.</div></div>'
+              : '')
+      +     '<div data-signwrap="' + esc(ct.id) + '"></div>'
       +     '<div class="ab-rowact">'
+      +       (!ct.is_signed && !ct.awaiting_signature
+              ? '<button class="ab-btn primary tiny" data-act="send-sign" data-id="' + esc(ct.id) + '">Skicka för signering</button>'
+              : '')
       +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="' + esc(ct.id) + '">Redigera</button>'
       +       (ct.status === 'pausat'
               ? '<button class="ab-btn ghost tiny" data-act="resume" data-id="' + esc(ct.id) + '">Återuppta</button>'
@@ -3631,6 +3669,124 @@
     });
     // Bind action-knappar (pausa/avsluta/redigera/återuppta/återöppna + 2d-actions)
     bindActions();
+  }
+
+  // ── Skicka för signering (avtalsraden) ──────────────────────────────────
+  // Underlaget är avtalets EGNA bilagor: backend tar Dokument-id:n direkt, så
+  // ingenting laddas upp igen. Mottagarna hämtas från kundens kontaktpersoner.
+  var SIGN_CONTACTS = null;   // cachas per kortöppning
+  async function signContacts() {
+    if (SIGN_CONTACTS) return SIGN_CONTACTS;
+    if (!TOKEN || !CLIENTCOMPANY) return (SIGN_CONTACTS = []);
+    try {
+      var r = await fetch(HOST + '/admin/companies/' + encodeURIComponent(CLIENTCOMPANY) + '/coworkers',
+        { headers: { 'x-admin-token': TOKEN } });
+      var j = await r.json();
+      SIGN_CONTACTS = (j.rows || []).filter(function (c) { return c.email; });
+    } catch (_) { SIGN_CONTACTS = []; }
+    return SIGN_CONTACTS;
+  }
+
+  async function openSignForm(ctId) {
+    var wrap = root.querySelector('[data-signwrap="' + ctId + '"]');
+    if (!wrap) return;
+    if (wrap.innerHTML) { wrap.innerHTML = ''; return; }   // andra klicket stänger
+    var ct = findContractById(ctId);
+    wrap.innerHTML = '<div class="ab-sign"><div class="note">Hämtar bilagor och kontaktpersoner…</div></div>';
+    // ⚠️ Hämta bilagorna från endpointen, INTE från raden: loadLive()s mapCt
+    // skriver över c.attachments med placeholders utan Dokument-id (de finns
+    // bara för att visa antal). Utan riktiga id:n går inget att signera.
+    var atts = [];
+    try {
+      var ra = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachments',
+        { headers: { 'x-admin-token': TOKEN } });
+      var ja = await ra.json();
+      atts = (ja && ja.items) || [];
+    } catch (_) {}
+    var contacts = await signContacts();
+
+    var attHtml = atts.length
+      ? atts.map(function (a) {
+          return '<label class="rcp"><input type="checkbox" data-sign-doc="' + esc(a.id || '') + '" checked> '
+            + esc(a.titel || 'Dokument') + '</label>';
+        }).join('')
+      : '<div class="note">Avtalet har inga bilagor. Ladda upp avtals-PDF:en ovan först — det är den som skickas för signering.</div>';
+
+    var rcpHtml = contacts.length
+      ? contacts.map(function (c) {
+          return '<label class="rcp"><input type="checkbox" data-sign-rcp="' + esc(c.email) + '" data-sign-name="' + esc(c.name || '') + '"> '
+            + esc(c.name || c.email) + ' <span style="color:var(--t3)">' + esc(c.email) + '</span></label>';
+        }).join('')
+      : '<div class="note">Inga kontaktpersoner med e-post på kunden — ange en adress nedan.</div>';
+
+    wrap.innerHTML = ''
+      + '<div class="ab-sign">'
+      +   '<h4>Skicka för signering</h4>'
+      +   '<div class="fld"><span class="rowlbl">Rubrik</span>'
+      +     '<input type="text" data-sign-rubrik value="' + esc((ct && (ct.contract_title || ct.service_name)) || 'Avtal för signering') + '"></div>'
+      +   '<div class="fld"><span class="rowlbl">Meddelande till mottagaren (valfritt)</span>'
+      +     '<textarea rows="2" data-sign-msg></textarea></div>'
+      +   '<div class="fld"><span class="rowlbl">Detta signeras</span>' + attHtml + '</div>'
+      +   '<div class="fld"><span class="rowlbl">Mottagare</span>' + rcpHtml
+      +     '<input type="text" data-sign-other placeholder="Annan e-post (valfritt)" style="margin-top:6px"></div>'
+      +   '<div class="note">Alla mottagare får signera (BankID-fri OTP via e-post). Avtalet stämplas som signerat först när samtliga skrivit på.</div>'
+      +   '<div class="ab-sign-err" style="display:none; color:var(--err); font-size:12px; margin-top:8px"></div>'
+      +   '<div class="acts">'
+      +     '<button class="ab-btn ghost tiny" data-act="sign-cancel" data-id="' + esc(ctId) + '">Avbryt</button>'
+      +     '<button class="ab-btn primary tiny" data-act="sign-submit" data-id="' + esc(ctId) + '">Skicka</button>'
+      +   '</div>'
+      + '</div>';
+    bindActions();
+  }
+
+  async function submitSignForm(ctId, btn) {
+    var wrap = root.querySelector('[data-signwrap="' + ctId + '"]');
+    if (!wrap) return;
+    var errEl = wrap.querySelector('.ab-sign-err');
+    var setErr = function (m) { if (errEl) { errEl.textContent = m; errEl.style.display = m ? '' : 'none'; } };
+    setErr('');
+
+    var docs = [].slice.call(wrap.querySelectorAll('[data-sign-doc]'))
+      .filter(function (b) { return b.checked; })
+      .map(function (b) { return b.getAttribute('data-sign-doc'); })
+      .filter(Boolean);
+    var rcps = [].slice.call(wrap.querySelectorAll('[data-sign-rcp]'))
+      .filter(function (b) { return b.checked; })
+      .map(function (b) { return { email: b.getAttribute('data-sign-rcp'), name: b.getAttribute('data-sign-name') || '', role: 'Signer' }; });
+    var other = (wrap.querySelector('[data-sign-other]') || {}).value || '';
+    if (other.trim()) rcps.push({ email: other.trim(), name: '', role: 'Signer' });
+
+    if (!docs.length) return setErr('Välj minst ett dokument att signera.');
+    if (!rcps.length) return setErr('Välj minst en mottagare.');
+
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Skickar…';
+    try {
+      var r = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(ctId) + '/send-for-signing', {
+        method: 'POST',
+        headers: { 'x-admin-token': TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rubrik: (wrap.querySelector('[data-sign-rubrik]') || {}).value || '',
+          meddelande: (wrap.querySelector('[data-sign-msg]') || {}).value || '',
+          recipients: rcps,
+          dokument_ids: docs,
+          sender_email: cfg('sender_email') || '',
+          sender_name: cfg('sender_name') || 'Carotte'
+        })
+      });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok || !j.ok) {
+        setErr(j.hint || j.error || ('HTTP ' + r.status));
+        btn.disabled = false; btn.textContent = orig;
+        return;
+      }
+      wrap.innerHTML = '<div class="ab-sign"><h4>Skickat</h4><div class="note">'
+        + j.recipients_count + ' mottagare har fått signeringslänken. Avtalet stämplas som signerat när alla skrivit på.</div></div>';
+      await loadLive();   // statuspillen blir "Väntar på signering"
+    } catch (e) {
+      setErr('Nätverksfel: ' + (e.message || e));
+      btn.disabled = false; btn.textContent = orig;
+    }
   }
 
   // Create-modal
@@ -3750,6 +3906,23 @@
           if (!ctId || !docId) return;
           if (!confirm('Ta bort bilagan?')) return;
           await deleteAttachment(ctId, docId, btn);
+          return;
+        }
+        // ── Skicka avtalet för signering ───────────────────────────────
+        // Öppnar ett inline-formulär i raden (ingen modal → ingen stacking-fälla,
+        // och inget state går förlorat om listan re-renderas runtomkring).
+        if (act === 'send-sign') {
+          var sctId = btn.getAttribute('data-id');
+          if (sctId) await openSignForm(sctId);
+          return;
+        }
+        if (act === 'sign-cancel') {
+          var w = root.querySelector('[data-signwrap="' + btn.getAttribute('data-id') + '"]');
+          if (w) w.innerHTML = '';
+          return;
+        }
+        if (act === 'sign-submit') {
+          await submitSignForm(btn.getAttribute('data-id'), btn);
           return;
         }
         if (act === 'att-upload') {
@@ -4008,6 +4181,8 @@
 
     resetForm();
     populateSuppliers();
+    var signedRowC = $('f-signed-row');
+    if (signedRowC) signedRowC.style.display = 'none';   // create/edit sätter aldrig signed_at här
     if (mode === 'edit' && ct) {
       setActiveTypecard(ct.contract_type || 'Subscription');
       setVal('f-offer', ct.offer_id || '');
@@ -4079,6 +4254,10 @@
       payload.file_doc_id       = IMPORT_STATE.file_doc_id;
       payload.file_url          = IMPORT_STATE.file_url;
       payload.parsed_confidence = IMPORT_STATE.parsed_confidence;
+      // Osignerat → backend lämnar signed_at/signed_pdf tomma och lägger PDF:en
+      // som bilaga, så avtalet inte hamnar i Bubble som "signerat idag".
+      var sb = $('f-is-signed');
+      payload.is_signed = sb ? !!sb.checked : true;
       // Import saknar offer → kategori kommer från LLM-parsen (annars null → ingen kategori/leverantör)
       if (!payload.category && IMPORT_STATE.category) payload.category = IMPORT_STATE.category;
       url = HOST + '/admin/contracts/import/commit';
@@ -4357,6 +4536,13 @@
       console.log('[ab] LLM tyckte kunden är:', parsed.customer_name, parsed.customer_org_no,
         'confidence:', conf);
     }
+
+    // Frågan "redan signerat?" hör bara till importen. Default = ikryssad, dvs
+    // exakt dagens beteende — man måste aktivt säga att avtalet är osignerat.
+    var signedRow = $('f-signed-row');
+    if (signedRow) signedRow.style.display = '';
+    var signedBox = $('f-is-signed');
+    if (signedBox) signedBox.checked = true;
 
     var mask = $('create-mask');
     if (mask) mask.classList.add('on');

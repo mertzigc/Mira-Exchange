@@ -37,6 +37,28 @@ Regionsindelningen är gles på ClientCompany men kundansvarig är satt — ansv
 - **Verifierat:** `malgrupp_smoke.mjs` 68/68, **mutationstestat på logiken** (inte bara filborttagning): görs "fyll bara tomma" om till "skriv över allt" faller 8 assertions inkl. "cc3 rördes ALDRIG"; tas regionvalideringen bort faller 2; görs torrkörning icke-default faller 4. Regression: samtliga 16 sviter gröna.
 - **Deploy:** `companies_api.js` + `index.js` (Render). Inga Bubble-ändringar.
 
+### Inläst OSIGNERAT avtal → signering → stämpling — BYGGT 2026-08-19, EJ DEPLOYAT
+**Utlösare:** en kollega läste in ett osignerat avtal via PDF-importen på kundkortet, la till en bilaga, och ville få det signerat. Tre luckor gjorde det omöjligt att göra rätt:
+
+1. **Importen antog ALLTID att PDF:en var påskriven.** `/admin/contracts/import/commit` satte `signed_pdf = filen` och `signed_at = signed_at || startdatum || NU`. Ett osignerat avtal hamnade alltså i Bubble som signerat samma dag. **Detta var den faktiska databuggen** — inte bilagan.
+2. **Signeringsformuläret kunde bara ladda upp NYA filer.** Men `OfferApprovalRequest.dokument` är en **List of Dokument** och `_createApprovalRequestInternal` tar redan emot `dokumentIds`. `Contract.attachments` ÄR Dokument-rader → de kan skickas rakt in med sina id:n. Luckan satt i UI:t, inte i modellen.
+3. **Ingen koppling avtal → signering.** `Contract.offer_approval` fanns men sattes bara av auto-Contract-vägen, så ett fristående utskick gav två öar: avtalet fick aldrig `signed_at` eller signeringsbevis.
+
+**Lösning i tre delar:**
+- **`is_signed`-flagga i importen** (default `true` = oförändrat för gamla anropare). Vid `false`: `signed_at`/`signed_pdf` lämnas tomma, PDF:en blir bilaga. Frontend: kryssruta "Avtalet är redan signerat" i granskningsmodalen, synlig BARA i import-läge.
+- **`POST /admin/contracts/:id/send-for-signing`** — bygger signeringsbegäran av avtalets EGNA bilagor (Dokument-id:n, ingen omuppladdning), ärver kund + affär, och sätter `Contract.offer_approval` efter att requesten skapats. Spärrar: `409 already_signed` · `409 signing_already_started` (båda forcerbara) · `400 inga_dokument`. En delmängd `dokument_ids` filtreras mot avtalets egna bilagor — annars kan man skicka ett främmande dokument för signering.
+- **`_markContractSignedFromApproval(parent)`** i `_checkAndCompleteRequest` — stämplar `signed_at` + senaste signeringsbeviset (`OfferApproval.signed_document`) på det BEFINTLIGA avtalet. Idempotent, mjuk-felar.
+
+**⚠️ Duplikatskyddet är gratis och måste förstås:** `_createContractsFromApprovalRequest` hoppar redan över requests som har ett Contract med `offer_approval == request._id`. Eftersom vi sätter kopplingen FÖRE utskicket skapas inget nytt avtal vid Approved — det befintliga stämplas i stället. Endpointen skickar dessutom `auto_create_contract:"no"` och ALDRIG `contract_template_json` (bälte + hängslen). Ordningen i `_checkAndCompleteRequest` är därför inte kosmetisk: auto-contract måste få titta först.
+
+**⚠️ Statussignalen är MEDVETET SMAL.** Ny status `vantar_signering` = `offer_approval` satt **OCH** `signed_at` tom. "signed_at tom" ENSAMT hade flaggat halva listan som osignerad — manuella `/admin/contracts/create` sätter `signed_at` bara om anroparen skickar det, så massor av äldre avtal saknar det. Manuell `status_override` vinner fortfarande; väntar-status går före datum-härledningen (ett avtal som väntar på påskrift ska inte visas "Aktiv" bara för att startdatum passerat).
+
+**⚠️ Bugg som harnessen fångade:** `loadLive()`s `mapCt` skriver över `c.attachments` med placeholders **utan Dokument-id** (de finns bara för antalsvisningen). Signeringsformuläret hämtar därför bilagorna från `/admin/contracts/:id/attachments` i stället för från raden — annars hade en tom dokumentlista skickats.
+- **Frontend:** inline-formulär i avtalsraden (INTE modal → ingen z-index/stacking-fälla, jfr Avtal-portens tre buggar). Rubrik förifylld från avtalet, dokument-kryssrutor, mottagare ur kundens kontaktpersoner + fritextfält. "Signering pågår"-ruta när `awaiting_signature`.
+- **Verifierat:** `avtal_signering_smoke.mjs` **50/50**, **mutationstestat på logiken**: återinförd signed_at-stämpling i importen fäller 1 · bred statussignal fäller 2 · borttagen `auto_create_contract:"no"` fäller 1 · ofiltrerad `dokument_ids` fäller 1. Regression: samtliga 17 sviter gröna. **Browser-harness** genom hela kedjan: knappen syns på osignerat avtal → formuläret hämtar riktiga Dokument-id:n + kontaktpersoner (den utan e-post filtreras bort) → validering av tomt dokument/mottagare → utskick med rätt payload → statuspill "Väntar på signering" och knappen borta → efter stämpling "Aktiv" + "Signerat <datum> · <bevis-URL>".
+- **Kvar att veta:** avtalspanelen hämtar inte om vid flikbyte för samma kund (`syncAvtalCompany` triggar bara vid kundbyte — WU-medvetet, befintligt beteende). En signering som blir klar syns alltså efter omladdning av sidan.
+- **Deploy:** `index.js` (Render) + klistra om `mira-foretag-lista.html`. Inga Bubble-schemaändringar — `offer_approval`, `attachments`, `signed_at`, `signed_pdf` finns redan.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.
 - **Drift Fas 3 (QC SKRIV)** — skapa kvalitetskontroll från Housekeeping-Contract → kontrollobjekt per yta (Mötesrum + Internal_room) → betyg/bild/kommentar → slutför.

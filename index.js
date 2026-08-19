@@ -16632,6 +16632,12 @@ function _deriveContractStatus(contract, nowMs) {
     if (s === "tvistig") return SERVICES.STATUS_OVERRIDE_DISPUTED;
     if (s === "vilande") return SERVICES.STATUS_OVERRIDE_DORMANT;
   }
+  // Signering påbörjad men inte klar → egen status, före datum-härledningen
+  // (ett avtal som väntar på påskrift ska inte visas som "Aktiv" bara för att
+  // startdatum passerat). Manuell override vinner fortfarande, ovan.
+  if (contract && contract[SERVICES.CT_OFFER_APPROVAL] && !contract[SERVICES.CT_SIGNED_AT]) {
+    return SERVICES.STATUS_VANTAR_SIGNERING;
+  }
   const endRaw = contract && contract[SERVICES.CT_END];
   const startRaw = contract && contract[SERVICES.CT_START];
   const end = endRaw ? Date.parse(endRaw) : null;
@@ -16794,6 +16800,55 @@ async function _createContractsFromApprovalRequest(parent) {
   return { created: created.length, contracts: created, skipped };
 }
 
+// ── _markContractSignedFromApproval — stäng cirkeln för ett BEFINTLIGT avtal ──
+// Motsatsen till _createContractsFromApprovalRequest: den skapar nya avtal ur en
+// signering, den här stämplar ett avtal som redan fanns (inläst eller manuellt
+// skapat) och som skickades för signering via /admin/contracts/:id/send-for-signing.
+//
+// De två krockar inte: send-for-signing sätter Contract.offer_approval FÖRE
+// utskicket, och _createContractsFromApprovalRequest hoppar över requests som redan
+// har ett Contract med den kopplingen. Duplikatskyddet är alltså gratis.
+//
+// signed_pdf hämtas från signeringsbeviset (OfferApproval.signed_document = original
+// + certifikat sammanslaget). Finns flera signers tas det senast genererade.
+// Mjuk-felar: signeringen är klar oavsett, avtalet kan stämplas manuellt.
+async function _markContractSignedFromApproval(parent) {
+  if (!parent || !parent._id) return { updated: 0, reason: "no_parent" };
+  const contracts = await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+    constraints: [{ key: SERVICES.CT_OFFER_APPROVAL, constraint_type: "equals", value: parent._id }],
+  }).catch(() => []);
+  const pending = (contracts || []).filter((c) => !c[SERVICES.CT_SIGNED_AT]);
+  if (!pending.length) return { updated: 0, reason: "none_pending" };
+
+  // Signeringsbevis: nyast genererade bland requestens approvals.
+  let certUrl = null;
+  try {
+    const approvals = await bubbleFindAll("OfferApproval", {
+      constraints: [{ key: "request", constraint_type: "equals", value: parent._id }],
+    });
+    const withDoc = (approvals || []).filter((a) => a.signed_document);
+    withDoc.sort((a, b) => Date.parse(b.signed_document_generated_at || 0) - Date.parse(a.signed_document_generated_at || 0));
+    if (withDoc.length) certUrl = withDoc[0].signed_document;
+  } catch (e) {
+    console.warn("[contract-signed] kunde inte läsa signeringsbevis:", e?.message);
+  }
+
+  const nowIso = new Date().toISOString();
+  let updated = 0;
+  for (const c of pending) {
+    const patch = { [SERVICES.CT_SIGNED_AT]: nowIso };
+    if (certUrl) patch[SERVICES.CT_SIGNED_PDF] = certUrl;
+    try {
+      await bubblePatch(SERVICES.CONTRACT_TYPE, c._id, patch);
+      updated++;
+      console.log(`[contract-signed] Contract ${c._id} markerat signerat via request ${parent._id}${certUrl ? " (+ signeringsbevis)" : " (utan bevis)"}`);
+    } catch (e) {
+      console.error(`[contract-signed] kunde inte stämpla Contract ${c._id}:`, e?.message, e?.detail);
+    }
+  }
+  return { updated, cert: !!certUrl };
+}
+
 // ── _checkAndCompleteRequest — central completion-helper ────────────────────
 // Anropas efter varje signer-/granskar-handling. Om alla signers signat OCH
 // alla reviewers granskat (eller reviewers_count==0) → sätt parent.status=
@@ -16833,6 +16888,16 @@ async function _checkAndCompleteRequest(requestId) {
     }
   } catch (autoErr) {
     console.warn(`[approval-complete] auto-contract failed (non-fatal) för request ${requestId}`, autoErr?.message);
+  }
+
+  // Befintligt avtal som skickats för signering → stämpla signed_at + bevis.
+  // Körs EFTER auto-contract: den hoppar redan över requests som har ett länkat
+  // avtal, så här finns inget att dubblera. Mjuk-felar som övriga hooks.
+  try {
+    const mk = await _markContractSignedFromApproval(parent);
+    if (mk?.updated > 0) console.log(`[approval-complete] stämplade ${mk.updated} befintligt avtal som signerat (request ${requestId})`);
+  } catch (mkErr) {
+    console.warn(`[approval-complete] contract-signed failed (non-fatal) för request ${requestId}`, mkErr?.message);
   }
 
   // Auto-convert F&E-offert → MiraOrder (Fas 3). Om requesten är länkad till en
@@ -19997,6 +20062,12 @@ const SERVICES = {
   STATUS_UTGAR_SNART:       "utgar_snart",
   STATUS_AVSLUTAD:          "avslutad",
   STATUS_OKAND:             "okand",          // legacy: saknar både start/slutdatum
+  // Signering pågår: offer_approval satt MEN signed_at tom. ⚠️ Medvetet SMALT —
+  // massor av äldre avtal saknar signed_at (manuella /create sätter det bara om
+  // anroparen skickar det), så "signed_at tom" ENSAMT hade flaggat halva listan
+  // som osignerad. Kombinationen är däremot entydig: någon startade en signering
+  // som inte gått i mål.
+  STATUS_VANTAR_SIGNERING:  "vantar_signering",
   STATUS_OVERRIDE_PAUSED:   "pausat",
   STATUS_OVERRIDE_DORMANT:  "vilande",
   STATUS_OVERRIDE_DISPUTED: "tvistig",
@@ -21226,6 +21297,10 @@ function _enrichContract(ct, ctx) {
     signed_pdf:                 ct[SERVICES.CT_SIGNED_PDF] || null,
     signed_at:                  ct[SERVICES.CT_SIGNED_AT] || null,
     offer_approval_id:          ct[SERVICES.CT_OFFER_APPROVAL] || null,
+    // UI: "Skicka för signering" erbjuds så länge avtalet inte är signerat.
+    // awaiting_signature = signeringen är redan igång (då erbjuds den inte igen).
+    is_signed:                  !!ct[SERVICES.CT_SIGNED_AT],
+    awaiting_signature:         !!ct[SERVICES.CT_OFFER_APPROVAL] && !ct[SERVICES.CT_SIGNED_AT],
     commission_id:              ct[SERVICES.CT_COMMISSION] || null,
     deal_id:                    _ffIdOf(ct[SERVICES.CT_DEAL]) || null,   // Affär-ryggrad: för deal-scopad filtrering i affärs-popupen
     master_contract_id:         ct[SERVICES.CT_MASTER] || null,
@@ -21747,6 +21822,103 @@ app.patch("/admin/contracts/:id", async (req, res) => {
   }
 });
 
+// ── POST /admin/contracts/:id/send-for-signing ─────────────────────────────
+// Skickar ett BEFINTLIGT avtal för signering och länkar ihop de två.
+//
+// Bakgrund (2026-08-19): en kollega läste in ett osignerat avtal via PDF-importen,
+// la till en bilaga, och ville få det signerat. Signeringsformuläret kunde bara
+// ladda upp NYA filer, så avtalet och signeringen blev två öar — avtalet fick
+// aldrig signed_at och bilagan måste laddas upp igen som en dubblett.
+//
+// Två saker gör att detta blir litet:
+//   1. OfferApprovalRequest.dokument är en List of Dokument, och
+//      _createApprovalRequestInternal tar redan emot `dokumentIds`. Contract.attachments
+//      ÄR Dokument-rader → de skickas rakt in med sina id:n, utan omuppladdning.
+//   2. Vi sätter Contract.offer_approval FÖRE utskicket. _createContractsFromApprovalRequest
+//      hoppar över requests som redan har ett länkat Contract → inget duplikat vid Approved,
+//      och _markContractSignedFromApproval stämplar i stället det befintliga avtalet.
+//
+// Body: { rubrik?, meddelande?, recipients:[{email,name,role}], expires_at?,
+//         dokument_ids? (default: avtalets alla bilagor), force? }
+app.options("/admin/contracts/:id/send-for-signing", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/:id/send-for-signing", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  try {
+    const contractId = String(req.params.id || "").trim();
+    const b = req.body || {};
+    const force = b.force === true;
+    if (!contractId) return res.status(400).json({ ok: false, error: "contract_id_krävs" });
+
+    const ct = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId).catch(() => null);
+    if (!ct) return res.status(404).json({ ok: false, error: "contract_not_found" });
+
+    // Redan signerat → stoppa. Att skicka ett påskrivet avtal för signering igen
+    // är nästan alltid ett misstag; `force` finns för omsigneringar.
+    if (ct[SERVICES.CT_SIGNED_AT] && !force) {
+      return res.status(409).json({ ok: false, error: "already_signed", signed_at: ct[SERVICES.CT_SIGNED_AT],
+        hint: "Avtalet är redan markerat som signerat. Skicka force:true för att signera om." });
+    }
+    // Signering redan igång → stoppa, med id:t så man kan titta på den i stället.
+    if (ct[SERVICES.CT_OFFER_APPROVAL] && !force) {
+      return res.status(409).json({ ok: false, error: "signing_already_started", request_id: ct[SERVICES.CT_OFFER_APPROVAL],
+        hint: "Avtalet har redan en pågående signering. Skicka force:true för att ersätta den." });
+    }
+
+    // Underlaget: avtalets bilagor (Dokument-id:n). Anroparen kan välja delmängd.
+    const attachmentIds = _ffIdsOf(ct[SERVICES.CT_ATTACHMENTS]);
+    const requested = Array.isArray(b.dokument_ids) ? b.dokument_ids.map(String).filter(Boolean) : null;
+    // En delmängd får bara innehålla avtalets EGNA bilagor — annars kan man råka
+    // skicka ett främmande dokument för signering.
+    const dokumentIds = requested ? requested.filter((id) => attachmentIds.includes(id)) : attachmentIds;
+    if (!dokumentIds.length) {
+      return res.status(400).json({ ok: false, error: "inga_dokument",
+        hint: "Avtalet har inga bilagor att signera. Ladda upp avtals-PDF:en som bilaga först." });
+    }
+
+    const companyId = _ffIdOf(ct[SERVICES.CT_COMPANY]) || null;
+    const dealId    = _ffIdOf(ct[SERVICES.CT_DEAL]) || null;
+    const rubrik    = String(b.rubrik || ct[SERVICES.CT_TITLE] || ct[SERVICES.CT_KATEGORI] || "Avtal för signering").trim();
+
+    // ⚠️ INGET contract_template_json → auto-Contract-hooken skapar inget nytt avtal.
+    // Det befintliga stämplas i stället av _markContractSignedFromApproval.
+    const result = await _createApprovalRequestInternal({
+      req,
+      files: [],
+      dokumentIds,
+      payload: {
+        rubrik,
+        meddelande:    String(b.meddelande || ""),
+        sender_email:  b.sender_email || "",
+        sender_name:   b.sender_name || "Carotte",
+        clientcompany: companyId,
+        deal:          dealId,
+        expires_at:    b.expires_at || null,
+        recipients:    Array.isArray(b.recipients) ? b.recipients : [],
+        auto_create_contract: "no",
+      },
+    });
+
+    // Länka avtalet → signeringen. Görs EFTER att requesten skapats (vi vill inte
+    // peka på ett id som inte finns om utskicket failar), men före Approved hinner
+    // ske — signering kräver att mottagaren öppnar mailet.
+    await bubblePatch(SERVICES.CONTRACT_TYPE, contractId, { [SERVICES.CT_OFFER_APPROVAL]: result.request_id });
+    console.log(`[contracts/send-for-signing] Contract ${contractId} → request ${result.request_id} (${dokumentIds.length} dokument, ${(b.recipients || []).length} mottagare)`);
+
+    return res.json({ ok: true, contract_id: contractId, request_id: result.request_id,
+      dokument_count: dokumentIds.length, recipients_count: result.recipients_count, approvals: result.approvals });
+  } catch (e) {
+    console.error("[/admin/contracts/:id/send-for-signing] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
 // ── Bilagor (Fas 2d) — list / upload / delete på Contract.attachments ──────
 // attachments är List of Dokument. Vi tar bara bort från listan, behåller
 // Dokument-raden för audit-trail. Återanvänder _approvalUpload multer-config.
@@ -22232,6 +22404,13 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
 
     const fileDocId = b.file_doc_id || null;
     const fileUrl   = b.file_url || null;
+    // ⚠️ Importen antog tidigare ALLTID att PDF:en var ett påskrivet avtal och
+    // stämplade signed_at (default: NU). Läser man in ett avtal som ska signeras
+    // hamnade det alltså i Bubble som signerat samma dag. `is_signed:false` läser
+    // in det som underlag i stället: filen blir bilaga, signed_at/signed_pdf lämnas
+    // tomma tills signeringen faktiskt är klar.
+    // Default true = oförändrat beteende för anropare som inte skickar flaggan.
+    const isSigned  = b.is_signed !== false && String(b.is_signed).toLowerCase() !== "no";
     const signedAt  = b.signed_at || b.startdatum || new Date().toISOString();
 
     // Leverantör: explicit val vinner; annars kategoristyrd default.
@@ -22259,8 +22438,8 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
       [SERVICES.CT_PRICE_REG_NEXT]:    b.price_regulation_next || null,
       [SERVICES.CT_RATE_CARD_JSON]:    stringifyMaybeObject(b.rate_card_json || b.rate_card),
       [SERVICES.CT_VOLUME_JSON]:       stringifyMaybeObject(b.volume_json || b.volume),
-      [SERVICES.CT_SIGNED_PDF]:        fileUrl,
-      [SERVICES.CT_SIGNED_AT]:         signedAt,
+      [SERVICES.CT_SIGNED_PDF]:        isSigned ? fileUrl : null,
+      [SERVICES.CT_SIGNED_AT]:         isSigned ? signedAt : null,
       [SERVICES.CT_ATTACHMENTS]:       fileDocId ? [fileDocId] : null,
       [SERVICES.CT_PARSED_CONFIDENCE]: stringifyMaybeObject(b.parsed_confidence || b.confidence),
     };
@@ -22271,8 +22450,8 @@ app.post("/admin/contracts/import/commit", async (req, res) => {
     // Importerat avtal med deal-koppling → flytta affären framåt till "Avtal" (framåt-bara).
     if (b.deal || b.deal_id) await _advanceDealStatus(b.deal || b.deal_id, "Avtal");
 
-    console.log(`[contracts/import/commit] skapade Contract ${contractId} för ${companyId} (typ ${contractType}, signed_pdf=${fileUrl ? "ja" : "nej"})`);
-    return res.json({ ok: true, contract_id: contractId });
+    console.log(`[contracts/import/commit] skapade Contract ${contractId} för ${companyId} (typ ${contractType}, signerat=${isSigned ? "ja" : "nej — väntar på signering"})`);
+    return res.json({ ok: true, contract_id: contractId, is_signed: isSigned });
   } catch (e) {
     console.error("[/admin/contracts/import/commit] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({
