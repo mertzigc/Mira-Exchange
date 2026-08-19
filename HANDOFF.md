@@ -162,6 +162,31 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **Deploy:** (1) **Bubble: skapa `IntelliplanRevenueDay`** enligt fältlistan. (2) `index.js` + `intelliplan.js` till Render. (3) Torrkör `./intelliplan_sync.sh 2026-06-01 2026-06-30`, jämför `revenue_total` mot 6 850 058,36. (4) `--apply`. (5) Cron.
 
+### STEG 5 — kundnivå: rapport 1058 → Bubble. BYGGT 2026-08-19, EJ deployat
+**⚠️ KUNDENS ORGNR FINNS INTE ATT HÄMTA.** Kolumnen `AccountCompanyOrgNo1` ("Legal Company - OrgNr (Customer)") lades till och gav **ett enda distinkt värde på 231 rader** — `556858-0392`, alltså **Carottes eget** organisationsnummer. Intelliplan modellerar "Legal Company" som den EGNA juridiska personen i alla dimensioner, oavsett vad parentesen anger. Genomsökning av `org`- och `customer`-träffarna (35 resp. 54 kolumner) gav inget kund-orgnr. **Kolumnprofileringen fångade det direkt via `distinct: 1`** — utan den hade vi byggt kundmappningen på en konstant och upptäckt det när alla 84 kunder pekade på samma `ClientCompany`. Normaliseraren läser därför kolumnen medvetet INTE.
+
+**Mappningen är manuell — och det är rätt beslut.** `Account1` är ett stabilt numeriskt kund-id (84 distinkta). Engångsmappning med namnförslag slår en automatisk namnmatchning som tyst kan gå fel.
+
+**TVÅ Bubble-datatyper (måste skapas):**
+- **`IntelliplanOrderMonth`** — faktarader, en per (period, order): `ip_key`(text) · `ip_period`(text) · `ip_order_id`(number) · `ip_order_name`(text) · `ip_account_id`(number) · `ip_account_name`(text) · `ip_office_id`(number) · `ip_office`(text) · `revenue`(number) · `cost`(number) · `hours`(number) · `gross_margin`(number) · `gross_margin_ratio`(number) · `client_company`(ClientCompany) · `ip_report_id`(number) · `synced_at`(date)
+- **`IntelliplanAccount`** — mappningen: `ip_account_id`(number) · `ip_account_name`(text) · `client_company`(ClientCompany) · `last_seen`(date)
+
+**⚠️ Varför EGEN mappningstyp och inte ett fält på ClientCompany:** omappade konton måste SYNAS. Ligger kopplingen bara på ClientCompany blir ett okänt konto osynligt — och dess omsättning försvinner tyst ur kundvyn.
+
+**`normalizeOrderMonth(csv, {periodKey})`:** nyckel `"<YYYY-MM>|<order_id|none>"`. Ordernamnet strippas från id-prefixet (`"53 - Serveringspersonal"` → `"Serveringspersonal"`), råa etiketten bevaras. Raden utan order behålls (bär omsättning — droppas den stämmer inte totalen). Stannar vid ändrade kolumnnamn, dubbel order i samma period och felaktig `periodKey`.
+
+**Endpoints:** `POST /admin/intelliplan/sync/order-month {from,to,dry_run}` (torrkörning default) · `GET /admin/intelliplan/accounts?unmapped=1` (konton + matchningsförslag; företagsnamn ur **delade CC-cachen** → noll Bubble-anrop) · `POST /admin/intelliplan/accounts/map {mappings[], apply_confident}`.
+
+**⚠️ MÅNADSGRIND:** kornigheten är kalendermånad. Ett spann över flera månader klumpas ihop av Intelliplan och `period_key` skulle ljuga. `_ipMonthGuard` kräver månadens första till sista dag (klarar februari och skottår).
+
+**⚠️ `confident` kräver EXAKT normaliserad namnträff OCH att tvåan inte ligger nära.** Två lika bra kandidater → aldrig automatisk koppling. `apply_confident:true` kopplar bara de entydiga.
+
+**⚠️ Faktaraderna bär `client_company` från SYNKTILLFÄLLET** — efter en mappningsrunda måste berörda perioder köras om, annars pekar gamla rader fortfarande på ingenting. Svaret från `/accounts/map` påminner om det.
+
+**Verifierat:** `intelliplan_smoke.mjs` **178/178**. **Mutationstestat:** confident vid tvetydig match fäller 1 · dubbel order oupptäckt 1 · ostrippat ordernamn 1 · månadsgrinden ej anropad 1 · flermånadersspann tillåtet 1 · halv månad tillåten 1. Regression: samtliga 19 sviter gröna.
+
+**Ordning vid uppsättning:** (1) skapa båda datatyperna · (2) deploya · (3) `REPORT=order ./intelliplan_sync.sh 2026-06-01 2026-06-30` (torrkörning — jämför `revenue_total` mot 6 850 058,36) · (4) `--apply` → kontona skapas omappade · (5) `GET /accounts` → mappa · (6) kör om perioden så faktaraderna får kundkopplingen.
+
 **Nästa steg:** `./intelliplan_probe.sh 1063 2026-07-01 2026-07-31` → kolumnkarta → be Intelliplan om ÖVRIGA rapport-id (och om det finns en endpoint som listar dem) → **steg 4:** normaliserare + Bubble-datatyp, där kundmatchningen mot `ClientCompany` är den svåra biten (samma problem som `resolveInvoiceCustomer` löser för Tengella). Kolumnnamnens `1`/`2`-suffix antyder grupperade kolumner — behöver förstås innan mappning → **steg 5:** cron med nattligt delta + `_bulkCreate`.
 
 **Deploy:** `index.js` + nya `intelliplan.js` till Render. Inga Bubble-ändringar, inga HTML-block.

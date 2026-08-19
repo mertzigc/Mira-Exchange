@@ -222,6 +222,14 @@ export function createIntelliplanClient(deps = {}) {
    * så `/grid-report/v2/...` är formen deras backend använder. Vi knackar på ett
    * fåtal rimliga kandidater och redovisar vad var och en svarar.
    *
+   * ⚠️ UTFALL 2026-08-19: samtliga åtta kandidatvägar gav **404, ingen 401/403**.
+   * Det är alltså inte ett behörighetsproblem — vägarna finns inte. API-ytan mot
+   * vår integration är genuint bara `/gridreport/{id}/{lang}`. **Rapport-id måste
+   * läsas ur Intelliplans UI** (vyn "Report templates", fyrsiffrigt nummer under
+   * ikonen, växlaren på "Both"). Kör inte om det här i tron att något ändrats —
+   * be Intelliplan om en list-endpoint i stället, lämpligen samtidigt som
+   * skrivendpointsen kommer i vinter.
+   *
    * Läser bara. Sekventiellt med paus — vi vet inget om deras rate limits.
    */
   async function discoverTemplates(opts = {}) {
@@ -536,4 +544,149 @@ export function normalizeRevenueDay(csvText, opts = {}) {
            revenue_total: Number(total.toFixed(4)), warnings,
            dates: [...new Set(out.map((r) => r.date))].sort(),
            offices: [...new Set(out.map((r) => (r.office_id == null ? "none" : r.office_id + " " + r.office)))].sort() };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// NORMALISERARE — rapport 1058 "Intäkt totalt (ink kund och uppdrag)"
+// ────────────────────────────────────────────────────────────────────────────
+// CSV-kolumner (verifierade 2026-08-19): DeliveryOffice1/2 · Account1/2 ·
+// Order1/2 · SalesPerson1/2 · Revenue1 · Cost1 · Hours1 · GrossMargin1 ·
+// GrossMarginPercentage1. `1` = id, `2` = visningsnamn.
+//
+// Kornighet: EN RAD PER ORDER OCH PERIOD (Order1 distinct_ratio 1.0) → nyckeln
+// (period, order_id) gör periodomläsning idempotent utan rad-id.
+//
+// ⚠️ `GrossMarginPercentage1` är en ANDEL (max 1), inte procent. UI:t visar 27 %
+// där CSV:n har 0,27. Vi lagrar andelen rå och låter presentationslagret formatera.
+//
+// ⚠️ En rad saknar order/kund/kontor ("No connection" i UI:t) men bär ändå
+// omsättning. Den BEHÅLLS med order_id=null — droppas den stämmer inte totalen.
+//
+// ⚠️ `AccountCompanyOrgNo1` läses medvetet INTE: kolumnen finns men innehåller
+// Carottes EGET orgnummer (ett distinkt värde på 231 rader), inte kundens.
+// Intelliplan modellerar "Legal Company" som den egna juridiska personen i alla
+// dimensioner. Kundkopplingen går därför via Account1 + manuell mappning.
+export const IP_ORDER_MONTH_REPORT = 1058;
+
+/** "412 - Arena Sergel" → "Arena Sergel". Order2 inleds med Order1 + " - ". */
+function stripOrderPrefix(label, orderId) {
+  const s2 = String(label == null ? "" : label).trim();
+  if (orderId == null) return s2;
+  const pre = String(orderId) + " - ";
+  return s2.startsWith(pre) ? s2.slice(pre.length) : s2;
+}
+
+export function normalizeOrderMonth(csvText, opts = {}) {
+  const strict = opts.strict !== false;
+  const periodKey = String(opts.periodKey || "").trim();          // "2026-06"
+  if (!/^\d{4}-\d{2}$/.test(periodKey)) {
+    const e = new Error("period_key_krävs_som_YYYY-MM"); e.status = 400; throw e;
+  }
+  const rows = parseCsv(csvText, { delimiter: sniffDelimiter(csvText) });
+  const header = (rows[0] || []).map((h) => String(h || "").trim());
+  const idx = (n) => header.indexOf(n);
+  const NEED = ["Account1", "Account2", "Order1", "Order2", "Revenue1", "Cost1", "Hours1", "GrossMargin1"];
+  const missing = NEED.filter((n) => idx(n) < 0);
+  if (missing.length) {
+    const e = new Error("intelliplan_unexpected_columns: saknar " + missing.join(", ") + " (fick: " + header.join(",") + ")");
+    e.status = 502; throw e;
+  }
+  const i = Object.fromEntries(header.map((h, k) => [h, k]));
+  const num = (v) => { const t = String(v == null ? "" : v).trim().replace(",", "."); if (!t) return null; const n = Number(t); return Number.isFinite(n) ? n : null; };
+  const txt = (v) => { const t = String(v == null ? "" : v).trim(); return t || null; };
+
+  const out = [], warnings = [], seen = new Map(), accounts = new Map();
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || !row.some((v) => String(v || "").trim() !== "")) continue;
+    const orderId = num(row[i.Order1]);
+    const accountId = num(row[i.Account1]);
+    const key = periodKey + "|" + (orderId == null ? "none" : String(orderId));
+    if (seen.has(key)) {
+      const msg = `dubbel nyckel ${key} (rad ${seen.get(key)} och ${r}) — kornigheten är inte (period, order)`;
+      if (strict) { const e = new Error("intelliplan_duplicate_key: " + msg); e.status = 502; throw e; }
+      warnings.push({ row: r, reason: "duplicate_key", value: msg });
+      continue;
+    }
+    seen.set(key, r);
+
+    const accountName = txt(row[i.Account2]);
+    if (accountId != null && !accounts.has(accountId)) accounts.set(accountId, accountName);
+
+    out.push({
+      key, period_key: periodKey,
+      order_id: orderId, order_name: stripOrderPrefix(row[i.Order2], orderId), order_label: txt(row[i.Order2]),
+      account_id: accountId, account_name: accountName,
+      office_id: i.DeliveryOffice1 != null ? num(row[i.DeliveryOffice1]) : null,
+      office: i.DeliveryOffice2 != null ? txt(row[i.DeliveryOffice2]) : null,
+      salesperson_id: i.SalesPerson1 != null ? num(row[i.SalesPerson1]) : null,
+      salesperson: i.SalesPerson2 != null ? txt(row[i.SalesPerson2]) : null,
+      revenue: num(row[i.Revenue1]) || 0,
+      cost: num(row[i.Cost1]) || 0,
+      hours: num(row[i.Hours1]) || 0,
+      gross_margin: num(row[i.GrossMargin1]) || 0,
+      // Andel, inte procent — se kommentaren överst.
+      gross_margin_ratio: i.GrossMarginPercentage1 != null ? num(row[i.GrossMarginPercentage1]) : null,
+    });
+  }
+
+  const sum = (f) => Number(out.reduce((a, b) => a + (b[f] || 0), 0).toFixed(4));
+  return {
+    report_id: IP_ORDER_MONTH_REPORT, period_key: periodKey,
+    rows: out, count: out.length,
+    revenue_total: sum("revenue"), cost_total: sum("cost"), hours_total: sum("hours"),
+    gross_margin_total: sum("gross_margin"),
+    accounts: [...accounts.entries()].map(([id, name]) => ({ ip_account_id: id, ip_account_name: name }))
+      .sort((a, b) => a.ip_account_id - b.ip_account_id),
+    rows_without_order: out.filter((r) => r.order_id == null).length,
+    warnings,
+  };
+}
+
+// ── Namnmatchning Account → ClientCompany (förslag, aldrig automatik) ───────
+// Bolagsformer och skiljetecken bort, gemener, kollapsade blanksteg. Så att
+// "Gothia Towers AB" och "gothia-towers" hamnar på samma normalform.
+const _CO_SUFFIX = /\b(ab|hb|kb|ekonomisk förening|ek för|handelsbolag|aktiebolag|publ|ltd|inc|as|oy)\b/g;
+export function normalizeCompanyName(v) {
+  return String(v == null ? "" : v).toLowerCase()
+    .replace(/[.,()\/]/g, " ").replace(/[-–—]/g, " ")
+    .replace(_CO_SUFFIX, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Föreslår ClientCompany per Intelliplan-konto. Returnerar ALLTID förslag med
+ * poäng — aldrig en automatisk koppling. En felaktig automatmatchning är dyrare
+ * att upptäcka än en manuell bekräftelse är att göra.
+ * companies: [{id, name}]
+ */
+export function suggestAccountMatches(accounts, companies, opts = {}) {
+  const limit = opts.limit || 3;
+  const norm = (companies || []).map((c) => ({ id: c.id, name: c.name, n: normalizeCompanyName(c.name) }))
+    .filter((c) => c.n);
+  const tokens = (s2) => new Set(String(s2).split(" ").filter((t) => t.length > 2));
+
+  return (accounts || []).map((a) => {
+    const an = normalizeCompanyName(a.ip_account_name);
+    const at = tokens(an);
+    const scored = norm.map((c) => {
+      let score = 0;
+      if (an && c.n === an) score = 1;
+      else if (an && (c.n.startsWith(an) || an.startsWith(c.n))) score = 0.85;
+      else {
+        const ct = tokens(c.n);
+        const inter = [...at].filter((t) => ct.has(t)).length;
+        const uni = new Set([...at, ...ct]).size;
+        score = uni ? inter / uni : 0;
+      }
+      return { client_company_id: c.id, name: c.name, score: Number(score.toFixed(3)) };
+    }).filter((x) => x.score > 0.3).sort((a2, b) => b.score - a2.score).slice(0, limit);
+
+    return {
+      ip_account_id: a.ip_account_id, ip_account_name: a.ip_account_name,
+      suggestions: scored,
+      // Exakt normaliserad träff OCH ingen tvåa som ligger nära → tryggt att bekräfta.
+      confident: scored.length > 0 && scored[0].score === 1 && (scored.length === 1 || scored[1].score < 0.9),
+    };
+  });
 }

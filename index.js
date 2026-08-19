@@ -12,7 +12,8 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
+         normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -22219,6 +22220,246 @@ app.post("/admin/intelliplan/sync/revenue-day", async (req, res) => {
   } catch (e) {
     console.error("[intelliplan/sync/revenue-day]", e?.message, e?.status || "", (e?.body || "").slice(0, 300));
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.body || null });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// INTELLIPLAN steg 5 — kundnivå: rapport 1058 (intäkt per kund och order/månad)
+// ════════════════════════════════════════════════════════════════════════════
+// TVÅ Bubble-datatyper:
+//   `IntelliplanOrderMonth` — faktaraderna, en per (period, order)
+//     ip_key(text) ip_period(text) ip_order_id(number) ip_order_name(text)
+//     ip_account_id(number) ip_account_name(text) ip_office_id(number) ip_office(text)
+//     revenue(number) cost(number) hours(number) gross_margin(number)
+//     gross_margin_ratio(number) client_company(ClientCompany) ip_report_id(number) synced_at(date)
+//   `IntelliplanAccount` — mappningen Intelliplan-konto → kund
+//     ip_account_id(number) ip_account_name(text) client_company(ClientCompany) last_seen(date)
+//
+// ⚠️ Varför en EGEN mappningstyp och inte ett fält på ClientCompany: omappade
+// konton måste SYNAS. Ligger kopplingen bara på ClientCompany blir ett konto vi
+// inte känner igen osynligt — och dess omsättning försvinner tyst ur kundvyn.
+//
+// ⚠️ Mappningen är ALLTID manuell. Intelliplan exponerar inget kund-orgnr
+// (kolumnen "Legal Company - OrgNr (Customer)" innehåller Carottes EGET nummer),
+// så namnmatchning ger förslag med poäng — aldrig en automatisk koppling.
+const IP_ORDERMONTH_TYPE = "IntelliplanOrderMonth";
+const IP_ACCOUNT_TYPE    = "IntelliplanAccount";
+
+// Kornigheten är en KALENDERMÅNAD. Skickar man ett spann över flera månader
+// aggregerar Intelliplan ihop dem till en klump och vår period_key ljuger.
+function _ipMonthGuard(from, to) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return "from_och_to_krävs_som_YYYY-MM-DD";
+  const f = new Date(from + "T00:00:00Z"), t = new Date(to + "T00:00:00Z");
+  if (from.slice(0, 7) !== to.slice(0, 7)) return "perioden måste ligga inom EN kalendermånad (kornigheten är månad)";
+  if (f.getUTCDate() !== 1) return "from måste vara månadens första dag";
+  const lastDay = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  if (t.getUTCDate() !== lastDay) return "to måste vara månadens sista dag";
+  return null;
+}
+
+// Läser mappningstabellen → Map(ip_account_id → {row, companyId})
+async function _ipAccountMap() {
+  const rows = await bubbleFindAll(IP_ACCOUNT_TYPE, {});
+  const m = new Map();
+  for (const r of rows || []) {
+    const id = Number(r.ip_account_id);
+    if (Number.isFinite(id)) m.set(id, { row: r, companyId: _ffIdOf(r.client_company) || null });
+  }
+  return m;
+}
+
+// POST /admin/intelliplan/sync/order-month { from, to, dry_run }
+app.post("/admin/intelliplan/sync/order-month", async (req, res) => {
+  const b = req.body || {};
+  const dryRun = b.dry_run !== false;
+  const from = String(b.from || "").trim(), to = String(b.to || "").trim();
+  const bad = _ipMonthGuard(from, to);
+  if (bad) return res.status(400).json({ ok: false, error: bad });
+  const periodKey = from.slice(0, 7);
+  try {
+    const rep = await intelliplan.getGridReport({ id: IP_ORDER_MONTH_REPORT, lang: "sv", dateFrom: from, dateTo: to });
+    const norm = normalizeOrderMonth(rep.raw, { periodKey });
+
+    let accMap;
+    try { accMap = await _ipAccountMap(); }
+    catch (e) {
+      return res.status(502).json({ ok: false, error: "kunde_inte_lasa_kontomappning",
+        detail: e?.detail || e?.message || null, hint: `Finns datatypen ${IP_ACCOUNT_TYPE} i Bubble och är den API-exponerad?` });
+    }
+
+    // Nya konton = de vi aldrig sett. De skapas OMAPPADE och väntar på bekräftelse.
+    const newAccounts = norm.accounts.filter((a) => !accMap.has(a.ip_account_id));
+    const unmapped = norm.accounts.filter((a) => { const e = accMap.get(a.ip_account_id); return !e || !e.companyId; });
+
+    let existingRows;
+    try {
+      existingRows = await bubbleFindAll(IP_ORDERMONTH_TYPE, { constraints: [
+        { key: "ip_period", constraint_type: "equals", value: periodKey } ] });
+    } catch (e) {
+      return res.status(502).json({ ok: false, error: "kunde_inte_lasa_befintliga",
+        detail: e?.detail || e?.message || null, hint: `Finns datatypen ${IP_ORDERMONTH_TYPE} i Bubble och är den API-exponerad?` });
+    }
+    const byKey = new Map();
+    for (const r of existingRows) { const k = String(r.ip_key || ""); if (k) byKey.set(k, r); }
+
+    const nowIso = new Date().toISOString();
+    const toCreate = [], toPatch = [];
+    let unchanged = 0;
+    for (const row of norm.rows) {
+      const acc = row.account_id == null ? null : accMap.get(row.account_id);
+      const companyId = acc ? acc.companyId : null;
+      const payload = {
+        ip_key: row.key, ip_period: periodKey, ip_report_id: IP_ORDER_MONTH_REPORT,
+        ip_order_id: row.order_id, ip_order_name: row.order_name,
+        ip_account_id: row.account_id, ip_account_name: row.account_name,
+        ip_office_id: row.office_id, ip_office: row.office,
+        revenue: row.revenue, cost: row.cost, hours: row.hours,
+        gross_margin: row.gross_margin, gross_margin_ratio: row.gross_margin_ratio,
+        client_company: companyId, synced_at: nowIso,
+      };
+      const cur = byKey.get(row.key);
+      if (!cur) { toCreate.push(payload); continue; }
+      const same = Number(cur.revenue || 0) === row.revenue && Number(cur.cost || 0) === row.cost
+        && Number(cur.hours || 0) === row.hours && Number(cur.gross_margin || 0) === row.gross_margin
+        && String(_ffIdOf(cur.client_company) || "") === String(companyId || "")
+        && String(cur.ip_order_name || "") === String(row.order_name || "");
+      if (same) { unchanged++; continue; }
+      toPatch.push({ id: cur._id || cur.id, payload });
+    }
+    const reportKeys = new Set(norm.rows.map((r) => r.key));
+    const orphans = existingRows.filter((r) => !reportKeys.has(String(r.ip_key || "")));
+
+    const summary = {
+      period: periodKey, report_id: IP_ORDER_MONTH_REPORT,
+      report_rows: norm.count, rows_without_order: norm.rows_without_order,
+      revenue_total: norm.revenue_total, cost_total: norm.cost_total,
+      hours_total: norm.hours_total, gross_margin_total: norm.gross_margin_total,
+      accounts_in_report: norm.accounts.length,
+      accounts_new: newAccounts.length, accounts_unmapped: unmapped.length,
+      existing_in_bubble: existingRows.length,
+      to_create: toCreate.length, to_update: toPatch.length, unchanged,
+      orphans: orphans.length, warnings: norm.warnings,
+    };
+    if (dryRun) return res.json({ ok: true, dry_run: true, ...summary,
+      unmapped_examples: unmapped.slice(0, 10).map((a) => a.ip_account_id + " " + a.ip_account_name) });
+
+    // Nya konton först — så faktaraderna i NÄSTA körning kan hitta dem.
+    let accountsCreated = 0;
+    if (newAccounts.length) {
+      const r2 = await _bulkCreate(IP_ACCOUNT_TYPE, newAccounts.map((a) => ({
+        ip_account_id: a.ip_account_id, ip_account_name: a.ip_account_name, last_seen: nowIso })));
+      accountsCreated = r2.created;
+    }
+
+    let created = 0;
+    if (toCreate.length) {
+      const r3 = await _bulkCreate(IP_ORDERMONTH_TYPE, toCreate);
+      created = r3.created;
+      // Läs tillbaka och verifiera fälten. Probe-raden = den med FLEST ifyllda
+      // värden, och bara fält vi skickade ett värde för jämförs — Bubble lagrar
+      // inte null, så tomma fält ser annars ut som saknade. (Fällan 2026-08-19.)
+      const nonNull = (o) => Object.values(o).filter((v) => v != null).length;
+      const probe = toCreate.reduce((best, r4) => (nonNull(r4) > nonNull(best) ? r4 : best), toCreate[0]);
+      const chk = await bubbleFindAll(IP_ORDERMONTH_TYPE, { constraints: [
+        { key: "ip_key", constraint_type: "equals", value: probe.ip_key } ] }).catch(() => []);
+      const got = (chk || [])[0];
+      const sent = Object.keys(probe).filter((k) => probe[k] != null);
+      const lost = got ? sent.filter((k) => got[k] === undefined) : sent;
+      if (lost.length) {
+        console.error("[intelliplan-order] fält droppades tyst av Bubble:", lost.join(", "));
+        return res.status(502).json({ ok: false, error: "fields_missing_on_type", missing: lost,
+          hint: `Lägg till fälten på ${IP_ORDERMONTH_TYPE} i Bubble (exakta namn) och kör om.`, ...summary });
+      }
+    }
+    let updated = 0;
+    for (let k = 0; k < toPatch.length; k += 5) {
+      await Promise.all(toPatch.slice(k, k + 5).map(async (p) => {
+        try { await bubblePatch(IP_ORDERMONTH_TYPE, p.id, p.payload); updated++; }
+        catch (e) { console.error("[intelliplan-order] patch misslyckades", p.id, e?.message); }
+      }));
+    }
+    console.log(`[intelliplan-order] ${periodKey}: ${created} nya, ${updated} uppdaterade, ${unchanged} oförändrade · ${accountsCreated} nya konton, ${unmapped.length} omappade · omsättning ${norm.revenue_total}`);
+    return res.json({ ok: true, dry_run: false, created, updated, accounts_created: accountsCreated, ...summary });
+  } catch (e) {
+    console.error("[intelliplan/sync/order-month]", e?.message, e?.status || "", (e?.body || "").slice(0, 300));
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.body || null });
+  }
+});
+
+// GET /admin/intelliplan/accounts?unmapped=1 — konton + matchningsförslag.
+// Förslagen är just förslag: en felaktig automatkoppling är dyrare att upptäcka
+// än en manuell bekräftelse är att göra.
+app.get("/admin/intelliplan/accounts", async (req, res) => {
+  try {
+    const rows = await bubbleFindAll(IP_ACCOUNT_TYPE, {}).catch((e) => { throw Object.assign(e, { _acc: true }); });
+    const onlyUnmapped = req.query.unmapped === "1";
+    const accounts = (rows || []).map((r) => ({
+      id: r._id || r.id, ip_account_id: Number(r.ip_account_id), ip_account_name: r.ip_account_name || "",
+      client_company_id: _ffIdOf(r.client_company) || null, last_seen: r.last_seen || null,
+    })).filter((a) => (onlyUnmapped ? !a.client_company_id : true));
+
+    // Företagsnamnen ur den DELADE cachen → noll Bubble-anrop.
+    const full = sharedCompanyFullMap ? sharedCompanyFullMap() : null;
+    const companies = full ? [...full.values()].map((c) => ({ id: c.id, name: c.name })).filter((c) => c.name) : [];
+    const withSuggestions = suggestAccountMatches(accounts, companies);
+    const merged = accounts.map((a, ix) => Object.assign({}, a, {
+      suggestions: withSuggestions[ix].suggestions, confident: withSuggestions[ix].confident,
+    }));
+    return res.json({ ok: true, count: merged.length,
+      mapped: merged.filter((a) => a.client_company_id).length,
+      unmapped: merged.filter((a) => !a.client_company_id).length,
+      confident_unmapped: merged.filter((a) => !a.client_company_id && a.confident).length,
+      companies_in_cache: companies.length, accounts: merged });
+  } catch (e) {
+    console.error("[intelliplan/accounts]", e?.message);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e),
+      hint: e?._acc ? `Finns datatypen ${IP_ACCOUNT_TYPE} i Bubble och är den API-exponerad?` : null });
+  }
+});
+
+// POST /admin/intelliplan/accounts/map { mappings:[{ip_account_id, client_company_id}], apply_confident }
+// apply_confident:true kopplar de konton där namnet matchar EXAKT efter
+// normalisering och tvåan inte ligger nära — resten kräver ett uttryckligt val.
+app.post("/admin/intelliplan/accounts/map", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const rows = await bubbleFindAll(IP_ACCOUNT_TYPE, {});
+    const byAccId = new Map((rows || []).map((r) => [Number(r.ip_account_id), r]));
+
+    let pairs = (Array.isArray(b.mappings) ? b.mappings : [])
+      .map((m) => ({ ip_account_id: Number(m.ip_account_id), client_company_id: String(m.client_company_id || "").trim() }))
+      .filter((m) => Number.isFinite(m.ip_account_id) && m.client_company_id);
+
+    if (b.apply_confident === true) {
+      const full = sharedCompanyFullMap ? sharedCompanyFullMap() : null;
+      const companies = full ? [...full.values()].map((c) => ({ id: c.id, name: c.name })).filter((c) => c.name) : [];
+      const unmapped = (rows || []).filter((r) => !_ffIdOf(r.client_company))
+        .map((r) => ({ ip_account_id: Number(r.ip_account_id), ip_account_name: r.ip_account_name || "" }));
+      for (const s2 of suggestAccountMatches(unmapped, companies)) {
+        if (s2.confident && !pairs.some((p) => p.ip_account_id === s2.ip_account_id)) {
+          pairs.push({ ip_account_id: s2.ip_account_id, client_company_id: s2.suggestions[0].client_company_id });
+        }
+      }
+    }
+    if (!pairs.length) return res.status(400).json({ ok: false, error: "inga_mappningar" });
+
+    const done = [], failed = [];
+    for (const p of pairs) {
+      const row = byAccId.get(p.ip_account_id);
+      if (!row) { failed.push({ ...p, reason: "okänt_konto" }); continue; }
+      try {
+        await bubblePatch(IP_ACCOUNT_TYPE, row._id || row.id, { client_company: p.client_company_id });
+        done.push(p);
+      } catch (e) { failed.push({ ...p, reason: e?.message || String(e) }); }
+    }
+    console.log(`[intelliplan-accounts] mappade ${done.length}, ${failed.length} fel`);
+    // ⚠️ Faktaraderna bär client_company från SYNKTILLFÄLLET. Kör om perioderna
+    // efter en mappning, annars pekar gamla rader fortfarande på ingenting.
+    return res.json({ ok: true, mapped: done.length, failed,
+      hint: "Kör om berörda perioder med sync/order-month så faktaraderna får kundkopplingen." });
+  } catch (e) {
+    console.error("[intelliplan/accounts/map]", e?.message);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 

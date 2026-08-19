@@ -4,7 +4,8 @@
 // Mockad fetch → vi kan verifiera exakt vad som går på tråden: URL-mönster,
 // token-cache, förnyelse, 401-retry, cookie-hantering och att client_secret
 // aldrig läcker ut i något svar.
-import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT } from "./intelliplan.js";
+import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
+         normalizeOrderMonth, suggestAccountMatches, normalizeCompanyName, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
 import fs from "node:fs";
 
 let pass = 0, fail = 0;
@@ -39,6 +40,11 @@ function mkFetch(plan) {
   return f;
 }
 const tokenBody = (over) => Object.assign({ access_token: "eyJTOKEN", expires_in: 3600, token_type: "Bearer", scope: "processengine" }, over || {});
+
+// En grupp som kraschar ska bli ETT rött kryss, inte fälla hela körningen.
+async function group(label, fn) {
+  try { await fn(); } catch (e) { fail++; console.log(`  ✗ [${label} kraschade] ${e && e.message}`); }
+}
 
 function slice(src, a, b, label) {
   const i = src.indexOf(a);
@@ -387,6 +393,56 @@ const run = async () => {
   ok("tom fil ger tomt resultat, ingen krasch", normalizeRevenueDay(H).count === 0);
 
   // ══════════════════════════════════════════════════════════════════════════
+  sec("Normaliserare 1058 — intäkt per kund och order/månad");
+  // ══════════════════════════════════════════════════════════════════════════
+  const OH = "DeliveryOffice1,DeliveryOffice2,Account1,Account2,Order1,Order2,SalesPerson1,SalesPerson2,"
+           + "AccountCompanyOrgNo1,Revenue1,Cost1,Hours1,GrossMargin1,GrossMarginPercentage1\n";
+  const OM = OH
+    + "1,Göteborg,204,Gothia Towers AB,53,53 - Serveringspersonal,,,556858-0392,151078.0000,110000.0000,398.0000,41078.0000,0.2719\n"
+    + "2,Stockholm,311,Arena Sergel,93,93 - Reception,6,Anna Ek,556858-0392,67055.0000,50157.0000,160.0000,16898.0000,0.2520\n"
+    + ",,,,,,,,,0.0000,-228592.0000,,228592.0000,\n";
+  const om = normalizeOrderMonth(OM, { periodKey: "2026-06" });
+  ok("rapport-id exporteras", IP_ORDER_MONTH_REPORT === 1058);
+  ok("nyckeln är period + order", om.rows[0].key === "2026-06|53");
+  ok("ordernamnet strippas från id-prefixet", om.rows[0].order_name === "Serveringspersonal");
+  ok("råa etiketten bevaras också", om.rows[0].order_label === "53 - Serveringspersonal");
+  // ⚠️ Raden utan order bär ändå omsättning/kostnad — droppas den stämmer inte totalen.
+  ok("raden utan order behålls med none-nyckel", om.rows[2].key === "2026-06|none" && om.rows_without_order === 1);
+  ok("totalerna summerar ALLA rader", om.revenue_total === 218133 && om.cost_total === Number((110000 + 50157 - 228592).toFixed(4)));
+  // ⚠️ Andel, inte procent. Multipliceras den två gånger blir TB 27 %→2700 %.
+  ok("täckningsgraden lagras som ANDEL", om.rows[0].gross_margin_ratio === 0.2719);
+  ok("kontona plockas ut distinkt", om.accounts.length === 2 && om.accounts[0].ip_account_id === 204);
+  // ⚠️ Kolumnen finns i CSV:n men bär Carottes EGET orgnr — läses medvetet inte.
+  ok("kundens orgnr-kolumn ignoreras (bär vårt eget nummer)",
+     !JSON.stringify(om.rows[0]).includes("556858"));
+
+  let oe = null;
+  try { normalizeOrderMonth(OM, { periodKey: "2026-6" }); } catch (e) { oe = e; }
+  ok("period_key måste vara YYYY-MM", oe && /period_key/.test(oe.message));
+  oe = null;
+  try { normalizeOrderMonth("A,B\n1,2\n", { periodKey: "2026-06" }); } catch (e) { oe = e; }
+  ok("ändrade kolumnnamn → STANNAR", oe && /unexpected_columns/.test(oe.message));
+  oe = null;
+  try { normalizeOrderMonth(OH + "1,G,204,X,53,53 - A,,,,1,1,1,1,1\n1,G,204,X,53,53 - A,,,,2,2,2,2,1\n", { periodKey: "2026-06" }); } catch (e) { oe = e; }
+  ok("dubbel order i samma period → STANNAR", oe && /duplicate_key/.test(oe.message));
+
+  // ── Namnmatchning ──
+  ok("bolagsform stryks vid normalisering", normalizeCompanyName("Gothia Towers AB") === "gothia towers");
+  ok("bindestreck och punkt normaliseras", normalizeCompanyName("Gothia-Bankett, AB.") === "gothia bankett");
+  const sug = suggestAccountMatches(om.accounts, [
+    { id: "cc1", name: "Gothia Towers" }, { id: "cc2", name: "Arena Sergel AB" }, { id: "cc3", name: "Helt annat" }]);
+  ok("exakt normaliserad träff ger poäng 1", (sug[0].suggestions[0] || {}).score === 1);
+  ok("och markeras som trygg", sug[0].confident === true);
+  ok("orelaterade företag filtreras bort", !JSON.stringify(sug).includes("Helt annat"));
+  const amb = suggestAccountMatches([{ ip_account_id: 1, ip_account_name: "Gothia" }],
+    [{ id: "a", name: "Gothia Towers" }, { id: "b", name: "Gothia Bankett" }]);
+  // ⚠️ Två lika bra kandidater → ALDRIG confident. En felaktig automatkoppling är
+  // dyrare att upptäcka än en manuell bekräftelse är att göra.
+  ok("tvetydig match är aldrig confident", amb[0].confident === false);
+  ok("men förslagen visas ändå", amb[0].suggestions.length >= 1);
+  ok("konto utan namn kraschar inte", suggestAccountMatches([{ ip_account_id: 9, ip_account_name: null }], [{ id: "x", name: "Y" }])[0].confident === false);
+
+  // ══════════════════════════════════════════════════════════════════════════
   sec("Endpoints i index.js");
   // ══════════════════════════════════════════════════════════════════════════
   const SRC = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
@@ -444,6 +500,42 @@ const run = async () => {
   ok("bara fält vi skickade ett VÄRDE för verifieras", /sentKeys = Object\.keys\(probe\)\.filter\(\(k\) => probe\[k\] != null\)/.test(syncBlock));
   ok("kollar inte längre blint på första raden", !/Object\.keys\(toCreate\[0\]\)\.filter/.test(syncBlock));
   ok("föräldralösa rader rapporteras", /orphans/.test(syncBlock));
+
+  const omBlock = slice(SRC, "// INTELLIPLAN steg 5 —", "// ── Bilagor (Fas 2d)", "order-month-blocket");
+  ok("kundnivå-synk finns", /app\.post\("\/admin\/intelliplan\/sync\/order-month"/.test(omBlock));
+  ok("torrkörning är default även här", /const dryRun = b\.dry_run !== false/.test(omBlock));
+  // ⚠️ Kornigheten är månad. Ett spann över flera månader klumpas ihop av
+  // Intelliplan och vår period_key skulle ljuga om vad raden avser.
+  // Testa LOGIKEN, inte att funktionen råkar finnas — en oanvänd vakt vaktar inget.
+  ok("grinden anropas i endpointen", /const bad = _ipMonthGuard\(from, to\)/.test(omBlock));
+  ok("ogiltig period → 400", /if \(bad\) return res\.status\(400\)/.test(omBlock));
+  await group("_ipMonthGuard", () => {
+    const src = slice(SRC, "function _ipMonthGuard(from, to) {", "\n}", "_ipMonthGuard");
+    const guard = new Function(src + "\nreturn _ipMonthGuard;")();
+    ok("hel månad godkänns", guard("2026-06-01", "2026-06-30") === null);
+    ok("februari 28 dagar godkänns", guard("2026-02-01", "2026-02-28") === null);
+    ok("skottår: februari 29 dagar godkänns", guard("2024-02-01", "2024-02-29") === null);
+    ok("spann över två månader nekas", /EN kalendermånad/.test(guard("2026-06-01", "2026-07-31") || ""));
+    ok("start mitt i månaden nekas", /första dag/.test(guard("2026-06-15", "2026-06-30") || ""));
+    ok("slut före månadens sista dag nekas", /sista dag/.test(guard("2026-06-01", "2026-06-29") || ""));
+    ok("fel datumformat nekas", /YYYY-MM-DD/.test(guard("2026-06", "2026-06-30") || ""));
+  });
+  ok("nya konton skapas OMAPPADE", /newAccounts/.test(omBlock) && /accounts_unmapped/.test(omBlock));
+  ok("omappade konton redovisas med exempel", /unmapped_examples/.test(omBlock));
+  ok("kundkopplingen skrivs på faktaraden", /client_company: companyId/.test(omBlock));
+  ok("samma läs-tillbaka-härdning som revenue-day", /fields_missing_on_type/.test(omBlock)
+     && /nonNull\(r4\) > nonNull\(best\)/.test(omBlock));
+  ok("saknad mappningstyp ger egen, läsbar orsak", /kunde_inte_lasa_kontomappning/.test(omBlock));
+
+  ok("kontolistan finns", /app\.get\("\/admin\/intelliplan\/accounts"/.test(omBlock));
+  // Företagsnamnen ska INTE kosta ett Bubble-svep — de finns i den delade cachen.
+  ok("företagsnamn hämtas ur delade cachen, inte via Bubble", /sharedCompanyFullMap\(\)/.test(omBlock)
+     && !/bubbleFindAll\("ClientCompany"/.test(omBlock));
+  ok("mappnings-endpoint finns", /app\.post\("\/admin\/intelliplan\/accounts\/map"/.test(omBlock));
+  ok("apply_confident kopplar bara entydiga träffar", /s2\.confident && !pairs\.some/.test(omBlock));
+  // Faktaraderna bär kopplingen från synktillfället — utan omkörning pekar
+  // gamla rader fortfarande på ingenting.
+  ok("svaret påminner om att köra om perioderna", /Kör om berörda perioder/.test(omBlock));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
