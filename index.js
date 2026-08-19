@@ -16984,7 +16984,12 @@ app.post("/docs/offer-approval/:id", requireSyncSecret, async (req, res) => {
 // SHA-256-hash i OfferApproval.token_hash. URL till mottagaren bär raw-värdet.
 // Servern hashar input innan compare → läcker raw-tokenet aldrig från databasen.
 //
-// OTP-modell: 6-siffrig kod, SHA-256-hashas till otp_hash, expires_at = +10 min.
+// OTP-modell: 6-siffrig kod, SHA-256-hashas till otp_hash, expires_at = +OTP_MINUTES.
+// 15 min (höjt från 10 2026-08-19): sedan koden återanvänds vid omladdning är det
+// här den FAKTISKA tiden från första mailet till inskriven kod — inklusive att byta
+// till mailappen och leta. 10 min var för snålt när klockan inte längre nollställs.
+const OTP_MINUTES = 15;
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 // ════════════════════════════════════════════════════════════════════════════
 
 // EmailTemplate-IDs i Bubble. Christian skapar 3 EmailTemplate-rader med
@@ -17318,7 +17323,19 @@ async function _fetchApprovalByToken(approvalId, rawToken) {
 }
 
 // ── POST /approval/request-otp/:id — skickar OTP via mail ──────────────────
-// Body: { token: "<raw token från view-länken>" }
+// Body: { token: "<raw token från view-länken>", force?: bool }
+//
+// ⚠️ ÅTERANVÄNDER en giltig kod (buggfix 2026-08-19). Signeringssidan begär en kod
+// vid varje sidladdning, och varje ny kod skrev tidigare över `otp_hash` → den kod
+// mottagaren hade i inkorgen dog så fort hon laddade om eller öppnade länken igen.
+// Resultatet i skarp drift: 6 koder till samma mottagare, och först den sista
+// fungerade ("Mira bombarderar mig med länkar, den 7:e funkade").
+//
+// Nu: finns en OTP som inte gått ut → skicka INGET mail, svara `reused:true` och
+// låt sidan hänvisa till koden som redan ligger i inkorgen. Bara ett EXPLICIT
+// `force:true` (knappen "Skicka koden igen") genererar en ny kod, och den är
+// dessutom kylskyddad på servern — klientens 60-sekunderskyla nollställdes av
+// varje omladdning och skyddade alltså ingenting.
 app.options("/approval/request-otp/:id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
 
 app.post("/approval/request-otp/:id", async (req, res) => {
@@ -17340,9 +17357,31 @@ app.post("/approval/request-otp/:id", async (req, res) => {
       return res.json({ ok: true, already_approved: true });
     }
 
+    const force = (req.body || {}).force === true;
+    const prevExp = approval.otp_expires_at ? Date.parse(approval.otp_expires_at) : NaN;
+    const hasLiveOtp = String(approval.otp_hash || "").trim() && Number.isFinite(prevExp) && prevExp > Date.now();
+
+    // Sidladdning + giltig kod finns → rör INGENTING. Att skriva en ny hash här är
+    // precis det som dödade kodens i mottagarens inkorg.
+    if (hasLiveOtp && !force) {
+      return res.json({ ok: true, reused: true, expires_at: new Date(prevExp).toISOString() });
+    }
+
+    // Explicit omsändning: kyla på SERVERN. Klientens cooldown nollställs av varje
+    // omladdning och kan alltså inte bära det här ansvaret.
+    if (hasLiveOtp && force) {
+      const sentAt = prevExp - OTP_MINUTES * 60 * 1000;
+      const waited = Date.now() - sentAt;
+      if (Number.isFinite(waited) && waited < OTP_RESEND_COOLDOWN_MS) {
+        const retryAfter = Math.ceil((OTP_RESEND_COOLDOWN_MS - waited) / 1000);
+        return res.status(429).json({ ok: false, error: "resend_too_soon", retry_after: retryAfter,
+          expires_at: new Date(prevExp).toISOString() });
+      }
+    }
+
     const code  = _genOtp();
     const hash  = _sha256Hex(code);
-    const minutes = 10;
+    const minutes = OTP_MINUTES;
     const expMs   = Date.now() + minutes * 60 * 1000;
 
     await bubblePatch("OfferApproval", approvalId, {
@@ -17371,7 +17410,8 @@ app.post("/approval/request-otp/:id", async (req, res) => {
       email_sent:  false,
     });
 
-    return res.json({ ok: true, expires_at: new Date(expMs).toISOString() });
+    console.log(`[approval-otp] ny kod till ${approval.recipient_email || "(okänd)"} (approval ${approvalId}${force ? ", omsändning" : ""})`);
+    return res.json({ ok: true, sent: true, expires_at: new Date(expMs).toISOString() });
   } catch (e) {
     console.error("[/approval/request-otp] failed", e);
     return res.status(e?.status || 500).json({
@@ -17999,16 +18039,31 @@ app.get("/approval/view/:id", async (req, res) => {
     tick();
   }
 
-  async function requestOtp(){
+  function clockOf(iso){
+    const t = Date.parse(iso);
+    if (!isFinite(t)) return "";
+    const d = new Date(t);
+    return (" (giltig till " + String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0") + ")");
+  }
+
+  // force=true bara från "Skicka koden igen". Vid sidladdning frågar vi UTAN force
+  // → servern återanvänder en giltig kod i stället för att döda den som redan
+  // ligger i mottagarens inkorg. Se buggen 2026-08-19 (sex koder, sista funkade).
+  async function requestOtp(force){
     setErr("");
-    setInfo("Skickar engångskod till " + D.recipient + "…");
+    setInfo(force ? ("Skickar ny kod till " + D.recipient + "…") : "Kontrollerar…");
     resend.disabled = true;
     try {
       const r = await fetch("/approval/request-otp/" + encodeURIComponent(D.approval_id), {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ token: D.token })
+        body: JSON.stringify({ token: D.token, force: force === true })
       });
       const j = await r.json().catch(() => ({}));
+      if (r.status === 429 && j.error === "resend_too_soon") {
+        setInfo("Koden är redan skickad till " + D.recipient + clockOf(j.expires_at) + ". Kolla inkorgen — även skräpposten.");
+        startCooldown(j.retry_after || 60);
+        return;
+      }
       if (!r.ok || !j.ok) {
         setErr("Kunde inte skicka koden: " + (j.error || r.status));
         resend.disabled = false;
@@ -18018,7 +18073,13 @@ app.get("/approval/view/:id", async (req, res) => {
         location.reload();
         return;
       }
-      setInfo("Kod skickad till " + D.recipient + ". Skriv in den 6-siffriga koden nedan.");
+      if (j.reused) {
+        // Ingen ny kod skickades — den som redan finns i inkorgen gäller fortfarande.
+        setInfo("Vi har redan skickat en kod till " + D.recipient + clockOf(j.expires_at)
+          + ". Skriv in den nedan — den fungerar även om du laddat om sidan.");
+      } else {
+        setInfo("Kod skickad till " + D.recipient + clockOf(j.expires_at) + ". Skriv in den 6-siffriga koden nedan.");
+      }
       startCooldown(60);
     } catch (e) {
       setErr("Nätverksfel: " + (e.message || e));
@@ -18060,10 +18121,13 @@ app.get("/approval/view/:id", async (req, res) => {
     }
   });
 
-  resend.addEventListener("click", requestOtp);
+  resend.addEventListener("click", () => requestOtp(true));
 
-  // Auto-skicka OTP vid pageload (per UX-beslutet 2026-06-24)
-  requestOtp();
+  // Vid pageload: fråga UTAN force. Finns en giltig kod återanvänds den (inget mail),
+  // annars skickas en ny. Tidigare skickades ALLTID en ny här — vilket dödade koden
+  // mottagaren just hämtat ur inkorgen varje gång hon laddade om eller öppnade
+  // länken på nytt (buggen 2026-08-19).
+  requestOtp(false);
 })();
 </script>
 </body></html>`;

@@ -59,6 +59,28 @@ Regionsindelningen är gles på ClientCompany men kundansvarig är satt — ansv
 - **Kvar att veta:** avtalspanelen hämtar inte om vid flikbyte för samma kund (`syncAvtalCompany` triggar bara vid kundbyte — WU-medvetet, befintligt beteende). En signering som blir klar syns alltså efter omladdning av sidan.
 - **Deploy:** `index.js` (Render) + klistra om `mira-foretag-lista.html`. Inga Bubble-schemaändringar — `offer_approval`, `attachments`, `signed_at`, `signed_pdf` finns redan.
 
+### ⚠️ OTP-BOMBNINGEN vid signering — SKARP BUGG, löst 2026-08-19
+**Symptom (kund, i mail):** *"Mira verkar strula lite och bombarderar mig med länkar, den 7e funkade."* Render-loggen visar inbjudan + **sex** `"Din kod för att signera: …"` till samma mottagare innan signeringen gick igenom.
+
+**Rotorsak:** sista raden i signeringssidans inline-script var `requestOtp();` — **ovillkorligt vid varje sidladdning**. Och `POST /approval/request-otp/:id` skrev alltid en NY `otp_hash`, vilket **dödar den kod mottagaren redan har i inkorgen**. Loopen: öppna länk → kod #1 → växla till mailen → tillbaka via länken (eller ladda om) → kod #2, **#1 nu ogiltig** → "Fel kod" → "Skicka koden igen" → #3 … Först när hon skrev in den SENASTE koden utan att ladda om däremellan gick det igenom (kod #6 = mail nr 7).
+
+Inget bromsade: `startCooldown(60)` sitter **bara i klienten** och nollställs av varje omladdning, och serverns rate limit är 30/timme/IP — byggd mot missbruk, inte mot det här.
+
+⚠️ **Detta infördes INTE av avtalskopplingen** (§ ovan). Flödet har använts för offertsigneringar där mottagaren typiskt stannar i samma flik; `send-for-signing` gjorde bara att fler kunder mötte samma sida.
+
+**Fix:**
+1. **Återanvänd en levande kod.** Finns `otp_hash` och `otp_expires_at` i framtiden → skicka INGET mail, svara `{reused:true, expires_at}`. Koden i inkorgen fortsätter gälla hur många gånger sidan än laddas om.
+2. **`force:true` är enda vägen till en ny kod** — bara knappen "Skicka koden igen" skickar det. Sidladdning frågar utan force.
+3. **Serverside-kylning** (`OTP_RESEND_COOLDOWN_MS` 60 s) på omsändning → `429 resend_too_soon` + `retry_after`. Klientkylan kunde inte bära ansvaret.
+4. **`OTP_MINUTES` 10 → 15.** Sedan klockan inte längre nollställs av omladdningar är det här den FAKTISKA tiden från första mailet till inskriven kod, inklusive att byta till mailappen och leta.
+5. Sidan visar utgångstiden (`clockOf`) och säger explicit att koden "fungerar även om du laddat om sidan".
+
+**Verifierat:** `otp_smoke.mjs` **29/29** — kör den RIKTIGA route-handlern mot mockad Bubble och räknar **köade mail** (den enhet kunden drabbades av): fem omladdningar → noll extra mail, hashen orörd; utgången kod → ny skickas; force före kylan → 429 utan mail och gamla koden lever; efter kylan → ny kod; fel/saknad token → inget mail; redan signerat → ingen kod ens med force. **Mutationstestat:** tas återanvändningen bort faller 7 assertions (buggen reproduceras exakt), sidladdning med `force:true` faller 1, borttagen serverkyla faller 3.
+
+**Lärdom att ta med:** en engångskod som roteras vid varje sidladdning är en tävling mellan användarens inkorg och användarens webbläsare. Rotera bara på explicit begäran — och lägg kylan på servern, klientens nollställs av F5.
+
+**Deploy:** `index.js` (Render). Inget HTML-block att klistra om — signeringssidan renderas av servern. Inga Bubble-ändringar.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.
 - **Drift Fas 3 (QC SKRIV)** — skapa kvalitetskontroll från Housekeeping-Contract → kontrollobjekt per yta (Mötesrum + Internal_room) → betyg/bild/kommentar → slutför.
