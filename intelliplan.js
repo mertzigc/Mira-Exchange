@@ -666,27 +666,51 @@ export function suggestAccountMatches(accounts, companies, opts = {}) {
     .filter((c) => c.n);
   const tokens = (s2) => new Set(String(s2).split(" ").filter((t) => t.length > 2));
 
+  const raw = (s2) => String(s2 == null ? "" : s2);
+  // Kontona är ANLÄGGNINGAR, inte bolag: "Gothia Towers - Heaven 23",
+  // "Gothia Towers - Mässan", "Gothia Towers- Seasons" är fem konton hos samma
+  // kund. Mappningen är därför många-till-en. Vi poängsätter både hela namnet
+  // och prefixet före separatorn, så att enhetsnamnen hamnar rätt i förslagen.
+  const prefixOf = (s2) => {
+    const m = raw(s2).split(/\s*-\s+|\s+-\s*/)[0];   // " - " eller "- " / " -"
+    return m && m !== raw(s2) ? m : "";
+  };
+  const scoreOne = (an, at, c) => {
+    if (!an) return 0;
+    if (c.n === an) return 1;
+    if (c.n.startsWith(an) || an.startsWith(c.n)) return 0.85;
+    const ct = tokens(c.n);
+    const inter = [...at].filter((t) => ct.has(t)).length;
+    const uni = new Set([...at, ...ct]).size;
+    return uni ? inter / uni : 0;
+  };
+
   return (accounts || []).map((a) => {
     const an = normalizeCompanyName(a.ip_account_name);
     const at = tokens(an);
+    const pn = normalizeCompanyName(prefixOf(a.ip_account_name));
+    const pt = tokens(pn);
+
+    let exactFull = false;
     const scored = norm.map((c) => {
-      let score = 0;
-      if (an && c.n === an) score = 1;
-      else if (an && (c.n.startsWith(an) || an.startsWith(c.n))) score = 0.85;
-      else {
-        const ct = tokens(c.n);
-        const inter = [...at].filter((t) => ct.has(t)).length;
-        const uni = new Set([...at, ...ct]).size;
-        score = uni ? inter / uni : 0;
-      }
-      return { client_company_id: c.id, name: c.name, score: Number(score.toFixed(3)) };
+      const full = scoreOne(an, at, c);
+      // Prefixträff väger tungt men NÅGOT mindre än hela namnet — den säger
+      // "kontot hör till den kundens grupp", inte "kontot ÄR kunden".
+      const pre = pn ? scoreOne(pn, pt, c) * 0.95 : 0;
+      const score = Math.max(full, pre);
+      if (full === 1) exactFull = true;
+      return { client_company_id: c.id, name: c.name, score: Number(score.toFixed(3)),
+               via: pre > full ? "prefix" : "namn" };
     }).filter((x) => x.score > 0.3).sort((a2, b) => b.score - a2.score).slice(0, limit);
 
     return {
       ip_account_id: a.ip_account_id, ip_account_name: a.ip_account_name,
       suggestions: scored,
-      // Exakt normaliserad träff OCH ingen tvåa som ligger nära → tryggt att bekräfta.
-      confident: scored.length > 0 && scored[0].score === 1 && (scored.length === 1 || scored[1].score < 0.9),
+      // ⚠️ `confident` kräver att HELA namnet matchar exakt — en prefixträff
+      // föreslås men kopplas aldrig automatiskt. "Gothia Towers - Heaven 23" är
+      // sannolikt Gothia Towers, men det ska en människa få säga.
+      confident: exactFull && scored.length > 0 && scored[0].score === 1 && scored[0].via === "namn"
+                 && (scored.length === 1 || scored[1].score < 0.9),
     };
   });
 }

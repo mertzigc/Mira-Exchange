@@ -179,11 +179,13 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **⚠️ MÅNADSGRIND:** kornigheten är kalendermånad. Ett spann över flera månader klumpas ihop av Intelliplan och `period_key` skulle ljuga. `_ipMonthGuard` kräver månadens första till sista dag (klarar februari och skottår).
 
-**⚠️ `confident` kräver EXAKT normaliserad namnträff OCH att tvåan inte ligger nära.** Två lika bra kandidater → aldrig automatisk koppling. `apply_confident:true` kopplar bara de entydiga.
+**⚠️ KONTONA ÄR ANLÄGGNINGAR, INTE BOLAG** (upptäckt i skarp data 2026-08-19). Kontonamnen är `Gothia Towers- Seasons` · `Gothia Towers - Imagine` · `Gothia Towers - Mässan` · `Gothia Towers - Heaven 23` · `Gothia-Bankett` · `Läppstiftet Reception` · `Fastighetsreception Vikingsgatan`. **Mappningen är många-till-en** — Gothia Towers ensamt har fem konton. Designen bär det (flera `IntelliplanAccount` → samma `ClientCompany`), men namnmatchningen behövde hjälp: `suggestAccountMatches` poängsätter nu både hela namnet OCH prefixet före separatorn (` - ` eller `- `), och redovisar `via: "namn" | "prefix"`.
+
+**⚠️ `confident` kräver EXAKT träff på HELA namnet** och att tvåan inte ligger nära. **En prefixträff (0,95) föreslås men blir ALDRIG confident** — den säger "kontot hör till den kundens grupp", inte "kontot ÄR kunden". Det ska en människa avgöra. `apply_confident:true` kopplar bara entydiga helnamnsträffar.
 
 **⚠️ Faktaraderna bär `client_company` från SYNKTILLFÄLLET** — efter en mappningsrunda måste berörda perioder köras om, annars pekar gamla rader fortfarande på ingenting. Svaret från `/accounts/map` påminner om det.
 
-**Verifierat:** `intelliplan_smoke.mjs` **178/178**. **Mutationstestat:** confident vid tvetydig match fäller 1 · dubbel order oupptäckt 1 · ostrippat ordernamn 1 · månadsgrinden ej anropad 1 · flermånadersspann tillåtet 1 · halv månad tillåten 1. Regression: samtliga 19 sviter gröna.
+**Verifierat:** `intelliplan_smoke.mjs` **185/185**. Torrkörning mot juni 2026 stämmer på alla fyra måtten: omsättning 6 850 058,36 · kostnad 5 107 574,22 · timmar 17 641,77 · TB 1 742 484,14 · 232 rader · 84 konton. **Mutationstestat:** confident vid tvetydig match fäller 1 · dubbel order oupptäckt 1 · ostrippat ordernamn 1 · månadsgrinden ej anropad 1 · flermånadersspann tillåtet 1 · halv månad tillåten 1 · ingen prefixmatchning 3 · prefixträff som confident 1. Regression: samtliga 19 sviter gröna.
 
 **Ordning vid uppsättning:** (1) skapa båda datatyperna · (2) deploya · (3) `REPORT=order ./intelliplan_sync.sh 2026-06-01 2026-06-30` (torrkörning — jämför `revenue_total` mot 6 850 058,36) · (4) `--apply` → kontona skapas omappade · (5) `GET /accounts` → mappa · (6) kör om perioden så faktaraderna får kundkopplingen.
 

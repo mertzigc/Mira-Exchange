@@ -442,6 +442,25 @@ const run = async () => {
   ok("men förslagen visas ändå", amb[0].suggestions.length >= 1);
   ok("konto utan namn kraschar inte", suggestAccountMatches([{ ip_account_id: 9, ip_account_name: null }], [{ id: "x", name: "Y" }])[0].confident === false);
 
+  // ⚠️ SKARP DATA 2026-08-19: kontona är ANLÄGGNINGAR, inte bolag. Gothia Towers
+  // har fem konton (Seasons, Imagine, Mässan, Heaven 23, Bankett) → mappningen
+  // är många-till-en. Utan prefixmatchning hamnar de långt ned i förslagen.
+  const sites = suggestAccountMatches(
+    [{ ip_account_id: 4, ip_account_name: "Gothia Towers- Seasons" },
+     { ip_account_id: 8, ip_account_name: "Gothia Towers - Heaven 23" },
+     { ip_account_id: 17, ip_account_name: "Arena Sergel" }],
+    [{ id: "cc1", name: "Gothia Towers AB" }, { id: "cc2", name: "Arena Sergel" }, { id: "cc3", name: "Annat" }]);
+  ok("enhetsnamn matchas mot kunden via prefix", sites[0].suggestions[0].client_company_id === "cc1");
+  ok("prefixträff får hög men inte full poäng", sites[0].suggestions[0].score === 0.95);
+  ok("källan till träffen redovisas", sites[0].suggestions[0].via === "prefix");
+  ok("separator utan mellanslag före hanteras ('Towers- Seasons')", sites[0].suggestions[0].score === 0.95);
+  // ⚠️ Kärnan: prefixträff = "hör till kundens grupp", inte "ÄR kunden".
+  // Den får aldrig kopplas automatiskt av apply_confident.
+  ok("prefixträff är ALDRIG confident", sites[0].confident === false && sites[1].confident === false);
+  ok("men exakt namnträff är det fortfarande", sites[2].confident === true && sites[2].suggestions[0].via === "namn");
+  ok("flera konton kan peka på samma kund (många-till-en)",
+     sites[0].suggestions[0].client_company_id === sites[1].suggestions[0].client_company_id);
+
   // ══════════════════════════════════════════════════════════════════════════
   sec("Endpoints i index.js");
   // ══════════════════════════════════════════════════════════════════════════
