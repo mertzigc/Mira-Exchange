@@ -22399,7 +22399,9 @@ app.get("/admin/intelliplan/accounts", async (req, res) => {
     })).filter((a) => (onlyUnmapped ? !a.client_company_id : true));
 
     // Företagsnamnen ur den DELADE cachen → noll Bubble-anrop.
-    const full = sharedCompanyFullMap ? sharedCompanyFullMap() : null;
+    // ⚠️ sharedCompanyFullMap är ASYNC — utan await får man ett Promise och
+    // felet blir det kryptiska "full.values is not a function".
+    const full = sharedCompanyFullMap ? await sharedCompanyFullMap() : null;
     const companies = full ? [...full.values()].map((c) => ({ id: c.id, name: c.name })).filter((c) => c.name) : [];
     const withSuggestions = suggestAccountMatches(accounts, companies);
     const merged = accounts.map((a, ix) => Object.assign({}, a, {
@@ -22431,7 +22433,7 @@ app.post("/admin/intelliplan/accounts/map", async (req, res) => {
       .filter((m) => Number.isFinite(m.ip_account_id) && m.client_company_id);
 
     if (b.apply_confident === true) {
-      const full = sharedCompanyFullMap ? sharedCompanyFullMap() : null;
+      const full = sharedCompanyFullMap ? await sharedCompanyFullMap() : null;   // ASYNC — se ovan
       const companies = full ? [...full.values()].map((c) => ({ id: c.id, name: c.name })).filter((c) => c.name) : [];
       const unmapped = (rows || []).filter((r) => !_ffIdOf(r.client_company))
         .map((r) => ({ ip_account_id: Number(r.ip_account_id), ip_account_name: r.ip_account_name || "" }));

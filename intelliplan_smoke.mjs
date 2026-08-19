@@ -550,6 +550,17 @@ const run = async () => {
   // Företagsnamnen ska INTE kosta ett Bubble-svep — de finns i den delade cachen.
   ok("företagsnamn hämtas ur delade cachen, inte via Bubble", /sharedCompanyFullMap\(\)/.test(omBlock)
      && !/bubbleFindAll\("ClientCompany"/.test(omBlock));
+  // ⚠️ SKARP BUGG 2026-08-19: sharedCompanyFullMap är ASYNC. Utan await blir
+  // `full` ett Promise och felet "full.values is not a function" — kryptiskt nog
+  // att man börjar leta på fel ställe. Kodbasen awaitar den överallt annars.
+  const fullCalls = omBlock.match(/(await )?sharedCompanyFullMap\(\)/g) || [];
+  ok("varje anrop av sharedCompanyFullMap är awaitat",
+     fullCalls.length === 2 && fullCalls.every((m) => m.startsWith("await ")));
+  // Gäller hela filen — samma miss någon annanstans ger samma kryptiska fel.
+  // Lookbehind utesluter själva deklarationen (`async function sharedCompanyFullMap()`).
+  const allFull = SRC.match(/(?<!function )(await )?sharedCompanyFullMap\(\)/g) || [];
+  ok("inget oawaitat anrop någonstans i index.js",
+     allFull.length >= 2 && allFull.every((m) => m.startsWith("await ")));
   ok("mappnings-endpoint finns", /app\.post\("\/admin\/intelliplan\/accounts\/map"/.test(omBlock));
   ok("apply_confident kopplar bara entydiga träffar", /s2\.confident && !pairs\.some/.test(omBlock));
   // Faktaraderna bär kopplingen från synktillfället — utan omkörning pekar

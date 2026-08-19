@@ -185,7 +185,9 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **⚠️ Faktaraderna bär `client_company` från SYNKTILLFÄLLET** — efter en mappningsrunda måste berörda perioder köras om, annars pekar gamla rader fortfarande på ingenting. Svaret från `/accounts/map` påminner om det.
 
-**Verifierat:** `intelliplan_smoke.mjs` **185/185**. Torrkörning mot juni 2026 stämmer på alla fyra måtten: omsättning 6 850 058,36 · kostnad 5 107 574,22 · timmar 17 641,77 · TB 1 742 484,14 · 232 rader · 84 konton. **Mutationstestat:** confident vid tvetydig match fäller 1 · dubbel order oupptäckt 1 · ostrippat ordernamn 1 · månadsgrinden ej anropad 1 · flermånadersspann tillåtet 1 · halv månad tillåten 1 · ingen prefixmatchning 3 · prefixträff som confident 1. Regression: samtliga 19 sviter gröna.
+**Verifierat:** `intelliplan_smoke.mjs` **194/194**. Torrkörning mot juni 2026 stämmer på alla fyra måtten: omsättning 6 850 058,36 · kostnad 5 107 574,22 · timmar 17 641,77 · TB 1 742 484,14 · 232 rader · 84 konton. **Mutationstestat:** confident vid tvetydig match fäller 1 · dubbel order oupptäckt 1 · ostrippat ordernamn 1 · månadsgrinden ej anropad 1 · flermånadersspann tillåtet 1 · halv månad tillåten 1 · ingen prefixmatchning 3 · prefixträff som confident 1. Regression: samtliga 19 sviter gröna.
+
+**⚠️ `sharedCompanyFullMap` är ASYNC.** Glömt `await` i `/accounts` gav det kryptiska `"full.values is not a function"` (ett Promise har ingen `.values`) — tillräckligt otydligt för att man börjar leta på fel ställe. Kodbasen awaitar den överallt annars. Smoke-testet vaktar nu att INGET anropsställe i hela `index.js` saknar `await` (lookbehind utesluter deklarationen).
 
 **Ordning vid uppsättning:** (1) skapa båda datatyperna · (2) deploya · (3) `REPORT=order ./intelliplan_sync.sh 2026-06-01 2026-06-30` (torrkörning — jämför `revenue_total` mot 6 850 058,36) · (4) `--apply` → kontona skapas omappade · (5) `GET /accounts` → mappa · (6) kör om perioden så faktaraderna får kundkopplingen.
 
