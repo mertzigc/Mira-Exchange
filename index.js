@@ -12,6 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
+import { createIntelliplanClient, describeReportPayload } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -7693,6 +7694,86 @@ async function upsertTengellaWorkorderRowToBubble(
 // ────────────────────────────────────────────────────────────
 // Debug endpoints
 // ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// INTELLIPLAN — Rapport-API (steg 1–2: auth + rå rekognosering)
+// ════════════════════════════════════════════════════════════════════════════
+// Fjärde datakällan jämte Fortnox/Tengella/Caspeco. Skrivendpoints kommer i
+// vinter och växer in i samma modul.
+//
+// Endpointsen ligger under /admin/intelliplan och grindas därför av den GLOBALA
+// x-api-key-middlewaren — de ska INTE i openPrefixes (den listan är för
+// x-admin-token-grindade HTML-block; de här körs från terminalen).
+//
+// ⚠️ Skriver INGENTING till Bubble. Steg 2 handlar om att ta reda på vad
+// rapporterna faktiskt innehåller innan någon datamodell designas.
+// Env: INTELLIPLAN_TENANT · INTELLIPLAN_CLIENT_ID · INTELLIPLAN_CLIENT_SECRET
+//      (valfritt INTELLIPLAN_SCOPE / INTELLIPLAN_IDP_BASE / INTELLIPLAN_API_BASE)
+const intelliplan = createIntelliplanClient({});
+
+// GET /admin/intelliplan/debug-env — visar ATT env finns, aldrig värdena.
+// client_secret redovisas som sha256-fingeravtryck (8 tecken) så du kan
+// verifiera att RÄTT hemlighet är deployad utan att exponera den.
+app.get("/admin/intelliplan/debug-env", (req, res) => {
+  res.json({ ok: true, ...intelliplan.config() });
+});
+
+// GET /admin/intelliplan/auth/test — hämtar en token. Returnerar bara scope +
+// när vi förnyar, aldrig själva token (bara 6 tecken som kvitto på att den finns).
+app.get("/admin/intelliplan/auth/test", async (req, res) => {
+  try {
+    const force = req.query.force === "1";
+    await intelliplan.ensureAccessToken({ force });
+    return res.json({ ok: true, ...intelliplan.tokenInfo(), config: intelliplan.config() });
+  } catch (e) {
+    console.error("[intelliplan/auth/test]", e?.message, e?.body || "");
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.body || null });
+  }
+});
+
+// GET /admin/intelliplan/report/:id?lang=sv&from=YYYY-MM-DD&to=YYYY-MM-DD&raw=1
+// Steg 2: proxa rapporten och BESKRIV svaret (form, antal rader, kolumnnamn) i
+// stället för att dumpa allt. `raw=1` ger hela kroppen när man vill se den.
+app.get("/admin/intelliplan/report/:id", async (req, res) => {
+  try {
+    const r = await intelliplan.getGridReport({
+      id: req.params.id,
+      lang: String(req.query.lang || "sv"),
+      dateFrom: req.query.from || req.query.dateFrom || null,
+      dateTo: req.query.to || req.query.dateTo || null,
+    });
+    const shape = describeReportPayload(r);
+    console.log(`[intelliplan] rapport ${req.params.id}: ${shape.shape}, ${shape.row_count != null ? shape.row_count + " rader" : shape.bytes + " byte"}`);
+    if (req.query.raw === "1") {
+      return res.json({ ok: true, url: r.url, content_type: r.content_type, shape, data: r.parsed ? r.data : r.raw });
+    }
+    return res.json({ ok: true, url: r.url, content_type: r.content_type, shape });
+  } catch (e) {
+    console.error("[intelliplan/report]", e?.message, e?.status || "", e?.body || "");
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), status: e?.status || null, detail: e?.body || null, url: e?.url || null });
+  }
+});
+
+// GET /admin/intelliplan/probe?ids=1,2,3&lang=sv — vilka rapport-id svarar?
+// Guiden visar bara id 1 och säger inget om hur man listar rapporter, så vi
+// knackar på och redovisar utfallet per id. Sekventiellt med kort paus: vi vet
+// inget om deras rate limits, och att brandvägga sig själv dag ett vore dumt.
+app.get("/admin/intelliplan/probe", async (req, res) => {
+  const ids = String(req.query.ids || "1,2,3,4,5").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 25);
+  const lang = String(req.query.lang || "sv");
+  const out = [];
+  for (const id of ids) {
+    try {
+      const r = await intelliplan.getGridReport({ id, lang, dateFrom: req.query.from || null, dateTo: req.query.to || null });
+      const shape = describeReportPayload(r);
+      out.push({ id, ok: true, shape: shape.shape, rows: shape.row_count ?? null, bytes: shape.bytes, columns: shape.columns });
+    } catch (e) {
+      out.push({ id, ok: false, status: e?.status || null, error: e?.message, detail: (e?.body || "").slice(0, 200) });
+    }
+    await new Promise((r2) => setTimeout(r2, 300));
+  }
+  return res.json({ ok: true, tested: ids.length, results: out });
+});
+
 app.get("/tengella/debug-env", (req, res) => {
   res.json({
     ok: true,

@@ -1,0 +1,244 @@
+// Smoke: Intelliplan-klienten (steg 1–2).
+//   node intelliplan_smoke.mjs
+//
+// Mockad fetch → vi kan verifiera exakt vad som går på tråden: URL-mönster,
+// token-cache, förnyelse, 401-retry, cookie-hantering och att client_secret
+// aldrig läcker ut i något svar.
+import { createIntelliplanClient, describeReportPayload } from "./intelliplan.js";
+import fs from "node:fs";
+
+let pass = 0, fail = 0;
+const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
+const sec = (t) => console.log("\n── " + t + " " + "─".repeat(Math.max(0, 56 - t.length)));
+
+// Påhittad, men samma form som en riktig Intelliplan-secret. Den SKARPA
+// hemligheten hör hemma i Render-env och ska aldrig checkas in — inte ens som
+// testfixture.
+const SECRET = "0000000000000000DEADBEEF00000000";
+const BASE = {
+  tenant: "carotte-se", clientId: "intelliplan-report-export", clientSecret: SECRET,
+  idpBase: "https://{tenant}.idp.intelliplan.eu",
+  apiBase: "https://integrations-{tenant}.api.intelliplan.eu",
+};
+
+// ── Mockad fetch ────────────────────────────────────────────────────────────
+function mkFetch(plan) {
+  const calls = [];
+  const f = async (url, opts = {}) => {
+    calls.push({ url, opts });
+    const step = typeof plan === "function" ? plan(url, opts, calls) : plan;
+    const s = step || {};
+    const headers = {
+      get: (k) => (s.headers || {})[String(k).toLowerCase()] || null,
+      getSetCookie: () => s.setCookie || [],
+    };
+    return { ok: s.status ? s.status < 400 : true, status: s.status || 200, headers,
+             text: async () => (typeof s.body === "string" ? s.body : JSON.stringify(s.body || {})) };
+  };
+  f.calls = calls;
+  return f;
+}
+const tokenBody = (over) => Object.assign({ access_token: "eyJTOKEN", expires_in: 3600, token_type: "Bearer", scope: "processengine" }, over || {});
+
+const run = async () => {
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Konfiguration — hemligheten läcker aldrig");
+  // ══════════════════════════════════════════════════════════════════════════
+  let c = createIntelliplanClient(BASE);
+  let cfg = c.config();
+  ok("bygger IDP-URL ur tenant", cfg.idp_base === "https://carotte-se.idp.intelliplan.eu");
+  ok("bygger API-URL ur tenant (annat värdmönster!)", cfg.api_base === "https://integrations-carotte-se.api.intelliplan.eu");
+  ok("ready när alla tre env finns", cfg.ready === true);
+  ok("client_id är inte hemligt och visas", cfg.client_id === "intelliplan-report-export");
+  // ⚠️ Kärnan: hela config-objektet går ut över HTTP i /debug-env.
+  ok("client_secret finns INTE någonstans i config", !JSON.stringify(cfg).includes(SECRET));
+  ok("secret redovisas som kort fingeravtryck", /^[0-9a-f]{8}$/.test(cfg.client_secret_fingerprint));
+  ok("fingeravtrycket är stabilt", createIntelliplanClient(BASE).config().client_secret_fingerprint === cfg.client_secret_fingerprint);
+  ok("annan hemlighet → annat fingeravtryck",
+     createIntelliplanClient({ ...BASE, clientSecret: "annan" }).config().client_secret_fingerprint !== cfg.client_secret_fingerprint);
+
+  const bare = createIntelliplanClient({ tenant: "", clientId: "", clientSecret: "" });
+  ok("saknad env → ready:false", bare.config().ready === false);
+  let threw = null;
+  try { await bare.ensureAccessToken(); } catch (e) { threw = e; }
+  ok("saknad env → 503 som NAMNGER vad som saknas",
+     threw && threw.status === 503 && /INTELLIPLAN_TENANT/.test(threw.message) && /INTELLIPLAN_CLIENT_SECRET/.test(threw.message));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Token");
+  // ══════════════════════════════════════════════════════════════════════════
+  let f = mkFetch({ body: tokenBody() });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  const t1 = await c.ensureAccessToken();
+  ok("hämtar token", t1 === "eyJTOKEN" && f.calls.length === 1);
+  ok("rätt token-URL", f.calls[0].url === "https://carotte-se.idp.intelliplan.eu/connect/token");
+  ok("POST med form-urlencoded", f.calls[0].opts.method === "POST" && /x-www-form-urlencoded/.test(f.calls[0].opts.headers["Content-Type"]));
+  const sent = new URLSearchParams(f.calls[0].opts.body);
+  ok("grant_type=client_credentials", sent.get("grant_type") === "client_credentials");
+  ok("scope=processengine", sent.get("scope") === "processengine");
+  ok("secret skickas i kroppen (inte i URL:en)", sent.get("client_secret") === SECRET && !f.calls[0].url.includes(SECRET));
+
+  await c.ensureAccessToken();
+  ok("andra anropet använder cachen", f.calls.length === 1);
+  await c.ensureAccessToken({ force: true });
+  ok("force hämtar ny token", f.calls.length === 2);
+
+  // Förnyelse med marginal: 3600 s → vi förnyar efter 3240 s, inte 3600.
+  let clock = 0;
+  f = mkFetch({ body: tokenBody() });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, now: () => clock, log: () => {} });
+  await c.ensureAccessToken();
+  clock = 3200 * 1000;
+  await c.ensureAccessToken();
+  ok("token återanvänds strax före marginalen", f.calls.length === 1);
+  clock = 3300 * 1000;
+  await c.ensureAccessToken();
+  ok("förnyar 6 min FÖRE utgång (aldrig ett anrop med död token)", f.calls.length === 2);
+
+  // Samtidiga anrop ska ge EN token-hämtning
+  f = mkFetch(() => ({ body: tokenBody() }));
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  await Promise.all([c.ensureAccessToken(), c.ensureAccessToken(), c.ensureAccessToken()]);
+  ok("samtidiga anrop dedupas till en hämtning", f.calls.length === 1);
+
+  // Felvägar — kroppen måste med, annars är felsökning ren gissning
+  f = mkFetch({ status: 401, body: { error: "invalid_client" } });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  threw = null;
+  try { await c.ensureAccessToken(); } catch (e) { threw = e; }
+  ok("401 från IdP → fel med status", threw && threw.status === 401);
+  ok("IdP:ns felkropp bevaras", threw && /invalid_client/.test(threw.body));
+  ok("felet läcker inte hemligheten", threw && !JSON.stringify({ m: threw.message, b: threw.body }).includes(SECRET));
+
+  f = mkFetch({ body: "<html>gateway</html>", headers: { "content-type": "text/html" } });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  threw = null;
+  try { await c.ensureAccessToken(); } catch (e) { threw = e; }
+  ok("icke-JSON från IdP → tydligt fel, inte krasch", threw && /unparsable/.test(threw.message));
+
+  f = mkFetch({ body: { expires_in: 3600 } });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  threw = null;
+  try { await c.ensureAccessToken(); } catch (e) { threw = e; }
+  ok("svar utan access_token → eget fel", threw && /missing_access_token/.test(threw.message));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Rapport-anrop");
+  // ══════════════════════════════════════════════════════════════════════════
+  const ROWS = { rows: [{ Konsult: "Anna", Timmar: 12, Kund: "NEXON" }, { Konsult: "Bo", Timmar: 8, Kund: "CMIAB" }] };
+  f = mkFetch((url) => url.includes("/connect/token")
+    ? { body: tokenBody() }
+    : { body: ROWS, headers: { "content-type": "application/json" } });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  let r = await c.getGridReport({ id: 1, lang: "sv", dateFrom: "2024-01-01", dateTo: "2024-01-31" });
+  const repUrl = f.calls[1].url;
+  ok("rätt värd + path", repUrl.startsWith("https://integrations-carotte-se.api.intelliplan.eu/gridreport/1/sv"));
+  // Utan overrideDatePeriodFilter använder rapporten sin egen sparade period —
+  // datumen man skickar in blir då tysta no-ops.
+  ok("datumfilter kräver overrideDatePeriodFilter=true", repUrl.includes("overrideDatePeriodFilter=true"));
+  ok("dateFrom/dateTo med", repUrl.includes("dateFrom=2024-01-01") && repUrl.includes("dateTo=2024-01-31"));
+  ok("Bearer-header satt", f.calls[1].opts.headers.Authorization === "Bearer eyJTOKEN");
+  ok("svaret parsas", r.parsed === true && r.data.rows.length === 2);
+
+  // Utan datum ska vi INTE tvinga override — då gäller rapportens egen period
+  f.calls.length = 0;
+  await c.getGridReport({ id: 7 });
+  ok("utan datum: ingen override (rapportens egen period gäller)", !f.calls[0].url.includes("overrideDatePeriodFilter"));
+  ok("default-språk sv", f.calls[0].url.includes("/gridreport/7/sv"));
+
+  let e2 = null;
+  try { await c.getGridReport({}); } catch (e) { e2 = e; }
+  ok("saknat rapport-id → 400", e2 && e2.status === 400);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Cookies (ARRAffinity) — fångas, hårdkodas aldrig");
+  // ══════════════════════════════════════════════════════════════════════════
+  f = mkFetch((url) => url.includes("/connect/token")
+    ? { body: tokenBody(), setCookie: ["ARRAffinity=abc123; Path=/; HttpOnly", "ARRAffinitySameSite=abc123; Path=/"] }
+    : { body: ROWS, headers: { "content-type": "application/json" } });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  await c.getGridReport({ id: 1 });
+  // Defensivt: saknas headern helt ska assertionen FALLA, inte krascha sviten
+  // (en krasch gör mutationstestet tyst värdelöst).
+  const ckHeader = (f.calls[1] && f.calls[1].opts.headers.Cookie) || "";
+  ok("cookies från token-svaret skickas vidare", ckHeader.includes("ARRAffinity=abc123"));
+  ok("båda affinity-cookiesarna med", ckHeader.includes("ARRAffinitySameSite=abc123"));
+  // Kärnan: guidens exempel innehåller ETT specifikt instans-id. Hårdkodat hade
+  // det fungerat tills Intelliplan byter instans.
+  ok("inget hårdkodat cookie-värde i modulen",
+     !fs.readFileSync(new URL("./intelliplan.js", import.meta.url), "utf8").includes("82114ef1feb862070f28d10a199"));
+
+  c._reset();
+  ok("reset tömmer cookie-jaren", c._cookies.size === 0);
+  // Svarar servern utan set-cookie ska vi inte hitta på några.
+  const f2 = mkFetch((url) => url.includes("/connect/token")
+    ? { body: tokenBody() }
+    : { body: ROWS, headers: { "content-type": "application/json" } });
+  const c2 = createIntelliplanClient({ ...BASE, fetchImpl: f2, log: () => {} });
+  await c2.getGridReport({ id: 1 });
+  ok("inga cookies från servern → ingen Cookie-header", !f2.calls[1].opts.headers.Cookie);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("401 mitt i — förnya och gör om");
+  // ══════════════════════════════════════════════════════════════════════════
+  let reportHits = 0;
+  f = mkFetch((url) => {
+    if (url.includes("/connect/token")) return { body: tokenBody() };
+    reportHits++;
+    return reportHits === 1
+      ? { status: 401, body: { error: "expired" } }
+      : { body: ROWS, headers: { "content-type": "application/json" } };
+  });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  r = await c.getGridReport({ id: 1 });
+  ok("401 → ny token + omförsök, anroparen märker inget", r.parsed === true);
+  ok("token hämtades två gånger", f.calls.filter((x) => x.url.includes("/connect/token")).length === 2);
+
+  // Andra fel ska INTE försöka igen i all oändlighet
+  f = mkFetch((url) => url.includes("/connect/token") ? { body: tokenBody() } : { status: 500, body: "boom" });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  threw = null;
+  try { await c.getGridReport({ id: 1 }); } catch (e) { threw = e; }
+  ok("500 kastar med status + kropp + URL", threw && threw.status === 500 && /boom/.test(threw.body) && !!threw.url);
+  ok("500 försöker inte om", f.calls.filter((x) => !x.url.includes("/connect/token")).length === 1);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("describeReportPayload — rekognosering utan att dumpa allt");
+  // ══════════════════════════════════════════════════════════════════════════
+  let d = describeReportPayload({ parsed: true, data: ROWS, raw: JSON.stringify(ROWS), content_type: "application/json" });
+  ok("hittar rader i {rows:[]}", d.shape === "wrapped_array" && d.row_count === 2);
+  ok("listar kolumnnamnen", JSON.stringify(d.columns) === JSON.stringify(["Konsult", "Timmar", "Kund"]));
+  ok("visar en exempelrad", d.first_row.Konsult === "Anna");
+  ok("redovisar storlek", d.bytes > 0);
+
+  d = describeReportPayload({ parsed: true, data: [{ a: 1 }], raw: "[{}]" });
+  ok("klarar toppnivå-array", d.shape === "array" && d.row_count === 1);
+  d = describeReportPayload({ parsed: true, data: { data: [{ b: 2 }] }, raw: "{}" });
+  ok("hittar rader i {data:[]}", d.row_count === 1);
+  d = describeReportPayload({ parsed: true, data: { meta: 1 }, raw: "{}" });
+  ok("objekt utan rader → nycklar i stället", d.shape === "object" && d.top_level_keys[0] === "meta");
+  d = describeReportPayload({ parsed: false, raw: "kolumn;kolumn2\n1;2", content_type: "text/csv" });
+  ok("oparsat (t.ex. CSV) → preview, ingen krasch", d.shape === "raw" && d.preview.includes("kolumn"));
+  ok("tomt svar kraschar inte", describeReportPayload(null).shape === "raw");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Endpoints i index.js");
+  // ══════════════════════════════════════════════════════════════════════════
+  const SRC = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  ok("debug-env finns", SRC.includes('app.get("/admin/intelliplan/debug-env"'));
+  ok("auth/test finns", SRC.includes('app.get("/admin/intelliplan/auth/test"'));
+  ok("report finns", SRC.includes('app.get("/admin/intelliplan/report/:id"'));
+  ok("probe finns", SRC.includes('app.get("/admin/intelliplan/probe"'));
+  // ⚠️ Ligger de i openPrefixes kringgår de x-api-key-grinden och blir helt öppna.
+  const gate = SRC.slice(SRC.indexOf("const openPrefixes = ["), SRC.indexOf("];", SRC.indexOf("const openPrefixes = [")));
+  ok("INTE i openPrefixes (ska grindas av x-api-key)", !gate.includes("intelliplan"));
+  const ipBlock = SRC.slice(SRC.indexOf("// INTELLIPLAN — Rapport-API"), SRC.indexOf('app.get("/tengella/debug-env"'));
+  ok("steg 2 skriver ingenting till Bubble", !/bubbleCreate|bubblePatch|safeCreate/.test(ipBlock));
+  ok("probe pausar mellan id:n (vi vet inget om rate limits)", /setTimeout\(r2, 300\)/.test(ipBlock));
+  ok("felsvar bär status + detail för felsökning", /detail: e\?\.body/.test(ipBlock));
+
+  console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
+  if (fail) process.exit(1);
+};
+run().catch((e) => { console.error(e); process.exit(1); });

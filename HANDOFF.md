@@ -81,6 +81,33 @@ Inget bromsade: `startCooldown(60)` sitter **bara i klienten** och nollställs a
 
 **Deploy:** `index.js` (Render). Inget HTML-block att klistra om — signeringssidan renderas av servern. Inga Bubble-ändringar.
 
+### INTELLIPLAN — Rapport-API (steg 1–2 byggt 2026-08-19, EJ deployat)
+Fjärde datakällan jämte Fortnox/Tengella/Caspeco. Förhandlingen klar; nu läsning av gridreports, **skrivendpoints kommer i vinter** och växer in i samma modul.
+
+**⚠️ Integrationsguiden (PDF) är i praktiken tom på text** — titel + tre skärmbilder. Innehållet fick extraheras genom att plocka ut de inbäddade bilderna ur PDF:en och läsa dem som bilder (`pdftoppm`/poppler saknas på maskinen, så Read-verktygets PDF-väg gick inte). Allt guiden säger:
+- **Token:** `POST https://{tenant}.idp.intelliplan.eu/connect/token`, `x-www-form-urlencoded`, `grant_type=client_credentials` + client_id/secret + `scope=processengine` → `{access_token, expires_in:3600, token_type:"Bearer", scope}`.
+- **Rapport:** `GET https://integrations-{tenant}.api.intelliplan.eu/gridreport/{id}/{lang}?overrideDatePeriodFilter=true&dateFrom=&dateTo=` med `Authorization: Bearer` + en `Cookie:`-header.
+- **TVÅ olika värdmönster** (`{tenant}.idp` vs `integrations-{tenant}.api`) — med tenant `carotte-se` blir det `carotte-se.idp.intelliplan.eu` resp. `integrations-carotte-se.api.intelliplan.eu`.
+
+**Guiden svarar INTE på:** vilka rapport-id som finns (exemplet visar bara `1`), svarsformatet, paginering, rate limits. Därför är steg 2 ren rekognosering innan någon datamodell designas.
+
+**`intelliplan.js` (NY modul):** `createIntelliplanClient({...})` → `config()` · `ensureAccessToken()` · `tokenInfo()` · `request()` · `getGridReport()`. Plus `describeReportPayload()` som beskriver ett okänt svar (form, radantal, kolumnnamn, exempelrad) i stället för att dumpa allt.
+- **Token-cache med marginal:** förnyar vid 90 % av `expires_in` (3600 s → 3240 s), aldrig ett anrop med död token. In-flight-dedup så samtidiga anrop ger EN hämtning. 401 mitt i ett anrop → tvinga ny token och gör om EN gång.
+- **⚠️ COOKIES hårdkodas ALDRIG.** Guidens curl-exempel innehåller konkreta `ARRAffinity`-värden — det är Azure App Services instans-stickiness, bunden till EN instans hos Intelliplan. Kopierat värde fungerar tills instansen byts, sen blir det svårfelsökta fel. Klienten fångar i stället `set-cookie` från svaren och skickar tillbaka dem, som en webbläsare. Smoke-testet vaktar att guidens värde inte finns i koden.
+- **⚠️ `overrideDatePeriodFilter=true` sätts BARA när datum skickas.** Utan den flaggan använder rapporten sin egen sparade period och inskickade datum blir tysta no-ops. Utan datum ska vi inte tvinga override.
+- **⚠️ Hemligheten läcker aldrig.** `config()` (som går ut över HTTP i `/debug-env`) visar närvaro + ett sha256-fingeravtryck på 8 tecken — nog för att verifiera att RÄTT secret är deployad, aldrig värdet. Saknad env → `503` som namnger exakt vilka variabler som fattas.
+
+**Endpoints (`index.js`, x-api-key-grindade — INTE i openPrefixes, den listan är för x-admin-token-block):**
+`GET /admin/intelliplan/debug-env` · `/auth/test?force=1` · `/report/:id?lang=sv&from=&to=&raw=1` · `/probe?ids=1,2,3` (knackar på flera rapport-id sekventiellt med 300 ms paus — vi vet inget om deras rate limits). **Ingen av dem skriver till Bubble.**
+
+**Env (Render, inlagda 2026-08-19):** `INTELLIPLAN_TENANT=carotte-se` · `INTELLIPLAN_CLIENT_ID` · `INTELLIPLAN_CLIENT_SECRET`. Valfria: `INTELLIPLAN_SCOPE` (default `processengine`), `INTELLIPLAN_IDP_BASE`, `INTELLIPLAN_API_BASE` (om värdarna flyttar).
+
+**Verifierat:** `intelliplan_smoke.mjs` **60/60** med mockad fetch (URL-mönster, token-cache/marginal/dedup, 401-retry, 500 utan retry, cookie-fångst, datumfilter, felkroppar bevarade, hemligheten aldrig i svar eller fel). **Mutationstestat:** secret i klartext i config fäller 2 · borttagen förnyelsemarginal 1 · borttagen `overrideDatePeriodFilter` 1 · cookies som inte skickas vidare 2.
+
+**Nästa steg (kräver riktig data):** kör `./intelliplan_probe.sh` → kartlägg vilka rapport-id som finns och vad de innehåller → välj första rapporten → **steg 4:** normaliserare + Bubble-datatyp, där kundmatchningen mot `ClientCompany` är den svåra biten (samma problem som `resolveInvoiceCustomer` löser för Tengella) → **steg 5:** cron med nattligt delta + `_bulkCreate`.
+
+**Deploy:** `index.js` + nya `intelliplan.js` till Render. Inga Bubble-ändringar, inga HTML-block.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.
 - **Drift Fas 3 (QC SKRIV)** — skapa kvalitetskontroll från Housekeeping-Contract → kontrollobjekt per yta (Mötesrum + Internal_room) → betyg/bild/kommentar → slutför.
