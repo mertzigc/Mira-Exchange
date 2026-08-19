@@ -7764,6 +7764,21 @@ app.get("/admin/intelliplan/report/:id", async (req, res) => {
   }
 });
 
+// GET /admin/intelliplan/templates — finns en endpoint som LISTAR mallarna?
+// Guiden dokumenterar ingen, och att gissa id:n har kostat två felsökningar
+// (1–8 och 219). Knackar på ett fåtal kandidatvägar och redovisar utfallet.
+// Läser bara. 401/403 betyder "finns men saknar behörighet" — annat samtal.
+app.get("/admin/intelliplan/templates", async (req, res) => {
+  try {
+    const r = await intelliplan.discoverTemplates();
+    console.log(`[intelliplan] mall-discovery: ${r.hits} träffar, ${r.forbidden} behörighetsfel av ${r.tried}`);
+    return res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error("[intelliplan/templates]", e?.message);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
 // GET /admin/intelliplan/probe?ids=1,2,3&lang=sv — vilka rapport-id svarar?
 // Guiden visar bara id 1 och säger inget om hur man listar rapporter, så vi
 // knackar på och redovisar utfallet per id. Sekventiellt med kort paus: vi vet

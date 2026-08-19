@@ -212,7 +212,52 @@ export function createIntelliplanClient(deps = {}) {
     return request(`/gridreport/${encodeURIComponent(rid)}/${encodeURIComponent(lang)}` + (q ? "?" + q : ""));
   }
 
-  return { config, ensureAccessToken, tokenInfo, request, getGridReport,
+  /**
+   * Rekognosering: finns en endpoint som LISTAR rapportmallar?
+   *
+   * Integrationsguiden dokumenterar bara `/gridreport/{id}/{lang}` och säger
+   * ingenting om hur man får tag på id:n — vilket har kostat oss två felsökningar
+   * (1–8 och 219). Deras egna felmeddelanden avslöjar dock den interna vägen:
+   *   "Shuffler error -> GET /grid-report/v2/download"
+   * så `/grid-report/v2/...` är formen deras backend använder. Vi knackar på ett
+   * fåtal rimliga kandidater och redovisar vad var och en svarar.
+   *
+   * Läser bara. Sekventiellt med paus — vi vet inget om deras rate limits.
+   */
+  async function discoverTemplates(opts = {}) {
+    const paths = opts.paths || [
+      "/gridreport",
+      "/gridreport/list",
+      "/gridreport/templates",
+      "/gridreporttemplate",
+      "/grid-report/v2/templates",
+      "/grid-report/v2/list",
+      "/grid-report/templates",
+      "/gridreport/template/list",
+    ];
+    const out = [];
+    for (const path of paths) {
+      try {
+        const r = await request(path);
+        // Träff: redovisa formen, inte hela kroppen (kan vara stor).
+        out.push({ path, status: r.status, ok: true, content_type: r.content_type,
+                   bytes: Buffer.byteLength(r.raw || "", "utf8"),
+                   preview: String(r.raw || "").slice(0, 400) });
+      } catch (e) {
+        out.push({ path, status: e?.status || null, ok: false,
+                   error: String(e?.message || e).slice(0, 120),
+                   detail: String(e?.body || "").slice(0, 200) });
+      }
+      await new Promise((r2) => setTimeout(r2, 400));
+    }
+    // 404 = vägen finns inte. 401/403 = den finns men vi saknar behörighet —
+    // och DET är ett helt annat samtal med Intelliplan.
+    const hits = out.filter((x) => x.ok);
+    const forbidden = out.filter((x) => x.status === 401 || x.status === 403);
+    return { tried: paths.length, hits: hits.length, forbidden: forbidden.length, results: out };
+  }
+
+  return { config, ensureAccessToken, tokenInfo, request, getGridReport, discoverTemplates,
            _cookies, _reset: () => { _tok = { token: null, expiresAt: 0, scope: null }; _cookies.clear(); } };
 }
 

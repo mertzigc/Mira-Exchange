@@ -313,6 +313,32 @@ const run = async () => {
   ok("versal/gemen-strukturen bevaras ändå", uni.cols[0].top_patterns[0].pattern.startsWith("A"));
 
   // ══════════════════════════════════════════════════════════════════════════
+  sec("Mall-discovery");
+  // ══════════════════════════════════════════════════════════════════════════
+  // Guiden dokumenterar ingen väg att LISTA mallar, och att gissa id:n har kostat
+  // två felsökningar. Knacka på kandidatvägar i stället för att gissa vidare.
+  let tried = [];
+  f = mkFetch((url) => {
+    if (url.includes("/connect/token")) return { body: tokenBody() };
+    tried.push(url);
+    return url.includes("/gridreport/list")
+      ? { body: [{ id: 1058, name: "Intäkt totalt" }], headers: { "content-type": "application/json" } }
+      : { status: 404, body: "not found" };
+  });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  const disc = await c.discoverTemplates({ paths: ["/gridreport", "/gridreport/list", "/gridreport/templates"] });
+  ok("provar alla kandidatvägar", disc.tried === 3 && tried.length === 3);
+  ok("hittar den väg som svarar", disc.hits === 1 && (disc.results.find((x) => x.ok) || {}).path === "/gridreport/list");
+  ok("404 räknas inte som träff", disc.results.filter((x) => x.status === 404).length === 2);
+  // 401/403 = vägen FINNS men vi saknar behörighet — ett helt annat samtal med
+  // Intelliplan än "vägen finns inte".
+  f = mkFetch((url) => url.includes("/connect/token") ? { body: tokenBody() } : { status: 403, body: "nope" });
+  c = createIntelliplanClient({ ...BASE, fetchImpl: f, log: () => {} });
+  const forb = await c.discoverTemplates({ paths: ["/gridreport/list"] });
+  ok("behörighetsfel särskiljs från saknad väg", forb.forbidden === 1 && forb.hits === 0);
+  ok("en väg som kastar fäller inte hela svepet", forb.results.length === 1 && forb.results[0].ok === false);
+
+  // ══════════════════════════════════════════════════════════════════════════
   sec("Normaliserare 1081 — intäkt per dag och kontor");
   // ══════════════════════════════════════════════════════════════════════════
   // Kolumnnamn verifierade mot skarp data 2026-08-19.

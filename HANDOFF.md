@@ -133,7 +133,9 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **Volym:** 232 rader/månad ≈ 2 800/år. Fullt hanterbart i Bubble, till skillnad från 1063:s 28 000.
 
-### STEG 4 BYGGT 2026-08-19 — synk av rapport 1081 → Bubble (EJ deployat)
+### STEG 4 — synk av rapport 1081 → Bubble. **LIVE och verifierat 2026-08-19**
+**Skarp körning bekräftar allt:** juni 2026 → 121 rader i Bubble, `revenue_total 6 850 058,36` (identisk med 1058 OCH 1039 — tre rapporter, tre kornigheter, samma krona). Omkörning gav `created:0, updated:0, unchanged:121` → **idempotensen håller** och synken skriver INTE om rader i onödan (WU-fällan verifierad skarpt, inte bara i test). Att alla 121 var `unchanged` bevisar dessutom att `ip_office`/`ip_office_id` lagrades korrekt — hade de varit tomma i Bubble hade de 98 kontorsraderna hamnat i `to_update`.
+
 **`1081` "mira-rapport-1"** (skapad av Christian): `Date1` · `Date2` · `ConsultantOffice1` · `ConsultantOffice2` · `Revenue1`. 121 rader för juni 2026. **En rad per (datum, kontor).**
 - **⭐ Ingen persondata alls** — bara datum, kontor, belopp. Därför får den här synken logga fritt, till skillnad från 1058/1063.
 - **⭐ Revenue1 summerar till 6 850 058,36 — EXAKT samma som 1058.** Två olika rapporter, olika kornighet, identisk total. Bekräftar auth, CSV-parsern och Intelliplans aggregering på en gång.

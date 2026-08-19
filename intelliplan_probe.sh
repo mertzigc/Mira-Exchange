@@ -57,8 +57,12 @@ if [ $# -ge 1 ]; then
   echo
   echo "(sample=1 ger en exempelrad, raw=1 hela svaret — båda innehåller persondata.)"
 else
-  # Rapport-id är fyrsiffriga och tilldelade per tenant (1063 är Carottes första
-  # kända) — att skanna blint är meningslöst. Ange id:t du fått av Intelliplan.
-  echo "Ange ett rapport-id. Kända: 1063"
-  echo "  ./intelliplan_probe.sh 1063 2026-07-01 2026-07-31"
+  # ⚠️ Rapport-id är FYRSIFFRIGA (1027–1081 hos Carotte) och står under
+  # rapportikonen i vyn "Report templates". Siffran bredvid "Report" i
+  # rapportvyn är ANTALET RADER — inte id:t. (Kostade en felsökning: 219.)
+  echo "═══ Finns en endpoint som listar mallarna? ═══"
+  curl -sS --max-time 120 "${H[@]}" "$HOST/admin/intelliplan/templates" | j
+  echo
+  echo "Kända rapport-id: 1039 (timmar+intäkt) · 1058 (intäkt per kund/order) · 1081 (intäkt per dag/kontor)"
+  echo "  ./intelliplan_probe.sh 1058 2026-06-01 2026-06-30"
 fi
