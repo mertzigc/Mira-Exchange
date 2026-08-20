@@ -162,9 +162,14 @@ Den tidigare noteringen *"blind skanning är meningslös"* gällde hela
 heltalsrymden. Med känt spann är skanning tvärtom den enda vägen.
 
 ```bash
-API_KEY=... ./intelliplan_scan.sh              # 1027–1080
-API_KEY=... ./intelliplan_scan.sh 1000 1120    # bredare svep
+API_KEY=... ./intelliplan_scan.sh              # 1020-1100 (default)
+API_KEY=... ./intelliplan_scan.sh 900 1200     # ännu bredare
 ```
+
+**⚠️ "23 mallar, id 1027–1080" ÄR INTE EN GRÄNS.** Siffran kom från en avläsning
+av Reporting-vyn — men vi använder **1081** (`IP_REVENUE_DAY_REPORT`), som ligger
+utanför. Ett avläst intervall är en indikation. Default-svepet är därför
+medvetet bredare; ett tomt id kostar 300 ms.
 
 **Hur det fungerar:** `GET /admin/intelliplan/probe?from_id=&to_id=&from=&to=`
 knackar på varje id med **en dags** datumfönster (rubrikraden räcker; en hel
@@ -196,5 +201,16 @@ Utan det kravet hade varje intäktsrapport sett ut som ett schema.
 finns i någon befintlig mall → bygg en via **"Add columns"** i Reporting-vyn
 (datum, starttid, sluttid, konsult, kund). Mallarna är användarredigerbara.
 
+**⚠️ `bash -n` RÄCKER INTE FÖR SHELLSKRIPT.** Första versionen dog skarpt med
+`FROM_ID?: unbound variable`: `$FROM_ID–$TO_ID` innehöll en **en dash** (U+2013),
+och skalet läste multibyte-tecknet som del av variabelnamnet. Det är ett
+EXPANSIONSFEL, inte ett syntaxfel — `bash -n` säger grönt. Regel: inga
+typografiska tecken (en dash, ellips) direkt efter en variabel i kodrader, och
+`${KLAMMER}` när text möter variabel. Verifierat med en genomsökning av samtliga
+`*.sh`.
+
 **Verifierat:** `intelliplan_smoke.mjs` **216/216**. Mutationstestat: öppnad
 persondata-grind fäller 3 · tomt id räknat som fel fäller 1.
+**Kört end-to-end mot en fejkad server** i två lägen: normalfall (hittar och
+rankar kandidaten) och failande anrop mitt i svepet (flaggar skanningen som
+OFULLSTÄNDIG). Det testet var det som avslöjade att 1081 låg utanför default-spannet.

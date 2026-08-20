@@ -14,19 +14,29 @@
 # ⚠️ SMALT DATUMFÖNSTER. Vi behöver bara rubrikraden. En hel månad ur 23
 # rapporter är megabyte i onödan och belastar Intelliplan.
 #
-#   API_KEY=... ./intelliplan_scan.sh                    # 1027–1080 (känt spann)
+#   API_KEY=... ./intelliplan_scan.sh                    # 1020-1100 (brett svep)
 #   API_KEY=... ./intelliplan_scan.sh 1000 1120          # bredare svep
 #   API_KEY=... ./intelliplan_scan.sh 1027 1080 2026-07-15   # annan sonderingsdag
+#
+# ⚠️ INGA typografiska tecken (en dash, ellips) direkt efter en variabel.
+# `$FROM_ID–$TO_ID` med en dash (U+2013) får skalet att läsa multibyte-tecknet
+# som del av variabelnamnet → "unbound variable" under `set -u`. `bash -n`
+# fångar det INTE (expansionsfel, inte syntaxfel). Använd ASCII i kod-rader och
+# ${KLAMMER} när text möter variabel.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 HOST="${HOST:-https://mira-exchange.onrender.com}"
 API_KEY="${API_KEY:?Missing API_KEY}"
-FROM_ID="${1:-1027}"
-TO_ID="${2:-1080}"
+# ⚠️ SPANNET ÄR VIDARE ÄN "1027-1080". Den siffran kom från en avläsning av
+# Reporting-vyn — men vi ANVÄNDER 1081 (IP_REVENUE_DAY_REPORT), som ligger
+# utanför. Avlästa intervall är en indikation, inte en gräns. Default svepet är
+# därför medvetet bredare; kostnaden är 300 ms per tomt id.
+FROM_ID="${1:-1020}"
+TO_ID="${2:-1100}"
 DAG="${3:-$(date -u -d 'yesterday' +%F 2>/dev/null || date -u -v-1d +%F)}"
 
-echo "═══ Mall-spaning: id $FROM_ID–$TO_ID, sonderingsdag $DAG ═══"
+echo "=== Mall-spaning: id ${FROM_ID}-${TO_ID}, sonderingsdag ${DAG} ==="
 echo "(en dag räcker — vi läser bara rubrikraden)"
 echo
 
@@ -39,7 +49,7 @@ trap 'rm -f "$tmp"' EXIT
 
 while [ "$id" -le "$TO_ID" ]; do
   slut=$(( id + CHUNK - 1 )); [ "$slut" -gt "$TO_ID" ] && slut=$TO_ID
-  echo "── knackar på $id–$slut …"
+  echo "-- knackar på ${id}-${slut} ..."
   body=$(curl -sS --max-time 600 -w $'\n%{http_code}' \
     "$HOST/admin/intelliplan/probe?from_id=$id&to_id=$slut&from=$DAG&to=$DAG" \
     -H "x-api-key: $API_KEY") || { echo "  ❌ curl misslyckades"; exit 1; }
