@@ -22486,19 +22486,40 @@ app.get("/admin/bokningslage/fe-overlap", async (req, res) => {
     const before = new Date(Date.parse(from + "T00:00:00Z") - 864e5).toISOString();
     const after = new Date(Date.parse(to + "T00:00:00Z") + 864e5).toISOString();
 
-    const [mira, fx] = await Promise.all([
-      bubbleFindAll("MiraOrder", { constraints: [
-        { key: "leveransdatum", constraint_type: "greater than", value: before },
-        { key: "leveransdatum", constraint_type: "less than", value: after } ] }).catch(() => []),
+    // ⚠️ INGA .catch(() => []) HÄR. En failande Bubble-fråga ska braka, inte
+    // returnera noll rader som sedan tolkas som "inget överlapp". Första skarpa
+    // körningen gav 0/0 därför att constraint-fältet hette fel — och felet
+    // syntes aldrig. (2026-08-19)
+    //
+    // ⚠️ FÄLTNAMN, verifierade mot hur kodbasen SKRIVER raderna:
+    //   FortnoxOrder.connection  (index.js skriver `connection: connection_id`)
+    //     — INTE `connection_id`, det var buggen.
+    //   MiraOrder.leveransdatum  (offert_api.js rad 315) men den är VALFRI:
+    //     `offert.leveransdatum || null`. Ordrar utan leveransdatum måste därför
+    //     hämtas på orderdatum också, annars är de osynliga — trots att
+    //     normMiraOrder faller tillbaka på orderdatum.
+    const dateWin = (field) => [
+      { key: field, constraint_type: "greater than", value: before },
+      { key: field, constraint_type: "less than", value: after },
+    ];
+    const [miraLev, miraOrd, fx] = await Promise.all([
+      bubbleFindAll("MiraOrder", { constraints: dateWin("leveransdatum") }),
+      bubbleFindAll("MiraOrder", { constraints: dateWin("orderdatum") }),
       bubbleFindAll("FortnoxOrder", { constraints: [
-        { key: "connection_id", constraint_type: "equals", value: FE_CONNECTION_ID },
-        { key: "ft_delivery_date", constraint_type: "greater than", value: before },
-        { key: "ft_delivery_date", constraint_type: "less than", value: after } ] }).catch(() => []),
+        { key: "connection", constraint_type: "equals", value: FE_CONNECTION_ID },
+        ...dateWin("ft_delivery_date") ] }),
     ]);
+    // Union + dedup: en order med BÅDA datumen i perioden kommer i båda svaren.
+    const seenIds = new Set();
+    const mira = [...miraLev, ...miraOrd].filter((r) => {
+      const id = r._id || r.id; if (!id || seenIds.has(id)) return false;
+      seenIds.add(id); return true;
+    });
 
     const result = feOverlap(mira, fx);
-    console.log(`[bokningslage/fe-overlap] ${from}..${to}: ${result.mira_count} MiraOrder, ${result.fortnox_count} FortnoxOrder(FE), ${result.matched} matchade`);
-    return res.json({ ok: true, period: { from, to }, fe_connection_id: FE_CONNECTION_ID, ...result });
+    console.log(`[bokningslage/fe-overlap] ${from}..${to}: ${result.mira_count} MiraOrder (${miraLev.length} på leveransdatum, ${miraOrd.length} på orderdatum), ${result.fortnox_count} FortnoxOrder(FE), ${result.matched} matchade`);
+    return res.json({ ok: true, period: { from, to }, fe_connection_id: FE_CONNECTION_ID,
+      mira_by_leveransdatum: miraLev.length, mira_by_orderdatum: miraOrd.length, ...result });
   } catch (e) {
     console.error("[bokningslage/fe-overlap]", e?.message, e?.detail || "");
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });

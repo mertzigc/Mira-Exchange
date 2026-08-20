@@ -99,7 +99,13 @@ const run = () => {
   const blk = i < 0 ? "" : SRC.slice(i, SRC.indexOf("\n});", i));
   ok("endpoint finns", i > 0);
   ok("skriver ingenting", !/bubbleCreate|bubblePatch|_bulkCreate/.test(blk));
-  ok("filtrerar på FE-connection", /connection_id", constraint_type: "equals", value: FE_CONNECTION_ID/.test(blk));
+  // ⚠️ Den här assertionen påstod ursprungligen `connection_id` — samma gissning
+  // som koden. Testet BEKRÄFTADE alltså buggen i stället för att fånga den, och
+  // var grönt medan endpointen gav noll rader i skarp drift. Fältet heter
+  // `connection` (index.js skriver `connection: connection_id`). Lärdom: ett
+  // grep-test som speglar antagandet i koden testar ingenting.
+  ok("filtrerar på FE-connection via rätt fältnamn",
+     /key: "connection", constraint_type: "equals", value: FE_CONNECTION_ID/.test(blk));
   // ⚠️ Bubble saknar "greater than or equal" — inklusivt intervall görs med
   // exklusiva gränser. Samma fälla som kostade en felsökning i Intelliplan-synken.
   // Kommentarerna nämner strängen — testa koden, inte prosan. (Har snubblat på
@@ -108,6 +114,60 @@ const run = () => {
   ok("använder giltiga constraint-typer", !/or equal/.test(code)
      && /constraint_type: "greater than"/.test(code) && /constraint_type: "less than"/.test(code));
   ok("periodiserar F&E på leveransdatum", /leveransdatum/.test(blk) && /ft_delivery_date/.test(blk));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Tomt är INTE en slutsats (skarp bugg 2026-08-19)");
+  // ══════════════════════════════════════════════════════════════════════════
+  // Första skarpa körningen gav 0 MiraOrder och 0 FortnoxOrder — och verdicten
+  // påstod ändå att källorna är disjunkta och "båda kan summeras". Slutsats ur
+  // tom data. Orsaken var ett felstavat constraint-fält som .catch svalde.
+  const empty = feOverlap([], []);
+  ok("noll på båda sidor → INGET ATT JÄMFÖRA", /INGET ATT JÄMFÖRA/.test(empty.verdict));
+  ok("påstår INTE att källorna kan summeras", !/kan summeras/.test(empty.verdict));
+  ok("uppmanar att kontrollera fältnamn/period", /fältnamnen|perioden/.test(empty.verdict));
+
+  const onlyMira = feOverlap([{ _id: "m1", ordernr: "MO-1", kundforetag: "cc1", leveransdatum: "2026-06-10", total: 1000 }], []);
+  ok("bara ena sidan har data → egen varning", /BARA EN KÄLLA/.test(onlyMira.verdict));
+  ok("varningen namnger antalen", /MiraOrder 1, FortnoxOrder 0/.test(onlyMira.verdict));
+
+  // ⚠️ Alla ordrar makulerade ser ut som "inga ordrar" — råantalet måste synas,
+  // annars letar man efter ett datafel som inte finns.
+  const allCancelled = feOverlap([],
+    [{ _id: "f1", ft_document_number: "F-1", linked_company: "cc1", ft_delivery_date: "2026-06-10", ft_total: 1000, ft_cancelled: true }]);
+  ok("makulerade räknas som noll användbara", /INGET ATT JÄMFÖRA/.test(allCancelled.verdict));
+  ok("men råantalet och makuleringarna redovisas", /FortnoxOrder 1 varav 1 makulerade/.test(allCancelled.verdict));
+  ok("och drar ingen slutsats om överlapp", !/kan summeras/.test(onlyMira.verdict));
+
+  const onlyFx = feOverlap([], [{ _id: "f1", ft_document_number: "F-1", linked_company: "cc1", ft_delivery_date: "2026-06-10", ft_total: 1000 }]);
+  ok("gäller åt andra hållet också", /BARA EN KÄLLA/.test(onlyFx.verdict));
+
+  // Med data på BÅDA sidor är "inget överlapp" en riktig slutsats.
+  const disjoint = feOverlap(
+    [{ _id: "m1", ordernr: "MO-1", kundforetag: "cc1", leveransdatum: "2026-06-10", total: 1000 }],
+    [{ _id: "f1", ft_document_number: "F-9", linked_company: "cc9", ft_delivery_date: "2026-06-20", ft_total: 55 }]);
+  ok("data på båda sidor + ingen matchning → slutsatsen är giltig", /Båda kan summeras/.test(disjoint.verdict));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Endpointen — inga tysta nollor");
+  // ══════════════════════════════════════════════════════════════════════════
+  const SRC2 = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  // Skär till EXAKT endpointen — ett för generöst spann drar in annan kod och
+  // gör assertionerna nedan meningslösa.
+  const epStart = SRC2.indexOf('app.get("/admin/bokningslage/fe-overlap"');
+  const ep = SRC2.slice(epStart, SRC2.indexOf("\n});", epStart) + 4);
+  // ⚠️ Kärnan i buggen: en failande fråga får ALDRIG bli en tom lista.
+  // Kommentaren i endpointen nämner mönstret — testa koden, inte prosan.
+  const epCode = ep.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("inga .catch(() => []) på Bubble-frågorna", !/\.catch\(\(\) => \[\]\)/.test(epCode));
+  // ⚠️ Fältet på FortnoxOrder heter `connection` — `connection_id` gav 0 rader.
+  ok("constraintar på FortnoxOrder.connection", /key: "connection", constraint_type: "equals"/.test(ep));
+  ok("använder INTE connection_id som constraint-nyckel", !/key: "connection_id"/.test(ep));
+  // ⚠️ leveransdatum är valfritt på MiraOrder → ordrar utan det vore osynliga.
+  ok("hämtar MiraOrder på BÅDE leveransdatum och orderdatum",
+     /dateWin\("leveransdatum"\)/.test(ep) && /dateWin\("orderdatum"\)/.test(ep));
+  ok("unionen dedupas på id", /seenIds\.has\(id\)/.test(ep));
+  ok("svaret redovisar hur många som kom från vilken datumväg",
+     /mira_by_leveransdatum/.test(ep) && /mira_by_orderdatum/.test(ep));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

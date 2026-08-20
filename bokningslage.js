@@ -117,7 +117,19 @@ export function feOverlap(miraRows, fortnoxRows, opts = {}) {
       unmatched_mira: unmatchedMira.slice(0, 5).map((m) => `${m.order_no} ${m.date} ${m.total} kr (${m.status || "utan status"})`),
     },
     // Tolkningshjälp — inte ett beslut.
-    verdict: matchedCount === 0
+    // ⚠️ TOMT ≠ SLUTSATS. Med noll rader på båda sidor vet vi ingenting om
+    // överlapp — då är svaret "inget att jämföra", inte "de är disjunkta".
+    // Att dra den slutsatsen ur tom data var precis vad den här raden gjorde
+    // första gången den kördes skarpt (2026-08-19), och det hade lett till att
+    // två källor summerades utan grund.
+    // `fx` är redan filtrerad på icke-makulerade. Är alla makulerade ser det ut
+    // som "inga ordrar" — därför redovisas råantalet separat, annars letar man
+    // efter ett datafel som inte finns.
+    verdict: (mira.length === 0 && fx.length === 0)
+      ? `INGET ATT JÄMFÖRA: båda källorna gav noll användbara rader (MiraOrder ${(miraRows || []).length}, FortnoxOrder ${(fortnoxRows || []).length} varav ${(fortnoxRows || []).length - fx.length} makulerade). Det säger ingenting om överlapp — kontrollera att perioden har ordrar och att fältnamnen stämmer.`
+      : (mira.length === 0 || fx.length === 0)
+      ? `BARA EN KÄLLA HAR DATA (MiraOrder ${mira.length}, FortnoxOrder ${fx.length} icke-makulerade av ${(fortnoxRows || []).length}). Överlapp går inte att mäta — kontrollera den tomma sidan innan du drar slutsatser.`
+      : matchedCount === 0
       ? "Inget överlapp hittat: källorna verkar beskriva olika ordrar. Båda kan summeras."
       : (matches.exact_no.length === matchedCount
           ? "Överlapp på exakt ordernummer — dedup är tillförlitlig."
