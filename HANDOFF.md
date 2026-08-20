@@ -297,7 +297,22 @@ Hanteras i `TACKNING`-konstanten (bokningslage.js):
 
 **Verifierat:** `bokningslage_smoke.mjs` **133/133** (från 115). **Mutationstestat:** uppräkning inskriven i `belopp` fäller 4 · tystad täckningsvarning fäller 3 · täckning utan effekt på `fullstandig` fäller 2 · påhittad lucka på HK fäller 1 · borttagen månadsdefault fäller 1. Samtliga 20 sviter gröna.
 
-**Nästa:** deploya → `curl .../admin/bokningslage/summary` (utan datum = innevarande månad) → bygg HTML-vyn ovanpå. Datalagret är klart; det som återstår är presentationen, och den ska bära `matt`-etiketterna och `varningar` synligt, inte gömma dem i en tooltip.
+### ⚠️ TRE FEL I FÖRSTA SKARPA SUMMARY-KÖRNINGEN (rättade 2026-08-20)
+Aug 2026 gav S&P 5 833 564,90 (177 rader) · **HK 0 kr / 0 rader** · F&E 3 035 401,33 (297 av 304).
+
+**1. HK frågade FEL TABELL.** Jag kodade HANDOFF-tabellens `FortnoxOrder(connection=TENGELLA)` — men den kanoniska HK-källan är **`TengellaWorkorder`**. `affar_api.js` säger det rakt ut: *"HK/Tengella-order = raw TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07). FortnoxOrder med connection=TENGELLA exkluderas i display … för att undvika dubbel mot ev. sync_v2-spegel."* **Nollan var korrekt — frågan var ställd till fel tabell.** Rättat: `bubbleFindAll("TengellaWorkorder", dateWin("order_date"))`. `order_date` är bevisat constraint-fält (affar_api.js `dateC("order_date")` i live-affärslistan).
+
+**⚠️ HK ÄR ETT TREDJE MÅTT.** `TengellaWorkorder` har **inget leveransdatum** — enda datumet är `order_date` (verifierat mot `upsertWorkorderToBubble`: fälten är workorder_id/workorder_no/order_date/is_deleted/workorder_rows_json, och raderna bär bara item/quantity/price, inga datum). HK svarar alltså på *"workordrar DATERADE i månaden"*, inte *"levererat i månaden"*. Etiketten säger det: *"…på ORDERDATUM i perioden (Tengella saknar leveransdatum — INTE samma sak som levererat i perioden)"*. Belopp = Σ `Quantity × Price` ur `workorder_rows_json`, exkl moms; `is_deleted` räknas bort. **En workorder utan rader blir 0 kr utan att något failar** → flaggas som `ofullstandig` med egen varning.
+
+**2. `summary` SAKNADE tom-sida-diagnosen** som `fe-overlap` hade. HK svarade `belopp: 0, ofullstandig: false` — en tyst nolla presenterad som ett faktum. Nu körs `describeEmptySide` + `bubbleCountStrict`-probning för varje område med 0 rader, området sätts `ofullstandig: true` och `summa.fullstandig` nollas.
+
+**3. MiraOrder-varningen ÖVERDREV.** Vid 1 rad (testordern, leveransdatum i augusti) påstod den *"Mira-native flödet är i drift"* — falskt. Nu: `≤ 5` rader → *"Så få tyder på TESTDATA, inte att flödet tagits i drift"*; fler → drift-formuleringen. Varnar fortfarande alltid.
+
+**⚠️ ETT TEST TOGS BORT, INTE UTÖKAT:** `"HK constraintas på TENGELLA_CONNECTION_ID"` bevakade FEL källa — det hade skyddat buggen. Och `"tomma områden diagnostiseras"` greppade bara `describeEmptySide(`, vilket **inte föll** när urvalet dödades (`tomma = []` gav grönt). Assertionen träffar nu själva urvalet (`result.omraden.filter((o) => o.antal === 0)`) och per-område-anropet. **Tredje gången denna session som ett grep-test visat sig vaktlöst — greppa alltid det som FAKTISKT styr beteendet, inte en symbol i närheten.**
+
+**Verifierat:** `bokningslage_smoke.mjs` **151/151** (från 133). **Mutationstestat:** HK tillbaka på FortnoxOrder fäller 3 · HK märkt med leveransdatum fäller 3 · oflaggad radlös workorder fäller 2 · borttagna workordrar medräknade fäller 3 · drift-formulering vid 1 rad fäller 1 · `tomma = []` fäller 1 · diagnos utan per-område-anrop fäller 1. Samtliga 20 sviter gröna.
+
+**Nästa:** deploya → kör om `summary` och kontrollera att HK nu ger rader → bygg HTML-vyn ovanpå. Datalagret är klart; presentationen ska bära `matt`-etiketterna och `varningar` **synligt**, inte i en tooltip — de tre bolagen mäts på tre olika sätt och det får inte gå att missa.
 
 ### INTELLIPLAN steg 5 — NATTLIG CRON (byggt 2026-08-20, EJ deployat)
 **`intelliplan_cron.sh` (NY).** Preflight `/version` (vilken commit kör?) → preflight `/admin/intelliplan/auth/test?force=1` (utgånget secret ska bli ett auth-fel överst, inte "0 rader" långt ner) → `intelliplan_sync.sh --apply`, `MONTHS=3` rullande. `MONTHS=12` för engångs-backfill, `DRY=1` för torrkörning.

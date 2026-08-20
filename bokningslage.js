@@ -243,8 +243,38 @@ export function describeEmptySide({ type, periodCount, typeTotal, wide }) {
 
 const MATT = {
   intjanat: "Intjänat för arbete utfört i perioden (periodiserad intäkt)",
-  ordervarde: "Ordervärde, hela ordern daterad på leveransdatum i perioden",
+  ordervarde: "Ordervärde, hela ordern daterad på LEVERANSDATUM i perioden",
+  // ⚠️ TREDJE MÅTTET. TengellaWorkorder har INGET leveransdatum — enda datumet
+  // är `order_date` (verifierat mot upsertWorkorderToBubble: fälten är
+  // workorder_id/workorder_no/order_date/is_deleted/workorder_rows_json, och
+  // raderna bär bara item/quantity/price, inga datum). HK svarar alltså på
+  // "workordrar DATERADE i månaden", inte "levererat i månaden". För löpande
+  // städuppdrag ligger de nära varandra, men det är inte samma fråga och får
+  // inte etiketteras som om det vore det.
+  ordervarde_orderdatum: "Ordervärde, workorder daterad på ORDERDATUM i perioden (Tengella saknar leveransdatum — INTE samma sak som levererat i perioden)",
 };
+
+/** TengellaWorkorder → belopp. Summan av rad-Quantity × Price, exkl moms. */
+export function workorderBelopp(r) {
+  let rows = [];
+  try { rows = JSON.parse(_str(r.workorder_rows_json) || "[]"); } catch { rows = []; }
+  if (!Array.isArray(rows)) rows = [];
+  let sum = 0;
+  for (const x of rows) sum += (_num(x.Quantity) || 0) * (_num(x.Price) || 0);
+  return { belopp: Number(sum.toFixed(2)), rader: rows.length };
+}
+
+/** TengellaWorkorder → jämförbar form. `is_deleted` motsvarar makulerad. */
+export function normWorkorder(r) {
+  const { belopp, rader } = workorderBelopp(r);
+  return {
+    source: "TengellaWorkorder", id: _id(r),
+    order_no: _str(r.workorder_no), date: _day(r.order_date),
+    belopp, rader,
+    // Bubble kan ge boolean ELLER "ja"/"true" beroende på väg — täck båda.
+    borttagen: r.is_deleted === true || ["ja", "true", "yes", "1"].includes(_str(r.is_deleted).toLowerCase()),
+  };
+}
 
 // ⚠️⚠️ KÄND TÄCKNINGSLUCKA — F&E (Christian, 2026-08-20)
 //
@@ -300,11 +330,33 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     };
   };
 
+  // ⚠️ HK kommer INTE från FortnoxOrder(TENGELLA). `TengellaWorkorder` är den
+  // kanoniska källan (affar_api.js: "HK/Tengella-order = raw TengellaWorkorder
+  // (kanonisk källa, Fas 1 2026-08-07). FortnoxOrder med connection=TENGELLA
+  // exkluderas i display ... för att undvika dubbel mot ev. sync_v2-spegel").
+  // Att fråga FortnoxOrder gav 0 rader skarpt 2026-08-20 — nollan var korrekt,
+  // frågan var ställd till fel tabell.
+  const hkArea = (rows) => {
+    const alla = (rows || []).map(normWorkorder);
+    const live = alla.filter((r) => !r.borttagen);
+    return {
+      antal: live.length,
+      antal_makulerade: alla.length - live.length,
+      belopp: Number(live.reduce((a, r) => a + r.belopp, 0).toFixed(2)),
+      matt: MATT.ordervarde_orderdatum,
+      // Beloppet räknas ur workorder_rows_json. Saknas raderna blir ordern
+      // värd 0 kr utan att något failar — samma tysta nolla som saknat ft_net.
+      ofullstandig: live.some((r) => r.rader === 0),
+      utan_net: live.filter((r) => r.rader === 0).length,
+      utan_net_varde_inkl_moms: 0,
+    };
+  };
+
   const omraden = [
     { nyckel: "service_people", namn: "Service & People", kalla: "IntelliplanOrderMonth",
       antal: spRows.length, antal_makulerade: 0, belopp: spTotal, matt: MATT.intjanat,
       ofullstandig: false, utan_net: 0, utan_net_varde_inkl_moms: 0 },
-    Object.assign({ nyckel: "housekeeping", namn: "Housekeeping", kalla: "FortnoxOrder (TENGELLA)" }, fxArea(hk)),
+    Object.assign({ nyckel: "housekeeping", namn: "Housekeeping", kalla: "TengellaWorkorder" }, hkArea(hk)),
     Object.assign({ nyckel: "food_event", namn: "Food & Event", kalla: "FortnoxOrder (FE)" }, fxArea(fe)),
   ];
 
@@ -330,7 +382,9 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     varningar.push("⚠️ Perioden pågår. Service & People växer efter periodens slut allteftersom utfört arbete rapporteras in — jämför mot SAMMA DAG i tidigare perioder, aldrig mot deras slutsummor.");
   }
   for (const o of omraden) {
-    if (o.ofullstandig) {
+    if (o.ofullstandig && o.nyckel === "housekeeping") {
+      varningar.push(`⚠️ ${o.namn}: ${o.utan_net} workorder saknar rader i workorder_rows_json och räknas därför som 0 kr. Beloppet är för LÅGT — kör Tengella-synken med rader innan talet används.`);
+    } else if (o.ofullstandig) {
       varningar.push(`⚠️ ${o.namn}: ${o.utan_net} order saknar ft_net (skrivs bara vid detail-fetch) — beloppet är för LÅGT med upp till ${o.utan_net_varde_inkl_moms} kr inkl moms. Presentera det inte som en total.`);
     }
   }
@@ -339,8 +393,13 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
   }
   // ⚠️ F&E har två möjliga källor. Idag ger bara den ena data — men det ändras
   // utan kodändring den dagen mira-native offert/orderflödet tas i drift.
+  // ⚠️ Ordalydelsen har betydelse. Vid 1 rad påstod den tidigare "Mira-native
+  // flödet är i drift" — falskt, det var testordern (skarpt 2026-08-20).
+  // Varna alltid, men påstå bara det som faktiskt är uppmätt.
   if (miraCount > 0) {
-    varningar.push(`⚠️ F&E: ${miraCount} MiraOrder i perioden. Mira-native flödet är i drift → samma affär kan finnas som BÅDE MiraOrder och FortnoxOrder. Kör /admin/bokningslage/fe-overlap och deduppa innan F&E-talet används.`);
+    varningar.push(miraCount <= 5
+      ? `⚠️ F&E: ${miraCount} MiraOrder i perioden. Så få tyder på TESTDATA, inte att mira-native flödet tagits i drift — men kontrollera, för när det väl går i drift kan samma affär finnas som BÅDE MiraOrder och FortnoxOrder. Kör /admin/bokningslage/fe-overlap innan F&E-talet används.`
+      : `⚠️ F&E: ${miraCount} MiraOrder i perioden — mira-native flödet ser ut att vara i drift. Samma affär kan finnas som BÅDE MiraOrder och FortnoxOrder. Kör /admin/bokningslage/fe-overlap och deduppa innan F&E-talet används.`);
   }
 
   // En känd täckningslucka gör summan lika ofullständig som ett saknat fält gör.

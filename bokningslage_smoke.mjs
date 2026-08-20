@@ -5,7 +5,7 @@
 // egen offertväg (`MiraOrder`) rader som SAMMA affär senare får som
 // `FortnoxOrder` med FE-connection? Summeras båda rakt av dubbelräknas den.
 import fs from "node:fs";
-import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide, bokningslageSummary } from "./bokningslage.js";
+import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide, bokningslageSummary, normWorkorder, workorderBelopp } from "./bokningslage.js";
 
 let pass = 0, fail = 0;
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
@@ -279,22 +279,33 @@ const run = () => {
   sec("Sammanställning — tre affärsområden utan att ljuga");
   // ══════════════════════════════════════════════════════════════════════════
   const SP = [{ revenue: 6000000 }, { revenue: 850058.36 }];
+  // ⚠️ HK = TengellaWorkorder (kanonisk källa), INTE FortnoxOrder(TENGELLA).
+  // Belopp = Σ Quantity × Price ur workorder_rows_json, exkl moms.
+  const W = (o) => Object.assign({ _id: "w" + Math.random().toString(36).slice(2, 7),
+    workorder_no: "WO-1", order_date: "2026-06-05",
+    workorder_rows_json: JSON.stringify([{ Quantity: 2, Price: 500 }]) }, o);
   const HK = [
-    { _id: "h1", ft_delivery_date: "2026-06-05", ft_total: 125000, ft_net: 100000 },
-    { _id: "h2", ft_delivery_date: "2026-06-06", ft_total: 62500, ft_net: 50000, ft_cancelled: "ja" },
+    W({ _id: "h1", workorder_rows_json: JSON.stringify([{ Quantity: 2, Price: 40000 }, { Quantity: 1, Price: 20000 }]) }),
+    W({ _id: "h2", workorder_rows_json: JSON.stringify([{ Quantity: 1, Price: 50000 }]), is_deleted: true }),
   ];
   const FE = [{ _id: "e1", ft_delivery_date: "2026-06-07", ft_total: 1250, ft_net: 1000 }];
   const sum1 = bokningslageSummary({ sp: SP, hk: HK, fe: FE });
   const omr = (k) => (sum1.omraden || []).find((o) => o.nyckel === k) || {};
 
   ok("S&P summeras ur revenue", omr("service_people").belopp === 6850058.36);
-  ok("HK använder ft_net, inte ft_total", omr("housekeeping").belopp === 100000);
-  ok("makulerade räknas bort", omr("housekeeping").antal === 1 && omr("housekeeping").antal_makulerade === 1);
+  ok("HK summerar Quantity × Price ur workorder-raderna", omr("housekeeping").belopp === 100000);
+  ok("borttagna workordrar räknas bort", omr("housekeeping").antal === 1 && omr("housekeeping").antal_makulerade === 1);
   ok("F&E använder ft_net", omr("food_event").belopp === 1000);
 
   // ⚠️ Kärnan: talen får inte presenteras som samma sort.
   ok("S&P märks som intjänat", /Intjänat/.test(omr("service_people").matt || ""));
   ok("HK märks som ordervärde", /Ordervärde/.test(omr("housekeeping").matt || ""));
+  // ⚠️ Tengella har INGET leveransdatum — bara order_date. HK svarar alltså på
+  // en annan fråga än F&E, och etiketten måste säga det.
+  ok("HK säger uttryckligen ORDERDATUM, inte leveransdatum", /ORDERDATUM/.test(omr("housekeeping").matt || ""));
+  ok("HK varnar att det inte är samma sak som levererat", /INTE samma sak som levererat/.test(omr("housekeeping").matt || ""));
+  ok("F&E säger LEVERANSDATUM", /LEVERANSDATUM/.test(omr("food_event").matt || ""));
+  ok("HK och F&E har därför olika mått", omr("housekeeping").matt !== omr("food_event").matt);
   ok("F&E märks som ordervärde", /Ordervärde/.test(omr("food_event").matt || ""));
   ok("måtten är olika", omr("service_people").matt !== omr("housekeeping").matt);
   ok("summan bär en varningsetikett", /BLANDADE MÅTT/.test((sum1.summa || {}).matt || ""));
@@ -302,9 +313,13 @@ const run = () => {
   ok("momsbasen sägs ut", /EXKL moms/.test(sum1.moms || ""));
 
   // ⚠️ Saknat ft_net får inte bli en tyst för låg summa.
-  const glest = bokningslageSummary({ sp: [], hk: [{ _id: "h1", ft_delivery_date: "2026-06-05", ft_total: 125000 }], fe: [] });
-  ok("order utan ft_net räknas inte som 0 kr utan flaggas", (glest.omraden.find((o) => o.nyckel === "housekeeping") || {}).ofullstandig === true);
+  const glest = bokningslageSummary({ sp: [], hk: [], fe: [{ _id: "e9", ft_delivery_date: "2026-06-05", ft_total: 125000 }] });
+  ok("order utan ft_net räknas inte som 0 kr utan flaggas", (glest.omraden.find((o) => o.nyckel === "food_event") || {}).ofullstandig === true);
   ok("och gapets storlek redovisas", /125000 kr inkl moms/.test((glest.varningar || []).join(" ")));
+  // ⚠️ Samma tysta nolla på HK-sidan: en workorder utan rader blir 0 kr.
+  const hkTom = bokningslageSummary({ sp: [], hk: [W({ workorder_rows_json: "[]" })], fe: [] });
+  ok("workorder utan rader blir 0 kr men flaggas", (hkTom.omraden.find((o) => o.nyckel === "housekeeping") || {}).ofullstandig === true);
+  ok("och varningen pekar ut workorder_rows_json", /workorder_rows_json/.test((hkTom.varningar || []).join(" ")));
   ok("summan markeras som icke fullständig", (glest.summa || {}).fullstandig === false);
 
   // ⚠️ Pågående period: S&P växer i efterhand.
@@ -325,6 +340,13 @@ const run = () => {
   const medMira = bokningslageSummary({ sp: [], hk: [], fe: FE, miraCount: 12 });
   ok("MiraOrder i perioden → varning om dubbelräkning", /dubbelräkning|BÅDE MiraOrder och FortnoxOrder/.test((medMira.varningar || []).join(" ")));
   ok("och hänvisar till fe-overlap", /fe-overlap/.test((medMira.varningar || []).join(" ")));
+  // ⚠️ Skarpt 2026-08-20: 1 MiraOrder (testordern) fick varningen att påstå
+  // "mira-native flödet är i drift". Falskt. Varna — men påstå bara det uppmätta.
+  const enMira = bokningslageSummary({ sp: [], hk: [], fe: FE, miraCount: 1 });
+  ok("1 MiraOrder varnar fortfarande", /MiraOrder/.test((enMira.varningar || []).join(" ")));
+  ok("men påstår INTE att flödet är i drift", !/flödet är i drift/.test((enMira.varningar || []).join(" ")));
+  ok("utan pekar på testdata", /TESTDATA/.test((enMira.varningar || []).join(" ")));
+  ok("många MiraOrder får däremot drift-formuleringen", /ser ut att vara i drift/.test((medMira.varningar || []).join(" ")));
   ok("utan MiraOrder ingen sådan varning", !/BÅDE MiraOrder/.test((sum1.varningar || []).join(" ")));
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -364,10 +386,27 @@ const run = () => {
   const sCode = sEp.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
   ok("summary-endpointen finns", sStart !== -1);
   ok("inga .catch(() => []) på frågorna", !/\.catch\(\(\) => \[\]\)/.test(sCode));
-  ok("HK constraintas på TENGELLA_CONNECTION_ID", /TENGELLA_CONNECTION_ID/.test(sCode));
+  // ⚠️ HK constraintades tidigare på TENGELLA_CONNECTION_ID mot FortnoxOrder.
+  // Den assertionen togs bort för att den bevakade FEL källa — se HK-testerna
+  // nedan. Att bara utöka hade lämnat kvar ett test som skyddade en bugg.
   ok("F&E constraintas på FE_CONNECTION_ID", /FE_CONNECTION_ID/.test(sCode));
-  ok("båda på fältet connection, inte connection_id", /key: "connection", constraint_type: "equals"/.test(sCode) && !/key: "connection_id"/.test(sCode));
+  ok("F&E på fältet connection, inte connection_id", /key: "connection", constraint_type: "equals"/.test(sCode) && !/key: "connection_id"/.test(sCode));
   ok("S&P hämtas på ip_period", /key: "ip_period"/.test(sCode));
+  // ⚠️ HK kommer från TengellaWorkorder, inte FortnoxOrder(TENGELLA).
+  ok("HK hämtas från TengellaWorkorder", /bubbleFindAll\("TengellaWorkorder"/.test(sCode));
+  ok("HK constraintas på order_date", /dateWin\("order_date"\)/.test(sCode));
+  ok("HK frågar INTE FortnoxOrder på TENGELLA-connection",
+     !/TENGELLA_CONNECTION_ID/.test(sCode) || !/bubbleFindAll\("FortnoxOrder"[\s\S]*TENGELLA_CONNECTION_ID/.test(sCode));
+  // ⚠️ summary saknade tom-sida-diagnosen som fe-overlap hade.
+  // ⚠️ Att bara greppa `describeEmptySide(` bevisar INGENTING — symbolen kan
+  // finnas kvar medan urvalet är dödat. (Mutationstest 2026-08-20: `tomma = []`
+  // gav grönt.) Assertionen måste träffa själva urvalet.
+  ok("tomma områden väljs ut på antal === 0", /result\.omraden\.filter\(\(o\) => o\.antal === 0\)/.test(sCode));
+  ok("och varje tomt område får en diagnos", /o\.tom_sida_diagnos = await probe\(/.test(sCode));
+  ok("tomma områden diagnostiseras", /describeEmptySide\(/.test(sCode));
+  ok("diagnosen mäts med bubbleCountStrict", /bubbleCountStrict\(/.test(sCode));
+  ok("ett tomt område kan aldrig vara fullständigt", /o\.ofullstandig = true/.test(sCode));
+  ok("och nollar summans fullstandig", /result\.summa\.fullstandig = false/.test(sCode));
   // ⚠️ ip_period är HELA månader — ett delspann gör S&P-talet för stort.
   ok("delspann mot månadskornighet flaggas", /sp_tacker_perioden/.test(sEp) && /inte hela månader/.test(sEp));
   ok("pågående period upptäcks mot dagens datum", /periodPagaende: to >= idag/.test(sCode));

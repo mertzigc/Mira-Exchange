@@ -22631,9 +22631,13 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
     const [spPerManad, hk, fe, miraLev, miraOrd] = await Promise.all([
       Promise.all(månader.map((m) => bubbleFindAll(IP_ORDERMONTH_TYPE, {
         constraints: [{ key: "ip_period", constraint_type: "equals", value: m }] }))),
-      bubbleFindAll("FortnoxOrder", { constraints: [
-        { key: "connection", constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
-        ...dateWin("ft_delivery_date") ] }),
+      // ⚠️ HK = TengellaWorkorder, INTE FortnoxOrder(TENGELLA). Den senare gav 0
+      // rader skarpt 2026-08-20 — nollan var korrekt, frågan var ställd till fel
+      // tabell. affar_api.js: "HK/Tengella-order = raw TengellaWorkorder
+      // (kanonisk källa) ... FortnoxOrder med connection=TENGELLA exkluderas".
+      // `order_date` är enda datumet på typen, och är ett bevisat constraint-fält
+      // (affar_api.js dateC("order_date") i den live affärslistan).
+      bubbleFindAll("TengellaWorkorder", { constraints: dateWin("order_date") }),
       bubbleFindAll("FortnoxOrder", { constraints: [
         { key: "connection", constraint_type: "equals", value: FE_CONNECTION_ID },
         ...dateWin("ft_delivery_date") ] }),
@@ -22661,7 +22665,44 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
       result.omraden[0].ofullstandig = true;
     }
 
-    console.log(`[bokningslage/summary] ${from}..${to}: S&P ${sp.length} rader, HK ${hk.length}, F&E ${fe.length}, MiraOrder ${miraIds.size}`);
+    // ── Tom sida → diagnos, inte slutsats ────────────────────────────────────
+    // ⚠️ `summary` saknade det här medan `fe-overlap` hade det, och HK svarade
+    // "0 kr, ofullstandig: false" — en tyst nolla presenterad som ett faktum.
+    // Körs bara för områden som faktiskt är tomma.
+    const wideFrom = new Date(Date.parse(from + "T00:00:00Z") - 3 * 365 * 864e5).toISOString();
+    const wideTo = new Date(Date.parse(to + "T00:00:00Z") + 3 * 365 * 864e5).toISOString();
+    const wideWin = (field) => [
+      { key: field, constraint_type: "greater than", value: wideFrom },
+      { key: field, constraint_type: "less than", value: wideTo },
+    ];
+    const probe = async (type, fields) => {
+      const safe = (label, pr) => pr.catch((e) => {
+        console.error(`[bokningslage/summary] diagnos-probe ${type}.${label} failade:`, e?.message, e?.detail || "");
+        return null;   // null = OMÄTT, aldrig 0
+      });
+      const [typeTotal, ...counts] = await Promise.all([
+        safe("total", bubbleCountStrict(type)),
+        ...fields.map((f) => safe(f, bubbleCountStrict(type, wideWin(f)))),
+      ]);
+      return describeEmptySide({ type, periodCount: 0, typeTotal,
+        wide: fields.map((f, i) => ({ field: f, count: counts[i] })) });
+    };
+    const PROBE_KALLA = {
+      service_people: [IP_ORDERMONTH_TYPE, ["synced_at"]],
+      housekeeping: ["TengellaWorkorder", ["order_date"]],
+      food_event: ["FortnoxOrder", ["ft_delivery_date"]],
+    };
+    const tomma = result.omraden.filter((o) => o.antal === 0);
+    for (const o of tomma) {
+      const [type, fields] = PROBE_KALLA[o.nyckel];
+      o.tom_sida_diagnos = await probe(type, fields);
+      // ⚠️ En tom sida är per definition inte ett fullständigt underlag.
+      o.ofullstandig = true;
+      result.varningar.push(`⚠️ ${o.namn}: 0 rader i perioden. ${o.tom_sida_diagnos.text}`);
+    }
+    if (tomma.length) result.summa.fullstandig = false;
+
+    console.log(`[bokningslage/summary] ${from}..${to}: S&P ${sp.length} rader, HK ${hk.length}, F&E ${fe.length}, MiraOrder ${miraIds.size}${tomma.length ? " · tomma: " + tomma.map((o) => `${o.nyckel}=${o.tom_sida_diagnos.status}`).join(", ") : ""}`);
     return res.json({ ok: true, period: { from, to }, sp_manader: månader,
       sp_tacker_perioden: spTacker, ...result });
   } catch (e) {
