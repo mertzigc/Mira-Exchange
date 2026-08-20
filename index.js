@@ -12,7 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { feOverlap } from "./bokningslage.js";
+import { feOverlap, describeEmptySide } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
@@ -1248,6 +1248,35 @@ async function bubbleCount(typeName, constraints = []) {
     } catch (_) {}
   }
   return 0;
+}
+// ⚠️ bubbleCount ovan sväljer ALLA fel och returnerar 0. Det är oftast harmlöst
+// (en räknare i en vy), men livsfarligt när nollan är själva svaret man tolkar:
+// "0 rader" och "frågan failade" blir omöjliga att skilja åt. Samma klass av fel
+// som `.catch(() => [])` i fe-overlap. Den här kastar i stället — använd den när
+// noll är en SLUTSATS, inte en siffra i en tabell.
+async function bubbleCountStrict(typeName, constraints = []) {
+  const qs = new URLSearchParams({ limit: "1" });
+  if (constraints.length) qs.set("constraints", JSON.stringify(constraints));
+  let lastErr = null;
+  for (const base of BUBBLE_BASES) {
+    const url = `${base}/api/1.1/obj/${typeName}?${qs}`;
+    try {
+      const r = await fetch(url, { headers: { Authorization: "Bearer " + BUBBLE_API_KEY } });
+      if (!r.ok) { lastErr = { base, status: r.status, body: (await r.text().catch(() => "")).slice(0, 500), url }; continue; }
+      const text = await r.text();
+      let j; try { j = JSON.parse(text); } catch { lastErr = { base, parseError: true, body: text.slice(0, 500), url }; continue; }
+      if (!j || typeof j.response !== "object" || j.response === null) { lastErr = { base, badShape: true, body: text.slice(0, 500), url }; continue; }
+      const results = Array.isArray(j.response.results) ? j.response.results.length : 0;
+      // `remaining` saknas helt om Bubble inte skickar det — då vet vi inte totalen
+      // och får inte gissa 0. Bara results är säkert.
+      const remaining = j.response.remaining;
+      if (remaining == null) { lastErr = { base, missingRemaining: true, url }; continue; }
+      return results + Number(remaining);
+    } catch (e) { lastErr = { base, error: String(e?.message || e), url }; }
+  }
+  const err = new Error("bubbleCountStrict failed");
+  err.detail = lastErr;
+  throw err;
 }
 async function bubbleFindOne(type, constraints) {
   const arr = await bubbleFind(type, {
@@ -22517,9 +22546,42 @@ app.get("/admin/bokningslage/fe-overlap", async (req, res) => {
     });
 
     const result = feOverlap(mira, fx);
-    console.log(`[bokningslage/fe-overlap] ${from}..${to}: ${result.mira_count} MiraOrder (${miraLev.length} på leveransdatum, ${miraOrd.length} på orderdatum), ${result.fortnox_count} FortnoxOrder(FE), ${result.matched} matchade`);
+
+    // ── Tom sida → diagnos, inte slutsats ────────────────────────────────────
+    // Kör BARA när en sida faktiskt är tom (annars fyra extra Bubble-anrop per
+    // request helt i onödan). Det breda fönstret är ±3 år runt perioden: räcker
+    // för att avgöra om datumfältet fungerar utan att bli ett helsvep.
+    // ⚠️ bubbleCountStrict, inte bubbleCount — den senare returnerar 0 på fel,
+    // och då diagnostiserar vi nollan med ett instrument som självt hittar på
+    // nollor. Failar probningen bär svaret `status: "okänt"`, inte en slutsats.
+    const wideFrom = new Date(Date.parse(from + "T00:00:00Z") - 3 * 365 * 864e5).toISOString();
+    const wideTo = new Date(Date.parse(to + "T00:00:00Z") + 3 * 365 * 864e5).toISOString();
+    const wideWin = (field) => [
+      { key: field, constraint_type: "greater than", value: wideFrom },
+      { key: field, constraint_type: "less than", value: wideTo },
+    ];
+    const probe = async (type, fields, periodCount) => {
+      // null = OMÄTT, aldrig 0 — och felet LOGGAS. Ett tyst .catch här hade
+      // återinfört exakt den bugg diagnosen finns för att fånga.
+      const safe = (label, p) => p.catch((e) => {
+        console.error(`[bokningslage/fe-overlap] diagnos-probe ${type}.${label} failade:`, e?.message, e?.detail || "");
+        return null;
+      });
+      const [typeTotal, ...counts] = await Promise.all([
+        safe("total", bubbleCountStrict(type)),
+        ...fields.map((f) => safe(f, bubbleCountStrict(type, wideWin(f)))),
+      ]);
+      return describeEmptySide({ type, periodCount, typeTotal,
+        wide: fields.map((f, i) => ({ field: f, count: counts[i] })) });
+    };
+    const diagnos = [];
+    if (result.mira_count === 0) diagnos.push(await probe("MiraOrder", ["leveransdatum", "orderdatum"], 0));
+    if (result.fortnox_count === 0) diagnos.push(await probe("FortnoxOrder", ["ft_delivery_date"], 0));
+
+    console.log(`[bokningslage/fe-overlap] ${from}..${to}: ${result.mira_count} MiraOrder (${miraLev.length} på leveransdatum, ${miraOrd.length} på orderdatum), ${result.fortnox_count} FortnoxOrder(FE), ${result.matched} matchade${diagnos.length ? " · diagnos: " + diagnos.map((d) => `${d.type}=${d.status}`).join(", ") : ""}`);
     return res.json({ ok: true, period: { from, to }, fe_connection_id: FE_CONNECTION_ID,
-      mira_by_leveransdatum: miraLev.length, mira_by_orderdatum: miraOrd.length, ...result });
+      mira_by_leveransdatum: miraLev.length, mira_by_orderdatum: miraOrd.length, ...result,
+      tom_sida_diagnos: diagnos.length ? diagnos : null });
   } catch (e) {
     console.error("[bokningslage/fe-overlap]", e?.message, e?.detail || "");
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });

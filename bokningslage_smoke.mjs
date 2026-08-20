@@ -5,7 +5,7 @@
 // egen offertväg (`MiraOrder`) rader som SAMMA affär senare får som
 // `FortnoxOrder` med FE-connection? Summeras båda rakt av dubbelräknas den.
 import fs from "node:fs";
-import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder } from "./bokningslage.js";
+import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide } from "./bokningslage.js";
 
 let pass = 0, fail = 0;
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
@@ -168,6 +168,106 @@ const run = () => {
   ok("unionen dedupas på id", /seenIds\.has\(id\)/.test(ep));
   ok("svaret redovisar hur många som kom från vilken datumväg",
      /mira_by_leveransdatum/.test(ep) && /mira_by_orderdatum/.test(ep));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Momsbas — inkl vs exkl moms får inte blandas");
+  // ══════════════════════════════════════════════════════════════════════════
+  // ft_total = Fortnox Total = INKL moms. ft_net = EXKL. Intelliplans intäkt är
+  // exkl. Att ställa dem bredvid varandra utan att skilja baserna överdriver F&E
+  // med momssatsen. Skarpt juni 2026: 8 096 472 inkl moms mot Intelliplans
+  // 6 850 058,36 exkl.
+  const momsFx = [
+    { _id: "f1", ft_document_number: "F-1", linked_company: "cc1", ft_delivery_date: "2026-06-10", ft_total: 1250, ft_net: 1000 },
+    { _id: "f2", ft_document_number: "F-2", linked_company: "cc2", ft_delivery_date: "2026-06-11", ft_total: 2500, ft_net: 2000 },
+  ];
+  const mb = (feOverlap([], momsFx) || {}).moms_bas || {};
+  ok("inkl-moms-summan redovisas separat", mb.fortnox_total_inkl_moms === 3750);
+  ok("exkl-moms-summan redovisas separat", mb.fortnox_net_exkl_moms === 3000);
+  ok("de är inte samma tal", mb.fortnox_total_inkl_moms !== mb.fortnox_net_exkl_moms);
+  ok("full täckning rapporteras som fullständig", /fullständig/.test(mb.note || "") && !/OFULLSTÄNDIG/.test(mb.note || ""));
+
+  // ⚠️ ft_net skrivs bara vid detail-fetch → saknas på list-synkade rader.
+  const glesFx = [
+    { _id: "f1", ft_document_number: "F-1", linked_company: "cc1", ft_delivery_date: "2026-06-10", ft_total: 1250, ft_net: 1000 },
+    { _id: "f2", ft_document_number: "F-2", linked_company: "cc2", ft_delivery_date: "2026-06-11", ft_total: 2500 },
+  ];
+  const mg = (feOverlap([], glesFx) || {}).moms_bas || {};
+  ok("saknat ft_net blir INTE 0 i net-summan", mg.fortnox_net_exkl_moms === 1000);
+  ok("antalet rader utan ft_net redovisas", mg.fortnox_utan_net === 1);
+  ok("och deras värde redovisas, så gapet syns", mg.fortnox_utan_net_varde_inkl_moms === 2500);
+  ok("net-summan flaggas som OFULLSTÄNDIG", /OFULLSTÄNDIG/.test(mg.note || ""));
+
+  // Matchningen ska däremot INTE byta bas — MiraOrder.total är också inkl moms.
+  const parad = feOverlap(
+    [{ _id: "m1", ordernr: "MO-1", kundforetag: "cc1", leveransdatum: "2026-06-10", total: 1250 }],
+    [{ _id: "f1", ft_document_number: "MO-1", linked_company: "cc1", ft_delivery_date: "2026-06-10", ft_total: 1250, ft_net: 1000 }]);
+  ok("matchningen jämför total mot total (båda inkl moms)", (parad || {}).matched === 1);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Tom sida — diagnos i stället för slutsats");
+  // ══════════════════════════════════════════════════════════════════════════
+  // Skarpt 2026-08-20: FortnoxOrder(FE) gav 540 rader men MiraOrder 0 på BÅDA
+  // datumvägarna. Frågan "är det ett datafaktum eller en trasig fråga?" måste
+  // besvaras av kod, inte av magkänsla.
+  const D = (o) => describeEmptySide(Object.assign(
+    { type: "MiraOrder", periodCount: 0, typeTotal: 0, wide: [{ field: "leveransdatum", count: 0 }] }, o));
+
+  const tomTyp = D({ typeTotal: 0 });
+  ok("typen helt tom → status typen_tom", (tomTyp || {}).status === "typen_tom");
+  ok("och säger uttryckligen att det inte handlar om perioden", /inget om just den här perioden/.test((tomTyp || {}).text || ""));
+
+  const faltFel = D({ typeTotal: 350, wide: [{ field: "leveransdatum", count: 0 }, { field: "orderdatum", count: 0 }] });
+  ok("rader finns men inget datumfält träffar brett → datumfält_misstänkt", (faltFel || {}).status === "datumfält_misstänkt");
+  ok("och pekar ut fältnamnen som ska verifieras", /leveransdatum, orderdatum/.test((faltFel || {}).text || ""));
+  ok("kallar det inte ett datafaktum", !/verkligt datafaktum/.test((faltFel || {}).text || ""));
+
+  const riktigNolla = D({ typeTotal: 350, wide: [{ field: "leveransdatum", count: 12 }, { field: "orderdatum", count: 40 }] });
+  ok("rader finns brett men noll i perioden → period_tom", (riktigNolla || {}).status === "period_tom");
+  ok("först DÅ får det kallas ett datafaktum", /verkligt datafaktum/.test((riktigNolla || {}).text || ""));
+
+  // ⚠️ Skarpt 2026-08-20: MiraOrder hade 1 rad totalt — en TESTORDER. Mira-native
+  // offert/orderflödet är inte i drift. "0 i juni" är då sant men berättar fel
+  // sak: det betyder "ännu inte i bruk", inte "F&E sålde inget via Mira".
+  // Skillnaden avgör om vyn får hårdkoda "F&E = bara Fortnox".
+  const knappt = D({ typeTotal: 1, wide: [{ field: "leveransdatum", count: 1 }] });
+  ok("en enda rad totalt flaggas som 'knappt i drift'", /knappt är i drift/.test((knappt || {}).text || ""));
+  ok("och varnar att svaret ändras när typen tas i drift", /tas i drift ändras svaret/.test((knappt || {}).text || ""));
+  ok("grammatiken följer antalet", /har 1 rad totalt/.test((knappt || {}).text || ""));
+  const idrift = D({ typeTotal: 350, wide: [{ field: "leveransdatum", count: 40 }] });
+  ok("en typ i drift får INTE den varningen", !/knappt är i drift/.test((idrift || {}).text || ""));
+
+  // ⚠️ Det farligaste fallet: probningen själv failade.
+  const omatt = D({ typeTotal: null, wide: [{ field: "leveransdatum", count: 0 }] });
+  ok("omätbar total → status okänt", (omatt || {}).status === "okänt");
+  ok("omätt blir ALDRIG typen_tom", (omatt || {}).status !== "typen_tom");
+  const omattFalt = D({ typeTotal: 350, wide: [{ field: "leveransdatum", count: null }] });
+  ok("ett omätbart datumfält räcker för okänt", (omattFalt || {}).status === "okänt");
+  ok("omätt blir ALDRIG datumfält_misstänkt", (omattFalt || {}).status !== "datumfält_misstänkt");
+
+  const harData = D({ periodCount: 7, typeTotal: 350, wide: [{ field: "leveransdatum", count: 12 }] });
+  ok("icke-tom sida rapporteras som har_data", (harData || {}).status === "har_data");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Endpointen — diagnosen mäts med rätt instrument");
+  // ══════════════════════════════════════════════════════════════════════════
+  ok("endpointen anropar describeEmptySide", /describeEmptySide\(/.test(ep));
+  // ⚠️ bubbleCount returnerar 0 på ALLA fel (index.js: `if (!r.ok) continue` →
+  // `return 0`). Att diagnostisera en nolla med den vore cirkulärt.
+  ok("probningen använder bubbleCountStrict", /bubbleCountStrict\(/.test(epCode));
+  ok("och INTE bubbleCount", !/[^t]bubbleCount\(/.test(epCode));
+  ok("probefel blir null (omätt), inte 0", /return null;/.test(epCode));
+  ok("probefel loggas", /diagnos-probe/.test(epCode));
+  ok("diagnosen körs bara när en sida är tom",
+     /result\.mira_count === 0/.test(epCode) && /result\.fortnox_count === 0/.test(epCode));
+  ok("svaret bär diagnosen", /tom_sida_diagnos/.test(ep));
+
+  // bubbleCountStrict får inte vara en kopia av den sväljande varianten.
+  const bcsStart = SRC2.indexOf("async function bubbleCountStrict");
+  const bcs = bcsStart === -1 ? "" : SRC2.slice(bcsStart, SRC2.indexOf("\nasync function", bcsStart + 10));
+  ok("bubbleCountStrict finns", bcsStart !== -1);
+  ok("bubbleCountStrict kastar i stället för att returnera 0", /throw err;/.test(bcs));
+  ok("bubbleCountStrict returnerar aldrig en naken 0", !/return 0;/.test(bcs));
+  ok("saknad `remaining` gissas inte till 0", /missingRemaining/.test(bcs));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

@@ -37,13 +37,28 @@ export function normMiraOrder(r) {
   };
 }
 
-/** FortnoxOrder → jämförbar form. */
+/**
+ * FortnoxOrder → jämförbar form.
+ *
+ * ⚠️ MOMS. `ft_total` är Fortnox `Total` = **inklusive moms** (Total = Net +
+ * TotalVAT). `ft_net` är beloppet **exklusive** moms. Det spelar ingen roll för
+ * MATCHNINGEN — `MiraOrder.total` är också inkl moms (`total = summa +
+ * moms_belopp`, affar_api.js recomputeOrderTotals), så total↔total är rätt par.
+ * Men det spelar all roll för en VY: Intelliplans intäkt är exkl moms, och att
+ * ställa 8,1 Mkr inkl moms bredvid 6,85 Mkr exkl moms överdriver F&E med ~25 %.
+ * Kodbasens egen avstämning mot bokföringen summerar `ft_net`, inte `ft_total`
+ * (/kpi/sales/reconcile: "net_sum_active: summa ft_net").
+ *
+ * ⚠️ `ft_net` skrivs BARA vid detail-fetch (index.js: "List-svar saknar dessa").
+ * Rader utan det får `net: null` — INTE 0. Ett saknat värde som blir en nolla
+ * drar ner en summa tyst, och det är precis den sortens tystnad vi jagar.
+ */
 export function normFortnoxOrder(r) {
   return {
     source: "FortnoxOrder", id: _id(r),
     order_no: _str(r.ft_document_number), order_no_n: normOrderNo(r.ft_document_number),
     company: _id(r.linked_company), date: _day(r.ft_delivery_date || r["Created Date"]),
-    total: _num(r.ft_total) || 0, connection: _id(r.connection_id),
+    total: _num(r.ft_total) || 0, net: _num(r.ft_net), connection: _id(r.connection_id),
     cancelled: r.ft_cancelled === true || _str(r.ft_cancelled).toLowerCase() === "ja",
   };
 }
@@ -102,6 +117,20 @@ export function feOverlap(miraRows, fortnoxRows, opts = {}) {
   return {
     mira_count: mira.length, fortnox_count: fx.length,
     mira_total: sum(mira), fortnox_total: sum(fx),
+    // ⚠️ MOMSBAS — se normFortnoxOrder. *_total är INKL moms, *_net EXKL.
+    // En vy som ställer F&E bredvid Intelliplan måste använda net-basen.
+    // Täckningen redovisas: saknas ft_net på rader är net-summan för LÅG, och
+    // då ska den inte presenteras som om den vore fullständig.
+    moms_bas: {
+      fortnox_total_inkl_moms: sum(fx),
+      fortnox_net_exkl_moms: sum(fx.filter((f) => f.net != null), (f) => f.net),
+      fortnox_utan_net: fx.filter((f) => f.net == null).length,
+      fortnox_utan_net_varde_inkl_moms: sum(fx.filter((f) => f.net == null)),
+      mira_total_inkl_moms: sum(mira),
+      note: fx.filter((f) => f.net == null).length
+        ? "⚠️ ft_net saknas på minst en order (skrivs bara vid detail-fetch) → net-summan är OFULLSTÄNDIG. Presentera den inte som en total."
+        : "ft_net finns på samtliga ordrar → net-summan är fullständig.",
+    },
     matched: matchedCount,
     matched_by: Object.fromEntries(Object.entries(matches).map(([k, v]) => [k, v.length])),
     // Beloppet som skulle DUBBELRÄKNAS om båda källorna summerades rakt av.
@@ -135,4 +164,52 @@ export function feOverlap(miraRows, fortnoxRows, opts = {}) {
           ? "Överlapp på exakt ordernummer — dedup är tillförlitlig."
           : "Överlapp finns men bara via belopp/datum. Dedupen blir en gissning; stickprova exemplen innan du litar på den."),
   };
+}
+
+/**
+ * ⚠️ TOM SIDA ÄR INTE ETT SVAR — den är en fråga.
+ *
+ * `mira_count: 0` kan betyda tre helt olika saker, och skillnaden avgör om
+ * F&E får summeras ur två källor eller bara en:
+ *
+ *   a) MiraOrder-typen är tom överhuvudtaget  → Miras offertväg har aldrig gett
+ *      en order. Ingen dubbelräkningsrisk finns, men det är ett påstående om
+ *      systemet, inte om perioden.
+ *   b) Typen HAR rader, men inget av datumfälten ger träff ens i ett brett
+ *      fönster → fältnamnet eller datumformatet är fel. Nollan är en BUGG.
+ *   c) Typen har rader i det breda fönstret men noll i perioden → verkligt
+ *      datafaktum för just den perioden.
+ *
+ * Att svara "båda kan summeras" utan att veta vilket av a/b/c som gäller var
+ * precis felet 2026-08-19. Den här funktionen tvingar fram valet.
+ *
+ * @param type        typnamn, för texten
+ * @param periodCount rader i den efterfrågade perioden
+ * @param typeTotal   TOTALT antal rader av typen (strikt räknat — aldrig en
+ *                    sväljd nolla), eller null om räkningen inte gick att göra
+ * @param wide        [{field, count}] träffar per datumfält i det breda fönstret;
+ *                    count === null betyder "frågan gick inte att ställa"
+ */
+export function describeEmptySide({ type, periodCount, typeTotal, wide }) {
+  const w = wide || [];
+  const fields = w.map((x) => x.field).join(", ") || "(inga fält probade)";
+  // Kunde vi inte mäta får vi INTE landa i någon av a/b/c.
+  if (typeTotal == null || w.some((x) => x.count == null)) {
+    return { status: "okänt", type, text:
+      `${type}: gick inte att avgöra varför perioden är tom — själva diagnosfrågan failade. Behandla nollan som omätt, inte som noll.` };
+  }
+  if (typeTotal === 0) {
+    return { status: "typen_tom", type, text:
+      `${type} har noll rader TOTALT. Perioden är tom därför att typen är tom — det säger inget om just den här perioden, och en framtida order gör påståendet ogiltigt.` };
+  }
+  const wideTotal = w.reduce((a, x) => a + x.count, 0);
+  if (wideTotal === 0) {
+    return { status: "datumfält_misstänkt", type, text:
+      `⚠️ ${type} har ${typeTotal} rader men INGET av datumfälten (${fields}) ger en enda träff i det breda fönstret. Det är sannolikt ett fel fältnamn eller datumformat, inte ett datafaktum. Verifiera mot hur kodbasen SKRIVER raden innan du tolkar nollan.` };
+  }
+  if (periodCount === 0) {
+    return { status: "period_tom", type, text:
+      `${type} har ${typeTotal} rad${typeTotal === 1 ? "" : "er"} totalt och ${wideTotal} träff${wideTotal === 1 ? "" : "ar"} i det breda fönstret (${fields}) — men noll i perioden. Det är ett verkligt datafaktum för perioden.${typeTotal <= 5 ? ` ⚠️ Men ${typeTotal} rad${typeTotal === 1 ? "" : "er"} TOTALT betyder att typen knappt är i drift — behandla nollan som "ännu inte i bruk", inte som "affärsområdet omsatte inget". Den dagen typen tas i drift ändras svaret utan att någon rör koden.` : ""}` };
+  }
+  return { status: "har_data", type, text: `${type}: ${periodCount} rader i perioden.` };
 }

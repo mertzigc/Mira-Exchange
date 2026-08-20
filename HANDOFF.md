@@ -225,6 +225,46 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **Nästa:** deploya (`index.js` + `bokningslage.js` + `bokningslage_smoke.mjs` — OINCHECKADE) → kör `/admin/bokningslage/fe-overlap` för några månader → avgör F&E-räkningen → bygg själva bokningslägesvyn.
 
+**✅ DEPLOYAT + KÖRT 2026-08-20.** Första svaret efter "deployen" var fortfarande gammal kod — `verdict` saknade `INGET ATT JÄMFÖRA`-grenen och svaret saknade `mira_by_leveransdatum`. Slutsatsen "0/0 är ett datafaktum" hade alltså dragits ur kod som aldrig kördes. **Lärdom: `/version` var en handskriven sträng (`2026-08-12-lead-value-col`) och kunde inte avslöja det.** Nu läser den `RENDER_GIT_COMMIT` → `{commit, commit_short, branch, booted_at}`. **Verifiera ALLTID `/version` innan ett skarpt svar tolkas.**
+
+**Skarpt utfall juni 2026 (rätt kod):** `FortnoxOrder(FE)` **540 icke-makulerade av 608** (68 makulerade), **8 096 472 kr**. `MiraOrder` **0** — på BÅDA datumvägarna. Verdict: `BARA EN KÄLLA HAR DATA`.
+
+**⚠️ MEN 0 MiraOrder ÄR ÄNNU INTE AVGJORT.** Det kan betyda tre olika saker, och skillnaden avgör om F&E får summeras ur två källor: (a) typen är tom överhuvudtaget · (b) typen har rader men datumfältet/formatet är fel → **bugg** · (c) rader finns men inga i juni → **datafaktum**. Endpointen svarar nu själv på det: `describeEmptySide` (bokningslage.js) + probning i rutten kör BARA när en sida är tom, mäter typens total och träffar per datumfält i ett ±3-årsfönster, och svarar `tom_sida_diagnos: [{status, text}]` med status `typen_tom` · `datumfält_misstänkt` · `period_tom` · `okänt`.
+
+**⚠️ `bubbleCount` duger INTE som mätinstrument här** — den returnerar `0` på varje fel (`if (!r.ok) continue` → `return 0`). Att diagnostisera en nolla med ett instrument som självt hittar på nollor är cirkulärt. Ny **`bubbleCountStrict`** (index.js, bredvid `bubbleCount`) kastar i stället, och vägrar gissa `0` när Bubble inte skickar `remaining`. Probefel → `null` = **omätt**, aldrig `0`, och loggas.
+
+**Verifierat:** `bokningslage_smoke.mjs` **70/70** (från 47). **Mutationstestat:** `bubbleCountStrict` som returnerar 0 fäller 2 · `null` behandlat som mätt fäller 3 · endpointen som mäter med `bubbleCount` fäller 2 · borttagen `datumfält_misstänkt`-gren fäller 2. Samtliga 20 sviter gröna.
+
+**✅ F&E-FRÅGAN AVGJORD 2026-08-20 (Christian, Bubble App data):** `MiraOrder` har **1 rad totalt — en testorder**. Mira-native offert/orderflödet är **inte i drift**. Alltså: **F&E = FortnoxOrder(FE) ensamt idag, inget överlapp att deduppa.**
+
+**⚠️ MEN DET ÄR ETT SVAR MED UTGÅNGSDATUM.** Den dagen mira-native tas i drift blir dubbelräkningsrisken verklig utan att någon rör koden. Vyn får därför **inte** hårdkoda "F&E = bara Fortnox" — överlappskontrollen ska köras per period och flagga när `MiraOrder` slutar vara trivial. `describeEmptySide` säger det numera själv: vid `typeTotal <= 5` bär `period_tom`-texten *"⚠️ N rader TOTALT betyder att typen knappt är i drift — behandla nollan som 'ännu inte i bruk', inte som 'affärsområdet omsatte inget'."*
+
+### ⚠️⚠️ MOMSFÄLLAN — `ft_total` är INKL moms (upptäckt 2026-08-20, innan vyn byggdes)
+Att ställa junis **8 096 472 kr** (F&E) bredvid Intelliplans **6 850 058,36 kr** (S&P) hade överdrivit F&E med momssatsen. Bevis, inte gissning:
+- `ft_total` = Fortnox `Total` = Net + TotalVAT → **inkl moms** (index.js 8393).
+- `ft_net` = `order.Net` → **exkl moms**. Kodbasens egen avstämning mot bokföringen summerar `ft_net`: `/kpi/sales/reconcile` → *"net_sum_active: summa ft_net"*.
+- `MiraOrder.total` = `summa + moms_belopp` → **inkl moms** (affar_api.js `recomputeOrderTotals`). Därför är total↔total rätt par för MATCHNINGEN — den ska inte byta bas.
+- Intelliplans intäkt är exkl moms. **⚠️ Bekräfta med Christian innan vyn publiceras.**
+
+**⚠️ `ft_net` skrivs BARA vid detail-fetch** — *"List-svar saknar dessa"* (index.js 8576). Rader som bara list-synkats saknar fältet. `normFortnoxOrder` ger dem därför `net: null`, **inte 0** — ett saknat värde som blir en nolla drar ner summan tyst. `feOverlap` returnerar nu `moms_bas: { fortnox_total_inkl_moms, fortnox_net_exkl_moms, fortnox_utan_net, fortnox_utan_net_varde_inkl_moms, note }`, där `note` säger rakt ut om net-summan är OFULLSTÄNDIG. **Presentera aldrig en ofullständig net-summa som en total.**
+
+**Verifierat:** `bokningslage_smoke.mjs` **83/83**. **Mutationstestat (moms + drift):** `ft_net || 0` fäller 3 · net-summa ur `ft_total` fäller 3 · tyst OFULLSTÄNDIG-flagga fäller 1 · borttagen "knappt i drift"-varning fäller 2.
+
+**Nästa:** deploya → kör om fe-overlap (kontrollera `moms_bas.fortnox_utan_net` — hur många F&E-ordrar saknar `ft_net`?) → bekräfta momsbasen för Intelliplan → **då** kan bokningslägesvyn byggas.
+
+### INTELLIPLAN steg 5 — NATTLIG CRON (byggt 2026-08-20, EJ deployat)
+**`intelliplan_cron.sh` (NY).** Preflight `/version` (vilken commit kör?) → preflight `/admin/intelliplan/auth/test?force=1` (utgånget secret ska bli ett auth-fel överst, inte "0 rader" långt ner) → `intelliplan_sync.sh --apply`, `MONTHS=3` rullande. `MONTHS=12` för engångs-backfill, `DRY=1` för torrkörning.
+
+**⚠️ VARFÖR HELA PERIODER, INTE DELTA:** en månad VÄXER efter månadsskiftet (juli mitt i månaden hade 1 024 rader mot junis 2 315). Upserten är idempotent på `ip_key` och patchar bara när ett mätvärde ändrats — en oförändrad månad läser men skriver inget. Höj inte `MONTHS` "för säkerhets skull"; backfill är en engångskörning.
+
+**⚠️ `post_sync` i `intelliplan_sync.sh` var tyst.** Den pipeade `curl -sS` rakt in i `json.tool` — utan `--fail`, utan statuskoll. `curl -sS` returnerar **0 även på HTTP 500**, så en nattlig körning som failade hade sett lyckad ut i cron-loggen. Samma klass av tystnad som `.catch(() => [])`. Nu: HTTP-status + `ok:true` krävs, misslyckade perioder räknas, exitkod 1. Varningar och antal omappade konton lyfts ur JSON:en så de inte drunknar.
+
+**⚠️ INTE `--fail-with-body`** i preflighten — flaggan kräver curl ≥ 7.76 och Renders image är inte verifierad. En okänd flagga hade gett "auth misslyckades" fast auth var frisk. Manuell statuskoll i stället.
+
+**Verifierat mot en fejkad Mira-server** (fyra lägen): `ok` → exit 0 + varningar synliga · `HTTP 500` → exit 1 · `ok:false` med HTTP 200 → exit 1 · `authfail` → ABORT innan synken, exit 1. **Mutationstestat:** med den URSPRUNGLIGA `post_sync` ger HTTP 500 **exit 0** — buggen var verklig, inte hypotetisk.
+
+**Deploy:** `index.js` + `bokningslage.js` + `intelliplan_sync.sh` + `intelliplan_cron.sh` → Render. Registrera `intelliplan_cron.sh` som Render Cron Job efter midnatt svensk tid och **efter** fortnox/tengella-jobben (så ClientCompany-mappningen är färsk när kontona matchas). Inga Bubble-ändringar.
+
 **⚠️ SCOPE-KORRIGERING (Christian, 2026-08-19):** Intelliplan är **bara Carotte Staff (Service & People)** — inte koncernen. Lönsamhet per kund för hela Carotte går INTE att härleda ur 1058 ensamt. Bokningsläget ska i stället ställa de tre affärsområdena bredvid varandra: **S&P = Intelliplan · Housekeeping = FortnoxOrder(connection=TENGELLA, workorder) · F&E = FortnoxOrder(connection=FE) + MiraOrder**. Det är därför `bokningslage.js` finns, och därför F&E-överlappet måste mätas innan något summeras.
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
