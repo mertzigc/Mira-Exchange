@@ -1884,6 +1884,11 @@
   var FLROOT = root;
   var FKAVTAL = {};
 
+  // ⚠️ Källetiketten var binär: `source==="fortnox" ? "Fortnox" : "Mira"`.
+  // Sedan §9-cutovern kan en order ha source "tengella" (Housekeeping, ligger i
+  // FortnoxOrder med connection=TENGELLA) — den hade då märkts "Mira", alltså
+  // fel bolag OCH fel system. En binär mappning tål inte en tredje källa.
+  var SRC_ETIKETT={ fortnox:"Fortnox", mira:"Mira", tengella:"Tengella (HK)" };
   var STATE={ view:"list", q:"", sort:"name", dir:"asc", page:1, limit:100,
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
@@ -2327,7 +2332,7 @@
           : '<td><button class="fk-editbtn" data-fk="cdopen" data-cdtype="lead" data-cdid="'+esc(r.id)+'" data-cdtitel="'+esc(r.title||"")+'" data-cdbelopp="'+esc(r.amount==null?"":r.amount)+'">+ Skapa affär</button></td>';
       }
       body+='<tr><td>'+esc(r.date||"—")+'</td>'+
-        '<td>'+esc(r.title||"—")+'<div class="fk-src">'+esc(r.source==="fortnox"?"Fortnox":"Mira")+'</div></td>'+
+        '<td>'+esc(r.title||"—")+'<div class="fk-src">'+esc(SRC_ETIKETT[r.source]||r.source||"Mira")+'</div></td>'+
         '<td class="num">'+(r.amount==null?"—":krc(r.amount))+'</td>'+
         '<td><span class="fk-lpill '+esc(r.status_cls||"wait")+'">'+esc(r.status||"—")+'</span>'+pdf+'</td>'+act+'</tr>';
       if(isLead && STATE.dealFor && STATE.dealFor.type==="lead" && STATE.dealFor.id===r.id){
