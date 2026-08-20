@@ -28,7 +28,12 @@ export function registerCompaniesRoutes(app, deps) {
     companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyTouchMapWarm, companyPatchEntry, companyForget,
     assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
+    // ⚠️ Behövs för att skilja HK från F&E i FortnoxOrder. Sedan §9-cutovern
+    // (LIVE 2026-06-08) ligger Tengella-workordrar i FortnoxOrder med
+    // connection=TENGELLA — och de bär `ft_order_date`, aldrig ft_delivery_date.
+    TENGELLA_CONNECTION_ID,
   } = deps;
+  const _connId = (v) => (v == null ? null : (typeof v === "string" ? v : (v._id || v.id || null)));
   // multer .single-middleware (memory) för foto-upload; no-op om ej injicerat (smoke/mock).
   const _photoMw = (typeof photoUpload === "function" && typeof photoUpload.single === "function")
     ? photoUpload.single("file") : (req, res, next) => next();
@@ -50,7 +55,23 @@ export function registerCompaniesRoutes(app, deps) {
   function nOffM(r)  { const s = _str(r.status); const cls = s === "Approved" ? "ok" : ((s === "Expired" || s === "Revoked") ? "red" : "open"); return { type: "Offert", source: "mira", title: _str(r.offertnr) || "Offert", amount: _num(r.total), date: _day(r.offertdatum || r["Created Date"]), status: s || "Utkast", status_cls: cls, url: "", id: bubbleId(r) }; }
   function nOffF(r)  { const st = r.ft_cancelled ? ["Avbruten", "red"] : (r.ft_sent ? ["Skickad", "open"] : ["Öppen", "open"]); return { type: "Offert", source: "fortnox", title: _str(r.ft_document_number), amount: _num(r.ft_total), date: _day(r.ft_offer_date || r.ft_delivery_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
   function nOrdM(r)  { const s = _str(r.orderstatus); const cls = (s === "Levererad" || s === "Fakturerad") ? "ok" : "open"; return { type: "Order", source: "mira", title: _str(r.ordernr) || "Order", amount: _num(r.total), date: _day(r.orderdatum || r["Created Date"]), status: s || "Bekräftad", status_cls: cls, url: "", id: bubbleId(r) }; }
-  function nOrdF(r)  { const t = r.ft_delivery_date ? Date.parse(r.ft_delivery_date) : 0; const past = t && t < Date.now(); return { type: "Order", source: "fortnox", title: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total), date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), id: bubbleId(r) }; }
+  // ⚠️ HK OCH F&E DELAR TABELL MEN INTE DATUMFÄLT.
+  // Housekeeping-ordrar (connection=TENGELLA, source="tengella-workorder") har
+  // bara `ft_order_date` — v2-adaptern sätter aldrig ft_delivery_date. Tidigare
+  // daterades de därför på Created Date (= synkdatum, inte affärsdatum) och
+  // märktes "fortnox"/"Levererad" fast vi inte vet något om leverans.
+  function nOrdF(r)  {
+    const hk = TENGELLA_CONNECTION_ID && _connId(r.connection) === TENGELLA_CONNECTION_ID;
+    const d = hk ? r.ft_order_date : r.ft_delivery_date;
+    const t = (!hk && r.ft_delivery_date) ? Date.parse(r.ft_delivery_date) : 0;
+    const past = t && t < Date.now();
+    return { type: "Order", source: hk ? "tengella" : "fortnox",
+      title: _str(r.ft_document_number || r.ft_order_document_number),
+      amount: _num(r.ft_total), date: _day(d || r["Created Date"]),
+      status: hk ? "Workorder" : (past ? "Levererad" : "Bekräftad"),
+      status_cls: hk ? "wait" : (past ? "ok" : "open"),
+      url: _httpsUrl(r.ft_pdf), id: bubbleId(r) };
+  }
   function nInv(r)   { const bal = _num(r.ft_balance); const due = r.ft_due_date ? Date.parse(r.ft_due_date) : 0; let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: "fortnox", title: _str(r.ft_document_number), amount: _num(r.ft_total), date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || _httpsUrl(r.ft_url), id: bubbleId(r) }; }
   function nContract(r) { const end = r["slutdatum"] ? Date.parse(r["slutdatum"]) : 0; const active = !(end && !Number.isNaN(end) && end < Date.now()); return { type: "Avtal", source: "mira", title: _str(r.contract_title) || _str(r["kategori"]) || "Avtal", contract_type: _str(r.contract_type) || "Subscription", amount: _num(r["månadskostnad"]), date: _day(r["slutdatum"]), status: active ? "Aktiv" : "Avslutad", status_cls: active ? "ok" : "wait", id: bubbleId(r) }; }
   function nApproval(r) { const s = _str(r.status); const cls = s === "Approved" ? "ok" : ((s === "Expired" || s === "Revoked") ? "red" : "open"); return { type: "Signering", source: "mira", title: _str(r.rubrik) || "Signering", status: s || "Utkast", status_cls: cls, signed: _num(r.signed_count) || 0, recipients: _num(r.recipients_count) || 0, date: _day(r["Created Date"]), id: bubbleId(r) }; }

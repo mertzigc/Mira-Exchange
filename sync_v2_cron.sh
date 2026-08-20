@@ -195,6 +195,8 @@ if [ "$MODE" = "full" ]; then
   echo "[sync_v2] FULL (recent ${FULL_WINDOW_DAYS}d, since=${TSINCE}) @ $(date -u +%FT%TZ)"
   invoices_recent
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\"}"
+  # Tengella-pass — se noten i nightly-grenen. Kör i båda lägena.
+  post /sync/activities/tengella "{\"mode\":\"write\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
     echo "[sync_v2] FULL order/offer (F&E, recent) + workorder (since=${TSINCE})"
     order_offer_recent
@@ -216,6 +218,19 @@ else
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\"}"
+  # ⚠️ TENGELLA-PASS (planeringsvyn). Egen väg: /v2/TimeTableEvent →
+  # activity_sync.js → Bubble `Activity` (ActivityType=Housekeeping), som
+  # mira-kalender.html renderar med person, tider, region och arbetsledare.
+  #
+  # Den här raden SAKNADES. Verifierat 2026-08-20: inget cron-script anropade
+  # /sync/activities/* — pull-vägen kördes bara manuellt, senast 2026-06-15.
+  # Planeringsvyn visade alltså 65 dagar gamla pass utan att något larmade.
+  # Write-through (upsertActivityForComission/ForTodo) täcker BARA Miras egna
+  # typer, aldrig Tengella.
+  #
+  # Ligger UTANFÖR ORDERS_ENABLED-grinden: passen har inget med §9:s
+  # order/offer-cutover att göra och ska köra oavsett den flaggan.
+  post /sync/activities/tengella "{\"mode\":\"write\"}"
   if [ "$ORDERS_ENABLED" = "1" ]; then
     echo "[sync_v2] NIGHTLY order/offer F&E (modified=${DB}d) + workorder (since=${TSINCE})"
     # Order/offer BARA F&E (Staff = endast faktura; order/offert ligger i Intelliplan).

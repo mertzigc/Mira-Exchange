@@ -13,13 +13,28 @@ const DB = {
   Offert: [{ _id: "o1", source: "mira_fe", offertnr: "FE-1", kundforetag: "cc1", total: 2000, deal: "d1", "Created Date": "2026-07-12" }],
   FortnoxOffer: [],
   MiraOrder: [{ _id: "mo1", source: "mira_fe", ordernr: "FE-1", kundforetag: "cc1", total: 2000, deal: "d1", "Created Date": "2026-07-13" }],
-  FortnoxOrder: [], TengellaWorkorder: [],
+  // ⚠️ HK och F&E i SAMMA tabell efter §9-cutovern (LIVE 2026-06-08).
+  // HK: connection=TENG, source="tengella-workorder", BARA ft_order_date.
+  // F&E: connection=FE, ft_delivery_date.
+  FortnoxOrder: [
+    { _id: "fo1", connection: "FE", ft_document_number: "FE-100", ft_customer_name: "Acme AB",
+      ft_total: 4000, ft_net: 3200, ft_delivery_date: "2026-07-20", "Created Date": "2026-07-02" },
+    { _id: "wo1", connection: "TENG", source: "tengella-workorder", ft_document_number: "10568",
+      ft_customer_name: "Acme AB", ft_total: 2880, ft_net: 2304,
+      ft_order_date: "2026-07-18", "Created Date": "2026-08-19" },
+  ],
+  FortnoxOrderRow: [
+    { _id: "for1", connection: "TENG", ft_order_document_number: "10568", ft_row_index: 1,
+      ft_article_number: "ST-1", ft_description: "Storstädning", ft_quantity: 2, ft_price: "1200", ft_total: "2400" },
+    { _id: "for2", connection: "TENG", ft_order_document_number: "10568", ft_row_index: 2,
+      ft_article_number: "FÖ-2", ft_description: "Fönsterputs", ft_quantity: 1, ft_price: "480", ft_total: "480" },
+  ],
   FortnoxInvoice: [{ _id: "inv1", ft_customer_name: "Acme AB", ft_document_number: "F-1", ft_total: 2000, ft_our_reference: "Sara S", connection: "FE", connection_id: "FE", ft_invoice_date: "2026-07-31", "Created Date": "2026-08-05" }],
   Contract: [{ _id: "c1", contract_title: "Ramavtal", "kundföretag": "cc1", "månadskostnad": 1000, deal: "d1", "Created Date": "2026-07-15" }],
   Todo: [], "leverantör-supplier": [],
 };
 let lastConstraints = {};
-const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); if (c.constraint_type === "contains") return Array.isArray(v) ? v.map(String).includes(String(c.value)) : String(v) === String(c.value); if (c.constraint_type === "greater than") return Date.parse(v) > Date.parse(c.value); if (c.constraint_type === "less than") return Date.parse(v) < Date.parse(c.value); return true; };
+const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); if (c.constraint_type === "not in") return !(Array.isArray(c.value) && c.value.map(String).includes(String(v))); if (c.constraint_type === "contains") return Array.isArray(v) ? v.map(String).includes(String(c.value)) : String(v) === String(c.value); if (c.constraint_type === "greater than") return Date.parse(v) > Date.parse(c.value); if (c.constraint_type === "less than") return Date.parse(v) < Date.parse(c.value); return true; };
 const rec = (t, cs) => { lastConstraints[t] = (lastConstraints[t] || []).concat(cs); };
 const deps = {
   bubbleId: (r) => (r ? r._id : null),
@@ -29,7 +44,9 @@ const deps = {
   bubbleCount: async (t, cs = []) => (DB[t] || []).filter((r) => cs.every((c) => _match(r, c))).length,
   bubblePatch: async () => ({}), bubbleCreate: async () => "n", bubbleDelete: async () => ({}),
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
-  FE_CONNECTION_ID: "FE", CONNECTION_NAMES: { FE: "Food & Event" }, offertConvert: async () => ({}), renderOrderPdf: async () => ({}),
+  FE_CONNECTION_ID: "FE", TENGELLA_CONNECTION_ID: "TENG",
+  CONNECTION_NAMES: { FE: "Food & Event", TENG: "Housekeeping" },
+  offertConvert: async () => ({}), renderOrderPdf: async () => ({}),
 };
 registerAffarRoutes(app, deps);
 
@@ -99,6 +116,60 @@ const run = async () => {
   const cAll = await call("/admin/affar/list", { query: { type: "affar" } });
   ok("ofiltrerat: total=grand_total, filtered=false", cAll.body.total === 1 && cAll.body.grand_total === 1 && cAll.body.filtered === false);
   ok("filtrerat: grand_total kvar, filtered=true, total krymper", kAff0.body.grand_total === 1 && kAff0.body.filtered === true && kAff0.body.total === 0);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HOUSEKEEPING i affärsvyn — §9-cutovern (utredd 2026-08-20)
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ Affärsvyn läste `TengellaWorkorder` — en typ fryst 2026-06-04 — och
+  // EXKLUDERADE FortnoxOrder(TENGELLA), den kanoniska källan. Resultat: elva
+  // veckor gammal HK-data utan att något larmade.
+  const hkOrd = await call("/admin/affar/list", { query: { type: "order" } });
+  const orows = (hkOrd.body && hkOrd.body.rows) || [];
+  const hk = orows.find((r) => r.number === "10568");
+  const fe = orows.find((r) => r.number === "FE-100");
+
+  ok("HK-ordern syns i affärsvyn", !!hk);
+  // ⚠️ HK hämtas i en EGEN fråga (annat datumfält). Utan `not in`-exkluderingen
+  // i F&E-frågan kommer samma order tillbaka i båda och listas TVÅ gånger.
+  ok("HK-ordern listas exakt EN gång", orows.filter((r) => r.number === "10568").length === 1);
+  ok("inga dubbletter alls i listan",
+     orows.map((r) => r.id).filter((v, i, a) => a.indexOf(v) !== i).length === 0);
+  ok("och märks som tengella, inte fortnox", (hk || {}).source === "tengella");
+  ok("F&E-ordern syns fortfarande", !!fe && fe.source === "fortnox");
+  // ⚠️ Kärnan: HK har inget ft_delivery_date. Daterades den på det fältet föll
+  // den tillbaka på Created Date (synkdatum 2026-08-19), inte affärsdatumet.
+  ok("HK dateras på ft_order_date", (hk || {}).date === "2026-07-18");
+  ok("HK dateras INTE på Created Date", (hk || {}).date !== "2026-08-19");
+  ok("F&E dateras på ft_delivery_date", (fe || {}).date === "2026-07-20");
+  // Vi vet inget om leverans för HK → gissa inte "Levererad".
+  ok("HK får neutral status, inte Levererad", (hk || {}).status === "Workorder");
+  ok("F&E får levererad-status (datum passerat)", (fe || {}).status === "Levererad");
+  // Rader ur FortnoxOrderRow, batchat efter paginering.
+  ok("HK bär sina rader", ((hk || {}).rows || []).length === 2);
+  ok("raderna är sorterade på radindex", (((hk || {}).rows || [])[0] || {}).art === "ST-1");
+  ok("radinnehållet mappas rätt", (((hk || {}).rows || [])[0] || {}).name === "Storstädning");
+  ok("radbelopp läses ur ft_total", (((hk || {}).rows || [])[0] || {}).sum === 2400);
+  ok("HK flaggas som expanderbar (wo)", !!(hk || {}).wo);
+  ok("F&E är INTE expanderbar som workorder", !(fe || {}).wo);
+
+  // ── Kategorifiltret ────────────────────────────────────────────────────────
+  const hkOnly = await call("/admin/affar/list", { query: { type: "order", kategori: "Housekeeping" } });
+  const hkRows = (hkOnly.body && hkOnly.body.rows) || [];
+  ok("kategori=Housekeeping ger HK-ordern", hkRows.some((r) => r.number === "10568"));
+  ok("och INTE F&E-ordern", !hkRows.some((r) => r.number === "FE-100"));
+  const feOnly = await call("/admin/affar/list", { query: { type: "order", kategori: "Food & Event" } });
+  const feRows = (feOnly.body && feOnly.body.rows) || [];
+  ok("kategori=Food & Event ger F&E-ordern", feRows.some((r) => r.number === "FE-100"));
+  ok("och INTE HK-ordern", !feRows.some((r) => r.number === "10568"));
+
+  // ── Datumfilter — HK måste följa med ──────────────────────────────────────
+  const jul = await call("/admin/affar/list", { query: { type: "order", from: "2026-07-01", to: "2026-07-31" } });
+  const julRows = (jul.body && jul.body.rows) || [];
+  ok("datumfilter juli fångar HK (ft_order_date)", julRows.some((r) => r.number === "10568"));
+  ok("datumfilter juli fångar F&E (ft_delivery_date)", julRows.some((r) => r.number === "FE-100"));
+  const aug = await call("/admin/affar/list", { query: { type: "order", from: "2026-08-01", to: "2026-08-31" } });
+  const augRows = (aug.body && aug.body.rows) || [];
+  ok("HK dyker INTE upp i augusti (skulle betyda Created Date-fallback)", !augRows.some((r) => r.number === "10568"));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

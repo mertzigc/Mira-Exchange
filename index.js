@@ -20595,6 +20595,10 @@ registerAffarRoutes(app, {
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,
   FE_CONNECTION_ID,
+  // ⚠️ Behövs för att skilja HK från F&E i FortnoxOrder efter §9-cutovern:
+  // HK-ordrar bär connection=TENGELLA och dateras på ft_order_date, inte
+  // ft_delivery_date. Utan id:t kan affärsvyn inte filtrera dem rätt.
+  TENGELLA_CONNECTION_ID,
   CONNECTION_NAMES,
   // offert→order-konvertering (lat: offertEngine sätts vid registerOffertRoutes ovan)
   offertConvert: (id) => (offertEngine && offertEngine.convertOffertToOrder)
@@ -20714,6 +20718,8 @@ const _companiesApi = registerCompaniesRoutes(app, {
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,
+  // HK vs F&E i FortnoxOrder — se nOrdF i companies_api.js.
+  TENGELLA_CONNECTION_ID,
 });
 
 // ── POST /admin/produktion/login {code} — köks-iPad: delad kod → 12h scoped kitchen-token. ──
@@ -22747,7 +22753,9 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
     for (const o of result.omraden) {
       const [type, maxDagar, extra, label] = FARSKHET_KALLA[o.nyckel];
       o.farskhet = await farskhet(type, maxDagar, extra, label);
-      if (o.farskhet.status !== "farsk") {
+      // Samma allvarlighetsgrad som källhälsan: `inga_nya` betyder att synken
+      // KÖR men inte skapat nya rader — det gör inte talet ofullständigt.
+      if (o.farskhet.status === "inaktuell" || o.farskhet.status === "okänt") {
         o.ofullstandig = true;
         result.summa.fullstandig = false;
         result.varningar.push(`⚠️ ${o.namn}: ${o.farskhet.text}`);
@@ -22835,18 +22843,34 @@ app.get("/admin/bokningslage/kallhalsa", async (req, res) => {
       const f = kallaFarskhet({ type: k.namn, senasteSkapad: skapad, senasteRord: rord, nu, maxDagar: k.maxDagar });
       // ⚠️ En PENSIONERAD källa SKA vara inaktuell. Att flagga den som problem
       // vore precis det brus som får riktiga larm att ignoreras.
+      // ⚠️ ALARM FATIGUE. Första skarpa körningen flaggade 4 av 7 källor som 🔴
+      // när bara EN var en verklig incident. Om allt är rött är inget rött.
+      //
+      // De två signalerna får INTE kollapsas till en allvarlighetsgrad:
+      //   `inaktuell` (inget RÖRS)      → synken kör inte  → 🔴 incident
+      //   `inga_nya`  (rörs, inget nytt) → synken KÖR      → ℹ️ upplysning
+      // Att TengellaCustomer inte fått en ny kund på 14 dagar är inte ett fel;
+      // att den rördes för 1 dag sedan bevisar att synken lever. Samma sak för
+      // MiraOrder (1 testrad) och HK (löpande uppdrag, nya ordrar sällan).
       const bedomning = k.status === "pensionerad"
         ? (f.status === "farsk"
             ? "⚠️ OVÄNTAT: pensionerad källa får fortfarande nya rader — någon skriver till den."
             : "OK (pensionerad — ska inte få nya rader)")
-        : (f.status === "farsk" ? "OK" : `🔴 ${f.text}`);
+        : f.status === "farsk" ? "OK"
+        : f.status === "inga_nya" ? `ℹ️ Synken kör (rörd för ${f.dagar_sedan_rord} d) men ingen NY rad på ${f.dagar_sedan_skapad} d. Inget fel i sig — kontrollera bara om nya rader FÖRVÄNTAS.`
+        : f.status === "okänt" ? `⚠️ ${f.text}`
+        : `🔴 ${f.text}`;
       rader.push({ ...k, constraints: undefined, antal, senaste_skapad: skapad, senaste_rord: rord,
         ...(k.extraDatum ? { [k.extraDatum]: extraDatum } : {}), farskhet: f, bedomning, fel });
     }
+    // ℹ️ räknas INTE som problem — bara verkliga incidenter (🔴) och omätta/
+    // oväntade lägen (⚠️). Annars drunknar det enda riktiga larmet.
     const problem = rader.filter((r) => r.bedomning.startsWith("🔴") || r.bedomning.startsWith("⚠️"));
+    const upplysningar = rader.filter((r) => r.bedomning.startsWith("ℹ️"));
     console.log(`[bokningslage/kallhalsa] ${rader.length} källor, ${problem.length} problem`);
     return res.json({ ok: true, kontrollerad: nu, kallor: rader,
       problem: problem.map((r) => `${r.namn}: ${r.bedomning}`),
+      upplysningar: upplysningar.map((r) => `${r.namn}: ${r.bedomning}`),
       allt_ok: problem.length === 0 });
   } catch (e) {
     console.error("[bokningslage/kallhalsa]", e?.message, e?.detail || "");

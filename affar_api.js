@@ -17,7 +17,7 @@ export function registerAffarRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleCount, bubblePatch, bubbleCreate, bubbleDelete, bubbleId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
-    FE_CONNECTION_ID, CONNECTION_NAMES, offertConvert, renderOrderPdf,
+    FE_CONNECTION_ID, TENGELLA_CONNECTION_ID, CONNECTION_NAMES, offertConvert, renderOrderPdf,
   } = deps;
 
   const SOURCE_MIRA_FE = "mira_fe";
@@ -137,38 +137,14 @@ export function registerAffarRoutes(app, deps) {
   function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: "Ny", status_cls: "wait", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   function nAkt(r, m)  { const [lbl] = pick({}, _str(r.kundm_te_option_kundm_te), ["Aktivitet", "wait"]); return { type: "Aktivitet", source: "mira", company: cname(m, r.clientcompany), number: "", amount: null, date: _day(r.datum_bokning_date || r["Created Date"]), status: lbl || "Aktivitet", status_cls: "wait", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
-  // HK/Tengella-order = raw TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07 — färsk sync,
-  // syns oavsett affär). FortnoxOrder(connection=TENGELLA) exkluderas i display (connSource→
-  // "tengella") för att undvika dubbel mot ev. sync_v2-spegel. Belopp: total_price||ft_totalvat
-  // (ofta tomt → summeras från rader i Fas 2). is_deleted filtreras client-side.
-  // Rader parsas ur workorder_rows_json (finns på workordern → ingen N+1). Fält (Tengella):
-  // ItemName/ItemNo/Quantity/Price/Note. Belopp = Σ(Quantity×Price). Inget total_price-fält finns.
-  function _woRows(r) {
-    const raw = _str(r.workorder_rows_json); if (!raw) return [];
-    try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch (e) { return []; }
-  }
-  function nWorkorder(r, m) {
-    const raw = _woRows(r);
-    let amount = 0;
-    const rows = raw.map((x) => {
-      const qty = _num(x.Quantity), price = _num(x.Price), sum = qty * price;
-      amount += sum;
-      return { name: _str(x.ItemName), art: _str(x.ItemNo), qty, price, sum, note: _str(x.Note) };
-    });
-    return {
-      type: "Order", source: "tengella",
-      company: cname(m, r.company) || _str(r.description),
-      number: _str(r.workorder_no),
-      amount: amount || null,
-      date: _day(r.order_date || r["Created Date"]),
-      status: "Workorder", status_cls: "wait",
-      note: _str(r.note),
-      deal_id: _ref(r.deal) || null,
-      rows, wo: 1,
-      id: bubbleId(r),
-    };
-  }
-  const _liveWO = (arr) => (arr || []).filter((r) => r && r.is_deleted !== true);
+  // ⚠️ BORTTAGET 2026-08-20: `_woRows` / `nWorkorder` / `_liveWO` läste den
+  // PENSIONERADE typen `TengellaWorkorder` (fryst 2026-06-04 av §9-cutovern).
+  // Kommentaren här påstod "kanonisk källa … färsk sync" om data som redan då
+  // var två månader gammal — och det påståendet är hela orsaken till att
+  // affärsvyn visade elva veckor gammal Housekeeping-data.
+  // HK läses nu ur FortnoxOrder (connection=TENGELLA) via `nOrderF`, med rader
+  // ur FortnoxOrderRow via `fyllHkRader`. Koden är borttagen i stället för
+  // utkommenterad: död kod som ser levande ut var precis felet.
   function nOffertM(r, m, durl) { const [lbl, cls] = pick(OFFER_STATUS, _str(r.status), ["Utkast", "wait"]); const d0 = (Array.isArray(r.dokument) ? r.dokument[0] : null); return { type: "Offert", source: "mira", kind: _str(r.kind) || "strukturerad", company: cname(m, r.kundforetag), number: _str(r.offertnr), amount: _num(r.total) || null, date: _day(r.offertdatum || r["Created Date"]), status: lbl, status_cls: cls, url: (durl && d0) ? (durl.get(_ref(d0)) || "") : "", deal_id: _ref(r.deal) || null, order_id: null, order_nr: "", id: bubbleId(r) }; }
   // Batch: vilka Mira-offerter har redan en MiraOrder? → id→{id,nr} (för Konvertera-status i affär-vyn).
   async function orderMapForOfferts(offRecs) {
@@ -194,7 +170,57 @@ export function registerAffarRoutes(app, deps) {
   // OBS: FortnoxOrder kan ha connection=TENGELLA (§9d mappar workorders hit) → tagga
   // källa efter anslutning (som nInvoice), annars märks HK-order fel som "fortnox" och
   // Visa-knappen försöker (fåfängt) hämta Fortnox-order-PDF från Tengella-anslutningen.
-  function nOrderF(r) { const src = connSource(r.connection); const past = _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now(); return { type: "Order", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number || r.ft_order_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_delivery_date || r["Created Date"]), status: past ? "Levererad" : "Bekräftad", status_cls: past ? "ok" : "open", url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  // ⚠️ HK OCH F&E BOR I SAMMA TABELL MEN BÄR OLIKA DATUM.
+  // §9-cutovern (LIVE 2026-06-08) flyttade Tengella-workordrar till unified
+  // `FortnoxOrder` (connection=TENGELLA, source="tengella-workorder").
+  // v2-adaptern sätter `ft_order_date` men ALDRIG `ft_delivery_date` — workordern
+  // har bara OrderDate. Att datera HK på ft_delivery_date gav fallback till
+  // Created Date och gjorde raderna osynliga i varje datumfilter.
+  // Status: för HK vet vi inte om något levererats (inget leveransdatum finns),
+  // så vi behåller den neutrala "Workorder"-etiketten från den gamla vyn i
+  // stället för att gissa "Levererad".
+  function nOrderF(r) {
+    const src = connSource(r.connection);
+    const hk = src === "tengella";
+    const d = hk ? r.ft_order_date : r.ft_delivery_date;
+    const past = !hk && _ts(r.ft_delivery_date) && _ts(r.ft_delivery_date) < Date.now();
+    return { type: "Order", source: src, company: _str(r.ft_customer_name),
+      number: _str(r.ft_document_number || r.ft_order_document_number),
+      amount: _num(r.ft_total) || null, date: _day(d || r["Created Date"]),
+      status: hk ? "Workorder" : (past ? "Levererad" : "Bekräftad"),
+      status_cls: hk ? "wait" : (past ? "ok" : "open"),
+      url: _httpsUrl(r.ft_pdf), deal_id: _ref(r.deal) || null,
+      ...(hk ? { wo: 1, rows: [] } : {}),   // rows fylls efter paginering (ingen N+1)
+      id: bubbleId(r) };
+  }
+
+  // HK-orderrader ligger i `FortnoxOrderRow` (egen typ), till skillnad från den
+  // pensionerade TengellaWorkorder där de låg inbäddade i workorder_rows_json.
+  // ⚠️ Hämtas EFTER paginering, i EN batchfråga för hela sidan — annars N+1.
+  async function fyllHkRader(items) {
+    const hk = (items || []).filter((x) => x && x.wo && x.number);
+    if (!hk.length) return items;
+    const docNos = [...new Set(hk.map((x) => x.number))];
+    // Låt frågan braka — en tom lista här skulle tyst visa "0 rader".
+    const rows = await bubbleFindAll("FortnoxOrderRow", { constraints: [
+      { key: "ft_order_document_number", constraint_type: "in", value: docNos } ] });
+    const byDoc = new Map();
+    for (const r of rows) {
+      const k = _str(r.ft_order_document_number); if (!k) continue;
+      if (!byDoc.has(k)) byDoc.set(k, []);
+      byDoc.get(k).push(r);
+    }
+    for (const x of hk) {
+      const rs = (byDoc.get(x.number) || []).sort((a, b) => (_num(a.ft_row_index) || 0) - (_num(b.ft_row_index) || 0));
+      x.rows = rs.map((r) => {
+        const qty = _num(r.ft_quantity), price = _num(r.ft_price);
+        return { name: _str(r.ft_description), art: _str(r.ft_article_number),
+          qty, price, sum: _num(r.ft_total) != null ? _num(r.ft_total) : (qty || 0) * (price || 0),
+          note: "" };
+      });
+    }
+    return items;
+  }
   // ⚠️ ft_url är Fortnox API-URL (JSON, EJ PDF) på order/Fortnox-faktura → aldrig som Visa-länk.
   // Bara Tengella-fakturans ft_url är en riktig (temporär) PDF-länk. Order utan ft_pdf → lazy-knapp.
   function nInvoice(r) { const src = connSource(r.connection); const bal = _num(r.ft_balance); const due = _ts(r.ft_due_date); let st = ["Obetald", "open"]; if (bal === 0) st = ["Betald", "ok"]; else if (due && due < Date.now()) st = ["Förfallen", "red"]; return { type: "Faktura", source: src, company: _str(r.ft_customer_name), number: _str(r.ft_document_number), amount: _num(r.ft_total) || null, date: _day(r.ft_invoice_date || r["Created Date"]), status: st[0], status_cls: st[1], url: _httpsUrl(r.ft_pdf) || (src === "tengella" ? _httpsUrl(r.ft_url) : ""), deal_id: _ref(r.deal) || null, ansvarig: _str(r.ft_our_reference), id: bubbleId(r) }; }
@@ -301,21 +327,25 @@ export function registerAffarRoutes(app, deps) {
       const limit = Math.min(80, Math.max(10, parseInt(req.query.limit, 10) || 40));
       const feMira = [{ key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE }];
 
-      // HK/Tengella-order = raw TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07). FortnoxOrder
-      // med connection=TENGELLA exkluderas i display (nOrderF→source "tengella") för att undvika
-      // dubbel mot ev. sync_v2-spegel. Se nWorkorder + dedup-not.
+      // ⚠️ RÄTTAT 2026-08-20. Stod tidigare: "HK/Tengella-order = raw
+      // TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07 — färsk sync)".
+      // Den kommentaren PÅSTOD färsk sync om en typ som varit fryst sedan
+      // 2026-06-04, och kallade den kanoniska källan för "ev. sync_v2-spegel".
+      // Följden: affärsvyn visade elva veckor gammal HK-data.
+      // Sanningen: §9-cutovern (LIVE 2026-06-08) gjorde FortnoxOrder med
+      // connection=TENGELLA till kanonisk källa för HK. Ingen exkludering längre.
       const [
-        cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cWO, cInv, cAvtal,
-        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, wos, invs, avtals,
+        cLead, cAkt, cDeal, cOffM, cOffF, cOrdM, cOrdF, cInv, cAvtal,
+        m, leads, akts, deals, offMs, offFs, ordMs, ordFs, invs, avtals,
       ] = await Promise.all([
         bubbleCount("Lead"), bubbleCount("activitet_crm"), bubbleCount("deal"),
         bubbleCount("Offert", feMira), bubbleCount("FortnoxOffer"),
-        bubbleCount("MiraOrder"), bubbleCount("FortnoxOrder"), bubbleCount("TengellaWorkorder"),
+        bubbleCount("MiraOrder"), bubbleCount("FortnoxOrder"),
         bubbleCount("FortnoxInvoice"), bubbleCount("Contract"),
         companyMap(),
         recent("Lead", limit), recent("activitet_crm", limit), recent("deal", limit),
         recent("Offert", limit, feMira), recent("FortnoxOffer", limit),
-        recent("MiraOrder", limit), recent("FortnoxOrder", limit), recent("TengellaWorkorder", limit),
+        recent("MiraOrder", limit), recent("FortnoxOrder", limit),
         recent("FortnoxInvoice", limit), recent("Contract", limit),
       ]);
 
@@ -328,8 +358,7 @@ export function registerAffarRoutes(app, deps) {
         ...offFs.map(nOffertF),
         ...avtals.map((r) => nAvtal(r, m)),
         ...ordMs.map((r) => nOrderM(r, m)),
-        ...ordFs.map(nOrderF).filter((r) => r.source !== "tengella"),  // exkludera HK-fortnox → dedup mot workorders
-        ..._liveWO(wos).map((r) => nWorkorder(r, m)),                   // raw Tengella-workorders (kanonisk)
+        ...ordFs.map(nOrderF),   // HK ingår (connection=TENGELLA) — ingen exkludering
         ...invs.map(nInvoice),
       ].filter((r) => r.id);
       rows.sort((a, b) => (_ts(b.date) - _ts(a.date)));
@@ -342,7 +371,7 @@ export function registerAffarRoutes(app, deps) {
         },
         counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, avtal: cAvtal, order_mira: cOrdM, order_fortnox: cOrdF, order_tengella: cWO },
         rows,
-        note: "Order = MiraOrder + FortnoxOrder(ej HK) + raw TengellaWorkorder (kanonisk för HK, Fas 1 2026-08-07). Sortering på visnings-datum.",
+        note: "Order = MiraOrder + FortnoxOrder (HK ingår: connection=TENGELLA, daterad på ft_order_date). TengellaWorkorder pensionerad 2026-06-04. Sortering på visnings-datum.",
       });
     } catch (e) {
       console.error("[/admin/affar/feed]", e?.message, e?.detail);
@@ -370,7 +399,7 @@ export function registerAffarRoutes(app, deps) {
       const rev = (type) => bubbleFind(type, { constraints: [{ key: "deal", constraint_type: "equals", value: did }], limit: 25 }).catch(() => []);
       const dedup = (arr) => { const mp = new Map(); (arr || []).forEach((o) => { const id = bubbleId(o); if (id && !mp.has(id)) mp.set(id, o); }); return [...mp.values()]; };
 
-      const [leadRow, akts, aktRev, offList, offRev, offFRev, ordList, ordFRev, woRev, invList, invRev, avtalRows, leadRev] = await Promise.all([
+      const [leadRow, akts, aktRev, offList, offRev, offFRev, ordList, ordFRev, invList, invRev, avtalRows, leadRev] = await Promise.all([
         deal.lead ? bubbleGet("Lead", _ref(deal.lead)).catch(() => null) : null,
         getList("activitet_crm", deal.historik),
         rev("activitet_crm"),
@@ -379,7 +408,6 @@ export function registerAffarRoutes(app, deps) {
         rev("FortnoxOffer"),
         getList("FortnoxOrder", deal.order),
         rev("FortnoxOrder"),
-        rev("TengellaWorkorder"),
         getList("FortnoxInvoice", deal.invoice),
         rev("FortnoxInvoice"),
         rev("Contract"),
@@ -395,7 +423,6 @@ export function registerAffarRoutes(app, deps) {
       const aktRows   = dedup([...(akts || []), ...(aktRev || [])]);
       const offFRows  = dedup(offFRev);                             // FortnoxOffer via deal
       const fortOrders = dedup([...(ordList || []), ...(ordFRev || [])]);
-      const woRows    = _liveWO(dedup(woRev));                      // TengellaWorkorder via deal
       const invRowsAll = dedup([...(invList || []), ...(invRev || [])]);
       const leadUnion = dedup([...(leadRow ? [leadRow] : []), ...(leadRev || [])]);
       const leadPrimary = leadUnion[0] || null;
@@ -415,10 +442,11 @@ export function registerAffarRoutes(app, deps) {
       ], offOmap);
       const avtalItems = (avtalRows || []).map((r) => tag(nAvtal(r, m), true));  // Contract: bara reverse
       const ordItems = [
-        ...fortOrders.map(nOrderF).filter((r) => r.source !== "tengella").map((x) => tag(x, !ordListIds.has(x.id))),
+        // HK ingår nu — samma tabell, connSource skiljer dem åt i display.
+        ...fortOrders.map(nOrderF).map((x) => tag(x, !ordListIds.has(x.id))),
         ...miraOrders.map((r) => tag(nOrderM(r, m), false)),   // via offert-kedjan, ej manuell
-        ...woRows.map((r) => tag(nWorkorder(r, m), true)),     // TengellaWorkorder: bara reverse
       ];
+      await fyllHkRader(ordItems);   // HK-rader ur FortnoxOrderRow, batchat
       const invItems = invRowsAll.map((r) => tag(nInvoice(r), !invListIds.has(bubbleId(r))));
 
       // ── redigerbara deal-fält (förifyllning) ──
@@ -621,30 +649,48 @@ export function registerAffarRoutes(app, deps) {
           : ((miraCatOk ? await bubbleCount("Offert", mBase) : 0) + await bubbleCount("FortnoxOffer", fBase)));
       }
       else if (type === "order") {
-        // Order = MiraOrder + FortnoxOrder(ej HK) + raw TengellaWorkorder (kanonisk HK, Fas 1 2026-08-07).
+        // Order = MiraOrder + FortnoxOrder. HK ligger i FortnoxOrder med
+        // connection=TENGELLA sedan §9-cutovern (LIVE 2026-06-08) — den
+        // pensionerade `TengellaWorkorder` läses INTE längre (fryst 2026-06-04).
+        //
+        // ⚠️ TVÅ FRÅGOR MOT SAMMA TABELL, olika datumfält: F&E m.fl. daterar på
+        // `ft_delivery_date`, HK på `ft_order_date` (v2-adaptern sätter aldrig
+        // leveransdatum). Ett gemensamt datumfönster hade tappat HK helt så fort
+        // ett datumfilter var aktivt.
         const m = await companyMap();
-        const dMira = dateC("orderdatum"), dFort = dateC("ft_delivery_date"), dWo = dateC("order_date"), pDoc = personC("doc");
-        const mBase = [...dMira, ...pDoc], fBase = [...dFort, ...pDoc, ...fortKatC], wBase = [...dWo, ...pDoc];
-        const useMira = miraCatOk, useWo = tengCatOk, useFort = (!_kategori || _kategori !== "Housekeeping");   // HK visas via Tengella, ej FortnoxOrder
-        let miras, forts, wos;
+        const dMira = dateC("orderdatum"), dFort = dateC("ft_delivery_date"), dHk = dateC("ft_order_date"), pDoc = personC("doc");
+        const HK_CONN = [{ key: "connection", constraint_type: "equals", value: TENGELLA_CONNECTION_ID }];
+        const EJ_HK = [{ key: "connection", constraint_type: "not in", value: [TENGELLA_CONNECTION_ID] }];
+        const mBase = [...dMira, ...pDoc];
+        const fBase = [...dFort, ...pDoc, ...fortKatC, ...EJ_HK];    // allt UTOM HK
+        const hBase = [...dHk, ...pDoc, ...HK_CONN];                 // bara HK
+        const useMira = miraCatOk;
+        const useHk = tengCatOk;                                     // kategori Housekeeping
+        const useFort = (!_kategori || _kategori !== "Housekeeping");
+        let miras, forts, hks;
         if (q) {
           const ccIds = ccIdsMatching(m, q);
           if (useMira) { const mSets = [[...mBase, { key: "ordernr", constraint_type: "text contains", value: q }]]; if (ccIds.length) mSets.push([...mBase, { key: "kundforetag", constraint_type: "in", value: ccIds }]); miras = await searchUnion("MiraOrder", mSets); } else miras = [];
-          forts = useFort ? await searchUnion("FortnoxOrder", [
-            [...fBase, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
-            [...fBase, { key: "ft_document_number", constraint_type: "text contains", value: q }],
-          ]) : [];
-          if (useWo) { const woSets = [[...wBase, { key: "workorder_no", constraint_type: "text contains", value: q }]]; if (ccIds.length) woSets.push([...wBase, { key: "company", constraint_type: "in", value: ccIds }]); wos = await searchUnion("TengellaWorkorder", woSets); } else wos = [];
-        } else { miras = useMira ? await pageOf("MiraOrder", mBase) : []; forts = useFort ? await pageOf("FortnoxOrder", fBase) : []; wos = useWo ? await pageOf("TengellaWorkorder", wBase) : []; }
+          const fritext = (base) => [
+            [...base, { key: "ft_customer_name", constraint_type: "text contains", value: q }],
+            [...base, { key: "ft_document_number", constraint_type: "text contains", value: q }],
+          ];
+          forts = useFort ? await searchUnion("FortnoxOrder", fritext(fBase)) : [];
+          hks = useHk ? await searchUnion("FortnoxOrder", fritext(hBase)) : [];
+        } else {
+          miras = useMira ? await pageOf("MiraOrder", mBase) : [];
+          forts = useFort ? await pageOf("FortnoxOrder", fBase) : [];
+          hks = useHk ? await pageOf("FortnoxOrder", hBase) : [];
+        }
         const combined = [
           ...miras.map((r) => nOrderM(r, m)),
-          ...forts.map(nOrderF).filter((r) => r.source !== "tengella"),
-          ..._liveWO(wos).map((r) => nWorkorder(r, m)),
+          ...forts.map(nOrderF),
+          ...hks.map(nOrderF),
         ].sort((a, b) => _ts(b.date) - _ts(a.date));
-        rows = combined.slice(0, limit);
-        grand_total = (await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder")) + (await bubbleCount("TengellaWorkorder"));
+        rows = await fyllHkRader(combined.slice(0, limit));   // rader EFTER paginering
+        grand_total = (await bubbleCount("MiraOrder")) + (await bubbleCount("FortnoxOrder"));
         total = !filtersActive ? grand_total : (q ? combined.length
-          : ((useMira ? await bubbleCount("MiraOrder", mBase) : 0) + (useFort ? await bubbleCount("FortnoxOrder", fBase) : 0) + (useWo ? await bubbleCount("TengellaWorkorder", wBase) : 0)));
+          : ((useMira ? await bubbleCount("MiraOrder", mBase) : 0) + (useFort ? await bubbleCount("FortnoxOrder", fBase) : 0) + (useHk ? await bubbleCount("FortnoxOrder", hBase) : 0)));
       }
       else {
         return res.status(400).json({ ok: false, error: "okänd_typ", hint: "type=lead|aktivitet|offert|order|faktura|avtal|affar" });
@@ -1039,12 +1085,10 @@ export function registerAffarRoutes(app, deps) {
           [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
           [{ key: "ft_document_number", constraint_type: "text contains", value: q }],
         ]);
-        const woSets = [[{ key: "workorder_no", constraint_type: "text contains", value: q }]];
-        if (ccIds.length) woSets.push([{ key: "company", constraint_type: "in", value: ccIds }]);
-        const wos = await searchUnionAll("TengellaWorkorder", woSets);
+        // HK ingår i `forts` (FortnoxOrder, connection=TENGELLA) sedan §9-cutovern
+        // — ingen separat TengellaWorkorder-sökning och ingen exkludering.
         miras.map((r) => nOrderM(r, m)).forEach((x) => push(x, false));           // Mira-order: via offert
-        forts.map(nOrderF).filter((r) => r.source !== "tengella").forEach((x) => push(x, true));
-        _liveWO(wos).map((r) => nWorkorder(r, m)).forEach((x) => push(x, true));
+        forts.map(nOrderF).forEach((x) => push(x, true));
       } else if (type === "faktura") {
         const forts = await searchUnionAll("FortnoxInvoice", [
           [{ key: "ft_customer_name", constraint_type: "text contains", value: q }],
@@ -1091,7 +1135,11 @@ export function registerAffarRoutes(app, deps) {
     avtal: () => "Contract",
     faktura: () => "FortnoxInvoice",
     offert: (src) => (src === "fortnox" ? "FortnoxOffer" : "Offert"),
-    order: (src) => (src === "tengella" ? "TengellaWorkorder" : (src === "mira" ? null : "FortnoxOrder")),
+    // ⚠️ HK (src "tengella") pekade tidigare på "TengellaWorkorder" — pensionerad
+    // typ. HK-ordrar ÄR FortnoxOrder efter §9-cutovern, så kopplingen ska skrivas
+    // på FortnoxOrder. Pekade man fel skrevs deal-kopplingen på en rad som
+    // affärsvyn inte längre läser.
+    order: (src) => (src === "mira" ? null : "FortnoxOrder"),
   };
   app.options("/admin/affar/link", (req, res) => { planningCors && planningCors(req, res); res.sendStatus(204); });
   app.post("/admin/affar/link", async (req, res) => {

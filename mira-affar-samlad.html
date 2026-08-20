@@ -969,7 +969,12 @@
       .catch(function(){ cell.innerHTML='<div class="deal"><div class="deal-h muted">Nätverksfel.</div></div>'; });
   }
 
-  // ── workorder radexpandering (Tengella-order) ──
+  // ── HK-radexpandering (Housekeeping-order från Tengella) ──
+  // ⚠️ Källan bytte 2026-08-20: raderna kommer inte längre ur TengellaWorkorder
+  // (pensionerad 2026-06-04) utan ur FortnoxOrder + FortnoxOrderRow, batchat av
+  // backend efter paginering. Formen är oförändrad: r.wo=1 + r.rows[{art,name,
+  // qty,price,sum}], så den här renderingen behövde inte röras. `r.id` är nu ett
+  // FortnoxOrder-id, vilket är precis vad koppla-widgeten ska patcha.
   function findAnyRow(id){
     var i;
     for(i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id) return STATE.listRows[i]; }

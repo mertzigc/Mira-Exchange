@@ -452,7 +452,13 @@ const run = () => {
   ok("varje område färskhetskontrolleras", /for \(const o of result\.omraden\)/.test(sCode) && /o\.farskhet = await farskhet\(/.test(sCode));
   ok("färskhet läses på både Created Date och Modified Date",
      /nyaste\(type, "Created Date", extra\)/.test(sCode) && /nyaste\(type, "Modified Date", extra\)/.test(sCode));
-  ok("icke-färsk källa gör området ofullständigt", /o\.farskhet\.status !== "farsk"/.test(sCode));
+  // ⚠️ ALARM FATIGUE-RÄTTNING 2026-08-20: villkoret var `status !== "farsk"`,
+  // vilket flaggade `inga_nya` (= synken KÖR, bara inga nya rader) som ett
+  // problem. Första skarpa körningen gav 4 🔴 av 7 källor när bara EN var en
+  // verklig incident. Bara `inaktuell` (inget rörs) och `okänt` (omätt) duger.
+  ok("bara inaktuell/okänt gör området ofullständigt",
+     /o\.farskhet\.status === "inaktuell" \|\| o\.farskhet\.status === "okänt"/.test(sCode));
+  ok("inga_nya flaggar INTE området", !/status !== "farsk"/.test(sCode));
   // ⚠️ HK och F&E bor i SAMMA tabell. En okonstraintad färskhetsmätning hade
   // gjort HK "färsk" bara för att F&E synkas — falsk trygghet av värsta sorten.
   ok("HK-färskheten är constraintad på TENGELLA-connection",

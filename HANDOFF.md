@@ -381,14 +381,45 @@ Källor som mäts: `FortnoxOrder(F&E)` · `FortnoxOrder(TENGELLA/HK)` · `Tengel
 |---|---|---|
 | 1 | HK i bokningsläget → `FortnoxOrder(TENGELLA)` på `ft_order_date` | ✅ rättat |
 | 2 | Färskhetskontroll per connection, inte per typ | ✅ rättat |
-| 3 | **`affar_api.js` → läs `FortnoxOrder(TENGELLA)` i st.f. `TengellaWorkorder`** — och ta bort exkluderingen av "sync_v2-spegeln" | 🔴 **EJ GJORT — kräver beslut, se nedan** |
+| 3 | `affar_api.js` + `companies_api.js` + frontend → HK ur `FortnoxOrder(TENGELLA)` | ✅ **GJORT** |
 | 4 | Färskhetskontroll på alla källor → `GET /admin/bokningslage/kallhalsa` | ✅ byggt |
 | 5 | **Cron för `/sync/activities/tengella`** (passen finns redan via `/v2/TimeTableEvent` → Activity, men körs bara manuellt) | 🔴 ej gjort |
-| 6 | Avveckla `TengellaWorkorder` när inget läser den | 🔴 ej gjort |
+| 6 | Avveckla `TengellaWorkorder` när inget läser den | 🟡 inget läser den i affärsvyn längre; kvar i länk-/reconcile-listor (index.js 16591/16609/16625) |
+| 7 | Cron för `/sync/activities/tengella` (Tengella-passen) | ✅ tillagd i `sync_v2_cron.sh` |
 
 **⚠️ Åtgärd 3 är inte en ren omskrivning.** `affar_api.js` exkluderar `FortnoxOrder(TENGELLA)` för att undvika dubbelräkning mot `TengellaWorkorder`. Byter man källa måste exkluderingen bort SAMTIDIGT, annars försvinner HK helt ur affärsvyn. Historiska `TengellaWorkorder`-rader (t.o.m. 4 juni) finns dessutom sannolikt ÄVEN som `FortnoxOrder` från §9-backfillen (HANDOFF rad 1443: *"backfillat 2026 (workorder 2025+2026)"*) — kontrollera överlappet innan bytet, precis som för F&E.
 
-**Verifierat:** `bokningslage_smoke.mjs` **171/171**. **Mutationstestat:** HK på `ft_delivery_date` fäller 2 · okonstraintad HK-färskhet fäller 1 · constraints ej vidarebefordrade fäller 1 · HK med F&E:s etikett fäller 3. Samtliga 20 sviter gröna.
+### ✅ AFFÄRSVYN + KUNDKORTET RÄTTADE (2026-08-20)
+Källhälsan bevisade att bytet var säkert: **`FortnoxOrder(TENGELLA)` = 765 rader, rörda samma dag** mot `TengellaWorkorder` = 583 rader frysta 4 juni. Data fanns alltså hela tiden — i rätt tabell.
+
+**Backend `affar_api.js`:**
+- `nOrderF` grenar på connection: HK dateras på **`ft_order_date`** (F&E på `ft_delivery_date`), får `source: "tengella"`, och den neutrala statusen **`Workorder`** i stället för en gissad `Levererad` — vi har inget leveransdatum att grunda den på.
+- Order-listan gör **två frågor mot samma tabell**: F&E m.fl. med `connection not in [TENGELLA]` på `ft_delivery_date`, HK med `connection equals TENGELLA` på `ft_order_date`. Ett gemensamt datumfönster hade tappat HK helt så fort ett datumfilter var aktivt. **`not in`-exkluderingen är inte kosmetisk** — utan den kommer HK tillbaka i båda frågorna och listas dubbelt.
+- `fyllHkRader()` hämtar HK-rader ur **`FortnoxOrderRow`** i EN batchfråga **efter paginering** (tidigare låg de inbäddade i `workorder_rows_json` → ingen N+1; nu är det en egen typ och N+1-risken är verklig).
+- Feed, deal-kortet, doc-search och `LINK_MAP.order` uppdaterade. `LINK_MAP` pekade HK-kopplingar på `TengellaWorkorder` — deal-kopplingen skrevs alltså på en rad vyn inte längre läser.
+- `_woRows` / `nWorkorder` / `_liveWO` **borttagna**, inte utkommenterade. Död kod som ser levande ut var precis felet.
+
+**⚠️ FÄLLA VID BORTTAGNING UR `Promise.all`:** att ta bort en post utan att ta bort motsvarande namn ur destruktureringen **förskjuter alla efterföljande variabler** — tyst. Hände i både feed och deal-kortet; fångat med ett aritetstest (19 vs 19, 12 vs 12).
+
+**Backend `companies_api.js` (kundkortet):** samma bugg fanns i `nOrdF` — HK saknar `ft_delivery_date` och daterades därför på **Created Date (synkdatum, inte affärsdatum)** och märktes `fortnox`/`Levererad`. Rättat likadant. Kräver `TENGELLA_CONNECTION_ID` i deps (injicerat från index.js).
+
+**Frontend `mira-affar-samlad.html`:** renderingen behövde inte röras — backend behöll kontraktet (`r.wo = 1` + `r.rows[{art,name,qty,price,sum}]`). Kommentaren som pekade ut TengellaWorkorder är rättad, och `r.id` är nu ett FortnoxOrder-id, vilket är exakt vad koppla-widgeten ska patcha.
+
+**Verifierat med BETEENDETESTER (inte grep):** `affar_ansvarig_smoke.mjs` **50/50** (från 27) kör riktiga routes mot mock-DB med både en F&E- och en HK-order: HK syns, märks `tengella`, dateras på `ft_order_date` (**inte** Created Date), får `Workorder`-status, bär sina två rader sorterade på radindex, listas **exakt en gång**, och följer både kategori- och datumfiltret. `affar_richcard_smoke.mjs` **29/29** — fixturerna skrevs om från `TengellaWorkorder` till `FortnoxOrder`+`FortnoxOrderRow`.
+
+**Mutationstestat:** HK på `ft_delivery_date` fäller 2 · borttagen HK-fråga fäller 5 · uteblivna HK-rader fäller 4 · borttagen `not in` (dubblett) fäller 2 · gissad leveransstatus fäller 1.
+
+### ⚠️ ALARM FATIGUE — rättat samma dag
+Källhälsans första skarpa körning gav **4 🔴 av 7 källor** när bara EN var en verklig incident. Orsak: jag kollapsade de två färskhetssignalerna till en allvarlighetsgrad. Nu:
+- `inaktuell` (inget **rörs**) → 🔴 incident — synken kör inte.
+- `inga_nya` (rörs, inget nytt) → ℹ️ upplysning — synken **kör**; att TengellaCustomer inte fått en ny kund på 14 dagar är inte ett fel.
+- `okänt` (omätt) → ⚠️.
+
+Bara 🔴 och ⚠️ hamnar i `problem`. **Om allt är rött är inget rött.**
+
+**Verifierat:** `bokningslage_smoke.mjs` **185/185**.
+
+**Verifierat (HK-utredningen):** `bokningslage_smoke.mjs` **171/171**. **Mutationstestat:** HK på `ft_delivery_date` fäller 2 · okonstraintad HK-färskhet fäller 1 · constraints ej vidarebefordrade fäller 1 · HK med F&E:s etikett fäller 3. Samtliga 20 sviter gröna.
 
 **Nästa:** deploya → kör om `summary` och kontrollera att HK nu ger rader → bygg HTML-vyn ovanpå. Datalagret är klart; presentationen ska bära `matt`-etiketterna och `varningar` **synligt**, inte i en tooltip — de tre bolagen mäts på tre olika sätt och det får inte gå att missa.
 

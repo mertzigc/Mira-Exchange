@@ -46,9 +46,20 @@ const DB = {
   MiraOrder: [{ _id: "moX", kundforetag: "cc1", ordernr: "FE-2026-0004", total: 20000, orderdatum: "2026-07-06", offert: "offM_list", orderstatus: "Bekräftad" }],
   FortnoxOrder: [
     { _id: "foFE", ft_customer_name: "Acme AB", ft_document_number: "10500", ft_total: 8000, connection: "FE_CONN", deal: "d1" },
-    { _id: "foTeng", ft_customer_name: "Beta Städ", ft_document_number: "10825", ft_total: 3000, connection: "TENG_CONN", deal: "d1" }, // ska exkluderas
+    // ⚠️ RÄTTAT 2026-08-20: HK-ordern exkluderades tidigare ur affärsvyn till
+    // förmån för TengellaWorkorder — en typ fryst sedan 2026-06-04. Efter
+    // §9-cutovern (LIVE 2026-06-08) ÄR detta den kanoniska HK-raden och SKA
+    // ingå. HK bär ft_order_date, aldrig ft_delivery_date.
+    { _id: "foTeng", ft_customer_name: "Beta Städ", ft_document_number: "10825", ft_total: 3000, ft_order_date: "2026-07-09", connection: "TENG_CONN", source: "tengella-workorder", deal: "d1" },
+    // HK-order kopplad till d2 (tidigare TengellaWorkorder "woBeta").
+    { _id: "woBeta", ft_customer_name: "Beta Städ", ft_document_number: "WO-99", ft_total: 1000, ft_order_date: "2026-07-08", connection: "TENG_CONN", source: "tengella-workorder", deal: "d2" },
   ],
-  TengellaWorkorder: [{ _id: "woBeta", company: "cc2", workorder_no: "WO-99", order_date: "2026-07-08", workorder_rows_json: JSON.stringify([{ ItemName: "Städ", ItemNo: "S1", Quantity: 2, Price: 500 }]), deal: "d2" }],
+  // HK-order kopplad till d2 — ligger i FortnoxOrder efter cutovern, med
+  // raderna i FortnoxOrderRow (tidigare inbäddade i workorder_rows_json).
+  FortnoxOrderRow: [
+    { _id: "forB", connection: "TENG_CONN", ft_order_document_number: "WO-99", ft_row_index: 1,
+      ft_article_number: "S1", ft_description: "Städ", ft_quantity: 2, ft_price: "500", ft_total: "1000" },
+  ],
   FortnoxInvoice: [
     { _id: "invF_list", ft_customer_name: "Acme AB", ft_document_number: "F-1", ft_total: 20000, ft_invoice_date: "2026-07-20", ft_balance: 0, connection: "FE_CONN" },
     { _id: "invF_rev", ft_customer_name: "Acme AB", ft_document_number: "F-2", ft_total: 9000, ft_invoice_date: "2026-07-22", ft_balance: 9000, connection: "FE_CONN", deal: "d1" },
@@ -72,7 +83,7 @@ const deps = {
   bubbleCount: async (type, constraints = []) => (DB[type] || []).filter((r) => constraints.every((c) => _match(r, c))).length,
   bubblePatch: async () => ({}),
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
-  FE_CONNECTION_ID: "FE_CONN",
+  FE_CONNECTION_ID: "FE_CONN", TENGELLA_CONNECTION_ID: "TENG_CONN",
   CONNECTION_NAMES: { FE_CONN: "Food & Event", TENG_CONN: "Housekeeping" },
 };
 
@@ -95,7 +106,10 @@ const run = async () => {
   ok("offert summa = 20000+15000+9000", (off.reduce((s, x) => s + (x.amount || 0), 0)) === 44000);
 
   const ord = ch.order.items;
-  ok("order: foFE + moX (foTeng exkluderad)", ord.length === 2 && byId(ord, "foFE") && byId(ord, "moX") && !byId(ord, "foTeng"));
+  ok("order: foFE + moX + foTeng (HK ingår efter §9-cutovern)",
+     ord.length === 3 && byId(ord, "foFE") && byId(ord, "moX") && !!byId(ord, "foTeng"));
+  ok("HK-ordern märks som tengella", (byId(ord, "foTeng") || {}).source === "tengella");
+  ok("HK-ordern dateras på ft_order_date", (byId(ord, "foTeng") || {}).date === "2026-07-09");
   ok("foFE linked=true (reverse, ej i Deal.order-listfält)", byId(ord, "foFE") && byId(ord, "foFE").linked === true);
   ok("moX linked=false (via offert-kedjan)", byId(ord, "moX") && byId(ord, "moX").linked === false);
 
