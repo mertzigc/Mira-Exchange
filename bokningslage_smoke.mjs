@@ -5,7 +5,7 @@
 // egen offertväg (`MiraOrder`) rader som SAMMA affär senare får som
 // `FortnoxOrder` med FE-connection? Summeras båda rakt av dubbelräknas den.
 import fs from "node:fs";
-import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide, bokningslageSummary, normWorkorder, workorderBelopp } from "./bokningslage.js";
+import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide, bokningslageSummary, normWorkorder, workorderBelopp, kallaFarskhet } from "./bokningslage.js";
 
 let pass = 0, fail = 0;
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
@@ -379,6 +379,39 @@ const run = () => {
   ok("summan kan inte vara fullständig", (tck.summa || {}).fullstandig === false);
 
   // ══════════════════════════════════════════════════════════════════════════
+  sec("Källfärskhet — en inaktuell källa är farligare än en tom");
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ Skarpt 2026-08-20: HK gav antal:1, belopp:2880, ofullstandig:false för
+  // augusti — men inga TengellaWorkorders hade skapats sedan 4 juni. Ett litet
+  // plausibelt tal passerar varje nollkontroll. Nollan syns; det här gör inte det.
+  const NU = "2026-08-20T00:00:00.000Z";
+  const FR = (o) => kallaFarskhet(Object.assign(
+    { type: "TengellaWorkorder", senasteSkapad: NU, senasteRord: NU, nu: NU, maxDagar: 3 }, o));
+
+  ok("färsk källa är färsk", FR({}).status === "farsk");
+  const dod = FR({ senasteSkapad: "2026-06-04T00:00:00.000Z", senasteRord: "2026-06-04T00:00:00.000Z" });
+  ok("inget rört på 77 dagar → inaktuell", dod.status === "inaktuell");
+  ok("dagantalet redovisas", dod.dagar_sedan_rord === 77);
+  ok("och säger att synken sannolikt inte kör", /kör sannolikt inte/.test(dod.text || ""));
+  ok("och att talet är en rest, inte ett affärsfaktum", /rest av senaste lyckade körning/.test(dod.text || ""));
+
+  // Rörs rader men inget nytt skapas → svagare signal, egen status.
+  const ingaNya = FR({ senasteSkapad: "2026-06-04T00:00:00.000Z", senasteRord: NU });
+  ok("rader rörs men inga nya → inga_nya, inte inaktuell", ingaNya.status === "inga_nya");
+  ok("och kallas inte färsk", ingaNya.status !== "farsk");
+  ok("men påstår inte att synken är död", !/kör sannolikt inte/.test(ingaNya.text || ""));
+
+  // ⚠️ Omätt är inte färskt.
+  const omattF = FR({ senasteSkapad: null, senasteRord: null });
+  ok("omätbar färskhet → okänt", omattF.status === "okänt");
+  ok("omätt blir ALDRIG färsk", omattF.status !== "farsk");
+  ok("och säger att talet är overifierat", /overifierat/.test(omattF.text || ""));
+
+  // Gränsen ska gå att flytta, och exakt på gränsen är fortfarande färskt.
+  ok("precis på gränsen är färskt", FR({ senasteSkapad: "2026-08-17T00:00:00.000Z", senasteRord: "2026-08-17T00:00:00.000Z" }).status === "farsk");
+  ok("en dag över gränsen är det inte", FR({ senasteSkapad: "2026-08-16T00:00:00.000Z", senasteRord: "2026-08-16T00:00:00.000Z" }).status === "inaktuell");
+
+  // ══════════════════════════════════════════════════════════════════════════
   sec("Summary-endpointen");
   // ══════════════════════════════════════════════════════════════════════════
   const sStart = SRC2.indexOf('app.get("/admin/bokningslage/summary"');
@@ -407,6 +440,12 @@ const run = () => {
   ok("diagnosen mäts med bubbleCountStrict", /bubbleCountStrict\(/.test(sCode));
   ok("ett tomt område kan aldrig vara fullständigt", /o\.ofullstandig = true/.test(sCode));
   ok("och nollar summans fullstandig", /result\.summa\.fullstandig = false/.test(sCode));
+  // ⚠️ Färskhetskontrollen — HK:s 2 880 kr fick aldrig se friskt ut igen.
+  ok("varje område färskhetskontrolleras", /for \(const o of result\.omraden\)/.test(sCode) && /o\.farskhet = await farskhet\(/.test(sCode));
+  ok("färskhet läses på både Created Date och Modified Date",
+     /nyaste\(type, "Created Date"\)/.test(sCode) && /nyaste\(type, "Modified Date"\)/.test(sCode));
+  ok("icke-färsk källa gör området ofullständigt", /o\.farskhet\.status !== "farsk"/.test(sCode));
+  ok("HK färskhetskontrolleras mot TengellaWorkorder", /housekeeping: \["TengellaWorkorder", 3\]/.test(sCode));
   // ⚠️ ip_period är HELA månader — ett delspann gör S&P-talet för stort.
   ok("delspann mot månadskornighet flaggas", /sp_tacker_perioden/.test(sEp) && /inte hela månader/.test(sEp));
   ok("pågående period upptäcks mot dagens datum", /periodPagaende: to >= idag/.test(sCode));

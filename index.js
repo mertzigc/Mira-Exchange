@@ -12,7 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { feOverlap, describeEmptySide, bokningslageSummary } from "./bokningslage.js";
+import { feOverlap, describeEmptySide, bokningslageSummary, kallaFarskhet } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
@@ -22692,6 +22692,44 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
       housekeeping: ["TengellaWorkorder", ["order_date"]],
       food_event: ["FortnoxOrder", ["ft_delivery_date"]],
     };
+    // ── Färskhetskontroll per källa ──────────────────────────────────────────
+    // ⚠️ En INAKTUELL källa passerar varje nollkontroll. Skarpt 2026-08-20 gav
+    // HK `antal: 1, belopp: 2880, ofullstandig: false` för augusti — men inga
+    // TengellaWorkorders hade skapats sedan 4 juni. Ett litet plausibelt tal är
+    // farligare än en nolla, för nollan syns.
+    // Två billiga frågor per källa (limit 1, sorterad) — ingen paginering.
+    const nyaste = async (type, field) => {
+      const r = await bubbleFind(type, { limit: 1, sort_field: field, descending: true });
+      return (r && r[0] && r[0][field]) || null;
+    };
+    const farskhet = async (type, maxDagar) => {
+      try {
+        const [skapad, rord] = await Promise.all([nyaste(type, "Created Date"), nyaste(type, "Modified Date")]);
+        return kallaFarskhet({ type, senasteSkapad: skapad, senasteRord: rord,
+          nu: new Date().toISOString(), maxDagar });
+      } catch (e) {
+        // ⚠️ Omätt, inte färskt. kallaFarskhet ger då status "okänt".
+        console.error(`[bokningslage/summary] färskhetskontroll ${type} failade:`, e?.message, e?.detail || "");
+        return kallaFarskhet({ type, senasteSkapad: null, senasteRord: null, nu: new Date().toISOString(), maxDagar });
+      }
+    };
+    // Gränsen = nattlig synk + marginal. Intelliplan läser om hela månader varje
+    // natt, Tengella/Fortnox körs nattligt via egna cron-jobb.
+    const FARSKHET_KALLA = {
+      service_people: [IP_ORDERMONTH_TYPE, 3],
+      housekeeping: ["TengellaWorkorder", 3],
+      food_event: ["FortnoxOrder", 3],
+    };
+    for (const o of result.omraden) {
+      const [type, maxDagar] = FARSKHET_KALLA[o.nyckel];
+      o.farskhet = await farskhet(type, maxDagar);
+      if (o.farskhet.status !== "farsk") {
+        o.ofullstandig = true;
+        result.summa.fullstandig = false;
+        result.varningar.push(`⚠️ ${o.namn}: ${o.farskhet.text}`);
+      }
+    }
+
     const tomma = result.omraden.filter((o) => o.antal === 0);
     for (const o of tomma) {
       const [type, fields] = PROBE_KALLA[o.nyckel];

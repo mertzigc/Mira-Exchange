@@ -312,6 +312,39 @@ Aug 2026 gav S&P 5 833 564,90 (177 rader) · **HK 0 kr / 0 rader** · F&E 3 035 
 
 **Verifierat:** `bokningslage_smoke.mjs` **151/151** (från 133). **Mutationstestat:** HK tillbaka på FortnoxOrder fäller 3 · HK märkt med leveransdatum fäller 3 · oflaggad radlös workorder fäller 2 · borttagna workordrar medräknade fäller 3 · drift-formulering vid 1 rad fäller 1 · `tomma = []` fäller 1 · diagnos utan per-område-anrop fäller 1. Samtliga 20 sviter gröna.
 
+### ⚠️⚠️ INAKTUELL KÄLLA ÄR FARLIGARE ÄN TOM (upptäckt 2026-08-20)
+Efter HK-rättningen svarade `summary`: **HK `antal: 1, belopp: 2880, ofullstandig: false`** för augusti. Talet SÅG friskt ut. Sanningen: **inga `TengellaWorkorder` har skapats sedan 4 juni** — synken slutade leverera.
+
+**Det är den svåraste varianten av samma klass.** En TOM källa fångas av `describeEmptySide`. En INAKTUELL källa ger ett litet, plausibelt tal som passerar varje nollkontroll. Nollan syns; det här gör det inte.
+
+**`kallaFarskhet()` (bokningslage.js) + färskhetskontroll i `summary`.** Två frågor per källa (`limit 1`, sorterad — ingen paginering), som mäter **två olika saker**:
+- **`senaste_skapad`** (max `Created Date`) — gammal ⇒ inget nytt kommer in.
+- **`senaste_rord`** (max `Modified Date`) — gammal ⇒ synken rör *ingenting alls*, alltså kör den sannolikt inte.
+
+Fyra statusar: `farsk` · `inga_nya` (rader uppdateras men inga nya — lugn period ELLER synk som slutat skapa) · `inaktuell` (*"synken rör ingenting — den kör sannolikt inte. Talet är en rest av senaste lyckade körning."*) · `okänt` (omätt är **aldrig** färskt). Icke-färsk källa → området blir `ofullstandig`, `summa.fullstandig` nollas, varning läggs till. Gräns 3 dagar = nattlig synk + marginal.
+
+### TENGELLA-KEDJAN — hur data hämtas och var den landar
+```
+tengella_cron.sh  (Render Cron Job, x-api-key + X-Sync-Secret)
+  → POST /tengella/cron   (index.js 8117, requireSyncSecret)
+      ├─ tengellaLogin(orgNo)                    TENGELLA_ORGNO, default 746-0509
+      ├─ A) listTengellaCustomers  → upsertTengellaCustomerToBubble → TengellaCustomer
+      └─ B) listTengellaWorkOrders → upsertTengellaWorkorderToBubble → TengellaWorkorder
+                                   → upsertTengellaWorkorderRowToBubble → TengellaWorkorderRow
+```
+**Bubble-typer:** `TengellaCustomer` · `TengellaWorkorder` · `TengellaWorkorderRow` · **`TengellaSyncState`** (en rad per `org_no`).
+
+**⚠️ SYNKEN ÄR CURSOR-DRIVEN OCH LÅSBAR.** `TengellaSyncState` bär `customers_cursor` · `workorders_cursor` · `last_run` · `last_ok` · `locked_until`. Varje sida sparar cursorn direkt (tappar aldrig läget). Nås slutet (`Next: null`) sparas `""` → nästa körning börjar om från början. Taket per körning är `workordersMaxPages × limit` = **40 × 50 = 2 000 workordrar**; fler än så tar flera nätter.
+
+**Felsökningsordning när HK står stilla:**
+1. `curl -sS "$HOST/version"` — kör rätt kod?
+2. Render → Cron Jobs: **är `tengella_cron.sh` schemalagt och grönt?** (Cron-scheman ligger i Renders UI, inte i repot — inget `render.yaml` finns.)
+3. `TengellaSyncState` i Bubble App data: `last_run`, `last_ok`, `workorders_cursor`, `locked_until`. Ett `locked_until` i FRAMTIDEN blockerar varje körning (`skipped: "locked"`); låset sätts 8 min och släpps med `locked_until: null` — **och Bubble lagrar inte null**, så fältet kan bära ett gammalt värde utan att blockera. Kolla tidsstämpeln, inte bara att fältet finns.
+4. `POST /tengella/cron` manuellt (kräver `X-Sync-Secret`) — svaret bär `workorders.pages/fetched/upserted/cursor`. `fetched: 0` med tom cursor ⇒ Tengella returnerar inget, inte att vi tappat läget.
+5. Render-loggen: `[tengella/cron] workorders page {sentCursor, got, next, existsMoreData}` loggas per sida.
+
+**Verifierat:** `bokningslage_smoke.mjs` **168/168** (från 151). **Mutationstestat:** borttagen `inaktuell`-gren fäller 4 · omätt som mätt fäller 3 · borttagen `inga_nya`-signal fäller 2 · färskhet utan effekt på `ofullstandig` fäller 1 · `Modified Date` oläst fäller 1. Samtliga 20 sviter gröna.
+
 **Nästa:** deploya → kör om `summary` och kontrollera att HK nu ger rader → bygg HTML-vyn ovanpå. Datalagret är klart; presentationen ska bära `matt`-etiketterna och `varningar` **synligt**, inte i en tooltip — de tre bolagen mäts på tre olika sätt och det får inte gå att missa.
 
 ### INTELLIPLAN steg 5 — NATTLIG CRON (byggt 2026-08-20, EJ deployat)

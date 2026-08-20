@@ -417,3 +417,56 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     varningar,
   };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// KÄLLFÄRSKHET — en inaktuell källa är farligare än en tom
+// ────────────────────────────────────────────────────────────────────────────
+//
+// ⚠️ Skarpt 2026-08-20: Housekeeping rapporterades som `antal: 1, belopp: 2880,
+// ofullstandig: false` för augusti. Talet SÅG friskt ut. Sanningen var att inga
+// TengellaWorkorders skapats sedan 4 juni — synken hade slutat leverera.
+//
+// En TOM källa fångas av `describeEmptySide`. En INAKTUELL källa gör det inte:
+// den ger ett litet, plausibelt tal som passerar varje nollkontroll. Det är
+// därför den här kontrollen finns, och därför den kollar TVÅ saker:
+//
+//   senaste_skapad  — senaste NYA raden. Gammal ⇒ inget nytt kommer in.
+//   senaste_rord    — senaste ÄNDRADE raden. Gammal ⇒ synken rör ingenting
+//                     alls, alltså kör den sannolikt inte.
+//
+// De betyder olika saker: en källa kan sakna nya rader men uppdatera gamla
+// (friskt, lugn period), men rörs INGET är synken död.
+
+/**
+ * @param type          typnamn, för texten
+ * @param senasteSkapad ISO-sträng eller null (null = kunde inte mätas)
+ * @param senasteRord   ISO-sträng eller null
+ * @param nu            ISO-sträng, "nu"
+ * @param maxDagar      hur gammal en källa får vara innan den kallas inaktuell
+ */
+export function kallaFarskhet({ type, senasteSkapad, senasteRord, nu, maxDagar = 3 }) {
+  const dagar = (iso) => {
+    if (!iso) return null;
+    const t = Date.parse(iso), n = Date.parse(nu);
+    if (!Number.isFinite(t) || !Number.isFinite(n)) return null;
+    return Math.floor((n - t) / 864e5);
+  };
+  const dSkapad = dagar(senasteSkapad), dRord = dagar(senasteRord);
+
+  // ⚠️ Omätt är inte färskt. Kunde vi inte läsa får vi inte påstå något.
+  if (dSkapad == null && dRord == null) {
+    return { status: "okänt", type, dagar_sedan_skapad: null, dagar_sedan_rord: null,
+      text: `${type}: kunde inte avgöra hur färsk källan är. Behandla talet som overifierat.` };
+  }
+  // Rörs ingenting alls är synken död — det väger tyngre än utebliven nyskapning.
+  if (dRord != null && dRord > maxDagar) {
+    return { status: "inaktuell", type, dagar_sedan_skapad: dSkapad, dagar_sedan_rord: dRord,
+      text: `⚠️ ${type}: ingen rad har ÄNDRATS på ${dRord} dagar (gräns ${maxDagar}). Synken rör ingenting — den kör sannolikt inte. Talet för perioden är då inte ett affärsfaktum utan en rest av senaste lyckade körning.` };
+  }
+  if (dSkapad != null && dSkapad > maxDagar) {
+    return { status: "inga_nya", type, dagar_sedan_skapad: dSkapad, dagar_sedan_rord: dRord,
+      text: `⚠️ ${type}: ingen NY rad på ${dSkapad} dagar (befintliga rader rördes för ${dRord} dagar sedan). Antingen en lugn period eller en synk som slutat skapa. Kontrollera innan talet används.` };
+  }
+  return { status: "farsk", type, dagar_sedan_skapad: dSkapad, dagar_sedan_rord: dRord,
+    text: `${type}: färsk (ny rad för ${dSkapad} dagar sedan, ändrad för ${dRord} dagar sedan).` };
+}
