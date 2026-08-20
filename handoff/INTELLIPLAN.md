@@ -214,3 +214,61 @@ persondata-grind fäller 3 · tomt id räknat som fel fäller 1.
 **Kört end-to-end mot en fejkad server** i två lägen: normalfall (hittar och
 rankar kandidaten) och failande anrop mitt i svepet (flaggar skanningen som
 OFULLSTÄNDIG). Det testet var det som avslöjade att 1081 låg utanför default-spannet.
+
+---
+
+## 📊 SKARPT SKANNINGSRESULTAT 2026-08-20
+
+**53 mallar funna** i spannet 1020–1100 (28 tomma id). ⚠️ **Inte 23** — den
+siffran kom från en avläsning av Reporting-vyn och var fel. Fliken var
+sannolikt scopad (Organisation / User / Both).
+
+**Ingen bedömd mall har datum + tid.** Bara `1081` har datumkolumn alls
+(`Date1/Date2`), och den saknar tid → dagsrapport.
+
+**⚠️ 14 mallar gick INTE att bedöma** — de svarade 200 OK men utan rubrikrad:
+`1022, 1026, 1036, 1047, 1052, 1054, 1064, 1067, 1070, 1071, 1073, 1077, 1078,
+1080`. Troligen ingen data på sonderingsdagen (en dags fönster var min
+optimering — den blindade alltså 14 mallar). **De har inte förkastats, de har
+inte lästs.** Kör om dem innan slutsatsen "mallen finns inte" står fast:
+
+```bash
+API_KEY=... ./intelliplan_probe_ids.sh 1022,1026,1036,1047,1052,1054,1064,1067,1070,1071,1073,1077,1078,1080
+```
+
+### ⭐ REKOMMENDERAD BASMALL: **1075**
+
+```
+ConsultantNo1, Consultant1, Consultant2, Account1, Account2,
+Order1, Order2, Hours1, AbsenceHours1          (95 rader)
+```
+
+**Enda mallen med konsult + kund + order + timmar samtidigt** (verifierat
+programmatiskt över alla 53). Den har redan exakt den join en passlista behöver
+— det som saknas är bara tidsupplösningen. Lägg till via **"Add columns"**:
+datum (dag), starttid, sluttid. Behåll `Account`/`Order` för kundkopplingen och
+`ConsultantNo1` som stabil nyckel (namn är inte unikt).
+
+`AbsenceHours1` är en bonus: frånvaro syns direkt i samma vy.
+
+**Andrahandsval: `1076`** — `ConsultantNo1, Consultant1/2, IsConsultantConfirmed1,
+IsManagerConfirmed1, CountRegularWorkdays1` (82 rader). Ser ut som en
+attest-/närvarorapport. `CountRegularWorkdays1` antyder att **dagsupplösning
+finns i datamodellen** — men mallen saknar kund. Ta den om 1075:s kolumnväljare
+inte exponerar tid.
+
+**⭐ Att klona är normal praxis hos er.** Fem grupper har identiska
+kolumnuppsättningar med olika radantal — samma mall, olika sparat filter:
+`[1057, 1058, 1060, 1066]` · `[1053, 1055, 1056, 1074]` · `[1034, 1046, 1049]` ·
+`[1020, 1021, 1051]` · `[1038, 1048]`. **Klona 1075 i stället för att ändra
+den** — 1075 kan användas av något annat.
+
+### ⚠️ VERKTYGSFEL SOM RÄTTADES AV DET SKARPA RESULTATET
+`scoreScheduleColumns([])` rapporterade tidigare `score 0, "saknar datumkolumn"`
+— alltså exakt som en mall vi läst och förkastat. Nu returneras
+`bedombar: false` med *"OBEDÖMBAR — svarade utan rubrikrad"*, kandidater söks
+bara bland bedömda, och slutsatsen räknar upp de obedömda id:na. **En obedömd
+mall som ser förkastad ut gör "hittade inget" till ett falskt negativt.**
+
+**Verifierat:** `intelliplan_smoke.mjs` **225/225**. Mutationstestat: tom
+kolumnlista bedömd som vanligt fäller 4 · kandidater sökta bland obedömda fäller 1.

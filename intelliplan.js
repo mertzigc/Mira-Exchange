@@ -756,6 +756,17 @@ const SCHEMA_SIGNALER = {
  */
 export function scoreScheduleColumns(columns) {
   const cols = (columns || []).map(_norm);
+  // ⚠️ INGA KOLUMNER = OBEDÖMBAR, INTE FÖRKASTAD.
+  // Skarpt 2026-08-20 svarade 14 av 53 mallar 200 OK men utan rubrikrad — troligen
+  // för att sonderingsdagen saknade data. De rapporterades som "hittad, score 0,
+  // saknar datumkolumn", alltså precis som en mall vi FAKTISKT bedömt och
+  // förkastat. En av dem kan vara schemarapporten. Slutsatsen "ingen mall har
+  // datum + tid" blir osann om 14 aldrig lästes.
+  if (!cols.length) {
+    return { score: 0, traffar: { datum: [], tid: [], konsult: [], kund: [] },
+      kandidat: false, bedombar: false, kolumner_totalt: 0,
+      varfor: "⚠️ OBEDÖMBAR — svarade utan rubrikrad (troligen ingen data på sonderingsdagen). Kör om med ett bredare datumfönster innan du drar slutsatser." };
+  }
   const traffar = {};
   for (const [nyckel, monster] of Object.entries(SCHEMA_SIGNALER)) {
     traffar[nyckel] = (columns || []).filter((c) => monster.some((m) => m.test(_norm(c))));
@@ -765,6 +776,7 @@ export function scoreScheduleColumns(columns) {
   return {
     score,
     traffar,
+    bedombar: true,
     // Datum UTAN tid = dagsrapport (t.ex. 1081), inte ett schema.
     kandidat: har("datum") && har("tid") && har("konsult"),
     varfor: !har("datum") ? "saknar datumkolumn"

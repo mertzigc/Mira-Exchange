@@ -614,6 +614,18 @@ const run = async () => {
   ok("datum+tid+konsult utan kund är fortfarande kandidat", sUtanKund.kandidat === true);
   ok("men får lägre poäng", sUtanKund.score === 3);
 
+  // ⚠️ OBEDÖMBAR ≠ FÖRKASTAD. Skarpt 2026-08-20 svarade 14 av 53 mallar 200 OK
+  // utan rubrikrad (ingen data på sonderingsdagen). De rapporterades som
+  // "score 0, saknar datumkolumn" — omöjligt att skilja från en mall vi faktiskt
+  // läst och förkastat. Slutsatsen "ingen mall har datum+tid" blev då osann.
+  const sTom = scoreScheduleColumns([]);
+  ok("tom kolumnlista är OBEDÖMBAR", sTom.bedombar === false);
+  ok("och påstår INTE att datumkolumn saknas", !/saknar datumkolumn/.test(sTom.varfor));
+  ok("utan säger att den ska köras om", /bredare datumfönster/.test(sTom.varfor));
+  ok("obedömbar är aldrig en kandidat", sTom.kandidat === false);
+  ok("en riktig kolumnlista är bedömbar", scoreScheduleColumns(["Account1"]).bedombar === true);
+  ok("null hanteras som obedömbar", scoreScheduleColumns(null).bedombar === false);
+
   // ⚠️ Tomt id vs verkligt fel — får inte blandas ihop.
   ok("503 + GridReportTemplateDto = mallen finns inte",
      malFinnsInte({ status: 503, body: '{"error":"Could not find GridReportTemplateDto for id 1099"}' }) === true);
@@ -639,6 +651,10 @@ const run = async () => {
   ok("tomt id skiljs från verkligt fel", /finns_inte: tomt/.test(pCode) && /!r\.ok && !r\.finns_inte/.test(pCode));
   ok("failade anrop gör skanningen ofullständig", /OFULLSTÄNDIG/.test(pEp));
   ok("kandidater rankas och pekas ut", /schema_kandidater/.test(pCode) && /basta/.test(pCode));
+  // ⚠️ Obedömda mallar får inte döljas i en "ingen kandidat"-slutsats.
+  ok("obedömbara räknas separat", /mallar_obedombara/.test(pCode) && /obedombara_id/.test(pCode));
+  ok("kandidater söks bara bland BEDÖMDA", /bedomda\.filter\(\(r\) => r\.schema_kandidat\)/.test(pCode));
+  ok("slutsatsen nämner de obedömda när sådana finns", /är alltså OBEDÖMDA/.test(pEp));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

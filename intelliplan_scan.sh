@@ -81,16 +81,24 @@ if fel:
         print(f"     {r['id']}: HTTP {r.get('status')} {str(r.get('error'))[:90]}")
     print("   Kör om dem innan du drar slutsatser om vad som finns.")
 
-if funna:
-    print("\n── ALLA MALLAR (kolumner, ingen data) ──")
-    for r in sorted(funna, key=lambda x: -x.get("schema_score", 0)):
-        flagga = "⭐" if r.get("schema_kandidat") else "  "
+bedomda   = [r for r in funna if r.get("schema_bedombar")]
+obedombara = [r for r in funna if not r.get("schema_bedombar")]
+if bedomda:
+    print("\n-- BEDOMDA MALLAR (kolumner, ingen data) --")
+    for r in sorted(bedomda, key=lambda x: -x.get("schema_score", 0)):
+        flagga = "*" if r.get("schema_kandidat") else " "
         cols = r.get("columns") or []
         print(f"{flagga} {r['id']}  score {r.get('schema_score',0)}/4  {len(cols)} kol  {r.get('rows')} rader")
-        print(f"      {', '.join(cols[:14])}{' …' if len(cols) > 14 else ''}")
-        print(f"      → {r.get('schema_varfor','')}")
+        print(f"      {', '.join(cols[:14])}{' ...' if len(cols) > 14 else ''}")
+        print(f"      -> {r.get('schema_varfor','')}")
+if obedombara:
+    # En mall som svarade utan rubrikrad har inte forkastats - den har inte lasts.
+    print(f"\n⚠️  {len(obedombara)} MALLAR GICK INTE ATT BEDOMA (svarade utan rubrikrad):")
+    print("     " + ", ".join(r["id"] for r in obedombara))
+    print("     Troligen ingen data pa sonderingsdagen. Kor om dem med bredare fonster:")
+    print(f"       API_KEY=$API_KEY ./intelliplan_probe_ids.sh {','.join(r['id'] for r in obedombara[:25])}")
 
-kand = [r for r in funna if r.get("schema_kandidat")]
+kand = [r for r in bedomda if r.get("schema_kandidat")]
 print("\n═══ SLUTSATS ═══")
 if fel:
     print("⚠️  Ofullständig skanning — se ovan. Slutsatsen nedan kan sakna mallar.")
@@ -98,9 +106,13 @@ if kand:
     b = max(kand, key=lambda x: x.get("schema_score", 0))
     print(f"⭐ {len(kand)} mall(ar) med datum + tid + konsult. Börja med id {b['id']}.")
     print(f"   Nästa: REPORT-id {b['id']} → kolumnprofilera med ./intelliplan_probe.sh {b['id']} <från> <till>")
-elif funna:
-    print("Ingen mall har datum + tid + konsult.")
-    print("→ Pass-kornighet finns inte i någon BEFINTLIG mall. Bygg en via")
+elif bedomda and obedombara:
+    print(f"Ingen av de {len(bedomda)} BEDOMDA mallarna har datum + tid + konsult.")
+    print(f"⚠️  Men {len(obedombara)} gick inte att bedoma - kor om dem forst.")
+    print("   Slutsatsen 'mallen finns inte' haller inte forran de ar lasta.")
+elif bedomda:
+    print(f"Ingen av {len(bedomda)} mallar har datum + tid + konsult.")
+    print("-> Pass-kornighet finns inte i nagon BEFINTLIG mall. Bygg en via")
     print('  "Add columns" i Reporting-vyn: datum, starttid, sluttid, konsult, kund.')
 else:
     print("Inga mallar alls i spannet — kontrollera intervallet.")

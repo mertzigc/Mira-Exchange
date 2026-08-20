@@ -7846,7 +7846,7 @@ app.get("/admin/intelliplan/probe", async (req, res) => {
       const schema = scoreScheduleColumns(shape.columns);
       out.push({ id, ok: true, shape: shape.shape, rows: shape.row_count ?? null, bytes: shape.bytes,
         columns: shape.columns, schema_score: schema.score, schema_kandidat: schema.kandidat,
-        schema_varfor: schema.varfor, schema_traffar: schema.traffar });
+        schema_bedombar: schema.bedombar, schema_varfor: schema.varfor, schema_traffar: schema.traffar });
     } catch (e) {
       // 503 + "Could not find GridReportTemplateDto" = id:t är TOMT, inte ett
       // fel. Att blanda ihop dem gör skanningen oläsbar.
@@ -7858,13 +7858,21 @@ app.get("/admin/intelliplan/probe", async (req, res) => {
     await new Promise((r2) => setTimeout(r2, 300));
   }
   const funna = out.filter((r) => r.ok);
-  const kandidater = funna.filter((r) => r.schema_kandidat)
+  // ⚠️ Skilj BEDÖMD från OBEDÖMBAR. En mall som svarade utan rubrikrad har inte
+  // förkastats — den har inte lästs. Att blanda ihop dem gör "ingen kandidat"
+  // till ett falskt negativt.
+  const bedomda = funna.filter((r) => r.schema_bedombar);
+  const obedombara = funna.filter((r) => !r.schema_bedombar);
+  const kandidater = bedomda.filter((r) => r.schema_kandidat)
     .sort((a, b) => b.schema_score - a.schema_score);
   // ⚠️ Skilj "id:t är tomt" från "anropet failade". Bara det senare är ett problem.
   const fel = out.filter((r) => !r.ok && !r.finns_inte);
   return res.json({ ok: true, tested: ids.length,
     sammanfattning: {
       mallar_funna: funna.length,
+      mallar_bedomda: bedomda.length,
+      mallar_obedombara: obedombara.length,
+      obedombara_id: obedombara.map((r) => r.id),
       id_utan_mall: out.filter((r) => r.finns_inte).length,
       anrop_som_failade: fel.length,
       schema_kandidater: kandidater.map((r) => ({ id: r.id, score: r.schema_score, varfor: r.schema_varfor })),
@@ -7873,8 +7881,10 @@ app.get("/admin/intelliplan/probe", async (req, res) => {
         ? `⚠️ ${fel.length} anrop failade (inte "mall saknas") — skanningen är OFULLSTÄNDIG, kör om dem innan du drar slutsatser.`
         : kandidater.length
         ? `Hittade ${kandidater.length} mall(ar) med datum + tid + konsult. Börja med ${kandidater[0].id}.`
-        : funna.length
-        ? `${funna.length} mallar hittade, men INGEN har datum + tid + konsult. Pass-kornighet finns troligen inte i någon befintlig mall — då måste en byggas via "Add columns".`
+        : obedombara.length
+        ? `${bedomda.length} mallar bedömda — ingen har datum + tid + konsult. MEN ${obedombara.length} svarade utan rubrikrad och är alltså OBEDÖMDA (${obedombara.map((r) => r.id).join(", ")}). Kör om dem med ett bredare datumfönster innan du drar slutsatsen att mallen inte finns.`
+        : bedomda.length
+        ? `${bedomda.length} mallar bedömda, INGEN har datum + tid + konsult. Pass-kornighet finns inte i någon befintlig mall — bygg en via "Add columns".`
         : "Inga mallar alls i det skannade spannet — kontrollera intervallet.",
     },
     results: out });
