@@ -6,6 +6,7 @@
 // `FortnoxOrder` med FE-connection? Summeras båda rakt av dubbelräknas den.
 import fs from "node:fs";
 import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide, bokningslageSummary, normWorkorder, workorderBelopp, kallaFarskhet } from "./bokningslage.js";
+import { createActivityEngine, ACTIVITY_CONFIG, CATEGORY_COLORS, FALLBACK_COLOR } from "./activity_sync.js";
 
 let pass = 0, fail = 0;
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
@@ -529,6 +530,112 @@ const run = () => {
   ok("skipped_customers finns i rapportens grundform (stabil även vid tidig retur)",
      /source: "tengella", companies: 0, skipped_customers: \[\]/.test(asCode));
   ok("den tysta `continue` är borta", !/if \(!ccId \|\| !customerId\) continue;/.test(asCode));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec('Category-OS: namnkrocken "Staff" vs "Service & People"');
+  // ══════════════════════════════════════════════════════════════════════════
+  // Bubbles Category-option set har EXAKT fyra värden: Food & Event,
+  // Housekeeping, Service & People, Other facility services (verifierat i
+  // Bubble-editorn 2026-07-14). "Staff" är namnet på FORTNOX-ANSLUTNINGEN
+  // (index.js CONNECTION_NAMES) och på bolaget Carotte Staff AB — aldrig ett
+  // Category-värde. affar_api.js NAME_TO_CAT håller isär de två.
+  //
+  // ⚠️ En uppslagstabell som är Category-nycklad men stavar nyckeln "Staff"
+  // matchar därför ALDRIG. Felet är tyst: ingen exception, bara S&P som faller
+  // ur — grå färg i stället för lila, ingen underkategori, ingen leverantör.
+  const CAT_SP  = "Service & People";
+  const CAT_ALL = ["Food & Event", "Housekeeping", CAT_SP, "Other facility services"];
+
+  // Nycklarna i ett objektliteral `NAMN: {` / `const NAMN = {` (balanserade klamrar).
+  const katNycklar = (src, namn) => {
+    const m = new RegExp("(?:const\\s+)?" + namn + "\\s*[:=]\\s*\\{").exec(src);
+    if (!m) return null;
+    let i = m.index + m[0].length, depth = 1;
+    while (i < src.length && depth > 0) { const c = src[i++]; if (c === "{") depth++; else if (c === "}") depth--; }
+    return [...src.slice(m.index + m[0].length, i - 1).matchAll(/"([^"]+)"\s*:/g)].map((x) => x[1]);
+  };
+  const CSRC = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
+
+  // ── activity_sync: färgtabellen är också giltighetsfiltret ────────────────
+  // knownCat() släpper bara igenom kategorier som finns i CATEGORY_COLORS.
+  // Saknas S&P där skrivs Activity.Category = null OCH color_hex = grå.
+  ok("CATEGORY_COLORS nycklas på Category-värdet", CATEGORY_COLORS[CAT_SP] === "#9F77DD");
+  ok("och har ingen kvarglömd Staff-nyckel", CATEGORY_COLORS.Staff === undefined);
+  ok("alla fyra Category-värden har en färg", CAT_ALL.every((c) => !!CATEGORY_COLORS[c]));
+  ok("och tabellen innehåller inget femte påhitt", Object.keys(CATEGORY_COLORS).length === 4);
+
+  // Beteende, inte bara stavning: mappa en riktig S&P-bokning genom motorn.
+  const AENG = createActivityEngine({
+    bubbleId: (x) => (x && typeof x === "object" ? x._id : x) || null,
+    helpers: { toBubbleDate: (v) => (v == null ? null : String(v)) },
+  });
+  const spBokning = AENG.mapComission({
+    _id: "c-sp", commission_title: "Hyra personal v.34", Commission_title: "Hyra personal v.34",
+    delivery_date: "2026-08-24T07:00:00Z", Slutdatum: "2026-08-24T16:00:00Z",
+    Category: CAT_SP, SubCategorySP: "Hyra personal",
+    commission_status: "Ny", Company: "cc1",
+  });
+  ok("en S&P-bokning behåller sin kategori", spBokning.Category === CAT_SP);
+  ok("och får den lila kategorifärgen, inte grå fallback", spBokning.color_hex === "#9F77DD");
+  ok("och underkategorin materialiseras ur SubCategorySP", spBokning.subcategory === "Hyra personal");
+  // ⚠️ Kontroll: fixen får INTE vara en Staff-alias. "Staff" skrivet till
+  // Activity.Category ger 400 "could not parse this as a Category" — det ska
+  // fortsatt fångas av knownCat och bli grått/null.
+  const junkBokning = AENG.mapComission({ _id: "c-junk", Category: "Staff", SubCategorySP: "Hyra personal" });
+  ok('"Staff" som kategori är fortfarande skräp → null', junkBokning.Category === null);
+  ok("och ger grå fallback-färg", junkBokning.color_hex === FALLBACK_COLOR);
+  ok("och materialiserar ingen underkategori", junkBokning.subcategory === null);
+  ok("SUBCAT_FIELDS i activity_sync är Category-nycklad",
+     ACTIVITY_CONFIG.SUBCAT_FIELDS[CAT_SP] === "SubCategorySP" && ACTIVITY_CONFIG.SUBCAT_FIELDS.Staff === undefined);
+
+  // ── index.js: förfrågan-wizardens tre tabeller ────────────────────────────
+  // Kategorilistan SERVERAS av /admin/forfragan/bootstrap (categories =
+  // Object.keys(FORFRAGAN_KATEGORIER)) och wizarden skickar tillbaka den valda
+  // strängen rakt in i Comission.Category. Fel nyckel här = fel option
+  // set-värde på tråden.
+  for (const [namn, forvantat] of [
+    ["FORFRAGAN_KATEGORIER",   null],
+    ["SUPPLIER_BY_CATEGORY",   null],
+    ["SUBCAT_FIELDS",          "SubCategorySP"],
+  ]) {
+    const keys = katNycklar(CSRC, namn);
+    ok(namn + " hittas i index.js", Array.isArray(keys) && keys.length > 0);
+    ok(namn + " nycklas på Service & People", !!keys && keys.includes(CAT_SP));
+    ok(namn + ' har ingen "Staff"-nyckel', !!keys && !keys.includes("Staff"));
+    ok(namn + " täcker alla fyra kategorier", !!keys && CAT_ALL.every((c) => keys.includes(c)));
+    if (forvantat) ok(namn + " pekar S&P på rätt Bubble-fält", new RegExp('"' + CAT_SP + '":\\s*"' + forvantat + '"').test(CSRC));
+  }
+  // activity_sync och index.js måste hålla SAMMA underkategorifält per kategori
+  // — de skriver till samma Comission-rader.
+  ok("de två SUBCAT_FIELDS-tabellerna har identiska nycklar",
+     JSON.stringify(Object.keys(ACTIVITY_CONFIG.SUBCAT_FIELDS).sort()) ===
+     JSON.stringify((katNycklar(CSRC, "SUBCAT_FIELDS") || []).sort()));
+
+  // ── index.js: KPI-räknarna på Lead.Category ───────────────────────────────
+  // Lead.Category är samma option set som Comission.Category (index.js:
+  // "Category (samma optionset som Comission)"). CATS-listorna filtrerar/
+  // constraintar på värdet → "Staff" gav evigt 0 för S&P.
+  const catsListor = [...CSRC.matchAll(/const CATS = \[([^\]]*)\]/g)].map((m) => m[1]);
+  ok("KPI-endpointernas CATS-listor finns", catsListor.length === 2);
+  ok("de räknar på Service & People", catsListor.every((s) => s.includes('"' + CAT_SP + '"')));
+  ok('och ingen av dem säger "Staff"', catsListor.every((s) => !/"Staff"/.test(s)));
+
+  // ── Det som INTE får röras: "Staff" är ett riktigt anslutningsnamn ────────
+  ok("Fortnox-anslutningen heter fortfarande Staff",
+     /"1771579472595x998707043537409700":\s*"Staff"/.test(CSRC));
+  const AFFAR = fs.readFileSync(new URL("./affar_api.js", import.meta.url), "utf8");
+  ok("och affar_api översätter anslutningen Staff → Service & People",
+     new RegExp('"Staff":\\s*"' + CAT_SP + '"').test(AFFAR));
+
+  // ── Wizardens demo-fallback speglar samma kontrakt ────────────────────────
+  // DEMO_BOOT postar aldrig, men den visar kategorinamnen för läsaren och är
+  // mallen någon kopierar när bootstrap byggs om.
+  const FF = fs.readFileSync(new URL("./mira-forfragan-skapa.html", import.meta.url), "utf8");
+  const demoStart = FF.indexOf("var DEMO_BOOT");
+  const demoBlock = demoStart === -1 ? "" : FF.slice(demoStart, FF.indexOf("\n  };", demoStart));
+  ok("DEMO_BOOT finns", demoStart !== -1);
+  ok("demo-kategorierna är Category-värden", demoBlock.includes('"' + CAT_SP + '"'));
+  ok('och innehåller ingen "Staff"-nyckel', !/"Staff"/.test(demoBlock));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

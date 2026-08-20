@@ -454,6 +454,36 @@ pass felklassade fäller 2 · `utfort_total` över alla rader fäller 2 · midna
 ohanterat fäller 3 · Category tillbaka till "Staff" fäller 2 · helsvep i stället
 för datumfönster fäller 1. Samtliga 20 sviter gröna.
 
+### ⚠️ CHUNKAD SKRIVNING — `_bulkCreate` duger inte rakt av
+`_bulkCreate` skickar **alla** rader i EN request (3 420 ≈ 1,4 MB body) och
+returnerar `created: ok || rows.length` — alltså **antalet skickade** när svaret
+inte går att tolka. En partiellt misslyckad skrivning hade sett ut som full
+framgång. Passynken chunkar därför 200 rader i taget, räknar skickat mot skapat,
+och svarar `502 ofullstandig_skrivning` vid diskrepans i stället för `ok:true`.
+Omkörning är säker — upserten är idempotent på `source_id`.
+
+**⚠️ `_bulkCreate` har samma optimism för ALLA anropare** (gäst-import m.fl.).
+Ej ändrat här — eget spår.
+
 **Nästa:** skapa OS-värdet + de tio fälten i Bubble → torrkör
 `POST /admin/intelliplan/sync/pass {"from":"2026-07-01","to":"2026-07-31"}` →
 jämför mot 3 420 rader → `dry_run:false` → lägg i `intelliplan_cron.sh`.
+
+### ✅ TORRKÖRNING JULI 2026 (2026-08-20, efter kontomappning)
+`3 420 rader · pass 1 202 · inställt 1 146 · frånvaro 1 072 · okänd 0`
+`placement 17 662,54 · utfört 9 266,54 · lost 8 972,33 · absence 8 397,83`
+— identiskt med CSV-exporten. `to_create: 3420`, `orphans: 0`.
+
+**Kontomappning:** 7 → **1** omappat (`1305` Scandinavian Hospitality Rentals,
+4 rader). Tre av de sju var Gothia-anläggningar → samma ClientCompany som de fem
+befintliga. `Clientcompany` ligger i jämförelsefälten, så när 1305 mappas
+patchas raderna vid nästa körning.
+
+**37 negativa raster = ÖVERTID utöver bokat fönster**, inte kodfel. 22 av 37 ≤ 0,5 h,
+totalt 34 h av 17 663 (0,2 %). Klustrat på Ellery Beach House, Gothia Restaurang,
+Brofästet, DS Resort — restaurang/event där pass drar över. Kalendern visar det
+BOKADE passet, vilket är rätt.
+
+**⚠️ 80 rader saknar `Account1` helt** (frånvaro utan kund) → `Clientcompany: null`
+→ osynliga i den kundfiltrerade kalendern. Öppet designbeslut: en vy per KONSULT
+i stället för per kund vore rätt hem för dem.

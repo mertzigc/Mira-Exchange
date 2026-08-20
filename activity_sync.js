@@ -44,7 +44,7 @@ export const ACTIVITY_CONFIG = {
   SUBCAT_FIELDS: {
     "Food & Event":            "SubkategoriFE",
     "Housekeeping":            "SubCategoryHK",
-    "Staff":                   "SubCategorySP",
+    "Service & People":        "SubCategorySP",
     "Other facility services": "SubcategoryFM",
   },
 
@@ -79,7 +79,7 @@ export const ACTIVITY_CONFIG = {
 export const CATEGORY_COLORS = {
   "Food & Event":            "#F47B30",
   "Housekeeping":            "#4C9AFF",
-  "Staff":                   "#9F77DD",
+  "Service & People":        "#9F77DD",
   "Other facility services": "#4CAF7D",
 };
 export const FALLBACK_COLOR = "#888888";

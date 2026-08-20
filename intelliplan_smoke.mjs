@@ -741,6 +741,14 @@ const run = async () => {
   ok("probe-raden väljs med flest ifyllda värden", /filter\(\(v\) => v != null\)\.length/.test(ipCode));
   ok("omappade konton redovisas", /konton_utan_clientcompany/.test(ipCode));
   ok("timmarna hålls isär per radtyp", /_ipPassTimmar/.test(ipCode));
+  // ⚠️ 3 420 rader i EN bulk-request ≈ 1,4 MB → timeout-risk, och `_bulkCreate`
+  // rapporterar `created: ok || rows.length` (= antalet SKICKADE) när svaret
+  // inte går att tolka. Chunkat + diskrepanskontroll gör partiella fel synliga.
+  ok("creates chunkas", /const CHUNK = 200/.test(ipCode) && /toCreate\.slice\(c, c \+ CHUNK\)/.test(ipCode));
+  ok("skickat jämförs mot skapat", /skickade !== created/.test(ipCode));
+  ok("diskrepans ger fel, inte ok:true", /error: "ofullstandig_skrivning"/.test(ipCode));
+  ok("och hänvisar till att köra om (idempotent)", /idempotent/.test(ipEp));
+  ok("chunkfel fångas per chunk", /chunkfel\.push\(/.test(ipCode));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

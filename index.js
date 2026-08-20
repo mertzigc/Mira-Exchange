@@ -10853,7 +10853,7 @@ app.get("/kpi/leads", async (req, res) => {
     return out;
   }
 
-  const CATS = ["Housekeeping","Food & Event","Staff"];
+  const CATS = ["Housekeeping","Food & Event","Service & People"];
 
   const [thisWeek, prevWeek] = await Promise.all([
     fetchLeads(weekStart, null),
@@ -10899,7 +10899,7 @@ app.get("/kpi/customers/categories", async (req, res) => {
   const y    = now.getFullYear(), mo = now.getMonth();
   const thisMonthStart = new Date(y, mo, 1).toISOString();
   const prevMonthStart = new Date(y, mo-1, 1).toISOString();
-  const CATS = ["Housekeeping","Food & Event","Staff"];
+  const CATS = ["Housekeeping","Food & Event","Service & People"];
 
   async function countLeadsByCat(afterISO, beforeISO) {
     const m = {};
@@ -19359,7 +19359,7 @@ const FORFRAGAN = {
   // = [matchande id]. Namn visas via SUPPLIER_NAME-fältet (kräver SUPPLIER_TYPE-typnamnet).
   SUPPLIER_BY_CATEGORY: {
     "Food & Event":            "1731411052569x831010598495453200",
-    "Staff":                   "1732782758356x272951352004444160",
+    "Service & People":        "1732782758356x272951352004444160",
     "Housekeeping":            "1732782847141x739655205427609600",
     "Other facility services": "1746511649924x692607212964806700",
   },
@@ -19416,7 +19416,7 @@ const FORFRAGAN = {
   SUBCAT_FIELDS: {
     "Food & Event":            "SubkategoriFE",
     "Housekeeping":            "SubCategoryHK",
-    "Staff":                   "SubCategorySP",
+    "Service & People":        "SubCategorySP",
     "Other facility services": "SubcategoryFM",
   },
 
@@ -19450,7 +19450,7 @@ const FORFRAGAN = {
 const FORFRAGAN_KATEGORIER = {
   "Food & Event": ["Frukost","Lunch","Middag","After work","Kundevent","Internt event","Sommarfest","Julfest","Kickoff","Konferens","Fika","FYI"],
   "Housekeeping": ["Storstäd","Städ höga höjder","Trapphus","Desinficering","Eventstäd","Extrastäd","Fönster","Golvvård","Mattvätt","Möbeltvätt","Sanering","Övrigt städ","Ångtvätt","FYI"],
-  "Staff": ["Hyra personal","Rekrytera personal","Executive search","FYI"],
+  "Service & People": ["Hyra personal","Rekrytera personal","Executive search","FYI"],
   "Other facility services": ["Fastighetsteknik","Teknisk supprt","Kontorsmaterial","Handyman","Kaffe & baristalösningar","Vattentorn","Blommor & dekor","Frukt på jobbet","Matkylar","FYI"],
 };
 
@@ -21876,7 +21876,7 @@ app.post("/admin/contracts/create", async (req, res) => {
     };
 
     // Kategori-härledning: Contract.kategori är option-set "Category"
-    // (Food & Event / Housekeeping / Staff / Other facility services).
+    // (Food & Event / Housekeeping / Service & People / Other facility services).
     // Frontend kan skicka "platform"/"facility" från ServiceCatalog.category
     // (helt annat begrepp) eller ingenting. Härled från Erbjudande.Category
     // som är samma option-set som Contract.kategori.
@@ -22956,9 +22956,27 @@ app.post("/admin/intelliplan/sync/pass", async (req, res) => {
     };
     if (dryRun) return res.json({ ok: true, dry_run: true, ...summary });
 
-    let created = 0, updated = 0;
-    if (toCreate.length) { const r2 = await _bulkCreate(ACTIVITY_CONFIG.ACTIVITY_TYPE, toCreate); created = r2.created; }
+    // ⚠️ CHUNKAT, inte en smäll. `_bulkCreate` skickar ALLA rader i EN request
+    // (3 420 rader ≈ 1,4 MB body) — timeout-risk, och faller den ryker hela
+    // körningen. Dessutom returnerar den `created: ok || rows.length`, alltså
+    // ANTALET SKICKADE när svaret inte går att tolka. Utan chunkning + kontroll
+    // kan en partiellt misslyckad skrivning se ut som full framgång.
+    const CHUNK = 200;
+    let created = 0, updated = 0, skickade = 0;
+    const chunkfel = [];
+    for (let c = 0; c < toCreate.length; c += CHUNK) {
+      const del = toCreate.slice(c, c + CHUNK);
+      skickade += del.length;
+      try {
+        const r2 = await _bulkCreate(ACTIVITY_CONFIG.ACTIVITY_TYPE, del);
+        created += r2.created || 0;
+      } catch (e) {
+        chunkfel.push({ from: c, to: c + del.length - 1, error: e?.message || String(e) });
+      }
+    }
     for (const u of toPatch) { await bubblePatch(ACTIVITY_CONFIG.ACTIVITY_TYPE, u.id, u.payload); updated++; }
+    // Stämmer skickat mot skapat? Diskrepans får inte döljas bakom ok:true.
+    const create_diskrepans = skickade !== created ? { skickade, created } : null;
 
     // ⚠️ Bubble droppar okända fält TYST (safeCreate självläker på
     // "Unrecognized field"). Utan den här kontrollen skulle synken rapportera
@@ -22979,6 +22997,11 @@ app.post("/admin/intelliplan/sync/pass", async (req, res) => {
       return res.status(502).json({ ok: false, error: "fields_missing_on_type", fields: fieldsMissing,
         hint: `Skapa fälten på ${ACTIVITY_CONFIG.ACTIVITY_TYPE} i Bubble — de droppades tyst vid skrivning.`,
         created, updated, ...summary });
+    }
+    if (chunkfel.length || create_diskrepans) {
+      return res.status(502).json({ ok: false, error: "ofullstandig_skrivning",
+        hint: "Kör om — synken är idempotent på source_id, redan skapade rader blir noop.",
+        chunkfel, create_diskrepans, created, updated, ...summary });
     }
     return res.json({ ok: true, dry_run: false, created, updated, ...summary });
   } catch (e) {
