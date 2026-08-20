@@ -22757,7 +22757,7 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
       // KÖR men inte skapat nya rader — det gör inte talet ofullständigt.
       if (o.farskhet.status === "inaktuell" || o.farskhet.status === "okänt") {
         o.ofullstandig = true;
-        result.summa.fullstandig = false;
+        result.underlag_fullstandigt = false;
         result.varningar.push(`⚠️ ${o.namn}: ${o.farskhet.text}`);
       }
     }
@@ -22770,7 +22770,7 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
       o.ofullstandig = true;
       result.varningar.push(`⚠️ ${o.namn}: 0 rader i perioden. ${o.tom_sida_diagnos.text}`);
     }
-    if (tomma.length) result.summa.fullstandig = false;
+    if (tomma.length) result.underlag_fullstandigt = false;
 
     console.log(`[bokningslage/summary] ${from}..${to}: S&P ${sp.length} rader, HK ${hk.length}, F&E ${fe.length}, MiraOrder ${miraIds.size}${tomma.length ? " · tomma: " + tomma.map((o) => `${o.nyckel}=${o.tom_sida_diagnos.status}`).join(", ") : ""}`);
     return res.json({ ok: true, period: { from, to }, sp_manader: månader,
@@ -22865,13 +22865,43 @@ app.get("/admin/bokningslage/kallhalsa", async (req, res) => {
     }
     // ℹ️ räknas INTE som problem — bara verkliga incidenter (🔴) och omätta/
     // oväntade lägen (⚠️). Annars drunknar det enda riktiga larmet.
+    // ── Pass-täckning: hur många kunder KAN visa pass i planeringsvyn? ───────
+    // ⚠️ `syncTengella` hoppar över varje TengellaCustomer utan ClientCompany —
+    // de kundernas pass skapas aldrig, och i kalendern (som filtrerar på
+    // Clientcompany) ser det ut som "inga inbokade pass" i stället för
+    // "kopplingen saknas". Mät det i stället för att upptäcka det via en
+    // förvånad kollega.
+    // Filtreras i JS: Bubbles is_empty är opålitlig för ref-fält OCH kan inte
+    // indexeras. 123 rader = 2 sidor, försumbart.
+    let passTackning = null;
+    try {
+      const tcs = await bubbleFindAll("TengellaCustomer", { constraints: [] });
+      const utan = tcs.filter((t) => {
+        const c = t.company;
+        return !c || (typeof c === "object" && !(c._id || c.id));
+      });
+      passTackning = {
+        kunder_totalt: tcs.length,
+        kunder_med_clientcompany: tcs.length - utan.length,
+        kunder_utan_clientcompany: utan.length,
+        exempel_utan: utan.slice(0, 10).map((t) => t.name || t.Name || t.customer_name || `tengella_customer_id ${t.tengella_customer_id}`),
+        betydelse: utan.length
+          ? `⚠️ ${utan.length} av ${tcs.length} Tengella-kunder saknar ClientCompany-koppling. Deras pass synkas ALDRIG och syns därför inte i planeringsvyn — det ser ut som "inga inbokade pass". Koppla dem i Bubble (TengellaCustomer.company).`
+          : "Samtliga Tengella-kunder är kopplade till ClientCompany — alla kan visa pass.",
+      };
+    } catch (e) {
+      console.error("[bokningslage/kallhalsa] pass-täckning failade:", e?.message, e?.detail || "");
+      passTackning = { fel: e?.message || String(e), betydelse: "Kunde inte mäta pass-täckningen — behandla den som okänd, inte som fullständig." };
+    }
+
     const problem = rader.filter((r) => r.bedomning.startsWith("🔴") || r.bedomning.startsWith("⚠️"));
     const upplysningar = rader.filter((r) => r.bedomning.startsWith("ℹ️"));
     console.log(`[bokningslage/kallhalsa] ${rader.length} källor, ${problem.length} problem`);
     return res.json({ ok: true, kontrollerad: nu, kallor: rader,
       problem: problem.map((r) => `${r.namn}: ${r.bedomning}`),
       upplysningar: upplysningar.map((r) => `${r.namn}: ${r.bedomning}`),
-      allt_ok: problem.length === 0 });
+      pass_tackning: passTackning,
+      allt_ok: problem.length === 0 && !(passTackning && passTackning.kunder_utan_clientcompany) });
   } catch (e) {
     console.error("[bokningslage/kallhalsa]", e?.message, e?.detail || "");
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });

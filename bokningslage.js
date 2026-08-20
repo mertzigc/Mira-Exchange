@@ -276,6 +276,15 @@ export function normWorkorder(r) {
 
 // ⚠️⚠️ KÄND TÄCKNINGSLUCKA — F&E (Christian, 2026-08-20)
 //
+// 🔻 BESLUT 2026-08-20 (Christian): **inget fiktivt totalt ordervärde.**
+// Uppräkningen `uppskattad_full_belopp` (uppmätt / 0,70) är BORTTAGEN, och
+// `summa` över de tre affärsområdena likaså. Motiv: F&E blir inte komplett
+// förrän Caspeco är fullt implementerat (Q1-27), och ett uppräknat eller
+// hopsummerat tal ser ut som ett facit utan att vara det. Historik bakåt tas
+// vid behov ur bokföringen i Fortnox — den behöver inte visas i Mira.
+// `tackning` + noten är KVAR: läsaren ska veta att F&E-talet är för lågt,
+// men vi hittar inte på hur mycket.
+//
 // Samtliga enheter på Food & Event har ännu inte gått över till Caspeco. Tills
 // migreringen är klar saknas **ca 30 %** av bolagets intäkter i våra källor.
 // Migreringen startar **Q1 2027**.
@@ -285,14 +294,9 @@ export function normWorkorder(r) {
 // En vy som visar det utan att säga det ljuger, och den som jämför F&E mot S&P
 // drar fel slutsats om vilket bolag som går bäst.
 //
-// Därför bär F&E-posten `tackning` + en uttalad not, och den uppräknade
-// siffran hålls SKILD från det uppmätta beloppet (`uppskattad_full_belopp`,
-// `uppskattad: true`). Den är en linjär uppräkning ur ett antagande, inte en
-// mätning — blanda dem aldrig.
+// Därför bär F&E-posten `tackning` + en uttalad not. Vi räknar INTE upp talet.
 //
-// 🔁 TA BORT när migreringen är klar. Sätt `tackning: 1` och radera noten —
-// en kvarglömd uppräkning som lever vidare efter Q1-27 blir ett tyst 43 %-fel
-// åt andra hållet.
+// 🔁 TA BORT när migreringen är klar (Q1-27). Sätt `tackning: 1` och radera noten.
 const TACKNING = {
   food_event: {
     andel: 0.70,
@@ -367,8 +371,6 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     if (t) {
       o.tackning_note = t.note;
       o.tackning_ses_over = t.ses_over;
-      o.uppskattad_full_belopp = Number((o.belopp / t.andel).toFixed(2));
-      o.uppskattad = true;   // ⚠️ uppskattad_full_belopp är INTE en mätning
     }
   }
 
@@ -388,7 +390,7 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     }
   }
   for (const o of omraden) {
-    if (o.tackning < 1) varningar.push(`${o.tackning_note} (${o.namn}: uppmätt ${o.belopp} kr, uppräknat till full täckning ≈ ${o.uppskattad_full_belopp} kr — uppräkningen är ett ANTAGANDE, inte en mätning. Ses över ${o.tackning_ses_over}.)`);
+    if (o.tackning < 1) varningar.push(`${o.tackning_note} (${o.namn}: uppmätt ${o.belopp} kr. Vi räknar INTE upp talet — hur mycket som saknas vet vi inte. Ses över ${o.tackning_ses_over}.)`);
   }
   // ⚠️ F&E har två möjliga källor. Idag ger bara den ena data — men det ändras
   // utan kodändring den dagen mira-native offert/orderflödet tas i drift.
@@ -405,13 +407,14 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
   const allaFullstandiga = omraden.every((o) => !o.ofullstandig && o.tackning >= 1);
   return {
     omraden,
-    summa: {
-      belopp: Number(omraden.reduce((a, o) => a + o.belopp, 0).toFixed(2)),
-      // ⚠️ Etiketten är inte dekoration — den är hela poängen.
-      matt: "BLANDADE MÅTT — intjänat (S&P) + ordervärde (HK, F&E). Talet är en storleksordning, inte en koncernintäkt."
-        + (omraden.some((o) => o.tackning < 1) ? " ⚠️ Dessutom för LÅGT: minst ett bolag har känd täckningslucka (se varningar)." : ""),
-      fullstandig: allaFullstandiga && !opts.periodPagaende,
-    },
+    // 🔻 INGEN `summa`. Beslut 2026-08-20 (Christian): de tre talen mäter olika
+    // saker (intjänat vs ordervärde) och F&E är känt ofullständigt till Q1-27.
+    // En summa av dem är ett fiktivt totalt ordervärde — den fanns tidigare med
+    // etiketten "BLANDADE MÅTT", men en etikett gör inte ett meningslöst tal
+    // meningsfullt. Den som vill ha koncerntotal går till bokföringen i Fortnox.
+    summa: null,
+    summa_saknas_varfor: "Ingen totalsumma visas: S&P mäter intjänat, HK och F&E mäter ordervärde, och F&E saknar ca 30 % till Caspeco-migreringen (Q1-27). Ett hopslaget tal hade sett ut som ett facit utan att vara det. Historik bakåt tas ur bokföringen i Fortnox.",
+    underlag_fullstandigt: allaFullstandiga && !opts.periodPagaende,
     moms: "Samtliga belopp EXKL moms.",
     varningar,
   };

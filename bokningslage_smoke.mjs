@@ -310,8 +310,13 @@ const run = () => {
   ok("HK och F&E har därför olika mått", omr("housekeeping").matt !== omr("food_event").matt);
   ok("F&E märks som ordervärde", /Ordervärde/.test(omr("food_event").matt || ""));
   ok("måtten är olika", omr("service_people").matt !== omr("housekeeping").matt);
-  ok("summan bär en varningsetikett", /BLANDADE MÅTT/.test((sum1.summa || {}).matt || ""));
-  ok("summan påstår inte att vara koncernintäkt", !/koncernintäkt(?!\.)/.test((sum1.summa || {}).matt || "") || /inte en koncernintäkt/.test((sum1.summa || {}).matt || ""));
+  // 🔻 BESLUT 2026-08-20: ingen totalsumma alls. En etikett ("BLANDADE MÅTT")
+  // gör inte ett meningslöst tal meningsfullt — och F&E är känt ofullständigt
+  // till Q1-27. Historik bakåt tas ur bokföringen i Fortnox.
+  ok("ingen totalsumma visas", sum1.summa === null);
+  ok("och skälet står utskrivet", /Ett hopslaget tal hade sett ut som ett facit/.test(sum1.summa_saknas_varfor || ""));
+  ok("skälet nämner både måtten och Caspeco-luckan",
+     /intjänat/.test(sum1.summa_saknas_varfor || "") && /Caspeco/.test(sum1.summa_saknas_varfor || ""));
   ok("momsbasen sägs ut", /EXKL moms/.test(sum1.moms || ""));
 
   // ⚠️ Saknat ft_net får inte bli en tyst för låg summa.
@@ -321,20 +326,20 @@ const run = () => {
   // ⚠️ Samma tysta nolla på HK-sidan: en HK-order utan ft_net.
   const hkTom = bokningslageSummary({ sp: [], hk: [W({ ft_net: undefined })], fe: [] });
   ok("HK-order utan ft_net blir inte 0 kr utan flaggas", (hkTom.omraden.find((o) => o.nyckel === "housekeeping") || {}).ofullstandig === true);
-  ok("summan markeras som icke fullständig", (glest.summa || {}).fullstandig === false);
+  ok("underlaget markeras som icke fullständigt", glest.underlag_fullstandigt === false);
 
   // ⚠️ Pågående period: S&P växer i efterhand.
   const pagaende = bokningslageSummary({ sp: SP, hk: [], fe: [], opts: { periodPagaende: true } });
   ok("pågående period varnar om efterrapportering", /Perioden pågår/.test((pagaende.varningar || []).join(" ")));
   ok("och säger att man ska jämföra mot samma dag bakåt", /SAMMA DAG/.test((pagaende.varningar || []).join(" ")));
-  ok("pågående period ger aldrig fullstandig summa", (pagaende.summa || {}).fullstandig === false);
+  ok("pågående period ger aldrig fullständigt underlag", pagaende.underlag_fullstandigt === false);
   const klar = bokningslageSummary({ sp: SP, hk: [], fe: [], opts: { periodPagaende: false } });
   ok("avslutad period varnar inte om efterrapportering", !/Perioden pågår/.test((klar.varningar || []).join(" ")));
   // ⚠️ Men den blir ändå inte `fullstandig` — F&E:s Caspeco-lucka gäller varje
   // period tills migreringen är klar. Det HÄR testet påstod tidigare motsatsen;
   // antagandet föll när täckningsluckan blev känd (Christian 2026-08-20).
   // Så länge något bolag har tackning < 1 får ingen period kallas fullständig.
-  ok("men är ändå inte fullständig så länge F&E:s täckningslucka finns", (klar.summa || {}).fullstandig === false);
+  ok("men underlaget är ändå inte fullständigt så länge F&E:s täckningslucka finns", klar.underlag_fullstandigt === false);
   ok("och orsaken är täckningen, inte perioden", /Ca 30 %/.test((klar.varningar || []).join(" ")));
 
   // ⚠️ Den dagen mira-native går i drift måste F&E varna för dubbelräkning.
@@ -360,24 +365,25 @@ const run = () => {
   const fe1 = (tck.omraden || []).find((o) => o.nyckel === "food_event") || {};
   ok("F&E bär en täckningsgrad", fe1.tackning === 0.7);
   ok("belopp är det UPPMÄTTA, inte det uppräknade", fe1.belopp === 7000);
-  ok("uppräkningen ligger i ett EGET fält", fe1.uppskattad_full_belopp === 10000);
-  ok("och är märkt som uppskattning", fe1.uppskattad === true);
+  // 🔻 Uppräkningen är BORTTAGEN — vi vet att talet är för lågt, inte hur mycket.
+  ok("ingen uppräkning görs", fe1.uppskattad_full_belopp === undefined);
+  ok("och inget fält påstår sig vara en uppskattning", fe1.uppskattad === undefined);
+  ok("varningen säger uttryckligen att vi inte räknar upp", /räknar INTE upp/.test((tck.varningar || []).join(" ")));
   ok("noten säger att beloppet är för lågt", /för LÅGT/.test(fe1.tackning_note || ""));
   ok("noten namnger orsaken och tidpunkten", /Caspeco/.test(fe1.tackning_note || "") && /Q1 2027/.test(fe1.tackning_note || ""));
   ok("täckningsluckan hamnar bland varningarna", /Ca 30 %/.test((tck.varningar || []).join(" ")));
-  ok("varningen säger att uppräkningen är ett antagande", /ANTAGANDE, inte en mätning/.test((tck.varningar || []).join(" ")));
   ok("den har ett datum då den ska ses över", fe1.tackning_ses_over === "2027-Q1");
 
   // De andra bolagen ska INTE räknas upp.
   const sp1 = (tck.omraden || []).find((o) => o.nyckel === "service_people") || {};
   const hk1 = (tck.omraden || []).find((o) => o.nyckel === "housekeeping") || {};
-  ok("S&P har full täckning", sp1.tackning === 1 && sp1.uppskattad_full_belopp === undefined);
-  ok("HK har full täckning", hk1.tackning === 1 && hk1.uppskattad_full_belopp === undefined);
+  ok("S&P har full täckning", sp1.tackning === 1);
+  ok("HK har full täckning", hk1.tackning === 1);
 
   // ⚠️ Summan får aldrig se komplett ut när ett bolag har en känd lucka.
-  ok("summan innehåller det uppmätta, inte det uppräknade", (tck.summa || {}).belopp === 6850058.36 + 100000 + 7000);
-  ok("summan flaggas som för låg", /för LÅGT/.test((tck.summa || {}).matt || ""));
-  ok("summan kan inte vara fullständig", (tck.summa || {}).fullstandig === false);
+  ok("ingen summa att förvanska", tck.summa === null);
+  ok("underlaget flaggas som icke fullständigt", tck.underlag_fullstandigt === false);
+  ok("per-område-beloppen är kvar och uppmätta", fe1.belopp === 7000);
 
   // ══════════════════════════════════════════════════════════════════════════
   sec("Källfärskhet — en inaktuell källa är farligare än en tom");
@@ -447,7 +453,7 @@ const run = () => {
   ok("tomma områden diagnostiseras", /describeEmptySide\(/.test(sCode));
   ok("diagnosen mäts med bubbleCountStrict", /bubbleCountStrict\(/.test(sCode));
   ok("ett tomt område kan aldrig vara fullständigt", /o\.ofullstandig = true/.test(sCode));
-  ok("och nollar summans fullstandig", /result\.summa\.fullstandig = false/.test(sCode));
+  ok("och nollar underlag_fullstandigt", /result\.underlag_fullstandigt = false/.test(sCode));
   // ⚠️ Färskhetskontrollen — HK:s 2 880 kr fick aldrig se friskt ut igen.
   ok("varje område färskhetskontrolleras", /for \(const o of result\.omraden\)/.test(sCode) && /o\.farskhet = await farskhet\(/.test(sCode));
   ok("färskhet läses på både Created Date och Modified Date",
@@ -500,7 +506,29 @@ const run = () => {
   ok("färskheten mäts med kallaFarskhet", /kallaFarskhet\(/.test(kCode));
   ok("antalet räknas med bubbleCountStrict, inte bubbleCount", /bubbleCountStrict\(/.test(kCode) && !/[^t]bubbleCount\(/.test(kCode));
   ok("mätfel bärs som fel, inte som noll", /fel = e\?\.message/.test(kCode) && /antal = null/.test(kCode));
-  ok("frågorna är constraintade (limit 1), inga svep", /limit: 1/.test(kCode) && !/bubbleFindAll\(/.test(kCode));
+  ok("färskhetsfrågorna är constraintade (limit 1)", /limit: 1/.test(kCode));
+
+  // ── Pass-täckning: kan kunderna över huvud taget visa pass? ────────────────
+  // ⚠️ syncTengella hoppar över varje TengellaCustomer utan ClientCompany.
+  // Kalendern filtrerar på Clientcompany → de kundernas pass syns aldrig, och
+  // det ser ut som "inga inbokade pass" i stället för "kopplingen saknas".
+  ok("pass-täckningen mäts", /kunder_utan_clientcompany/.test(kCode));
+  ok("och betydelsen förklaras för läsaren", /ser ut som "inga inbokade pass"/.test(kCode));
+  ok("okopplade kunder namnges så mappningen går att laga", /exempel_utan/.test(kCode));
+  ok("mätfel ger okänd täckning, inte fullständig", /behandla den som okänd, inte som fullständig/.test(kCode));
+  ok("okopplade kunder gör allt_ok falskt", /!\(passTackning && passTackning\.kunder_utan_clientcompany\)/.test(kCode));
+  // ⚠️ Bubbles is_empty kan inte indexeras och är opålitlig för ref-fält →
+  // filtrera i JS. 123 rader gör det försumbart.
+  ok("company-tomheten filtreras i JS, inte via is_empty", !/is_empty/.test(kCode));
+
+  // ── Överhoppade kunder i själva pass-synken ───────────────────────────────
+  const AS = fs.readFileSync(new URL("./activity_sync.js", import.meta.url), "utf8");
+  const asCode = AS.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("syncTengella redovisar överhoppade kunder", /report\.skipped_customers\.push\(/.test(asCode));
+  ok("och anger orsaken per kund", /orsak:/.test(asCode));
+  ok("skipped_customers finns i rapportens grundform (stabil även vid tidig retur)",
+     /source: "tengella", companies: 0, skipped_customers: \[\]/.test(asCode));
+  ok("den tysta `continue` är borta", !/if \(!ccId \|\| !customerId\) continue;/.test(asCode));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

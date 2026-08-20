@@ -386,7 +386,10 @@ export function createActivityEngine(deps) {
   // Tengella TimeTableEvent → Activity, per företag som har tengella_customer_id.
   async function syncTengella(opts, sharedIndex) {
     const write = !!opts.write;
-    const report = { source: "tengella", companies: 0, events: 0, create: 0, update: 0, noop: 0, errors: 0 };
+    // `skipped_customers` ligger i grundformen så rapporten har samma form även
+    // vid tidig retur (scan_error/login_error) — annars måste varje anropare
+    // gissa om tomt betyder "inga överhoppade" eller "kom aldrig så långt".
+    const report = { source: "tengella", companies: 0, skipped_customers: [], events: 0, create: 0, update: 0, noop: 0, errors: 0 };
 
     const fromDate = opts.fromDate || new Date(Date.now() - 31 * 86400000).toISOString().slice(0, 10);
     const toDate   = opts.toDate   || new Date(Date.now() + 92 * 86400000).toISOString().slice(0, 10);
@@ -403,10 +406,26 @@ export function createActivityEngine(deps) {
     try { token = await tengella.login(orgNo); }
     catch (e) { return { ...report, login_error: errInfo(e) }; }
 
+    // ⚠️ TYST BORTFALL — den här grinden avgör vilka kunder som får pass i
+    // planeringsvyn. En TengellaCustomer utan `company` (ClientCompany) hoppas
+    // över, och då finns kundens pass INTE i Bubble över huvud taget. I
+    // kalendern ser det ut som att kunden inte har några inbokade pass — inte
+    // som att kopplingen saknas. Samma klass som Intelliplans omappade konton.
+    //
+    // Tidigare stod här bara `continue`. Nu redovisas de överhoppade i rapporten
+    // med id och namn, så mappningen går att laga i stället för att gissa.
     for (const tc of customers) {
       const ccId = idOf(tc[C.TC_COMPANY]);
       const customerId = num(tc[C.TC_CUSTOMER_ID]);
-      if (!ccId || !customerId) continue;   // utan ClientCompany hamnar passet ingenstans
+      if (!ccId || !customerId) {
+        report.skipped_customers.push({
+          tengella_customer_id: customerId ?? null,
+          namn: tc.name || tc.Name || tc.customer_name || "",
+          orsak: !customerId ? "saknar tengella_customer_id" : "saknar ClientCompany-koppling (company)",
+          bubble_id: idOf(tc) || tc._id || null,
+        });
+        continue;
+      }
       report.companies++;
 
       let cursor = null, guard = 0;
