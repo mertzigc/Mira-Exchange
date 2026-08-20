@@ -12,7 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { feOverlap, describeEmptySide } from "./bokningslage.js";
+import { feOverlap, describeEmptySide, bokningslageSummary } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
@@ -22584,6 +22584,88 @@ app.get("/admin/bokningslage/fe-overlap", async (req, res) => {
       tom_sida_diagnos: diagnos.length ? diagnos : null });
   } catch (e) {
     console.error("[bokningslage/fe-overlap]", e?.message, e?.detail || "");
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOKNINGSLÄGE — de tre affärsområdena bredvid varandra
+// ════════════════════════════════════════════════════════════════════════════
+// GET /admin/bokningslage/summary?from=YYYY-MM-DD&to=YYYY-MM-DD
+//
+// ⚠️ Talen är INTE samma sort — se bokningslageSummary. Endpointen summerar dem
+// ändå, men bara med en etikett som säger vad summan är. Läser bara.
+app.get("/admin/bokningslage/summary", async (req, res) => {
+  // Utan datum: INNEVARANDE MÅNAD — det är frågan vyn ställer ("vad är
+  // innevarande månads leveranser värda i intäkt ex moms per bolag?").
+  const nu = new Date();
+  const mStart = new Date(Date.UTC(nu.getUTCFullYear(), nu.getUTCMonth(), 1));
+  const mSlut = new Date(Date.UTC(nu.getUTCFullYear(), nu.getUTCMonth() + 1, 0));
+  const from = String(req.query.from || mStart.toISOString().slice(0, 10)).trim();
+  const to = String(req.query.to || mSlut.toISOString().slice(0, 10)).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ ok: false, error: "from_och_to_krävs_som_YYYY-MM-DD" });
+  }
+  if (to < from) return res.status(400).json({ ok: false, error: "to_före_from" });
+  try {
+    // Exklusiva gränser — Bubble saknar "greater than or equal".
+    const before = new Date(Date.parse(from + "T00:00:00Z") - 864e5).toISOString();
+    const after = new Date(Date.parse(to + "T00:00:00Z") + 864e5).toISOString();
+    const dateWin = (field) => [
+      { key: field, constraint_type: "greater than", value: before },
+      { key: field, constraint_type: "less than", value: after },
+    ];
+    // ⚠️ INGA .catch här. En failande fråga ska braka, inte bli ett nolltal.
+    // ⚠️ Fältnamn verifierade mot skrivvägarna: FortnoxOrder.connection
+    //    (index.js 8377 constraintar så i den nattliga upserten),
+    //    IntelliplanOrderMonth.ip_period (index.js 22327, samma synk).
+    // S&P kornighet är KALENDERMÅNAD — `ip_period` = "YYYY-MM". Ett spann som
+    // korsar månadsskifte kan därför inte besvaras exakt; vi hämtar de månader
+    // spannet rör och säger till om spannet inte täcker dem helt.
+    const månader = [];
+    for (let d = new Date(Date.parse(from + "T00:00:00Z")); d <= new Date(Date.parse(to + "T00:00:00Z")); d.setUTCMonth(d.getUTCMonth() + 1)) {
+      const k = d.toISOString().slice(0, 7);
+      if (!månader.includes(k)) månader.push(k);
+      if (månader.length > 24) break;
+    }
+    const [spPerManad, hk, fe, miraLev, miraOrd] = await Promise.all([
+      Promise.all(månader.map((m) => bubbleFindAll(IP_ORDERMONTH_TYPE, {
+        constraints: [{ key: "ip_period", constraint_type: "equals", value: m }] }))),
+      bubbleFindAll("FortnoxOrder", { constraints: [
+        { key: "connection", constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
+        ...dateWin("ft_delivery_date") ] }),
+      bubbleFindAll("FortnoxOrder", { constraints: [
+        { key: "connection", constraint_type: "equals", value: FE_CONNECTION_ID },
+        ...dateWin("ft_delivery_date") ] }),
+      bubbleFindAll("MiraOrder", { constraints: dateWin("leveransdatum") }),
+      bubbleFindAll("MiraOrder", { constraints: dateWin("orderdatum") }),
+    ]);
+    const sp = spPerManad.flat();
+    const miraIds = new Set([...miraLev, ...miraOrd].map((r) => r._id || r.id).filter(Boolean));
+
+    // Täcker spannet de hämtade månaderna helt? Annars är S&P-talet för STORT
+    // (hela månader mot ett delspann) och det måste sägas, inte döljas.
+    const forstaIManaden = from.slice(8) === "01";
+    const sistaIManaden = (() => {
+      const d = new Date(Date.parse(to + "T00:00:00Z"));
+      return d.getUTCDate() === new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+    })();
+    const spTacker = forstaIManaden && sistaIManaden;
+
+    const idag = new Date().toISOString().slice(0, 10);
+    const result = bokningslageSummary({ sp, hk, fe, miraCount: miraIds.size,
+      opts: { periodPagaende: to >= idag } });
+
+    if (!spTacker) {
+      result.varningar.unshift(`⚠️ Service & People har KALENDERMÅNAD som minsta kornighet (ip_period). Spannet ${from}..${to} är inte hela månader, så S&P-talet avser HELA ${månader.join(", ")} och är därför för stort i förhållande till de andra två. Använd hela månader för en rättvis jämförelse.`);
+      result.omraden[0].ofullstandig = true;
+    }
+
+    console.log(`[bokningslage/summary] ${from}..${to}: S&P ${sp.length} rader, HK ${hk.length}, F&E ${fe.length}, MiraOrder ${miraIds.size}`);
+    return res.json({ ok: true, period: { from, to }, sp_manader: månader,
+      sp_tacker_perioden: spTacker, ...result });
+  } catch (e) {
+    console.error("[bokningslage/summary]", e?.message, e?.detail || "");
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });

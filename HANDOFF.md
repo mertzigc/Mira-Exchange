@@ -250,7 +250,54 @@ Att ställa junis **8 096 472 kr** (F&E) bredvid Intelliplans **6 850 058,36 kr*
 
 **Verifierat:** `bokningslage_smoke.mjs` **83/83**. **Mutationstestat (moms + drift):** `ft_net || 0` fäller 3 · net-summa ur `ft_total` fäller 3 · tyst OFULLSTÄNDIG-flagga fäller 1 · borttagen "knappt i drift"-varning fäller 2.
 
-**Nästa:** deploya → kör om fe-overlap (kontrollera `moms_bas.fortnox_utan_net` — hur många F&E-ordrar saknar `ft_net`?) → bekräfta momsbasen för Intelliplan → **då** kan bokningslägesvyn byggas.
+**✅ SKARPT UTFALL JUNI 2026 (verifierat 2026-08-20, ny kod):**
+- `fortnox_utan_net: 0` → **`ft_net` finns på samtliga 540 F&E-ordrar**, net-summan är fullständig.
+- F&E juni: **7 158 290,45 kr exkl moms** (8 096 472 inkl). Implicit momssats **13,1 %** — konsekvent med F&E:s mix av 12 % (livsmedel) och 25 %.
+- `tom_sida_diagnos` gav `period_tom` + "knappt i drift"-varningen, precis som avsett.
+- **Christian bekräftar: Intelliplans intäkt är EXKL moms.** Baserna är alltså jämförbara efter bytet till `ft_net`.
+
+**⚠️ RÄTTAT: "1 rad totalt och 2 träffar"** — `wideTotal` summerar över FÄLT, inte rader, så en order med både leveransdatum och orderdatum räknades två gånger och lästes som två rader. Träffarna redovisas nu per fält (`leveransdatum: 1, orderdatum: 1`) med utskriven brasklapp.
+
+### BOKNINGSLÄGESVYN — datalagret (byggt 2026-08-20, EJ deployat)
+**`bokningslageSummary()` (bokningslage.js) + `GET /admin/bokningslage/summary?from=&to=`.** Ställer de tre affärsområdena bredvid varandra. Läser bara.
+
+**⚠️ VARJE POST BÄR SIN EGEN `matt`-ETIKETT** — det är hela poängen, inte dekoration:
+| Område | Källa | Mått |
+|---|---|---|
+| Service & People | `IntelliplanOrderMonth.revenue` | **Intjänat** för arbete utfört i perioden |
+| Housekeeping | `FortnoxOrder(TENGELLA).ft_net` | **Ordervärde**, hela ordern på leveransdatum |
+| Food & Event | `FortnoxOrder(FE).ft_net` | **Ordervärde**, hela ordern på leveransdatum |
+
+En Fortnox-order på 500 kkr med leverans 3 juni ligger med fullt värde i juni så fort den lagts — även om den lades i mars. Intelliplans junisiffra fylls på under och efter juni. `summa` finns men är märkt **"BLANDADE MÅTT — … en storleksordning, inte en koncernintäkt"**.
+
+**Fyra saker den vägrar dölja:**
+1. **Pågående period** (`to >= idag`) → varning om att S&P växer i efterhand + "jämför mot SAMMA DAG bakåt". `summa.fullstandig` blir aldrig `true`.
+2. **Saknat `ft_net`** → beloppet flaggas `ofullstandig` med gapets storlek i kr; blir aldrig en tyst för låg summa.
+3. **MiraOrder > 0 i perioden** → varning om dubbelräkning + hänvisning till `/fe-overlap`. Utlöses automatiskt den dagen mira-native går i drift.
+4. **Delspann mot månadskornighet** — `ip_period` är HELA månader. Ett spann som inte är hela månader gör S&P-talet för stort; då sätts `sp_tacker_perioden: false` och S&P märks `ofullstandig`.
+
+**Verifierat:** `bokningslage_smoke.mjs` **115/115** (från 83). **Mutationstestat:** summering på `ft_total` fäller 2 · S&P märkt som ordervärde fäller 2 · summan kallad "Total omsättning" fäller 1 · borttagen pågående-varning fäller 2 · borttagen MiraOrder-varning fäller 2 · `connection_id` tillbaka fäller 1. Samtliga 20 sviter gröna.
+
+**✅ VYNS FRÅGA FASTSTÄLLD (Christian, 2026-08-20):** *"Vad är innevarande månads totala leveranser värda i intäkt ex moms, per bolag?"* Alltså **hela månadens leveransvärde**, inte "bokat per dag X jämfört bakåt" — det senare spåret (som hade krävt `ft_order_date`-filtrering) är därmed **inte** aktuellt. `summary` defaultar nu till **innevarande månad** när `from`/`to` utelämnas.
+
+### ⚠️⚠️ KÄND TÄCKNINGSLUCKA — F&E saknar ca 30 % (Christian, 2026-08-20)
+Samtliga enheter på Food & Event har ännu inte gått över till **Caspeco**. Tills migreringen är klar saknas **ca 30 % av bolagets intäkter** i våra källor. **Migreringen startar Q1 2027.**
+
+**Det här är den farligaste sortens fel: talet SER komplett ut.** Inget failar, ingen rad är tom, ingen varning utlöses av sig själv — F&E är bara systematiskt ~30 % för lågt. Den som jämför F&E mot S&P drar fel slutsats om vilket bolag som går bäst.
+
+Hanteras i `TACKNING`-konstanten (bokningslage.js):
+- `omraden[].tackning` = `0.70` för F&E, `1` för de andra.
+- **`belopp` är ALLTID det UPPMÄTTA.** Uppräkningen ligger i ett eget fält, `uppskattad_full_belopp`, med `uppskattad: true`. En linjär uppräkning ur ett antagande är inte en mätning — blanda dem aldrig.
+- Varning med både uppmätt och uppräknat belopp, uttalat *"ANTAGANDE, inte en mätning"*, plus `tackning_ses_over: "2027-Q1"`.
+- `summa.fullstandig` kan **aldrig** bli `true` medan luckan finns, och `summa.matt` bär *"⚠️ Dessutom för LÅGT"*.
+
+**🔁 TA BORT när migreringen är klar.** Sätt `tackning: 1` och radera noten — en kvarglömd uppräkning som lever vidare efter Q1-27 blir ett tyst 43 %-fel åt andra hållet.
+
+**⚠️ ETT TEST FICK RÄTTAS, INTE BARA UTÖKAS:** `"avslutad period med full täckning får vara fullständig"` kodade in antagandet att en avslutad period ÄR fullständig. Det föll när täckningsluckan blev känd — så länge något bolag har `tackning < 1` får ingen period kallas fullständig. Testet påstår nu motsatsen och verifierar att orsaken är täckningen, inte perioden.
+
+**Verifierat:** `bokningslage_smoke.mjs` **133/133** (från 115). **Mutationstestat:** uppräkning inskriven i `belopp` fäller 4 · tystad täckningsvarning fäller 3 · täckning utan effekt på `fullstandig` fäller 2 · påhittad lucka på HK fäller 1 · borttagen månadsdefault fäller 1. Samtliga 20 sviter gröna.
+
+**Nästa:** deploya → `curl .../admin/bokningslage/summary` (utan datum = innevarande månad) → bygg HTML-vyn ovanpå. Datalagret är klart; det som återstår är presentationen, och den ska bära `matt`-etiketterna och `varningar` synligt, inte gömma dem i en tooltip.
 
 ### INTELLIPLAN steg 5 — NATTLIG CRON (byggt 2026-08-20, EJ deployat)
 **`intelliplan_cron.sh` (NY).** Preflight `/version` (vilken commit kör?) → preflight `/admin/intelliplan/auth/test?force=1` (utgånget secret ska bli ett auth-fel överst, inte "0 rader" långt ner) → `intelliplan_sync.sh --apply`, `MONTHS=3` rullande. `MONTHS=12` för engångs-backfill, `DRY=1` för torrkörning.

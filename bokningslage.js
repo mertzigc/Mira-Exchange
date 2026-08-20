@@ -202,14 +202,159 @@ export function describeEmptySide({ type, periodCount, typeTotal, wide }) {
     return { status: "typen_tom", type, text:
       `${type} har noll rader TOTALT. Perioden är tom därför att typen är tom — det säger inget om just den här perioden, och en framtida order gör påståendet ogiltigt.` };
   }
+  // ⚠️ Summan över FÄLT, inte över RADER — en order med både leveransdatum och
+  // orderdatum räknas en gång per fält. Skarpt 2026-08-20 blev "1 rad totalt"
+  // till "2 träffar", vilket läses som två rader. Används bara som
+  // "träffade något alls" (> 0), och redovisas per fält i texten.
   const wideTotal = w.reduce((a, x) => a + x.count, 0);
+  const perField = w.map((x) => `${x.field}: ${x.count}`).join(", ");
   if (wideTotal === 0) {
     return { status: "datumfält_misstänkt", type, text:
       `⚠️ ${type} har ${typeTotal} rader men INGET av datumfälten (${fields}) ger en enda träff i det breda fönstret. Det är sannolikt ett fel fältnamn eller datumformat, inte ett datafaktum. Verifiera mot hur kodbasen SKRIVER raden innan du tolkar nollan.` };
   }
   if (periodCount === 0) {
     return { status: "period_tom", type, text:
-      `${type} har ${typeTotal} rad${typeTotal === 1 ? "" : "er"} totalt och ${wideTotal} träff${wideTotal === 1 ? "" : "ar"} i det breda fönstret (${fields}) — men noll i perioden. Det är ett verkligt datafaktum för perioden.${typeTotal <= 5 ? ` ⚠️ Men ${typeTotal} rad${typeTotal === 1 ? "" : "er"} TOTALT betyder att typen knappt är i drift — behandla nollan som "ännu inte i bruk", inte som "affärsområdet omsatte inget". Den dagen typen tas i drift ändras svaret utan att någon rör koden.` : ""}` };
+      `${type} har ${typeTotal} rad${typeTotal === 1 ? "" : "er"} totalt och träffar i det breda fönstret (${perField} — räknat per fält, samma rad kan ligga i flera) men noll i perioden. Det är ett verkligt datafaktum för perioden.${typeTotal <= 5 ? ` ⚠️ Men ${typeTotal} rad${typeTotal === 1 ? "" : "er"} TOTALT betyder att typen knappt är i drift — behandla nollan som "ännu inte i bruk", inte som "affärsområdet omsatte inget". Den dagen typen tas i drift ändras svaret utan att någon rör koden.` : ""}` };
   }
   return { status: "har_data", type, text: `${type}: ${periodCount} rader i perioden.` };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SAMMANSTÄLLNING — de tre affärsområdena bredvid varandra
+// ────────────────────────────────────────────────────────────────────────────
+//
+// ⚠️ DET HÄR ÄR INTE TRE JÄMFÖRBARA TAL. De mäter olika saker:
+//
+//   S&P  (Intelliplan)  = INTJÄNAT för arbete som UTFÖRTS i månaden.
+//   HK   (FortnoxOrder) = ORDERVÄRDE, hela ordern daterad på leveransmånaden.
+//   F&E  (FortnoxOrder) = samma sak som HK.
+//
+// En Fortnox-order på 500 kkr med leverans 3 juni ligger med sitt fulla värde i
+// juni så fort den lagts — även om den lades i mars. Intelliplans junisiffra
+// däremot fylls på under och efter juni allteftersom arbete utförs och
+// rapporteras. Att lägga ihop dem ger ett tal utan innebörd.
+//
+// Därför: `summa` finns, men den är MÄRKT, och varje post bär sin egen
+// `matt`-etikett. Den som vill ha en koncernsiffra måste läsa vad den betyder.
+//
+// ⚠️ MOMS: allt här är EXKL moms (bekräftat av Christian 2026-08-20 för
+// Intelliplan). Fortnox-sidan använder därför `ft_net`, aldrig `ft_total`.
+// Saknas ft_net på rader blir summan för låg → posten flaggas `ofullstandig`.
+
+const MATT = {
+  intjanat: "Intjänat för arbete utfört i perioden (periodiserad intäkt)",
+  ordervarde: "Ordervärde, hela ordern daterad på leveransdatum i perioden",
+};
+
+// ⚠️⚠️ KÄND TÄCKNINGSLUCKA — F&E (Christian, 2026-08-20)
+//
+// Samtliga enheter på Food & Event har ännu inte gått över till Caspeco. Tills
+// migreringen är klar saknas **ca 30 %** av bolagets intäkter i våra källor.
+// Migreringen startar **Q1 2027**.
+//
+// Det här är den farligaste sortens fel: talet SER komplett ut. Inget saknas,
+// inget failar, ingen rad är tom — F&E är bara systematiskt ~30 % för lågt.
+// En vy som visar det utan att säga det ljuger, och den som jämför F&E mot S&P
+// drar fel slutsats om vilket bolag som går bäst.
+//
+// Därför bär F&E-posten `tackning` + en uttalad not, och den uppräknade
+// siffran hålls SKILD från det uppmätta beloppet (`uppskattad_full_belopp`,
+// `uppskattad: true`). Den är en linjär uppräkning ur ett antagande, inte en
+// mätning — blanda dem aldrig.
+//
+// 🔁 TA BORT när migreringen är klar. Sätt `tackning: 1` och radera noten —
+// en kvarglömd uppräkning som lever vidare efter Q1-27 blir ett tyst 43 %-fel
+// åt andra hållet.
+const TACKNING = {
+  food_event: {
+    andel: 0.70,
+    note: "⚠️ Ca 30 % av F&E:s intäkter saknas i källorna tills samtliga enheter gått över till Caspeco (migrering startar Q1 2027). Det uppmätta beloppet är systematiskt för LÅGT — jämför inte F&E mot de andra bolagen utan att räkna med det.",
+    ses_over: "2027-Q1",
+  },
+};
+
+/**
+ * @param sp   IntelliplanOrderMonth-rader för perioden (fält `revenue`, exkl moms)
+ * @param hk   FortnoxOrder-rader, connection = TENGELLA
+ * @param fe   FortnoxOrder-rader, connection = FE
+ * @param miraCount  antal MiraOrder i perioden — styr F&E-varningen
+ * @param opts { periodPagaende: bool }  innevarande månad är alltid ofullständig
+ */
+export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
+  const spRows = sp || [];
+  const spTotal = Number(spRows.reduce((a, r) => a + (_num(r.revenue) || 0), 0).toFixed(2));
+
+  // Fortnox-sidan: net (exkl moms), makulerade bort, saknat ft_net redovisas.
+  const fxArea = (rows) => {
+    const live = (rows || []).map(normFortnoxOrder).filter((r) => !r.cancelled);
+    const medNet = live.filter((r) => r.net != null);
+    const utanNet = live.filter((r) => r.net == null);
+    return {
+      antal: live.length,
+      antal_makulerade: (rows || []).length - live.length,
+      belopp: Number(medNet.reduce((a, r) => a + r.net, 0).toFixed(2)),
+      matt: MATT.ordervarde,
+      ofullstandig: utanNet.length > 0,
+      utan_net: utanNet.length,
+      utan_net_varde_inkl_moms: Number(utanNet.reduce((a, r) => a + (r.total || 0), 0).toFixed(2)),
+    };
+  };
+
+  const omraden = [
+    { nyckel: "service_people", namn: "Service & People", kalla: "IntelliplanOrderMonth",
+      antal: spRows.length, antal_makulerade: 0, belopp: spTotal, matt: MATT.intjanat,
+      ofullstandig: false, utan_net: 0, utan_net_varde_inkl_moms: 0 },
+    Object.assign({ nyckel: "housekeeping", namn: "Housekeeping", kalla: "FortnoxOrder (TENGELLA)" }, fxArea(hk)),
+    Object.assign({ nyckel: "food_event", namn: "Food & Event", kalla: "FortnoxOrder (FE)" }, fxArea(fe)),
+  ];
+
+  // Känd täckningslucka → posten bär den, och uppräkningen hålls SKILD från
+  // mätningen. `belopp` är alltid det UPPMÄTTA — aldrig det uppräknade.
+  for (const o of omraden) {
+    const t = TACKNING[o.nyckel];
+    o.tackning = t ? t.andel : 1;
+    if (t) {
+      o.tackning_note = t.note;
+      o.tackning_ses_over = t.ses_over;
+      o.uppskattad_full_belopp = Number((o.belopp / t.andel).toFixed(2));
+      o.uppskattad = true;   // ⚠️ uppskattad_full_belopp är INTE en mätning
+    }
+  }
+
+  const varningar = [];
+  // ⚠️ Innevarande månad är ALLTID ofullständig i Intelliplan — arbete utfört i
+  // månaden rapporteras in efter månadsskiftet. Juli mitt i månaden hade 1 024
+  // rader mot junis 2 315. Utan den här varningen ser varje pågående månad ut
+  // som ett ras.
+  if (opts.periodPagaende) {
+    varningar.push("⚠️ Perioden pågår. Service & People växer efter periodens slut allteftersom utfört arbete rapporteras in — jämför mot SAMMA DAG i tidigare perioder, aldrig mot deras slutsummor.");
+  }
+  for (const o of omraden) {
+    if (o.ofullstandig) {
+      varningar.push(`⚠️ ${o.namn}: ${o.utan_net} order saknar ft_net (skrivs bara vid detail-fetch) — beloppet är för LÅGT med upp till ${o.utan_net_varde_inkl_moms} kr inkl moms. Presentera det inte som en total.`);
+    }
+  }
+  for (const o of omraden) {
+    if (o.tackning < 1) varningar.push(`${o.tackning_note} (${o.namn}: uppmätt ${o.belopp} kr, uppräknat till full täckning ≈ ${o.uppskattad_full_belopp} kr — uppräkningen är ett ANTAGANDE, inte en mätning. Ses över ${o.tackning_ses_over}.)`);
+  }
+  // ⚠️ F&E har två möjliga källor. Idag ger bara den ena data — men det ändras
+  // utan kodändring den dagen mira-native offert/orderflödet tas i drift.
+  if (miraCount > 0) {
+    varningar.push(`⚠️ F&E: ${miraCount} MiraOrder i perioden. Mira-native flödet är i drift → samma affär kan finnas som BÅDE MiraOrder och FortnoxOrder. Kör /admin/bokningslage/fe-overlap och deduppa innan F&E-talet används.`);
+  }
+
+  // En känd täckningslucka gör summan lika ofullständig som ett saknat fält gör.
+  const allaFullstandiga = omraden.every((o) => !o.ofullstandig && o.tackning >= 1);
+  return {
+    omraden,
+    summa: {
+      belopp: Number(omraden.reduce((a, o) => a + o.belopp, 0).toFixed(2)),
+      // ⚠️ Etiketten är inte dekoration — den är hela poängen.
+      matt: "BLANDADE MÅTT — intjänat (S&P) + ordervärde (HK, F&E). Talet är en storleksordning, inte en koncernintäkt."
+        + (omraden.some((o) => o.tackning < 1) ? " ⚠️ Dessutom för LÅGT: minst ett bolag har känd täckningslucka (se varningar)." : ""),
+      fullstandig: allaFullstandiga && !opts.periodPagaende,
+    },
+    moms: "Samtliga belopp EXKL moms.",
+    varningar,
+  };
 }

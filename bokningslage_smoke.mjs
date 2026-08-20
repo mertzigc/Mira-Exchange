@@ -5,7 +5,7 @@
 // egen offertväg (`MiraOrder`) rader som SAMMA affär senare får som
 // `FortnoxOrder` med FE-connection? Summeras båda rakt av dubbelräknas den.
 import fs from "node:fs";
-import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide } from "./bokningslage.js";
+import { feOverlap, normOrderNo, normMiraOrder, normFortnoxOrder, describeEmptySide, bokningslageSummary } from "./bokningslage.js";
 
 let pass = 0, fail = 0;
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
@@ -233,6 +233,12 @@ const run = () => {
   ok("en enda rad totalt flaggas som 'knappt i drift'", /knappt är i drift/.test((knappt || {}).text || ""));
   ok("och varnar att svaret ändras när typen tas i drift", /tas i drift ändras svaret/.test((knappt || {}).text || ""));
   ok("grammatiken följer antalet", /har 1 rad totalt/.test((knappt || {}).text || ""));
+  // ⚠️ Skarpt: "1 rad totalt och 2 träffar" — samma rad i två datumfält lästes
+  // som två rader. Träffarna ska redovisas PER FÄLT, inte som en klumpsumma.
+  const tvaFalt = D({ typeTotal: 1, wide: [{ field: "leveransdatum", count: 1 }, { field: "orderdatum", count: 1 }] });
+  ok("träffar redovisas per fält", /leveransdatum: 1, orderdatum: 1/.test((tvaFalt || {}).text || ""));
+  ok("ingen klumpsumma som läses som radantal", !/2 träffar/.test((tvaFalt || {}).text || ""));
+  ok("och säger att samma rad kan ligga i flera fält", /samma rad kan ligga i flera/.test((tvaFalt || {}).text || ""));
   const idrift = D({ typeTotal: 350, wide: [{ field: "leveransdatum", count: 40 }] });
   ok("en typ i drift får INTE den varningen", !/knappt är i drift/.test((idrift || {}).text || ""));
 
@@ -268,6 +274,106 @@ const run = () => {
   ok("bubbleCountStrict kastar i stället för att returnera 0", /throw err;/.test(bcs));
   ok("bubbleCountStrict returnerar aldrig en naken 0", !/return 0;/.test(bcs));
   ok("saknad `remaining` gissas inte till 0", /missingRemaining/.test(bcs));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Sammanställning — tre affärsområden utan att ljuga");
+  // ══════════════════════════════════════════════════════════════════════════
+  const SP = [{ revenue: 6000000 }, { revenue: 850058.36 }];
+  const HK = [
+    { _id: "h1", ft_delivery_date: "2026-06-05", ft_total: 125000, ft_net: 100000 },
+    { _id: "h2", ft_delivery_date: "2026-06-06", ft_total: 62500, ft_net: 50000, ft_cancelled: "ja" },
+  ];
+  const FE = [{ _id: "e1", ft_delivery_date: "2026-06-07", ft_total: 1250, ft_net: 1000 }];
+  const sum1 = bokningslageSummary({ sp: SP, hk: HK, fe: FE });
+  const omr = (k) => (sum1.omraden || []).find((o) => o.nyckel === k) || {};
+
+  ok("S&P summeras ur revenue", omr("service_people").belopp === 6850058.36);
+  ok("HK använder ft_net, inte ft_total", omr("housekeeping").belopp === 100000);
+  ok("makulerade räknas bort", omr("housekeeping").antal === 1 && omr("housekeeping").antal_makulerade === 1);
+  ok("F&E använder ft_net", omr("food_event").belopp === 1000);
+
+  // ⚠️ Kärnan: talen får inte presenteras som samma sort.
+  ok("S&P märks som intjänat", /Intjänat/.test(omr("service_people").matt || ""));
+  ok("HK märks som ordervärde", /Ordervärde/.test(omr("housekeeping").matt || ""));
+  ok("F&E märks som ordervärde", /Ordervärde/.test(omr("food_event").matt || ""));
+  ok("måtten är olika", omr("service_people").matt !== omr("housekeeping").matt);
+  ok("summan bär en varningsetikett", /BLANDADE MÅTT/.test((sum1.summa || {}).matt || ""));
+  ok("summan påstår inte att vara koncernintäkt", !/koncernintäkt(?!\.)/.test((sum1.summa || {}).matt || "") || /inte en koncernintäkt/.test((sum1.summa || {}).matt || ""));
+  ok("momsbasen sägs ut", /EXKL moms/.test(sum1.moms || ""));
+
+  // ⚠️ Saknat ft_net får inte bli en tyst för låg summa.
+  const glest = bokningslageSummary({ sp: [], hk: [{ _id: "h1", ft_delivery_date: "2026-06-05", ft_total: 125000 }], fe: [] });
+  ok("order utan ft_net räknas inte som 0 kr utan flaggas", (glest.omraden.find((o) => o.nyckel === "housekeeping") || {}).ofullstandig === true);
+  ok("och gapets storlek redovisas", /125000 kr inkl moms/.test((glest.varningar || []).join(" ")));
+  ok("summan markeras som icke fullständig", (glest.summa || {}).fullstandig === false);
+
+  // ⚠️ Pågående period: S&P växer i efterhand.
+  const pagaende = bokningslageSummary({ sp: SP, hk: [], fe: [], opts: { periodPagaende: true } });
+  ok("pågående period varnar om efterrapportering", /Perioden pågår/.test((pagaende.varningar || []).join(" ")));
+  ok("och säger att man ska jämföra mot samma dag bakåt", /SAMMA DAG/.test((pagaende.varningar || []).join(" ")));
+  ok("pågående period ger aldrig fullstandig summa", (pagaende.summa || {}).fullstandig === false);
+  const klar = bokningslageSummary({ sp: SP, hk: [], fe: [], opts: { periodPagaende: false } });
+  ok("avslutad period varnar inte om efterrapportering", !/Perioden pågår/.test((klar.varningar || []).join(" ")));
+  // ⚠️ Men den blir ändå inte `fullstandig` — F&E:s Caspeco-lucka gäller varje
+  // period tills migreringen är klar. Det HÄR testet påstod tidigare motsatsen;
+  // antagandet föll när täckningsluckan blev känd (Christian 2026-08-20).
+  // Så länge något bolag har tackning < 1 får ingen period kallas fullständig.
+  ok("men är ändå inte fullständig så länge F&E:s täckningslucka finns", (klar.summa || {}).fullstandig === false);
+  ok("och orsaken är täckningen, inte perioden", /Ca 30 %/.test((klar.varningar || []).join(" ")));
+
+  // ⚠️ Den dagen mira-native går i drift måste F&E varna för dubbelräkning.
+  const medMira = bokningslageSummary({ sp: [], hk: [], fe: FE, miraCount: 12 });
+  ok("MiraOrder i perioden → varning om dubbelräkning", /dubbelräkning|BÅDE MiraOrder och FortnoxOrder/.test((medMira.varningar || []).join(" ")));
+  ok("och hänvisar till fe-overlap", /fe-overlap/.test((medMira.varningar || []).join(" ")));
+  ok("utan MiraOrder ingen sådan varning", !/BÅDE MiraOrder/.test((sum1.varningar || []).join(" ")));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Täckningslucka F&E — ~30 % saknas tills Caspeco-migreringen är klar");
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ Farligast av allt: talet SER komplett ut. Inget failar, ingen rad är tom
+  // — F&E är bara systematiskt ~30 % för lågt (Christian 2026-08-20, Q1-27).
+  const tck = bokningslageSummary({ sp: SP, hk: HK, fe: [
+    { _id: "e1", ft_delivery_date: "2026-06-07", ft_total: 8750, ft_net: 7000 }] });
+  const fe1 = (tck.omraden || []).find((o) => o.nyckel === "food_event") || {};
+  ok("F&E bär en täckningsgrad", fe1.tackning === 0.7);
+  ok("belopp är det UPPMÄTTA, inte det uppräknade", fe1.belopp === 7000);
+  ok("uppräkningen ligger i ett EGET fält", fe1.uppskattad_full_belopp === 10000);
+  ok("och är märkt som uppskattning", fe1.uppskattad === true);
+  ok("noten säger att beloppet är för lågt", /för LÅGT/.test(fe1.tackning_note || ""));
+  ok("noten namnger orsaken och tidpunkten", /Caspeco/.test(fe1.tackning_note || "") && /Q1 2027/.test(fe1.tackning_note || ""));
+  ok("täckningsluckan hamnar bland varningarna", /Ca 30 %/.test((tck.varningar || []).join(" ")));
+  ok("varningen säger att uppräkningen är ett antagande", /ANTAGANDE, inte en mätning/.test((tck.varningar || []).join(" ")));
+  ok("den har ett datum då den ska ses över", fe1.tackning_ses_over === "2027-Q1");
+
+  // De andra bolagen ska INTE räknas upp.
+  const sp1 = (tck.omraden || []).find((o) => o.nyckel === "service_people") || {};
+  const hk1 = (tck.omraden || []).find((o) => o.nyckel === "housekeeping") || {};
+  ok("S&P har full täckning", sp1.tackning === 1 && sp1.uppskattad_full_belopp === undefined);
+  ok("HK har full täckning", hk1.tackning === 1 && hk1.uppskattad_full_belopp === undefined);
+
+  // ⚠️ Summan får aldrig se komplett ut när ett bolag har en känd lucka.
+  ok("summan innehåller det uppmätta, inte det uppräknade", (tck.summa || {}).belopp === 6850058.36 + 100000 + 7000);
+  ok("summan flaggas som för låg", /för LÅGT/.test((tck.summa || {}).matt || ""));
+  ok("summan kan inte vara fullständig", (tck.summa || {}).fullstandig === false);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Summary-endpointen");
+  // ══════════════════════════════════════════════════════════════════════════
+  const sStart = SRC2.indexOf('app.get("/admin/bokningslage/summary"');
+  const sEp = sStart === -1 ? "" : SRC2.slice(sStart, SRC2.indexOf("\n});", sStart) + 4);
+  const sCode = sEp.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("summary-endpointen finns", sStart !== -1);
+  ok("inga .catch(() => []) på frågorna", !/\.catch\(\(\) => \[\]\)/.test(sCode));
+  ok("HK constraintas på TENGELLA_CONNECTION_ID", /TENGELLA_CONNECTION_ID/.test(sCode));
+  ok("F&E constraintas på FE_CONNECTION_ID", /FE_CONNECTION_ID/.test(sCode));
+  ok("båda på fältet connection, inte connection_id", /key: "connection", constraint_type: "equals"/.test(sCode) && !/key: "connection_id"/.test(sCode));
+  ok("S&P hämtas på ip_period", /key: "ip_period"/.test(sCode));
+  // ⚠️ ip_period är HELA månader — ett delspann gör S&P-talet för stort.
+  ok("delspann mot månadskornighet flaggas", /sp_tacker_perioden/.test(sEp) && /inte hela månader/.test(sEp));
+  ok("pågående period upptäcks mot dagens datum", /periodPagaende: to >= idag/.test(sCode));
+  // Utan datum ska frågan vara "innevarande månad" — det är vyns fråga.
+  ok("defaultar till innevarande månad", /mStart\.toISOString/.test(sCode) && /mSlut\.toISOString/.test(sCode));
+  ok("och avvisar bakvända spann", /to_före_from/.test(sCode));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
