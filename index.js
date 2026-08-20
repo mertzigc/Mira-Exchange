@@ -22631,13 +22631,29 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
     const [spPerManad, hk, fe, miraLev, miraOrd] = await Promise.all([
       Promise.all(månader.map((m) => bubbleFindAll(IP_ORDERMONTH_TYPE, {
         constraints: [{ key: "ip_period", constraint_type: "equals", value: m }] }))),
-      // ⚠️ HK = TengellaWorkorder, INTE FortnoxOrder(TENGELLA). Den senare gav 0
-      // rader skarpt 2026-08-20 — nollan var korrekt, frågan var ställd till fel
-      // tabell. affar_api.js: "HK/Tengella-order = raw TengellaWorkorder
-      // (kanonisk källa) ... FortnoxOrder med connection=TENGELLA exkluderas".
-      // `order_date` är enda datumet på typen, och är ett bevisat constraint-fält
-      // (affar_api.js dateC("order_date") i den live affärslistan).
-      bubbleFindAll("TengellaWorkorder", { constraints: dateWin("order_date") }),
+      // ⚠️⚠️ HK = FortnoxOrder(connection=TENGELLA) på **ft_order_date**.
+      //
+      // Tre fällor på rad här, alla utredda 2026-08-20:
+      //
+      // 1. `TengellaWorkorder` är PENSIONERAD. §9-cutovern (LIVE 2026-06-08,
+      //    HANDOFF §5/§9e) flyttade workordrar till unified `FortnoxOrder` med
+      //    connection=TENGELLA och `source="tengella-workorder"`. Den gamla
+      //    cronen `tengella_cron.sh` (Render-jobbet TengellaNightlySync)
+      //    suspenderades 2026-06-04 — MED FLIT. Typen är alltså fryst by design,
+      //    inte trasig. Läs den inte som en levande källa.
+      //
+      // 2. **v2-adaptern sätter ALDRIG `ft_delivery_date`.** Den skriver
+      //    `ft_order_date` + `ft_order_ts` (invoice_sync.js tengellaWorkorderAdapter
+      //    — workordern har bara `OrderDate`). Att fråga på ft_delivery_date gav
+      //    0 rader, och den nollan tolkades först som "fel tabell" och sedan som
+      //    "död synk". Båda slutsatserna var fel: frågan letade på ett fält som
+      //    aldrig skrivs.
+      //
+      // 3. F&E frågar `ft_delivery_date` och HK `ft_order_date` — OLIKA fält, för
+      //    att källorna bär olika datum. Det är därför mått-etiketterna skiljer sig.
+      bubbleFindAll("FortnoxOrder", { constraints: [
+        { key: "connection", constraint_type: "equals", value: TENGELLA_CONNECTION_ID },
+        ...dateWin("ft_order_date") ] }),
       bubbleFindAll("FortnoxOrder", { constraints: [
         { key: "connection", constraint_type: "equals", value: FE_CONNECTION_ID },
         ...dateWin("ft_delivery_date") ] }),
@@ -22689,7 +22705,7 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
     };
     const PROBE_KALLA = {
       service_people: [IP_ORDERMONTH_TYPE, ["synced_at"]],
-      housekeeping: ["TengellaWorkorder", ["order_date"]],
+      housekeeping: ["FortnoxOrder", ["ft_order_date"]],
       food_event: ["FortnoxOrder", ["ft_delivery_date"]],
     };
     // ── Färskhetskontroll per källa ──────────────────────────────────────────
@@ -22698,31 +22714,39 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
     // TengellaWorkorders hade skapats sedan 4 juni. Ett litet plausibelt tal är
     // farligare än en nolla, för nollan syns.
     // Två billiga frågor per källa (limit 1, sorterad) — ingen paginering.
-    const nyaste = async (type, field) => {
-      const r = await bubbleFind(type, { limit: 1, sort_field: field, descending: true });
+    // ⚠️ MÅSTE VARA CONSTRAINTAD. HK och F&E bor i SAMMA tabell (FortnoxOrder,
+    // olika connection). En färskhetsmätning på hela typen hade gjort HK "färsk"
+    // enbart för att F&E synkas — exakt den falska trygghet kontrollen finns för
+    // att förhindra.
+    const nyaste = async (type, field, extra = []) => {
+      const r = await bubbleFind(type, { limit: 1, sort_field: field, descending: true,
+        constraints: extra });
       return (r && r[0] && r[0][field]) || null;
     };
-    const farskhet = async (type, maxDagar) => {
+    const farskhet = async (type, maxDagar, extra = [], label = null) => {
+      const namn = label || type;
       try {
-        const [skapad, rord] = await Promise.all([nyaste(type, "Created Date"), nyaste(type, "Modified Date")]);
-        return kallaFarskhet({ type, senasteSkapad: skapad, senasteRord: rord,
+        const [skapad, rord] = await Promise.all([
+          nyaste(type, "Created Date", extra), nyaste(type, "Modified Date", extra)]);
+        return kallaFarskhet({ type: namn, senasteSkapad: skapad, senasteRord: rord,
           nu: new Date().toISOString(), maxDagar });
       } catch (e) {
         // ⚠️ Omätt, inte färskt. kallaFarskhet ger då status "okänt".
-        console.error(`[bokningslage/summary] färskhetskontroll ${type} failade:`, e?.message, e?.detail || "");
-        return kallaFarskhet({ type, senasteSkapad: null, senasteRord: null, nu: new Date().toISOString(), maxDagar });
+        console.error(`[bokningslage/summary] färskhetskontroll ${namn} failade:`, e?.message, e?.detail || "");
+        return kallaFarskhet({ type: namn, senasteSkapad: null, senasteRord: null, nu: new Date().toISOString(), maxDagar });
       }
     };
+    const CONN = (id) => [{ key: "connection", constraint_type: "equals", value: id }];
     // Gränsen = nattlig synk + marginal. Intelliplan läser om hela månader varje
     // natt, Tengella/Fortnox körs nattligt via egna cron-jobb.
     const FARSKHET_KALLA = {
-      service_people: [IP_ORDERMONTH_TYPE, 3],
-      housekeeping: ["TengellaWorkorder", 3],
-      food_event: ["FortnoxOrder", 3],
+      service_people: [IP_ORDERMONTH_TYPE, 3, [], IP_ORDERMONTH_TYPE],
+      housekeeping: ["FortnoxOrder", 3, CONN(TENGELLA_CONNECTION_ID), "FortnoxOrder(TENGELLA)"],
+      food_event: ["FortnoxOrder", 3, CONN(FE_CONNECTION_ID), "FortnoxOrder(FE)"],
     };
     for (const o of result.omraden) {
-      const [type, maxDagar] = FARSKHET_KALLA[o.nyckel];
-      o.farskhet = await farskhet(type, maxDagar);
+      const [type, maxDagar, extra, label] = FARSKHET_KALLA[o.nyckel];
+      o.farskhet = await farskhet(type, maxDagar, extra, label);
       if (o.farskhet.status !== "farsk") {
         o.ofullstandig = true;
         result.summa.fullstandig = false;
@@ -22745,6 +22769,87 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
       sp_tacker_perioden: spTacker, ...result });
   } catch (e) {
     console.error("[bokningslage/summary]", e?.message, e?.detail || "");
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// KÄLLHÄLSA — vilka datakällor lever, och sedan när?
+// ════════════════════════════════════════════════════════════════════════════
+// GET /admin/bokningslage/kallhalsa
+//
+// ⚠️ BAKGRUND (2026-08-20). Housekeeping-datan såg frisk ut i elva veckor medan
+// den var fryst. Ingen källa hade en färskhetskontroll, och en PENSIONERAD typ
+// är utifrån omöjlig att skilja från en DÖD synk. Den här endpointen gör
+// skillnaden mätbar: varje källa deklarerar om den är `aktiv` eller
+// `pensionerad`, och mäts på samma sätt.
+//
+// Läser bara. En rad per källa, alla frågor constraintade (limit 1) — inga svep.
+app.get("/admin/bokningslage/kallhalsa", async (req, res) => {
+  try {
+    const CONNC = (id) => [{ key: "connection", constraint_type: "equals", value: id }];
+    // status: "aktiv" = ska vara färsk · "pensionerad" = ska INTE få nya rader
+    const KALLOR = [
+      { namn: "FortnoxOrder (F&E)", type: "FortnoxOrder", constraints: CONNC(FE_CONNECTION_ID),
+        status: "aktiv", matas_av: "sync_v2_cron.sh → /sync/v2/fortnox-order (SYNC_V2_ORDERS=1)", maxDagar: 3 },
+      { namn: "FortnoxOrder (TENGELLA/HK)", type: "FortnoxOrder", constraints: CONNC(TENGELLA_CONNECTION_ID),
+        status: "aktiv", matas_av: "sync_v2_cron.sh → /sync/v2/tengella-workorder (SYNC_V2_ORDERS=1)", maxDagar: 3 },
+      { namn: "TengellaWorkorder", type: "TengellaWorkorder", constraints: [],
+        status: "pensionerad", matas_av: "tengella_cron.sh — SUSPENDERAD 2026-06-04 av §9-cutovern (avsiktligt)", maxDagar: 3 },
+      { namn: "TengellaCustomer", type: "TengellaCustomer", constraints: [],
+        status: "aktiv", matas_av: "sync_v2_cron.sh → /tengella/customers/sync", maxDagar: 3 },
+      // ⚠️ Planeringsvyns Tengella-PASS. Egen väg: /v2/TimeTableEvent →
+      // activity_sync.js → Activity. Har INGEN cron (verifierat 2026-08-20:
+      // inget script anropar /sync/activities/*).
+      { namn: "Activity (Tengella-pass)", type: "Activity",
+        constraints: [{ key: "ActivityType", constraint_type: "equals", value: ACTIVITY_CONFIG.AT_HOUSEKEEPING }],
+        status: "aktiv", matas_av: "POST /sync/activities/tengella — ⚠️ INGEN CRON ANROPAR DEN", maxDagar: 3,
+        extraDatum: "tengella_last_synced" },
+      { namn: "IntelliplanOrderMonth (S&P)", type: IP_ORDERMONTH_TYPE, constraints: [],
+        status: "aktiv", matas_av: "intelliplan_cron.sh → /admin/intelliplan/sync/order-month", maxDagar: 3 },
+      { namn: "MiraOrder", type: "MiraOrder", constraints: [],
+        status: "aktiv", matas_av: "Miras egen offertväg (ej i drift — testdata)", maxDagar: 3 },
+    ];
+
+    const nyaste = async (type, field, extra) => {
+      const r = await bubbleFind(type, { limit: 1, sort_field: field, descending: true, constraints: extra });
+      return (r && r[0] && r[0][field]) || null;
+    };
+    const nu = new Date().toISOString();
+    const rader = [];
+    for (const k of KALLOR) {
+      let antal = null, skapad = null, rord = null, extraDatum = null, fel = null;
+      try {
+        // ⚠️ bubbleCountStrict — bubbleCount returnerar 0 på fel.
+        antal = await bubbleCountStrict(k.type, k.constraints);
+        [skapad, rord] = await Promise.all([
+          nyaste(k.type, "Created Date", k.constraints),
+          nyaste(k.type, "Modified Date", k.constraints),
+        ]);
+        if (k.extraDatum) extraDatum = await nyaste(k.type, k.extraDatum, k.constraints);
+      } catch (e) {
+        // Omätt ≠ noll. Felet bärs i svaret, inte som en nolla.
+        fel = e?.message || String(e);
+        console.error(`[bokningslage/kallhalsa] ${k.namn}:`, fel, e?.detail || "");
+      }
+      const f = kallaFarskhet({ type: k.namn, senasteSkapad: skapad, senasteRord: rord, nu, maxDagar: k.maxDagar });
+      // ⚠️ En PENSIONERAD källa SKA vara inaktuell. Att flagga den som problem
+      // vore precis det brus som får riktiga larm att ignoreras.
+      const bedomning = k.status === "pensionerad"
+        ? (f.status === "farsk"
+            ? "⚠️ OVÄNTAT: pensionerad källa får fortfarande nya rader — någon skriver till den."
+            : "OK (pensionerad — ska inte få nya rader)")
+        : (f.status === "farsk" ? "OK" : `🔴 ${f.text}`);
+      rader.push({ ...k, constraints: undefined, antal, senaste_skapad: skapad, senaste_rord: rord,
+        ...(k.extraDatum ? { [k.extraDatum]: extraDatum } : {}), farskhet: f, bedomning, fel });
+    }
+    const problem = rader.filter((r) => r.bedomning.startsWith("🔴") || r.bedomning.startsWith("⚠️"));
+    console.log(`[bokningslage/kallhalsa] ${rader.length} källor, ${problem.length} problem`);
+    return res.json({ ok: true, kontrollerad: nu, kallor: rader,
+      problem: problem.map((r) => `${r.namn}: ${r.bedomning}`),
+      allt_ok: problem.length === 0 });
+  } catch (e) {
+    console.error("[bokningslage/kallhalsa]", e?.message, e?.detail || "");
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });

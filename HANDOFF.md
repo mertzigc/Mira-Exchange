@@ -312,38 +312,83 @@ Aug 2026 gav S&P 5 833 564,90 (177 rader) · **HK 0 kr / 0 rader** · F&E 3 035 
 
 **Verifierat:** `bokningslage_smoke.mjs` **151/151** (från 133). **Mutationstestat:** HK tillbaka på FortnoxOrder fäller 3 · HK märkt med leveransdatum fäller 3 · oflaggad radlös workorder fäller 2 · borttagna workordrar medräknade fäller 3 · drift-formulering vid 1 rad fäller 1 · `tomma = []` fäller 1 · diagnos utan per-område-anrop fäller 1. Samtliga 20 sviter gröna.
 
-### ⚠️⚠️ INAKTUELL KÄLLA ÄR FARLIGARE ÄN TOM (upptäckt 2026-08-20)
-Efter HK-rättningen svarade `summary`: **HK `antal: 1, belopp: 2880, ofullstandig: false`** för augusti. Talet SÅG friskt ut. Sanningen: **inga `TengellaWorkorder` har skapats sedan 4 juni** — synken slutade leverera.
+### 🔴 UTREDNING 2026-08-20: HOUSEKEEPING-DATAN — VAD SOM FAKTISKT HÄNDE
 
-**Det är den svåraste varianten av samma klass.** En TOM källa fångas av `describeEmptySide`. En INAKTUELL källa ger ett litet, plausibelt tal som passerar varje nollkontroll. Nollan syns; det här gör det inte.
+**Symtom:** bokningsläget gav HK `antal: 1, belopp: 2880` för augusti. Christian: *"vi har inte skapat TengellaWorkorders sedan 4 juni."* Render: **cron-jobbet `TengellaNightlySync` (kör `tengella_cron.sh`) är manuellt suspended, sista lyckade körning 4 juni 2026.**
 
-**`kallaFarskhet()` (bokningslage.js) + färskhetskontroll i `summary`.** Två frågor per källa (`limit 1`, sorterad — ingen paginering), som mäter **två olika saker**:
-- **`senaste_skapad`** (max `Created Date`) — gammal ⇒ inget nytt kommer in.
-- **`senaste_rord`** (max `Modified Date`) — gammal ⇒ synken rör *ingenting alls*, alltså kör den sannolikt inte.
+**⚠️ SLUTSATSEN "SYNKEN ÄR DÖD" VAR FEL.** Kedjan, verifierad i kod och git:
 
-Fyra statusar: `farsk` · `inga_nya` (rader uppdateras men inga nya — lugn period ELLER synk som slutat skapa) · `inaktuell` (*"synken rör ingenting — den kör sannolikt inte. Talet är en rest av senaste lyckade körning."*) · `okänt` (omätt är **aldrig** färskt). Icke-färsk källa → området blir `ofullstandig`, `summa.fullstandig` nollas, varning läggs till. Gräns 3 dagar = nattlig synk + marginal.
+1. **`fb99584` 2026-06-04 17:09 — "Sync v2: cron-cutover".** §9-omtaget flyttade workordrar från den egna typen `TengellaWorkorder` till **unified `FortnoxOrder`** med `connection=TENGELLA` och `source="tengella-workorder"` (adapter i `invoice_sync.js`, `bubbleType: "FortnoxOrder"`).
+2. **`TengellaNightlySync` suspenderades samma dag — MED FLIT.** Runbooken (§9e, HANDOFF rad 1574) föreskriver exakt det: *"STÄNG AV gamla order/offer/workorder-cron … `tengella_cron.sh` (workorder-delen)"* innan `SYNC_V2_ORDERS=1`.
+3. **Cutovern gick LIVE 2026-06-08** (HANDOFF rad 1452): *"`SYNC_V2_ORDERS=1` aktiv. Nightly grön med order/offer/workorder."*
 
-### TENGELLA-KEDJAN — hur data hämtas och var den landar
+**`TengellaWorkorder` är alltså PENSIONERAD, inte trasig.** Frusen 4 juni by design. Att den inte får nya rader är korrekt beteende.
+
+#### 🔴 DE TVÅ VERKLIGA FELEN
+
+**FEL A — `affar_api.js` läser den pensionerade typen.** Rad 140/304, daterat **2026-08-07**: *"HK/Tengella-order = raw TengellaWorkorder (kanonisk källa, Fas 1 2026-08-07 — **färsk sync**, syns oavsett affär). FortnoxOrder(connection=TENGELLA) exkluderas i display … för att undvika dubbel mot ev. sync_v2-spegel."*
+
+Kommentaren **påstår att synken var färsk** — den hade då varit avstängd i två månader. Och det som kallas "ev. sync_v2-spegel" är i själva verket den **kanoniska** källan efter cutovern. Följden: **affärsvyn/kundkortet har visat frusen juni-data för Housekeeping sedan 7 augusti**, och exkluderat den levande källan. ⚠️ **EJ ÅTGÄRDAT — eget spår, se nedan.**
+
+**FEL B — mitt eget: `ft_delivery_date` på HK.** Bokningslägets första HK-fråga gick mot `FortnoxOrder(TENGELLA)` på `ft_delivery_date` → **0 rader**. Jag tolkade nollan som "fel tabell" och bytte till `TengellaWorkorder` — vilket gav 1 rad från juni, som färskhetskontrollen sedan (korrekt) flaggade som 77 dagar gammal. Två fel som pekade åt samma håll och bekräftade varandra.
+
+**Sanningen:** `tengellaWorkorderAdapter` sätter `ft_order_date` + `ft_order_ts` men **ALDRIG `ft_delivery_date`** — workordern har bara `OrderDate`. Nollan berodde på ett fält som aldrig skrivs.
+
+**Rättat:** HK = `FortnoxOrder`, `connection = TENGELLA`, fönster på **`ft_order_date`**. F&E ligger kvar på `ft_delivery_date`. **Olika datumfält i samma tabell** — därav de olika mått-etiketterna.
+
+#### ⚠️ FÄRSKHETSKONTROLLEN MÅSTE VARA CONSTRAINTAD
+HK och F&E bor i **samma tabell**. En okonstraintad `kallaFarskhet("FortnoxOrder")` hade gjort HK "färsk" enbart för att F&E synkas — falsk trygghet av exakt den sort kontrollen finns för att förhindra. Mäts nu per connection: `FortnoxOrder(TENGELLA)` resp. `FortnoxOrder(FE)`.
+
+#### ✅ RÄTTELSE: SCHEMALÄGGNING/PASS FINNS — via en HELT ANNAN väg
+Jag skrev först att ingen pass-integration fanns. **Fel** — jag greppade bara `index.js`. Den ligger i **`activity_sync.js`**:
+
 ```
-tengella_cron.sh  (Render Cron Job, x-api-key + X-Sync-Secret)
-  → POST /tengella/cron   (index.js 8117, requireSyncSecret)
-      ├─ tengellaLogin(orgNo)                    TENGELLA_ORGNO, default 746-0509
-      ├─ A) listTengellaCustomers  → upsertTengellaCustomerToBubble → TengellaCustomer
-      └─ B) listTengellaWorkOrders → upsertTengellaWorkorderToBubble → TengellaWorkorder
-                                   → upsertTengellaWorkorderRowToBubble → TengellaWorkorderRow
+POST /sync/activities/tengella      (requireSyncSecret)
+  → activityEngine.syncForSource("tengella")
+  → Tengella /v2/TimeTableEvent          ← FEMTE endpointen, utöver login/Customers/Invoices/WorkOrders
+  → mapTimeTableEvent() → Bubble `Activity`
+       ActivityType = "Housekeeping" · Category = "Housekeeping"
+       Startdatum/Slutdatum ← ev.StartDateTime / EndDateTime
+       tengella_employee_id/-name · project_id/-name · region_id/-name
+       supervisor_id/-name · item_name · event_id · tengella_last_synced
+  upsert-nyckel: Activity.source_id = "tengella:<EventId>"
 ```
-**Bubble-typer:** `TengellaCustomer` · `TengellaWorkorder` · `TengellaWorkorderRow` · **`TengellaSyncState`** (en rad per `org_no`).
+Planeringsvyn (`mira-kalender.html`) läser `Activity` via `/admin/planning/activities` och renderar `tengella_employee_name` / `region` / `project` / `supervisor`. **Det är därifrån pass, person och tider kommer.**
 
-**⚠️ SYNKEN ÄR CURSOR-DRIVEN OCH LÅSBAR.** `TengellaSyncState` bär `customers_cursor` · `workorders_cursor` · `last_run` · `last_ok` · `locked_until`. Varje sida sparar cursorn direkt (tappar aldrig läget). Nås slutet (`Next: null`) sparas `""` → nästa körning börjar om från början. Taket per körning är `workordersMaxPages × limit` = **40 × 50 = 2 000 workordrar**; fler än så tar flera nätter.
+#### 🔴 MEN: `/sync/activities/*` HAR INGEN CRON
+Verifierat 2026-08-20: **inget script i repot anropar `/sync/activities/`** (genomsökt samtliga `*.sh`). Skrivvägen finns bara som *write-through* för Miras egna typer (`upsertActivityForComission` / `ForTodo`, anropade från förfrågan/popup). **Pull-vägen från Tengella körs alltså bara manuellt.** Tengella-passen i planeringsvyn är därmed frusna vid senaste manuella körningen — kontrollera `tengella_last_synced` via källhälsan nedan.
 
-**Felsökningsordning när HK står stilla:**
-1. `curl -sS "$HOST/version"` — kör rätt kod?
-2. Render → Cron Jobs: **är `tengella_cron.sh` schemalagt och grönt?** (Cron-scheman ligger i Renders UI, inte i repot — inget `render.yaml` finns.)
-3. `TengellaSyncState` i Bubble App data: `last_run`, `last_ok`, `workorders_cursor`, `locked_until`. Ett `locked_until` i FRAMTIDEN blockerar varje körning (`skipped: "locked"`); låset sätts 8 min och släpps med `locked_until: null` — **och Bubble lagrar inte null**, så fältet kan bära ett gammalt värde utan att blockera. Kolla tidsstämpeln, inte bara att fältet finns.
-4. `POST /tengella/cron` manuellt (kräver `X-Sync-Secret`) — svaret bär `workorders.pages/fetched/upserted/cursor`. `fetched: 0` med tom cursor ⇒ Tengella returnerar inget, inte att vi tappat läget.
-5. Render-loggen: `[tengella/cron] workorders page {sentCursor, got, next, existsMoreData}` loggas per sida.
+### KÄLLHÄLSA — `GET /admin/bokningslage/kallhalsa` (NY)
+Elva veckors tyst dataförlust berodde på att **en pensionerad typ och en död synk ser identiska ut utifrån**. Endpointen gör skillnaden mätbar: varje källa **deklarerar** `status: "aktiv" | "pensionerad"` plus vad som matar den, och mäts likadant (antal + max `Created Date` + max `Modified Date` + `kallaFarskhet`).
 
-**Verifierat:** `bokningslage_smoke.mjs` **168/168** (från 151). **Mutationstestat:** borttagen `inaktuell`-gren fäller 4 · omätt som mätt fäller 3 · borttagen `inga_nya`-signal fäller 2 · färskhet utan effekt på `ofullstandig` fäller 1 · `Modified Date` oläst fäller 1. Samtliga 20 sviter gröna.
+- En **pensionerad** källa som är gammal → `OK (pensionerad)`. Att larma på den vore brus som får riktiga larm att ignoreras.
+- En **pensionerad** källa som plötsligt får nya rader → `⚠️ OVÄNTAT: någon skriver till den.`
+- En **aktiv** källa som inte är färsk → `🔴` + färskhetstexten.
+
+Källor som mäts: `FortnoxOrder(F&E)` · `FortnoxOrder(TENGELLA/HK)` · `TengellaWorkorder` (pensionerad) · `TengellaCustomer` · **`Activity` med `ActivityType=Housekeeping` (Tengella-passen, mäts även på `tengella_last_synced`)** · `IntelliplanOrderMonth` · `MiraOrder`. Alla frågor `limit 1` + constraintade — inga svep. `bubbleCountStrict`, aldrig `bubbleCount`. Mätfel bärs som `fel`, aldrig som `0`.
+
+#### ⚠️ FJÄRDE VAKTLÖSA GREP-TESTET DENNA SESSION
+`"en pensionerad källa flaggas inte som problem"` greppade `kEp` (**med** kommentarer) — mutationen som dödade hela `bedomning`-grenen gav **grönt**, eftersom orden fanns kvar i kommentaren. Assertionerna greppar nu `kCode` (kommentarer strippade) och själva grenen `k.status === "pensionerad"`. **Regel: greppa alltid den strippade koden, aldrig råtexten — en kommentar som beskriver beteendet gör testet till en tautologi.**
+
+#### VARFÖR DET INTE UPPTÄCKTES PÅ 11 VECKOR
+- Cutovern var **korrekt utförd och dokumenterad** — inget larm skulle utlösts.
+- Den ENDA felaktiga länken var en kommentar i `affar_api.js` som **antog** färsk sync utan att mäta.
+- Ingen källa hade en färskhetskontroll. En pensionerad typ och en död synk ser exakt likadana ut utifrån.
+- `TengellaWorkorder` gav fortfarande *plausibla* tal i affärsvyn — bara gamla.
+
+#### ⏭️ ÅTGÄRDER
+| # | Åtgärd | Status |
+|---|---|---|
+| 1 | HK i bokningsläget → `FortnoxOrder(TENGELLA)` på `ft_order_date` | ✅ rättat |
+| 2 | Färskhetskontroll per connection, inte per typ | ✅ rättat |
+| 3 | **`affar_api.js` → läs `FortnoxOrder(TENGELLA)` i st.f. `TengellaWorkorder`** — och ta bort exkluderingen av "sync_v2-spegeln" | 🔴 **EJ GJORT — kräver beslut, se nedan** |
+| 4 | Färskhetskontroll på alla källor → `GET /admin/bokningslage/kallhalsa` | ✅ byggt |
+| 5 | **Cron för `/sync/activities/tengella`** (passen finns redan via `/v2/TimeTableEvent` → Activity, men körs bara manuellt) | 🔴 ej gjort |
+| 6 | Avveckla `TengellaWorkorder` när inget läser den | 🔴 ej gjort |
+
+**⚠️ Åtgärd 3 är inte en ren omskrivning.** `affar_api.js` exkluderar `FortnoxOrder(TENGELLA)` för att undvika dubbelräkning mot `TengellaWorkorder`. Byter man källa måste exkluderingen bort SAMTIDIGT, annars försvinner HK helt ur affärsvyn. Historiska `TengellaWorkorder`-rader (t.o.m. 4 juni) finns dessutom sannolikt ÄVEN som `FortnoxOrder` från §9-backfillen (HANDOFF rad 1443: *"backfillat 2026 (workorder 2025+2026)"*) — kontrollera överlappet innan bytet, precis som för F&E.
+
+**Verifierat:** `bokningslage_smoke.mjs` **171/171**. **Mutationstestat:** HK på `ft_delivery_date` fäller 2 · okonstraintad HK-färskhet fäller 1 · constraints ej vidarebefordrade fäller 1 · HK med F&E:s etikett fäller 3. Samtliga 20 sviter gröna.
 
 **Nästa:** deploya → kör om `summary` och kontrollera att HK nu ger rader → bygg HTML-vyn ovanpå. Datalagret är klart; presentationen ska bära `matt`-etiketterna och `varningar` **synligt**, inte i en tooltip — de tre bolagen mäts på tre olika sätt och det får inte gå att missa.
 

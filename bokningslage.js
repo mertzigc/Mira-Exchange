@@ -244,14 +244,12 @@ export function describeEmptySide({ type, periodCount, typeTotal, wide }) {
 const MATT = {
   intjanat: "Intjänat för arbete utfört i perioden (periodiserad intäkt)",
   ordervarde: "Ordervärde, hela ordern daterad på LEVERANSDATUM i perioden",
-  // ⚠️ TREDJE MÅTTET. TengellaWorkorder har INGET leveransdatum — enda datumet
-  // är `order_date` (verifierat mot upsertWorkorderToBubble: fälten är
-  // workorder_id/workorder_no/order_date/is_deleted/workorder_rows_json, och
-  // raderna bär bara item/quantity/price, inga datum). HK svarar alltså på
-  // "workordrar DATERADE i månaden", inte "levererat i månaden". För löpande
-  // städuppdrag ligger de nära varandra, men det är inte samma fråga och får
-  // inte etiketteras som om det vore det.
-  ordervarde_orderdatum: "Ordervärde, workorder daterad på ORDERDATUM i perioden (Tengella saknar leveransdatum — INTE samma sak som levererat i perioden)",
+  // ⚠️ TREDJE MÅTTET. Workordern har bara `OrderDate`, och v2-adaptern
+  // (invoice_sync.js tengellaWorkorderAdapter) sätter därför `ft_order_date` men
+  // ALDRIG `ft_delivery_date`. HK svarar på "ordrar DATERADE i månaden", inte
+  // "levererat i månaden". För löpande städuppdrag ligger de nära varandra, men
+  // det är inte samma fråga och får inte etiketteras som om det vore det.
+  ordervarde_orderdatum: "Ordervärde, HK-order daterad på ORDERDATUM i perioden (Tengella saknar leveransdatum — INTE samma sak som levererat i perioden)",
 };
 
 /** TengellaWorkorder → belopp. Summan av rad-Quantity × Price, exkl moms. */
@@ -330,12 +328,9 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     };
   };
 
-  // ⚠️ HK kommer INTE från FortnoxOrder(TENGELLA). `TengellaWorkorder` är den
-  // kanoniska källan (affar_api.js: "HK/Tengella-order = raw TengellaWorkorder
-  // (kanonisk källa, Fas 1 2026-08-07). FortnoxOrder med connection=TENGELLA
-  // exkluderas i display ... för att undvika dubbel mot ev. sync_v2-spegel").
-  // Att fråga FortnoxOrder gav 0 rader skarpt 2026-08-20 — nollan var korrekt,
-  // frågan var ställd till fel tabell.
+  // ⚠️ PENSIONERAD VÄG — behålls för historiska TengellaWorkorder-rader (frysta
+  // 2026-06-04 av §9-cutovern). Används INTE av bokningsläget längre; HK läses
+  // ur FortnoxOrder(connection=TENGELLA). Radera först när ingen läser typen.
   const hkArea = (rows) => {
     const alla = (rows || []).map(normWorkorder);
     const live = alla.filter((r) => !r.borttagen);
@@ -356,7 +351,11 @@ export function bokningslageSummary({ sp, hk, fe, miraCount = 0, opts = {} }) {
     { nyckel: "service_people", namn: "Service & People", kalla: "IntelliplanOrderMonth",
       antal: spRows.length, antal_makulerade: 0, belopp: spTotal, matt: MATT.intjanat,
       ofullstandig: false, utan_net: 0, utan_net_varde_inkl_moms: 0 },
-    Object.assign({ nyckel: "housekeeping", namn: "Housekeeping", kalla: "TengellaWorkorder" }, hkArea(hk)),
+    // ⚠️ HK och F&E kommer från SAMMA tabell (FortnoxOrder, olika connection) men
+    // bär OLIKA datum: HK har bara ft_order_date, F&E har ft_delivery_date.
+    // Därför samma beloppslogik (ft_net) men olika mått-etikett.
+    Object.assign({ nyckel: "housekeeping", namn: "Housekeeping", kalla: "FortnoxOrder (TENGELLA, source=tengella-workorder)" },
+      fxArea(hk), { matt: MATT.ordervarde_orderdatum }),
     Object.assign({ nyckel: "food_event", namn: "Food & Event", kalla: "FortnoxOrder (FE)" }, fxArea(fe)),
   ];
 

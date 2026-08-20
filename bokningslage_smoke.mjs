@@ -279,22 +279,24 @@ const run = () => {
   sec("Sammanställning — tre affärsområden utan att ljuga");
   // ══════════════════════════════════════════════════════════════════════════
   const SP = [{ revenue: 6000000 }, { revenue: 850058.36 }];
-  // ⚠️ HK = TengellaWorkorder (kanonisk källa), INTE FortnoxOrder(TENGELLA).
-  // Belopp = Σ Quantity × Price ur workorder_rows_json, exkl moms.
+  // ⚠️ HK = FortnoxOrder(connection=TENGELLA, source="tengella-workorder") efter
+  // §9-cutovern 2026-06-08. `TengellaWorkorder` är PENSIONERAD (fryst 2026-06-04
+  // när tengella_cron.sh suspenderades — med flit). HK bär bara ft_order_date;
+  // v2-adaptern sätter aldrig ft_delivery_date.
   const W = (o) => Object.assign({ _id: "w" + Math.random().toString(36).slice(2, 7),
-    workorder_no: "WO-1", order_date: "2026-06-05",
-    workorder_rows_json: JSON.stringify([{ Quantity: 2, Price: 500 }]) }, o);
+    ft_document_number: "WO-1", ft_order_date: "2026-06-05",
+    ft_total: 125000, ft_net: 100000, source: "tengella-workorder" }, o);
   const HK = [
-    W({ _id: "h1", workorder_rows_json: JSON.stringify([{ Quantity: 2, Price: 40000 }, { Quantity: 1, Price: 20000 }]) }),
-    W({ _id: "h2", workorder_rows_json: JSON.stringify([{ Quantity: 1, Price: 50000 }]), is_deleted: true }),
+    W({ _id: "h1" }),
+    W({ _id: "h2", ft_total: 62500, ft_net: 50000, ft_cancelled: "ja" }),
   ];
   const FE = [{ _id: "e1", ft_delivery_date: "2026-06-07", ft_total: 1250, ft_net: 1000 }];
   const sum1 = bokningslageSummary({ sp: SP, hk: HK, fe: FE });
   const omr = (k) => (sum1.omraden || []).find((o) => o.nyckel === k) || {};
 
   ok("S&P summeras ur revenue", omr("service_people").belopp === 6850058.36);
-  ok("HK summerar Quantity × Price ur workorder-raderna", omr("housekeeping").belopp === 100000);
-  ok("borttagna workordrar räknas bort", omr("housekeeping").antal === 1 && omr("housekeeping").antal_makulerade === 1);
+  ok("HK använder ft_net, inte ft_total", omr("housekeeping").belopp === 100000);
+  ok("makulerade HK-ordrar räknas bort", omr("housekeeping").antal === 1 && omr("housekeeping").antal_makulerade === 1);
   ok("F&E använder ft_net", omr("food_event").belopp === 1000);
 
   // ⚠️ Kärnan: talen får inte presenteras som samma sort.
@@ -316,10 +318,9 @@ const run = () => {
   const glest = bokningslageSummary({ sp: [], hk: [], fe: [{ _id: "e9", ft_delivery_date: "2026-06-05", ft_total: 125000 }] });
   ok("order utan ft_net räknas inte som 0 kr utan flaggas", (glest.omraden.find((o) => o.nyckel === "food_event") || {}).ofullstandig === true);
   ok("och gapets storlek redovisas", /125000 kr inkl moms/.test((glest.varningar || []).join(" ")));
-  // ⚠️ Samma tysta nolla på HK-sidan: en workorder utan rader blir 0 kr.
-  const hkTom = bokningslageSummary({ sp: [], hk: [W({ workorder_rows_json: "[]" })], fe: [] });
-  ok("workorder utan rader blir 0 kr men flaggas", (hkTom.omraden.find((o) => o.nyckel === "housekeeping") || {}).ofullstandig === true);
-  ok("och varningen pekar ut workorder_rows_json", /workorder_rows_json/.test((hkTom.varningar || []).join(" ")));
+  // ⚠️ Samma tysta nolla på HK-sidan: en HK-order utan ft_net.
+  const hkTom = bokningslageSummary({ sp: [], hk: [W({ ft_net: undefined })], fe: [] });
+  ok("HK-order utan ft_net blir inte 0 kr utan flaggas", (hkTom.omraden.find((o) => o.nyckel === "housekeeping") || {}).ofullstandig === true);
   ok("summan markeras som icke fullständig", (glest.summa || {}).fullstandig === false);
 
   // ⚠️ Pågående period: S&P växer i efterhand.
@@ -425,11 +426,18 @@ const run = () => {
   ok("F&E constraintas på FE_CONNECTION_ID", /FE_CONNECTION_ID/.test(sCode));
   ok("F&E på fältet connection, inte connection_id", /key: "connection", constraint_type: "equals"/.test(sCode) && !/key: "connection_id"/.test(sCode));
   ok("S&P hämtas på ip_period", /key: "ip_period"/.test(sCode));
-  // ⚠️ HK kommer från TengellaWorkorder, inte FortnoxOrder(TENGELLA).
-  ok("HK hämtas från TengellaWorkorder", /bubbleFindAll\("TengellaWorkorder"/.test(sCode));
-  ok("HK constraintas på order_date", /dateWin\("order_date"\)/.test(sCode));
-  ok("HK frågar INTE FortnoxOrder på TENGELLA-connection",
-     !/TENGELLA_CONNECTION_ID/.test(sCode) || !/bubbleFindAll\("FortnoxOrder"[\s\S]*TENGELLA_CONNECTION_ID/.test(sCode));
+  // ⚠️⚠️ DE TVÅ FELEN SOM KOSTADE UTREDNINGEN 2026-08-20:
+  //  (a) HK lästes ur `TengellaWorkorder` — en PENSIONERAD typ, fryst 2026-06-04.
+  //  (b) HK frågades på `ft_delivery_date` — ett fält v2-adaptern ALDRIG skriver.
+  // Båda gav 0 rader, och båda nollorna tolkades som fakta.
+  ok("HK hämtas ur FortnoxOrder, inte den pensionerade TengellaWorkorder",
+     /bubbleFindAll\("FortnoxOrder"/.test(sCode) && !/bubbleFindAll\("TengellaWorkorder"/.test(sCode));
+  ok("HK constraintas på TENGELLA-connection", /value: TENGELLA_CONNECTION_ID/.test(sCode));
+  ok("HK constraintas på ft_order_date — v2 sätter aldrig ft_delivery_date",
+     /dateWin\("ft_order_date"\)/.test(sCode));
+  ok("F&E constraintas på ft_delivery_date", /dateWin\("ft_delivery_date"\)/.test(sCode));
+  ok("HK och F&E frågar därför OLIKA datumfält",
+     /dateWin\("ft_order_date"\)/.test(sCode) && /dateWin\("ft_delivery_date"\)/.test(sCode));
   // ⚠️ summary saknade tom-sida-diagnosen som fe-overlap hade.
   // ⚠️ Att bara greppa `describeEmptySide(` bevisar INGENTING — symbolen kan
   // finnas kvar medan urvalet är dödat. (Mutationstest 2026-08-20: `tomma = []`
@@ -443,15 +451,50 @@ const run = () => {
   // ⚠️ Färskhetskontrollen — HK:s 2 880 kr fick aldrig se friskt ut igen.
   ok("varje område färskhetskontrolleras", /for \(const o of result\.omraden\)/.test(sCode) && /o\.farskhet = await farskhet\(/.test(sCode));
   ok("färskhet läses på både Created Date och Modified Date",
-     /nyaste\(type, "Created Date"\)/.test(sCode) && /nyaste\(type, "Modified Date"\)/.test(sCode));
+     /nyaste\(type, "Created Date", extra\)/.test(sCode) && /nyaste\(type, "Modified Date", extra\)/.test(sCode));
   ok("icke-färsk källa gör området ofullständigt", /o\.farskhet\.status !== "farsk"/.test(sCode));
-  ok("HK färskhetskontrolleras mot TengellaWorkorder", /housekeeping: \["TengellaWorkorder", 3\]/.test(sCode));
+  // ⚠️ HK och F&E bor i SAMMA tabell. En okonstraintad färskhetsmätning hade
+  // gjort HK "färsk" bara för att F&E synkas — falsk trygghet av värsta sorten.
+  ok("HK-färskheten är constraintad på TENGELLA-connection",
+     /housekeeping: \["FortnoxOrder", 3, CONN\(TENGELLA_CONNECTION_ID\)/.test(sCode));
+  ok("F&E-färskheten är constraintad på FE-connection",
+     /food_event: \["FortnoxOrder", 3, CONN\(FE_CONNECTION_ID\)/.test(sCode));
+  ok("färskhetsfrågan skickar med constraints", /constraints: extra/.test(sCode));
   // ⚠️ ip_period är HELA månader — ett delspann gör S&P-talet för stort.
   ok("delspann mot månadskornighet flaggas", /sp_tacker_perioden/.test(sEp) && /inte hela månader/.test(sEp));
   ok("pågående period upptäcks mot dagens datum", /periodPagaende: to >= idag/.test(sCode));
   // Utan datum ska frågan vara "innevarande månad" — det är vyns fråga.
   ok("defaultar till innevarande månad", /mStart\.toISOString/.test(sCode) && /mSlut\.toISOString/.test(sCode));
   ok("och avvisar bakvända spann", /to_före_from/.test(sCode));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Källhälsa-endpointen");
+  // ══════════════════════════════════════════════════════════════════════════
+  const kStart = SRC2.indexOf('app.get("/admin/bokningslage/kallhalsa"');
+  const kEp = kStart === -1 ? "" : SRC2.slice(kStart, SRC2.indexOf("\n});", kStart) + 4);
+  const kCode = kEp.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("källhälsa-endpointen finns", kStart !== -1);
+  // ⚠️ En PENSIONERAD typ och en DÖD synk ser identiska ut utifrån. Enda sättet
+  // att skilja dem är att källan DEKLARERAR vilket den är.
+  ok("varje källa deklarerar aktiv/pensionerad", /status: "aktiv"/.test(kCode) && /status: "pensionerad"/.test(kCode));
+  ok("TengellaWorkorder är märkt pensionerad",
+     /namn: "TengellaWorkorder"[\s\S]{0,300}status: "pensionerad"/.test(kCode));
+  ok("och HK-ordrar mäts på FortnoxOrder med TENGELLA-connection",
+     /FortnoxOrder \(TENGELLA\/HK\)"[\s\S]{0,200}CONNC\(TENGELLA_CONNECTION_ID\)/.test(kCode));
+  // ⚠️ Greppa KODEN (kCode), inte kEp — kommentarerna innehåller samma ord och
+  // gjorde testet grönt när själva grenen var borta (mutationstest 2026-08-20).
+  ok("bedömningen grenar faktiskt på status", /k\.status === "pensionerad"/.test(kCode));
+  ok("en pensionerad källa flaggas inte som problem för att den är gammal",
+     /pensionerad — ska inte få nya rader/.test(kCode));
+  ok("men flaggas om den PLÖTSLIGT får nya rader", /OVÄNTAT: pensionerad källa/.test(kCode));
+  // ⚠️ Planeringsvyns pass — egen väg, ingen cron.
+  ok("Tengella-pass mäts via Activity + ActivityType Housekeeping",
+     /AT_HOUSEKEEPING/.test(kCode) && /Activity \(Tengella-pass\)/.test(kCode));
+  ok("och det saknade cron-jobbet står utskrivet i svaret", /INGEN CRON ANROPAR DEN/.test(kCode));
+  ok("färskheten mäts med kallaFarskhet", /kallaFarskhet\(/.test(kCode));
+  ok("antalet räknas med bubbleCountStrict, inte bubbleCount", /bubbleCountStrict\(/.test(kCode) && !/[^t]bubbleCount\(/.test(kCode));
+  ok("mätfel bärs som fel, inte som noll", /fel = e\?\.message/.test(kCode) && /antal = null/.test(kCode));
+  ok("frågorna är constraintade (limit 1), inga svep", /limit: 1/.test(kCode) && !/bubbleFindAll\(/.test(kCode));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
