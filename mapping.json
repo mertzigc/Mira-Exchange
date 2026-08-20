@@ -1,0 +1,490 @@
+[
+  {
+    "ip_account_id": 4,
+    "_konto": "Gothia Towers- Seasons",
+    "_förslag": "Gothia Towers",
+    "_poäng": 0.95,
+    "_via": "prefix",
+    "client_company_id": "1771811026974x932597593214658700"
+  },
+  {
+    "ip_account_id": 5,
+    "_konto": "Gothia Towers - Imagine",
+    "_förslag": "Gothia Towers",
+    "_poäng": 0.95,
+    "_via": "prefix",
+    "client_company_id": "1771811026974x932597593214658700"
+  },
+  {
+    "ip_account_id": 7,
+    "_konto": "Gothia Towers - Mässan",
+    "_förslag": "Gothia Towers",
+    "_poäng": 0.95,
+    "_via": "prefix",
+    "client_company_id": "1771811026974x932597593214658700"
+  },
+  {
+    "ip_account_id": 8,
+    "_konto": "Gothia Towers - Heaven 23",
+    "_förslag": "Gothia Towers",
+    "_poäng": 0.95,
+    "_via": "prefix",
+    "client_company_id": "1771811026974x932597593214658700"
+  },
+  {
+    "ip_account_id": 1145,
+    "_konto": "Göteborgs Universitet - Vasaparken",
+    "_förslag": "Göteborgs Universitet",
+    "_poäng": 0.95,
+    "_via": "prefix",
+    "client_company_id": "1771811072727x711159836321788200"
+  },
+  {
+    "ip_account_id": 169,
+    "_konto": "Castellum city förvaltning AB {Castellum city förvaltning AB}",
+    "_förslag": "Castellum city förvaltning AB",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1772053590495x465219014833495600"
+  },
+  {
+    "ip_account_id": 390,
+    "_konto": "Vasakronan Sales Manager",
+    "_förslag": "Vasakronan AB",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1771638386316x871154205296475800"
+  },
+  {
+    "ip_account_id": 391,
+    "_konto": "Vasakronan HK",
+    "_förslag": "Vasakronan AB",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1771638386316x871154205296475800"
+  },
+  {
+    "ip_account_id": 402,
+    "_konto": "Sven Harrys",
+    "_förslag": "Sven Harrys konstmuseum",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1772053511071x259677676018950750"
+  },
+  {
+    "ip_account_id": 414,
+    "_konto": "Sofia",
+    "_förslag": "Sofia Kellner",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1771852213319x261039792969116600"
+  },
+  {
+    "ip_account_id": 475,
+    "_konto": "Kulturhuset",
+    "_förslag": "Kulturhuset Spira",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1778834481901x547279615062442000"
+  },
+  {
+    "ip_account_id": 486,
+    "_konto": "Jenny",
+    "_förslag": "Jenny Nilsdotter",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1772187120905x900456744541914800"
+  },
+  {
+    "ip_account_id": 518,
+    "_konto": "Epicenter",
+    "_förslag": "Epicenter (tillhör ej F&E) Reception",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1771638268102x335680604636492400"
+  },
+  {
+    "ip_account_id": 533,
+    "_konto": "Downtown Camper by Scandic SC87913001 BANKETT",
+    "_förslag": "Downtown Camper by Scandic",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1778234215750x427749226519199740"
+  },
+  {
+    "ip_account_id": 547,
+    "_konto": "Cirkus",
+    "_förslag": "Cirkus Arena och Restaurang på Djurgården AB",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1771593707252x946228873059316000"
+  },
+  {
+    "ip_account_id": 990,
+    "_konto": "Ågrenska Villan - GU",
+    "_förslag": "Ågrenska",
+    "_poäng": 0.85,
+    "_via": "namn",
+    "client_company_id": "1771638227545x559932404758844740"
+  },
+  {
+    "ip_account_id": 1278,
+    "_konto": "Hötorgskraporna-Carotte Group AB",
+    "_förslag": "Carotte Group",
+    "_poäng": 0.667,
+    "_via": "namn",
+    "client_company_id": "1726738549743x453535655154064800"
+  },
+  {
+    "ip_account_id": 24,
+    "_konto": "Carotte Food & Event AB Sthlm",
+    "_förslag": "Carotte Food & Event AB JKP",
+    "_poäng": 0.6,
+    "_via": "namn",
+    "client_company_id": "1771593631494x573816901416270850"
+  },
+  {
+    "ip_account_id": 148,
+    "_konto": "Carotte Food & Event AB Gbg",
+    "_förslag": "Carotte Food & Event AB JKP",
+    "_poäng": 0.6,
+    "_via": "namn",
+    "client_company_id": "1771593631494x573816901416270850"
+  },
+  {
+    "ip_account_id": 142,
+    "_konto": "Scandic Göteborg Central",
+    "_förslag": "Mindpark Göteborg Central AB",
+    "_poäng": 0.5,
+    "_via": "namn",
+    "client_company_id": "1772188120320x470612178336151000"
+  },
+  {
+    "ip_account_id": 235,
+    "_konto": "Alfa Göteborg 4 AB",
+    "_förslag": "Göteborg",
+    "_poäng": 0.5,
+    "_via": "namn",
+    "client_company_id": "1772187343044x135023897288977230"
+  },
+  {
+    "ip_account_id": 393,
+    "_konto": "Utbildning GÖTEBORG",
+    "_förslag": "Göteborg",
+    "_poäng": 0.5,
+    "_via": "namn",
+    "client_company_id": "1772187343044x135023897288977230"
+  },
+  {
+    "ip_account_id": 3,
+    "_konto": "Gothia-Bankett",
+    "_förslag": "Gothia Kompetens AB",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771723997783x313062524048410200"
+  },
+  {
+    "ip_account_id": 17,
+    "_konto": "Arena Sergel",
+    "_förslag": "Åby Arena",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811031497x494731694157336770"
+  },
+  {
+    "ip_account_id": 18,
+    "_konto": "Arena Skrapan",
+    "_förslag": "Åby Arena",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811031497x494731694157336770"
+  },
+  {
+    "ip_account_id": 511,
+    "_konto": "Fotografiska Festvåning",
+    "_förslag": "Fotografiska Stockholm AB",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771593705988x776974303614434600"
+  },
+  {
+    "ip_account_id": 549,
+    "_konto": "Carotte Kontor",
+    "_förslag": "Carotte Group",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1726738549743x453535655154064800"
+  },
+  {
+    "ip_account_id": 1015,
+    "_konto": "Werket Jönköping",
+    "_förslag": "Castellum Werket",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1757423548125x656249238155952100"
+  },
+  {
+    "ip_account_id": 1023,
+    "_konto": "Arena Nordstan",
+    "_förslag": "Åby Arena",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811031497x494731694157336770"
+  },
+  {
+    "ip_account_id": 1212,
+    "_konto": "Carotte Restaurang Läppstiftet",
+    "_förslag": "Restaurang N6 AB",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811092173x112647031958008180"
+  },
+  {
+    "ip_account_id": 1241,
+    "_konto": "Arena Triangeln",
+    "_förslag": "Åby Arena",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811031497x494731694157336770"
+  },
+  {
+    "ip_account_id": 1242,
+    "_konto": "Arena Platinan",
+    "_förslag": "Åby Arena",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811031497x494731694157336770"
+  },
+  {
+    "ip_account_id": 1243,
+    "_konto": "Arena Läppstiftet",
+    "_förslag": "Åby Arena",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811031497x494731694157336770"
+  },
+  {
+    "ip_account_id": 1257,
+    "_konto": "Utbildning Stockholm",
+    "_förslag": "Castellum Stockholm AB",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771592250066x102171799986408690"
+  },
+  {
+    "ip_account_id": 1283,
+    "_konto": "Belgiska Ambassaden",
+    "_förslag": "Tyska Ambassaden",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771811047451x497402218978107100"
+  },
+  {
+    "ip_account_id": 1289,
+    "_konto": "Handler DMC Sweden",
+    "_förslag": "CN Sweden AB",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1772186476024x984132845204866000"
+  },
+  {
+    "ip_account_id": 1292,
+    "_konto": "Svenska Läkarförbundet",
+    "_förslag": "SVENSKA KANOTFÖRBUNDET",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771723964122x803987188589328800"
+  },
+  {
+    "ip_account_id": 1298,
+    "_konto": "Alfab Gårda AB",
+    "_förslag": "Alfab Flexiwork AB",
+    "_poäng": 0.333,
+    "_via": "namn",
+    "client_company_id": "1771638301748x179458606322114180"
+  },
+  {
+    "ip_account_id": 542,
+    "_konto": "Corem Hilton- Frösunda",
+    "_förslag": "Corem Rosmarinen HB",
+    "_poäng": 0.317,
+    "_via": "prefix",
+    "client_company_id": "1771638274560x291826150070214400"
+  },
+  {
+    "ip_account_id": 13,
+    "_konto": "Läppstiftet Reception",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 14,
+    "_konto": "Fastighetsreception Vikingsgatan",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 15,
+    "_konto": "Fastighetsreceptionen Mårten Krakow",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 141,
+    "_konto": "Aurora Live International Oy Ltd",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 211,
+    "_konto": "Alecta Tjänstepension Ömsesidigt",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 412,
+    "_konto": "Corem Solna Gate, REF 6800",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 477,
+    "_konto": "Konserthuset - Pausservering",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 480,
+    "_konto": "Corem Kista Gate, REF 6801",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 517,
+    "_konto": "Epicenter café",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 532,
+    "_konto": "Drottninggatan 89",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 540,
+    "_konto": "Corem Uppsala Business Park",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 541,
+    "_konto": "Corem Time Building- Kista REF 6806",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 552,
+    "_konto": "Börshuset",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 569,
+    "_konto": "Alice",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 571,
+    "_konto": "Agdas på hörnet internt (lunch)",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 572,
+    "_konto": "Agdas på Hörnet externt (kväll)",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 1136,
+    "_konto": "HVC - GU",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 1264,
+    "_konto": "Beställningar små volymer",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 1282,
+    "_konto": "Brofästet",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 1294,
+    "_konto": "Passionlab",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 1300,
+    "_konto": "AB Kapelludden",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  },
+  {
+    "ip_account_id": 1302,
+    "_konto": "AZIMUT BENETTI S.p.A",
+    "_förslag": null,
+    "_poäng": null,
+    "_via": null,
+    "client_company_id": ""
+  }
+]
