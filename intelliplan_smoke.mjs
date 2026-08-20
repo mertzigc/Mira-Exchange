@@ -5,7 +5,8 @@
 // token-cache, förnyelse, 401-retry, cookie-hantering och att client_secret
 // aldrig läcker ut i något svar.
 import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
-         normalizeOrderMonth, suggestAccountMatches, normalizeCompanyName, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
+         normalizeOrderMonth, suggestAccountMatches, normalizeCompanyName, IP_ORDER_MONTH_REPORT,
+         scoreScheduleColumns, malFinnsInte } from "./intelliplan.js";
 import fs from "node:fs";
 
 let pass = 0, fail = 0;
@@ -580,6 +581,64 @@ const run = async () => {
   // ⚠️ Den viktigaste raden i filen: många-till-en är förväntat.
   ok("dokumenterar att flera konton får peka på samma kund", /många-till-en|Gothia Towers har fem konton/.test(MAP_SH));
   ok("påminner om omkörning efter mappning", /kör om berörda perioder|Kör om berörda perioder/i.test(MAP_SH));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Mall-spaning — hitta rapporten med pass/schema-kornighet");
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ Intelliplan listar inte sina mallar och id:n syns inte i deras UI.
+  // Intervallet är känt (23 mallar, 1027–1080) → rangeskanning är enda vägen.
+
+  // 1058: order × månad. Har Hours1 — men det är en SUMMA, inte tidsupplösning.
+  const s1058 = scoreScheduleColumns(["Account1","Account2","Order1","Order2","Revenue1","Cost1","Hours1","GrossMargin1"]);
+  ok("1058 är ingen schemakandidat", s1058.kandidat === false);
+  ok("och Hours1 förväxlas inte med tidsupplösning", !/tid/.test(s1058.varfor) || /saknar datumkolumn/.test(s1058.varfor));
+
+  // 1081: dag × kontor. Har datum men ingen tid → dagsrapport, inte pass.
+  const s1081 = scoreScheduleColumns(["Date1","Date2","ConsultantOffice1","ConsultantOffice2","Revenue1"]);
+  ok("1081 har datum men är ingen kandidat", s1081.kandidat === false);
+  ok("och skälet är att tid saknas", /dagsrapport, inte pass/.test(s1081.varfor));
+
+  // 1063: lönekostnad. Konsult finns, men varken datum eller tid.
+  const s1063 = scoreScheduleColumns(["FinancialItemNote1","Article1","Article2","Consultant1","Consultant2","Order1","Order2","SalaryCost1"]);
+  ok("1063 är ingen kandidat trots konsultnamn", s1063.kandidat === false);
+  ok("men konsultkolumnerna hittas", (s1063.traffar.konsult || []).length === 2);
+
+  // Det vi FAKTISKT letar efter.
+  const sPass = scoreScheduleColumns(["Date1","StartTime1","EndTime1","Consultant1","Consultant2","Account1","Account2"]);
+  ok("datum + tid + konsult + kund är en kandidat", sPass.kandidat === true);
+  ok("och får full poäng", sPass.score === 4);
+  ok("och märks som starkaste kandidaten", /⭐⭐/.test(sPass.varfor));
+
+  // Kandidat utan kundkolumn ska ändå flaggas — men svagare.
+  const sUtanKund = scoreScheduleColumns(["Date1","StartTime1","EndTime1","Employee1"]);
+  ok("datum+tid+konsult utan kund är fortfarande kandidat", sUtanKund.kandidat === true);
+  ok("men får lägre poäng", sUtanKund.score === 3);
+
+  // ⚠️ Tomt id vs verkligt fel — får inte blandas ihop.
+  ok("503 + GridReportTemplateDto = mallen finns inte",
+     malFinnsInte({ status: 503, body: '{"error":"Could not find GridReportTemplateDto for id 1099"}' }) === true);
+  ok("ett timeout-fel är INTE 'mallen finns inte'",
+     malFinnsInte({ status: 504, body: "gateway timeout" }) === false);
+  ok("tomt felsvar tolkas inte som saknad mall", malFinnsInte({}) === false);
+
+  // ── Endpointen ────────────────────────────────────────────────────────────
+  const IX = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
+  const pStart = IX.indexOf('app.get("/admin/intelliplan/probe"');
+  const pEp = IX.slice(pStart, IX.indexOf("\n});", pStart) + 4);
+  const pCode = pEp.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("probe stödjer rangeskanning", /from_id/.test(pCode) && /to_id/.test(pCode));
+  ok("spannet har ett tak", /spann_över_120_id/.test(pCode));
+  ok("bakvänt spann avvisas", /to_id_före_from_id/.test(pCode));
+  // ⚠️ PERSONDATA — skanningen får ALDRIG be om exempelrader.
+  // ⚠️ PERSONDATA. Testa KODEN, inte texten: en efterföljande kommentar som
+  // nämner "sample" gjorde första versionen av det här testet rött utan orsak.
+  // Det som räknas är att describeReportPayload anropas UTAN options-objekt.
+  const pRen = pCode.replace(/\/\/[^\n]*/g, "");           // strippa även radslutskommentarer
+  ok("probe anropar describeReportPayload utan options", /describeReportPayload\(r\)\s*;/.test(pRen));
+  ok("och begär aldrig en exempelrad", !/sample\s*:\s*true/.test(pRen) && !/sample=1/.test(pRen));
+  ok("tomt id skiljs från verkligt fel", /finns_inte: tomt/.test(pCode) && /!r\.ok && !r\.finns_inte/.test(pCode));
+  ok("failade anrop gör skanningen ofullständig", /OFULLSTÄNDIG/.test(pEp));
+  ok("kandidater rankas och pekas ut", /schema_kandidater/.test(pCode) && /basta/.test(pCode));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

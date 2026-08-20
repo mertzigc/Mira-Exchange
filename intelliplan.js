@@ -714,3 +714,70 @@ export function suggestAccountMatches(accounts, companies, opts = {}) {
     };
   });
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// MALL-SPANING — hitta rapporten med pass/schema-kornighet
+// ────────────────────────────────────────────────────────────────────────────
+//
+// ⚠️ Intelliplan har INGEN endpoint som listar mallar (verifierat 2026-08-19:
+// åtta kandidatvägar, alla 404 — inte 401/403, alltså finns vägarna inte).
+// Id:n står inte heller i deras UI på ett sätt Christian hittar.
+//
+// MEN: vi vet att Carotte har 23 mallar i intervallet 1027–1080. Det är 54
+// kandidater. Tidigare noterat "blind skanning är meningslös" gällde hela
+// heltalsrymden — med känt intervall är det tvärtom den enda vägen.
+//
+// Ett existerande id svarar 200 med en rubrikrad. Ett obefintligt svarar 503
+// med "Could not find GridReportTemplateDto" (Intelliplans felinpackning —
+// tolka det INTE som att tjänsten är nere).
+//
+// ⚠️ PERSONDATA: skanningen läser BARA kolumnnamn, aldrig rader. Rapporterna
+// bär konsultnamn och lönekostnader (1063). `describeReportPayload` utan
+// `sample` utelämnar dataraderna — den grinden får aldrig öppnas i en skanning.
+
+const _norm = (s) => String(s || "").toLowerCase();
+
+// Vad en pass-/schemarapport MÅSTE innehålla för att vara användbar:
+// datum, tid, vem, och för vilken kund.
+const SCHEMA_SIGNALER = {
+  datum:   [/^date/, /datum/, /day/, /week/, /vecka/],
+  tid:     [/time/, /start/, /end/, /slut/, /from/, /^to$/, /hour(?!s\d)/, /klock/, /pass/, /shift/],
+  konsult: [/consultant/, /employee/, /konsult/, /resource/, /person/, /staff/],
+  kund:    [/account/, /customer/, /client/, /kund/, /order/],
+};
+
+/**
+ * Poängsätter en rapports kolumnlista mot pass/schema-behovet.
+ * Ren funktion — ingen I/O, inga rader, bara namn.
+ *
+ * ⚠️ `hours` (summa timmar) är INTE tidsupplösning. 1058 har `Hours1` men är
+ * order×månad. Därför kräver `kandidat` att BÅDE datum och tid finns — annars
+ * skulle varje intäktsrapport se ut som ett schema.
+ */
+export function scoreScheduleColumns(columns) {
+  const cols = (columns || []).map(_norm);
+  const traffar = {};
+  for (const [nyckel, monster] of Object.entries(SCHEMA_SIGNALER)) {
+    traffar[nyckel] = (columns || []).filter((c) => monster.some((m) => m.test(_norm(c))));
+  }
+  const har = (k) => traffar[k].length > 0;
+  const score = ["datum", "tid", "konsult", "kund"].filter(har).length;
+  return {
+    score,
+    traffar,
+    // Datum UTAN tid = dagsrapport (t.ex. 1081), inte ett schema.
+    kandidat: har("datum") && har("tid") && har("konsult"),
+    varfor: !har("datum") ? "saknar datumkolumn"
+      : !har("tid") ? "har datum men ingen tid — dagsrapport, inte pass"
+      : !har("konsult") ? "har datum+tid men ingen konsult/person"
+      : !har("kund") ? "⭐ datum+tid+konsult finns men ingen tydlig kundkolumn — titta ändå"
+      : "⭐⭐ datum + tid + konsult + kund — starkaste kandidaten",
+    kolumner_totalt: cols.length,
+  };
+}
+
+/** Är felet "mallen finns inte" (503) eller något annat? Avgör om id:t är tomt. */
+export function malFinnsInte(err) {
+  const body = String((err && (err.body || err.detail)) || "");
+  return /Could not find GridReportTemplateDto/i.test(body);
+}

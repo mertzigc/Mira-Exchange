@@ -13,7 +13,7 @@
 >
 > 🔍 **ÖPPET SPÅR (2026-08-20):** pass/schemaläggning per kund med konsultnamn.
 > Kräver en rapportmall med tid/pass-kornighet — ingen av de fyra kända har det.
-> Mallarna är användarredigerbara ("Add columns"), så Carotte kan bygga en själva.
+> **Kör `./intelliplan_scan.sh` för att hitta resten** (se nedan).
 >
 > Kod: `intelliplan.js` · `intelliplan_sync.sh` · `intelliplan_cron.sh`
 > Minne: `reference-intelliplan-api`
@@ -148,3 +148,53 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 **Deploy:** `index.js` + `bokningslage.js` + `intelliplan_sync.sh` + `intelliplan_cron.sh` → Render. Registrera `intelliplan_cron.sh` som Render Cron Job efter midnatt svensk tid och **efter** fortnox/tengella-jobben (så ClientCompany-mappningen är färsk när kontona matchas). Inga Bubble-ändringar.
 
 **⚠️ SCOPE-KORRIGERING (Christian, 2026-08-19):** Intelliplan är **bara Carotte Staff (Service & People)** — inte koncernen. Lönsamhet per kund för hela Carotte går INTE att härleda ur 1058 ensamt. Bokningsläget ska i stället ställa de tre affärsområdena bredvid varandra: **S&P = Intelliplan · Housekeeping = FortnoxOrder(connection=TENGELLA, workorder) · F&E = FortnoxOrder(connection=FE) + MiraOrder**. Det är därför `bokningslage.js` finns, och därför F&E-överlappet måste mätas innan något summeras.
+
+---
+
+## 🔎 MALL-SPANING — `intelliplan_scan.sh` (byggt 2026-08-20)
+
+Christian hittar inga mall-id:n i Intelliplans UI och det finns ingen
+dokumentation. Intelliplan har heller **ingen endpoint som listar mallar**
+(åtta kandidatvägar testade, alla 404 — inte 401/403, alltså finns vägarna inte).
+
+**Men intervallet är känt: 23 mallar mellan 1027 och 1080 = 54 kandidater.**
+Den tidigare noteringen *"blind skanning är meningslös"* gällde hela
+heltalsrymden. Med känt spann är skanning tvärtom den enda vägen.
+
+```bash
+API_KEY=... ./intelliplan_scan.sh              # 1027–1080
+API_KEY=... ./intelliplan_scan.sh 1000 1120    # bredare svep
+```
+
+**Hur det fungerar:** `GET /admin/intelliplan/probe?from_id=&to_id=&from=&to=`
+knackar på varje id med **en dags** datumfönster (rubrikraden räcker; en hel
+månad ur 23 rapporter är megabyte i onödan). 300 ms paus mellan anropen, tak
+120 id per anrop — skriptet delar upp automatiskt.
+
+**⚠️ PERSONDATA:** skanningen läser BARA kolumnnamn. `describeReportPayload`
+anropas utan `sample`, så datarader utelämnas. Rapporterna bär konsultnamn och
+lönekostnader (1063). Grinden är testtäckt och mutationstestad.
+
+**⚠️ TOMT ID ≠ FEL.** Ett obefintligt id svarar `503` +
+`"Could not find GridReportTemplateDto"` — Intelliplans felinpackning, inte att
+tjänsten är nere. `malFinnsInte()` skiljer dem åt. Failar ett anrop av ANNAN
+orsak flaggas hela skanningen som **OFULLSTÄNDIG** — annars ser "vi hittade
+inget" likadant ut som "vi kom inte fram".
+
+**Kandidatpoäng** (`scoreScheduleColumns`, ren funktion): datum · tid · konsult ·
+kund. `kandidat` kräver **datum + tid + konsult** — datum utan tid är en
+dagsrapport (1081), och `Hours1` i 1058 är en **summa**, inte tidsupplösning.
+Utan det kravet hade varje intäktsrapport sett ut som ett schema.
+
+| Rapport | score | varför inte |
+|---|---|---|
+| 1058 | 2/4 | saknar datumkolumn (`Hours1` är en summa) |
+| 1081 | 2/4 | datum men ingen tid → dagsrapport |
+| 1063 | 2/4 | konsult men varken datum eller tid |
+
+**Om skanningen inte hittar någon kandidat** är svaret att pass-kornighet inte
+finns i någon befintlig mall → bygg en via **"Add columns"** i Reporting-vyn
+(datum, starttid, sluttid, konsult, kund). Mallarna är användarredigerbara.
+
+**Verifierat:** `intelliplan_smoke.mjs` **216/216**. Mutationstestat: öppnad
+persondata-grind fäller 3 · tomt id räknat som fel fäller 1.

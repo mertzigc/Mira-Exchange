@@ -14,7 +14,8 @@ import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
 import { feOverlap, describeEmptySide, bokningslageSummary, kallaFarskhet } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
-         normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
+         normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT,
+         scoreScheduleColumns, malFinnsInte } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -7814,21 +7815,69 @@ app.get("/admin/intelliplan/templates", async (req, res) => {
 // Guiden visar bara id 1 och säger inget om hur man listar rapporter, så vi
 // knackar på och redovisar utfallet per id. Sekventiellt med kort paus: vi vet
 // inget om deras rate limits, och att brandvägga sig själv dag ett vore dumt.
+// GET /admin/intelliplan/probe?ids=1058,1063  ELLER  ?from_id=1027&to_id=1080
+//
+// ⚠️ MALL-SPANING (2026-08-20). Intelliplan har ingen endpoint som listar
+// mallar, och id:n går inte att hitta i deras UI. Men intervallet är känt —
+// Carotte har 23 mallar mellan 1027 och 1080 — så en rangeskanning är den enda
+// vägen, och 54 anrop är fullt rimligt.
+//
+// ⚠️ ANVÄND ETT SMALT DATUMFÖNSTER (t.ex. en dag). Vi behöver bara rubrikraden;
+// en hel månad ur 23 rapporter är megabyte i onödan och belastar dem.
+//
+// ⚠️ PERSONDATA: aldrig `sample` här. Skanningen läser BARA kolumnnamn.
 app.get("/admin/intelliplan/probe", async (req, res) => {
-  const ids = String(req.query.ids || "1,2,3,4,5").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 25);
+  const fromId = parseInt(req.query.from_id, 10), toId = parseInt(req.query.to_id, 10);
+  let ids;
+  if (Number.isFinite(fromId) && Number.isFinite(toId)) {
+    if (toId < fromId) return res.status(400).json({ ok: false, error: "to_id_före_from_id" });
+    // Taket skyddar både oss och dem: 120 id × 300 ms ≈ 36 s.
+    if (toId - fromId + 1 > 120) return res.status(400).json({ ok: false, error: "spann_över_120_id", hint: "Dela upp skanningen." });
+    ids = []; for (let i = fromId; i <= toId; i++) ids.push(String(i));
+  } else {
+    ids = String(req.query.ids || "1,2,3,4,5").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 25);
+  }
   const lang = String(req.query.lang || "sv");
   const out = [];
   for (const id of ids) {
     try {
       const r = await intelliplan.getGridReport({ id, lang, dateFrom: req.query.from || null, dateTo: req.query.to || null });
       const shape = describeReportPayload(r);   // aldrig sample i probe-läget
-      out.push({ id, ok: true, shape: shape.shape, rows: shape.row_count ?? null, bytes: shape.bytes, columns: shape.columns });
+      const schema = scoreScheduleColumns(shape.columns);
+      out.push({ id, ok: true, shape: shape.shape, rows: shape.row_count ?? null, bytes: shape.bytes,
+        columns: shape.columns, schema_score: schema.score, schema_kandidat: schema.kandidat,
+        schema_varfor: schema.varfor, schema_traffar: schema.traffar });
     } catch (e) {
-      out.push({ id, ok: false, status: e?.status || null, error: e?.message, detail: (e?.body || "").slice(0, 900) });
+      // 503 + "Could not find GridReportTemplateDto" = id:t är TOMT, inte ett
+      // fel. Att blanda ihop dem gör skanningen oläsbar.
+      const tomt = malFinnsInte(e);
+      out.push({ id, ok: false, finns_inte: tomt, status: e?.status || null,
+        error: tomt ? "mall saknas på detta id" : e?.message,
+        detail: tomt ? null : (e?.body || "").slice(0, 900) });
     }
     await new Promise((r2) => setTimeout(r2, 300));
   }
-  return res.json({ ok: true, tested: ids.length, results: out });
+  const funna = out.filter((r) => r.ok);
+  const kandidater = funna.filter((r) => r.schema_kandidat)
+    .sort((a, b) => b.schema_score - a.schema_score);
+  // ⚠️ Skilj "id:t är tomt" från "anropet failade". Bara det senare är ett problem.
+  const fel = out.filter((r) => !r.ok && !r.finns_inte);
+  return res.json({ ok: true, tested: ids.length,
+    sammanfattning: {
+      mallar_funna: funna.length,
+      id_utan_mall: out.filter((r) => r.finns_inte).length,
+      anrop_som_failade: fel.length,
+      schema_kandidater: kandidater.map((r) => ({ id: r.id, score: r.schema_score, varfor: r.schema_varfor })),
+      basta: kandidater.length ? kandidater[0].id : null,
+      slutsats: fel.length
+        ? `⚠️ ${fel.length} anrop failade (inte "mall saknas") — skanningen är OFULLSTÄNDIG, kör om dem innan du drar slutsatser.`
+        : kandidater.length
+        ? `Hittade ${kandidater.length} mall(ar) med datum + tid + konsult. Börja med ${kandidater[0].id}.`
+        : funna.length
+        ? `${funna.length} mallar hittade, men INGEN har datum + tid + konsult. Pass-kornighet finns troligen inte i någon befintlig mall — då måste en byggas via "Add columns".`
+        : "Inga mallar alls i det skannade spannet — kontrollera intervallet.",
+    },
+    results: out });
 });
 
 app.get("/tengella/debug-env", (req, res) => {
