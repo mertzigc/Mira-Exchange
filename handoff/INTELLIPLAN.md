@@ -236,7 +236,7 @@ inte lästs.** Kör om dem innan slutsatsen "mallen finns inte" står fast:
 API_KEY=... ./intelliplan_probe_ids.sh 1022,1026,1036,1047,1052,1054,1064,1067,1070,1071,1073,1077,1078,1080
 ```
 
-### ⭐ REKOMMENDERAD BASMALL: **1075**
+### ~~⭐ REKOMMENDERAD BASMALL: 1075~~ — ERSATT, se nedan
 
 ```
 ConsultantNo1, Consultant1, Consultant2, Account1, Account2,
@@ -272,3 +272,188 @@ mall som ser förkastad ut gör "hittade inget" till ett falskt negativt.**
 
 **Verifierat:** `intelliplan_smoke.mjs` **225/225**. Mutationstestat: tom
 kolumnlista bedömd som vanligt fäller 4 · kandidater sökta bland obedömda fäller 1.
+
+---
+
+## 🔄 REKOMMENDATIONEN REVIDERAD efter om-probningen (2026-08-20)
+
+Om-probningen av de 14 obedömda gav tre nya mallar som ändrar bilden. **1075 var
+fel rekommendation** — den saknar datum och det finns bättre utgångspunkter.
+
+### 🔴 VIKTIGAST: ingen mall i hela beståndet har KLOCKSLAG
+
+Genomsökning av samtliga kolumner i 53 mallar efter tid-på-dygnet-mönster
+(`time`, `start`, `end`, `klock`, `shift`, `minute`) gav **en enda träff:
+`EmploymentHourlySalary1`** — en timlön, inte ett klockslag.
+
+Allt som mäter tid är en **mängd**: `Hours1` · `AbsenceHours1` · `InvoiceHours1`.
+Allt som daterar är en **dag**: `Date1/Date2` · `SalaryDate1/2`.
+
+**Slutsats:** Intelliplans rapportmodell ser ut att ha **dagskornighet med timmar
+som kvantitet — inte pass med start- och sluttid.** Det betyder att
+planeringsvyn realistiskt kan visa *"Anna, kund X, 14 aug, 7,5 h"* men troligen
+inte *"07:00–15:30"*.
+
+⚠️ Detta är **evidens, inte bevis**: vilka kolumner som råkar användas i
+befintliga mallar säger inte allt om vad kolumnväljaren erbjuder. Men med 53
+mallar och noll klockslag är signalen stark.
+
+### Dagsgrain FINNS — på två sidor som ännu inte mötts
+
+| Mall | Dimensioner | Rader |
+|---|---|---|
+| **1052** | Article · Consultant · **Date** · BaseCost · Revenue | 199 |
+| 1036 | AbsenceCode · Consultant · **Date** · AbsenceHours | 185 |
+| **1063** | Article · Consultant · **Order** · FinancialItemNote · SalaryCost | 181 |
+| **1078** | Account · Order · Consultant · ConsultantAge · Hours | 108 |
+| 1075 | ConsultantNo · Consultant · Account · Order · Hours · AbsenceHours | 95 |
+
+**1052 och 1063 delar `Article + Consultant` och har snarlika radantal (199/181)
+över olika fönster** — de är sannolikt byggda på SAMMA faktatabell
+(financial item / tidstransaktion). Om det stämmer kan `Date` och `Order`
+samexistera, och unionen blir exakt det vi vill ha:
+
+`Article · Consultant · Date · Order · Revenue · BaseCost`
+
+### ⭐ GÖR DETTA FÖRST — ett tvåminuterstest som avgör allt
+
+Öppna kolumnväljaren ("Add columns") i **1052** och titta efter:
+1. **`Order` eller `Account`** → finns de, är hypotesen bekräftad. Klona 1052,
+   lägg till kundkopplingen, och du har passrapporten på dagsnivå.
+2. **Något klockslag** (start/slut/tid) → finns det, kan vi bygga riktiga pass.
+
+Gör samma sak från andra hållet i **1078** (Account · Order · Consultant · Hours)
+och leta efter `Date`. Det är samma fråga ställd från kundsidan, och 1078 har
+redan hela kundkopplingen.
+
+**Klona, ändra inte** — fem grupper i beståndet har identiska kolumnuppsättningar
+med olika radantal, så mallar återanvänds med sparade filter.
+
+### Kvarstår obedömd
+`1067` gav ingen rubrikrad ens med sex månaders fönster.
+
+**Verifierat:** analysen är körd programmatiskt över samtliga kolumnlistor, inte
+ögnad.
+
+---
+
+## ✅ MALL 1082 `mira-pass-1` — KLAR, kolumner verifierade mot skarp CSV (2026-08-20)
+
+**Juli 2026: 3 420 rader, 20 kolumner.** Exakt rubrikrad:
+
+```
+Date1,Date2,Consultant1,Consultant2,ConsultantNo1,Account1,Account2,
+FinancialItemId1,OrderDescription1,OrderNo1,WorkdayBookedToTime1,
+PunchInTimeRounded1,PunchOutTimeRounded1,FinancialItemNote1,
+MannedBy1,MannedBy2,WorkdayBookedFromTime1,PlacementHours1,LostHours1,AbsenceHours1
+```
+
+**⚠️ MIN SLUTSATS ATT INTELLIPLAN SAKNAR KLOCKSLAG VAR FEL.** Den byggde på att
+ingen av de 53 befintliga mallarna hade tidskolumner — men de är allihop
+ekonomi-/lönerapporter. **Frånvaro av en kolumn i befintliga mallar säger
+ingenting om datamodellen, bara om vad folk hittills rapporterat på.**
+`WorkdayBookedFromTime1` / `WorkdayBookedToTime1` finns och är ifyllda.
+
+### 🔑 Nyckel: `FinancialItemId1` — 3 420 distinkta av 3 420 rader
+Perfekt upsert-nyckel. Idempotent omläsning utan sammansatt nyckel.
+
+### ⭐ TRE RADTYPER — bevisade, inte gissade (ingen överlappar)
+
+| Typ | Antal | Kännetecken | Timmar |
+|---|---|---|---|
+| **Genomfört pass** | 1 202 | har `WorkdayBookedFrom/ToTime` · alltid Account + OrderNo | `PlacementHours` **9 267** |
+| **Inställt pass** | 1 146 | **bara** `LostHours`, ingen tid | `LostHours` **8 972** |
+| **Frånvaro** | 1 072 | `PlacementHours` **+** `AbsenceHours`, ingen tid | `AbsenceHours` **8 398** |
+
+**Semantiken är därmed bevisad:** `PlacementHours` totalt 17 663 = 9 267 (utfört)
++ 8 396 (frånvarande men schemalagt). **`PlacementHours` är SCHEMALAGD tid,
+oavsett om den utfördes.** Faktiskt arbetad tid = de 1 202 raderna med tid = **9 267 h**.
+
+Det förklarar också anomalin i UI:t (en rad med Placement 8 / Lost 16): de är
+olika radtyper, och `LostHours` blandas aldrig med `PlacementHours`.
+
+**Normaliseraren ska klassificera radtypen** — planeringsvyn visar bokat pass,
+inställt och frånvaro olika.
+
+### 🔴 TVÅ KOLUMNER ÄR HELT TOMMA — ta bort dem
+`PunchInTimeRounded1` och `PunchOutTimeRounded1`: **0 av 3 420 ifyllda.**
+Stämpelklocka används inte (eller fylls inte i). Vi kan alltså inte visa faktisk
+kontra bokad tid — bara bokad.
+
+`MannedBy1/2` (11 distinkta) = den som bemannat/planerat, inte utföraren.
+Behåll bara om vyn ska visa det — annars är det persondata utan syfte.
+
+### ⚠️ VERKSAMHETSFYND SOM MÅSTE BEKRÄFTAS FÖRE VISNING
+**8 972 h inställt mot 9 267 h genomfört** — nästan 1:1. Plus 8 398 h frånvaro.
+Datan är kategoriskt ren, men det säger inte att TOLKNINGEN är rätt: räknas ett
+pass som ställs in och bemannas om som "lost" på båda konsulterna? Bekräfta med
+Intelliplan innan talet visas för någon som fattar beslut på det.
+
+### Volym
+3 420 rader/månad → ~41 000/år. Synka ett **rullande fönster** för
+planeringsvyn, inte all historik.
+
+---
+
+## ✅ PASSYNK 1082 → `Activity` (byggt 2026-08-20, EJ deployat)
+
+Speglar Tengella-passvägen så S&P och Housekeeping hamnar i **samma kalender**:
+`source_id = "intelliplan:<FinancialItemId>"` (mot Tengellas `"tengella:<EventId>"`).
+
+**`normalizePass(csv)` (intelliplan.js)** — verifierad mot skarp CSV:
+`placement 17 662,54` · `lost 8 972,33` · `absence 8 397,83` — stämmer exakt mot
+UI:t (17 663 / 8 972 / 8 398). 3 420 rader, **0 okända radtyper**.
+
+**`POST /admin/intelliplan/sync/pass {from,to,dry_run}`** — torrkörning default.
+
+### ⚠️ TRE MÅTT SOM INTE FÅR SLÅS IHOP
+`placement_total` (17 663) **inkluderar frånvaro**. `utfort_total` (9 267) räknar
+bara rader med bokad tid. Att summera placement som "arbetade timmar" vore fel
+med nästan en faktor två. Båda redovisas, aldrig hopslagna.
+
+### ⚠️ KLOCKTID ≠ BETALD TID — skillnaden är RAST
+`(slut − start) − PlacementHours`: **1,0 h på 704 pass · 0,5 h på 163 · 0 h på
+272**. Kalenderblocket är start→slut (inkl rast), betald tid är PlacementHours.
+Härled aldrig det ena ur det andra. 37 rader har negativ rast → varning, inte stopp.
+
+**36 pass passerar midnatt** → slutdatum +1 dygn, annars slutar passet före det börjat.
+
+### 🔧 KRÄVS I BUBBLE INNAN SKARP KÖRNING
+**Nytt `ActivityType`-OS-värde: `Service & People`** (bredvid `Housekeeping`).
+
+**Nya fält på `Activity`:** `intelliplan_item_id`(number) · `intelliplan_radtyp`(text)
+· `intelliplan_consultant_no`(number) · `intelliplan_consultant_name`(text)
+· `intelliplan_account_id`(number) · `intelliplan_order_no`(text)
+· `intelliplan_order_desc`(text) · `intelliplan_hours`(number)
+· `intelliplan_rast_hours`(number) · `intelliplan_last_synced`(date)
+
+Saknas något droppas det **tyst** — därför läses en rad tillbaka efter första
+create och synken svarar `502 fields_missing_on_type` i stället för `ok:true`.
+Probe-raden väljs med FLEST ifyllda värden (Bubble lagrar inte null → en gles
+rad ger falska larm).
+
+### WU
+Befintliga rader läses **constraintat på `Startdatum`**, aldrig helsvep.
+`loadActivityIndex()` i activity_sync läser hela `Activity` (18 862 rader ≈ 310
+WU/körning) — den vägen används medvetet INTE här. Patchar bara vid faktisk
+ändring av ett mätvärde.
+
+Kundkoppling via befintliga `_ipAccountMap()` (IntelliplanAccount → ClientCompany)
+— inga nya mappningar. Omappade konton redovisas som `konton_utan_clientcompany`.
+
+### 🔴 EGET SPÅR UPPTÄCKT: Category-nyckeln "Staff"
+`CATEGORY_COLORS` och `SUBCAT_FIELDS` (activity_sync.js) samt tre tabeller i
+index.js är Category-nycklade men använder **`"Staff"`** — option set-värdet är
+`Service & People`. Matchar de aldrig får S&P-poster grå fallback-färg och
+saknar underkategori. **Ej ändrat** — `"Staff"` är korrekt på andra ställen
+(Fortnox connection-namn), så det kräver en egen genomgång. Passynken använder
+det verifierade värdet.
+
+**Verifierat:** `intelliplan_smoke.mjs` **257/257**. **Mutationstestat:** inställda
+pass felklassade fäller 2 · `utfort_total` över alla rader fäller 2 · midnatt
+ohanterat fäller 3 · Category tillbaka till "Staff" fäller 2 · helsvep i stället
+för datumfönster fäller 1. Samtliga 20 sviter gröna.
+
+**Nästa:** skapa OS-värdet + de tio fälten i Bubble → torrkör
+`POST /admin/intelliplan/sync/pass {"from":"2026-07-01","to":"2026-07-31"}` →
+jämför mot 3 420 rader → `dry_run:false` → lägg i `intelliplan_cron.sh`.

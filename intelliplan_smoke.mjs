@@ -6,7 +6,7 @@
 // aldrig läcker ut i något svar.
 import { createIntelliplanClient, describeReportPayload, parseCsv, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, normalizeCompanyName, IP_ORDER_MONTH_REPORT,
-         scoreScheduleColumns, malFinnsInte } from "./intelliplan.js";
+         scoreScheduleColumns, malFinnsInte, normalizePass, passRadtyp, IP_PASS_REPORT } from "./intelliplan.js";
 import fs from "node:fs";
 
 let pass = 0, fail = 0;
@@ -655,6 +655,92 @@ const run = async () => {
   ok("obedömbara räknas separat", /mallar_obedombara/.test(pCode) && /obedombara_id/.test(pCode));
   ok("kandidater söks bara bland BEDÖMDA", /bedomda\.filter\(\(r\) => r\.schema_kandidat\)/.test(pCode));
   ok("slutsatsen nämner de obedömda när sådana finns", /är alltså OBEDÖMDA/.test(pEp));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  sec("Rapport 1082 — PASS per konsult, kund och dag");
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ Tre radtyper, bevisade ur skarp CSV (juli 2026: 1202 pass · 1146 inställda
+  // · 1072 frånvaro). De överlappar ALDRIG, och det är hela grunden för att
+  // PlacementHours inte får summeras som "arbetade timmar".
+  ok("bokad tid → pass", passRadtyp({ harTid: true, placement: 8, lost: null, absence: null }) === "pass");
+  ok("bara LostHours → inställt", passRadtyp({ harTid: false, placement: null, lost: 8, absence: null }) === "installt");
+  ok("placement + absence → frånvaro", passRadtyp({ harTid: false, placement: 8, lost: null, absence: 8 }) === "franvaro");
+  ok("inget av det → okänd, inte tyst pass", passRadtyp({ harTid: false, placement: null, lost: null, absence: null }) === "okand");
+  // ⚠️ Ett inställt pass får ALDRIG klassas som genomfört — då blir 8 972 h
+  // inställd tid till utförd tid.
+  ok("inställt blir aldrig pass", passRadtyp({ harTid: false, placement: null, lost: 8, absence: null }) !== "pass");
+
+  const PCSV = (rows) => "Date1,Date2,Consultant1,Consultant2,ConsultantNo1,Account1,Account2,"
+    + "FinancialItemId1,OrderDescription1,OrderNo1,WorkdayBookedToTime1,FinancialItemNote1,"
+    + "WorkdayBookedFromTime1,PlacementHours1,LostHours1,AbsenceHours1\n" + rows.join("\n");
+  // fält:      d1,      d2, c1,   c2,  no,  a1, a2,  id, odesc, ono,  to, note, from, plac, lost, abs
+  const prad = (o = {}) => ["20635", o.d || "2026-07-01", "9", o.c || "A B", o.no || "1037",
+    o.a1 || "1015", o.a2 || "Arena Sergel", o.id || "1", o.odesc || "Reception", o.ono || "102",
+    o.to || "", "", o.from || "", o.plac || "", o.lost || "", o.abs || ""].join(",");
+
+  const pn1 = normalizePass(PCSV([
+    prad({ id: "1", from: "08:00", to: "17:00", plac: "8.0000" }),          // pass, 1 h rast
+    prad({ id: "2", lost: "8.0000" }),                                       // inställt
+    prad({ id: "3", plac: "8.0000", abs: "8.0000" }),                        // frånvaro
+  ]));
+  ok("alla tre radtyper klassas rätt", JSON.stringify(pn1.typer) === JSON.stringify({ pass: 1, installt: 1, franvaro: 1, okand: 0 }));
+  // ⚠️ Kärnan: placement_total INKLUDERAR frånvaro. utfort_total gör det inte.
+  ok("placement_total inkluderar frånvaro", pn1.placement_total === 16);
+  ok("utfort_total räknar BARA genomförda pass", pn1.utfort_total === 8);
+  ok("de två är olika tal", pn1.placement_total !== pn1.utfort_total);
+  ok("lost hålls separat", pn1.lost_total === 8);
+
+  // ⚠️ Klocktid − betald tid = RAST (704 pass hade 1,0 h i juli). Att härleda
+  // det ena ur det andra vore fel: de mäter olika saker.
+  const pp1 = pn1.rows.find((r) => r.typ === "pass");
+  ok("rasten räknas ut", pp1.rast_hours === 1);
+  ok("start blir datum + bokad starttid", pp1.start === "2026-07-01T08:00:00.000Z");
+  ok("slut blir datum + bokad sluttid", pp1.slut === "2026-07-01T17:00:00.000Z");
+
+  // ⚠️ 36 pass i juli passerade midnatt. Utan +1 dygn blir slut FÖRE start.
+  const pn2 = normalizePass(PCSV([prad({ id: "9", from: "22:00", to: "02:00", plac: "4.0000" })]));
+  const pmid = pn2.rows[0];
+  ok("midnattspass flaggas", pmid.passerar_midnatt === true);
+  ok("och slutar dagen efter", pmid.slut === "2026-07-02T02:00:00.000Z");
+  ok("slut ligger efter start", Date.parse(pmid.slut) > Date.parse(pmid.start));
+
+  // Negativ rast = data vi inte äger → varna, blockera inte.
+  const pn3 = normalizePass(PCSV([prad({ id: "7", from: "08:00", to: "12:00", plac: "8.0000" })]));
+  ok("negativ rast varnas", (pn3.warnings || []).some((w) => w.reason === "negativ_rast"));
+  ok("men raden behålls", pn3.count === 1);
+
+  // ⚠️ Ändrade kolumner ska STANNA synken, inte lagra nollor.
+  let stannade = false;
+  try { normalizePass("Date2,Consultant2\n2026-07-01,A B"); } catch (e) { stannade = /unexpected_columns/.test(e.message); }
+  ok("saknade kolumner stoppar synken", stannade);
+  // Dubbel nyckel = kornighetsantagandet håller inte.
+  let dubbel = false;
+  try { normalizePass(PCSV([prad({ id: "5", plac: "8.0000", abs: "8.0000" }), prad({ id: "5", lost: "1.0000" })])); }
+  catch (e) { dubbel = /duplicate_key/.test(e.message); }
+  ok("dubbel FinancialItemId stoppar synken", dubbel);
+
+  // ── Endpointen ────────────────────────────────────────────────────────────
+  const ipStart = IX.indexOf('app.post("/admin/intelliplan/sync/pass"');
+  const ipEp = IX.slice(ipStart, IX.indexOf("\n});", ipStart) + 4);
+  const ipCode = ipEp.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+  ok("sync/pass finns", ipStart !== -1);
+  ok("torrkörning är default", /dry_run !== false/.test(ipCode));
+  // Prefixkonstanten ligger UTANFÖR routen → greppa hela filen för den, och
+  // användningen inne i routen. (Första versionen greppade bara routen → rött.)
+  ok("källnyckeln speglar Tengella-mönstret",
+     /IP_PASS_SOURCE_PREFIX = "intelliplan:"/.test(IX) && /IP_PASS_SOURCE_PREFIX \+ r\.key/.test(ipCode));
+  // ⚠️ Category-värdet är "Service & People", INTE "Staff".
+  ok("Category är Service & People", /IP_PASS_CATEGORY = "Service & People"/.test(IX));
+  ok("och inte Staff", !/IP_PASS_CATEGORY = "Staff"/.test(IX));
+  // ⚠️ Helsvep på Activity (18 862 rader) = ~310 WU per körning.
+  ok("befintliga läses constraintat på Startdatum", /key: "Startdatum", constraint_type: "greater than"/.test(ipCode));
+  ok("inget okonstraintat Activity-svep", !/ACTIVITY_CONFIG\.ACTIVITY_TYPE, \{ \}\)/.test(ipCode));
+  ok("patchar bara vid faktisk ändring", /const JMF = \[/.test(ipCode) && /unchanged\+\+/.test(ipCode));
+  // ⚠️ Bubble droppar okända fält tyst.
+  ok("läser tillbaka och rapporterar saknade fält", /fields_missing_on_type/.test(ipCode));
+  ok("probe-raden väljs med flest ifyllda värden", /filter\(\(v\) => v != null\)\.length/.test(ipCode));
+  ok("omappade konton redovisas", /konton_utan_clientcompany/.test(ipCode));
+  ok("timmarna hålls isär per radtyp", /_ipPassTimmar/.test(ipCode));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

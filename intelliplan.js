@@ -793,3 +793,146 @@ export function malFinnsInte(err) {
   const body = String((err && (err.body || err.detail)) || "");
   return /Could not find GridReportTemplateDto/i.test(body);
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// NORMALISERARE — rapport 1082 "mira-pass-1": PASS per konsult, kund och dag
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Byggd av Christian 2026-08-20 i Intelliplans Reporting-vy. Kolumner
+// verifierade mot skarp CSV (juli 2026: 3 420 rader).
+//
+// ⚠️ TRE RADTYPER, bevisade ur datan — de överlappar ALDRIG:
+//
+//   pass      1 202 rader  har WorkdayBookedFrom/ToTime · bara PlacementHours
+//   installt  1 146 rader  BARA LostHours, ingen tid
+//   franvaro  1 072 rader  PlacementHours + AbsenceHours, ingen tid
+//
+// Därför är `PlacementHours` SCHEMALAGD tid, inte arbetad: totalen 17 663 =
+// 9 267 (utfört) + 8 396 (frånvarande men schemalagt). Att summera den som
+// "arbetade timmar" vore fel med nästan en faktor två.
+//
+// ⚠️ KLOCKTID ≠ TIMMAR. (slut − start) − PlacementHours = RAST:
+// 1,0 h på 704 pass · 0,5 h på 163 · 0 h på 272. Kalenderblocket är
+// start→slut (inkl rast), betald tid är PlacementHours. **Försök aldrig
+// härleda det ena ur det andra** — de mäter olika saker.
+//
+// ⚠️ 36 pass passerar midnatt (slut < start) → slutdatum +1 dygn.
+//
+// ⚠️ PunchIn/PunchOutTimeRounded var 0 av 3 420 ifyllda — stämpelklocka
+// används inte. Faktisk kontra bokad tid går alltså INTE att visa.
+export const IP_PASS_REPORT = 1082;
+
+const _t2min = (t) => {
+  const p = String(t || "").trim().replace(".", ":").split(":");
+  if (p.length < 2) return null;
+  const h = Number(p[0]), m = Number(p[1]);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+};
+const _isoAt = (dateIso, minutes) => {
+  const base = Date.parse(dateIso + "T00:00:00.000Z");
+  if (!Number.isFinite(base) || minutes == null) return null;
+  return new Date(base + minutes * 60000).toISOString();
+};
+
+/** Radtyp ur måtten. Ren funktion — testbar utan CSV. */
+export function passRadtyp({ harTid, placement, lost, absence }) {
+  if (harTid) return "pass";
+  if (lost != null && placement == null && absence == null) return "installt";
+  if (absence != null) return "franvaro";
+  return "okand";
+}
+
+export function normalizePass(csvText, opts = {}) {
+  const strict = opts.strict !== false;
+  const rows = parseCsv(csvText, { delimiter: sniffDelimiter(csvText) });
+  const header = (rows[0] || []).map((h) => String(h || "").trim());
+  const i = Object.fromEntries(header.map((h, n) => [h, n]));
+
+  // Ändrar någon mallens kolumner ska synken STANNA, inte tyst lagra nollor.
+  const NEED = ["Date2", "Consultant2", "ConsultantNo1", "Account1", "Account2",
+    "FinancialItemId1", "OrderNo1", "WorkdayBookedFromTime1", "WorkdayBookedToTime1",
+    "PlacementHours1", "LostHours1", "AbsenceHours1"];
+  const missing = NEED.filter((n) => i[n] == null);
+  if (missing.length) {
+    const e = new Error("intelliplan_unexpected_columns: saknar " + missing.join(", ") + " (fick: " + header.join(",") + ")");
+    e.status = 502; throw e;
+  }
+
+  const num = (v) => { const s2 = String(v == null ? "" : v).trim().replace(",", "."); if (!s2) return null; const n = Number(s2); return Number.isFinite(n) ? n : null; };
+  const txt = (v) => String(v == null ? "" : v).trim();
+  const out = [], warnings = [], seen = new Map();
+  const typer = { pass: 0, installt: 0, franvaro: 0, okand: 0 };
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || !row.some((v) => String(v || "").trim() !== "")) continue;
+
+    const iso = txt(row[i.Date2]);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) { warnings.push({ row: r, reason: "ogiltigt_datum", value: iso.slice(0, 20) }); continue; }
+
+    const itemId = num(row[i.FinancialItemId1]);
+    if (itemId == null) { warnings.push({ row: r, reason: "saknar_FinancialItemId" }); continue; }
+    const key = String(itemId);
+    // ⚠️ FinancialItemId var 3 420 distinkta av 3 420 rader. Dubbletter betyder
+    // att kornighetsantagandet inte håller — det ska aldrig tystas.
+    if (seen.has(key)) {
+      const msg = `dubbel nyckel ${key} (rad ${seen.get(key)} och ${r})`;
+      if (strict) { const e = new Error("intelliplan_duplicate_key: " + msg); e.status = 502; throw e; }
+      warnings.push({ row: r, reason: "duplicate_key", value: msg }); continue;
+    }
+    seen.set(key, r);
+
+    const fromMin = _t2min(row[i.WorkdayBookedFromTime1]);
+    const toMinRaw = _t2min(row[i.WorkdayBookedToTime1]);
+    const harTid = fromMin != null && toMinRaw != null;
+    const placement = num(row[i.PlacementHours1]);
+    const lost = num(row[i.LostHours1]);
+    const absence = num(row[i.AbsenceHours1]);
+    const typ = passRadtyp({ harTid, placement, lost, absence });
+    typer[typ] = (typer[typ] || 0) + 1;
+    if (typ === "okand") warnings.push({ row: r, reason: "okand_radtyp", value: key });
+
+    // Midnattspassering: slut före start ⇒ nästa dygn.
+    let toMin = toMinRaw, passerarMidnatt = false;
+    if (harTid && toMinRaw <= fromMin) { toMin = toMinRaw + 1440; passerarMidnatt = true; }
+
+    const start = harTid ? _isoAt(iso, fromMin) : _isoAt(iso, 0);
+    const slut = harTid ? _isoAt(iso, toMin) : _isoAt(iso, 1439);
+
+    // Klocktid minus betald tid = rast. Negativt = något stämmer inte (37 rader
+    // i juli) — varna, blockera inte; det är data vi inte äger.
+    let rast = null;
+    if (harTid && placement != null) {
+      rast = Number((((toMin - fromMin) / 60) - placement).toFixed(2));
+      if (rast < 0) warnings.push({ row: r, reason: "negativ_rast", value: `${key}: klocktid ${(toMin - fromMin) / 60} h < PlacementHours ${placement}` });
+    }
+
+    out.push({
+      key, typ, date: iso,
+      start, slut, passerar_midnatt: passerarMidnatt,
+      consultant_no: num(row[i.ConsultantNo1]),
+      consultant: txt(row[i.Consultant2]),
+      account_id: num(row[i.Account1]),
+      account: txt(row[i.Account2]),
+      order_no: txt(row[i.OrderNo1]),
+      order_desc: i.OrderDescription1 != null ? txt(row[i.OrderDescription1]) : "",
+      note: i.FinancialItemNote1 != null ? txt(row[i.FinancialItemNote1]) : "",
+      placement_hours: placement, lost_hours: lost, absence_hours: absence,
+      rast_hours: rast,
+    });
+  }
+
+  const sum = (f) => Number(out.reduce((a, b) => a + (f(b) || 0), 0).toFixed(2));
+  return {
+    report_id: IP_PASS_REPORT, rows: out, count: out.length, typer, warnings,
+    // Redovisa BÅDA — schemalagt och faktiskt utfört. Att bara visa den ena
+    // vore missvisande, och det är hela poängen med radtyperna.
+    placement_total: sum((r) => r.placement_hours),
+    utfort_total: Number(out.filter((r) => r.typ === "pass").reduce((a, b) => a + (b.placement_hours || 0), 0).toFixed(2)),
+    lost_total: sum((r) => r.lost_hours),
+    absence_total: sum((r) => r.absence_hours),
+    dates: [...new Set(out.map((r) => r.date))].sort(),
+    consultants: new Set(out.map((r) => r.consultant_no)).size,
+    accounts: [...new Set(out.map((r) => r.account_id).filter((x) => x != null))].sort((a, b) => a - b),
+  };
+}

@@ -15,7 +15,7 @@ import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_C
 import { feOverlap, describeEmptySide, bokningslageSummary, kallaFarskhet } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT,
-         scoreScheduleColumns, malFinnsInte } from "./intelliplan.js";
+         scoreScheduleColumns, malFinnsInte, normalizePass, IP_PASS_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -22837,6 +22837,153 @@ app.get("/admin/bokningslage/summary", async (req, res) => {
   } catch (e) {
     console.error("[bokningslage/summary]", e?.message, e?.detail || "");
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// INTELLIPLAN PASS (rapport 1082) → Bubble `Activity` — planeringsvyn
+// ════════════════════════════════════════════════════════════════════════════
+// POST /admin/intelliplan/sync/pass { from, to, dry_run }   ⚠️ torrkörning default
+//
+// Speglar Tengella-passvägen (activity_sync.js mapTimeTableEvent → Activity) så
+// S&P och Housekeeping hamnar i SAMMA kalender med samma mekanik. Skillnaden är
+// källan: Tengella har en egen endpoint, Intelliplan har bara rapport-API:t.
+//
+// Upsert-nyckel: `source_id = "intelliplan:<FinancialItemId>"` — samma mönster
+// som `"tengella:<EventId>"`. FinancialItemId var 3 420 distinkta av 3 420 rader.
+//
+// ⚠️ INGET HELSVEP. `loadActivityIndex()` i activity_sync läser HELA Activity
+// (18 862 rader = ~189 sidor ≈ 310 WU per körning). Här läses befintliga rader
+// CONSTRAINTAT på Startdatum-fönstret, precis som IntelliplanRevenueDay gör.
+const IP_PASS_ACTIVITY_TYPE = "Service & People";   // ActivityType-OS-värde (måste finnas i Bubble)
+const IP_PASS_CATEGORY = "Service & People";        // Category-OS — verifierat värde, INTE "Staff"
+const IP_PASS_COLOR = "#9F77DD";
+const IP_PASS_SOURCE_PREFIX = "intelliplan:";
+
+// Titel per radtyp. Radtypen ska synas i kalendern — ett inställt pass och ett
+// genomfört får inte se likadana ut.
+function _ipPassTitel(r) {
+  const vem = r.consultant || "Okänd";
+  const var_ = r.account || r.order_desc || "";
+  if (r.typ === "installt") return `⃠ Inställt — ${vem}${var_ ? " · " + var_ : ""}`;
+  if (r.typ === "franvaro") return `Frånvaro — ${vem}`;
+  return `${vem}${var_ ? " · " + var_ : ""}`;
+}
+
+// Timmar per radtyp — SAMMA fält, olika betydelse. Att lägga alla tre i ett
+// belopp hade dolt att placement inkluderar frånvaro.
+function _ipPassTimmar(r) {
+  if (r.typ === "installt") return r.lost_hours;
+  if (r.typ === "franvaro") return r.absence_hours;
+  return r.placement_hours;
+}
+
+app.post("/admin/intelliplan/sync/pass", async (req, res) => {
+  const b = req.body || {};
+  const dryRun = b.dry_run !== false;              // ⚠️ torrkörning är default
+  const from = String(b.from || "").trim(), to = String(b.to || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ ok: false, error: "from_och_to_krävs_som_YYYY-MM-DD" });
+  }
+  if (to < from) return res.status(400).json({ ok: false, error: "to_före_from" });
+  try {
+    const rep = await intelliplan.getGridReport({ id: IP_PASS_REPORT, lang: "sv", dateFrom: from, dateTo: to });
+    const norm = normalizePass(rep.raw, { strict: true });
+
+    // Kundkoppling via den BEFINTLIGA IntelliplanAccount-mappningen — samma
+    // hjälpare som order-month använder, inga nya mappningar att underhålla.
+    const accById = await _ipAccountMap();
+    const omappade = [...new Set(norm.rows.map((r) => r.account_id).filter((x) => x != null)
+      .filter((id) => !accById.get(id)?.companyId))];
+
+    // Befintliga Activities i fönstret — CONSTRAINTAT, inget helsvep.
+    const before = new Date(Date.parse(from + "T00:00:00Z") - 864e5).toISOString();
+    const after = new Date(Date.parse(to + "T00:00:00Z") + 2 * 864e5).toISOString();
+    const existing = await bubbleFindAll(ACTIVITY_CONFIG.ACTIVITY_TYPE, { constraints: [
+      { key: "ActivityType", constraint_type: "equals", value: IP_PASS_ACTIVITY_TYPE },
+      { key: "Startdatum", constraint_type: "greater than", value: before },
+      { key: "Startdatum", constraint_type: "less than", value: after } ] });
+    const bySource = new Map();
+    for (const e of existing) { const sid = String(e.source_id || ""); if (sid) bySource.set(sid, e); }
+
+    const nowIso = new Date().toISOString();
+    const bygg = (r) => ({
+      source_id: IP_PASS_SOURCE_PREFIX + r.key,
+      ActivityType: IP_PASS_ACTIVITY_TYPE,
+      Title: _ipPassTitel(r),
+      Startdatum: r.start, Slutdatum: r.slut,
+      Category: IP_PASS_CATEGORY, color_hex: IP_PASS_COLOR,
+      [ACTIVITY_CONFIG.A_COMPANY]: (accById.get(r.account_id) || {}).companyId || null,
+      intelliplan_item_id: Number(r.key),
+      intelliplan_radtyp: r.typ,
+      intelliplan_consultant_no: r.consultant_no,
+      intelliplan_consultant_name: r.consultant,
+      intelliplan_account_id: r.account_id,
+      intelliplan_order_no: r.order_no || null,
+      intelliplan_order_desc: r.order_desc || null,
+      intelliplan_hours: _ipPassTimmar(r),
+      intelliplan_rast_hours: r.rast_hours,
+      intelliplan_last_synced: nowIso,
+    });
+
+    // Patcha BARA när ett mätvärde faktiskt ändrats — annars skrivs tusentals
+    // rader varje natt bara för att synctidsstämpeln rört sig.
+    const JMF = ["Title", "Startdatum", "Slutdatum", "intelliplan_radtyp",
+      "intelliplan_hours", "intelliplan_account_id", "intelliplan_order_no", ACTIVITY_CONFIG.A_COMPANY];
+    const toCreate = [], toPatch = [];
+    let unchanged = 0;
+    for (const r of norm.rows) {
+      const p = bygg(r);
+      const cur = bySource.get(p.source_id);
+      if (!cur) { toCreate.push(p); continue; }
+      const same = JMF.every((f) => String(cur[f] ?? "") === String(p[f] ?? ""));
+      if (same) { unchanged++; continue; }
+      toPatch.push({ id: cur._id || cur.id, payload: p });
+    }
+    const reportKeys = new Set(norm.rows.map((r) => IP_PASS_SOURCE_PREFIX + r.key));
+    const orphans = existing.filter((e) => !reportKeys.has(String(e.source_id || "")));
+
+    const summary = {
+      period: { from, to }, report_id: IP_PASS_REPORT,
+      rader: norm.count, typer: norm.typer,
+      placement_total: norm.placement_total, utfort_total: norm.utfort_total,
+      lost_total: norm.lost_total, absence_total: norm.absence_total,
+      konsulter: norm.consultants, konton: norm.accounts.length,
+      konton_utan_clientcompany: omappade.length, omappade_konton: omappade.slice(0, 20),
+      befintliga_i_bubble: existing.length,
+      to_create: toCreate.length, to_update: toPatch.length, unchanged,
+      orphans: orphans.length, warnings: norm.warnings,
+    };
+    if (dryRun) return res.json({ ok: true, dry_run: true, ...summary });
+
+    let created = 0, updated = 0;
+    if (toCreate.length) { const r2 = await _bulkCreate(ACTIVITY_CONFIG.ACTIVITY_TYPE, toCreate); created = r2.created; }
+    for (const u of toPatch) { await bubblePatch(ACTIVITY_CONFIG.ACTIVITY_TYPE, u.id, u.payload); updated++; }
+
+    // ⚠️ Bubble droppar okända fält TYST (safeCreate självläker på
+    // "Unrecognized field"). Utan den här kontrollen skulle synken rapportera
+    // ok:true med tomma intelliplan_*-fält. Läs tillbaka den rad som har FLEST
+    // ifyllda värden — Bubble lagrar inte null, så en gles rad ger falska larm.
+    let fieldsMissing = null;
+    if (created && toCreate.length) {
+      const probe = toCreate.filter((p) => p.intelliplan_hours != null)
+        .sort((a, b) => Object.values(b).filter((v) => v != null).length - Object.values(a).filter((v) => v != null).length)[0] || toCreate[0];
+      const back = await bubbleFindAll(ACTIVITY_CONFIG.ACTIVITY_TYPE, { constraints: [
+        { key: "source_id", constraint_type: "equals", value: probe.source_id } ] }).catch(() => null);
+      if (Array.isArray(back) && back[0]) {
+        const saknas = Object.keys(probe).filter((f) => probe[f] != null && back[0][f] === undefined);
+        if (saknas.length) fieldsMissing = saknas;
+      }
+    }
+    if (fieldsMissing) {
+      return res.status(502).json({ ok: false, error: "fields_missing_on_type", fields: fieldsMissing,
+        hint: `Skapa fälten på ${ACTIVITY_CONFIG.ACTIVITY_TYPE} i Bubble — de droppades tyst vid skrivning.`,
+        created, updated, ...summary });
+    }
+    return res.json({ ok: true, dry_run: false, created, updated, ...summary });
+  } catch (e) {
+    console.error("[intelliplan/sync/pass]", e?.message, e?.status || "", (e?.body || "").slice(0, 300));
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.body || e?.detail || null });
   }
 });
 
