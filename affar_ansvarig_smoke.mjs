@@ -171,6 +171,48 @@ const run = async () => {
   const augRows = (aug.body && aug.body.rows) || [];
   ok("HK dyker INTE upp i augusti (skulle betyda Created Date-fallback)", !augRows.some((r) => r.number === "10568"));
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // RÖKTEST PÅ SAMTLIGA GET-ROUTES — fångar odefinierade variabler
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ SKARP KRASCH 2026-08-20: `/admin/affar/feed` dog med "cWO is not defined".
+  // Jag tog bort `cWO` ur destruktureringen (TengellaWorkorder-räknaren) men
+  // missade att den fortfarande användes i svarets `funnel`/`counts_detail`.
+  // Ett aritetstest (variabler == uttryck i Promise.all) räckte INTE — det
+  // säger inget om användningar längre ner i funktionen.
+  //
+  // INGEN svit anropade feed:en. Den här loopen kallar varje registrerad
+  // GET-route med minimala argument och kräver att den inte exploderar. Billigt,
+  // brett, och fångar precis den klassen av fel.
+  const GET_ROUTES = Object.keys(routes.get);
+  ok("det finns GET-routes att röktesta", GET_ROUTES.length > 0);
+  for (const rp of GET_ROUTES) {
+    // Routes med :param får ett dummy-id; de får svara 404, bara inte krascha.
+    const params = {};
+    (rp.match(/:([a-zA-Z]+)/g) || []).forEach((m) => { params[m.slice(1)] = "x"; });
+    let res;
+    try {
+      res = await new Promise((r) => routes.get[rp](
+        { query: {}, params, body: {}, headers: {} },
+        { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); } }));
+    } catch (e) {
+      res = { code: 500, body: { ok: false, error: "THROW: " + (e && e.message) } };
+    }
+    const kraschat = res.code >= 500 || /is not defined|THROW:/.test(String((res.body || {}).error || ""));
+    ok("GET " + rp + " kraschar inte" + (kraschat ? " (" + ((res.body || {}).error || res.code) + ")" : ""), !kraschat);
+  }
+  // Feed:en specifikt — den var den som dog, och dess funnel ska summera rätt.
+  const feed = await new Promise((r) => routes.get["/admin/affar/feed"](
+    { query: {}, params: {}, body: {}, headers: {} },
+    { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); } }));
+  ok("feed svarar ok", !!(feed.body && feed.body.ok));
+  ok("feed har en funnel", !!(feed.body && feed.body.funnel));
+  // ⚠️ HK ingår i order_fortnox nu — ingen separat workorder-räknare får finnas
+  // kvar, den hade dubbelräknat samma rader.
+  ok("funnel.order = mira + fortnox (ingen separat workorder-räknare)",
+     (feed.body.funnel || {}).order === ((feed.body.counts_detail || {}).order_mira + (feed.body.counts_detail || {}).order_fortnox));
+  ok("counts_detail har ingen order_tengella längre",
+     !("order_tengella" in (feed.body.counts_detail || {})));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

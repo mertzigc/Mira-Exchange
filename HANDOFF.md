@@ -399,7 +399,11 @@ Källhälsan bevisade att bytet var säkert: **`FortnoxOrder(TENGELLA)` = 765 ra
 - Feed, deal-kortet, doc-search och `LINK_MAP.order` uppdaterade. `LINK_MAP` pekade HK-kopplingar på `TengellaWorkorder` — deal-kopplingen skrevs alltså på en rad vyn inte längre läser.
 - `_woRows` / `nWorkorder` / `_liveWO` **borttagna**, inte utkommenterade. Död kod som ser levande ut var precis felet.
 
-**⚠️ FÄLLA VID BORTTAGNING UR `Promise.all`:** att ta bort en post utan att ta bort motsvarande namn ur destruktureringen **förskjuter alla efterföljande variabler** — tyst. Hände i både feed och deal-kortet; fångat med ett aritetstest (19 vs 19, 12 vs 12).
+**⚠️ FÄLLA VID BORTTAGNING UR `Promise.all` — TVÅ STEG, INTE ETT:**
+1. Att ta bort en post utan att ta bort motsvarande namn ur destruktureringen **förskjuter alla efterföljande variabler** — tyst. Hände i både feed och deal-kortet. Fångat med ett aritetstest (19 vs 19, 12 vs 12).
+2. **🔴 MEN ARITETSTESTET RÄCKTE INTE.** Affärsvyn **kraschade skarpt** med `cWO is not defined`: jag tog bort `cWO` (TengellaWorkorder-räknaren) ur destruktureringen men den användes fortfarande längre ner, i svarets `funnel.order` och `counts_detail.order_tengella`. Aritet säger ingenting om **användningar**. Rättat: HK ingår i `cOrdF`, så en separat räknare hade dessutom dubbelräknat dem.
+
+**⚠️ ORSAKEN TILL ATT DET NÅDDE PRODUKTION: ingen svit anropade `/admin/affar/feed`.** 20 gröna sviter, och den mest trafikerade endpointen i vyn testades inte alls. Åtgärdat med ett **röktest över SAMTLIGA registrerade GET-routes** i `affar_ansvarig_smoke.mjs`: varje route anropas med minimala argument (`:param` → dummy-id) och måste svara utan 5xx och utan `is not defined`. Billigt, brett, och fångar hela klassen "borttagen variabel som fortfarande används". Plus riktade assertioner på feed:ens funnel. **Mutationstestat:** återinförd `cWO` fäller 4 · återinförd `order_tengella`-räknare fäller 1.
 
 **Backend `companies_api.js` (kundkortet):** samma bugg fanns i `nOrdF` — HK saknar `ft_delivery_date` och daterades därför på **Created Date (synkdatum, inte affärsdatum)** och märktes `fortnox`/`Levererad`. Rättat likadant. Kräver `TENGELLA_CONNECTION_ID` i deps (injicerat från index.js).
 

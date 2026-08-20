@@ -367,9 +367,12 @@ export function registerAffarRoutes(app, deps) {
         ok: true,
         funnel: {
           lead: cLead, aktivitet: cAkt, affar: cDeal,
-          offert: cOffM + cOffF, avtal: cAvtal, order: cOrdM + cOrdF + cWO, faktura: cInv,
+          // ⚠️ `cWO` (TengellaWorkorder-räknaren) togs bort 2026-08-20 när HK
+          // flyttades till FortnoxOrder. HK ingår nu i `cOrdF` — att addera en
+          // separat workorder-räknare här hade dubbelräknat dem.
+          offert: cOffM + cOffF, avtal: cAvtal, order: cOrdM + cOrdF, faktura: cInv,
         },
-        counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, avtal: cAvtal, order_mira: cOrdM, order_fortnox: cOrdF, order_tengella: cWO },
+        counts_detail: { offert_mira: cOffM, offert_fortnox: cOffF, avtal: cAvtal, order_mira: cOrdM, order_fortnox: cOrdF },
         rows,
         note: "Order = MiraOrder + FortnoxOrder (HK ingår: connection=TENGELLA, daterad på ft_order_date). TengellaWorkorder pensionerad 2026-06-04. Sortering på visnings-datum.",
       });
