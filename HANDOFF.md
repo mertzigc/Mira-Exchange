@@ -213,9 +213,19 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **`bokningslage.js` (NY) + `GET /admin/bokningslage/fe-overlap?from=&to=`** mäter punkt 3 i stället för att anta den. Fortnox sätter egna dokumentnummer, så tre strategier provas i fallande säkerhet: `exact_no` (ordernr === ft_document_number, normaliserat) → `company_date_total` → `company_total` (inom 31 dagar). Redovisar antal per strategi, `overlap_value` (beloppet som skulle dubbelräknas), omatchade på båda sidor, exempel att stickprova, och ett **verdict** som säger om dedupen är tillförlitlig eller en gissning. En FortnoxOrder konsumeras bara EN gång; makulerade räknas bort. `MiraOrder` periodiseras på **leveransdatum**, inte orderdatum — en order lagd i maj för ett event i juni hör till juni. Läser bara.
 
-**Verifierat:** `bokningslage_smoke.mjs` **31/31**, mutationstestat (flerfaldig konsumtion av samma Fortnox-order fäller 1 · makulerade medräknade 1 · periodisering på orderdatum 6).
+**⚠️ FYRA FEL I FÖRSTA SKARPA KÖRNINGEN (rättade 2026-08-19, EJ deployade).** Endpointen svarade `mira_count: 0, fortnox_count: 0` och verdicten påstod ändå *"källorna verkar beskriva olika ordrar, båda kan summeras"* — en slutsats dragen ur ingenting.
+1. **`.catch(() => [])` på båda Bubble-frågorna.** En failande fråga blev tom lista → tolkades som resultat. Borttaget: frågan får braka.
+2. **Fel fältnamn: `connection_id` → `connection`.** `index.js` skriver `connection: connection_id` på FortnoxOrder (rad 2164/2400/8357). Fel constraint-nyckel ⇒ Bubble avvisar HELA frågan. **Detta var orsaken till nollan.**
+3. **MiraOrder hämtades bara på `leveransdatum`**, men fältet är valfritt (`offert.leveransdatum || null`, offert_api.js rad 315). Ordrar utan leveransdatum var osynliga trots att `normMiraOrder` faller tillbaka på `orderdatum`. Nu: två frågor (leveransdatum + orderdatum), union deduppad på id, och svaret bär `mira_by_leveransdatum` / `mira_by_orderdatum`.
+4. **Verdict drog slutsats ur tom data.** Nu tre lägen: `INGET ATT JÄMFÖRA` (0 på båda) · `BARA EN KÄLLA HAR DATA` · riktig slutsats. Makulerade redovisas separat i råantalet — annars ser "alla makulerade" ut som "inga ordrar".
 
-**Nästa:** kör `/admin/bokningslage/fe-overlap` för några månader → avgör F&E-räkningen → bygg själva bokningslägesvyn.
+**⚠️ LÄRDOM: mitt eget test bekräftade buggen.** Assertionen kontrollerade att koden constraintade på `connection_id` — samma gissning som koden. Testet var GRÖNT medan endpointen gav noll rader skarpt. **Ett grep-test är aldrig bättre än faktumet man kodar in.** Fältnamn ska verifieras mot hur kodbasen SKRIVER raden, inte mot vad man tror. Se [[reference-bubble-tysta-faltdrop]].
+
+**Verifierat:** `bokningslage_smoke.mjs` **47/47** (från 31), mutationstestat: `connection_id` tillbaka fäller 4 · borttagen orderdatum-väg 2 · slutsats ur tom data 10 · återinförd `.catch` 1 · flerfaldig konsumtion av samma Fortnox-order 1 · makulerade medräknade 1 · periodisering på orderdatum 6. Samtliga 20 sviter gröna.
+
+**Nästa:** deploya (`index.js` + `bokningslage.js` + `bokningslage_smoke.mjs` — OINCHECKADE) → kör `/admin/bokningslage/fe-overlap` för några månader → avgör F&E-räkningen → bygg själva bokningslägesvyn.
+
+**⚠️ SCOPE-KORRIGERING (Christian, 2026-08-19):** Intelliplan är **bara Carotte Staff (Service & People)** — inte koncernen. Lönsamhet per kund för hela Carotte går INTE att härleda ur 1058 ensamt. Bokningsläget ska i stället ställa de tre affärsområdena bredvid varandra: **S&P = Intelliplan · Housekeeping = FortnoxOrder(connection=TENGELLA, workorder) · F&E = FortnoxOrder(connection=FE) + MiraOrder**. Det är därför `bokningslage.js` finns, och därför F&E-överlappet måste mätas innan något summeras.
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.

@@ -23733,10 +23733,25 @@ app.get("/admin/clientcompany/:id/details", async (req, res) => {
 });
 
 // Build-markör — curl HOST/version för att bekräfta vilken kod som faktiskt är live.
+// ⚠️ HANDSKRIVEN STRÄNG DUGER INTE. Den låg kvar på "2026-08-12" i åtta dagar och
+// gjorde det omöjligt att se att en deploy INTE landat: 2026-08-20 svarade
+// /admin/bokningslage/fe-overlap fortfarande ur commit 1e9b45d (gamla verdicten,
+// utan mira_by_leveransdatum) fast origin/main stod på f8f0250. Slutsatsen "0/0 är
+// ett datafaktum" hade dragits ur kod som aldrig kördes.
+// Render sätter RENDER_GIT_COMMIT/RENDER_GIT_BRANCH automatiskt → commit-sha kommer
+// från plattformen, inte från något vi måste komma ihåg att uppdatera.
+const BUILD_COMMIT = process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null;
+const BUILD_MARK = (BUILD_COMMIT ? BUILD_COMMIT.slice(0, 7) : "okänd-commit");
+const BOOTED_AT = new Date().toISOString();
 app.get("/version", (req, res) => {
-  res.json({ ok: true, build: "2026-08-12-lead-value-col",
-    note: "ingen auto-Leverantör på Erbjudande (hörde till Comission)" });
+  res.json({ ok: true,
+    commit: BUILD_COMMIT, commit_short: BUILD_MARK,
+    branch: process.env.RENDER_GIT_BRANCH || null,
+    booted_at: BOOTED_AT,
+    // Öppen endpoint (ingen x-api-key) — därför bara build-metadata, aldrig
+    // konfiguration eller vilka integrationer som är påslagna.
+    note: BUILD_COMMIT ? null : "RENDER_GIT_COMMIT saknas — kör troligen lokalt" });
 });
 
-app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [build 2026-08-12-lead-value-col]"));
+app.listen(PORT, () => console.log("🚀 Mira Exchange running on port " + PORT + " [commit " + BUILD_MARK + ", booted " + BOOTED_AT + "]"));
 startEmailPoller({ bubbleFind, bubblePatch, bubbleGet });
