@@ -195,6 +195,28 @@ Carotte har **23 rapportmallar**, id 1027–1080, synliga i Intelliplans Reporti
 
 **Deploy:** `index.js` + nya `intelliplan.js` till Render. Inga Bubble-ändringar, inga HTML-block.
 
+### BOKNINGSLÄGE — samlat orderläge över de tre affärsområdena (påbörjat 2026-08-19)
+**⚠️ Intelliplan är BARA Service & People.** Att behandla dess intäkt som koncernens är fel — Christians rättelse. De tre affärsområdena finns alla i Bubble men i olika former:
+
+| Affärsområde | Källa |
+|---|---|
+| Service & People | `IntelliplanOrderMonth` (nytt) |
+| Housekeeping | `FortnoxOrder` där `connection_id` = TENGELLA `1771579481117x119544302020443410` (via §9d workorder-synken) |
+| Food & Event | `FortnoxOrder` där `connection_id` = FE `1771579463578x385222043661358460` **+** `MiraOrder` (Miras egen offertväg) |
+
+**Vald inriktning:** *bokningsläge just nu per affärsområde*, jämfört mot **samma dag i tidigare månader** — inte mot deras slutsummor.
+
+**⚠️ TRE SAKER SOM AVGÖR OM VYN BLIR SANN:**
+1. **Talen är inte samma sort.** Intelliplan = intjänat för arbete utfört i månaden. FortnoxOrder = helt ordervärde daterat på leverans. Summera aldrig utan att säga vad summan betyder.
+2. **Innevarande månad är ofullständig i Intelliplan** (juli mitt i månaden: 1 024 rader mot junis 2 315). Bokningsläget växer under månaden → jämför mot samma dag bakåt, annars ser varje pågående månad ut som ett ras. Dagsupplösning finns för S&P via 1081 och via orderdatum för de andra.
+3. **Dubbelräkningsrisk i F&E** — en Mira-offert kan bli `MiraOrder` och samma affär senare en `FortnoxOrder`.
+
+**`bokningslage.js` (NY) + `GET /admin/bokningslage/fe-overlap?from=&to=`** mäter punkt 3 i stället för att anta den. Fortnox sätter egna dokumentnummer, så tre strategier provas i fallande säkerhet: `exact_no` (ordernr === ft_document_number, normaliserat) → `company_date_total` → `company_total` (inom 31 dagar). Redovisar antal per strategi, `overlap_value` (beloppet som skulle dubbelräknas), omatchade på båda sidor, exempel att stickprova, och ett **verdict** som säger om dedupen är tillförlitlig eller en gissning. En FortnoxOrder konsumeras bara EN gång; makulerade räknas bort. `MiraOrder` periodiseras på **leveransdatum**, inte orderdatum — en order lagd i maj för ett event i juni hör till juni. Läser bara.
+
+**Verifierat:** `bokningslage_smoke.mjs` **31/31**, mutationstestat (flerfaldig konsumtion av samma Fortnox-order fäller 1 · makulerade medräknade 1 · periodisering på orderdatum 6).
+
+**Nästa:** kör `/admin/bokningslage/fe-overlap` för några månader → avgör F&E-räkningen → bygg själva bokningslägesvyn.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.
 - **Drift Fas 3 (QC SKRIV)** — skapa kvalitetskontroll från Housekeeping-Contract → kontrollobjekt per yta (Mötesrum + Internal_room) → betyg/bild/kommentar → slutför.

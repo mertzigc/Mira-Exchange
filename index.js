@@ -12,6 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
+import { feOverlap } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
@@ -22462,6 +22463,45 @@ app.post("/admin/intelliplan/accounts/map", async (req, res) => {
   } catch (e) {
     console.error("[intelliplan/accounts/map]", e?.message);
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// BOKNINGSLÄGE — utredning: överlappar MiraOrder och FortnoxOrder (F&E)?
+// ════════════════════════════════════════════════════════════════════════════
+// Innan de tre affärsområdena kan ställas bredvid varandra måste F&E-frågan
+// avgöras: Miras egen offertväg skapar `MiraOrder`, och samma affär kan senare
+// dyka upp som `FortnoxOrder` med FE-connection. Summeras båda rakt av
+// dubbelräknas den. Vi VET inte att de överlappar — Fortnox sätter egna
+// dokumentnummer — så det här mäter det i stället för att anta.
+//
+// Läser bara. Skriver ingenting.
+app.get("/admin/bokningslage/fe-overlap", async (req, res) => {
+  const from = String(req.query.from || "").trim(), to = String(req.query.to || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ ok: false, error: "from_och_to_krävs_som_YYYY-MM-DD" });
+  }
+  try {
+    // Exklusiva gränser — Bubble saknar "greater than or equal". (Se fällan i §0k.)
+    const before = new Date(Date.parse(from + "T00:00:00Z") - 864e5).toISOString();
+    const after = new Date(Date.parse(to + "T00:00:00Z") + 864e5).toISOString();
+
+    const [mira, fx] = await Promise.all([
+      bubbleFindAll("MiraOrder", { constraints: [
+        { key: "leveransdatum", constraint_type: "greater than", value: before },
+        { key: "leveransdatum", constraint_type: "less than", value: after } ] }).catch(() => []),
+      bubbleFindAll("FortnoxOrder", { constraints: [
+        { key: "connection_id", constraint_type: "equals", value: FE_CONNECTION_ID },
+        { key: "ft_delivery_date", constraint_type: "greater than", value: before },
+        { key: "ft_delivery_date", constraint_type: "less than", value: after } ] }).catch(() => []),
+    ]);
+
+    const result = feOverlap(mira, fx);
+    console.log(`[bokningslage/fe-overlap] ${from}..${to}: ${result.mira_count} MiraOrder, ${result.fortnox_count} FortnoxOrder(FE), ${result.matched} matchade`);
+    return res.json({ ok: true, period: { from, to }, fe_connection_id: FE_CONNECTION_ID, ...result });
+  } catch (e) {
+    console.error("[bokningslage/fe-overlap]", e?.message, e?.detail || "");
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 
