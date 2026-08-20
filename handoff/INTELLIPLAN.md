@@ -487,3 +487,65 @@ BOKADE passet, vilket är rätt.
 **⚠️ 80 rader saknar `Account1` helt** (frånvaro utan kund) → `Clientcompany: null`
 → osynliga i den kundfiltrerade kalendern. Öppet designbeslut: en vy per KONSULT
 i stället för per kund vore rätt hem för dem.
+
+---
+
+## ✅ SKARP KÖRNING KLAR + IDEMPOTENS BEVISAD (2026-08-20)
+
+Körning 1: `created 3242 · unchanged 178 · orphans 0` (178 från ett avbrutet
+tidigare försök). Körning 2: **`to_create 0 · unchanged 3420 · created 0`** —
+idempotensen är bevisad, inte antagen. **`fields_missing_on_type` uteblev** →
+alla tio Bubble-fält finns och fastnade.
+
+### 🔴 3 420 RADER SOM KALENDERN GÖMDE
+`mira-kalender.html` filtrerar via `visible()`: `if(!st.on[ev.type]) return false`.
+`TYPES` och `st.on` var **hårdkodade** med fyra lager — `Service & People` fanns
+i ingendera. Passen skrevs korrekt och var **helt osynliga**.
+
+Rättat: lagret tillagt i BÅDA listorna (rad 194 + 217). **⚠️ Lägger du till en ny
+ActivityType måste båda uppdateras** — annars försvinner datan utan ett spår.
+Blocket måste klistras om i Bubble.
+
+Ännu ett exempel på dagens genomgående mönster: **skrivningen lyckades, vyn
+visade ingenting, och inget larmade.**
+
+---
+
+## ⏭️ NÄSTA SESSION — Intelliplan pass
+
+**Kör hälsokollen först** (`/version` + `/admin/bokningslage/kallhalsa`).
+
+### 1. 🔴 AVGÖR FÖRST: returnerar 1082 FRAMTIDA pass?
+Allt vi laddat är **juli — dåtid**. Planeringsvyn handlar om *inbokade* pass,
+alltså framtid. Rapporten bygger på `FinancialItem`, vilket kan betyda att rader
+uppstår först när passet ekonomiskt registrerats.
+
+```bash
+curl -sS -X POST ".../admin/intelliplan/sync/pass" -H "x-api-key: $API_KEY" \
+  -H "Content-Type: application/json" -d '{"from":"2026-08-21","to":"2026-10-31"}'
+```
+Torrkörning. **Noll rader ⇒ hela premissen måste tänkas om** — då kan vyn bara
+visa historik, och "inbokade pass" kräver en annan källa. Allt nedan hänger på
+det här svaret.
+
+### 2. Nya konton skapas INTE av passynken
+`sync/order-month` registrerar okända konton i `IntelliplanAccount`
+(`accounts_created`). **`sync/pass` gör det inte** — den läser bara
+`_ipAccountMap()`. Ett konto som bara förekommer i pass hamnar aldrig i
+mappningstabellen, syns aldrig i `/accounts?unmapped=1`, och dess pass blir
+osynliga i kalendern för alltid. Spegla order-months kontoskapande.
+
+### 3. Cron med rullande fönster
+Fönstret beror på svaret i (1). Förslag om framtid finns: **−1 månad → +3 månader**
+i `intelliplan_cron.sh`. ~3 400 rader/månad; patchar bara vid faktisk ändring.
+
+### 4. Orphan-policy — ej beslutad
+Ett pass som RADERAS i Intelliplan lämnar en Activity kvar. Synken rapporterar
+`orphans` men tar aldrig bort dem. I en kalender är ett spökpass fel. Radera,
+markera, eller lämna?
+
+### 5. Kvarvarande
+- `1305` Scandinavian Hospitality Rentals omappat (4 rader) — patchas vid nästa körning
+- **80 rader utan kund** (frånvaro utan uppdrag) → `Clientcompany: null` → osynliga i
+  den kundfiltrerade kalendern. Behöver en vy per KONSULT.
+- 37 negativa raster = övertid utöver bokat fönster (0,2 % av tiden) — inget att göra

@@ -183,9 +183,15 @@
   var ADMIN = (_av === 'yes' || _av === 'true' || _av === '1' || _av === 'ja');
 
   // ActivityType → lager (etikett + ikon). Färg på objekten = Activity.color_hex (kategori).
+  // ⚠️ ETT LAGER SOM SAKNAS HÄR GÖR DATAN OSYNLIG, INTE FELAKTIG.
+  // visible() gör `if(!st.on[ev.type]) return false` → en ActivityType som inte
+  // står i TYPES *och* i st.on filtreras bort utan ett spår. Intelliplan-passen
+  // (3 420 rader juli 2026) skrevs korrekt men syntes inte förrän raden nedan
+  // lades till. Lägger du till en ny ActivityType: uppdatera BÅDA listorna.
   var TYPES = [
     {key:'Bokning',   label:'Bokningar',   ic:'●'},
     {key:'Housekeeping', label:'Housekeeping', ic:'⬢'},
+    {key:'Service & People', label:'Service & People', ic:'◆'},
     {key:'Ärende',    label:'Ärenden',     ic:'▲'},
     {key:'Kom ihåg',  label:'Todos',       ic:'✓'}
   ];
@@ -208,7 +214,7 @@
   ];
   function iso(m,d,h){var x=new Date(TODAY.getFullYear(),m,d,h||0,0,0);return x.toISOString();}
 
-  var EVENTS=[], COMPANIES=[], st={level:'ar',anchor:new Date(TODAY),on:{Bokning:true,Housekeeping:true,'Ärende':true,'Kom ihåg':true},status:'',q:'',activeCompany:COMPANY};
+  var EVENTS=[], COMPANIES=[], st={level:'ar',anchor:new Date(TODAY),on:{Bokning:true,Housekeeping:true,'Service & People':true,'Ärende':true,'Kom ihåg':true},status:'',q:'',activeCompany:COMPANY};
 
   function typeMeta(t){return TYPES.find(function(x){return x.key===t})||{label:t,ic:'•'};}
   function pad(n){return (n<10?'0':'')+n;}
