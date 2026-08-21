@@ -323,8 +323,15 @@ Full beskrivning: **`handoff/FORETAG-KUNDKORT-DRIFT.md`** ("Nästa steg-grinden"
   `bubblePatch` → okänt fält = 400 på HELA skrivningen; därför mjuk nedgradering +
   `nasta_steg_field_missing` i svaret.
 - Uppföljaren skapas FÖRE aktiviteten sparas och ärver **företag + affär** från raden.
-- Grinden gäller ÖVERGÅNGEN ej→genomförd, inte varje sparning av en redan genomförd rad.
-- **⚠️ `salj_api.js` (mötesbokningsvyn) patchar också `genomfört` och har ingen grind.**
+- **Var i affärsvyn:** grinden ligger i den expanderade aktivitetsraden, **mellan
+  Mötesanteckning och Spara-knappen**, och i "+ Aktivitet"-formuläret. Den visas när
+  typ = **Kundmöte** och **Genomfört** är ibockad — **och beslut saknas**. En aktivitet
+  som redan har ett `nasta_steg` visar ingen grind (det är därför den inte syntes på
+  raden i skärmdumpen 2026-08-21 innan regeln skärptes).
+- Grinden gäller sparningar som rör **avklarandet** (`genomfört`/anteckningen) när
+  beslut saknas — inte bara övergången. "Koppla till affär" och fas-ändringar blockeras
+  alltså inte.
+- **✅ `salj_api.js` (mötesbokningsvyn) grindar nu också** — alla tre skrivarna täckta.
 - Verifierat: `affar_create_smoke` 43/43, mutationstestat (13 faller).
 
 ## 5. Produktionsmodul

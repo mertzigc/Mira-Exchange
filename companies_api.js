@@ -1014,17 +1014,37 @@ export function registerCompaniesRoutes(app, deps) {
       return { value: await fn(q), missing: true };
     }
   }
-  // Grinden. Returnerar ett felobjekt eller null. `wasDone` = radens tidigare läge:
-  // kravet gäller ÖVERGÅNGEN till genomförd, inte varje sparning av en redan
-  // genomförd aktivitet (annars får man frågan igen varje gång man rättar en stavning).
-  function _nastaStegError(p, wasDone) {
-    const nowDone = p["genomfört"] === true;
-    if (!nowDone || wasDone) return null;
-    const v = _str(p[NASTA_FIELD]).trim();
-    if (!v) return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
-                     hint: "En aktivitet som markeras genomförd måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
-    if (NASTA_STEG.indexOf(v) < 0) return { error: "okänt_nasta_steg", value: v, allowed: NASTA_STEG };
-    return null;
+  // Grinden. Returnerar ett felobjekt eller null.
+  // ⚠️ REGELN ÄNDRAD 2026-08-21 (Christian såg att en redan genomförd aktivitet inte
+  // grindades): kravet gäller inte bara ÖVERGÅNGEN utan **frånvaron av ett beslut**.
+  // Grindar om resultatet är genomfört OCH inget nästa steg finns — varken i det som
+  // skickas nu eller redan lagrat på raden. Konsekvens: de hundratals redan genomförda
+  // aktiviteterna får sitt beslut nästa gång någon sparar dem, i st.f. att aldrig
+  // omfattas. Har raden redan ett värde frågas man INTE igen (stavfelsrättning ska
+  // inte kräva ett nytt beslut).
+  // ⚠️ Grinden gäller sparningar som handlar om AVKLARANDET — d.v.s. som rör
+  // `genomfört` eller mötesanteckningen ("när en aktivitet är genomförd och
+  // anteckning innan vill vi ha ett nästa steg"). En patch som bara ändrar
+  // beskrivning, fas eller kopplar en affär blockeras INTE; att kräva ett
+  // uppföljningsbeslut för att rätta ett stavfel vore ren friktion.
+  const NASTA_TRIGGERS = ["genomfört", "mötesantecking"];
+  function _nastaStegError(p, cur) {
+    const incoming = _str(p[NASTA_FIELD]).trim();
+    if (incoming && NASTA_STEG.indexOf(incoming) < 0) {
+      return { error: "okänt_nasta_steg", value: incoming, allowed: NASTA_STEG };
+    }
+    if (!NASTA_TRIGGERS.some((k) => p[k] !== undefined)) return null;   // rör inte avklarandet
+    const curDone = !!(cur && cur["genomfört"] === true);
+    const nowDone = (p["genomfört"] !== undefined) ? (p["genomfört"] === true) : curDone;
+    if (!nowDone) return null;
+    if (incoming) return null;
+    // ⚠️ Redan beslutat → fråga inte igen. Läs OS-medvetet: `{display}`-objektet
+    // hade annars alltid sett ut som ett värde ("[object Object]") och tyst
+    // avaktiverat grinden för rader som saknar beslut.
+    const existing = _osStr(cur && cur[NASTA_FIELD]).trim();
+    if (existing) return null;
+    return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
+             hint: "En genomförd aktivitet måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
   }
 
   function _aktWrite(p, b) {
@@ -1060,7 +1080,7 @@ export function registerCompaniesRoutes(app, deps) {
       if (byUser) p["writer"] = byUser;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
       // Nyskapad som genomförd → wasDone=false, alltså en övergång: nästa steg krävs.
-      const gErr = _nastaStegError(p, false);
+      const gErr = _nastaStegError(p, null);   // ny rad → inget lagrat beslut
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
       const cw = await _writeOptional((q) => bubbleCreate("activitet_crm", q), p, NASTA_FIELD);
       const id = cw.value;
@@ -1089,7 +1109,7 @@ export function registerCompaniesRoutes(app, deps) {
       const p = _aktWrite({}, req.body || {});
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "no_fields" });
       // Grinden gäller ÖVERGÅNGEN ej→genomförd. Redan genomförd rad kan redigeras fritt.
-      const gErr = _nastaStegError(p, cur["genomfört"] === true);
+      const gErr = _nastaStegError(p, cur);
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
       const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
       const [fresh, uc] = await Promise.all([bubbleGet("activitet_crm", id).catch(() => null), _users().catch(() => null)]);

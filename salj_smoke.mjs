@@ -1,5 +1,6 @@
 // Smoke: sälj mötestratt + attribution + säljmål. node salj_smoke.mjs
 import { registerSaljRoutes } from "./salj_api.js";
+import { readFileSync } from "node:fs";
 const routes = { get: {}, post: {}, options: {} };
 const app = { get: (p, h) => { routes.get[p] = h; }, post: (p, h) => { routes.post[p] = h; }, options: (p, h) => { routes.options[p] = h; } };
 function call(method, path, { params = {}, query = {}, body = {} } = {}) {
@@ -111,7 +112,8 @@ const run = async () => {
   ok("set utan user_id → 400", setBad.code === 400 && setBad.body.error === "user_id_krävs");
 
   // ── mötes-redigering (a3 ägs av u2) ──
-  const pOwner = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "a3" }, body: { by_user: "u2", fas: "Fas 2", genomfort: true, motesanteckning: "Bra möte", beskrivning: "Uppföljning" } });
+  // ⚠️ genomfort:true kräver nu ett nästa steg (grinden 2026-08-21) — även här.
+  const pOwner = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "a3" }, body: { by_user: "u2", fas: "Fas 2", genomfort: true, motesanteckning: "Bra möte", beskrivning: "Uppföljning", nasta_steg: "avslutat" } });
   ok("ägare (u2) redigerar eget möte → ok", pOwner.body.ok && pOwner.body.mote);
   const a3 = DB.activitet_crm.find((x) => x._id === "a3");
   ok("möte patchat: fas/genomfört/anteckning/beskr", a3["Kundmöte"] === "Fas 2" && a3["genomfört"] === true && a3["mötesantecking"] === "Bra möte" && a3.beskrivning === "Uppföljning");
@@ -133,6 +135,85 @@ const run = async () => {
   // okänt id → 404
   const p404 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "nope" }, body: { by_user: "u1", fas: "Fas 1" } });
   ok("okänt möte → 404", p404.code === 404 && p404.body.error === "möte_not_found");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // NÄSTA STEG-GRINDEN i mötesbokningsvyn (2026-08-21)
+  // TREDJE skrivaren av `genomfört`. Utan grind här var kravet bara en artighet i
+  // två vyer av tre. ⚠️ Bubble-fält: `aktivitet_nasta_steg` (Option Set).
+  // ══════════════════════════════════════════════════════════════════════════
+  DB.activitet_crm.push({ _id: "aG1", activity_type: "Kundmöte", writer: "u2", "genomfört": false, beskrivning: "Pågår" });
+  const sg1 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { genomfort: true, motesanteckning: "Klart" } });
+  ok("grind: markera genomförd utan nästa steg → 400",
+     sg1.code === 400 && sg1.body.error === "nasta_steg_krävs");
+  const sg2 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "hittepa" } });
+  ok("grind: okänt värde → 400", sg2.code === 400 && sg2.body.error === "okänt_nasta_steg");
+  const sg3 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat" } });
+  ok("grind: med nästa steg → sparas i RÄTT Bubble-fält",
+     sg3.body.ok === true && DB.activitet_crm.find((x) => x._id === "aG1")["aktivitet_nasta_steg"] === "avslutat" &&
+     sg3.body.nasta_steg_field_missing === false);
+  const sg4 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { motesanteckning: "Rättar stavfel" } });
+  ok("grind: beslut redan fattat → ingen ny fråga", sg4.body.ok === true);
+  // ⚠️ Grinden får INTE blockera sparningar som inte rör avklarandet.
+  DB.activitet_crm.push({ _id: "aG2", activity_type: "Kundmöte", writer: "u2", "genomfört": true, beskrivning: "Gammalt klart möte" });
+  const sg5 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG2" }, body: { fas: "Fas 3" } });
+  ok("grind: patch som bara ändrar fas blockeras INTE", sg5.body.ok === true);
+  const sg6 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG2" }, body: { motesanteckning: "Efterhandsanteckning" } });
+  ok("grind: gammalt genomfört möte UTAN beslut grindas när anteckningen rörs",
+     sg6.code === 400 && sg6.body.error === "nasta_steg_krävs");
+  // Option set som {display}-objekt får inte se ut som ett värde när det saknas
+  DB.activitet_crm.push({ _id: "aG3", activity_type: "Kundmöte", writer: "u2", "genomfört": true, aktivitet_nasta_steg: { display: "todo" } });
+  const sg7 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG3" }, body: { motesanteckning: "x" } });
+  ok("grind: {display}-objekt läses som ett riktigt beslut (ingen ny fråga)", sg7.body.ok === true);
+  ok("mote-raden exponerar nasta_steg som ren sträng", sg7.body.mote && sg7.body.mote.nasta_steg === "todo");
+
+  // ── FRONTEND (mira-motesbokning.html) ─────────────────────────────────────
+  const mbRaw = readFileSync(new URL("./mira-motesbokning.html", import.meta.url), "utf8");
+  const mb = mbRaw.split("\n").filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).join("\n");
+  // ⚠️ Knapparna byggs ur NS_STEG-arrayen, så de literala data-ns-strängarna finns
+  // inte i källan — assertionen måste spegla hur koden FAKTISKT bygger dem.
+  ok("frontend: grinden renderas i mötesformuläret",
+     /function nsHtml\(mt\)/.test(mb) && /nsHtml\(mt\)\+/.test(mb) &&
+     /var NS_STEG=\[\["aktivitet",[^\]]*\],\["todo",[^\]]*\],\["avslutat",/.test(mb) &&
+     /data-ns="'\+esc\(NS_STEG\[i\]\[0\]\)\+'"/.test(mb));
+  ok("frontend: grindar bara när beslut saknas",
+     /if\(mt\.genomfort && mt\.nasta_steg\) return "";/.test(mb));
+  ok("frontend: Genomfört-bocken visar/döljer grinden",
+     /if\(nsw\) nsw\.style\.display=t\.checked\?"block":"none"/.test(mb));
+  ok("frontend: sparning blockeras utan val",
+     /if\(ns\.error\)\{ nsMsg\(mcard2, ns\.error, true\); return; \}/.test(mb));
+  // ⚠️ SCOPE: hjälparna måste ligga på IIFE-nivå, INTE inuti render-funktionen.
+  // Första versionen hamnade i mcard-scopet → nsHtml renderade, men klickhanteraren
+  // fick `nsSelect is not defined` och grinden gick inte att använda alls.
+  // Greppet kräver att de deklareras med samma indrag som de andra toppfunktionerna
+  // (två blanksteg) — inuti en funktion hade de fått fyra.
+  ok("frontend: ns-hjälparna ligger på IIFE-nivå (klickhanteraren ser dem)",
+     /\n  function nsSelect\(/.test(mb) && /\n  function nsPick\(/.test(mb) &&
+     /\n  function nsCreateFollow\(/.test(mb) && /\n  function nsHtml\(/.test(mb));
+  ok("frontend: segmentknapparna hanteras före spara-knappen i klickhanteraren",
+     mb.indexOf('t.closest("[data-ns]")') > -1 &&
+     mb.indexOf('t.closest("[data-ns]")') < mb.indexOf('t.closest(\'[data-mb="savemote"]\')'));
+  ok("frontend: saknat Bubble-fält rapporteras", /aktivitet_nasta_steg saknas i Bubble/.test(mb));
+  // ⚠️ Uppföljaren skapas här också (rättat efter Christians påpekande 2026-08-21):
+  // activitet_crm har `company` — kunden behöver inte gissas. `nMote` bär nu
+  // `company_id`, och uppföljaren ärver både företag och affär från mötesraden.
+  ok("frontend: mini-formulär för både aktivitet och todo",
+     /data-nsform="aktivitet"/.test(mb) && /data-nsform="todo"/.test(mb) &&
+     /data-nf="a_datum"/.test(mb) && /data-nf="t_titel"/.test(mb));
+  ok("frontend: uppföljaren ärver företag OCH affär från mötesraden",
+     /nsCreateFollow\(ns\.follow, mt&&mt\.company_id, mt&&mt\.deal_id\)/.test(mb) &&
+     /company_id:companyId\|\|"", deal_id:dealId\|\|""/.test(mb));
+  ok("frontend: uppföljaren skapas FÖRE mötet och stoppar sparningen om den faller",
+     /mötet sparades INTE/.test(mb));
+  ok("frontend: validerar datum resp. titel innan sparning",
+     /Ange datum för den nya aktiviteten/.test(mb) && /Ange en titel för att-göra-punkten/.test(mb));
+  ok("frontend: säger vilket företag uppföljaren knyts till",
+     /Knyts till <b>/.test(mb) && /Mötet saknar kundkoppling/.test(mb));
+  DB.activitet_crm.push({ _id: "aG4", activity_type: "Kundmöte", writer: "u2", "genomfört": false, company: "cc1", deal: "d1" });
+  const sg8 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG4" }, body: { fas: "Fas 2" } });
+  ok("backend: mote-raden bär kundens id (uppföljaren knyts till rätt företag)",
+     sg8.body.mote && sg8.body.mote.company_id === "cc1" && sg8.body.mote.company === "Acme AB");
+  ok("backend: mote-raden bär affärs-id (uppföljaren ärver affären)",
+     sg8.body.mote && sg8.body.mote.deal_id === "d1");
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

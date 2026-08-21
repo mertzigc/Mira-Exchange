@@ -274,6 +274,10 @@ export function registerAffarRoutes(app, deps) {
       motesanteckning: _str(r["mötesantecking"]),
       motesdatum_iso: _day(r["Datum_bokning"]),
       genomfort: r["genomfört"] === true,
+      // Nästa steg-beslutet. Frontenden grindar bara när det SAKNAS. Läses
+      // OS-medvetet (kan komma som {display}-objekt) — `_osStr` definieras längre
+      // ned i samma scope och är initierad när raden normaliseras vid request-tid.
+      nasta_steg: _osStr(r["aktivitet_nasta_steg"]),
     };
   }
   // Företags-id:n vars namn matchar q (för ref-företags-sök som Bubble ej klarar direkt)
@@ -775,14 +779,37 @@ export function registerAffarRoutes(app, deps) {
       return { value: await fn(q), missing: true };
     }
   }
-  function _nastaStegError(p, wasDone) {
-    const nowDone = p["genomfört"] === true;
-    if (!nowDone || wasDone) return null;
-    const v = _str(p[NASTA_FIELD]).trim();
-    if (!v) return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
-                     hint: "En aktivitet som markeras genomförd måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
-    if (NASTA_STEG.indexOf(v) < 0) return { error: "okänt_nasta_steg", value: v, allowed: NASTA_STEG };
-    return null;
+  // Grinden. Returnerar ett felobjekt eller null.
+  // ⚠️ REGELN ÄNDRAD 2026-08-21 (Christian såg att en redan genomförd aktivitet inte
+  // grindades): kravet gäller inte bara ÖVERGÅNGEN utan **frånvaron av ett beslut**.
+  // Grindar om resultatet är genomfört OCH inget nästa steg finns — varken i det som
+  // skickas nu eller redan lagrat på raden. Konsekvens: de hundratals redan genomförda
+  // aktiviteterna får sitt beslut nästa gång någon sparar dem, i st.f. att aldrig
+  // omfattas. Har raden redan ett värde frågas man INTE igen (stavfelsrättning ska
+  // inte kräva ett nytt beslut).
+  // ⚠️ Grinden gäller sparningar som handlar om AVKLARANDET — d.v.s. som rör
+  // `genomfört` eller mötesanteckningen ("när en aktivitet är genomförd och
+  // anteckning innan vill vi ha ett nästa steg"). En patch som bara ändrar
+  // beskrivning, fas eller kopplar en affär blockeras INTE; att kräva ett
+  // uppföljningsbeslut för att rätta ett stavfel vore ren friktion.
+  const NASTA_TRIGGERS = ["genomfört", "mötesantecking"];
+  function _nastaStegError(p, cur) {
+    const incoming = _str(p[NASTA_FIELD]).trim();
+    if (incoming && NASTA_STEG.indexOf(incoming) < 0) {
+      return { error: "okänt_nasta_steg", value: incoming, allowed: NASTA_STEG };
+    }
+    if (!NASTA_TRIGGERS.some((k) => p[k] !== undefined)) return null;   // rör inte avklarandet
+    const curDone = !!(cur && cur["genomfört"] === true);
+    const nowDone = (p["genomfört"] !== undefined) ? (p["genomfört"] === true) : curDone;
+    if (!nowDone) return null;
+    if (incoming) return null;
+    // ⚠️ Redan beslutat → fråga inte igen. Läs OS-medvetet: `{display}`-objektet
+    // hade annars alltid sett ut som ett värde ("[object Object]") och tyst
+    // avaktiverat grinden för rader som saknar beslut.
+    const existing = _osStr(cur && cur[NASTA_FIELD]).trim();
+    if (existing) return null;
+    return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
+             hint: "En genomförd aktivitet måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
   }
 
   // ── POST /admin/affar/aktivitet/:id/patch — redigera aktivitet inline ──
@@ -806,7 +833,7 @@ export function registerAffarRoutes(app, deps) {
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
       // Grinden gäller ÖVERGÅNGEN ej→genomförd → läs radens nuvarande läge först.
       const cur = await bubbleGet("activitet_crm", id).catch(() => null);
-      const gErr = _nastaStegError(p, !!(cur && cur["genomfört"] === true));
+      const gErr = _nastaStegError(p, cur);
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
       const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
@@ -851,7 +878,7 @@ export function registerAffarRoutes(app, deps) {
       if (byUser) p["writer"] = byUser;
       if (b.nasta_steg !== undefined) p[NASTA_FIELD] = _str(b.nasta_steg).trim() || null;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
-      const gErr = _nastaStegError(p, false);   // nyskapad som genomförd = en övergång
+      const gErr = _nastaStegError(p, null);   // ny rad → inget lagrat beslut
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
       const cw = await _writeOptional((q) => bubbleCreate("activitet_crm", q), p, NASTA_FIELD);
       const id = cw.value;

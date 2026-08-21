@@ -2646,14 +2646,16 @@
   // Ett genomfört möte får inte lämnas utan beslut. Tre vägar: boka ny aktivitet,
   // skapa en todo, eller avsluta spåret medvetet. Servern grindar också (400
   // `nasta_steg_krävs`) — den här är UX-lagret, inte garantin.
-  // ⚠️ Grinden gäller ÖVERGÅNGEN till genomförd. Redigerar man en redan genomförd
-  // aktivitet (r.genomfort true när formuläret öppnas) frågas man inte igen — annars
-  // hade varje stavfelsrättning krävt ett nytt uppföljningsbeslut.
-  function nsLocked(r){ return !!(r && r.genomfort); }
+  // ⚠️ REGELN SKÄRPT 2026-08-21: grinden gäller inte bara ÖVERGÅNGEN utan
+  // **frånvaron av ett beslut**. En redan genomförd aktivitet som saknar
+  // `nasta_steg` grindas alltså också — annars hade de hundratals redan avbockade
+  // aktiviteterna aldrig omfattats av kravet. Har raden ett beslut frågas man
+  // INTE igen (stavfelsrättning ska inte kräva ett nytt beslut).
+  function nsLocked(r){ return !!(r && r.genomfort && r.nasta_steg); }
   var TODO_KATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
   function nastaStegHtml(r, isK, done, isNew){
-    if(nsLocked(r)) return "";                       // redan genomförd → ingen grind
-    var vis=(isK&&done)?"":"display:none";
+    if(nsLocked(r)) return "";                       // beslut redan fattat → ingen grind
+    var vis=(isK&&done)?"":"display:none";           // synlig direkt om raden redan är genomförd
     var typeOpts='<option value="">— typ —</option>';
     for(var i=0;i<AKT_TYPES.length;i++) typeOpts+=optTag(AKT_TYPES[i], "Kundmöte");
     var katOpts='<option value="">— kategori —</option>';
@@ -2738,7 +2740,9 @@
     '</div>';
   }
   function histDetail(r){
+    var NS_LBL={aktivitet:"Ny aktivitet bokad",todo:"Att-göra skapad",avslutat:"Spåret avslutat"};
     var rows=[["Typ",r.typ||"—"],["Fas",r.fas||"—"],["Mötesdatum",r.motesdatum_iso||"—"],["Registrerad",r.created||"—"],["Ansvarig",r.ansvarig||"—"],["Status",r.genomfort?"Genomförd":"Planerad"]];
+    if(r.genomfort) rows.push(["Nästa steg", r.nasta_steg?(NS_LBL[r.nasta_steg]||r.nasta_steg):"— ej beslutat —"]);
     var meta=""; for(var i=0;i<rows.length;i++){ meta+='<div class="fk-hmeta"><span>'+esc(rows[i][0])+'</span><b>'+esc(rows[i][1])+'</b></div>'; }
     var note=r.motesanteckning?('<div class="fk-hnote"><label>Mötesanteckning</label><div>'+esc(r.motesanteckning)+'</div></div>'):'';
     // Skapa affär av aktiviteten — samma flöde som i affärsvyn (2026-08-18)

@@ -199,7 +199,10 @@ const run = async () => {
   ok("frontend: grinden visas bara när Genomfört är ibockad",
      /ns\.style\.display=\(isK&&d2&&d2\.checked\)\?"":"none"/.test(af));
   // ⚠️ Redan genomförd rad grindas inte om (locked-argumentet = done).
-  ok("frontend: redan genomförd aktivitet grindas inte om", /nsHtml\("a", isK, done, done\)/.test(af));
+  // ⚠️ locked = beslut REDAN fattat. En genomförd aktivitet UTAN beslut måste grindas,
+  // annars omfattas aldrig de hundratals redan avbockade aktiviteterna av kravet.
+  ok("frontend: grindar genomförd aktivitet som SAKNAR beslut, men inte en som har det",
+     /nsHtml\("a", isK, done, !!\(done && r\.nasta_steg\)\)/.test(af));
   ok("frontend: uppföljaren skapas FÖRE aktiviteten och stoppar sparningen om den faller",
      /nsCreateFollow\(ns\.follow, row&&row\.company_id, row&&row\.affar_id\)/.test(af) &&
      /aktiviteten sparades INTE/.test(af));

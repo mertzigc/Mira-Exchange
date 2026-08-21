@@ -592,6 +592,8 @@
   // är UX-lagret. Grinden gäller ÖVERGÅNGEN: en redan genomförd aktivitet kan
   // redigeras fritt, annars krävs ett nytt beslut vid varje stavfelsrättning.
   var TODO_KATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+  // ⚠️ `locked` = beslut REDAN fattat (genomförd + nasta_steg satt). En genomförd
+  // aktivitet UTAN beslut grindas — annars omfattas aldrig de redan avbockade.
   function nsHtml(pfx, isK, done, locked){
     if(locked) return "";
     var typeOpts=""; for(var i=0;i<AKT_TYPES.length;i++) typeOpts+=opt(AKT_TYPES[i], "Kundmöte");
@@ -680,7 +682,7 @@
         '<div class="af-k-only" style="'+kStyle+'"><label class="el">Status</label><label class="chk"><input type="checkbox" class="af-a-done"'+(done?" checked":"")+'> Genomfört</label></div>'+
       '</div>'+
       '<div class="af-note-wrap" style="'+((isK&&done)?"":"display:none")+'"><label class="el">Mötesanteckning</label><textarea class="ein af-a-note" rows="4">'+esc(r.motesanteckning||"")+'</textarea></div>'+
-      nsHtml("a", isK, done, done)+
+      nsHtml("a", isK, done, !!(done && r.nasta_steg))+
       '<div class="eact"><button class="ebtn af-a-save" data-akt-id="'+esc(r.id)+'">Spara</button><span class="af-a-msg ecur"></span></div>'+
       '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("aktivitet","",r.id,r.affar_id)+
         createDealWidgetHtml("aktivitet", r.id, { titel:(r.company||(r.beskrivning?r.beskrivning.slice(0,60):"")||""), company_id:r.company_id, company_name:r.company })+'</div>'+

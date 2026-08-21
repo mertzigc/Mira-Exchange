@@ -1001,9 +1001,20 @@ const run = async () => {
   const g6 = await nsPatch(g4id, { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat" });
   ok("grind: patch med nästa steg går igenom", g6.body.ok === true);
   const g7 = await nsPatch(g4id, { motesanteckning: "Rättar stavfel" });
-  ok("grind: redan genomförd rad kan redigeras UTAN nytt beslut (ingen övergång)", g7.body.ok === true);
+  ok("grind: rad med beslut kan redigeras utan att frågas igen", g7.body.ok === true);
   const g8 = await nsPatch(g4id, { genomfort: true, beskrivning: "Ny text" });
-  ok("grind: genomförd→genomförd är ingen övergång → ingen grind", g8.body.ok === true);
+  ok("grind: rad med beslut grindas inte om vid ny sparning", g8.body.ok === true);
+  // ⚠️ SKÄRPT REGEL: gammalt genomfört möte UTAN beslut ska grindas när
+  // avklarandet rörs — annars omfattas de befintliga aktiviteterna aldrig.
+  STORE.activitet_crm.push({ _id: "aktGammal", company: "cc1", activity_type: "Kundmöte", "genomfört": true, beskrivning: "Gammalt klart möte" });
+  const g9 = await nsPatch("aktGammal", { motesanteckning: "Efterhandsanteckning" });
+  ok("grind: gammalt genomfört möte utan beslut grindas när anteckningen rörs",
+     g9.code === 400 && g9.body.error === "nasta_steg_krävs");
+  // ...men en sparning som INTE rör avklarandet får inte blockeras.
+  const g10 = await nsPatch("aktGammal", { fas: "Fas 3" });
+  ok("grind: patch som bara ändrar fas blockeras INTE", g10.body.ok === true);
+  const g11 = await nsPatch("aktGammal", { beskrivning: "Ny beskrivning" });
+  ok("grind: patch som bara ändrar beskrivning blockeras INTE", g11.body.ok === true);
 
   // ── Fältet saknas i Bubble: mötet MÅSTE ändå sparas ───────────────────────
   // ⚠️ Utan mjuk nedgradering hade en Render-deploy före Bubble-fältet blockerat
@@ -1093,9 +1104,12 @@ const run = async () => {
      /function nastaStegHtml/.test(fl) && /data-ns="aktivitet"/.test(fl) && /data-ns="todo"/.test(fl) && /data-ns="avslutat"/.test(fl));
   ok("frontend: grinden visas bara när Kundmöte + Genomfört",
      /if\(ns\) ns\.style\.display=\(isK&&done&&done\.checked\)\?"":"none";/.test(fl));
-  // ⚠️ Redan genomförd rad → ingen grind (annars nytt beslut vid varje stavfelsrättning).
-  ok("frontend: redan genomförd aktivitet grindas inte om",
-     /function nsLocked\(r\)\{ return !!\(r && r\.genomfort\); \}/.test(fl) &&
+  // ⚠️ Grinden gäller frånvaron av ett BESLUT, inte bara övergången. En redan
+  // genomförd aktivitet UTAN nasta_steg måste grindas — annars omfattas de
+  // hundratals redan avbockade aktiviteterna aldrig av kravet. Har raden ett
+  // beslut frågas man inte igen.
+  ok("frontend: grindar genomförd rad som SAKNAR beslut, men inte en som har det",
+     /function nsLocked\(r\)\{ return !!\(r && r\.genomfort && r\.nasta_steg\); \}/.test(fl) &&
      /if\(nsLocked\(r\)\) return "";/.test(fl));
   // ⚠️ Uppföljaren skapas FÖRE aktiviteten — annars kan mötet stå som genomfört
   // med nasta_steg="aktivitet" utan att någon aktivitet finns.

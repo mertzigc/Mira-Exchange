@@ -96,9 +96,16 @@ export function registerSaljRoutes(app, deps) {
       datum: _day(r["Datum_bokning"]),
       datum_ts: _ts(r["Datum_bokning"]),
       company: cname(cm, r.company),
+      // ⚠️ Kund-ID:t behövs för att kunna skapa uppföljaren (aktivitet/todo) knuten
+      // till RÄTT företag direkt ur mötesbokningsvyn. `company` är enda kund-fältet
+      // på activitet_crm (schema-verifierat) — det finns alltid när mötet är kopplat.
+      company_id: _ref(r.company) || null,
       ansvarig: repId ? (um.get(repId) || "") : "",
       ansvarig_id: repId || null,
       genomfort: r["genomfört"] === true,
+      // Nästa steg-beslutet. Frontenden grindar bara när det saknas (annars skulle
+      // varje redigering av ett avklarat möte kräva ett nytt beslut).
+      nasta_steg: _osStr(r["aktivitet_nasta_steg"]),
       meddelande: _str(r.beskrivning),
       motesanteckning: _str(r["mötesantecking"]),   // Bubble-fält misstavat (mötesantecking)
       deal_id: dId || null,
@@ -289,6 +296,59 @@ export function registerSaljRoutes(app, deps) {
     }
   });
 
+  // ── NÄSTA STEG-GRINDEN (2026-08-21) ───────────────────────────────────────
+  // TREDJE skrivaren av `genomfört`, vid sidan av companies_api (kundkortet) och
+  // affar_api (affärsvyn). Utan grind här hade kravet "en genomförd aktivitet måste
+  // ha ett nästa steg" varit en UI-artighet i två vyer av tre — mötesbokningsvyn
+  // hade fortsatt bocka av möten utan beslut.
+  // ⚠️ Bubble-fält: `aktivitet_nasta_steg` (Option Set, samma namn), värden
+  // `aktivitet` · `todo` · `avslutat`. Läses tillbaka som sträng ELLER {display}-objekt
+  // → `_osStr`. Se [[reference-bubble-option-sets]].
+  const NASTA_STEG = ["aktivitet", "todo", "avslutat"];
+  const NASTA_FIELD = "aktivitet_nasta_steg";
+  const _osStr = (v) => {
+    if (v == null) return "";
+    if (typeof v === "object") return _str(v.display || v.Display || "");
+    return _str(v);
+  };
+  function _isUnknownField(e, field) {
+    const d = e && e.detail;
+    if (!d || d.status !== 400) return false;
+    const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
+    return body.indexOf("Unrecognized field: " + field) > -1;
+  }
+  async function _writeOptional(fn, payload, field) {
+    if (payload[field] === undefined) return { value: await fn(payload), missing: false };
+    try { return { value: await fn(payload), missing: false }; }
+    catch (e) {
+      if (!_isUnknownField(e, field)) throw e;
+      const q = Object.assign({}, payload); delete q[field];
+      console.warn("[nasta_steg] fältet saknas på activitet_crm i Bubble — mötet sparas utan det");
+      return { value: await fn(q), missing: true };
+    }
+  }
+  // ⚠️ Grinden gäller sparningar som handlar om AVKLARANDET — d.v.s. som rör
+  // `genomfört` eller mötesanteckningen. En patch som bara ändrar beskrivning eller
+  // fas blockeras INTE; att kräva ett uppföljningsbeslut för ett stavfel vore friktion.
+  const NASTA_TRIGGERS = ["genomfört", "mötesantecking"];
+  function _nastaStegError(p, cur) {
+    const incoming = _str(p[NASTA_FIELD]).trim();
+    if (incoming && NASTA_STEG.indexOf(incoming) < 0) {
+      return { error: "okänt_nasta_steg", value: incoming, allowed: NASTA_STEG };
+    }
+    if (!NASTA_TRIGGERS.some((k) => p[k] !== undefined)) return null;
+    const curDone = !!(cur && cur["genomfört"] === true);
+    const nowDone = (p["genomfört"] !== undefined) ? (p["genomfört"] === true) : curDone;
+    if (!nowDone) return null;
+    if (incoming) return null;
+    // ⚠️ Läs OS-medvetet — `{display}`-objektet hade annars alltid sett ut som ett
+    // värde och tyst avaktiverat grinden för rader som saknar beslut.
+    const existing = _osStr(cur && cur[NASTA_FIELD]).trim();
+    if (existing) return null;
+    return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
+             hint: "En genomförd aktivitet måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
+  }
+
   // ── POST /admin/salj/mote/:id/patch — redigera Kundmöte inline i tratten ──
   // Behörighet (soft, UI primärt): by_user måste vara mötets ägare (writer||Created By)
   // ELLER salesmanager. Utelämnat by_user (admin/curl) släpps igenom. Speglar affärsvyns
@@ -315,11 +375,18 @@ export function registerSaljRoutes(app, deps) {
       if (b.beskrivning     !== undefined) p["beskrivning"]    = _str(b.beskrivning);
       if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
       if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
+      if (b.nasta_steg      !== undefined) p[NASTA_FIELD]      = _str(b.nasta_steg).trim() || null;
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
-      await bubblePatch("activitet_crm", id, p);
+      // `akt` är redan hämtad ovan (ägarkontrollen) → ingen extra Bubble-läsning.
+      const gErr = _nastaStegError(p, akt);
+      if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
+      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
+      // Läs tillbaka OS-medvetet: null = kunde inte verifieras, inte "saknas".
+      const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
       const um = await userMap(), cm = await companyMap(), dm = await dealMap();
-      return res.json({ ok: true, id, mote: fresh ? nMote(fresh, um, cm, dm) : null });
+      return res.json({ ok: true, id, mote: fresh ? nMote(fresh, um, cm, dm) : null,
+                        nasta_steg_field_missing: pw.missing || (verified === false && !!p[NASTA_FIELD]) });
     } catch (e) {
       console.error("[/admin/salj/mote/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });

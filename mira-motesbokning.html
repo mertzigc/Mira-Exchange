@@ -68,6 +68,18 @@
   .mb .cbx{display:flex;align-items:center;gap:7px;font-size:12.5px;cursor:pointer}
   .mb .cbx input{width:16px;height:16px;accent-color:var(--green)}
   .mb .me-act{display:flex;gap:10px;align-items:center;margin-top:2px}
+  .mb .mb-ns{border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin:8px 0;background:rgba(255,255,255,.03)}
+  .mb .mb-ns > label{display:block;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;opacity:.65;font-weight:700;margin:0 0 7px}
+  .mb .mb-nsbtns{display:flex;flex-wrap:wrap;gap:7px}
+  .mb .mb-nsbtn{background:rgba(255,255,255,.06);color:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12px}
+  .mb .mb-nsbtn.on{background:var(--acc,#df6f39);border-color:var(--acc,#df6f39);color:#fff;font-weight:700}
+  .mb .mb-nsbody{margin-top:9px}
+  .mb .mb-nsmsg{display:block;margin-top:7px;font-size:11.5px;opacity:.7}
+  .mb .mb-nsmsg.err{color:#ff8080;opacity:1}
+  .mb .mb-nsform{margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .mb .mb-nsform .full{grid-column:1 / -1}
+  .mb .mb-nsform label{display:block;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;opacity:.65;font-weight:700;margin:0 0 4px}
+  .mb .mb-nsform input,.mb .mb-nsform select,.mb .mb-nsform textarea{width:100%;background:rgba(0,0,0,.2);border:1px solid var(--line);border-radius:7px;padding:7px 9px;color:inherit;font-size:12px;font-family:inherit}
   .mb .me-act .btn{padding:8px 16px;font-size:12.5px}
   .mb .me-det{font-size:12.5px}.mb .me-det .me-l{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--w40);display:block;margin-bottom:3px}
   .mb .me-det>div{color:var(--w70);white-space:pre-wrap}
@@ -217,8 +229,103 @@
       '<label class="cbx"><input type="checkbox" class="me-genomfort"'+(mt.genomfort?" checked":"")+'> Genomfört?</label>'+
       '<div class="fld"><label>Beskrivning</label><textarea class="me-besk" rows="2">'+esc(mt.meddelande||"")+'</textarea></div>'+
       '<div class="me-note fld" style="'+(mt.genomfort?"":"display:none")+'"><label>Mötesanteckning</label><textarea class="me-anteckning" rows="3">'+esc(mt.motesanteckning||"")+'</textarea></div>'+
+      nsHtml(mt)+
       '<div class="me-act"><button class="btn" data-mb="savemote" data-mid="'+esc(mt.id)+'">Spara</button><span class="msg" data-me-msg></span></div>'+
     '</div>';
+  }
+  // ── NÄSTA STEG-GRINDEN (2026-08-21) ───────────────────────────────────────
+  // Mötesbokningsvyn var den TREDJE skrivaren av `genomfört` (vid sidan av
+  // kundkortet och affärsvyn) och saknade grind — kravet "en genomförd aktivitet
+  // måste ha ett nästa steg" var därför inte heltäckande. Servern grindar
+  // (`400 nasta_steg_krävs` i /admin/salj/mote/:id/patch); det här är UX-lagret.
+  // ⚠️ Grindar bara när beslut SAKNAS. Har mötet redan ett `nasta_steg` frågas man
+  // inte igen — annars hade varje datumjustering krävt ett nytt beslut.
+  // ⚠️ Här skapas INGEN uppföljare (till skillnad från kundkortet/affärsvyn):
+  // mötesbokningsvyn har varken företags- eller affärskontext i formuläret, och att
+  // gissa kunden vore värre än att låta användaren skapa uppföljaren där den hör
+  // hemma. "Avslutat" fungerar fullt ut; de andra två registrerar beslutet och
+  // hänvisar till kundkortet.
+  var NS_STEG=[["aktivitet","📅 Boka ny aktivitet"],["todo","✓ Skapa att-göra"],["avslutat","⏹ Avsluta spåret"]];
+  var NS_TYPER=["Kundmöte","Säljsamtal","Kommentar","Pratat med","Skickat e-post","Fått e-post","Sökt, ej på plats","Mötesanteckningar"];
+  var NS_KATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+  function nsHtml(mt){
+    if(mt.genomfort && mt.nasta_steg) return "";      // beslut redan fattat
+    var btns="";
+    for(var i=0;i<NS_STEG.length;i++) btns+='<button type="button" class="mb-nsbtn" data-ns="'+esc(NS_STEG[i][0])+'">'+esc(NS_STEG[i][1])+'</button>';
+    var tOpts=""; for(var j=0;j<NS_TYPER.length;j++) tOpts+='<option value="'+esc(NS_TYPER[j])+'"'+(j===0?" selected":"")+'>'+esc(NS_TYPER[j])+'</option>';
+    var kOpts='<option value="">— kategori —</option>'; for(var k=0;k<NS_KATS.length;k++) kOpts+='<option value="'+esc(NS_KATS[k])+'">'+esc(NS_KATS[k])+'</option>';
+    // ⚠️ Uppföljaren knyts till mötets EGET företag (och affär om den finns) — id:na
+    // ligger på raden (`company_id`/`deal_id` ur nMote). Ingen gissning.
+    var ctx=mt.company?('Knyts till <b>'+esc(mt.company)+'</b>'+(mt.deal_name?(' · affär <b>'+esc(mt.deal_name)+'</b>'):'')):
+      '<b>Mötet saknar kundkoppling</b> — uppföljaren skapas utan företag.';
+    return '<div class="mb-ns" data-nswrap="1" style="'+(mt.genomfort?"":"display:none")+'">'+
+      '<label>Nästa steg *</label><div class="mb-nsbtns">'+btns+'</div>'+
+      '<div class="mb-nsbody">'+
+        '<div class="mb-nsform" data-nsform="aktivitet" style="display:none">'+
+          '<div><label>Typ</label><select data-nf="a_typ">'+tOpts+'</select></div>'+
+          '<div><label>Datum *</label><input type="date" data-nf="a_datum"></div>'+
+          '<div class="full"><label>Beskrivning</label><textarea data-nf="a_besk" rows="2" placeholder="Vad ska göras?"></textarea></div>'+
+        '</div>'+
+        '<div class="mb-nsform" data-nsform="todo" style="display:none">'+
+          '<div class="full"><label>Titel *</label><input type="text" data-nf="t_titel" placeholder="Vad ska göras?"></div>'+
+          '<div><label>Klart senast</label><input type="date" data-nf="t_slut"></div>'+
+          '<div><label>Kategori</label><select data-nf="t_kat">'+kOpts+'</select></div>'+
+        '</div>'+
+        '<span class="mb-nsmsg" data-nsmsg>Välj hur du går vidare innan du sparar.</span>'+
+        '<span class="mb-nsmsg" data-nsctx style="display:none">'+ctx+'</span>'+
+      '</div></div>';
+  }
+  function nsSelect(wrap, val){
+    var bs=wrap.querySelectorAll(".mb-nsbtn");
+    for(var i=0;i<bs.length;i++){ if(bs[i].getAttribute("data-ns")===val) bs[i].classList.add("on"); else bs[i].classList.remove("on"); }
+    var fs=wrap.querySelectorAll("[data-nsform]");
+    for(var j=0;j<fs.length;j++) fs[j].style.display=(fs[j].getAttribute("data-nsform")===val)?"grid":"none";
+    var m=wrap.querySelector("[data-nsmsg]"); if(m){ m.className="mb-nsmsg"; m.textContent=""; }
+    var c=wrap.querySelector("[data-nsctx]"); if(c) c.style.display=(val==="avslutat")?"none":"block";
+  }
+  function nsPick(card){
+    var wrap=card.querySelector("[data-nswrap]");
+    if(!wrap || wrap.style.display==="none") return { steg:"" };
+    var b=wrap.querySelector(".mb-nsbtn.on");
+    if(!b) return { error:"Välj ett nästa steg innan du sparar." };
+    var v=b.getAttribute("data-ns");
+    var g=function(k){ var e=wrap.querySelector('[data-nf="'+k+'"]'); return e?String(e.value||"").trim():""; };
+    if(v==="aktivitet"){
+      if(!g("a_datum")) return { error:"Ange datum för den nya aktiviteten." };
+      return { steg:v, follow:{ kind:"aktivitet", activity_type:g("a_typ")||"Kundmöte", motesdatum:g("a_datum"), beskrivning:g("a_besk") } };
+    }
+    if(v==="todo"){
+      if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
+      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), sluttid:g("t_slut"), kategori:g("t_kat") } };
+    }
+    return { steg:"avslutat" };
+  }
+  // ⚠️ Uppföljaren skapas FÖRE mötet sparas. Faller den sparas ingenting — annars
+  // står mötet som genomfört med nasta_steg="aktivitet" utan att någon aktivitet
+  // finns, alltså en lögn i datan. Samma ordning som kundkortet och affärsvyn.
+  // Kund + affär ärvs från mötesraden (company_id/deal_id ur nMote).
+  function nsCreateFollow(follow, companyId, dealId){
+    if(!follow) return Promise.resolve({ ok:true });
+    if(follow.kind==="aktivitet"){
+      return apiPost("/admin/affar/aktivitet/create", { activity_type:follow.activity_type,
+        beskrivning:follow.beskrivning, motesdatum:follow.motesdatum, genomfort:false,
+        company_id:companyId||"", deal_id:dealId||"", by_user:ME });
+    }
+    return apiPost("/admin/affar/todo/create", { titel:follow.titel, sluttid:follow.sluttid,
+      kategori:follow.kategori, status:"Pågående", company_id:companyId||"", deal_id:dealId||"", user_id:ME });
+  }
+  function nsMsg(card, txt, err){
+    var m=card.querySelector("[data-nsmsg]"); if(!m) return;
+    m.textContent=txt||""; m.className="mb-nsmsg"+(err?" err":"");
+  }
+
+  // Mötesraden per id — bär `company_id`/`deal_id` som uppföljaren ärver.
+  function findMote(id){
+    var d=STATE.moten; if(!d) return null;
+    var gs=d.groups||[];
+    for(var i=0;i<gs.length;i++){ var ms=gs[i].moten||[];
+      for(var j=0;j<ms.length;j++) if(ms[j].id===id) return ms[j]; }
+    return null;
   }
   function renderTratt(){
     var d=STATE.moten;
@@ -336,17 +443,33 @@
     // expandera mötes-kort
     var eh=t.closest && t.closest('.mcard-head[data-mb="expand"]');
     if(eh){ var card=eh.closest(".mcard"), exp=card.querySelector(".mcard-exp"); var open=exp.style.display==="none"; exp.style.display=open?"block":"none"; card.classList.toggle("open",open); return; }
+    // ⚠️ Nästa steg-knapparna ligger INNE i mötes-kortet — måste hanteras FÖRE
+    // kort-toggeln, annars fälls kortet ihop när man väljer.
+    var nsb=t.closest && t.closest("[data-ns]");
+    if(nsb){ var nsw2=nsb.closest("[data-nswrap]"); if(nsw2) nsSelect(nsw2, nsb.getAttribute("data-ns")); return; }
     // spara mötes-redigering
     var sm=t.closest && t.closest('[data-mb="savemote"]');
     if(sm){
       var mcard2=sm.closest(".mcard"), mid=sm.getAttribute("data-mid"), mmsg=mcard2.querySelector("[data-me-msg]");
       var noteEl=mcard2.querySelector(".me-anteckning");
-      sm.disabled=true; mmsg.textContent="Sparar…";
-      apiPost("/admin/salj/mote/"+encodeURIComponent(mid)+"/patch",{ by_user:ME,
+      var ns=nsPick(mcard2);
+      if(ns.error){ nsMsg(mcard2, ns.error, true); return; }
+      var mt=findMote(mid);
+      var body={ by_user:ME,
         fas:mcard2.querySelector(".me-fas").value, motesdatum:mcard2.querySelector(".me-datum").value,
         beskrivning:mcard2.querySelector(".me-besk").value, genomfort:mcard2.querySelector(".me-genomfort").checked,
-        motesanteckning:noteEl?noteEl.value:""
-      }).then(function(j){ sm.disabled=false; if(!j||!j.ok){ mmsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; } mmsg.textContent="Sparat ✓"; cacheClearAll(); loadMoten(); })
+        motesanteckning:noteEl?noteEl.value:"" };
+      if(ns.steg) body.nasta_steg=ns.steg;
+      sm.disabled=true; mmsg.textContent="Sparar…";
+      nsCreateFollow(ns.follow, mt&&mt.company_id, mt&&mt.deal_id).then(function(fj){
+        if(!fj||!fj.ok){ sm.disabled=false; mmsg.textContent="";
+          nsMsg(mcard2, "✗ Kunde inte skapa uppföljningen: "+((fj&&(fj.hint||fj.error))||"fel")+" — mötet sparades INTE.", true); return null; }
+        return apiPost("/admin/salj/mote/"+encodeURIComponent(mid)+"/patch", body);
+      }).then(function(j){
+          if(j===null) return;
+          sm.disabled=false; if(!j||!j.ok){ mmsg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
+          if(j.nasta_steg_field_missing) nsMsg(mcard2, "⚠ Sparat — men fältet aktivitet_nasta_steg saknas i Bubble, så valet lagrades inte.", true);
+          mmsg.textContent="Sparat ✓"; cacheClearAll(); loadMoten(); })
         .catch(function(){ sm.disabled=false; mmsg.textContent="Nätverksfel."; });
       return;
     }
@@ -392,7 +515,8 @@
   });
   root.addEventListener("change",function(e){
     var t=e.target;
-    if(t.classList && t.classList.contains("me-genomfort")){ var card=t.closest(".mcard"), note=card.querySelector(".me-note"); if(note) note.style.display=t.checked?"block":"none"; return; }
+    if(t.classList && t.classList.contains("me-genomfort")){ var card=t.closest(".mcard"), note=card.querySelector(".me-note"); if(note) note.style.display=t.checked?"block":"none";
+      var nsw=card.querySelector("[data-nswrap]"); if(nsw) nsw.style.display=t.checked?"block":"none"; return; }
     if(t.getAttribute("data-mb")==="person"){ STATE.person=t.value; loadMoten(); return; }
     if(t.getAttribute("data-mb")==="from"){ STATE.from=t.value; loadMoten(); return; }
     if(t.getAttribute("data-mb")==="to"){ STATE.to=t.value; loadMoten(); return; }

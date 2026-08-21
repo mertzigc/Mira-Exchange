@@ -245,10 +245,27 @@ före fältet fanns **blockerat användarna från att spara sina möten**.
   verifieras, aldrig "saknas" ([[reference-bubble-tysta-faltdrop]]).
 - **UI:t säger det rakt ut** i en banner ovanför historikflödet.
 
-#### Grinden
-- Gäller **ÖVERGÅNGEN** ej→genomförd (create med `genomfort:true`, eller patch där
-  raden inte redan var genomförd). En redan genomförd aktivitet kan redigeras fritt —
-  annars hade varje stavfelsrättning krävt ett nytt uppföljningsbeslut.
+#### Grinden — REGELN SKÄRPT 2026-08-21 (andra iterationen)
+**Första versionen grindade bara ÖVERGÅNGEN ej→genomförd.** Christian öppnade en redan
+genomförd aktivitet i affärsvyn och såg ingen grind — helt enligt den regeln, men fel
+mot intentionen: de **348 redan avbockade aktiviteterna** hade då aldrig omfattats av
+kravet. Regeln är nu:
+
+> Grinda om sparningen rör **avklarandet** (`genomfört` eller `mötesantecking`),
+> resultatet är **genomfört**, och **inget beslut finns** — varken inkommande eller
+> redan lagrat i `aktivitet_nasta_steg`.
+
+- **Gammalt genomfört möte utan beslut → grindas** när någon rör anteckningen/bocken.
+  Så betas backloggen av i takt med att man arbetar med mötena.
+- **Rad som redan har ett beslut → frågas aldrig igen.**
+- **Sparningar som inte rör avklarandet blockeras INTE** (`fas`, `beskrivning`,
+  affärskoppling). Att kräva ett uppföljningsbeslut för att rätta ett stavfel vore
+  ren friktion — och hade blockerat "Koppla till affär" i affärsvyn.
+- ⚠️ Kontrollen av lagrat beslut läser **OS-medvetet** (`_osStr`). Ett `{display}`-objekt
+  hade annars alltid sett ut som ett värde och **tyst avaktiverat grinden** för rader
+  som saknar beslut.
+- Kortets detaljvy visar nu raden **"Nästa steg"** på genomförda aktiviteter
+  (`Ny aktivitet bokad` / `Att-göra skapad` / `Spåret avslutat` / `— ej beslutat —`).
 - Servern grindar (`400 nasta_steg_krävs` / `okänt_nasta_steg` + `allowed`), frontenden
   är UX-lagret. Båda vyerna: **kundkortets Historik** (`mira-foretag-lista.html`) och
   **affärsvyns aktivitet** (`mira-affar-samlad.html`, både redigera och skapa).
@@ -258,10 +275,19 @@ före fältet fanns **blockerat användarna från att spara sina möten**.
   ofarlig (den syns och kan tas bort).
 - Uppföljaren ärver kund (och i affärsvyn även affär). Todo skapas via
   `POST /admin/affar/todo/create` — företags-agnostisk, återanvänds från kortet.
-- **⚠️ TREDJE SKRIVAREN UTAN GRIND:** `salj_api.js` (`/admin/salj/mote/:id/patch`,
-  mötesbokningsvyn `mira-motesbokning.html`) patchar också `genomfört`. Christian bad
-  om kundkortet + affärsvyn; den dörren står alltså öppen och kravet är inte
-  heltäckande förrän den stängs. **Nästa steg om kravet ska hålla.**
+- **✅ ALLA TRE SKRIVARNA GRINDAR NU** (stängt 2026-08-21): `companies_api`
+  (kundkortet), `affar_api` (affärsvyn) och **`salj_api`** (`/admin/salj/mote/:id/patch`,
+  mötesbokningsvyn `mira-motesbokning.html`). Samma regel, samma fält, samma felkoder.
+- **Mötesbokningsvyn skapar uppföljaren fullt ut** — precis som de andra två.
+  ⚠️ Jag påstod först att den saknade kundkontext; **det var fel**. `activitet_crm`
+  har `company` (enda kund-fältet) och `nMote` resolvade redan företagsNAMNET — det
+  som saknades var bara **id:t** i radens payload. `nMote` bär nu `company_id`, och
+  uppföljaren ärver **både företag och affär** (`deal_id` fanns redan). Ingen gissning
+  någonstans. Lärdom: kontrollera vad raden FAKTISKT bär innan man drar en
+  begränsning ur att ett fält inte syns i normaliseraren.
+- Formuläret visar vilket företag (och ev. affär) uppföljaren knyts till, och säger
+  **"Mötet saknar kundkoppling"** rakt ut om `company_id` är tomt — i st.f. att tyst
+  skapa en lös aktivitet.
 
 #### Levande aktivitet/todo (kundkortets Hem-flik)
 - **Definition (Christians beslut):** datum framåt **OCH** inte avklarat.
@@ -279,8 +305,20 @@ före fältet fanns **blockerat användarna från att spara sina möten**.
   Snabbåtgärder. Todo-formuläret ligger direkt på Hem.
 
 #### Verifierat
-- companies_smoke **292/292** (+31) · affar_create_smoke **43/43** (+17) ·
-  **mutationstestat: 23 resp. 13 faller**. Samtliga 20 sviter gröna.
+- companies_smoke **295/295** · affar_create_smoke **43/43** · salj_smoke **62/62**
+  (+22, hela grinden + uppföljaren i mötesbokningsvyn). Samtliga 20 sviter gröna.
+- **Mutationstestat mot `3c83b3d`:** 2 · 1 · 17 faller.
+- **⚠️ Browser-harnessen fångade en tredje bugg som smoken inte kunde se:** i
+  mötesbokningsvyn hamnade `nsSelect`/`nsPick`/`nsCreateFollow` **inuti**
+  render-funktionens scope i st.f. på IIFE-nivå. Grinden RENDERADES (grep-testerna
+  var gröna) men klickhanteraren fick `nsSelect is not defined` → knapparna gjorde
+  ingenting och funktionen var oanvändbar. Regressionsvakt: greppet kräver nu
+  deklaration med **två blankstegs indrag** (IIFE-nivå), inte fyra.
+  **Lärdom: en grep som bara bevisar att koden FINNS bevisar inte att den är NÅBAR.**
+- Harness i mötesbokningsvyn: grinden dold tills Genomfört bockas · blockerad utan val ·
+  blockerad utan datum/titel · uppföljaren skapas FÖRE mötet och knyts till rätt
+  företag (`cc2`) resp. rätt företag + affär (`cc1`/`d1`) · redan beslutad rad visar
+  ingen grind alls.
 - **Browser-harness fångade två buggar som smoken aldrig hade sett:**
   1. `STATE.chain.historik=null` → `historikBody(null)` kraschade på `rows.length`.
      Chain-cachens "hämta om"-sentinel är **`undefined`**, inte null. Regressionsvakt
@@ -297,8 +335,9 @@ före fältet fanns **blockerat användarna från att spara sina möten**.
 
 #### Deploy
 1. ✅ Bubble-fältet finns redan (`aktivitet_nasta_steg`, Option Set).
-2. `index.js` oförändrad. Deploya `companies_api.js` + `affar_api.js` till Render.
-3. Klistra om **`mira-foretag-lista.html`** OCH **`mira-affar-samlad.html`**.
+2. `index.js` oförändrad. Deploya `companies_api.js` + `affar_api.js` + **`salj_api.js`**.
+3. Klistra om **`mira-foretag-lista.html`**, **`mira-affar-samlad.html`** OCH
+   **`mira-motesbokning.html`**.
 
 **Gör steg 2 och 3 tillsammans.** Backend med gammal frontend 400:ar för den som
 bockar "Genomfört" (gamla frontenden skickar inget `nasta_steg`).
