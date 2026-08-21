@@ -1126,6 +1126,22 @@ const run = async () => {
      /data-fk="qa-aktivitet">\+ Boka aktivitet/.test(fl) && /data-fk="qa-todo">\+ Skapa att-göra/.test(fl));
   // ⚠️ Varningen måste överleva re-rendern efter sparning — skrivs den bara i
   // formuläret rivs den direkt (fångat i browser-harness 2026-08-21).
+  // ── Todo-uppföljaren: BÅDE start- och slutdatum ───────────────────────────
+  // ⚠️ En todo kan planeras långt fram ("gör detta om 12 månader") — då är starttiden
+  // det som betyder något, inte deadline. Och en todo UTAN båda datumen syns aldrig
+  // i kortets levande-panel (som räknar framtida start ELLER slut) → osynlig
+  // uppföljning. Därför krävs minst ett av dem.
+  ok("frontend: todo-formuläret har både startdatum och klart-senast (grinden)",
+     /data-nf="t_start"/.test(fl) && /data-nf="t_slut"/.test(fl) && /<label>Startdatum<\/label>/.test(fl));
+  ok("frontend: todo-formuläret på Hem har också startdatum",
+     /data-tf="start"/.test(fl) && /data-tf="slut"/.test(fl));
+  ok("frontend: starttid skickas vidare till todo-endpointen",
+     /starttid: follow\.starttid, sluttid: follow\.sluttid/.test(fl) &&
+     /starttid:g\("start"\), sluttid:g\("slut"\)/.test(fl));
+  ok("frontend: todo utan något datum blockeras (skulle bli osynlig på kortet)",
+     /if\(!g\("t_start"\) && !g\("t_slut"\)\) return \{ error:/.test(fl) &&
+     /if\(!g\("start"\) && !g\("slut"\)\)\{/.test(fl));
+
   ok("frontend: saknat Bubble-fält rapporteras i en banner som överlever re-rendern",
      /STATE\.nsWarn="Aktiviteten sparades, men fältet aktivitet_nasta_steg saknas/.test(fl) &&
      /STATE\.nsWarn\?\(/.test(fl) && /data-fk="nswarnclose"/.test(fl));

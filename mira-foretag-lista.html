@@ -2504,6 +2504,7 @@
       '<label>Ny att-göra</label>'+
       '<div class="fk-fld full"><label>Titel *</label><input type="text" data-tf="titel" placeholder="Vad ska göras?"></div>'+
       '<div class="fk-hrow">'+
+        '<div class="fk-fld"><label>Startdatum</label><input type="date" data-tf="start"></div>'+
         '<div class="fk-fld"><label>Klart senast</label><input type="date" data-tf="slut"></div>'+
         '<div class="fk-fld"><label>Kategori</label><select data-tf="kat">'+katOpts+'</select></div>'+
       '</div>'+
@@ -2515,8 +2516,10 @@
     var g=function(k){ var e=box.querySelector('[data-tf="'+k+'"]'); return e?String(e.value||"").trim():""; };
     var msg=box.querySelector("[data-todomsg]");
     if(!g("titel")){ if(msg){ msg.textContent="Ange en titel"; msg.className="msg err"; } return; }
+    // Samma krav som i grinden: utan datum syns den inte som planerad på kunden.
+    if(!g("start") && !g("slut")){ if(msg){ msg.textContent="Ange startdatum eller klart senast"; msg.className="msg err"; } return; }
     if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
-    apiPost("/admin/affar/todo/create", { titel:g("titel"), sluttid:g("slut"), kategori:g("kat"),
+    apiPost("/admin/affar/todo/create", { titel:g("titel"), starttid:g("start"), sluttid:g("slut"), kategori:g("kat"),
       status:"Pågående", company_id:STATE.cardId, user_id:cfg("current_user") }).then(function(j){
       if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
       STATE.todoNew=false; STATE.nastaDirty=true; refreshCard();
@@ -2678,6 +2681,7 @@
         '<div class="fk-nsform" data-nsform="todo" style="display:none">'+
           '<div class="fk-fld full"><label>Titel *</label><input type="text" data-nf="t_titel" placeholder="Vad ska göras?"></div>'+
           '<div class="fk-hrow">'+
+            '<div class="fk-fld"><label>Startdatum</label><input type="date" data-nf="t_start"></div>'+
             '<div class="fk-fld"><label>Klart senast</label><input type="date" data-nf="t_slut"></div>'+
             '<div class="fk-fld"><label>Kategori</label><select data-nf="t_kat">'+katOpts+'</select></div>'+
           '</div>'+
@@ -2710,7 +2714,11 @@
     }
     if(v==="todo"){
       if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
-      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), sluttid:g("t_slut"), kategori:g("t_kat") } };
+      // ⚠️ Minst ett datum krävs. En todo utan Starttid OCH Sluttid dyker aldrig upp
+      // i kortets "levande"-panel (den räknar framtida start ELLER slut) — man hade
+      // alltså skapat en osynlig uppföljning och trott att kunden var täckt.
+      if(!g("t_start") && !g("t_slut")) return { error:"Ange startdatum eller när den ska vara klar — annars syns att-göra-punkten inte som planerad på kunden." };
+      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), starttid:g("t_start"), sluttid:g("t_slut"), kategori:g("t_kat") } };
     }
     return { steg:"avslutat" };
   }
@@ -2972,7 +2980,7 @@
     // Todo-endpointen ligger i affar_api men är företags-agnostisk (tar company_id).
     // Todo har INGET deal-fält — koppling till affär sker via Deal.todo (ej relevant här).
     return apiPost("/admin/affar/todo/create", {
-      titel: follow.titel, sluttid: follow.sluttid, kategori: follow.kategori,
+      titel: follow.titel, starttid: follow.starttid, sluttid: follow.sluttid, kategori: follow.kategori,
       status: "Pågående", company_id: STATE.cardId, user_id: cfg("current_user")
     });
   }

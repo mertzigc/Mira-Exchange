@@ -268,8 +268,9 @@
         '</div>'+
         '<div class="mb-nsform" data-nsform="todo" style="display:none">'+
           '<div class="full"><label>Titel *</label><input type="text" data-nf="t_titel" placeholder="Vad ska göras?"></div>'+
+          '<div><label>Startdatum</label><input type="date" data-nf="t_start"></div>'+
           '<div><label>Klart senast</label><input type="date" data-nf="t_slut"></div>'+
-          '<div><label>Kategori</label><select data-nf="t_kat">'+kOpts+'</select></div>'+
+          '<div class="full"><label>Kategori</label><select data-nf="t_kat">'+kOpts+'</select></div>'+
         '</div>'+
         '<span class="mb-nsmsg" data-nsmsg>Välj hur du går vidare innan du sparar.</span>'+
         '<span class="mb-nsmsg" data-nsctx style="display:none">'+ctx+'</span>'+
@@ -296,7 +297,10 @@
     }
     if(v==="todo"){
       if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
-      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), sluttid:g("t_slut"), kategori:g("t_kat") } };
+      // ⚠️ Minst ett datum — en todo utan Starttid OCH Sluttid syns aldrig som
+      // planerad på kundkortet ("levande" = framtida start ELLER slut).
+      if(!g("t_start") && !g("t_slut")) return { error:"Ange startdatum eller när den ska vara klar — annars syns att-göra-punkten inte som planerad på kunden." };
+      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), starttid:g("t_start"), sluttid:g("t_slut"), kategori:g("t_kat") } };
     }
     return { steg:"avslutat" };
   }
@@ -311,7 +315,7 @@
         beskrivning:follow.beskrivning, motesdatum:follow.motesdatum, genomfort:false,
         company_id:companyId||"", deal_id:dealId||"", by_user:ME });
     }
-    return apiPost("/admin/affar/todo/create", { titel:follow.titel, sluttid:follow.sluttid,
+    return apiPost("/admin/affar/todo/create", { titel:follow.titel, starttid:follow.starttid, sluttid:follow.sluttid,
       kategori:follow.kategori, status:"Pågående", company_id:companyId||"", deal_id:dealId||"", user_id:ME });
   }
   function nsMsg(card, txt, err){

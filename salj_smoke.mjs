@@ -206,6 +206,14 @@ const run = async () => {
      /mötet sparades INTE/.test(mb));
   ok("frontend: validerar datum resp. titel innan sparning",
      /Ange datum för den nya aktiviteten/.test(mb) && /Ange en titel för att-göra-punkten/.test(mb));
+  // ⚠️ Todo kan planeras långt fram → starttid måste finnas i formuläret, och minst
+  // ett datum krävs (utan datum syns todon aldrig som planerad på kundkortet).
+  ok("frontend: todo-formuläret har både startdatum och klart-senast",
+     /data-nf="t_start"/.test(mb) && /data-nf="t_slut"/.test(mb));
+  ok("frontend: starttid skickas till todo-endpointen",
+     /titel:follow\.titel, starttid:follow\.starttid, sluttid:follow\.sluttid/.test(mb));
+  ok("frontend: todo utan något datum blockeras",
+     /if\(!g\("t_start"\) && !g\("t_slut"\)\) return \{ error:/.test(mb));
   ok("frontend: säger vilket företag uppföljaren knyts till",
      /Knyts till <b>/.test(mb) && /Mötet saknar kundkoppling/.test(mb));
   DB.activitet_crm.push({ _id: "aG4", activity_type: "Kundmöte", writer: "u2", "genomfört": false, company: "cc1", deal: "d1" });

@@ -215,6 +215,14 @@ const run = async () => {
      af.indexOf('t.closest("[data-ns]")') < af.indexOf('t.closest(".af-a-save")'));
   ok("frontend: saknat Bubble-fält rapporteras till användaren",
      /fältet aktivitet_nasta_steg saknas/.test(af));
+  // ⚠️ Todo kan planeras långt fram → starttiden måste gå att ange. Utan BÅDE
+  // start och slut tomma syns todon aldrig som planerad på kundkortet.
+  ok("frontend: todo-formuläret har både startdatum och klart-senast",
+     /data-nf="t_start"/.test(af) && /data-nf="t_slut"/.test(af));
+  ok("frontend: starttid skickas till todo-endpointen",
+     /titel:follow\.titel, starttid:follow\.starttid, sluttid:follow\.sluttid/.test(af));
+  ok("frontend: todo utan något datum blockeras",
+     /if\(!g\("t_start"\) && !g\("t_slut"\)\) return \{ error:/.test(af));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

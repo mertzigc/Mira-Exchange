@@ -275,6 +275,15 @@ kravet. Regeln är nu:
   ofarlig (den syns och kan tas bort).
 - Uppföljaren ärver kund (och i affärsvyn även affär). Todo skapas via
   `POST /admin/affar/todo/create` — företags-agnostisk, återanvänds från kortet.
+- **Todo-formuläret har BÅDE `Startdatum` och `Klart senast`** (2026-08-21). En
+  uppföljning kan planeras långt fram — "ta detta om 12 månader" — och då är
+  **starttiden** det som betyder något, inte deadline. Backend stödde `starttid`
+  redan; det var bara formulären som saknade fältet. Gäller alla tre vyerna plus
+  den fristående todo-formen på kortets Hem-flik.
+- **⚠️ Minst ETT av datumen krävs.** En todo utan `Starttid` och `Sluttid` dyker
+  aldrig upp i kortets levande-panel (som räknar framtida start **eller** slut) →
+  man hade skapat en osynlig uppföljning och trott att kunden var täckt. Valideras
+  i alla fyra formulären.
 - **✅ ALLA TRE SKRIVARNA GRINDAR NU** (stängt 2026-08-21): `companies_api`
   (kundkortet), `affar_api` (affärsvyn) och **`salj_api`** (`/admin/salj/mote/:id/patch`,
   mötesbokningsvyn `mira-motesbokning.html`). Samma regel, samma fält, samma felkoder.
@@ -305,9 +314,12 @@ kravet. Regeln är nu:
   Snabbåtgärder. Todo-formuläret ligger direkt på Hem.
 
 #### Verifierat
-- companies_smoke **295/295** · affar_create_smoke **43/43** · salj_smoke **62/62**
-  (+22, hela grinden + uppföljaren i mötesbokningsvyn). Samtliga 20 sviter gröna.
-- **Mutationstestat mot `3c83b3d`:** 2 · 1 · 17 faller.
+- companies_smoke **299/299** · affar_create_smoke **46/46** · salj_smoke **65/65**.
+  Samtliga 20 sviter gröna.
+- **Mutationstestat mot `3c83b3d`:** 6 · 4 · 20 faller.
+- Harness: todo med **bara startdatum 12 mån fram** går igenom och skickar
+  `starttid` (tom `sluttid`); todo helt utan datum blockeras i både grinden och
+  Hem-formuläret.
 - **⚠️ Browser-harnessen fångade en tredje bugg som smoken inte kunde se:** i
   mötesbokningsvyn hamnade `nsSelect`/`nsPick`/`nsCreateFollow` **inuti**
   render-funktionens scope i st.f. på IIFE-nivå. Grinden RENDERADES (grep-testerna

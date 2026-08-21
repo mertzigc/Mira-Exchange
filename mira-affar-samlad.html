@@ -613,7 +613,8 @@
         '</div><div><label class="el">Beskrivning</label><textarea class="ein" data-nf="a_besk" rows="2"></textarea></div></div>'+
         '<div class="af-nsform" data-nsform="todo" style="display:none">'+
           '<div><label class="el">Titel *</label><input class="ein" data-nf="t_titel" placeholder="Vad ska göras?"></div>'+
-          '<div class="erow"><div><label class="el">Klart senast</label><input type="date" class="ein" data-nf="t_slut"></div>'+
+          '<div class="erow"><div><label class="el">Startdatum</label><input type="date" class="ein" data-nf="t_start"></div>'+
+          '<div><label class="el">Klart senast</label><input type="date" class="ein" data-nf="t_slut"></div>'+
           '<div><label class="el">Kategori</label><select class="ein" data-nf="t_kat">'+katOpts+'</select></div></div></div>'+
         '<div class="af-nsform" data-nsform="avslutat" style="display:none">'+
           '<div class="ecur">Inget mer planeras på det här spåret.</div></div>'+
@@ -645,7 +646,10 @@
     }
     if(v==="todo"){
       if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
-      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), sluttid:g("t_slut"), kategori:g("t_kat") } };
+      // ⚠️ Minst ett datum — en todo utan Starttid OCH Sluttid syns aldrig som
+      // planerad på kundkortet ("levande" = framtida start ELLER slut).
+      if(!g("t_start") && !g("t_slut")) return { error:"Ange startdatum eller när den ska vara klar — annars syns att-göra-punkten inte som planerad på kunden." };
+      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), starttid:g("t_start"), sluttid:g("t_slut"), kategori:g("t_kat") } };
     }
     return { steg:"avslutat" };
   }
@@ -661,8 +665,8 @@
                 genomfort:false, company_id:companyId||"", deal_id:dealId||"", by_user:cfg("current_user") };
     } else {
       url="/admin/affar/todo/create";
-      payload={ titel:follow.titel, sluttid:follow.sluttid, kategori:follow.kategori, status:"Pågående",
-                company_id:companyId||"", deal_id:dealId||"", user_id:cfg("current_user") };
+      payload={ titel:follow.titel, starttid:follow.starttid, sluttid:follow.sluttid, kategori:follow.kategori,
+                status:"Pågående", company_id:companyId||"", deal_id:dealId||"", user_id:cfg("current_user") };
     }
     return fetch(HOST+url,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},
       body:JSON.stringify(payload)}).then(function(r){ return r.json(); });
