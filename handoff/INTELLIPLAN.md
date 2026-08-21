@@ -515,7 +515,7 @@ visade ingenting, och inget larmade.**
 
 **Kör hälsokollen först** (`/version` + `/admin/bokningslage/kallhalsa`).
 
-### 1. 🔴 AVGÖR FÖRST: returnerar 1082 FRAMTIDA pass?
+### 1. ✅ BESVARAD 2026-08-20: JA, framtida pass finns
 Allt vi laddat är **juli — dåtid**. Planeringsvyn handlar om *inbokade* pass,
 alltså framtid. Rapporten bygger på `FinancialItem`, vilket kan betyda att rader
 uppstår först när passet ekonomiskt registrerats.
@@ -524,9 +524,8 @@ uppstår först när passet ekonomiskt registrerats.
 curl -sS -X POST ".../admin/intelliplan/sync/pass" -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" -d '{"from":"2026-08-21","to":"2026-10-31"}'
 ```
-Torrkörning. **Noll rader ⇒ hela premissen måste tänkas om** — då kan vyn bara
-visa historik, och "inbokade pass" kräver en annan källa. Allt nedan hänger på
-det här svaret.
+**Svar: 3 879 rader för 21 aug – 31 okt.** Premissen håller — planeringsvyn kan
+visa inbokade pass.
 
 ### 2. Nya konton skapas INTE av passynken
 `sync/order-month` registrerar okända konton i `IntelliplanAccount`
@@ -549,3 +548,37 @@ markera, eller lämna?
 - **80 rader utan kund** (frånvaro utan uppdrag) → `Clientcompany: null` → osynliga i
   den kundfiltrerade kalendern. Behöver en vy per KONSULT.
 - 37 negativa raster = övertid utöver bokat fönster (0,2 % av tiden) — inget att göra
+
+---
+
+## 📈 FRAMTID vs DÅTID — profilen skiftar dramatiskt (2026-08-20)
+
+| | Juli (passerad) | 21 aug–31 okt (framtid) |
+|---|---|---|
+| pass | 1 202 (35 %) | **3 374 (87 %)** |
+| inställt | 1 146 (33 %) | 135 (3,5 %) |
+| frånvaro | 1 072 (31 %) | 370 (9,5 %) |
+| konsulter | 156 | 250 |
+| konton | 51 | 67 |
+
+**Inställningar och frånvaro registreras i EFTERHAND.** En period fortsätter
+alltså "mogna" efter att den passerat — precis som Intelliplans månad som växer.
+
+**Två konsekvenser:**
+1. Det rullande fönstret måste sträcka sig **bakåt** också, annars fryses juli
+   med de inställningar som råkade vara registrerade när vi först läste den.
+2. En vy får aldrig jämföra en framtida periods "inställt" mot en passerad
+   periods — 3,5 % mot 33 % är inte en förbättring, det är omogen data.
+
+### ⚠️ NAMNFEL RÄTTAT: `utfort_total` → `pass_timmar_total`
+Framtidsfönstret gav **25 468 h** på måttet. Med det gamla namnet hade det lästs
+som *utfört arbete i en period som inte hänt*. Måttet är summan av
+`PlacementHours` på rader med bokad tid — för en passerad period ≈ utfört, för
+en framtida = **bokat**. Samma klass av fel som att kalla `PlacementHours`
+"arbetade timmar", och jag höll på att bygga in det i mitt eget API.
+
+### 🔴 PUNKT 2 ÄR NU AKUT, INTE TEORETISK
+Framtidsfönstret har **11 omappade konton** (mot 1 i juli): `567, 267, 338, 527,
+300, 1283, 1306, 1265, 79, 1120, 1287`. Nya kunder tillkommer löpande, och
+`sync/pass` skapar inte `IntelliplanAccount`-rader. Utan den fixen växer mängden
+osynliga pass för varje månad.

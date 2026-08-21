@@ -928,7 +928,14 @@ export function normalizePass(csvText, opts = {}) {
     // Redovisa BÅDA — schemalagt och faktiskt utfört. Att bara visa den ena
     // vore missvisande, och det är hela poängen med radtyperna.
     placement_total: sum((r) => r.placement_hours),
-    utfort_total: Number(out.filter((r) => r.typ === "pass").reduce((a, b) => a + (b.placement_hours || 0), 0).toFixed(2)),
+    // ⚠️ HETTE `utfort_total` — MISSVISANDE FÖR FRAMTIDA PERIODER.
+    // Måttet är summan av PlacementHours på rader som ÄR pass (har bokad tid).
+    // För en passerad period ≈ utförd tid. För en FRAMTIDA period är det
+    // BOKAD tid — inget är utfört än. Skarpt 2026-08-20 gav fönstret
+    // 21 aug–31 okt 25 468 h, som med det gamla namnet hade lästs som utfört
+    // arbete i en period som inte hänt. Samma klass av fel som att kalla
+    // PlacementHours "arbetade timmar".
+    pass_timmar_total: Number(out.filter((r) => r.typ === "pass").reduce((a, b) => a + (b.placement_hours || 0), 0).toFixed(2)),
     lost_total: sum((r) => r.lost_hours),
     absence_total: sum((r) => r.absence_hours),
     dates: [...new Set(out.map((r) => r.date))].sort(),

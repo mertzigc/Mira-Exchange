@@ -684,10 +684,12 @@ const run = async () => {
     prad({ id: "3", plac: "8.0000", abs: "8.0000" }),                        // frånvaro
   ]));
   ok("alla tre radtyper klassas rätt", JSON.stringify(pn1.typer) === JSON.stringify({ pass: 1, installt: 1, franvaro: 1, okand: 0 }));
-  // ⚠️ Kärnan: placement_total INKLUDERAR frånvaro. utfort_total gör det inte.
+  // ⚠️ Kärnan: placement_total INKLUDERAR frånvaro. pass_timmar_total gör det inte.
   ok("placement_total inkluderar frånvaro", pn1.placement_total === 16);
-  ok("utfort_total räknar BARA genomförda pass", pn1.utfort_total === 8);
-  ok("de två är olika tal", pn1.placement_total !== pn1.utfort_total);
+  ok("pass_timmar_total räknar BARA rader med bokad tid", pn1.pass_timmar_total === 8);
+  // ⚠️ Namnet får INTE antyda "utfört" — för en framtida period är inget utfört.
+  ok("måttet heter inte utfort_total", pn1.utfort_total === undefined);
+  ok("de två är olika tal", pn1.placement_total !== pn1.pass_timmar_total);
   ok("lost hålls separat", pn1.lost_total === 8);
 
   // ⚠️ Klocktid − betald tid = RAST (704 pass hade 1,0 h i juli). Att härleda

@@ -22946,7 +22946,7 @@ app.post("/admin/intelliplan/sync/pass", async (req, res) => {
     const summary = {
       period: { from, to }, report_id: IP_PASS_REPORT,
       rader: norm.count, typer: norm.typer,
-      placement_total: norm.placement_total, utfort_total: norm.utfort_total,
+      placement_total: norm.placement_total, pass_timmar_total: norm.pass_timmar_total,
       lost_total: norm.lost_total, absence_total: norm.absence_total,
       konsulter: norm.consultants, konton: norm.accounts.length,
       konton_utan_clientcompany: omappade.length, omappade_konton: omappade.slice(0, 20),
