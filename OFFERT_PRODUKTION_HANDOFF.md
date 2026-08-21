@@ -310,6 +310,23 @@ Ny fristående modul `offert_api.js` (DI-mönster som `contract_render.js`) → 
 
 **Öppet:** normaliserad statusmodell per steg (varje källa har eget statusspråk). Faktura→order-referens: bär Fortnox-fakturan orderreferensen? (verifiera i Fortnox-API vid P4).
 
+### 4.6 Nästa steg-grind på aktivitet (2026-08-21) — EJ DEPLOYAT
+
+En aktivitet som markeras **genomförd** måste ha ett nästa steg: `aktivitet` · `todo` ·
+`avslutat`. Gäller både redigera-raden och "Ny aktivitet" i `mira-affar-samlad.html`,
+och speglar kundkortet — samma grind, samma fält, samma felkoder.
+Full beskrivning: **`handoff/FORETAG-KUNDKORT-DRIFT.md`** ("Nästa steg-grinden").
+
+- Bubble-fältet **`aktivitet_nasta_steg`** på `activitet_crm` (**Option Set**, samma
+  namn) finns sedan 2026-08-21. ⚠️ Inte `nasta_steg`, och inte text — option sets läses
+  tillbaka som sträng ELLER `{display}`-objekt (`_osStr`). `affar_api` får RÅ
+  `bubblePatch` → okänt fält = 400 på HELA skrivningen; därför mjuk nedgradering +
+  `nasta_steg_field_missing` i svaret.
+- Uppföljaren skapas FÖRE aktiviteten sparas och ärver **företag + affär** från raden.
+- Grinden gäller ÖVERGÅNGEN ej→genomförd, inte varje sparning av en redan genomförd rad.
+- **⚠️ `salj_api.js` (mötesbokningsvyn) patchar också `genomfört` och har ingen grind.**
+- Verifierat: `affar_create_smoke` 43/43, mutationstestat (13 faller).
+
 ## 5. Produktionsmodul
 
 ### 5.1 Vad den läser

@@ -17,7 +17,17 @@ const TOUCH = new Map([
   ["cc2", { ts: Date.parse("2026-07-01T12:00:00.000Z"), src: "lead" }],
 ]);
 const REV = new Map([["cc1", { 2025: 146750, 2026: 40992 }], ["cc2", { 2026: 7600 }]]);
+// ⚠️ Todo-schemat är VERIFIERAT (skärmdump 2026-08-07, [[reference-bubble-todo-fields]]):
+// Titel · Starttid/Sluttid(date) · Status(status_reminder-OS) · Företag(ClientCompany).
+// Fixturer som hittar på fältnamn testar en påhittad värld — se Fastighet-buggen.
+const _dagar = (n) => new Date(Date.now() + n * 86400000).toISOString();
 const AUX = {
+  Todo: [
+    { _id: "td1", Titel: "Ring Sarah",      Företag: "cc1", Sluttid: _dagar(7),   Status: "Pågående" },
+    { _id: "td2", Titel: "Gammal punkt",    Företag: "cc1", Sluttid: _dagar(-30), Status: "Pågående" },   // förfluten → ej levande
+    { _id: "td3", Titel: "Redan klar",      Företag: "cc1", Sluttid: _dagar(14),  Status: "Avslutad" },   // framtid MEN avslutad
+    { _id: "td4", Titel: "Startar snart",   Företag: "cc2", Starttid: _dagar(3),  Status: "Planerad" },
+  ],
   ClientGroup: [{ _id: "g1", name: "Acme-koncernen" }],
   // ⚠️ VERKLIGT Fastighet-schema (Bubble-editorn 2026-08-21): namnet ligger i `Titel`,
   // och `Adress` är ett geographic address-OBJEKT. Fixturen sa tidigare `Namn` — ett
@@ -75,6 +85,10 @@ const STORE = {
     { _id: "act3", company: "cc2", taggade_personer: ["co2"], "Datum_bokning": "2026-07-01", activity_type: "Mail", "Created Date": "2026-07-01" },
     { _id: "act4", company: "cc1", activity_type: "Kommentar", beskrivning: "Kommentar", "Datum_bokning": "2026-01-05", "Created Date": "2026-01-05" },
     { _id: "act5", company: "cc1", activity_type: "Möte", beskrivning: "Möte", "Datum_bokning": "2026-01-04", "Created Date": "2026-01-04" },
+    // Levande-fall: framtida datum, EJ genomförd (cc2). Och en fälla: framtida
+    // datum men redan genomförd (cc1) → ska INTE räknas som levande.
+    { _id: "act6", company: "cc2", activity_type: "Kundmöte", "Kundmöte": "Fas 1", beskrivning: "Uppstart", "Datum_bokning": _dagar(10), "Created Date": "2026-08-21" },
+    { _id: "act7", company: "cc3", activity_type: "Kundmöte", beskrivning: "Redan avbockat", "Datum_bokning": _dagar(20), "genomfört": true, "Created Date": "2026-08-21" },
   ],
 };
 // User i STORE (behövs för bubbleGet/patch i personal-koppling); u1 kopplad till cc1 via Associated_company
@@ -493,7 +507,8 @@ const run = async () => {
 
   // ── HISTORIK: skapa + redigera aktivitet (activitet_crm) ──
   var abefore = STORE.activitet_crm.length;
-  var hc = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Nytt möte", fas: "Fas 3", motesdatum: "2026-08-20", genomfort: true, motesanteckning: "Genomgång" } });
+  // ⚠️ genomfort:true kräver nu ett nästa steg (grinden 2026-08-21) — utan det 400:ar den.
+  var hc = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Nytt möte", fas: "Fas 3", motesdatum: "2026-08-20", genomfort: true, motesanteckning: "Genomgång", nasta_steg: "avslutat" } });
   ok("historik/create ok + rad skapad", hc.body.ok && STORE.activitet_crm.length === abefore + 1 && hc.body.row && hc.body.row.typ === "Kundmöte");
   var newAkt = STORE.activitet_crm[STORE.activitet_crm.length - 1];
   ok("ny aktivitet: company=cc1 + Kundmöte-fält (display-nycklar)", newAkt.company === "cc1" && newAkt.clientcompany === undefined && newAkt.activity_type === "Kundmöte" && newAkt["Kundmöte"] === "Fas 3" && newAkt["genomfört"] === true && newAkt["mötesantecking"] === "Genomgång" && /^2026-08-20/.test(newAkt["Datum_bokning"]));
@@ -949,6 +964,161 @@ const run = async () => {
      /if\(el===document\.activeElement\) continue;/.test(fl));
   ok("frontend: valt värde överlever en synk",
      /el\.value=STATE\.f\[k\]\|\|"";/.test(fl));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // NÄSTA STEG-GRINDEN + LEVANDE AKTIVITET/TODO (2026-08-21)
+  // En genomförd aktivitet får inte lämnas utan beslut: ny aktivitet, todo eller
+  // avslutat. `nasta_steg` är ett NYTT text-fält på activitet_crm — modulen får RÅ
+  // bubbleCreate/bubblePatch, så ett okänt fält 400:ar HELA skrivningen. Testerna
+  // vaktar både grinden och att mötet ändå sparas när fältet saknas i Bubble.
+  // ══════════════════════════════════════════════════════════════════════════
+  const nsCreate = (body) => call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body });
+  const nsPatch  = (id, body) => call(s.routes, "post", "/admin/companies/historik/:id/patch", { params: { id }, body });
+
+  const g1 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Möte", genomfort: true, motesanteckning: "Ok" });
+  ok("grind: genomförd aktivitet utan nästa steg → 400",
+     g1.code === 400 && g1.body.error === "nasta_steg_krävs" &&
+     JSON.stringify(g1.body.allowed) === JSON.stringify(["aktivitet", "todo", "avslutat"]));
+  const g2 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Möte", genomfort: true, nasta_steg: "kanske" });
+  ok("grind: okänt nästa steg-värde → 400", g2.code === 400 && g2.body.error === "okänt_nasta_steg");
+  const g3 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Möte ok", genomfort: true, nasta_steg: "todo" });
+  // ⚠️ Bubble-fältet heter `aktivitet_nasta_steg` (Option Set), verifierat mot
+  // editorn 2026-08-21. Testar man fel nyckel testar man en påhittad värld.
+  // ⚠️ Regressionsvakt mot precis det fel jag gjorde: koden hette `nasta_steg` medan
+  // Bubble-fältet heter `aktivitet_nasta_steg`. Fel nyckel = 400 på HELA skrivningen
+  // (eller, med nedgraderingen, ett tyst tappat val vid varje sparning).
+  ok("fältnamn: skriver ALDRIG den felaktiga nyckeln `nasta_steg`",
+     STORE.activitet_crm.every((r) => !Object.prototype.hasOwnProperty.call(r, "nasta_steg")));
+  ok("grind: med nästa steg → skapas + rätt Bubble-fält skrivs",
+     g3.body.ok === true && STORE.activitet_crm[STORE.activitet_crm.length - 1]["aktivitet_nasta_steg"] === "todo" &&
+     g3.body.nasta_steg_field_missing === false);
+  // ⚠️ Grinden gäller ÖVERGÅNGEN, inte varje sparning av en redan genomförd rad.
+  const g4 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Ej klar än", genomfort: false });
+  ok("grind: ej genomförd aktivitet kräver inget nästa steg", g4.body.ok === true);
+  const g4id = g4.body.id;
+  const g5 = await nsPatch(g4id, { genomfort: true, motesanteckning: "Klart" });
+  ok("grind: patch som markerar genomförd utan nästa steg → 400", g5.code === 400 && g5.body.error === "nasta_steg_krävs");
+  const g6 = await nsPatch(g4id, { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat" });
+  ok("grind: patch med nästa steg går igenom", g6.body.ok === true);
+  const g7 = await nsPatch(g4id, { motesanteckning: "Rättar stavfel" });
+  ok("grind: redan genomförd rad kan redigeras UTAN nytt beslut (ingen övergång)", g7.body.ok === true);
+  const g8 = await nsPatch(g4id, { genomfort: true, beskrivning: "Ny text" });
+  ok("grind: genomförd→genomförd är ingen övergång → ingen grind", g8.body.ok === true);
+
+  // ── Fältet saknas i Bubble: mötet MÅSTE ändå sparas ───────────────────────
+  // ⚠️ Utan mjuk nedgradering hade en Render-deploy före Bubble-fältet blockerat
+  // användaren från att spara sitt möte. Mocken kastar samma 400 som Bubble.
+  const noFieldDeps = Object.assign({}, deps, {
+    bubbleCreate: async (t, payload) => {
+      if (t === "activitet_crm" && payload && payload.aktivitet_nasta_steg !== undefined) {
+        const e = new Error("bubbleCreate failed");
+        e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "Unrecognized field: aktivitet_nasta_steg" } }) };
+        throw e;
+      }
+      return deps.bubbleCreate(t, payload);
+    },
+  });
+  const nfs = mk(); registerCompaniesRoutes(nfs.app, noFieldDeps);
+  const nfBefore = STORE.activitet_crm.length;
+  const nf = await call(nfs.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Möte utan fält", genomfort: true, nasta_steg: "avslutat" } });
+  ok("saknat Bubble-fält: mötet sparas ändå + nasta_steg_field_missing:true",
+     nf.body.ok === true && nf.body.nasta_steg_field_missing === true && STORE.activitet_crm.length === nfBefore + 1);
+  ok("saknat Bubble-fält: raden bär övriga fält (hela skrivningen tappades INTE)",
+     STORE.activitet_crm[STORE.activitet_crm.length - 1]["genomfört"] === true &&
+     STORE.activitet_crm[STORE.activitet_crm.length - 1]["aktivitet_nasta_steg"] === undefined);
+  // ⚠️ Ett ANNAT okänt fält får INTE svaljas — då döljer vi äkta buggar.
+  const otherFieldDeps = Object.assign({}, deps, {
+    bubbleCreate: async () => { const e = new Error("bubbleCreate failed"); e.detail = { status: 400, body: JSON.stringify({ body: { message: "Unrecognized field: nagot_annat" } }) }; throw e; },
+  });
+  const ofs = mk(); registerCompaniesRoutes(ofs.app, otherFieldDeps);
+  const of2 = await call(ofs.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "x", genomfort: true, nasta_steg: "avslutat" } });
+  ok("annat okänt fält braker fortfarande (nedgraderingen matchar SMALT)", of2.code >= 400 && of2.body.ok !== true);
+
+  // ── OPTION SET läses tillbaka som {display}-OBJEKT ────────────────────────
+  // ⚠️ `aktivitet_nasta_steg` är ett Option Set. Bubble kan svara med en sträng
+  // ELLER med `{display:"todo"}`. Ett rakt String(v) på objektformen ger
+  // "[object Object]" → läs-tillbaka-verifieringen hade flaggat fältet som SAKNAT
+  // fast allt sparats korrekt, och användaren fått en falsk varning.
+  // Samma klass av fel som fastighetsnamnen 2026-08-21.
+  const osDeps = Object.assign({}, deps, {
+    bubbleGet: async (t, id) => {
+      const r = await deps.bubbleGet(t, id);
+      if (t === "activitet_crm" && r && typeof r.aktivitet_nasta_steg === "string") {
+        return Object.assign({}, r, { aktivitet_nasta_steg: { display: r.aktivitet_nasta_steg } });
+      }
+      return r;
+    },
+  });
+  const oss = mk(); registerCompaniesRoutes(oss.app, osDeps);
+  const os1 = await call(oss.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "OS-form", genomfort: true, nasta_steg: "todo" } });
+  ok("option set som {display}-objekt: INGEN falsk 'fältet saknas'-varning",
+     os1.body.ok === true && os1.body.nasta_steg_field_missing === false);
+  ok("option set som {display}-objekt: raden exponerar värdet som ren sträng",
+     os1.body.row && os1.body.row.nasta_steg === "todo");
+
+  // ── LEVANDE AKTIVITET / TODO på kortet ────────────────────────────────────
+  const lc1 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc1" } });
+  const n1 = lc1.body.nasta || {};
+  ok("levande: kortet bär nasta.ok", n1.ok === true);
+  ok("levande: todo med framtida sluttid räknas",
+     (n1.todos || []).length === 1 && (n1.todos || [])[0].titel === "Ring Sarah");
+  ok("levande: förfluten todo och Avslutad-todo räknas INTE",
+     !(n1.todos || []).some((t) => t.titel === "Gammal punkt" || t.titel === "Redan klar"));
+  const lc2 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc2" } });
+  const n2 = lc2.body.nasta || {};
+  ok("levande: framtida ej genomförd aktivitet räknas",
+     (n2.aktiviteter || []).length === 1 && (n2.aktiviteter || [])[0].typ === "Kundmöte" && (n2.aktiviteter || [])[0].fas === "Fas 1");
+  ok("levande: todo med framtida STARTtid räknas (inte bara sluttid)",
+     (n2.todos || []).length === 1 && (n2.todos || [])[0].titel === "Startar snart");
+  const lc3 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc3" } });
+  const n3 = lc3.body.nasta || {};
+  ok("levande: framtida men REDAN GENOMFÖRD aktivitet räknas inte som levande",
+     n3.ok === true && (n3.aktiviteter || []).length === 0 && (n3.todos || []).length === 0);
+
+  // ⚠️ TOM DATA ÄR ALDRIG ETT SVAR: faller Todo-frågan är svaret OKÄNT, inte "inget
+  // planerat". Utan detta visar kortet skapa-knappar för en kund som har fullt upp.
+  const todoFailDeps = Object.assign({}, deps, {
+    bubbleFindAll: async (t, o) => { if (t === "Todo") throw new Error("Bubble 500"); return deps.bubbleFindAll(t, o); },
+  });
+  const tfs = mk(); registerCompaniesRoutes(tfs.app, todoFailDeps);
+  const tf = await call(tfs.routes, "get", "/admin/companies/:id/card", { params: { id: "cc1" } });
+  // ⚠️ Defensivt: mot gammal kod saknas `nasta` helt. `tf.body.nasta.ok` hade
+  // KRASCHAT sviten i st.f. att falla — tredje gången den fällan dyker upp i det
+  // här repot (roles 2026-08-18, bolag 2026-08-21). Skriv alltid `(x || {})`.
+  ok("levande: fallen Todo-fråga → nasta.ok:false (aldrig tolkat som 'inget planerat')",
+     tf.body.ok === true && (tf.body.nasta || {}).ok === false);
+
+  // ── FRONTEND ──────────────────────────────────────────────────────────────
+  ok("frontend: grinden renderas i historikformuläret",
+     /function nastaStegHtml/.test(fl) && /data-ns="aktivitet"/.test(fl) && /data-ns="todo"/.test(fl) && /data-ns="avslutat"/.test(fl));
+  ok("frontend: grinden visas bara när Kundmöte + Genomfört",
+     /if\(ns\) ns\.style\.display=\(isK&&done&&done\.checked\)\?"":"none";/.test(fl));
+  // ⚠️ Redan genomförd rad → ingen grind (annars nytt beslut vid varje stavfelsrättning).
+  ok("frontend: redan genomförd aktivitet grindas inte om",
+     /function nsLocked\(r\)\{ return !!\(r && r\.genomfort\); \}/.test(fl) &&
+     /if\(nsLocked\(r\)\) return "";/.test(fl));
+  // ⚠️ Uppföljaren skapas FÖRE aktiviteten — annars kan mötet stå som genomfört
+  // med nasta_steg="aktivitet" utan att någon aktivitet finns.
+  ok("frontend: uppföljaren skapas före aktiviteten sparas, och stoppar sparningen om den faller",
+     /nsCreateFollow\(ns\.follow\)\.then\(function\(fj\)\{/.test(fl) &&
+     /aktiviteten sparades INTE/.test(fl));
+  ok("frontend: segmentknapparna re-renderar inte kortet (texten i formuläret överlever)",
+     /if\(nsb\)\{ var nsw=nsb\.closest\("\[data-nswrap\]"\); if\(nsw\) nsSelect\(nsw, nsb\.getAttribute\("data-ns"\)\); return; \}/.test(fl));
+  ok("frontend: levande-panelen ligger på Hem, ovanför Snabbåtgärder",
+     /nastaPanel\(\)\+\n?\s*'<div class="fk-sech" style="margin-top:18px">Snabbåtgärder/.test(fl) || /nastaPanel\(\)\+/.test(fl));
+  ok("frontend: nasta.ok:false säger att det är okänt, inte att inget finns",
+     /Det betyder inte att inget är planerat/.test(fl));
+  ok("frontend: utan levande poster visas skapa-knappar för både aktivitet och att-göra",
+     /data-fk="qa-aktivitet">\+ Boka aktivitet/.test(fl) && /data-fk="qa-todo">\+ Skapa att-göra/.test(fl));
+  // ⚠️ Varningen måste överleva re-rendern efter sparning — skrivs den bara i
+  // formuläret rivs den direkt (fångat i browser-harness 2026-08-21).
+  ok("frontend: saknat Bubble-fält rapporteras i en banner som överlever re-rendern",
+     /STATE\.nsWarn="Aktiviteten sparades, men fältet aktivitet_nasta_steg saknas/.test(fl) &&
+     /STATE\.nsWarn\?\(/.test(fl) && /data-fk="nswarnclose"/.test(fl));
+  // ⚠️ Chain-cachen använder `undefined` som "hämta om"-sentinel; `null` når
+  // historikBody(null) → krasch på rows.length. Fångat i browser-harness 2026-08-21.
+  ok("frontend: historik-cachen nollställs med delete (undefined), aldrig null",
+     !/STATE\.chain\.historik=null/.test(fl) && /delete STATE\.chain\.historik/.test(fl));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

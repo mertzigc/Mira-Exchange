@@ -193,6 +193,24 @@
   .fk-bolagrow{display:flex;flex-wrap:wrap;align-items:center;gap:0;margin-top:8px;}
   .fk-bolagrow .l{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;margin-right:2px;}
   .fk-bolagrow .fk-bolag{margin-left:8px;}
+  /* Nasta steg-grinden pa en genomford aktivitet + levande-panelen pa Hem. */
+  .fk-ns{border:1px solid var(--fl-line);border-radius:10px;padding:12px 14px;margin:4px 0 2px;background:rgba(28,43,77,.35);}
+  .fk-ns > label{display:block;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;margin:0 0 8px;}
+  .fk-nsbtns{display:flex;flex-wrap:wrap;gap:8px;}
+  .fk-nsbtn{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:7px 13px;cursor:pointer;font-size:12px;}
+  .fk-nsbtn:hover{border-color:var(--fl-acc);}
+  .fk-nsbtn.on{background:var(--fl-acc);border-color:var(--fl-acc);color:#fff;font-weight:600;}
+  .fk-nsbody{margin-top:12px;}
+  .fk-nshint{color:var(--fl-mut);font-size:11.5px;margin-top:8px;}
+  .fk-nshint.err{color:#ff8080;}
+  .fk-live{display:flex;flex-direction:column;gap:8px;}
+  .fk-liveitem{display:flex;align-items:center;gap:9px;background:var(--fl-card2);border:1px solid var(--fl-line);border-radius:9px;padding:9px 11px;font-size:12px;}
+  .fk-liveitem .ic{font-size:13px;}
+  .fk-liveitem .t{flex:1;min-width:0;color:var(--fl-txt);}
+  .fk-liveitem .d{color:var(--fl-mut);font-size:11px;white-space:nowrap;}
+  .fk-livenone{border:1px dashed var(--fl-line);border-radius:9px;padding:12px;color:var(--fl-mut);font-size:12px;text-align:center;}
+  .fk-livenone b{display:block;color:#f0a070;font-weight:700;margin-bottom:3px;}
+  .fk-liveerr{border:1px solid rgba(255,107,107,.4);border-radius:9px;padding:11px;color:#ff8080;font-size:11.5px;}
   .fk-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0 4px;}
   .fk-stat{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:12px 14px;}
   .fk-stat .l{color:var(--fl-mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
@@ -1917,7 +1935,7 @@
               revenue_ready:true, bolag_ready:true, revTries:0, listDirty:false,
               touch_ready:true, touchTries:0,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:"", bolag:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, todoNew:false, nastaDirty:false, nsWarn:"", cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
@@ -2441,6 +2459,77 @@
     flds+='<div class="fk-formbtns"><button class="save" data-fk="save">Spara</button><button class="cancel" data-fk="canceledit">Avbryt</button><span class="msg" data-fk="savemsg"></span></div>';
     return '<div class="fk-panel"><div class="fk-ph"><h3>Redigera kunddata</h3></div><div class="fk-form">'+flds+'</div></div>';
   }
+  // ── LEVANDE AKTIVITET / TODO ──────────────────────────────────────────────
+  // Svarar på "har den här kunden något planerat framåt?". Servern avgör vad som
+  // räknas (framtida datum OCH inte avklarat) — se _liveAkt/_liveTodo i companies_api.
+  // ⚠️ `nasta.ok:false` betyder att en av frågorna FÖLL, inte att inget finns. Det
+  // måste synas: annars visar vi "Inget planerat" på en kund som har fullt upp.
+  function fmtDate(d){ return d?esc(d):"—"; }
+  function nastaPanel(){
+    var n=STATE.card.nasta;
+    var head='<div class="fk-sech" style="margin-top:18px">Nästa steg</div>';
+    if(!n) return head+'<div class="fk-liveerr">Kortet är laddat utan uppföljningsdata — ladda om.</div>';
+    if(n.ok===false) return head+'<div class="fk-liveerr">⚠ Kunde inte läsa aktiviteter/att-göra för kunden. <b>Det betyder inte att inget är planerat.</b> Försök igen.</div>';
+    var a=n.aktiviteter||[], t=n.todos||[];
+    if(!a.length && !t.length){
+      return head+'<div class="fk-livenone"><b>Inget planerat framåt</b>'+
+        'Ingen kommande aktivitet och ingen öppen att-göra på kunden.</div>'+
+        '<div class="fk-actions" style="margin-top:8px">'+
+          '<button class="fk-act pri" data-fk="qa-aktivitet">+ Boka aktivitet</button>'+
+          '<button class="fk-act" data-fk="qa-todo">+ Skapa att-göra</button>'+
+        '</div>'+(STATE.todoNew?todoFormHtml():"");
+    }
+    var h=head+'<div class="fk-live">';
+    for(var i=0;i<a.length;i++){
+      var lbl=[a[i].typ,a[i].fas].filter(Boolean).join(" · ");
+      h+='<div class="fk-liveitem"><span class="ic">📅</span><span class="t">'+esc(lbl)+
+         (a[i].text?(' — '+esc(a[i].text)):'')+'</span><span class="d">'+fmtDate(a[i].datum)+'</span></div>';
+    }
+    for(var j=0;j<t.length;j++){
+      var when=t[j].slut?("senast "+t[j].slut):(t[j].start?("från "+t[j].start):"");
+      h+='<div class="fk-liveitem"><span class="ic">✓</span><span class="t">'+esc(t[j].titel)+'</span>'+
+         '<span class="d">'+esc(when)+'</span></div>';
+    }
+    h+='</div><div class="fk-actions" style="margin-top:8px">'+
+       '<button class="fk-act" data-fk="qa-aktivitet">+ Boka aktivitet</button>'+
+       '<button class="fk-act" data-fk="qa-todo">+ Skapa att-göra</button></div>'+
+       (STATE.todoNew?todoFormHtml():"");
+    return h;
+  }
+  // Kompakt todo-form direkt på Hem (samma fält som nästa steg-grinden).
+  function todoFormHtml(){
+    var katOpts='<option value="">— kategori —</option>';
+    for(var k=0;k<TODO_KATS.length;k++) katOpts+=optTag(TODO_KATS[k], "");
+    return '<div class="fk-ns" style="margin-top:10px" data-todoform="1">'+
+      '<label>Ny att-göra</label>'+
+      '<div class="fk-fld full"><label>Titel *</label><input type="text" data-tf="titel" placeholder="Vad ska göras?"></div>'+
+      '<div class="fk-hrow">'+
+        '<div class="fk-fld"><label>Klart senast</label><input type="date" data-tf="slut"></div>'+
+        '<div class="fk-fld"><label>Kategori</label><select data-tf="kat">'+katOpts+'</select></div>'+
+      '</div>'+
+      '<div class="fk-formbtns"><button class="save" data-fk="todosave">Skapa</button>'+
+      '<button class="fk-cancel" data-fk="todocancel">Avbryt</button><span class="msg" data-todomsg></span></div></div>';
+  }
+  function saveTodo(){
+    var box=root.querySelector("[data-todoform]"); if(!box) return;
+    var g=function(k){ var e=box.querySelector('[data-tf="'+k+'"]'); return e?String(e.value||"").trim():""; };
+    var msg=box.querySelector("[data-todomsg]");
+    if(!g("titel")){ if(msg){ msg.textContent="Ange en titel"; msg.className="msg err"; } return; }
+    if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
+    apiPost("/admin/affar/todo/create", { titel:g("titel"), sluttid:g("slut"), kategori:g("kat"),
+      status:"Pågående", company_id:STATE.cardId, user_id:cfg("current_user") }).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      STATE.todoNew=false; STATE.nastaDirty=true; refreshCard();
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  // Hämtar om kortet (levande-panelen ligger i /card-svaret).
+  function refreshCard(){
+    if(!STATE.cardId) return;
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card").then(function(cj){
+      if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); STATE.nastaDirty=false; }
+      renderCard();
+    }).catch(function(){ renderCard(); });
+  }
   function cardHemRight(){
     var k=STATE.card.kpi, ready=STATE.card.revenue_ready;
     var onow=ready?krc(k.omsattning_now):'<span class="fk-calc">beräknar…</span>';
@@ -2459,6 +2548,7 @@
         '<div class="fk-rrow"><span class="rl">Leveranser</span><span class="fk-bar"><i style="width:0%"></i></span><span class="rv">—</span></div>'+
         '<div class="fk-rrow"><span class="rl">NKI</span><span class="fk-bar"><i style="width:'+(k.nki?Math.min(100,k.nki*10):0)+'%"></i></span><span class="rv">'+(k.nki==null?"—":numc(k.nki))+'</span></div>'+
       '</div></div>'+
+      nastaPanel()+
       '<div class="fk-sech" style="margin-top:18px">Snabbåtgärder</div>'+
       '<div class="fk-actions">'+
         '<button class="fk-act pri" data-fk="qa-aktivitet">+ Ny aktivitet</button><button class="fk-act" data-fk="qa-kontakt">+ Ny kontakt</button>'+
@@ -2552,6 +2642,80 @@
   var AKT_TYPES=["Säljsamtal","Kommentar","Kundmöte","Pratat med","Skickat e-post","Fått e-post","Sökt, ej på plats","Mötesanteckningar"];
   var AKT_FASER=["Fas 1","Fas 2","Fas 3","Fas 4","Övrigt"];
   function optTag(v,cur){ return '<option value="'+esc(v)+'"'+(v===cur?" selected":"")+'>'+esc(v)+'</option>'; }
+  // ── NÄSTA STEG-GRINDEN ────────────────────────────────────────────────────
+  // Ett genomfört möte får inte lämnas utan beslut. Tre vägar: boka ny aktivitet,
+  // skapa en todo, eller avsluta spåret medvetet. Servern grindar också (400
+  // `nasta_steg_krävs`) — den här är UX-lagret, inte garantin.
+  // ⚠️ Grinden gäller ÖVERGÅNGEN till genomförd. Redigerar man en redan genomförd
+  // aktivitet (r.genomfort true när formuläret öppnas) frågas man inte igen — annars
+  // hade varje stavfelsrättning krävt ett nytt uppföljningsbeslut.
+  function nsLocked(r){ return !!(r && r.genomfort); }
+  var TODO_KATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+  function nastaStegHtml(r, isK, done, isNew){
+    if(nsLocked(r)) return "";                       // redan genomförd → ingen grind
+    var vis=(isK&&done)?"":"display:none";
+    var typeOpts='<option value="">— typ —</option>';
+    for(var i=0;i<AKT_TYPES.length;i++) typeOpts+=optTag(AKT_TYPES[i], "Kundmöte");
+    var katOpts='<option value="">— kategori —</option>';
+    for(var k=0;k<TODO_KATS.length;k++) katOpts+=optTag(TODO_KATS[k], "");
+    return '<div class="fk-ns fk-nswrap" style="'+vis+'" data-nswrap="1">'+
+      '<label>Nästa steg *</label>'+
+      '<div class="fk-nsbtns">'+
+        '<button type="button" class="fk-nsbtn" data-ns="aktivitet">📅 Boka ny aktivitet</button>'+
+        '<button type="button" class="fk-nsbtn" data-ns="todo">✓ Skapa att-göra</button>'+
+        '<button type="button" class="fk-nsbtn" data-ns="avslutat">⏹ Avsluta spåret</button>'+
+      '</div>'+
+      '<div class="fk-nsbody" data-nsbody>'+
+        '<div class="fk-nsform" data-nsform="aktivitet" style="display:none">'+
+          '<div class="fk-hrow">'+
+            '<div class="fk-fld"><label>Typ</label><select data-nf="a_typ">'+typeOpts+'</select></div>'+
+            '<div class="fk-fld"><label>Datum *</label><input type="date" data-nf="a_datum"></div>'+
+          '</div>'+
+          '<div class="fk-fld full"><label>Beskrivning</label><textarea data-nf="a_besk" rows="2" placeholder="Vad ska göras?"></textarea></div>'+
+        '</div>'+
+        '<div class="fk-nsform" data-nsform="todo" style="display:none">'+
+          '<div class="fk-fld full"><label>Titel *</label><input type="text" data-nf="t_titel" placeholder="Vad ska göras?"></div>'+
+          '<div class="fk-hrow">'+
+            '<div class="fk-fld"><label>Klart senast</label><input type="date" data-nf="t_slut"></div>'+
+            '<div class="fk-fld"><label>Kategori</label><select data-nf="t_kat">'+katOpts+'</select></div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="fk-nsform" data-nsform="avslutat" style="display:none">'+
+          '<div class="fk-nshint">Inget mer planeras på det här spåret. Aktiviteten markeras som avslutad.</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="fk-nshint" data-nsmsg>Välj hur du går vidare innan du sparar.</div>'+
+    '</div>';
+  }
+  function nsPick(box){ var b=box.querySelector(".fk-nsbtn.on"); return b?b.getAttribute("data-ns"):""; }
+  function nsSelect(box, val){
+    var bs=box.querySelectorAll(".fk-nsbtn");
+    for(var i=0;i<bs.length;i++){ var on=(bs[i].getAttribute("data-ns")===val); if(on) bs[i].classList.add("on"); else bs[i].classList.remove("on"); }
+    var fs=box.querySelectorAll("[data-nsform]");
+    for(var j=0;j<fs.length;j++) fs[j].style.display=(fs[j].getAttribute("data-nsform")===val)?"":"none";
+    var m=box.querySelector("[data-nsmsg]"); if(m){ m.textContent=val?"":"Välj hur du går vidare innan du sparar."; m.className="fk-nshint"; }
+  }
+  // Validering + payload för uppföljaren. Returnerar {steg, follow} eller {error}.
+  function nsResolve(box){
+    var wrap=box.querySelector("[data-nswrap]");
+    if(!wrap || wrap.style.display==="none") return { steg:"" };   // grinden gäller inte
+    var v=nsPick(wrap);
+    if(!v) return { error:"Välj ett nästa steg: boka aktivitet, skapa att-göra eller avsluta." };
+    var g=function(k){ var e=wrap.querySelector('[data-nf="'+k+'"]'); return e?String(e.value||"").trim():""; };
+    if(v==="aktivitet"){
+      if(!g("a_datum")) return { error:"Ange datum för den nya aktiviteten." };
+      return { steg:v, follow:{ kind:"aktivitet", activity_type:g("a_typ")||"Kundmöte", motesdatum:g("a_datum"), beskrivning:g("a_besk"), fas:"", genomfort:false } };
+    }
+    if(v==="todo"){
+      if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
+      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), sluttid:g("t_slut"), kategori:g("t_kat") } };
+    }
+    return { steg:"avslutat" };
+  }
+  function nsMsg(box, txt, err){
+    var m=box.querySelector("[data-nsmsg]"); if(!m) return;
+    m.textContent=txt||""; m.className="fk-nshint"+(err?" err":"");
+  }
   // Delad redigera/skapa-form. r=null → skapa-läge. Kundmöte-fälten döljs tills typ=Kundmöte.
   function histForm(r){
     var isNew=!r; r=r||{typ:"",fas:"",beskrivning:"",motesdatum_iso:"",motesanteckning:"",genomfort:false};
@@ -2568,6 +2732,7 @@
         '<div class="fk-fld fk-konly" style="'+kStyle+'"><label>Status</label><label class="fk-chk"><input type="checkbox" data-hf="done"'+(done?" checked":"")+'> Genomfört</label></div>'+
       '</div>'+
       '<div class="fk-fld full fk-notewrap" style="'+((isK&&done)?"":"display:none")+'"><label>Mötesanteckning</label><textarea data-hf="note" rows="4">'+esc(r.motesanteckning||"")+'</textarea></div>'+
+      nastaStegHtml(r, isK, done, isNew)+
       '<div class="fk-formbtns"><button class="save" data-fk="'+(isNew?"histcreate":"histsave")+'">'+(isNew?"Skapa":"Spara")+'</button>'+
         (isNew?'<button class="fk-cancel" data-fk="histnewcancel">Avbryt</button>':'')+'<span class="msg" data-hmsg></span></div>'+
     '</div>';
@@ -2584,7 +2749,9 @@
     return '<div class="fk-hdetail"><div class="fk-hmetagrid">'+meta+'</div>'+note+deal+'</div>';
   }
   function historikBody(rows){
-    var head='<div style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="fk-editbtn" data-fk="histnew">+ Ny historik</button></div>'+
+    var warn=STATE.nsWarn?('<div class="fk-liveerr" style="margin:0 0 12px">⚠ '+esc(STATE.nsWarn)+
+      ' <button class="fk-editbtn" data-fk="nswarnclose" style="margin-left:8px">Stäng</button></div>'):'';
+    var head=warn+'<div style="display:flex;justify-content:flex-end;margin:0 0 12px"><button class="fk-editbtn" data-fk="histnew">+ Ny historik</button></div>'+
       (STATE.histNew?'<div class="fk-panel" style="margin:0 0 12px;padding:14px 16px"><div class="fk-ph"><h3>Ny aktivitet</h3></div>'+histForm(null)+'</div>':'');
     if(!rows.length) return '<div class="fk-body"><div class="fk-hwrap">'+head+'<div class="fk-placeholder"><b>Ingen historik</b>Inga aktiviteter registrerade på företaget ännu.</div></div></div>';
     var body="";
@@ -2781,6 +2948,40 @@
     var ks=box.querySelectorAll(".fk-konly"); for(var i=0;i<ks.length;i++){ ks[i].style.display=isK?"":"none"; }
     var done=box.querySelector('[data-hf="done"]'), nw=box.querySelector(".fk-notewrap");
     if(nw) nw.style.display=(isK&&done&&done.checked)?"":"none";
+    var ns=box.querySelector("[data-nswrap]");
+    if(ns) ns.style.display=(isK&&done&&done.checked)?"":"none";
+  }
+  // ── Uppföljaren ────────────────────────────────────────────────────────────
+  // ⚠️ ORDNING: uppföljaren skapas FÖRE aktiviteten sparas. Faller den vägrar vi
+  // spara — annars står mötet som genomfört med nasta_steg="aktivitet" utan att
+  // någon aktivitet finns, alltså en lögn i datan. Motsatt ordning kan i värsta fall
+  // lämna en föräldralös todo, vilket är ofarligt (den syns och kan tas bort).
+  function nsCreateFollow(follow){
+    if(!follow) return Promise.resolve({ ok:true });
+    if(follow.kind==="aktivitet"){
+      return apiPost("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/historik/create", {
+        activity_type: follow.activity_type, beskrivning: follow.beskrivning,
+        fas: follow.fas, motesdatum: follow.motesdatum, genomfort: false,
+        by_user: cfg("current_user")
+      });
+    }
+    // Todo-endpointen ligger i affar_api men är företags-agnostisk (tar company_id).
+    // Todo har INGET deal-fält — koppling till affär sker via Deal.todo (ej relevant här).
+    return apiPost("/admin/affar/todo/create", {
+      titel: follow.titel, sluttid: follow.sluttid, kategori: follow.kategori,
+      status: "Pågående", company_id: STATE.cardId, user_id: cfg("current_user")
+    });
+  }
+  // Efter lyckad sparning: nollställ kortets levande-panel så den hämtas om.
+  // ⚠️ Meddelandet får INTE bara skrivas i formuläret: efter en lyckad sparning
+  // re-renderas kortet och formuläret rivs, så varningen hann aldrig läsas.
+  // Den läggs i STATE och renderas som en banner ovanför historikflödet i stället.
+  function nsAfterSave(j, box){
+    if(j && j.nasta_steg_field_missing){
+      STATE.nsWarn="Aktiviteten sparades, men fältet aktivitet_nasta_steg saknas på activitet_crm i Bubble — ditt val av nästa steg lagrades INTE. Kontrollera fältet i Bubble-editorn.";
+      nsMsg(box, "⚠ Sparat — men fältet aktivitet_nasta_steg saknas i Bubble, så valet lagrades inte.", true);
+    }
+    STATE.nastaDirty=true;
   }
   function createHist(box){
     var msg=box.querySelector("[data-hmsg]"), p=histPayload(box);
@@ -2789,21 +2990,40 @@
     // API-nyckelns user via Data API och duger inte. (2026-08-17)
     p.by_user=cfg("current_user");
     if(!p.beskrivning && !p.activity_type){ if(msg){ msg.textContent="Fyll i beskrivning eller typ"; msg.className="msg err"; } return; }
+    var ns=nsResolve(box);
+    if(ns.error){ nsMsg(box, ns.error, true); if(msg){ msg.textContent=""; } return; }
+    if(ns.steg) p.nasta_steg=ns.steg;
     if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
-    apiPost("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/historik/create", p).then(function(j){
+    nsCreateFollow(ns.follow).then(function(fj){
+      if(!fj||!fj.ok){ nsMsg(box, "✗ Kunde inte skapa uppföljningen: "+((fj&&fj.error)||"fel")+" — aktiviteten sparades INTE.", true); if(msg){ msg.textContent=""; } return null; }
+      return apiPost("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/historik/create", p);
+    }).then(function(j){
+      if(j===null) return;
       if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
       if(j.row){ STATE.chain.historik=[j.row].concat(STATE.chain.historik||[]); }
       if(STATE.card&&STATE.card.counts&&typeof STATE.card.counts.historik==="number") STATE.card.counts.historik++;
-      STATE.histNew=false; STATE.histOpen=j.row?j.row.id:null; renderCard();
+      nsAfterSave(j, box);
+      // ⚠️ `undefined` (inte null) är sentineln som triggar omhämtning — renderaren
+      // gör `hrows===undefined` och `historikBody(null)` kraschar på `rows.length`.
+      STATE.histNew=false; STATE.histOpen=j.row?j.row.id:null; delete STATE.chain.historik; renderCard();
     }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
   }
   function saveHist(box){
     var id=box.getAttribute("data-hid"), msg=box.querySelector("[data-hmsg]"), p=histPayload(box);
     if(!p.beskrivning && !p.activity_type){ if(msg){ msg.textContent="Fyll i beskrivning eller typ"; msg.className="msg err"; } return; }
+    var ns=nsResolve(box);
+    if(ns.error){ nsMsg(box, ns.error, true); if(msg){ msg.textContent=""; } return; }
+    if(ns.steg) p.nasta_steg=ns.steg;
     if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
-    apiPost("/admin/companies/historik/"+encodeURIComponent(id)+"/patch", p).then(function(j){
+    nsCreateFollow(ns.follow).then(function(fj){
+      if(!fj||!fj.ok){ nsMsg(box, "✗ Kunde inte skapa uppföljningen: "+((fj&&fj.error)||"fel")+" — aktiviteten sparades INTE.", true); if(msg){ msg.textContent=""; } return null; }
+      return apiPost("/admin/companies/historik/"+encodeURIComponent(id)+"/patch", p);
+    }).then(function(j){
+      if(j===null) return;
       if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
       var arr=STATE.chain.historik||[]; for(var i=0;i<arr.length;i++){ if(arr[i].id===id && j.row){ arr[i]=j.row; } }
+      nsAfterSave(j, box);
+      if(ns.follow) delete STATE.chain.historik;   // uppföljaren ska in i flödet (undefined = hämta om)
       renderCard();
     }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
   }
@@ -3361,7 +3581,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardFast=null; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardFast=null; STATE.todoNew=false; STATE.nastaDirty=false; STATE.nsWarn=""; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
@@ -3443,9 +3663,18 @@
       var hcre=t.closest?t.closest('[data-fk="histcreate"]'):null;
       if(hcre){ var hb2=hcre.closest(".fk-hedit"); if(hb2) createHist(hb2); return; }
       if(t.closest && t.closest('[data-fk="qa-aktivitet"]')){ STATE.cardTab="historik"; STATE.histNew=true; STATE.histOpen=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="qa-todo"]')){ STATE.todoNew=!STATE.todoNew; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="todocancel"]')){ STATE.todoNew=false; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="todosave"]')){ saveTodo(); return; }
       if(t.closest && t.closest('[data-fk="qa-kontakt"]')){ STATE.cardTab="personer"; STATE.personDetail=null; STATE.newPerson=true; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="histnew"]')){ STATE.histNew=!STATE.histNew; renderCard(); return; }
       if(t.closest && t.closest('[data-fk="histnewcancel"]')){ STATE.histNew=false; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="nswarnclose"]')){ STATE.nsWarn=""; renderCard(); return; }
+      // ⚠️ Nästa steg-knapparna ligger INNE i historikformuläret. De får ALDRIG
+      // trigga renderCard() — då försvinner texten man just skrivit i beskrivningen
+      // (samma fälla som deal-formuläret och kortets fastighets-chips).
+      var nsb=t.closest?t.closest("[data-ns]"):null;
+      if(nsb){ var nsw=nsb.closest("[data-nswrap]"); if(nsw) nsSelect(nsw, nsb.getAttribute("data-ns")); return; }
       // Skapa affär av lead/aktivitet (2026-08-18). OBS före histrow-hanteraren:
       // knappen ligger INUTI den expanderade historik-raden, och en träff där
       // skulle annars bubbla vidare och kollapsa raden man just öppnade formen i.

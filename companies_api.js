@@ -559,8 +559,15 @@ export function registerCompaniesRoutes(app, deps) {
       // Counts per flik (parallellt). Företagsfält per typ: Mira=kundföretag/kundforetag/client_company,
       // Fortnox=linked_company. Personer/drift byggs senare → null.
       const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
+      // ⚠️ Aktivitetsraderna hämtades redan för histCount — återanvänd dem för
+      // "levande" i st.f. att fråga en gång till. Todo är den ENDA nya frågan (+1 anrop).
+      const aktRowsP = _companyActivityRows(id).then((r) => r || null).catch(() => null);
+      const todoRowsP = bubbleFindAll("Todo", { constraints: eqc("Företag") }).then((r) => r || null).catch((e) => {
+        console.error("[/admin/companies/:id/card] Todo-hämtning föll:", e?.message);
+        return null;   // ⚠️ null = OKÄNT, aldrig [] — se nasta.ok nedan
+      });
       const [histCount, dealCount, leadCount, offMC, offFC, ordMC, ordFC, invCount, persCount, driftCount] = await Promise.all([
-        _companyActivityRows(id).then((r) => r.length).catch(() => null),   // union company+clientcompany (dedup)
+        aktRowsP.then((r) => (r ? r.length : null)),
         bubbleCount("deal", eqc("kundföretag")).catch(() => null),
         bubbleCount("Lead", eqc("client_company")).catch(() => null),
         bubbleCount("Offert", eqc("kundforetag")).catch(() => null),
@@ -572,6 +579,16 @@ export function registerCompaniesRoutes(app, deps) {
         bubbleCount("Matter", [{ key: "Kundföretag", constraint_type: "equals", value: id }, { key: "status", constraint_type: "equals", value: "Pågående" }]).catch(() => null),   // öppna ärenden
       ]);
       const sumC = (a, b) => ((a == null && b == null) ? null : (Number(a || 0) + Number(b || 0)));
+
+      // ── Levande aktivitet/todo ──
+      // ⚠️ TOM DATA ÄR ALDRIG ETT SVAR: föll någon av frågorna är svaret OKÄNT, inte
+      // "inget bokat". `nasta.ok:false` → kortet säger det rakt ut i st.f. att visa
+      // skapa-knappar som om kunden vore utan uppföljning.
+      const [aktRows, todoRows] = await Promise.all([aktRowsP, todoRowsP]);
+      const nowTs = Date.now();
+      const nasta = (aktRows === null || todoRows === null)
+        ? { ok: false, aktiviteter: [], todos: [] }
+        : { ok: true, aktiviteter: _liveAkt(aktRows, nowTs), todos: _liveTodo(todoRows, nowTs) };
 
       const adr = rec && rec.Adress;
       const address = adr ? (typeof adr === "string" ? adr : (adr.address || "")) : "";
@@ -609,6 +626,7 @@ export function registerCompaniesRoutes(app, deps) {
           year: nowYear, prev: nowYear - 1,
           nki: proj.nki, antal_medarbetare: proj.antal_medarbetare,
         },
+        nasta,
         counts: {
           avtal: (contracts || []).length, historik: histCount, deals: dealCount,
           leads: leadCount, offerter: sumC(offMC, offFC), ordrar: sumC(ordMC, ordFC), fakturor: invCount,
@@ -870,6 +888,43 @@ export function registerCompaniesRoutes(app, deps) {
   // activitet_crm länkas till kunden via fältet `company` (ClientCompany) — bekräftat i Bubble-schemat
   // 2026-08-14 (INGET clientcompany-fält finns; det var ett felaktigt tidigt antagande). Native
   // "Historik" + affär använder `company`. (Hoistad function-declaration → nåbar i card-counten ovan.)
+  // ── LEVANDE AKTIVITET / TODO (2026-08-21) ─────────────────────────────────
+  // "Levande" = något är faktiskt bokat framåt på kunden. Christians definition
+  // (2026-08-21): datum i framtiden OCH inte avklarat.
+  //   Aktivitet: `Datum_bokning` > nu OCH `genomfört` !== true
+  //   Todo:      `Starttid` ELLER `Sluttid` > nu OCH `Status` !== "Avslutad"
+  // ⚠️ Todo-fälten är verifierade (skärmdump 2026-08-07, [[reference-bubble-todo-fields]]):
+  // `Företag`(ClientCompany) · `Starttid`/`Sluttid`(date) · `Status`(status_reminder-OS:
+  // Pågående·Avslutad·Försenad·Planerad) · `Titel`. Gissa aldrig här — fel fältnamn ger
+  // tyst noll, och noll läses som "inget bokat" = raka motsatsen till sanningen.
+  const TODO_KLAR = "Avslutad";
+  function _liveAkt(rows, nowTs) {
+    const out = [];
+    for (const r of (rows || [])) {
+      if (r["genomfört"] === true) continue;
+      const t = Date.parse(_str(r["Datum_bokning"]) || "");
+      if (!Number.isFinite(t) || t <= nowTs) continue;
+      out.push({ id: bubbleId(r), typ: _str(r.activity_type) || "Aktivitet", fas: _str(r["Kundmöte"]),
+                 datum: _day(r["Datum_bokning"]), text: _str(r.beskrivning) });
+    }
+    return out.sort((a, b) => Date.parse(a.datum) - Date.parse(b.datum));
+  }
+  function _liveTodo(rows, nowTs) {
+    const out = [];
+    for (const r of (rows || [])) {
+      if (_str(r["Status"]) === TODO_KLAR) continue;
+      const st = Date.parse(_str(r["Starttid"]) || "");
+      const en = Date.parse(_str(r["Sluttid"]) || "");
+      const future = (Number.isFinite(st) && st > nowTs) || (Number.isFinite(en) && en > nowTs);
+      if (!future) continue;
+      out.push({ id: bubbleId(r), titel: _str(r["Titel"]) || "Att-göra", status: _str(r["Status"]),
+                 start: _day(r["Starttid"]), slut: _day(r["Sluttid"]) });
+    }
+    // Sortera på den tidigaste framtida tidpunkten (start om den finns, annars slut).
+    const key = (x) => Date.parse(x.start || x.slut || "") || 0;
+    return out.sort((a, b) => key(a) - key(b));
+  }
+
   async function _companyActivityRows(id) {
     return bubbleFindAll("activitet_crm", { constraints: [{ key: "company", constraint_type: "equals", value: id }] }).catch(() => []);
   }
@@ -889,6 +944,7 @@ export function registerCompaniesRoutes(app, deps) {
       beskrivning: _str(r.beskrivning),
       motesanteckning: _str(r["mötesantecking"]),
       genomfort: r["genomfört"] === true,
+      nasta_steg: _osStr(r[NASTA_FIELD]),
       ansvarig: (um && wId) ? (um.get(wId) || "") : "",
       // Affärskoppling (2026-08-18): kortet erbjuder "skapa affär av aktiviteten"
       // bara när raden INTE redan är kopplad. Samma deal-fält som affärsvyn sätter.
@@ -915,6 +971,62 @@ export function registerCompaniesRoutes(app, deps) {
   // Datum_bokning/genomfört/mötesantecking. Kundmöte-typen bär fas/datum/genomfört/anteckning.
   const AKT_TYPES = ["Säljsamtal", "Kommentar", "Kundmöte", "Pratat med", "Skickat e-post", "Fått e-post", "Sökt, ej på plats", "Mötesanteckningar"];
   const AKT_FASER = ["Fas 1", "Fas 2", "Fas 3", "Fas 4", "Övrigt"];
+
+  // ── NÄSTA STEG (2026-08-21) ────────────────────────────────────────────────
+  // En genomförd aktivitet får inte lämnas utan beslut: antingen bokas en ny
+  // aktivitet, en todo skapas, eller så avslutas spåret medvetet.
+  // ⚠️ `nasta_steg` är ett NYTT text-fält på `activitet_crm` som Christian skapar i
+  // Bubble. Modulen får RÅ `bubbleCreate`/`bubblePatch` (inte `safeCreate`) → ett
+  // okänt fält ger 400 och **hela skrivningen** avvisas. Deployas Render före fältet
+  // finns hade användaren alltså blockerats från att spara sitt möte. Därför den
+  // mjuka nedgraderingen nedan: mötet sparas alltid, `nasta_steg` rapporteras saknat.
+  const NASTA_STEG = ["aktivitet", "todo", "avslutat"];
+  // ⚠️ FÄLTNAMN + TYP verifierade mot Bubble-editorn 2026-08-21 (Christians skärmdump):
+  // fältet heter **`aktivitet_nasta_steg`** och är ett **Option Set** med samma namn,
+  // värden `aktivitet` · `todo` · `avslutat`. Inte `nasta_steg`, inte text.
+  const NASTA_FIELD = "aktivitet_nasta_steg";
+  // ⚠️ Option sets läses tillbaka som STRÄNG **eller** som `{display}`-OBJEKT. Ett
+  // rakt `String(v)` på objekt-formen ger "[object Object]" — då hade läs-tillbaka-
+  // verifieringen nedan flaggat fältet som saknat fast allt sparats rätt. Samma
+  // klass av fel som fastighetsnamnen 2026-08-21. Se [[reference-bubble-option-sets]].
+  const _osStr = (v) => {
+    if (v == null) return "";
+    if (typeof v === "object") return _str(v.display || v.Display || "");
+    return _str(v);
+  };
+  // ⚠️ Matchar SMALT (400 + exakt fältnamnet) — precis som `_deadRefId`. Fel typnamn,
+  // andra okända fält och 5xx måste fortsätta braka, annars döljer vi äkta buggar.
+  function _isUnknownField(e, field) {
+    const d = e && e.detail;
+    if (!d || d.status !== 400) return false;
+    const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
+    return body.indexOf("Unrecognized field: " + field) > -1;
+  }
+  // Kör skrivningen med fältet; faller den på just det fältet skrivs den om utan.
+  // Returnerar { value, missing } — `missing:true` går hela vägen ut i svaret.
+  async function _writeOptional(fn, payload, field) {
+    if (payload[field] === undefined) return { value: await fn(payload), missing: false };
+    try { return { value: await fn(payload), missing: false }; }
+    catch (e) {
+      if (!_isUnknownField(e, field)) throw e;
+      const q = Object.assign({}, payload); delete q[field];
+      console.warn("[nasta_steg] fältet saknas på activitet_crm i Bubble — aktiviteten sparas utan det");
+      return { value: await fn(q), missing: true };
+    }
+  }
+  // Grinden. Returnerar ett felobjekt eller null. `wasDone` = radens tidigare läge:
+  // kravet gäller ÖVERGÅNGEN till genomförd, inte varje sparning av en redan
+  // genomförd aktivitet (annars får man frågan igen varje gång man rättar en stavning).
+  function _nastaStegError(p, wasDone) {
+    const nowDone = p["genomfört"] === true;
+    if (!nowDone || wasDone) return null;
+    const v = _str(p[NASTA_FIELD]).trim();
+    if (!v) return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
+                     hint: "En aktivitet som markeras genomförd måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
+    if (NASTA_STEG.indexOf(v) < 0) return { error: "okänt_nasta_steg", value: v, allowed: NASTA_STEG };
+    return null;
+  }
+
   function _aktWrite(p, b) {
     // gemensam fält-mappning för create+patch (bara skickade fält). p muteras.
     if (b.activity_type   !== undefined) p["activity_type"]  = _str(b.activity_type) || null;
@@ -923,6 +1035,7 @@ export function registerCompaniesRoutes(app, deps) {
     if (b.motesdatum      !== undefined) p["Datum_bokning"]  = _str(b.motesdatum) ? new Date(_str(b.motesdatum) + "T00:00:00.000Z").toISOString() : null;
     if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
     if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
+    if (b.nasta_steg      !== undefined) p[NASTA_FIELD]      = _str(b.nasta_steg).trim() || null;
     return p;
   }
 
@@ -946,10 +1059,18 @@ export function registerCompaniesRoutes(app, deps) {
       const byUser = _str(b.by_user);
       if (byUser) p["writer"] = byUser;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
-      const id = await bubbleCreate("activitet_crm", p);
+      // Nyskapad som genomförd → wasDone=false, alltså en övergång: nästa steg krävs.
+      const gErr = _nastaStegError(p, false);
+      if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
+      const cw = await _writeOptional((q) => bubbleCreate("activitet_crm", q), p, NASTA_FIELD);
+      const id = cw.value;
       if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
       const [fresh, uc] = await Promise.all([bubbleGet("activitet_crm", id).catch(() => null), _users().catch(() => null)]);
-      return res.json({ ok: true, id, row: fresh ? nActivity(fresh, uc && uc.map) : null });
+      // ⚠️ Läs TILLBAKA fältet — Bubble kan ha tagit emot skrivningen utan att spara
+      // värdet. `null` = kunde inte verifieras (läsningen föll), inte "saknas".
+      const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
+      return res.json({ ok: true, id, row: fresh ? nActivity(fresh, uc && uc.map) : null,
+                        nasta_steg_field_missing: cw.missing || (verified === false && !!p[NASTA_FIELD]) });
     } catch (e) {
       console.error("[/admin/companies/:id/historik/create]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
@@ -967,9 +1088,14 @@ export function registerCompaniesRoutes(app, deps) {
       if (!cur) return res.status(404).json({ ok: false, error: "activity_not_found" });
       const p = _aktWrite({}, req.body || {});
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "no_fields" });
-      await bubblePatch("activitet_crm", id, p);
+      // Grinden gäller ÖVERGÅNGEN ej→genomförd. Redan genomförd rad kan redigeras fritt.
+      const gErr = _nastaStegError(p, cur["genomfört"] === true);
+      if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
+      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
       const [fresh, uc] = await Promise.all([bubbleGet("activitet_crm", id).catch(() => null), _users().catch(() => null)]);
-      return res.json({ ok: true, id, patched: p, row: fresh ? nActivity(fresh, uc && uc.map) : null });
+      const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
+      return res.json({ ok: true, id, patched: p, row: fresh ? nActivity(fresh, uc && uc.map) : null,
+                        nasta_steg_field_missing: pw.missing || (verified === false && !!p[NASTA_FIELD]) });
     } catch (e) {
       console.error("[/admin/companies/historik/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });

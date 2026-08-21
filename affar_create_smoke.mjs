@@ -1,5 +1,6 @@
 // Smoke: skapa aktivitet + todo via affar_api. Mockad Bubble. node affar_create_smoke.mjs
 import { registerAffarRoutes } from "./affar_api.js";
+import { readFileSync } from "node:fs";
 
 const routes = { get: {}, post: {}, options: {} };
 const app = { get: (p, h) => { routes.get[p] = h; }, post: (p, h) => { routes.post[p] = h; }, options: (p, h) => { routes.options[p] = h; } };
@@ -50,7 +51,8 @@ const run = async () => {
   ok("aktivitet row returneras (nAktFull)", a1.body.row && a1.body.row.type === "Aktivitet");
 
   // ── aktivitet: Kundmöte + genomfört + anteckning ──
-  const a2 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Möte", fas: "Fas 2", motesdatum: "2026-08-10", genomfort: true, motesanteckning: "Bra möte" } });
+  // ⚠️ genomfort:true kräver nu ett nästa steg (grinden 2026-08-21).
+  const a2 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Möte", fas: "Fas 2", motesdatum: "2026-08-10", genomfort: true, motesanteckning: "Bra möte", nasta_steg: "avslutat" } });
   const c2 = created.filter((c) => c.t === "activitet_crm")[1];
   ok("Kundmöte: Kundmöte(fas)+Datum_bokning ISO", c2.payload["Kundmöte"] === "Fas 2" && /^2026-08-10T/.test(c2.payload["Datum_bokning"]));
   ok("Kundmöte: genomfört=true + mötesantecking", c2.payload["genomfört"] === true && c2.payload["mötesantecking"] === "Bra möte");
@@ -112,6 +114,104 @@ const run = async () => {
   const aktLink = patched.find((p) => p.t === "activitet_crm" && p.id === "akt1" && p.p.deal);
   ok("aktivitet kopplad → nya affären", aktLink && aktLink.p.deal === dcA.body.deal_id);
   ok("ingen lead-status-patch vid aktivitet-källa", !patched.some((p) => p.t === "Lead"));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // NÄSTA STEG-GRINDEN i affärsvyn (2026-08-21)
+  // Måste spegla kundkortet exakt — annars är kravet bara en UI-artighet i ena vyn.
+  // ⚠️ `nasta_steg` är ett NYTT fält på activitet_crm; modulen får RÅ
+  // bubbleCreate/bubblePatch → okänt fält 400:ar HELA skrivningen.
+  // ══════════════════════════════════════════════════════════════════════════
+  const ng1 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "M", genomfort: true } });
+  ok("grind: genomförd aktivitet utan nästa steg → 400",
+     ng1.code === 400 && ng1.body.error === "nasta_steg_krävs");
+  const ng2 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "M", genomfort: true, nasta_steg: "hittepa" } });
+  ok("grind: okänt nästa steg-värde → 400", ng2.code === 400 && ng2.body.error === "okänt_nasta_steg");
+  const ng3 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "M ok", genomfort: true, nasta_steg: "aktivitet" } });
+  const ng3rec = created.filter((c) => c.t === "activitet_crm").pop();
+  ok("grind: med nästa steg → skapas + fältet skrivs",
+     ng3.body.ok === true && ng3rec.payload["aktivitet_nasta_steg"] === "aktivitet" && ng3.body.nasta_steg_field_missing === false);
+
+  // patch: grinden gäller ÖVERGÅNGEN, inte varje sparning av en redan genomförd rad
+  DB.activitet_crm.push({ _id: "aktG", beskrivning: "Pågår", "genomfört": false });
+  const np1 = await call("post", "/admin/affar/aktivitet/:id/patch", { params: { id: "aktG" }, body: { genomfort: true } });
+  ok("grind: patch till genomförd utan nästa steg → 400", np1.code === 400 && np1.body.error === "nasta_steg_krävs");
+  const np2 = await call("post", "/admin/affar/aktivitet/:id/patch", { params: { id: "aktG" }, body: { genomfort: true, nasta_steg: "todo" } });
+  ok("grind: patch med nästa steg går igenom", np2.body.ok === true);
+  const np3 = await call("post", "/admin/affar/aktivitet/:id/patch", { params: { id: "aktG" }, body: { genomfort: true, beskrivning: "rättning" } });
+  ok("grind: genomförd→genomförd är ingen övergång → ingen grind", np3.body.ok === true);
+  const np4 = await call("post", "/admin/affar/aktivitet/:id/patch", { params: { id: "akt1" }, body: { beskrivning: "bara text" } });
+  ok("grind: patch utan genomfort rör inte grinden", np4.body.ok === true);
+
+  // ── Fältet saknas i Bubble: aktiviteten MÅSTE ändå sparas ─────────────────
+  const routes2 = { get: {}, post: {}, options: {} };
+  const app2 = { get: (p, h) => { routes2.get[p] = h; }, post: (p, h) => { routes2.post[p] = h; }, options: (p, h) => { routes2.options[p] = h; } };
+  const call2 = (method, path, opt) => {
+    const h = routes2[method][path];
+    return new Promise((resolve) => {
+      const res = { _code: 200, status(c) { this._code = c; return this; }, json(o) { resolve({ code: this._code, body: o }); }, sendStatus(c) { resolve({ code: c }); } };
+      h({ params: (opt && opt.params) || {}, query: {}, body: (opt && opt.body) || {}, headers: {} }, res);
+    });
+  };
+  let noFieldCreates = 0;
+  registerAffarRoutes(app2, Object.assign({}, deps, {
+    bubbleCreate: async (t, payload) => {
+      if (t === "activitet_crm" && payload && payload.aktivitet_nasta_steg !== undefined) {
+        const e = new Error("bubbleCreate failed");
+        e.detail = { status: 400, body: JSON.stringify({ body: { message: "Unrecognized field: aktivitet_nasta_steg" } }) };
+        throw e;
+      }
+      noFieldCreates++;
+      return deps.bubbleCreate(t, payload);
+    },
+  }));
+  const nf = await call2("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Utan fält", genomfort: true, nasta_steg: "avslutat" } });
+  ok("saknat Bubble-fält: aktiviteten sparas ändå + nasta_steg_field_missing:true",
+     nf.body.ok === true && nf.body.nasta_steg_field_missing === true && noFieldCreates === 1);
+  const nfRec = created.filter((c) => c.t === "activitet_crm").pop();
+  ok("saknat Bubble-fält: övriga fält skrevs (hela skrivningen tappades INTE)",
+     nfRec.payload["genomfört"] === true && nfRec.payload["aktivitet_nasta_steg"] === undefined);
+
+  // ── FRONTEND (mira-affar-samlad.html) ─────────────────────────────────────
+  // ⚠️ Greppar STRIPPAD kod — en kommentar som beskriver funktionen får inte
+  // göra testet grönt.
+  const afRaw = readFileSync(new URL("./mira-affar-samlad.html", import.meta.url), "utf8");
+  const af = afRaw.split("\n").filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).join("\n");
+  // ⚠️ Option set → kan läsas tillbaka som {display}-objekt. Utan OS-medveten läsning
+  // ger String(v) "[object Object]" och verifieringen ger falsklarm om saknat fält.
+  const osApp = { get: (p, h) => {}, post: (p, h) => { routes3[p] = h; }, options: () => {} };
+  const routes3 = {};
+  registerAffarRoutes(osApp, Object.assign({}, deps, {
+    bubbleGet: async (t, id) => {
+      const r = await deps.bubbleGet(t, id);
+      if (t === "activitet_crm" && r && typeof r.aktivitet_nasta_steg === "string") return Object.assign({}, r, { aktivitet_nasta_steg: { display: r.aktivitet_nasta_steg } });
+      return r;
+    },
+  }));
+  const osRes = await new Promise((resolve) => {
+    const res = { _code: 200, status(c) { this._code = c; return this; }, json(o) { resolve({ code: this._code, body: o }); } };
+    routes3["/admin/affar/aktivitet/create"]({ params: {}, query: {}, headers: {}, body: { activity_type: "Kundmöte", beskrivning: "OS-form", genomfort: true, nasta_steg: "todo" } }, res);
+  });
+  ok("option set som {display}-objekt: ingen falsk 'fältet saknas'-varning",
+     osRes.body.ok === true && osRes.body.nasta_steg_field_missing === false);
+
+  ok("frontend: grinden renderas i aktivitetsformuläret",
+     /function nsHtml/.test(af) && /data-ns="aktivitet"/.test(af) && /data-ns="todo"/.test(af) && /data-ns="avslutat"/.test(af));
+  ok("frontend: grinden visas bara när Genomfört är ibockad",
+     /ns\.style\.display=\(isK&&d2&&d2\.checked\)\?"":"none"/.test(af));
+  // ⚠️ Redan genomförd rad grindas inte om (locked-argumentet = done).
+  ok("frontend: redan genomförd aktivitet grindas inte om", /nsHtml\("a", isK, done, done\)/.test(af));
+  ok("frontend: uppföljaren skapas FÖRE aktiviteten och stoppar sparningen om den faller",
+     /nsCreateFollow\(ns\.follow, row&&row\.company_id, row&&row\.affar_id\)/.test(af) &&
+     /aktiviteten sparades INTE/.test(af));
+  ok("frontend: uppföljaren ärver företag och affär från raden",
+     /company_id:companyId\|\|"", deal_id:dealId\|\|""/.test(af));
+  // ⚠️ Klick-ordning: segmentknapparna ligger i redigeringsraden och får inte
+  // bubbla vidare till rad-toggeln.
+  ok("frontend: segmentknapparna hanteras före rad-hanterarna",
+     af.indexOf('t.closest("[data-ns]")') > -1 &&
+     af.indexOf('t.closest("[data-ns]")') < af.indexOf('t.closest(".af-a-save")'));
+  ok("frontend: saknat Bubble-fält rapporteras till användaren",
+     /fältet aktivitet_nasta_steg saknas/.test(af));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

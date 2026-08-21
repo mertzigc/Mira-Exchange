@@ -216,6 +216,93 @@ skillnaden var ledtråden: kortet hämtar sitt eget `/card`, listan ritar filter
   Ritas något en gång måste innehållet ha en egen synkväg — annars överlever ett
   rättat serverfel i klienten, och symtomet ser ut som att fixen inte gick fram.
 
+### Nästa steg-grinden + levande aktivitet/todo — BYGGT 2026-08-21, EJ DEPLOYAT
+
+Två saker: (1) en genomförd aktivitet får inte lämnas utan beslut, (2) kundkortet
+visar om något faktiskt är planerat framåt.
+
+#### Bubble-fältet — SKAPAT 2026-08-21 ✅
+**`aktivitet_nasta_steg` på `activitet_crm`** — ett **Option Set** med samma namn.
+Värden: `aktivitet` · `todo` · `avslutat`. (Verifierat mot Bubble-editorn.)
+
+**⚠️ Två avvikelser mot första antagandet, båda hade brutit TYST:**
+1. Fältet heter **`aktivitet_nasta_steg`**, inte `nasta_steg`. Fel nyckel → 400 på hela
+   skrivningen, eller (med nedgraderingen) ett tyst tappat val vid varje sparning.
+   Regressionsvakt: `companies_smoke` kräver att nyckeln `nasta_steg` **aldrig** skrivs.
+2. Det är ett **Option Set, inte text** → läses tillbaka som sträng **eller** som
+   `{display}`-objekt. `String(objekt)` ger `"[object Object]"`, vilket hade fått
+   läs-tillbaka-verifieringen att flagga fältet som saknat fast allt sparats rätt —
+   alltså **falsklarm** till användaren. Löst med `_osStr()` i båda modulerna, och
+   testat med en mock som svarar i objektform. Se [[reference-bubble-option-sets]].
+Modulerna får **RÅ `bubbleCreate`/`bubblePatch`** (inte `safeCreate`) → ett okänt fält
+ger 400 och **hela skrivningen avvisas**. Utan skyddsnätet nedan hade en Render-deploy
+före fältet fanns **blockerat användarna från att spara sina möten**.
+- **Mjuk nedgradering:** skrivningen försöks med fältet; svarar Bubble exakt
+  `Unrecognized field: nasta_steg` skrivs den om **utan** fältet och svaret bär
+  `nasta_steg_field_missing:true`. Matchningen är **SMAL** (400 + exakt fältnamnet) —
+  andra okända fält och 5xx måste fortsätta braka, jfr `_deadRefId`.
+- **Läs-tillbaka:** fältet verifieras mot den sparade raden; `null` = kunde inte
+  verifieras, aldrig "saknas" ([[reference-bubble-tysta-faltdrop]]).
+- **UI:t säger det rakt ut** i en banner ovanför historikflödet.
+
+#### Grinden
+- Gäller **ÖVERGÅNGEN** ej→genomförd (create med `genomfort:true`, eller patch där
+  raden inte redan var genomförd). En redan genomförd aktivitet kan redigeras fritt —
+  annars hade varje stavfelsrättning krävt ett nytt uppföljningsbeslut.
+- Servern grindar (`400 nasta_steg_krävs` / `okänt_nasta_steg` + `allowed`), frontenden
+  är UX-lagret. Båda vyerna: **kundkortets Historik** (`mira-foretag-lista.html`) och
+  **affärsvyns aktivitet** (`mira-affar-samlad.html`, både redigera och skapa).
+- **⚠️ ORDNING: uppföljaren skapas FÖRE aktiviteten sparas.** Faller den sparas
+  ingenting. Motsatt ordning kan lämna mötet genomfört med `nasta_steg="aktivitet"`
+  utan att någon aktivitet finns — en lögn i datan. En föräldralös todo är i jämförelse
+  ofarlig (den syns och kan tas bort).
+- Uppföljaren ärver kund (och i affärsvyn även affär). Todo skapas via
+  `POST /admin/affar/todo/create` — företags-agnostisk, återanvänds från kortet.
+- **⚠️ TREDJE SKRIVAREN UTAN GRIND:** `salj_api.js` (`/admin/salj/mote/:id/patch`,
+  mötesbokningsvyn `mira-motesbokning.html`) patchar också `genomfört`. Christian bad
+  om kundkortet + affärsvyn; den dörren står alltså öppen och kravet är inte
+  heltäckande förrän den stängs. **Nästa steg om kravet ska hålla.**
+
+#### Levande aktivitet/todo (kundkortets Hem-flik)
+- **Definition (Christians beslut):** datum framåt **OCH** inte avklarat.
+  Aktivitet: `Datum_bokning` > nu och `genomfört` !== true.
+  Todo: `Starttid` **eller** `Sluttid` > nu och `Status` !== `Avslutad`.
+- **Todo-fälten är verifierade** (skärmdump 2026-08-07,
+  [[reference-bubble-todo-fields]]): `Företag` · `Starttid`/`Sluttid` · `Status` · `Titel`.
+  Gissa aldrig här — fel fältnamn ger tyst noll, och noll läses som "inget bokat",
+  raka motsatsen till sanningen.
+- **WU: +1 anrop per kortöppning.** Aktivitetsraderna hämtades redan för `histCount`
+  och återanvänds; bara Todo är en ny fråga.
+- **⚠️ `nasta.ok:false` = OKÄNT, inte "inget planerat".** Faller Todo-frågan säger
+  kortet det rakt ut i st.f. att visa skapa-knappar för en kund som har fullt upp.
+- Utan levande poster: tydliga **+ Boka aktivitet** / **+ Skapa att-göra** intill
+  Snabbåtgärder. Todo-formuläret ligger direkt på Hem.
+
+#### Verifierat
+- companies_smoke **292/292** (+31) · affar_create_smoke **43/43** (+17) ·
+  **mutationstestat: 23 resp. 13 faller**. Samtliga 20 sviter gröna.
+- **Browser-harness fångade två buggar som smoken aldrig hade sett:**
+  1. `STATE.chain.historik=null` → `historikBody(null)` kraschade på `rows.length`.
+     Chain-cachens "hämta om"-sentinel är **`undefined`**, inte null. Regressionsvakt
+     finns nu (`delete STATE.chain.historik`).
+  2. "Fältet saknas"-varningen skrevs i formuläret som revs av re-rendern direkt
+     efteråt → ingen hann läsa den. Ligger nu i `STATE.nsWarn` som en stängbar banner.
+- Harness i övrigt: grinden dold tills Kundmöte+Genomfört · blockerad utan val ·
+  blockerad utan datum/titel · anteckningstexten överlever segmentklicket · alla tre
+  vägarna skickar rätt anrop i rätt ordning · redan genomförd rad sparas utan fråga ·
+  levande-panelen i alla tre lägen (poster / inget / okänt).
+- **⚠️ Testlärdom, TREDJE gången:** `tf.body.nasta.ok` **kraschade** mot gammal kod i
+  st.f. att falla och dolde 20 andra fel. Assertions mot fält som kan saknas måste
+  skrivas `(x || {})`. Samma fälla: roles 2026-08-18, bolag 2026-08-21.
+
+#### Deploy
+1. ✅ Bubble-fältet finns redan (`aktivitet_nasta_steg`, Option Set).
+2. `index.js` oförändrad. Deploya `companies_api.js` + `affar_api.js` till Render.
+3. Klistra om **`mira-foretag-lista.html`** OCH **`mira-affar-samlad.html`**.
+
+**Gör steg 2 och 3 tillsammans.** Backend med gammal frontend 400:ar för den som
+bockar "Genomfört" (gamla frontenden skickar inget `nasta_steg`).
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

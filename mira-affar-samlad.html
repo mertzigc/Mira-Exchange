@@ -150,6 +150,15 @@
   .af textarea.ein{resize:vertical}
   .af .chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--white);cursor:pointer;padding:8px 0}
   .af .eact{display:flex;align-items:center;justify-content:flex-start;gap:14px;border-top:1px solid var(--border);padding-top:11px;margin-top:1px}
+  /* Nasta steg-grinden pa en genomford aktivitet (speglar kundkortet). */
+  .af .af-ns{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:2px 0;background:rgba(255,255,255,.03)}
+  .af .af-nsbtns{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .af .af-nsbtn{background:rgba(255,255,255,.06);color:var(--white);border:1px solid var(--border);border-radius:8px;padding:7px 13px;cursor:pointer;font-size:12px}
+  .af .af-nsbtn:hover{border-color:var(--orange)}
+  .af .af-nsbtn.on{background:var(--orange);border-color:var(--orange);color:#fff;font-weight:700}
+  .af .af-nsbody{margin-top:10px}
+  .af .af-nsmsg{display:block;margin-top:8px}
+  .af .af-nsmsg.err{color:#ff8080}
   .af .ebtn{background:var(--orange);border:none;border-radius:8px;padding:8px 22px;color:#1c1206;font-weight:800;font-size:12.5px;cursor:pointer;font-family:var(--fb);transition:filter .12s}
   .af .ebtn:hover{filter:brightness(1.07)}
   .af .ebtn:disabled{opacity:.5;cursor:default}
@@ -576,6 +585,86 @@
   var TODO_KATS=["Food & Event","Housekeeping","Service & People","Other facility services"];   // Category-OS
   var TODO_STATUSES=["Pågående","Avslutad","Försenad","Planerad"];                                 // status_reminder-OS
   function opt(v,cur){ return '<option value="'+esc(v)+'"'+(v===cur?" selected":"")+'>'+esc(v)+'</option>'; }
+
+  // ── NÄSTA STEG-GRINDEN (2026-08-21) ───────────────────────────────────────
+  // Speglar kundkortet (mira-foretag-lista.html): ett genomfört möte får inte
+  // lämnas utan beslut. Servern grindar också (400 `nasta_steg_krävs`) — det här
+  // är UX-lagret. Grinden gäller ÖVERGÅNGEN: en redan genomförd aktivitet kan
+  // redigeras fritt, annars krävs ett nytt beslut vid varje stavfelsrättning.
+  var TODO_KATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+  function nsHtml(pfx, isK, done, locked){
+    if(locked) return "";
+    var typeOpts=""; for(var i=0;i<AKT_TYPES.length;i++) typeOpts+=opt(AKT_TYPES[i], "Kundmöte");
+    var katOpts='<option value="">— kategori —</option>';
+    for(var k=0;k<TODO_KATS.length;k++) katOpts+=opt(TODO_KATS[k], "");
+    return '<div class="af-ns" data-nswrap="1" style="'+((isK&&done)?"":"display:none")+'">'+
+      '<label class="el">Nästa steg *</label>'+
+      '<div class="af-nsbtns">'+
+        '<button type="button" class="af-nsbtn" data-ns="aktivitet">📅 Boka ny aktivitet</button>'+
+        '<button type="button" class="af-nsbtn" data-ns="todo">✓ Skapa att-göra</button>'+
+        '<button type="button" class="af-nsbtn" data-ns="avslutat">⏹ Avsluta spåret</button>'+
+      '</div>'+
+      '<div class="af-nsbody">'+
+        '<div class="af-nsform" data-nsform="aktivitet" style="display:none"><div class="erow">'+
+          '<div><label class="el">Typ</label><select class="ein" data-nf="a_typ">'+typeOpts+'</select></div>'+
+          '<div><label class="el">Datum *</label><input type="date" class="ein" data-nf="a_datum"></div>'+
+        '</div><div><label class="el">Beskrivning</label><textarea class="ein" data-nf="a_besk" rows="2"></textarea></div></div>'+
+        '<div class="af-nsform" data-nsform="todo" style="display:none">'+
+          '<div><label class="el">Titel *</label><input class="ein" data-nf="t_titel" placeholder="Vad ska göras?"></div>'+
+          '<div class="erow"><div><label class="el">Klart senast</label><input type="date" class="ein" data-nf="t_slut"></div>'+
+          '<div><label class="el">Kategori</label><select class="ein" data-nf="t_kat">'+katOpts+'</select></div></div></div>'+
+        '<div class="af-nsform" data-nsform="avslutat" style="display:none">'+
+          '<div class="ecur">Inget mer planeras på det här spåret.</div></div>'+
+      '</div>'+
+      '<div class="ecur af-nsmsg">Välj hur du går vidare innan du sparar.</div>'+
+    '</div>';
+  }
+  function nsSelect(wrap, val){
+    wrap.querySelectorAll(".af-nsbtn").forEach(function(b){
+      if(b.getAttribute("data-ns")===val) b.classList.add("on"); else b.classList.remove("on"); });
+    wrap.querySelectorAll("[data-nsform]").forEach(function(f){
+      f.style.display=(f.getAttribute("data-nsform")===val)?"":"none"; });
+    var m=wrap.querySelector(".af-nsmsg"); if(m){ m.textContent=""; m.classList.remove("err"); }
+  }
+  function nsMsg(box, txt, err){
+    var m=box.querySelector(".af-nsmsg"); if(!m) return;
+    m.textContent=txt||""; if(err) m.classList.add("err"); else m.classList.remove("err");
+  }
+  // {steg, follow} eller {error}
+  function nsResolve(box){
+    var wrap=box.querySelector("[data-nswrap]");
+    if(!wrap || wrap.style.display==="none") return { steg:"" };
+    var b=wrap.querySelector(".af-nsbtn.on"), v=b?b.getAttribute("data-ns"):"";
+    if(!v) return { error:"Välj ett nästa steg: boka aktivitet, skapa att-göra eller avsluta." };
+    var g=function(k){ var e=wrap.querySelector('[data-nf="'+k+'"]'); return e?String(e.value||"").trim():""; };
+    if(v==="aktivitet"){
+      if(!g("a_datum")) return { error:"Ange datum för den nya aktiviteten." };
+      return { steg:v, follow:{ kind:"aktivitet", activity_type:g("a_typ")||"Kundmöte", motesdatum:g("a_datum"), beskrivning:g("a_besk") } };
+    }
+    if(v==="todo"){
+      if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
+      return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), sluttid:g("t_slut"), kategori:g("t_kat") } };
+    }
+    return { steg:"avslutat" };
+  }
+  // ⚠️ Uppföljaren skapas FÖRE aktiviteten sparas — faller den sparas ingenting.
+  // Annars står mötet som genomfört med nasta_steg="aktivitet" utan att någon
+  // aktivitet finns, alltså en lögn i datan.
+  function nsCreateFollow(follow, companyId, dealId){
+    if(!follow) return Promise.resolve({ ok:true });
+    var url, payload;
+    if(follow.kind==="aktivitet"){
+      url="/admin/affar/aktivitet/create";
+      payload={ activity_type:follow.activity_type, beskrivning:follow.beskrivning, motesdatum:follow.motesdatum,
+                genomfort:false, company_id:companyId||"", deal_id:dealId||"", by_user:cfg("current_user") };
+    } else {
+      url="/admin/affar/todo/create";
+      payload={ titel:follow.titel, sluttid:follow.sluttid, kategori:follow.kategori, status:"Pågående",
+                company_id:companyId||"", deal_id:dealId||"", user_id:cfg("current_user") };
+    }
+    return fetch(HOST+url,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},
+      body:JSON.stringify(payload)}).then(function(r){ return r.json(); });
+  }
   function findRow(id){ for(var i=0;i<STATE.listRows.length;i++){ if(STATE.listRows[i].id===id) return STATE.listRows[i]; } return null; }
 
   function aktEditHtml(r){
@@ -591,6 +680,7 @@
         '<div class="af-k-only" style="'+kStyle+'"><label class="el">Status</label><label class="chk"><input type="checkbox" class="af-a-done"'+(done?" checked":"")+'> Genomfört</label></div>'+
       '</div>'+
       '<div class="af-note-wrap" style="'+((isK&&done)?"":"display:none")+'"><label class="el">Mötesanteckning</label><textarea class="ein af-a-note" rows="4">'+esc(r.motesanteckning||"")+'</textarea></div>'+
+      nsHtml("a", isK, done, done)+
       '<div class="eact"><button class="ebtn af-a-save" data-akt-id="'+esc(r.id)+'">Spara</button><span class="af-a-msg ecur"></span></div>'+
       '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:2px">'+kopplaWidgetHtml("aktivitet","",r.id,r.affar_id)+
         createDealWidgetHtml("aktivitet", r.id, { titel:(r.company||(r.beskrivning?r.beskrivning.slice(0,60):"")||""), company_id:r.company_id, company_name:r.company })+'</div>'+
@@ -640,8 +730,11 @@
     box.querySelectorAll(".af-k-only").forEach(function(x){ x.style.display=isK?"":"none"; });
     var nw=box.querySelector(".af-note-wrap");
     if(nw){ var done=box.querySelector(".af-a-done"); nw.style.display=(isK&&done&&done.checked)?"":"none"; }
+    var ns=box.querySelector("[data-nswrap]");
+    if(ns){ var d2=box.querySelector(".af-a-done"); ns.style.display=(isK&&d2&&d2.checked)?"":"none"; }
   }
-  function toggleNote(chk){ var box=chk.closest(".edit"); if(!box) return; var nw=box.querySelector(".af-note-wrap"); if(nw){ nw.style.display=chk.checked?"":"none"; } }
+  function toggleNote(chk){ var box=chk.closest(".edit"); if(!box) return; var nw=box.querySelector(".af-note-wrap"); if(nw){ nw.style.display=chk.checked?"":"none"; }
+    var ns=box.querySelector("[data-nswrap]"); if(ns){ ns.style.display=chk.checked?"":"none"; } }
 
   function positionSugg(box, anchor){
     if(!anchor||!box) return;
@@ -766,12 +859,23 @@
       var done=box.querySelector(".af-a-done").checked; payload.genomfort=done;
       if(done){ payload.motesanteckning=box.querySelector(".af-a-note").value; }
     }
-    var msg=box.querySelector(".af-a-msg"); btn.disabled=true; msg.textContent="Sparar…";
-    fetch(HOST+"/admin/affar/aktivitet/"+encodeURIComponent(id)+"/patch",{
-      method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)
-    }).then(function(r){ return r.json(); }).then(function(j){
+    var msg=box.querySelector(".af-a-msg");
+    var ns=nsResolve(box);
+    if(ns.error){ nsMsg(box, ns.error, true); return; }
+    if(ns.steg) payload.nasta_steg=ns.steg;
+    var row=findRow(id);
+    btn.disabled=true; msg.textContent="Sparar…";
+    nsCreateFollow(ns.follow, row&&row.company_id, row&&row.affar_id).then(function(fj){
+      if(!fj||!fj.ok){ btn.disabled=false; msg.textContent="";
+        nsMsg(box, "✗ Kunde inte skapa uppföljningen: "+((fj&&(fj.hint||fj.error))||"fel")+" — aktiviteten sparades INTE.", true); return null; }
+      return fetch(HOST+"/admin/affar/aktivitet/"+encodeURIComponent(id)+"/patch",{
+        method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)
+      }).then(function(r){ return r.json(); });
+    }).then(function(j){
+      if(j===null) return;
       btn.disabled=false;
-      if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
+      if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
+      if(j.nasta_steg_field_missing) nsMsg(box, "⚠ Sparat — men fältet aktivitet_nasta_steg saknas på activitet_crm i Bubble, så valet lagrades inte.", true);
       replaceRow(id, j.row);
     }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
@@ -1206,6 +1310,7 @@
         '<div class="af-na-konly" style="display:none"><label class="el">Status</label><label class="chk"><input type="checkbox" class="af-na-done"> Genomfört</label></div>'+
       '</div>'+
       '<div class="af-na-notewrap" style="display:none"><label class="el">Mötesanteckning</label><textarea class="ein af-na-note" rows="3"></textarea></div>'+
+      nsHtml("na", false, false, false)+
       '<div class="erow">'+
         '<div class="egrow"><label class="el">Koppla företag</label><input class="ein af-na-co-search" placeholder="Sök företag…" autocomplete="off"><input type="hidden" class="af-na-co-id" value="'+esc(pref.company_id||"")+'"><div class="ecur af-na-co-cur">'+coCur+'</div><div class="sugg af-na-co-sugg"></div></div>'+
         '<div class="egrow"><label class="el">Koppla affär</label><input class="ein af-na-deal-search" placeholder="Sök affär…" autocomplete="off"><input type="hidden" class="af-na-deal-id" value="'+esc(pref.deal_id||"")+'"><div class="ecur af-na-deal-cur">'+dCur+'</div><div class="sugg af-na-deal-sugg"></div></div>'+
@@ -1248,7 +1353,8 @@
     '</div><div class="card-actions-panel"></div>';
   }
   // konditionell Kundmöte i aktivitet-create
-  function toggleNaCond(sel){ var box=sel.closest(".af-na"); if(!box) return; var isK=(sel.value==="Kundmöte"); box.querySelectorAll(".af-na-konly").forEach(function(x){ x.style.display=isK?"":"none"; }); var nw=box.querySelector(".af-na-notewrap"); if(nw){ var d=box.querySelector(".af-na-done"); nw.style.display=(isK&&d&&d.checked)?"":"none"; } }
+  function toggleNaCond(sel){ var box=sel.closest(".af-na"); if(!box) return; var isK=(sel.value==="Kundmöte"); box.querySelectorAll(".af-na-konly").forEach(function(x){ x.style.display=isK?"":"none"; }); var nw=box.querySelector(".af-na-notewrap"); if(nw){ var d=box.querySelector(".af-na-done"); nw.style.display=(isK&&d&&d.checked)?"":"none"; }
+    var ns=box.querySelector("[data-nswrap]"); if(ns){ var d3=box.querySelector(".af-na-done"); ns.style.display=(isK&&d3&&d3.checked)?"":"none"; } }
   function toggleNaNote(chk){ var box=chk.closest(".af-na"); if(!box) return; var nw=box.querySelector(".af-na-notewrap"); var sel=box.querySelector(".af-na-type"); if(nw){ nw.style.display=(chk.checked&&sel&&sel.value==="Kundmöte")?"":"none"; } }
   // generiska sök-fält i create-panelerna (återanvänder pickSugg single-set)
   function genFetchSearch(inp, ep, mapFn){
@@ -1296,11 +1402,20 @@
     if(type==="Kundmöte"){ payload.fas=box.querySelector(".af-na-fas").value; payload.motesdatum=box.querySelector(".af-na-date").value; var done=box.querySelector(".af-na-done").checked; payload.genomfort=done; if(done){ payload.motesanteckning=box.querySelector(".af-na-note").value; } }
     var msg=box.querySelector(".af-na-msg");
     if(!payload.beskrivning && !payload.activity_type){ msg.textContent="Fyll i beskrivning eller typ."; return; }
+    var ns=nsResolve(box);
+    if(ns.error){ nsMsg(box, ns.error, true); return; }
+    if(ns.steg) payload.nasta_steg=ns.steg;
     btn.disabled=true; msg.textContent="Skapar…";
-    fetch(HOST+"/admin/affar/aktivitet/create",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
-      .then(function(r){ return r.json(); }).then(function(j){
+    nsCreateFollow(ns.follow, payload.company_id, payload.deal_id).then(function(fj){
+      if(!fj||!fj.ok){ btn.disabled=false; msg.textContent="";
+        nsMsg(box, "✗ Kunde inte skapa uppföljningen: "+((fj&&(fj.hint||fj.error))||"fel")+" — aktiviteten sparades INTE.", true); return null; }
+      return fetch(HOST+"/admin/affar/aktivitet/create",{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(payload)})
+        .then(function(r){ return r.json(); });
+    }).then(function(j){
+        if(j===null) return;
         btn.disabled=false;
         if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
+        if(j.nasta_steg_field_missing) nsMsg(box, "⚠ Sparad — men fältet aktivitet_nasta_steg saknas på activitet_crm i Bubble, så valet lagrades inte.", true);
         msg.textContent="Skapad ✓"; afterCreate(box, payload.deal_id, "Aktivitet");
       }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
@@ -1389,6 +1504,11 @@
     if(t.closest && t.closest(".assign")) return;   // låt tilldela-selecten vara
     var dx=t.closest && t.closest(".dx"); if(dx){ var ch=dx.closest(".dchip"); if(ch&&ch.parentNode){ ch.parentNode.removeChild(ch); } return; }
     var si=t.closest && t.closest(".si"); if(si){ if(si.closest(".ck-sugg")){ pickDocForCard(si); } else { pickSugg(si); } return; }
+    // ⚠️ Nästa steg-knapparna ligger INNE i redigeringsraden. Utan den här grenen
+    // FÖRE rad-hanterarna bubblar klicket upp och kollapsar raden man redigerar
+    // (samma fälla som deal-formuläret på kundkortet).
+    var nsb=t.closest && t.closest("[data-ns]");
+    if(nsb){ var nsw=nsb.closest("[data-nswrap]"); if(nsw) nsSelect(nsw, nsb.getAttribute("data-ns")); return; }
     var sa=t.closest && t.closest(".af-a-save"); if(sa){ saveAkt(sa); return; }
     var sl=t.closest && t.closest(".af-l-save"); if(sl){ saveLead(sl); return; }
     var sd=t.closest && t.closest(".af-d-save"); if(sd){ saveDeal(sd); return; }

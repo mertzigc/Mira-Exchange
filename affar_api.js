@@ -736,6 +736,55 @@ export function registerAffarRoutes(app, deps) {
     }
   });
 
+  // ── NÄSTA STEG (2026-08-21) ────────────────────────────────────────────────
+  // Speglar companies_api (kundkortet) — samma grind måste gälla oavsett var man
+  // markerar mötet genomfört, annars är kravet bara en UI-artighet i ena vyn.
+  // ⚠️ `nasta_steg` är ett NYTT text-fält på activitet_crm. Modulen får RÅ bubblePatch
+  // → okänt fält = 400 på HELA skrivningen. Mjuk nedgradering nedan så att mötet
+  // alltid sparas även om fältet ännu inte finns i Bubble.
+  // ⚠️ TREDJE SKRIVAREN: `salj_api.js` (mötesbokningsvyn) patchar också `genomfört`
+  // och har INGEN grind — se handoff. Kravet är alltså inte heltäckande förrän den
+  // dörren också stängs.
+  const NASTA_STEG = ["aktivitet", "todo", "avslutat"];
+  // ⚠️ FÄLTNAMN + TYP verifierade mot Bubble-editorn 2026-08-21 (Christians skärmdump):
+  // fältet heter **`aktivitet_nasta_steg`** och är ett **Option Set** med samma namn,
+  // värden `aktivitet` · `todo` · `avslutat`. Inte `nasta_steg`, inte text.
+  const NASTA_FIELD = "aktivitet_nasta_steg";
+  // ⚠️ Option sets läses tillbaka som STRÄNG **eller** som `{display}`-OBJEKT. Ett
+  // rakt `String(v)` på objekt-formen ger "[object Object]" — då hade läs-tillbaka-
+  // verifieringen nedan flaggat fältet som saknat fast allt sparats rätt. Samma
+  // klass av fel som fastighetsnamnen 2026-08-21. Se [[reference-bubble-option-sets]].
+  const _osStr = (v) => {
+    if (v == null) return "";
+    if (typeof v === "object") return _str(v.display || v.Display || "");
+    return _str(v);
+  };
+  function _isUnknownField(e, field) {
+    const d = e && e.detail;
+    if (!d || d.status !== 400) return false;
+    const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
+    return body.indexOf("Unrecognized field: " + field) > -1;
+  }
+  async function _writeOptional(fn, payload, field) {
+    if (payload[field] === undefined) return { value: await fn(payload), missing: false };
+    try { return { value: await fn(payload), missing: false }; }
+    catch (e) {
+      if (!_isUnknownField(e, field)) throw e;
+      const q = Object.assign({}, payload); delete q[field];
+      console.warn("[nasta_steg] fältet saknas på activitet_crm i Bubble — aktiviteten sparas utan det");
+      return { value: await fn(q), missing: true };
+    }
+  }
+  function _nastaStegError(p, wasDone) {
+    const nowDone = p["genomfört"] === true;
+    if (!nowDone || wasDone) return null;
+    const v = _str(p[NASTA_FIELD]).trim();
+    if (!v) return { error: "nasta_steg_krävs", allowed: NASTA_STEG,
+                     hint: "En aktivitet som markeras genomförd måste ha ett nästa steg: ny aktivitet, todo eller avslutat." };
+    if (NASTA_STEG.indexOf(v) < 0) return { error: "okänt_nasta_steg", value: v, allowed: NASTA_STEG };
+    return null;
+  }
+
   // ── POST /admin/affar/aktivitet/:id/patch — redigera aktivitet inline ──
   // body {activity_type?, fas?, motesdatum?(YYYY-MM-DD), genomfort?(bool), motesanteckning?, beskrivning?}
   // Skrivnycklar = display-namn (skarpt bekräftat via round-trip 2026-08-07). Patchar bara skickade fält.
@@ -753,11 +802,19 @@ export function registerAffarRoutes(app, deps) {
       if (b.motesdatum      !== undefined) p["Datum_bokning"]  = b.motesdatum ? new Date(_str(b.motesdatum) + "T00:00:00.000Z").toISOString() : null;
       if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
       if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
+      if (b.nasta_steg      !== undefined) p[NASTA_FIELD]      = _str(b.nasta_steg).trim() || null;
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
-      await bubblePatch("activitet_crm", id, p);
+      // Grinden gäller ÖVERGÅNGEN ej→genomförd → läs radens nuvarande läge först.
+      const cur = await bubbleGet("activitet_crm", id).catch(() => null);
+      const gErr = _nastaStegError(p, !!(cur && cur["genomfört"] === true));
+      if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
+      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
+      // Läs tillbaka: null = kunde inte verifieras, inte "saknas".
+      const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
       const row = fresh ? nAktFull(fresh, await companyMap(), await userMap(), await supplierMap(), await dealMap()) : null;
-      return res.json({ ok: true, id, patched: p, row });
+      return res.json({ ok: true, id, patched: p, row,
+                        nasta_steg_field_missing: pw.missing || (verified === false && !!p[NASTA_FIELD]) });
     } catch (e) {
       console.error("[/admin/affar/aktivitet/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
@@ -792,12 +849,18 @@ export function registerAffarRoutes(app, deps) {
       // Utan den saknar mötet ansvarig i mötestratten (salj_api aktRep = writer||Created By).
       const byUser = _str(b.by_user);
       if (byUser) p["writer"] = byUser;
+      if (b.nasta_steg !== undefined) p[NASTA_FIELD] = _str(b.nasta_steg).trim() || null;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
-      const id = await bubbleCreate("activitet_crm", p);
+      const gErr = _nastaStegError(p, false);   // nyskapad som genomförd = en övergång
+      if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
+      const cw = await _writeOptional((q) => bubbleCreate("activitet_crm", q), p, NASTA_FIELD);
+      const id = cw.value;
       if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
+      const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
       const row = fresh ? nAktFull(fresh, await companyMap(), await userMap(), await supplierMap(), await dealMap()) : null;
-      return res.json({ ok: true, id, created: p, row });
+      return res.json({ ok: true, id, created: p, row,
+                        nasta_steg_field_missing: cw.missing || (verified === false && !!p[NASTA_FIELD]) });
     } catch (e) {
       console.error("[/admin/affar/aktivitet/create]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
