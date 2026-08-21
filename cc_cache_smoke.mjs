@@ -306,5 +306,101 @@ eq((await fApi.sharedCompanyMap()).has("cc7"), false, "evict: borta ur namn-kart
 eq(fApi.forget("cc7"), false, "evict: andra anropet returnerar false (redan borta)");
 eq(fApi.forget(""), false, "evict: tomt id är no-op");
 
+// ══════════════════════════════════════════════════════════════════════════════
+// VÅRA BOLAG: vilka fakturerar kunden? (2026-08-21)
+// Kartan byggs ur SAMMA faktura-scan som omsättningen. Testet kör den RIKTIGA
+// koden ur index.js mot fakturafixturer — det är enda sättet att bevisa
+// (a) att fältet heter `connection_id` på FortnoxInvoice (FortnoxOrder/Offer
+//     använder `connection` — fel av de två ger tyst noll, inte fel), och
+// (b) att Group registreras FÖRE group-hoppet (annars försvinner Group-badgen
+//     tyst medan omsättningen ser helt korrekt ut).
+// ══════════════════════════════════════════════════════════════════════════════
+// ⚠️ Saknas blocket i index.js (t.ex. under ett mutationstest) ska sviten FALLA
+// begripligt, inte kasta ett exception som dödar de andra 60 assertionerna.
+let revSrc = null;
+try {
+  revSrc = slice(
+    "// ── Delad omsättnings-cache",
+    "function sharedCompanyBolagMapWarm() {\n  const c = _ccRevCache;\n  return c.bolag || null;\n}",
+    "omsättnings/bolags-blocket"
+  );
+} catch (e) {
+  ok(false, "bolag: hittade inte bolags-blocket i index.js — " + e.message);
+}
+if (revSrc) {
+const GROUP_ID = "1771579485842x995491391876972200";
+const HK_ID    = "1771579481117x119544302020443410";
+const FE_ID    = "1771579463578x385222043661358460";
+const STAFF_ID = "1771579472595x998707043537409700";
+const CONN_NAMES = { [FE_ID]: "Food & Event", [STAFF_ID]: "Staff", [GROUP_ID]: "Group", [HK_ID]: "Housekeeping" };
+
+let INVOICES = [];
+const revFactory = new Function(
+  "bubbleFindAll", "_ccRef", "GROUP_CONNECTION_ID", "TENGELLA_CONNECTION_ID", "CONNECTION_NAMES",
+  `${revSrc}
+   return { load: _loadCompanyRevenue, bolagWarm: sharedCompanyBolagMapWarm, revWarm: sharedCompanyRevenueMapWarm,
+            cache: () => _ccRevCache, bolagName: _bolagName };`
+);
+const D = (s) => s;   // fakturadatum som ISO-sträng
+function mkRev(tengellaId = HK_ID) {
+  return revFactory(
+    async () => INVOICES,
+    (v) => (v == null ? null : (typeof v === "string" ? v : (v._id || null))),
+    GROUP_ID, tengellaId, CONN_NAMES
+  );
+}
+
+const NOW = Date.now();
+const daysAgo = (n) => new Date(NOW - n * 86400000).toISOString();
+INVOICES = [
+  // cc1: fakturerad av Staff (nyligen) + F&E (nyligen) + Group (nyligen)
+  { _id: "i1", connection_id: STAFF_ID, linked_company: "cc1", ft_invoice_date: daysAgo(10),  ft_net: 1000 },
+  { _id: "i2", connection_id: FE_ID,    linked_company: "cc1", ft_invoice_date: daysAgo(40),  ft_net: 500 },
+  { _id: "i3", connection_id: GROUP_ID, linked_company: "cc1", ft_invoice_date: daysAgo(5),   ft_net: 9999 },
+  // cc2: Housekeeping för LÄNGE sedan + en makulerad färsk Staff-faktura
+  { _id: "i4", connection_id: HK_ID,    linked_company: "cc2", ft_invoice_date: daysAgo(700), ft_net: 300 },
+  { _id: "i5", connection_id: STAFF_ID, linked_company: "cc2", ft_invoice_date: daysAgo(3),   ft_net: 700, ft_cancelled: "ja" },
+  // cc3: två Staff-fakturor → senaste datumet ska vinna
+  { _id: "i6", connection_id: STAFF_ID, linked_company: "cc3", ft_invoice_date: daysAgo(200), ft_net: 100 },
+  { _id: "i7", connection_id: STAFF_ID, linked_company: "cc3", ft_invoice_date: daysAgo(20),  ft_net: 200 },
+  // utan linked_company → ska ignoreras helt
+  { _id: "i8", connection_id: FE_ID,    linked_company: null,  ft_invoice_date: daysAgo(1),   ft_net: 50 },
+];
+
+const R = mkRev();
+await R.load();
+const BM = R.bolagWarm();
+ok(!!BM, "bolag: kartan byggs i samma svep som omsättningen");
+eq(Object.keys(BM.get("cc1")).sort().join("|"), "Food & Event|Group|Staff",
+   "bolag: cc1 märks av Staff + F&E + GROUP (Group räknas MED här, till skillnad från omsättningen)");
+// Omsättningen ska vara OFÖRÄNDRAD: bara Staff (1000) + F&E (500) — Group (9999) exkluderas.
+const cc1Rev = R.revWarm().get("cc1");
+eq(Object.values(cc1Rev).reduce((a, b) => a + b, 0), 1500,
+   "bolag: Group-fakturan (9999) räknas ALDRIG in i omsättningen — bara Staff+F&E summeras");
+eq(BM.get("cc2") && Object.keys(BM.get("cc2")).join("|"), "Housekeeping",
+   "bolag: makulerad faktura märker INTE bolaget (cc2 får bara Housekeeping)");
+ok(BM.get("cc2").Housekeeping < NOW - 600 * 86400000,
+   "bolag: cc2:s Housekeeping-datum är gammalt (fönstret läggs på i companies_api, inte här)");
+eq(new Date(BM.get("cc3").Staff).toISOString().slice(0, 10), daysAgo(20).slice(0, 10),
+   "bolag: SENASTE fakturadatumet vinner när ett bolag fakturerat flera gånger");
+eq(BM.has("noCompany"), false, "bolag: fakturor utan linked_company ignoreras");
+
+// ⚠️ Fältnamnet: byter man till `connection` (som FortnoxOrder/Offer använder)
+// blir varje bolag okänt — vilket är exakt den tysta nollan vi vaktar mot.
+INVOICES = [{ _id: "x1", connection: STAFF_ID, linked_company: "ccX", ft_invoice_date: daysAgo(5), ft_net: 10 }];
+const R2 = mkRev(); await R2.load();
+eq(R2.bolagWarm().has("ccX"), false,
+   "bolag: en faktura utan `connection_id` märker inget bolag (fältnamnet är connection_id, inte connection)");
+
+// TENGELLA_CONNECTION_ID är env-överskrivbar men CONNECTION_NAMES är hårdkodad →
+// _bolagName måste matcha env-värdet FÖRE tabellen, annars tappas Housekeeping.
+const R3 = mkRev("1799999999999x000000000000000001");
+eq(R3.bolagName("1799999999999x000000000000000001"), "Housekeeping",
+   "bolag: env-överskriven TENGELLA-connection mappas ändå till Housekeeping");
+eq(R3.bolagName("1712345678901x999999999999999999").slice(0, 11), "Connection ",
+   "bolag: okänd anslutning får ett synligt fallback-namn (döljs aldrig)");
+
+}
+
 console.log(fail ? `\n❌ pass=${pass} fail=${fail}` : `\n✅ ALLA GRÖNA  pass=${pass} fail=0`);
 process.exit(fail ? 1 : 0);

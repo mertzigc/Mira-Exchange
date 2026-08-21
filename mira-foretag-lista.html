@@ -181,6 +181,18 @@
   .fk-pill.ok{background:rgba(46,204,113,.16);color:#5fe0a0;}
   .fk-pill.prospect{background:rgba(223,111,57,.16);color:#f0a070;}
   .fk-pill.plain{background:var(--fl-chip);color:var(--fl-mut);}
+  /* Vara bolag som fakturerar kunden. Aktiv = fylld, tidigare = nedtonad kontur. */
+  .fk-bolag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;
+     vertical-align:middle;margin-left:8px;white-space:nowrap;border:1px solid transparent;}
+  .fk-bolag.b-staff{background:rgba(90,160,255,.18);color:#8fbcff;}
+  .fk-bolag.b-fe{background:rgba(223,111,57,.18);color:#f0a070;}
+  .fk-bolag.b-hk{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fk-bolag.b-group{background:rgba(170,130,255,.18);color:#c0a6ff;}
+  .fk-bolag.b-other{background:var(--fl-chip);color:var(--fl-mut);}
+  .fk-bolag.past{background:transparent;border-color:var(--fl-line);color:var(--fl-mut);font-weight:600;}
+  .fk-bolagrow{display:flex;flex-wrap:wrap;align-items:center;gap:0;margin-top:8px;}
+  .fk-bolagrow .l{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;margin-right:2px;}
+  .fk-bolagrow .fk-bolag{margin-left:8px;}
   .fk-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0 4px;}
   .fk-stat{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:12px 14px;}
   .fk-stat .l{color:var(--fl-mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
@@ -1902,10 +1914,10 @@
   var SRC_ETIKETT={ fortnox:"Fortnox", mira:"Mira", tengella:"Tengella (HK)" };
   var STATE={ view:"list", q:"", sort:"name", dir:"asc", page:1, limit:100,
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
-              revenue_ready:true, revTries:0, listDirty:false,
+              revenue_ready:true, bolag_ready:true, revTries:0, listDirty:false,
               touch_ready:true, touchTries:0,
-              f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:""},
-              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
+              f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:"", bolag:""},
+              cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
@@ -1967,6 +1979,9 @@
     h+='<select class="fl-sel" data-flf="potential">'+selOpts(fac.potential||[], STATE.f.potential, "All potential")+'</select>';
     h+='<select class="fl-sel" data-flf="region">'+selOpts(fac.region||[], STATE.f.region, "Alla regioner")+'</select>';
     h+='<select class="fl-sel" data-flf="fastighet">'+selOpts(m.fastigheter||[], STATE.f.fastighet, "Alla fastigheter")+'</select>';
+    // Vilket av VÅRA bolag som fakturerar kunden (senaste 12 mån). Värdena kommer ur
+    // faktura-datan via meta.bolag — de fyra är alltid med, även medan svepet värms.
+    h+='<select class="fl-sel" data-flf="bolag">'+selOpts(m.bolag||[], STATE.f.bolag, "Alla våra bolag")+'</select>';
     h+='<button class="fl-clear" data-fl="clear">Rensa</button>';
     // Sorteringsväxlare: fristående från kolumnrubrikerna och oberoende av filtren
     // (servern sorterar EFTER filtreringen, så växeln gäller alltid hela träffmängden).
@@ -2116,8 +2131,15 @@
     var more="";
     if(STATE.rows.length<STATE.total) more='<div class="fl-more"><button data-fl="more">Visa fler ('+STATE.rows.length+'/'+STATE.total+')</button></div>';
     var banner=STATE.revenue_ready?"":'<div class="fl-revbanner"><span class="fl-dot"></span>Beräknar omsättning ur fakturahistoriken — kolumnerna fylls i om en stund.</div>';
+    // ⚠️ TOM DATA ÄR ALDRIG ETT SVAR. Bolagsfiltret läser en cache som värms lat —
+    // är den kall ger filtret 0 rader, och "Inga företag matchar" hade lästs som
+    // "ingen kund faktureras av det bolaget". Säg i stället att det beräknas; SWR
+    // hämtar om när svepet är klart.
+    var emptyMsg=(STATE.f.bolag && !STATE.bolag_ready)
+      ? 'Beräknar vilka bolag som fakturerar — filtret svarar när fakturascanningen är klar.'
+      : 'Inga företag matchar.';
     var html='<div class="fl-wrap"><table class="fl-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+
-             (body||'<tr><td colspan="'+COLS.length+'"><div class="fl-msg">Inga företag matchar.</div></td></tr>')+
+             (body||'<tr><td colspan="'+COLS.length+'"><div class="fl-msg">'+esc(emptyMsg)+'</div></td></tr>')+
              '</tbody></table></div>'+banner+more;
     $("body").innerHTML=html;
     $("count").textContent=STATE.total+" företag";
@@ -2185,6 +2207,7 @@
     if(!j||!j.ok) return false;
     STATE.total=j.total; STATE.pages=j.pages; STATE.year=j.year; STATE.prev=j.prev;
     STATE.revenue_ready=(j.revenue_ready!==false);
+    STATE.bolag_ready=(j.bolag_ready!==false);
     STATE.touch_ready=(j.touch_ready!==false);
     if(j.meta) STATE.meta=j.meta;
     if(append) STATE.rows=STATE.rows.concat(j.rows||[]); else STATE.rows=j.rows||[];
@@ -2264,6 +2287,26 @@
   }
   function statusCls(v){ var lv=String(v||"").toLowerCase(); if(lv.indexOf("aktiv")>-1) return "ok"; if(lv.indexOf("prospekt")>-1) return "prospect"; return "plain"; }
 
+  // ── VÅRA BOLAG (badges på kundkortet) ─────────────────────────────────────
+  // Vilka av Staff / Food & Event / Housekeeping / Group som fakturerar kunden.
+  // Aktiv = faktura senaste 12 mån (servern avgör, se BOLAG_WINDOW_MS). Bolag som
+  // fakturerat tidigare visas nedtonade med senaste fakturadatum i title.
+  // ⚠️ `Staff` = anslutningens/bolagets namn. Kategorin heter Service & People.
+  var BOLAG_CLS={"Staff":"b-staff","Food & Event":"b-fe","Housekeeping":"b-hk","Group":"b-group"};
+  function bolagBadges(c, ready){
+    // ⚠️ Tom lista + kall cache betyder INTE "ingen fakturerar" — säg det rakt ut.
+    if(!ready) return '<span class="fk-bolag b-other">beräknar bolag…</span>';
+    var all=c.bolag_all||[];
+    if(!all.length) return '<span class="fk-bolag b-other" title="Ingen faktura kopplad till kunden">Ingen fakturering</span>';
+    var h="";
+    for(var i=0;i<all.length;i++){
+      var b=all[i], cls=BOLAG_CLS[b.name]||"b-other";
+      var t=b.active?("Fakturerar · senaste faktura "+b.last):("Fakturerade senast "+b.last+" (utanför 12-månadersfönstret)");
+      h+='<span class="fk-bolag '+cls+(b.active?"":" past")+'" title="'+esc(t)+'">'+esc(b.name)+'</span>';
+    }
+    return h;
+  }
+
   function cardHero(){
     var c=STATE.card.company, k=STATE.card.kpi, ready=STATE.card.revenue_ready;
     var logo=c.logotyp
@@ -2278,6 +2321,7 @@
     var omsNow=ready?numc(k.omsattning_now):'<span class="fk-calc">beräknar…</span>';
     return '<div class="fk-hero"><div class="fk-herotop">'+
       '<div class="fk-hident"><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+'</div>'+
+      '<div class="fk-bolagrow"><span class="l">Faktureras av</span>'+bolagBadges(c, ready)+'</div>'+
       '<div class="fk-hmeta">'+meta.map(function(m){return '<span>'+m+'</span>';}).join("")+'</div></div>'+
       logo+'</div>'+
       '<div class="fk-strip">'+
@@ -2299,7 +2343,9 @@
   function cardKunddataRead(){
     var c=STATE.card.company, rows="";
     for(var i=0;i<FIELDS.length;i++){ var fd=FIELDS[i]; rows+='<div class="k">'+esc(fd.lbl)+'</div><div class="val">'+cDispVal(c,fd)+'</div>'; }
-    if(c.fastigheter&&c.fastigheter.length) rows+='<div class="k">Fastighet</div><div class="val">'+c.fastigheter.map(esc).join(", ")+'</div>';
+    // Visas ALLTID, även tom — annars går det inte att se att fältet finns och kan fyllas.
+    rows+='<div class="k">Fastighet</div><div class="val">'+
+      ((c.fastigheter&&c.fastigheter.length)?c.fastigheter.map(esc).join(", "):"—")+'</div>';
     return '<div class="fk-panel"><div class="fk-ph"><h3>Kunddata</h3><button class="fk-editbtn" data-fk="edit">✎ Redigera</button></div>'+
       '<div class="fk-kv">'+rows+'</div>'+
       '<div class="fk-note"><b>Kundinformation</b>'+(c.kundinformation?esc(c.kundinformation):"—")+'</div>'+
@@ -2315,9 +2361,45 @@
     var vals=(m.facets&&m.facets[fd.facet])||[];
     return '<select data-f="'+fd.k+'"><option value="">— tom —</option>'+selOpts(vals,cur,"").replace('<option value=""></option>','')+'</select>';
   }
+  // ── FASTIGHET PÅ KORTET (listfält, samma modell som listans cell) ──────────
+  // ⚠️ Här STAGEAS ändringarna i STATE.cardFast och skickas först vid "Spara" —
+  // till skillnad från listan där varje chip är sin egen PATCH. Skälet: kortets
+  // formulär har en Avbryt-knapp, och en chip som redan skrivits till Bubble hade
+  // inte gått att ångra. Avbryt måste betyda avbryt.
+  // ⚠️ Add/remove får INTE anropa renderCard() — det ritar om hela kortet och
+  // raderar text man skrivit i de andra fälten (samma fälla som deal-formuläret).
+  // Därför punktuppdateras bara fältets egen DOM.
+  function cardFastIds(){
+    if(STATE.cardFast) return STATE.cardFast;
+    var c=STATE.card.company;
+    STATE.cardFast=((c&&c.fastighet_ids)||[]).slice();
+    return STATE.cardFast;
+  }
+  function cardFastName(id){
+    var L=(STATE.card&&STATE.card.meta&&STATE.card.meta.fastigheter)||[];
+    for(var i=0;i<L.length;i++) if(String(L[i].id)===String(id)) return L[i].name;
+    return id;
+  }
+  function cardFastInner(){
+    var ids=cardFastIds(), h='<div class="fl-lst">';
+    for(var i=0;i<ids.length;i++){
+      h+='<span class="fl-chip">'+esc(cardFastName(ids[i]))+
+         '<span class="fl-chiprm" data-fkfrm="'+esc(ids[i])+'" title="Ta bort">×</span></span>';
+    }
+    var L=(STATE.card&&STATE.card.meta&&STATE.card.meta.fastigheter)||[];
+    var opts='<option value="">+ lägg till fastighet…</option>';
+    for(var j=0;j<L.length;j++){ if(ids.indexOf(L[j].id)>-1) continue; opts+='<option value="'+esc(L[j].id)+'">'+esc(L[j].name)+'</option>'; }
+    h+='<select class="fl-ec" data-fkfadd="1">'+opts+'</select>';
+    if(!ids.length) h+='<span class="fl-empty" style="font-style:italic;color:var(--fl-mut)">ingen fastighet</span>';
+    return h+'</div>';
+  }
+  function redrawCardFast(){
+    var box=root.querySelector("[data-fkfast]"); if(box) box.innerHTML=cardFastInner();
+  }
   function cardKunddataEdit(){
     var c=STATE.card.company, flds="";
     for(var i=0;i<FIELDS.length;i++){ var fd=FIELDS[i]; flds+='<div class="fk-fld"><label>'+esc(fd.lbl)+'</label>'+cardCtrl(fd,c)+'</div>'; }
+    flds+='<div class="fk-fld full"><label>Fastighet</label><div data-fkfast="1">'+cardFastInner()+'</div></div>';
     flds+='<div class="fk-fld full"><label>Kundinformation</label><textarea data-f="kundinformation">'+esc(c.kundinformation||"")+'</textarea></div>';
     flds+='<div class="fk-fld full"><label>Fakturainformation</label><textarea data-f="fakturainformation">'+esc(c.fakturainformation||"")+'</textarea></div>';
     flds+='<div class="fk-formbtns"><button class="save" data-fk="save">Spara</button><button class="cancel" data-fk="canceledit">Avbryt</button><span class="msg" data-fk="savemsg"></span></div>';
@@ -3243,7 +3325,7 @@
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
-    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
+    STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardFast=null; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
@@ -3269,13 +3351,18 @@
       if(key==="ansvarig") orig=c.ansvarig_id||""; else if(key==="group") orig=c.group_id||""; else orig=c[key]==null?"":String(c[key]);
       if(String(val)!==String(orig)) fields[key]=val;
     }
+    // Fastighet är en lista och ligger inte i [data-f] — jämför mot originalet.
+    if(STATE.cardFast){
+      var origF=(c.fastighet_ids||[]).join(",");
+      if(STATE.cardFast.join(",")!==origF) fields.fastighet=STATE.cardFast.slice();
+    }
     var msg=root.querySelector('[data-fk="savemsg"]');
-    if(!Object.keys(fields).length){ STATE.cardEditing=false; renderCard(); return; }
+    if(!Object.keys(fields).length){ STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }
     msg.textContent="Sparar…"; msg.className="msg";
     apiPatch(STATE.cardId, fields).then(function(j){
       if(!j||!j.ok){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; return; }
       STATE.listDirty=true;
-      api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card").then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); } STATE.cardEditing=false; renderCard(); });
+      api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card").then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); } STATE.cardEditing=false; STATE.cardFast=null; renderCard(); });
     }).catch(function(){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; });
   }
 
@@ -3286,9 +3373,16 @@
     if(STATE.view==="card"){
       if(t.closest && t.closest('[data-fk="back"]')){ closeCard(); return; }
       var ctab=t.closest?t.closest('[data-fk="tab"]'):null;
-      if(ctab){ STATE.cardTab=ctab.getAttribute("data-t"); STATE.cardEditing=false; renderCard(); return; }
-      if(t.closest && t.closest('[data-fk="edit"]')){ STATE.cardEditing=true; renderCard(); return; }
-      if(t.closest && t.closest('[data-fk="canceledit"]')){ STATE.cardEditing=false; renderCard(); return; }
+      if(ctab){ STATE.cardTab=ctab.getAttribute("data-t"); STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }
+      if(t.closest && t.closest('[data-fk="edit"]')){ STATE.cardEditing=true; STATE.cardFast=null; renderCard(); return; }
+      // Avbryt måste betyda avbryt — därför kastas den stageade fastighetslistan.
+      if(t.closest && t.closest('[data-fk="canceledit"]')){ STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }
+      // Chip-× i kortets fastighetsfält: punktuppdatera bara fältet (ALDRIG renderCard,
+      // som hade raderat text i de andra formulärfälten).
+      var kfrm=t.closest?t.closest("[data-fkfrm]"):null;
+      if(kfrm){ var gone=kfrm.getAttribute("data-fkfrm"), cur=cardFastIds(), keep=[];
+        for(var z=0;z<cur.length;z++) if(String(cur[z])!==String(gone)) keep.push(cur[z]);
+        STATE.cardFast=keep; redrawCardFast(); return; }
       if(t.closest && t.closest('[data-fk="save"]')){ cardSave(); return; }
       var pw=t.closest?t.closest('[data-fk="pw"]'):null;
       if(pw){ sendPw(pw.getAttribute("data-cid"), pw); return; }
@@ -3407,6 +3501,11 @@
     if(t.getAttribute && t.getAttribute("data-fk")==="logofile"){ onLogoPick(t); return; }
     var hf=t.getAttribute?t.getAttribute("data-hf"):null;
     if(hf==="type"||hf==="done"){ var hb=t.closest(".fk-hedit"); if(hb) toggleHistCond(hb); return; }
+    if(t.getAttribute && t.getAttribute("data-fkfadd")){
+      if(!t.value) return;
+      var kf=cardFastIds().slice(); if(kf.indexOf(t.value)<0) kf.push(t.value);
+      STATE.cardFast=kf; redrawCardFast(); return;
+    }
     if(STATE.view!=="list") return;
     if(t.getAttribute && t.getAttribute("data-fladd")){
       var atd=t.closest('[data-flcell="1"]'); if(!atd) return;

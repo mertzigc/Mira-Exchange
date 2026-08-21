@@ -20514,28 +20514,52 @@ _loadSharedCC().catch(() => {});                                      // prewarm
 // Driver företagslistans Omsättning-kolumner (kan senare driva kundkortets siffror).
 // Företag utan linked_company får inga siffror (by design).
 const CC_REV_TTL = 60 * 60 * 1000;
-let _ccRevCache = { map: null, ts: 0 };
+// ── Vilka av VÅRA bolag fakturerar kunden? ─────────────────────────────────────
+// Härleds ur SAMMA faktura-scan som omsättningen → NOLL nya Bubble-anrop. Kartan är
+// companyId → { [bolagsnamn]: senaste fakturadatum (ms) }; fönstret ("fakturerar idag")
+// läggs på i companies_api, så kartan aldrig behöver byggas om när gränsen ändras.
+//
+// ⚠️ FÄLTNAMN: FortnoxInvoice bär anslutningen i **`connection_id`** — FortnoxOrder och
+// FortnoxOffer bär den i **`connection`** (se invoice_sync.js backfill-tabellen ~1061).
+// Fel av de två ger tyst noll, inte fel. Här läses fakturor → `connection_id`.
+//
+// ⚠️ GROUP: exkluderas ur OMSÄTTNINGEN (som KPI:n) men räknas MED här — frågan
+// "vem fakturerar kunden" är en annan än "vad ska mätas". Därför registreras bolaget
+// FÖRE group-hoppet nedan; flyttas raden ned försvinner Group-badgen tyst.
+function _bolagName(cid) {
+  if (!cid) return "";
+  if (cid === TENGELLA_CONNECTION_ID) return "Housekeeping";   // env-överskrivbar → matcha före tabellen
+  return CONNECTION_NAMES[cid] || ("Connection " + String(cid).slice(-6));
+}
+let _ccRevCache = { map: null, bolag: null, ts: 0 };
 let _ccRevInflight = null;
 async function _loadCompanyRevenue() {
   if (_ccRevInflight) return _ccRevInflight;
   _ccRevInflight = (async () => {
     try {
       const all = await bubbleFindAll("FortnoxInvoice", {});
-      const map = new Map();   // companyId → { [year]: net }
+      const map = new Map();     // companyId → { [year]: net }
+      const bolag = new Map();   // companyId → { [bolagsnamn]: senaste fakturadatum (ms) }
       for (const r of (all || [])) {
         const cid = String(r.connection_id || "");
-        if (cid === GROUP_CONNECTION_ID) continue;                       // exkludera Group (som KPI)
         const cancelled = (r.ft_cancelled === true) || (String(r.ft_cancelled || "").toLowerCase() === "ja");
-        if (cancelled) continue;
+        if (cancelled) continue;                                         // makulerad = ingen fakturering
         const company = _ccRef(r.linked_company); if (!company) continue;
         const t = new Date(r.ft_invoice_date).getTime(); if (!isFinite(t)) continue;
+        // Bolagsmärkningen registreras FÖRE Group-hoppet (se blockkommentaren ovan).
+        const bn = _bolagName(cid);
+        if (bn) {
+          let b = bolag.get(company); if (!b) { b = {}; bolag.set(company, b); }
+          if (!(b[bn] > t)) b[bn] = t;                                   // behåll senaste
+        }
+        if (cid === GROUP_CONNECTION_ID) continue;                       // exkludera Group (som KPI)
         const year = new Date(t).getUTCFullYear();
         const net = Number(r.ft_net) || 0;
         let entry = map.get(company); if (!entry) { entry = {}; map.set(company, entry); }
         entry[year] = (entry[year] || 0) + net;
       }
       for (const entry of map.values()) for (const y in entry) entry[y] = Math.round(entry[y]);
-      _ccRevCache = { map, ts: Date.now() };
+      _ccRevCache = { map, bolag, ts: Date.now() };
       return _ccRevCache;
     } finally { _ccRevInflight = null; }
   })();
@@ -20555,6 +20579,15 @@ function sharedCompanyRevenueMapWarm() {
   if (c.map && (Date.now() - c.ts) < CC_REV_TTL) return c.map;          // färsk
   _loadCompanyRevenue().catch(() => {});                                // kall el. stale → ladda i bg (aldrig await)
   return c.map || null;                                                 // stale→servera, kall→null
+}
+// Bolagsmärkningen rider på SAMMA cache som omsättningen (samma svep) → ingen egen
+// TTL, ingen egen readiness-flagga: är omsättningen varm är bolagen det också.
+// ⚠️ Starta INTE en bg-laddning här — den anropas i samma request som Warm ovan, och
+// två parallella triggers på ett 10k-raders faktura-svep är precis den WU-fällan vi
+// städat bort en gång. Returnera null och låt omsättningsvägen äga uppvärmningen.
+function sharedCompanyBolagMapWarm() {
+  const c = _ccRevCache;
+  return c.bolag || null;
 }
 
 // ── Delad "senast ändrad"-cache: när hände något på företaget SENAST? ────────
@@ -20704,6 +20737,7 @@ const _companiesApi = registerCompaniesRoutes(app, {
   companyFullMap: sharedCompanyFullMap,        // delad förvärmd CC-cache (list-projektion)
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)
   companyRevenueMapWarm: sharedCompanyRevenueMapWarm,  // icke-blockerande: listan väntar aldrig på faktura-scanningen
+  companyBolagMapWarm: sharedCompanyBolagMapWarm,      // vilka av våra bolag som fakturerat kunden (ur samma svep)
   companyTouchMapWarm: sharedCompanyTouchMapWarm,      // "senast ändrad" (aktivitet/person/ärende/lead/affär/todo)
   companyForget: sharedCompanyForget,                   // kasta raderat företag ur cachen (dött id)
   companyPatchEntry: sharedCompanyPatchEntry,  // in-place cache-uppdatering efter inline-edit

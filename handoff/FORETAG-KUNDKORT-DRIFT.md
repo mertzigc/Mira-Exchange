@@ -87,6 +87,75 @@ Filterraden fick **Bransch**, tabellen fick **Region** och **Fastighet**, båda 
 - **Deploy:** `companies_api.js` (Render) + klistra om `mira-foretag-lista.html`.
   Ingen Bubble-ändring, ingen ny bindning.
 
+### Fastighet på kundkortet + "Vilka av VÅRA bolag fakturerar kunden" — BYGGT 2026-08-21, EJ DEPLOYAT
+
+Två saker: (1) fastighetsredigeringen från listan finns nu även på kundkortet,
+(2) ny märkning av vilka av Staff / Food & Event / Housekeeping / Group som
+fakturerar kunden — badges på kortet + filter i listan.
+
+**Fastighet på kortet**
+- Läsvyn visar **alltid** Fastighet-raden (även tom → `—`). Förut doldes den när
+  listan var tom, så det gick inte att se att fältet fanns.
+- Redigeringsformuläret fick ett chips-fält, samma modell som listcellen.
+- **⚠️ Skillnad mot listan: här STAGEAS ändringarna** (`STATE.cardFast`) och skickas
+  först vid Spara. Listan patchar per chip; kortet får inte göra det, för kortet har
+  en **Avbryt**-knapp och en redan skriven chip hade inte gått att ångra. Avbryt måste
+  betyda avbryt. Staging nollställs vid Spara/Avbryt/flikbyte/nytt kort.
+- **⚠️ Chip-ändring anropar ALDRIG `renderCard()`** — bara `redrawCardFast()`, som
+  punktuppdaterar fältets egen DOM. `renderCard()` ritar om hela kortet och hade
+  raderat text man skrivit i de andra formulärfälten (samma fälla som deal-formuläret).
+  Harness-verifierat: text i Web-fältet ligger kvar genom både add och remove.
+
+**Våra bolag (Staff / F&E / Housekeeping / Group)**
+- **Källa: `FortnoxInvoice`, härlett ur SAMMA faktura-scan som omsättningen** →
+  **noll nya Bubble-anrop**. `_loadCompanyRevenue` bygger nu även
+  `bolag`: Map(companyId → { bolagsnamn: senaste fakturadatum }).
+  Getter: `sharedCompanyBolagMapWarm()`.
+- **⚠️ FÄLTNAMN: `FortnoxInvoice.connection_id` — men `FortnoxOrder`/`FortnoxOffer`
+  använder `connection`.** Se backfill-tabellen i `invoice_sync.js` (~1061). Fel av de
+  två ger TYST noll, inte fel. Smoke-testat mot den riktiga koden: en faktura med
+  `connection` i stället för `connection_id` märker inget bolag.
+- **⚠️ GROUP RÄKNAS MED HÄR, men fortsätter exkluderas ur omsättningen.** Frågan "vem
+  fakturerar kunden" är en annan än "vad ska mätas". Bolaget registreras därför
+  **FÖRE** `if (cid === GROUP_CONNECTION_ID) continue` — flyttas raden ned försvinner
+  Group-badgen tyst medan omsättningssiffrorna ser helt korrekta ut. Regressionsvakt
+  i `cc_cache_smoke`: Group-fakturan (9999) får aldrig hamna i omsättningssumman.
+- **⚠️ `TENGELLA_CONNECTION_ID` är env-överskrivbar, `CONNECTION_NAMES` är hårdkodad.**
+  `_bolagName` matchar därför env-värdet FÖRE tabellen — annars tappas Housekeeping
+  tyst om env-varen någonsin ändras. Okänd anslutning får namnet
+  `Connection <6 sista>` och syns i filtret; den döljs aldrig.
+- **Fönstret: rullande 12 mån** (Christians beslut 2026-08-21) = `BOLAG_WINDOW_MS` i
+  companies_api. Kartan bär **datum, inte flaggor**, så gränsen kan ändras på ett ställe
+  utan att något behöver byggas om. Kalenderår valdes bort: då nollställs alla badgar
+  vid årsskiftet och en kund fakturerad i november ser passiv ut i januari.
+- **Kortet:** badge-rad "FAKTURERAS AV" under företagsnamnet, bredvid kundstatus-pillret.
+  Aktiv = fylld färg per bolag; bolag som fakturerat **tidigare** visas som nedtonad
+  kontur med senaste fakturadatum i `title`. Fakturerar ingen: "Ingen fakturering".
+- **Listan:** filter "Alla våra bolag". ⚠️ Bolagsfiltret kan inte ligga i list-loopens
+  continue-kedja — `bolag` finns inte i cache-projektionen utan härleds ur faktura-kartan
+  + fönstret, så det filtreras på den färdiga raden.
+- **⚠️ TOM DATA ÄR ALDRIG ETT SVAR — det farligaste i hela funktionen.** Faktura-cachen
+  värms LAT. Är den kall ger bolagsfiltret 0 rader, och "Inga företag matchar" hade lästs
+  som "ingen kund faktureras av Staff". Därför bär svaret **`bolag_ready`** (= samma
+  readiness som omsättningen, samma svep) och frontenden säger "Beräknar vilka bolag som
+  fakturerar…" i stället. Samma sak på kortet: badgen visar "beräknar bolag…", aldrig
+  "Ingen fakturering". Filtrets värdelista innehåller alltid de fyra bolagen, även kall.
+- **Ingen Bolag-kolumn i listan** (raden bär `bolag`/`bolag_all` redan — kolumnen är
+  ~5 rader om den önskas). Filter + kortbadges var det som beställdes.
+- **Verifierat:** companies_smoke **250/250** (+24) · cc_cache_smoke **71/71** (+10,
+  kör RIKTIG index.js-källa mot fakturafixturer) · **mutationstestat: 23 faller** mot
+  `9a6f514`. Samtliga 20 sviter gröna. Browser-harness: filter (Staff→1 träff,
+  HK→0 eftersom 700 dagar sedan), kall karta→"Beräknar…", kortbadges för alla tre
+  fallen (aktiv / tidigare / ingen), och fastighets-staging (0 PATCH under redigering,
+  Avbryt återställer, Spara skickar exakt en PATCH med hela listan, text i andra fält
+  överlever). Inga konsolfel.
+- **⚠️ Testlärdom (igen):** första versionen av bolagstesterna **kraschade** mot gammal
+  kod i st.f. att falla, och dolde då 20 andra fel. Assertions mot fält som kan saknas
+  måste skrivas defensivt (`(x || [])`). Samma sak i cc_cache: `slice()` som inte hittar
+  blocket rapporteras nu som ett FEL i st.f. att kasta och döda hela sviten.
+- **Deploy:** `index.js` + `companies_api.js` (Render) + klistra om
+  `mira-foretag-lista.html`. Ingen Bubble-ändring, ingen ny bindning.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

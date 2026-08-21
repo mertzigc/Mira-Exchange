@@ -25,7 +25,7 @@ export function registerCompaniesRoutes(app, deps) {
   const {
     bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleCreate, bubbleDelete,
     bubbleUploadFile, photoUpload,
-    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyTouchMapWarm, companyPatchEntry, companyForget,
+    companyFullMap, companyRevenueMap, companyRevenueMapWarm, companyTouchMapWarm, companyBolagMapWarm, companyPatchEntry, companyForget,
     assignTempPassword, createUserAccount, appBaseUrl, pwResetTemplateId, welcomeTemplateId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
     // ⚠️ Behövs för att skilja HK från F&E i FortnoxOrder. Sedan §9-cutovern
@@ -170,6 +170,49 @@ export function registerCompaniesRoutes(app, deps) {
               "Offentlig verksamhet", "Konsulttjänster", "Hotell", "Övriga tjänster"],
   };
 
+  // ── VÅRA BOLAG: vilka fakturerar kunden? ────────────────────────────────────
+  // Kartan (companyId → {bolag: senaste fakturadatum}) byggs i index.js ur SAMMA
+  // faktura-scan som omsättningen → noll extra WU. Här läggs bara FÖNSTRET på.
+  //
+  // ⚠️ "Fakturerar idag" = minst en icke-makulerad faktura de senaste 12 månaderna
+  // (Christians beslut 2026-08-21). Rullande fönster, inte kalenderår — annars
+  // nollställs alla badgar vid varje årsskifte och en kund fakturerad i november
+  // ser passiv ut i januari. Ändras gränsen räcker det att ändra här; kartan bär
+  // datum, inte flaggor.
+  // ⚠️ `Staff` är ANSLUTNINGENS namn (bolaget Carotte Staff AB), inte kategorin —
+  // kategorin heter `Service & People`. Blanda aldrig ihop dem, se
+  // [[reference-bubble-option-sets]] "namnkrocken".
+  const BOLAG_ORDER = ["Staff", "Food & Event", "Housekeeping", "Group"];
+  const BOLAG_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+  function _bolagSort(a, b) {
+    const ia = BOLAG_ORDER.indexOf(a), ib = BOLAG_ORDER.indexOf(b);
+    // Okända anslutningar (t.ex. en ny Fortnox-connection) sorteras sist men
+    // döljs ALDRIG — annars försvinner ny fakturering tyst ur både filter och kort.
+    if (ia < 0 && ib < 0) return a.localeCompare(b, "sv");
+    if (ia < 0) return 1;
+    if (ib < 0) return -1;
+    return ia - ib;
+  }
+  // → { active: ["Staff", …], all: [{ name, last: "YYYY-MM-DD", active: bool }, …] }
+  function _bolagOf(entry, nowTs) {
+    if (!entry) return { active: [], all: [] };
+    const names = Object.keys(entry).sort(_bolagSort);
+    const all = names.map((n) => {
+      const ts = entry[n];
+      return { name: n, last: ts ? new Date(ts).toISOString().slice(0, 10) : "", active: !!ts && (nowTs - ts) <= BOLAG_WINDOW_MS };
+    });
+    return { active: all.filter((x) => x.active).map((x) => x.name), all };
+  }
+
+  // Filtrets värdelista: de fyra bolagen ALLTID (så filtret inte är tomt medan
+  // faktura-cachen värms) unionat med vad som faktiskt förekommer — en ny
+  // Fortnox-anslutning dyker då upp i stället för att tyst saknas.
+  function _bolagList(bolagMap) {
+    const set = new Set(BOLAG_ORDER);
+    if (bolagMap) for (const e of bolagMap.values()) for (const k in e) set.add(k);
+    return [...set].sort(_bolagSort);
+  }
+
   function _facets(full) {
     const sets = {}; for (const f of OPTIONSET_FIELDS) sets[f] = new Set();
     for (const c of full.values()) for (const f of OPTIONSET_FIELDS) { const v = c[f]; if (v) sets[f].add(v); }
@@ -214,6 +257,7 @@ export function registerCompaniesRoutes(app, deps) {
   // ── Bygg en list-rad ur cache-projektionen + resolvade namn + omsättning ──
   function _rowOf(c, ctx, yearNow, yearPrev) {
     const rev = ctx.rev.get(c.id) || {};
+    const bol = _bolagOf(ctx.bolag.get(c.id), ctx.nowTs);
     return {
       id: c.id,
       name: c.name,
@@ -234,6 +278,10 @@ export function registerCompaniesRoutes(app, deps) {
       fastigheter: (c.fastighet_ids || []).map((id) => ctx.fast.get(id)).filter(Boolean),
       oms_now: rev[yearNow] != null ? rev[yearNow] : null,
       oms_prev: rev[yearPrev] != null ? rev[yearPrev] : null,
+      // Våra bolag: `bolag` = fakturerar nu (12 mån), `bolag_all` = även tidigare
+      // (med senaste fakturadatum) så kortet kan visa "tidigare kund hos X".
+      bolag: bol.active,
+      bolag_all: bol.all,
       // ── Senast ändrad ──────────────────────────────────────────────
       // MAX(företagets egen Modified Date, senaste relaterade rad). `modified_src`
       // säger VAD som rörde det ("aktivitet"/"person"/"ärende"/"lead"/"affär"/"todo"
@@ -294,8 +342,12 @@ export function registerCompaniesRoutes(app, deps) {
     // "Senast ändrad": icke-blockerande som omsättningen. null → touchReady=false,
     // listan faller tillbaka på företagets egen Modified Date tills svepen är klara.
     const touch = companyTouchMapWarm ? companyTouchMapWarm() : null;
+    // Bolagskartan kommer ur SAMMA svep som omsättningen → egen readiness behövs inte:
+    // är rev null är bolag det också, och frontenden visar redan "beräknar…".
+    const bolag = companyBolagMapWarm ? companyBolagMapWarm() : null;
     return { full, rev: rev || new Map(), revenueReady: !!rev,
              touch: touch || new Map(), touchReady: !!touch,
+             bolag: bolag || new Map(), nowTs: Date.now(),
              users: u.map, groups: g.map, fast: f.map };
   }
 
@@ -308,6 +360,7 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({
         ok: true,
         facets: _facets(ctxFull),
+        bolag: _bolagList(companyBolagMapWarm ? companyBolagMapWarm() : null),
         users: u.list,
         groups: g.list,
         fastigheter: f.list,
@@ -321,7 +374,7 @@ export function registerCompaniesRoutes(app, deps) {
 
   // ── GET /admin/companies/list ──────────────────────────────────────
   // ?q= &ansvarig= &kundstatus= &potential= &lojalitet= &region= &bransch=
-  //   &customer_type= &group= &fastighet= &unassigned=1
+  //   &customer_type= &group= &fastighet= &bolag= &unassigned=1
   //   &sort=name &dir=asc &page=1 &limit=100 &year=2026 &prev=2025 &meta=1
   app.options("/admin/companies/list", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.get("/admin/companies/list", async (req, res) => {
@@ -344,6 +397,7 @@ export function registerCompaniesRoutes(app, deps) {
         customer_type: _str(req.query.customer_type).trim() || null,
       };
       const fastighetId = _str(req.query.fastighet).trim() || null;
+      const bolagF = _str(req.query.bolag).trim() || null;
       const unassigned = _str(req.query.unassigned) === "1";
 
       // Bygg + filtrera rader (allt i minne från cachen)
@@ -363,7 +417,13 @@ export function registerCompaniesRoutes(app, deps) {
           const hay = (c.name + " " + c.orgnr).toLowerCase();
           if (!hay.includes(q)) continue;
         }
-        rows.push(_rowOf(c, ctx, yearNow, yearPrev));
+        // ⚠️ Bolagsfiltret kan INTE ligga i continue-kedjan ovan: `bolag` finns inte i
+        // cache-projektionen utan härleds ur faktura-kartan + fönstret. Filtrera på den
+        // färdiga raden i stället — och se `bolag_ready` nedan: är kartan kall betyder
+        // 0 träffar "inte beräknat än", aldrig "ingen kund har det bolaget".
+        const row = _rowOf(c, ctx, yearNow, yearPrev);
+        if (bolagF && row.bolag.indexOf(bolagF) < 0) continue;
+        rows.push(row);
       }
 
       // Sortering (tomma alltid sist, oavsett riktning)
@@ -394,6 +454,10 @@ export function registerCompaniesRoutes(app, deps) {
         pages: Math.max(1, Math.ceil(total / limit)),
         year: yearNow, prev: yearPrev,
         revenue_ready: ctx.revenueReady,   // false = faktura-scanningen värms fortf. → oms-kolumnerna kommer strax
+        // Samma svep som omsättningen. ⚠️ Frontenden MÅSTE skilja "0 träffar" från
+        // "inte beräknat än" när bolagsfiltret är på — annars läser en kall cache som
+        // "ingen kund faktureras av Staff".
+        bolag_ready: ctx.revenueReady,
         touch_ready: ctx.touchReady,       // false = "senast ändrad"-svepen värms → visar bara grunddata-datum tills klart
         rows: pageRows,
       };
@@ -401,6 +465,7 @@ export function registerCompaniesRoutes(app, deps) {
         const [u, g, f] = await Promise.all([_users(), _groups(), _fastigheter()]);
         out.meta = {
           facets: _facets(ctx.full),
+          bolag: _bolagList(ctx.bolag),
           users: u.list, groups: g.list, fastigheter: f.list,
           editable: Object.fromEntries(Object.entries(EDITABLE).map(([k, v]) => [k, v.type])),
           cache_total: ctx.full.size,
@@ -480,7 +545,14 @@ export function registerCompaniesRoutes(app, deps) {
       const address = adr ? (typeof adr === "string" ? adr : (adr.address || "")) : "";
       const grundat = rec && rec["Grundat_år"] ? _str(rec["Grundat_år"]).slice(0, 4) : "";
 
+      const bolMap = companyBolagMapWarm ? companyBolagMapWarm() : null;
+      const bol = _bolagOf(bolMap ? bolMap.get(id) : null, Date.now());
       const company = Object.assign({}, proj, {
+        // Våra bolag som fakturerar kunden. ⚠️ Läs tillsammans med `revenue_ready`:
+        // är svepet kallt är listan tom för att den inte är beräknad, inte för att
+        // ingen fakturerar. Kortet visar "beräknar…" i det läget.
+        bolag: bol.active,
+        bolag_all: bol.all,
         ansvarig: proj.ansvarig_id ? (u.map.get(proj.ansvarig_id) || "") : "",
         group: proj.group_id ? (g.map.get(proj.group_id) || "") : "",
         fastigheter: (proj.fastighet_ids || []).map((x) => f.map.get(x)).filter(Boolean),

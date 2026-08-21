@@ -128,6 +128,13 @@ function project(c) {
   };
 }
 const FULL = new Map(Object.values(CC).map((c) => [c._id, project(c)]));
+// ── Våra bolag (companyId → {bolag: senaste fakturadatum ms}). Byggs i index.js ur
+// faktura-svepet; här injiceras den färdig. Fönstret (12 mån) läggs på i companies_api.
+const _dago = (n) => Date.now() - n * 86400000;
+const BOLAG = new Map([
+  ["cc1", { "Staff": _dago(10), "Food & Event": _dago(40), "Group": _dago(5) }],
+  ["cc2", { "Housekeeping": _dago(700) }],          // fakturerade FÖRR, inte nu
+]);                                                  // cc3 saknas helt = ingen fakturering
 
 // Verifierade Bubble-scheman (skärmdump/HANDOFF). Används av mocken för att avvisa
 // okända fält precis som Bubble gör. Utöka när fler typer verifierats.
@@ -172,6 +179,7 @@ const deps = {
   companyRevenueMap: async () => REV,
   companyRevenueMapWarm: () => REV,
   companyTouchMapWarm: () => TOUCH,
+  companyBolagMapWarm: () => BOLAG,
   companyPatchEntry: (id, fresh) => { FULL.set(id, project(fresh)); },
   assignTempPassword: async ({ email }) => ({ ok: true, temp_password: "TMP-" + email }),
   createUserAccount: async (args) => { createUserCalls.push(args); return { ok: true, user_id: "newuser1" }; },
@@ -792,6 +800,97 @@ const run = async () => {
      /if\(cell\)\{ if\(cell\.getAttribute\("data-editing"\)\) return; beginEdit\(cell\); return; \}/.test(fl));
   ok("frontend: add-dropdownen skickar hela listan via commitList",
      /data-fladd"\)\)\{/.test(fl) && /commitList\(atd, next\)/.test(fl));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // VÅRA BOLAG: badges + filter (2026-08-21)
+  // Fönstret "fakturerar idag" = 12 rullande månader (Christians beslut).
+  // ⚠️ Kartan kommer ur faktura-svepet, som värms LAT. En kall karta ger 0 träffar
+  // på bolagsfiltret — och 0 får aldrig läsas som "ingen kund har det bolaget".
+  // ══════════════════════════════════════════════════════════════════════════
+  const lb2 = await call(s.routes, "get", "/admin/companies/list", { query: { meta: "1" } });
+  // ⚠️ Defensivt: mot gammal kod saknas fälten helt. Kraschar assertionen i st.f. att
+  // FALLA, dör sviten mitt i och mutationstestet döljer alla följande fel
+  // (exakt det som hände med `body.roles.indexOf` 2026-08-18).
+  const bRow = (id) => {
+    const r = lb2.body.rows.filter((x) => x.id === id)[0] || {};
+    return { id: r.id, bolag: r.bolag || null, bolag_all: r.bolag_all || null };
+  };
+  const bAll = (id, i) => ((bRow(id).bolag_all || [])[i] || {});
+  ok("bolag: cc1 faktureras av Staff + F&E + Group (aktiva, sorterade)",
+     JSON.stringify(bRow("cc1").bolag) === JSON.stringify(["Staff", "Food & Event", "Group"]));
+  ok("bolag: cc2 har INGEN aktiv (700 dagar sedan) men finns kvar i bolag_all",
+     JSON.stringify(bRow("cc2").bolag) === JSON.stringify([]) &&
+     (bRow("cc2").bolag_all || []).length === 1 && bAll("cc2", 0).name === "Housekeeping" &&
+     bAll("cc2", 0).active === false);
+  ok("bolag: bolag_all bär senaste fakturadatum (YYYY-MM-DD)",
+     /^\d{4}-\d{2}-\d{2}$/.test(bAll("cc2", 0).last || ""));
+  ok("bolag: cc3 utan fakturor → tomma listor, inte null",
+     JSON.stringify(bRow("cc3").bolag) === JSON.stringify([]) && JSON.stringify(bRow("cc3").bolag_all) === JSON.stringify([]));
+  ok("bolag: meta.bolag har alla fyra bolagen i kanonisk ordning",
+     JSON.stringify((lb2.body.meta || {}).bolag) === JSON.stringify(["Staff", "Food & Event", "Housekeeping", "Group"]));
+  ok("bolag: list-svaret bär bolag_ready", lb2.body.bolag_ready === true);
+
+  const fStaff = await call(s.routes, "get", "/admin/companies/list", { query: { bolag: "Staff" } });
+  ok("bolag: ?bolag=Staff → bara cc1", fStaff.body.total === 1 && fStaff.body.rows[0].id === "cc1");
+  const fHk = await call(s.routes, "get", "/admin/companies/list", { query: { bolag: "Housekeeping" } });
+  ok("bolag: ?bolag=Housekeeping → 0 (cc2:s faktura är utanför 12-månadersfönstret)", fHk.body.total === 0);
+  const fBoth = await call(s.routes, "get", "/admin/companies/list", { query: { bolag: "Group", kundstatus: "Aktiv kund" } });
+  ok("bolag: filtret kombineras med övriga filter", fBoth.body.total === 1 && fBoth.body.rows[0].id === "cc1");
+
+  // ⚠️ KALL CACHE: bolagskartan är null → svaret måste säga bolag_ready:false, annars
+  // läses 0 träffar som "ingen kund faktureras av Staff".
+  const bolagColdDeps = Object.assign({}, deps, { companyBolagMapWarm: () => null, companyRevenueMapWarm: () => null });
+  const bcs = mk(); registerCompaniesRoutes(bcs.app, bolagColdDeps);
+  const cold = await call(bcs.routes, "get", "/admin/companies/list", { query: { bolag: "Staff", meta: "1" } });
+  ok("bolag: kall karta → bolag_ready:false (0 träffar betyder 'inte beräknat', inte 'finns inte')",
+     cold.body.bolag_ready === false && cold.body.total === 0);
+  ok("bolag: filtrets värdelista är fylld ÄVEN med kall karta (de fyra alltid med)",
+     JSON.stringify((cold.body.meta || {}).bolag) === JSON.stringify(["Staff", "Food & Event", "Housekeeping", "Group"]));
+
+  // Okänd anslutning ska SYNAS, inte tappas
+  const oddDeps = Object.assign({}, deps, { companyBolagMapWarm: () => new Map([["cc1", { "Connection abc123": Date.now() }]]) });
+  const bos = mk(); registerCompaniesRoutes(bos.app, oddDeps);
+  const odd = await call(bos.routes, "get", "/admin/companies/list", { query: { meta: "1" } });
+  const oddList = ((odd.body.meta || {}).bolag) || [];
+  ok("bolag: okänd anslutning dyker upp i filterlistan (sist), döljs aldrig",
+     oddList.length > 0 && oddList.indexOf("Connection abc123") === oddList.length - 1);
+
+  // Kortet
+  const bcard = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc1" } });
+  ok("bolag: kortet bär bolag + bolag_all på company",
+     JSON.stringify((bcard.body.company || {}).bolag) === JSON.stringify(["Staff", "Food & Event", "Group"]) &&
+     (((bcard.body.company || {}).bolag_all) || []).length === 3);
+  const bcard2 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc2" } });
+  const c2b = bcard2.body.company || {};
+  ok("bolag: kortet visar tidigare fakturering som inaktiv, inte som frånvarande",
+     (c2b.bolag || []).length === 0 && ((c2b.bolag_all || [])[0] || {}).active === false);
+
+  // ── FRONTEND: kortets fastighetsredigering + bolagsbadges ──────────────────
+  ok("frontend: kortet har Fastighet-fält med chips i redigeringsformuläret",
+     /function cardFastInner/.test(fl) && /data-fkfadd="1"/.test(fl) && /data-fkfrm="/.test(fl));
+  // ⚠️ Kortets formulär har Avbryt → chipsen får INTE patchas direkt som i listan,
+  // utan stageas i STATE.cardFast och skickas med cardSave.
+  ok("frontend: kortets chips stageas i STATE.cardFast (inte direkt-PATCH)",
+     /STATE\.cardFast=keep; redrawCardFast\(\)/.test(fl) && /STATE\.cardFast=kf; redrawCardFast\(\)/.test(fl) &&
+     /fields\.fastighet=STATE\.cardFast\.slice\(\)/.test(fl));
+  ok("frontend: Avbryt kastar den stageade listan",
+     /data-fk="canceledit"\]'\)\)\{ STATE\.cardEditing=false; STATE\.cardFast=null;/.test(fl));
+  // ⚠️ redrawCardFast, ALDRIG renderCard — annars raderas text i formulärets andra fält.
+  ok("frontend: chip-ändring ritar bara om fältet, inte hela kortet",
+     /function redrawCardFast\(\)\{[\s\S]*?data-fkfast[\s\S]*?\}/.test(fl) &&
+     !/data-fkfrm[\s\S]{0,200}renderCard\(\)/.test(fl));
+  ok("frontend: Fastighet visas alltid i läsvyn, även tom",
+     /rows\+='<div class="k">Fastighet<\/div><div class="val">'\+/.test(fl));
+  ok("frontend: bolagsbadges renderas i kort-heron",
+     /function bolagBadges/.test(fl) && /fk-bolagrow[\s\S]{0,80}Faktureras av/.test(fl));
+  ok("frontend: badge skiljer aktiv från tidigare fakturering",
+     /b\.active\?"":" past"/.test(fl));
+  // ⚠️ Tom data får aldrig bli ett svar — varken i badgen eller i tomma tabellen.
+  ok("frontend: kall bolagskarta visar 'beräknar', inte 'Ingen fakturering'",
+     /if\(!ready\) return '<span class="fk-bolag b-other">beräknar bolag…<\/span>';/.test(fl));
+  ok("frontend: bolagsfilter + kall karta ger 'Beräknar…', inte 'Inga företag matchar'",
+     /STATE\.f\.bolag && !STATE\.bolag_ready/.test(fl));
+  ok("frontend: bolagsfilter i filterraden", /data-flf="bolag"/.test(fl) && /Alla våra bolag/.test(fl));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
