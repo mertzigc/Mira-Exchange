@@ -24,7 +24,7 @@
   .fl-filters .fl-clear{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:12px;}
   .fl-filters .fl-clear:hover{color:var(--fl-txt);border-color:var(--fl-acc);}
   .fl-wrap{overflow-x:auto;border:1px solid var(--fl-line);border-radius:12px;background:var(--fl-card);}
-  .fl-tbl{width:100%;border-collapse:collapse;min-width:1050px;}
+  .fl-tbl{width:100%;border-collapse:collapse;min-width:1290px;}
   .fl-tbl th{text-align:left;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;padding:11px 12px;border-bottom:1px solid var(--fl-line);white-space:nowrap;position:sticky;top:0;background:var(--fl-card);}
   .fl-tbl th.fl-sortable{cursor:pointer;user-select:none;}
   .fl-tbl th.fl-sortable:hover{color:var(--fl-txt);}
@@ -48,6 +48,15 @@
   .fl-star{color:var(--fl-acc);}
   .fl-ec{background:var(--fl-bg);border:1px solid var(--fl-acc);color:var(--fl-txt);border-radius:6px;padding:4px 6px;font-size:12px;max-width:180px;}
   .fl-ec option{background:#16223d;color:#e7ecf6;}
+  /* Listfält (Fastighet): chips + lagg-till-dropdown. OBS ingen display:inline-block
+     pa sjalva <td> (bryter tabell-layouten) - allt ligger i en wrapper-div. */
+  .fl-lst{display:flex;flex-wrap:wrap;gap:5px;align-items:center;max-width:340px;white-space:normal;}
+  .fl-chip{display:inline-flex;align-items:center;gap:5px;background:var(--fl-chip);border:1px solid var(--fl-line);border-radius:20px;padding:2px 4px 2px 9px;font-size:11px;color:var(--fl-txt);}
+  .fl-chip.ro{padding:2px 9px;}
+  .fl-chiprm{cursor:pointer;color:var(--fl-mut);font-size:13px;line-height:1;padding:0 4px;border-radius:20px;}
+  .fl-chiprm:hover{color:#ff6b6b;background:rgba(255,107,107,.14);}
+  .fl-lclose{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px;}
+  .fl-lclose:hover{color:var(--fl-txt);border-color:var(--fl-acc);}
   .fl-save{color:var(--fl-mut);font-size:10px;margin-left:6px;}
   .fl-save.fl-okc{color:var(--fl-ok);}
   .fl-save.fl-errc{color:#ff6b6b;}
@@ -1870,6 +1879,8 @@
     {key:"orgnr",      label:"Org nr",       sort:"orgnr",      edit:"orgnr",      kind:"text"},
     {key:"bransch",    label:"Bransch",      sort:"bransch",    edit:"bransch",    kind:"optionset"},
     {key:"ansvarig",   label:"Ansvarig",     sort:"ansvarig",   edit:"ansvarig",   kind:"userref"},
+    {key:"region",     label:"Region",       sort:"region",     edit:"region",     kind:"optionset"},
+    {key:"fastighet",  label:"Fastighet",    sort:"fastighet",  edit:"fastighet",  kind:"reflist"},
     {key:"potential",  label:"Potential",    sort:"potential",  edit:"potential",  kind:"optionset"},
     {key:"lojalitet",  label:"Lojalitet",    sort:"lojalitet",  edit:"lojalitet",  kind:"loyalty"},
     {key:"nki",        label:"NKI",          sort:"nki",        edit:"nki",        kind:"number", num:true},
@@ -1893,7 +1904,7 @@
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
               revenue_ready:true, revTries:0, listDirty:false,
               touch_ready:true, touchTries:0,
-              f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", region:"", fastighet:""},
+              f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:""},
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
@@ -1948,6 +1959,10 @@
     var h='<input class="fl-search" data-fl="q" type="text" placeholder="Sök företagsnamn / org.nr" value="'+esc(STATE.q)+'">';
     h+='<select class="fl-sel" data-flf="ansvarig">'+selOpts(m.users||[], STATE.f.ansvarig, "Alla kundansvariga")+'</select>';
     h+='<select class="fl-sel" data-flf="kundstatus">'+selOpts(fac.kundstatus||[], STATE.f.kundstatus, "Alla kundstatus")+'</select>';
+    // Branscherna kommer ur option-setet `Bransch` i Bubble (seedade i companies_api
+    // `_facets`) unionat med det som faktiskt star pa foretagen - annars vore filtret
+    // tomt sa lange faltet ar oifyllt, och kolumnen gick inte att skriva i.
+    h+='<select class="fl-sel" data-flf="bransch">'+selOpts(fac.bransch||[], STATE.f.bransch, "Alla branscher")+'</select>';
     h+='<select class="fl-sel" data-flf="lojalitet">'+selOpts(fac.lojalitet||[], STATE.f.lojalitet, "All lojalitet")+'</select>';
     h+='<select class="fl-sel" data-flf="potential">'+selOpts(fac.potential||[], STATE.f.potential, "All potential")+'</select>';
     h+='<select class="fl-sel" data-flf="region">'+selOpts(fac.region||[], STATE.f.region, "Alla regioner")+'</select>';
@@ -2015,9 +2030,76 @@
     if(c.kind==="loyalty")  return loyaltyCell(r.lojalitet);
     if(c.kind==="userref")  return r.ansvarig?esc(r.ansvarig):'<span class="fl-edit fl-empty">—</span>';
     if(c.kind==="groupref") return r.group?esc(r.group):'<span class="fl-edit fl-empty">—</span>';
+    if(c.kind==="reflist")  return reflistCell(r, c.key);
     if(c.kind==="number"){ var nv=r[c.key]; return nv==null?'<span class="fl-edit fl-empty">—</span>':esc(nv); }
     var val=r[c.key]; return (val===""||val==null)?'<span class="fl-edit fl-empty">—</span>':esc(val);
   }
+  // ── LISTFÄLT (Fastighet) ──────────────────────────────────────────────────
+  // Fastighet är List of Fastighet på ClientCompany. En vanlig select hade ersatt
+  // HELA listan → ett företag med två fastigheter tappar den ena utan att någon ser
+  // det. Därför chips: en per värde, × tar bort, dropdown lägger till. Varje
+  // add/remove är en egen PATCH med hela den nya listan (samma mönster som
+  // Leverantörer/Fastighetsägare på kortet).
+  var LIST_META={fastighet:{meta:"fastigheter", ids:"fastighet_ids", names:"fastigheter", add:"+ lägg till fastighet…", empty:"— ingen fastighet —"}};
+  function listIds(r, field){ var lm=LIST_META[field]; return (r&&r[lm.ids])||[]; }
+  function listNames(r, field){ var lm=LIST_META[field]; return (r&&r[lm.names])||[]; }
+  function reflistCell(r, field){
+    var nm=listNames(r, field);
+    if(!nm.length) return '<span class="fl-edit fl-empty">—</span>';
+    var h='<span class="fl-lst">';
+    for(var i=0;i<nm.length;i++) h+='<span class="fl-chip ro">'+esc(nm[i])+'</span>';
+    return h+'</span>';
+  }
+  // Namn för ett id ur meta-listan (raden bär bara de namn den redan har).
+  function listOptName(field, id){
+    var lm=LIST_META[field], L=(STATE.meta&&STATE.meta[lm.meta])||[];
+    for(var i=0;i<L.length;i++) if(String(L[i].id)===String(id)) return L[i].name;
+    return id;
+  }
+  function reflistEditHtml(r, field){
+    var lm=LIST_META[field], ids=listIds(r, field);
+    var h='<span class="fl-lst">';
+    for(var i=0;i<ids.length;i++){
+      h+='<span class="fl-chip">'+esc(listOptName(field, ids[i]))+
+         '<span class="fl-chiprm" data-flrm="'+esc(ids[i])+'" title="Ta bort">×</span></span>';
+    }
+    var L=(STATE.meta&&STATE.meta[lm.meta])||[], opts='<option value="">'+esc(lm.add)+'</option>';
+    for(var j=0;j<L.length;j++){ if(ids.indexOf(L[j].id)>-1) continue; opts+='<option value="'+esc(L[j].id)+'">'+esc(L[j].name)+'</option>'; }
+    h+='<select class="fl-ec" data-fladd="1">'+opts+'</select>';
+    h+='<button class="fl-lclose" data-flclose="1">Klar</button>';
+    h+='<span class="fl-save" data-flsavemsg></span>';
+    return h+'</span>';
+  }
+  // Ritar om cellen UTAN att stänga editorn (så man kan lägga till flera i rad).
+  function redrawListCell(td){
+    var tr=td.parentNode, id=tr.getAttribute("data-id"), field=td.getAttribute("data-field");
+    var r=findRow(id); if(!r) return;
+    td.innerHTML=reflistEditHtml(r, field);
+  }
+  // Skriver hela den nya listan. Tom lista = rensa fältet (backend skickar []).
+  function commitList(td, ids){
+    if(td.getAttribute("data-committing")) return; td.setAttribute("data-committing","1");
+    var tr=td.parentNode, id=tr.getAttribute("data-id"), field=td.getAttribute("data-field");
+    var msg=td.querySelector("[data-flsavemsg]"); if(msg){ msg.textContent="Sparar…"; msg.className="fl-save"; }
+    var fields={}; fields[field]=ids;
+    apiPatch(id, fields).then(function(j){
+      td.removeAttribute("data-committing");
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&(j.error||""))||"fel"); msg.className="fl-save fl-errc"; } return; }
+      if(j.row){ for(var i=0;i<STATE.rows.length;i++){ if(STATE.rows[i].id===id){ STATE.rows[i]=j.row; break; } } }
+      cacheClearAll();
+      redrawListCell(td);
+    }).catch(function(){
+      td.removeAttribute("data-committing");
+      if(msg){ msg.textContent="✗ nätverksfel"; msg.className="fl-save fl-errc"; }
+    });
+  }
+  function closeListEdit(td){
+    var tr=td.parentNode, id=tr.getAttribute("data-id"), field=td.getAttribute("data-field");
+    td.removeAttribute("data-editing"); td.removeAttribute("data-orig");
+    var r=findRow(id);
+    td.innerHTML=r?reflistCell(r, field):'<span class="fl-edit fl-empty">—</span>';
+  }
+
   function tdOf(c, r){
     var inner=cellHtml(c, r);
     var editable=!!c.edit;
@@ -2053,6 +2135,7 @@
   function curValFor(r, field, kind){
     if(kind==="userref") return r.ansvarig_id||"";
     if(kind==="groupref") return r.group_id||"";
+    if(kind==="reflist") return listIds(r, field);
     return r[field]==null?"":r[field];
   }
   function beginEdit(td){
@@ -2061,6 +2144,9 @@
     var r=findRow(id); if(!r) return;
     td.setAttribute("data-editing","1");
     td.setAttribute("data-orig", td.innerHTML);
+    // Listfält har ingen enskild "kontroll" att blur-committa — varje add/remove är
+    // sin egen sparning, och "Klar" stänger. Därför egen väg redan här.
+    if(kind==="reflist"){ td.innerHTML=reflistEditHtml(r, field); return; }
     var cur=curValFor(r, field, kind), ctrl;
     if(kind==="text"){ ctrl='<input class="fl-ec" type="text" value="'+esc(cur)+'">'; }
     else if(kind==="number"){ ctrl='<input class="fl-ec" type="number" value="'+esc(cur)+'">'; }
@@ -3293,8 +3379,22 @@
     if(t.closest && t.closest('[data-fl="more"]')){ STATE.page++; load(true); return; }
     if(t.closest && t.closest('[data-fl="refresh"]')){ cacheClearAll(); reload(); return; }
     if(t.closest && t.closest('[data-fl="clear"]')){ STATE.q=""; for(var k in STATE.f) STATE.f[k]=""; renderFilters(); reload(); return; }
+    // ⚠️ KLICK-ORDNING: chip-× och "Klar" ligger INNE i den redigerbara cellen. Utan
+    // dessa grenar före cell-grenen (och utan data-editing-vakten) skulle varje klick
+    // i editorn falla igenom till beginEdit. Samma klass av fel som deal-formuläret
+    // som kollapsade raden man just öppnat.
+    var lrm=t.closest?t.closest("[data-flrm]"):null;
+    if(lrm){ var rtd=lrm.closest('[data-flcell="1"]'); if(rtd){
+      var rid2=rtd.parentNode.getAttribute("data-id"), rf=rtd.getAttribute("data-field");
+      var rr=findRow(rid2); if(rr){
+        var keep=[], cur0=listIds(rr, rf), gone=lrm.getAttribute("data-flrm");
+        for(var q=0;q<cur0.length;q++) if(String(cur0[q])!==String(gone)) keep.push(cur0[q]);
+        commitList(rtd, keep);
+      } } return; }
+    var lcl=t.closest?t.closest("[data-flclose]"):null;
+    if(lcl){ var ctd=lcl.closest('[data-flcell="1"]'); if(ctd) closeListEdit(ctd); return; }
     var cell=t.closest?t.closest('[data-flcell="1"]'):null;
-    if(cell){ beginEdit(cell); return; }
+    if(cell){ if(cell.getAttribute("data-editing")) return; beginEdit(cell); return; }
   });
   root.addEventListener("input", function(e){
     if(STATE.view!=="list") return;
@@ -3308,6 +3408,13 @@
     var hf=t.getAttribute?t.getAttribute("data-hf"):null;
     if(hf==="type"||hf==="done"){ var hb=t.closest(".fk-hedit"); if(hb) toggleHistCond(hb); return; }
     if(STATE.view!=="list") return;
+    if(t.getAttribute && t.getAttribute("data-fladd")){
+      var atd=t.closest('[data-flcell="1"]'); if(!atd) return;
+      var aid=atd.parentNode.getAttribute("data-id"), af=atd.getAttribute("data-field"), ar=findRow(aid);
+      if(!ar||!t.value) return;
+      var next=listIds(ar, af).slice(); if(next.indexOf(t.value)<0) next.push(t.value);
+      commitList(atd, next); return;
+    }
     var ff=t.getAttribute?t.getAttribute("data-flf"):null;
     if(ff){ STATE.f[ff]=t.value; reload(); }
   });

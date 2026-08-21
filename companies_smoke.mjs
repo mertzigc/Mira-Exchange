@@ -1,6 +1,7 @@
 // Smoke: företagslista (companies_api.js). Mockad Bubble + injicerade delade cachar.
 //   node companies_smoke.mjs
 import { registerCompaniesRoutes } from "./companies_api.js";
+import { readFileSync } from "node:fs";
 
 // ── Rå ClientCompany-DB (för bubbleGet/patch + re-projektion i companyPatchEntry) ──
 const CC = {
@@ -694,6 +695,103 @@ const run = async () => {
   // ── PATCH på nya kunddata-fält (email/web/kundinformation) ──
   var pce = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc1" }, body: { fields: { email: "ny@acme.se", web: "nyacme.se", kundinformation: "Uppdaterad" } } });
   ok("patch kunddata-fält ok", pce.body.ok && CC.cc1.Email === "ny@acme.se" && CC.cc1.hemsida_crm === "nyacme.se" && CC.cc1.kundinfo_crm === "Uppdaterad");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BRANSCH-FILTER + KOLUMNERNA FASTIGHET/REGION (2026-08-21)
+  //
+  // Bakgrunden är ett moment 22: `_facets` härleder option-set-värden UR DATAN, och
+  // PATCH validerar mot samma facetter. Ett fält som är tomt på alla företag har
+  // därför inga giltiga värden → det går varken att filtrera på eller att skriva i,
+  // för alltid. `Bransch` var precis så i produktion. Seeden ur Bubbles option-set
+  // bryter dödläget; testerna nedan vaktar BÅDE att seeden finns OCH att den är en
+  // UNION (ett värde som bara finns i datan får aldrig falla ur).
+  // ══════════════════════════════════════════════════════════════════════════
+  const BRANSCH_OS = ["Bank", "Investmentbolag", "Fastigheter", "Mat & dryck", "Fordon", "Bygg",
+                      "Tillverkning", "Konsumentvaror", "IT-tjänster", "Digitala program",
+                      "Offentlig verksamhet", "Konsulttjänster", "Hotell", "Övriga tjänster"];
+  const meta2 = await call(s.routes, "get", "/admin/companies/meta");
+  const fb = (meta2.body.facets && meta2.body.facets.bransch) || [];
+  ok("facets.bransch bär HELA option-setet (14 värden) fast inget företag har dem",
+     BRANSCH_OS.every((v) => fb.indexOf(v) > -1));
+  ok("facets.bransch är UNION — datavärdet 'IT' (ej i option-setet) finns kvar",
+     fb.indexOf("IT") > -1);
+  ok("facets.bransch dedupar överlapp (Bygg finns i både seed och data)",
+     fb.filter((v) => v === "Bygg").length === 1);
+  ok("facets.bransch sorterad på svenska (Bank först, Övriga tjänster sist)",
+     fb[0] === "Bank" && fb[fb.length - 1] === "Övriga tjänster");
+  ok("seeden läcker INTE till andra option-set-fält (region = bara datans värden)",
+     JSON.stringify((meta2.body.facets.region || []).slice().sort()) === JSON.stringify(["Göteborg", "Stockholm"]));
+
+  // Själva dödläget: sätta ett värde som INGET företag har idag.
+  const pb1 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { field: "bransch", value: "Hotell" } });
+  ok("patch bransch till option-set-värde som ingen har → ok (dödläget brutet)",
+     pb1.body.ok === true && CC.cc3.Bransch === "Hotell" && pb1.body.row.bransch === "Hotell");
+  const pb2 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { field: "bransch", value: "Rymdfart" } });
+  ok("patch bransch med värde utanför option-setet → 400 (skräp når aldrig Bubble)",
+     pb2.code === 400 && String(pb2.body.error).startsWith("unknown_optionset_value") && CC.cc3.Bransch === "Hotell");
+  const lb = await call(s.routes, "get", "/admin/companies/list", { query: { bransch: "Hotell" } });
+  ok("list?bransch=Hotell filtrerar → bara cc3", lb.body.total === 1 && lb.body.rows[0].id === "cc3");
+
+  // ── Fastighet: LIST-fält, redigerbart utan att tappa värden ──
+  ok("meta editable fastighet=reflist", meta2.body.editable.fastighet === "reflist");
+  const pf1 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: ["f1", "f2"] } });
+  ok("patch fastighet: lägger till utan att tappa den befintliga",
+     pf1.body.ok && JSON.stringify(CC.cc2.Fastighet) === JSON.stringify(["f1", "f2"]) &&
+     JSON.stringify(pf1.body.row.fastigheter) === JSON.stringify(["Kungsgatan 1", "Vasagatan 5"]));
+  const pf2 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: ["f2"] } });
+  ok("patch fastighet: tar bort en (hela listan skrivs)",
+     pf2.body.ok && JSON.stringify(CC.cc2.Fastighet) === JSON.stringify(["f2"]));
+  const pf3 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: ["f2", "f2", "f1"] } });
+  ok("patch fastighet: dubbletter dedupas, ordning bevarad",
+     JSON.stringify(CC.cc2.Fastighet) === JSON.stringify(["f2", "f1"]));
+  const pf4 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: "f1,f2" } });
+  ok("patch fastighet: kommaseparerad sträng accepteras",
+     JSON.stringify(CC.cc2.Fastighet) === JSON.stringify(["f1", "f2"]));
+  const pf5 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: [] } });
+  ok("patch fastighet: tom lista rensar fältet",
+     pf5.body.ok && JSON.stringify(CC.cc2.Fastighet) === JSON.stringify([]) && JSON.stringify(pf5.body.row.fastigheter) === JSON.stringify([]));
+  // ⚠️ Ett referens-id som inte finns ger Bubble 400 MISSING_DATA (se _deadRefId).
+  // Vi ska stoppa det själva och säga VILKET id — inte låta Bubble braka.
+  const pf6 = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: ["f1", "fSPOKE"] } });
+  ok("patch fastighet: okänt fastighets-id → 400 unknown_ref_id, inget skrivs",
+     pf6.code === 400 && pf6.body.error === "unknown_ref_id:fastighet" && pf6.body.value === "fSPOKE" &&
+     JSON.stringify(CC.cc2.Fastighet) === JSON.stringify([]));
+  await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { field: "fastighet", value: ["f1"] } });
+
+  // Sortering på listkolumnen (tomma sist, oavsett riktning)
+  // ⚠️ Måste SKILJA sig från namnsorteringen — annars är testet grönt även när
+  // SORT_GETTERS.fastighet saknas och servern tyst faller tillbaka på sort=name.
+  // Namn asc = cc1, cc2, cc3. Fastighet asc = cc2 ("Kungsgatan 1"), cc1
+  // ("Kungsgatan 1, Vasagatan 5"), cc3 (tom → alltid sist).
+  const sf = await call(s.routes, "get", "/admin/companies/list", { query: { sort: "fastighet", dir: "asc" } });
+  const sfIds = sf.body.rows.map((r) => r.id);
+  ok("sort=fastighet sorterar på fastighetsnamnen, tomma sist (ej namn-fallback)",
+     JSON.stringify(sfIds) === JSON.stringify(["cc2", "cc1", "cc3"]));
+  const lf = await call(s.routes, "get", "/admin/companies/list", { query: { fastighet: "f1" } });
+  ok("list?fastighet=f1 oförändrad efter reflist-editen", lf.body.total === 2);
+
+  // ── FRONTEND (mira-foretag-lista.html) ────────────────────────────────────
+  // ⚠️ Greppar STRIPPAD kod: kommentarsrader bort först, annars kan en kommentar
+  // som beskriver en funktion göra testet grönt utan att koden finns.
+  const flRaw = readFileSync(new URL("./mira-foretag-lista.html", import.meta.url), "utf8");
+  const fl = flRaw.split("\n").filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).join("\n");
+  ok("frontend: Region-kolumn i COLS, redigerbar",
+     /\{key:"region",\s*label:"Region",\s*sort:"region",\s*edit:"region"/.test(fl));
+  ok("frontend: Fastighet-kolumn i COLS med kind reflist",
+     /\{key:"fastighet",\s*label:"Fastighet",\s*sort:"fastighet",\s*edit:"fastighet",\s*kind:"reflist"\}/.test(fl));
+  ok("frontend: Bransch-select i filterraden", /data-flf="bransch"/.test(fl) && /Alla branscher/.test(fl));
+  ok("frontend: STATE.f initierar bransch", /f:\{[^}]*bransch:""/.test(fl));
+  ok("frontend: listcellen ritas som chips + add-dropdown",
+     /function reflistEditHtml/.test(fl) && /data-fladd="1"/.test(fl) && /data-flrm="/.test(fl));
+  // ⚠️ Klick-ordning: chip-× och "Klar" MÅSTE hanteras före den generella
+  // cell-grenen, annars faller varje klick i editorn igenom till beginEdit.
+  ok("frontend: data-flrm hanteras FÖRE data-flcell i klick-hanteraren",
+     fl.indexOf('t.closest("[data-flrm]")') > -1 &&
+     fl.indexOf('t.closest("[data-flrm]")') < fl.indexOf('t.closest(\'[data-flcell="1"]\'):null;\n    if(cell)'));
+  ok("frontend: öppen editor klickas inte igenom till beginEdit",
+     /if\(cell\)\{ if\(cell\.getAttribute\("data-editing"\)\) return; beginEdit\(cell\); return; \}/.test(fl));
+  ok("frontend: add-dropdownen skickar hela listan via commitList",
+     /data-fladd"\)\)\{/.test(fl) && /commitList\(atd, next\)/.test(fl));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

@@ -34,7 +34,62 @@ Regionsindelningen är gles på ClientCompany men kundansvarig är satt — ansv
 - **Deploy:** `companies_api.js` + `index.js` (Render). Inga Bubble-ändringar.
 
 
+### Bransch-filter + kolumnerna Fastighet/Region — BYGGT 2026-08-21, EJ DEPLOYAT
+
+Filterraden fick **Bransch**, tabellen fick **Region** och **Fastighet**, båda redigerbara inline.
+
+- **⚠️ MOMENT 22 I `_facets` — det var den egentliga buggen.** `_facets()` härleder
+  option-set-värden UR DATAN, och `PATCH /admin/companies/:id` validerar mot samma
+  facetter. Ett fält som är **tomt på alla företag har därför inga giltiga värden** →
+  det går varken att filtrera på **eller att skriva i**, för alltid. `Bransch` var
+  precis så i produktion. Ett filter byggt på facetterna hade blivit tomt, och en
+  redigerbar kolumn hade svarat `unknown_optionset_value` på varje värde.
+- **Fix: `OPTIONSET_SEED` i companies_api.js** — de 14 värdena ur Bubbles option-set
+  `Bransch` (skärmdump 2026-08-21: Bank · Investmentbolag · Fastigheter · Mat & dryck ·
+  Fordon · Bygg · Tillverkning · Konsumentvaror · IT-tjänster · Digitala program ·
+  Offentlig verksamhet · Konsulttjänster · Hotell · Övriga tjänster). Seeden är
+  **UNION med datan** — ett värde som finns i Bubble men inte i seeden faller aldrig
+  ur (t.ex. gamla `IT`). Sorteras på svenska som övriga facetter.
+- **⚠️ Detta är ett medvetet avsteg från "härled aldrig, hårdkoda aldrig option-set".**
+  Regeln finns för att vi inte ska GISSA värden ([[reference-bubble-option-sets]]) —
+  här är de avlästa, och alternativet är ett fält som aldrig kan fyllas. **Priset:
+  ändras option-setet i Bubble måste `OPTIONSET_SEED` uppdateras**, annars går det nya
+  värdet inte att sätta förrän något företag redan har det. Seeden gäller BARA
+  `bransch`; `region` m.fl. härleds som förut (regressionstestat).
+- **Fastighet är ett LIST-fält** (`ClientCompany.Fastighet`, List of Fastighet) — ny
+  edit-typ **`reflist`** i `EDITABLE`/PATCH som skriver hela arrayen (samma mönster som
+  `Leverantör.Kundföretag` / `Hyresvärd.Hyresgäster`). Dedupar, tom lista rensar,
+  accepterar array eller kommaseparerad sträng. **Okänt fastighets-id → `400
+  unknown_ref_id`** i st.f. att låta Bubble braka med 400 MISSING_DATA (jfr `_deadRefId`).
+- **⚠️ Varför inte en vanlig dropdown:** en select hade ERSATT hela listan — ett bolag
+  med två fastigheter tappar den ena tyst så fort någon redigerar. Cellen visar därför
+  en chip per fastighet med ×, plus en "lägg till"-dropdown. Varje add/remove är en egen
+  PATCH med hela nya listan; editorn står kvar öppen så man kan lägga till flera.
+- **⚠️ Klick-ordning (samma fälla som deal-formuläret):** `data-flrm` (chip-×) och
+  `data-flclose` ("Klar") ligger INNE i den redigerbara cellen och måste hanteras
+  **före** den generella `data-flcell`-grenen, plus en `data-editing`-vakt på
+  cell-grenen. Utan det faller varje klick i editorn igenom till `beginEdit`.
+- **`SORT_GETTERS.fastighet`** sorterar på den sammanslagna etiketten (tomma sist).
+  ⚠️ Saknas den faller servern TYST tillbaka på `sort=name` — testet måste därför ge en
+  ordning som skiljer sig från namnsorteringen, annars är det grönt utan att bevisa något.
+- **Region krävde ingen backend** — låg redan i `EDITABLE`. Ren kolumn + cell.
+- **WU: noll nya anrop.** Allt (`bransch`, `region`, `fastighet_ids`) ligger redan i
+  `_projectCompany`; `_fastigheter()`-cachen hämtas bara om ett reflist-fält skrivs.
+  `min-width` på tabellen 1050 → 1290 px för de två kolumnerna.
+- **Verifierat:** companies_smoke **226/226** (+25), **mutationstestat** — mot gammal kod
+  faller 21 av dem (`git stash push companies_api.js mira-foretag-lista.html`). Frontend-
+  assertionerna greppar **strippad** kod (kommentarsrader bortfiltrerade). Regression:
+  samtliga 20 sviter gröna. Browser-harness (mockad fetch, localhost): editorn öppnas med
+  rätt chips och en dropdown utan redan valda värden · add skickar HELA listan (f1 bevaras)
+  · × tar bort · tomt läge → "—" och går att fylla igen · klick på chippen mitt i
+  editering faller INTE igenom · Bransch-filtret ger 15 värden + "Alla branscher",
+  filtrerar och rensas · Region/Bransch inline-edit på ett tomt bolag.
+- **Deploy:** `companies_api.js` (Render) + klistra om `mira-foretag-lista.html`.
+  Ingen Bubble-ändring, ingen ny bindning.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
+- **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
+  till i Bubble går inte att sätta från listan förrän de finns i seeden.
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.
 - **Drift Fas 3 (QC SKRIV)** — skapa kvalitetskontroll från Housekeeping-Contract → kontrollobjekt per yta (Mötesrum + Internal_room) → betyg/bild/kommentar → slutför.
 - **Avtal-fliken: inline-vyer i st.f. modaler** — Christians förslag. Tar bort hela z-index/stacking-buggklassen permanent. Panelerna ligger redan utanför kortets re-render, så inline-formulär är säkra state-mässigt. Omarbetning av tre ytor (skapa/redigera, 5-stegs-wizard, import-granskning).

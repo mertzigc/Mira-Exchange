@@ -151,11 +151,34 @@ export function registerCompaniesRoutes(app, deps) {
   // ── Option-set-fält: distinkta värden härledda ur datan (för filter + write-validering) ──
   // Nyckel = fältnamn i list-projektionen; label = svensk kolumnrubrik.
   const OPTIONSET_FIELDS = ["kundstatus", "potential", "lojalitet", "region", "bransch", "customer_type"];
+
+  // ── SEED ur Bubbles option-set (medvetet avsteg — läs varför) ──────────────
+  // Härledningen ovan har ett moment 22 för glesa fält: finns värdet inte på NÅGOT
+  // företag saknas det i facetterna → det går varken att filtrera på eller att
+  // SKRIVA (PATCH validerar mot samma facetter → `unknown_optionset_value`). Alltså
+  // kan ett tomt fält aldrig fyllas via listan. `Bransch` var precis så: tomt rakt
+  // igenom i produktion 2026-08-21, alltså ett dött filter och en oskrivbar kolumn.
+  // Seeden bryter dödläget. Den är UNION med datan — värden som finns i Bubble men
+  // inte här faller aldrig ur (motsatt fälla: en kort seed som tyst gömmer data).
+  // ⚠️ Speglar option-setet `Bransch` i Bubble-editorn (skärmdump 2026-08-21,
+  // 14 värden, Bank först → Övriga tjänster sist). Case-sensitive, `&` inte "och".
+  // Ändras option-setet i Bubble måste listan uppdateras här — annars kan man inte
+  // sätta det nya värdet förrän något företag redan har det.
+  const OPTIONSET_SEED = {
+    bransch: ["Bank", "Investmentbolag", "Fastigheter", "Mat & dryck", "Fordon", "Bygg",
+              "Tillverkning", "Konsumentvaror", "IT-tjänster", "Digitala program",
+              "Offentlig verksamhet", "Konsulttjänster", "Hotell", "Övriga tjänster"],
+  };
+
   function _facets(full) {
     const sets = {}; for (const f of OPTIONSET_FIELDS) sets[f] = new Set();
     for (const c of full.values()) for (const f of OPTIONSET_FIELDS) { const v = c[f]; if (v) sets[f].add(v); }
     const out = {};
-    for (const f of OPTIONSET_FIELDS) out[f] = [...sets[f]].sort((a, b) => a.localeCompare(b, "sv"));
+    for (const f of OPTIONSET_FIELDS) {
+      const seed = OPTIONSET_SEED[f];
+      if (seed) for (const v of seed) sets[f].add(v);
+      out[f] = [...sets[f]].sort((a, b) => a.localeCompare(b, "sv"));
+    }
     return out;
   }
 
@@ -173,6 +196,12 @@ export function registerCompaniesRoutes(app, deps) {
     nki:           { bubbleField: "NKI_carotte",  type: "number" },
     ansvarig:      { bubbleField: "Kundansvarig", type: "userref" },
     group:         { bubbleField: "group",        type: "groupref" },
+    // ⚠️ Fastighet är en LISTA (List of Fastighet) — inte ett enkelvärde. `reflist`
+    // skriver hela arrayen (samma mönster som Leverantör.Kundföretag /
+    // Hyresvärd.Hyresgäster). Frontenden lägger till/tar bort en chip i taget och
+    // skickar hela den nya listan, så ett företag med två fastigheter aldrig tappar
+    // den ena tyst — vilket en enkel dropdown hade gjort.
+    fastighet:     { bubbleField: "Fastighet",    type: "reflist",  ref: "fastighet" },
     // Kunddata-fält (kundkortets Hem-flik). Adress (geografiskt objekt) + Grundat_år (date) +
     // logotyp (image) redigeras EJ inline i denna omgång — läs-only tills egna kontroller byggs.
     email:              { bubbleField: "Email",        type: "text" },
@@ -234,6 +263,8 @@ export function registerCompaniesRoutes(app, deps) {
     region:     (r) => r.region,
     ansvarig:   (r) => r.ansvarig,
     group:      (r) => r.group,
+    // Lista → sortera på den sammanslagna etiketten (samma sträng som cellen visar).
+    fastighet:  (r) => (r.fastigheter || []).join(", "),
     nki:        (r) => r.nki,
     oms_now:    (r) => r.oms_now,
     oms_prev:   (r) => r.oms_prev,
@@ -1929,6 +1960,7 @@ export function registerCompaniesRoutes(app, deps) {
       const facets = _facets(full);
 
       const payload = {};
+      const refMaps = {};   // lat: referens-listor hämtas bara om ett reflist-fält skrivs
       for (const [key, rawVal] of Object.entries(fields)) {
         const spec = EDITABLE[key];
         if (!spec) return res.status(400).json({ ok: false, error: `field_not_editable:${key}` });
@@ -1950,6 +1982,25 @@ export function registerCompaniesRoutes(app, deps) {
         } else if (spec.type === "userref" || spec.type === "groupref") {
           const rid = _ref(val);
           payload[spec.bubbleField] = rid || "";   // "" rensar referensen
+        } else if (spec.type === "reflist") {
+          // Hela listan skickas varje gång (add/remove sker i frontenden). Tar array,
+          // kommaseparerad sträng eller "" (= töm listan).
+          const arr = Array.isArray(val) ? val : (_str(val).trim() === "" ? [] : _str(val).split(","));
+          // ⚠️ Bubble svarar 400 MISSING_DATA på ett referens-id som inte finns (se
+          // _deadRefId i index.js). Validera mot Fastighet-cachen och svara begripligt
+          // i stället för att låta Bubble braka på ett id vi själva kunde ha stoppat.
+          const LOADERS = { fastighet: async () => (await _fastigheter()).map };
+          if (!LOADERS[spec.ref]) return res.status(500).json({ ok: false, error: `unsupported_reflist:${key}` });
+          if (!refMaps[spec.ref]) refMaps[spec.ref] = await LOADERS[spec.ref]();
+          const known = refMaps[spec.ref];
+          const ids = [];
+          for (const raw of arr) {
+            const rid = _ref(_str(raw).trim());
+            if (!rid) continue;
+            if (!known.has(rid)) return res.status(400).json({ ok: false, error: `unknown_ref_id:${key}`, value: rid });
+            if (ids.indexOf(rid) < 0) ids.push(rid);   // dubbletter i en Bubble-lista är meningslösa
+          }
+          payload[spec.bubbleField] = ids;
         }
       }
 
