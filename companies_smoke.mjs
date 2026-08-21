@@ -927,6 +927,29 @@ const run = async () => {
   ok("frontend: selOpts faller tillbaka på värdet i st.f. att rendera ett objekt",
      /if\(nm===null\|\|nm===undefined\|\|typeof nm==="object"\) nm=v;/.test(fl));
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // FRUSNA FILTERVÄRDEN (bugg 2026-08-21, följdfel till "[object Object]")
+  // Backend var rättad men dropdownen visade fortfarande skräp: filterraden ritas
+  // BARA en gång (`if(!$("filters").innerHTML) renderFilters()`), så värdelistorna
+  // frystes vid sessionens FÖRSTA svar — och det kom ur sessionStorage (TTL 15 min),
+  // skrivet före deployen. Inte ens Uppdatera-knappen hjälpte: vakten satt på
+  // innerHTML, inte på cachen. Två lager: cache-version + synk av options.
+  // ══════════════════════════════════════════════════════════════════════════
+  ok("frontend: cache-nycklarna bär CACHE_VER (gamla payloads läses aldrig)",
+     /var CACHE_VER="\d+";/.test(fl) &&
+     /return "fl:list:"\+CACHE_VER\+":"/.test(fl) && /return "fl:card:"\+CACHE_VER\+":"/.test(fl));
+  ok("frontend: värdelistorna synkas när filterskelettet redan finns",
+     /else syncFilterOptions\(\);/.test(fl) && /function syncFilterOptions/.test(fl));
+  // ⚠️ Synken får bara röra [data-flf]-selecten — sökfältet måste lämnas ifred,
+  // annars är vi tillbaka i fokus/caret-buggen som gjorde raden render-once.
+  ok("frontend: synken rör bara filter-selecten, aldrig sökfältet",
+     /sels=root\.querySelectorAll\("\[data-flf\]"\)/.test(fl) &&
+     !/function syncFilterOptions[\s\S]*?data-fl="q"[\s\S]*?\n  \}/.test(fl));
+  ok("frontend: en öppen/fokuserad dropdown rycks inte undan",
+     /if\(el===document\.activeElement\) continue;/.test(fl));
+  ok("frontend: valt värde överlever en synk",
+     /el\.value=STATE\.f\[k\]\|\|"";/.test(fl));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

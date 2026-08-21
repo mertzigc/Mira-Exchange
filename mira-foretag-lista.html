@@ -1943,7 +1943,13 @@
   }
   function stopProg(){ if(_prog){ clearInterval(_prog); _prog=null; } }
 
-  function ckey(){ return "fl:list:"+JSON.stringify({q:STATE.q,sort:STATE.sort,dir:STATE.dir,page:STATE.page,limit:STATE.limit,f:STATE.f}); }
+  // ⚠️ CACHE_VER måste bumpas när svarets FORM eller meta-innehåll ändras. Utan den
+  // serverar sessionStorage (TTL 15 min) ett svar från FÖRE deployen — och eftersom
+  // filterraden ritas från det FÖRSTA svar som kommer in kan gamla facettvärden bli
+  // kvar i dropdownarna hela sessionen. Bet oss 2026-08-21: backend hade rätt namn på
+  // fastigheterna men filtret visade "[object Object]" ur den gamla cachen.
+  var CACHE_VER="4";
+  function ckey(){ return "fl:list:"+CACHE_VER+":"+JSON.stringify({q:STATE.q,sort:STATE.sort,dir:STATE.dir,page:STATE.page,limit:STATE.limit,f:STATE.f}); }
   function cacheGet(k){ try{ var v=sessionStorage.getItem(k); if(!v) return null; var o=JSON.parse(v); if(!o||(Date.now()-o.t)>900000) return null; return o.d; }catch(e){ return null; } }
   function cacheSet(k,d){ try{ sessionStorage.setItem(k,JSON.stringify({t:Date.now(),d:d})); }catch(e){} }
   function cacheClearAll(){ try{ for(var i=sessionStorage.length-1;i>=0;i--){ var k=sessionStorage.key(i); if(k&&k.indexOf("fl:")===0) sessionStorage.removeItem(k); } }catch(e){} }
@@ -1996,6 +2002,30 @@
        '<button class="fl-sortbtn'+(onMod?" on":"")+'" data-flsort="modified" title="Senaste händelse: grunddata, aktivitet, person, ärende, lead, affär eller todo">Senast ändrad</button>'+
        '</span>';
     $("filters").innerHTML=h;
+  }
+  // ── Uppdatera VÄRDELISTORNA utan att röra sökfältet ────────────────────────
+  // ⚠️ Filterraden ritas bara EN gång (annars tappar sökfältet fokus/caret mitt i
+  // skrivning, eftersom debounce→reload skulle re-rendera den). Priset var att
+  // dropdownarnas INNEHÅLL frystes vid sessionens första svar: kom det ur en gammal
+  // sessionStorage-post levde felaktiga etiketter vidare även efter att servern
+  // rättats ("[object Object]" 2026-08-21) — och inte ens Uppdatera-knappen hjälpte,
+  // eftersom vakten satt på `innerHTML`, inte på cachen.
+  // Därför: skelettet ritas en gång, men OPTIONS synkas vid varje färskt svar.
+  var FILTER_SRC={ ansvarig:"users", fastighet:"fastigheter", bolag:"bolag" };   // ur meta.<nyckel>; övriga ur meta.facets
+  function syncFilterOptions(){
+    var m=STATE.meta; if(!m) return;
+    var sels=root.querySelectorAll("[data-flf]");
+    for(var i=0;i<sels.length;i++){
+      var el=sels[i], k=el.getAttribute("data-flf");
+      // Rör ALDRIG en dropdown som är öppen/fokuserad — den stängs mitt i valet.
+      if(el===document.activeElement) continue;
+      var src=FILTER_SRC[k], list=src?(m[src]||[]):((m.facets&&m.facets[k])||[]);
+      var first=el.options.length?el.options[0].textContent:"";
+      var next=selOpts(list, STATE.f[k]||"", first);
+      if(el.innerHTML===next) continue;          // ingen DOM-churn när inget ändrats
+      el.innerHTML=next;
+      el.value=STATE.f[k]||"";                   // behåll valet över uppdateringen
+    }
   }
   // Filterraden renderas BARA en gång (annars tappar sökfältet fokus/caret mitt i
   // skrivning, eftersom debounce→reload skulle re-rendera den). Därför måste
@@ -2246,6 +2276,7 @@
       if(!applyResp(j, append)){ if(!STATE.rows.length) $("body").innerHTML='<div class="fl-err">Kunde inte ladda: '+esc((j&&j.error)||"okänt fel")+'</div>'; return; }
       cacheSet(key, j);
       if(STATE.meta && !$("filters").innerHTML) renderFilters();
+      else syncFilterOptions();   // skelettet finns → uppdatera bara värdelistorna
       if(STATE.view==="list") renderTable();
       if(!append){ STATE.revTries=0; scheduleRevenueRefetch(); STATE.touchTries=0; scheduleTouchRefetch(); }
     }).catch(function(){ stopProg(); if(!STATE.rows.length) $("body").innerHTML='<div class="fl-err">Nätverksfel — kontrollera api_host/token.</div>'; });
@@ -3321,7 +3352,7 @@
     mountPanes();   // PORTAT 2026-08-17
   }
 
-  function cardKey(id){ return "fl:card:"+id; }
+  function cardKey(id){ return "fl:card:"+CACHE_VER+":"+id; }
   function scheduleCardRev(){
     if(_cardRevTimer){ clearTimeout(_cardRevTimer); _cardRevTimer=null; }
     if(!STATE.card || STATE.card.revenue_ready || STATE.cardRevTries>20 || STATE.view!=="card") return;

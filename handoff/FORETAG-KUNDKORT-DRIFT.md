@@ -189,6 +189,33 @@ alla tre delar samma namnkarta.
   `patch fastighet`) som var tyst gröna med den påhittade fixturen. Samtliga 20 sviter gröna.
 - **Deploy:** `companies_api.js` + klistra om `mira-foretag-lista.html`.
 
+#### Följdfel: filtret visade skräp ÄVEN efter att backend rättats (löst samma dag)
+Backend svarade rätt (`/meta` gav 13 fastigheter, 0 trasiga namn) men dropdownen i
+listan visade fortfarande `[object Object]` — medan **kundkortet var rätt**. Den
+skillnaden var ledtråden: kortet hämtar sitt eget `/card`, listan ritar filterraden.
+
+- **Rotorsak:** filterraden ritas **BARA en gång** (`if(!$("filters").innerHTML)
+  renderFilters()`) — ett medvetet val, för annars tappar sökfältet fokus/caret vid
+  varje debounce-reload. Priset var att dropdownarnas INNEHÅLL frystes vid sessionens
+  **första** svar, och det kom ur `sessionStorage` (TTL 15 min), skrivet **före**
+  deployen. **Inte ens Uppdatera-knappen hjälpte** — den kör `cacheClearAll()+reload()`,
+  men vakten satt på `innerHTML`, inte på cachen, så raden ritades aldrig om.
+- **Fix i två lager:**
+  1. **`CACHE_VER`** i `ckey()`/`cardKey()` → payloads skrivna av en äldre blockversion
+     matchar aldrig. **⚠️ Bumpa den när svarets form eller meta-innehåll ändras.**
+  2. **`syncFilterOptions()`** — skelettet ritas fortfarande en gång, men OPTIONS
+     synkas vid varje färskt svar. Rör bara `[data-flf]`-selecten (**aldrig** sökfältet
+     — det var hela skälet till render-once), hoppar över en select som är
+     `document.activeElement` (rycker inte undan en öppen dropdown) och återställer
+     valt värde efteråt.
+- **Verifierat i harness som reproducerar felet:** en filterrad manuellt satt till
+  `[object Object]` självläker vid nästa svar · en fokuserad dropdown lämnas orörd ·
+  valt värde överlever en reload · sökfältet behåller fokus OCH text medan synken kör.
+  companies_smoke **261/261**, **mutationstestat: 5 faller**.
+- **Lärdom:** en render-once-optimering fryser inte bara layouten utan **datan i den**.
+  Ritas något en gång måste innehållet ha en egen synkväg — annars överlever ett
+  rättat serverfel i klienten, och symtomet ser ut som att fixen inte gick fram.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.
