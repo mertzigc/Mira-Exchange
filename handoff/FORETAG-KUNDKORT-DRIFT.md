@@ -156,6 +156,39 @@ fakturerar kunden — badges på kortet + filter i listan.
 - **Deploy:** `index.js` + `companies_api.js` (Render) + klistra om
   `mira-foretag-lista.html`. Ingen Bubble-ändring, ingen ny bindning.
 
+### ⚠️ "[object Object]" i fastighetslistan — löst 2026-08-21
+
+**Symptom (skarpt, Christians skärmdump):** filtret "Alla fastigheter" listade rad efter
+rad med `[object Object]`. Samma sak i den nya Fastighet-kolumnen och i kortets chips —
+alla tre delar samma namnkarta.
+
+- **Rotorsak:** `_fastigheter()` hämtade namnet med
+  `_str(f.Namn || f.name || f.Name || f.Adress || f.address || f.title || f.Titel)`.
+  **Fastighet har inget `Namn`-fält — namnet ligger i `Titel`** — och **`Adress` är ett
+  geographic address-OBJEKT**. Kedjan träffade alltså `Adress` FÖRE `Titel`, och
+  `String({address:…})` blir `"[object Object]"`.
+  Schema verifierat mot Bubble-editorn: `Adress`(geo) · `Bild` · `Bildspel` ·
+  `Coworker` · `Hyresgäster` · `Kluster` · `Kontor` · `Leverantör` · `Medarbetare` ·
+  `Region` · **`Titel`(text)** · `Ägare`.
+- **Fix:** `_fastighetName()` — **Titel först**, adressen bara som **textfallback**
+  (`a.address` plockas ut explicit), och `_cleanName()` som vägrar göra ett objekt till
+  ett namn (förkastar även en redan stringifierad `"[object Object]"`). Namnlösa
+  fastigheter utelämnas men **loggas** (`[fastigheter] N av M saknar namn`) — tyst
+  bortfall är hur felet kunde leva vidare.
+- **Frontend-bälte:** `selOpts` renderade `it.name` rakt av. Nu faller den tillbaka på
+  **värdet (id:t)** om namnet saknas eller är ett objekt. Ett rått id säger "något är
+  fel"; `"[object Object]"` ser ut som data. Dölj det aldrig med tom sträng.
+- **⚠️ VARFÖR TESTERNA VAR GRÖNA HELA TIDEN:** fixturen i `companies_smoke` skrev
+  `Fastighet: [{_id:"f1", Namn:"Kungsgatan 1"}]` — **ett fält som inte finns i Bubble**.
+  Mocken var alltså mer förlåtande än verkligheten, exakt samma klass som `used_at`-buggen
+  (2026-08-18) och samma lärdom: **fixturer ska spegla det VERIFIERADE schemat**, annars
+  testar de en påhittad värld. Fixturen bär nu `Titel` + `Adress:{address}`, plus en
+  fastighet med bara adress och en helt namnlös.
+- **Verifierat:** companies_smoke **256/256** (+6). **Mutationstestat: 8 faller** — och
+  tre av dem är BEFINTLIGA tester (`list resolvar fastigheter`, office-normaliseraren,
+  `patch fastighet`) som var tyst gröna med den påhittade fixturen. Samtliga 20 sviter gröna.
+- **Deploy:** `companies_api.js` + klistra om `mira-foretag-lista.html`.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

@@ -132,17 +132,49 @@ export function registerCompaniesRoutes(app, deps) {
     return _gCache;
   }
 
+  // ── Fastighetsnamn ────────────────────────────────────────────────────────
+  // ⚠️ BUGG 2026-08-21: namnet hämtades med `_str(f.Namn || … || f.Adress || …)`.
+  // Fastighet-typen har INGET `Namn`-fält — namnet ligger i **`Titel`** — och
+  // `Adress` är ett **geographic address-OBJEKT**. Kedjan träffade därför Adress
+  // före Titel, och `String({address:…})` blev **"[object Object]"**: filtret,
+  // Fastighet-kolumnen och kortets chips visade det rakt av.
+  // (Schema verifierat mot Bubble-editorn: Adress·Bild·Bildspel·Coworker·
+  //  Hyresgäster·Kluster·Kontor·Leverantör·Medarbetare·Region·Titel·Ägare.)
+  //
+  // Två regler som följer: **Titel först**, och ett objekt får ALDRIG bli ett namn
+  // via implicit stringifiering — geo-objektet plockas isär explicit (`.address`),
+  // allt annat objekt-aktigt förkastas av `_cleanName`.
+  function _cleanName(v) {
+    if (v == null) return "";
+    if (typeof v === "object") return "";        // aldrig "[object Object]"
+    const s = _str(v).trim();
+    return s === "[object Object]" ? "" : s;     // bältet: redan stringifierat objekt
+  }
+  function _fastighetName(f) {
+    const t = _cleanName(f.Titel) || _cleanName(f.titel) || _cleanName(f.Namn) ||
+              _cleanName(f.name) || _cleanName(f.Name) || _cleanName(f.title);
+    if (t) return t;
+    // Fallback: adressen — men bara textdelen ur geo-objektet.
+    const a = f.Adress || f.adress || f.address;
+    if (a) return _cleanName(typeof a === "string" ? a : a.address);
+    return "";
+  }
   let _fCache = { list: null, map: null, ts: 0 };
   async function _fastigheter() {
     if (_fCache.map && (Date.now() - _fCache.ts) < AUX_TTL) return _fCache;
     const all = await bubbleFindAll("Fastighet", {}).catch(() => []);
     const map = new Map(), list = [];
+    let unnamed = 0;
     for (const f of all) {
       const id = bubbleId(f); if (!id) continue;
-      const nm = _str(f.Namn || f.name || f.Name || f.Adress || f.address || f.title || f.Titel);
-      if (!nm) continue;
+      const nm = _fastighetName(f);
+      // ⚠️ Namnlösa fastigheter hoppas över (de går inte att välja i en dropdown),
+      // men räknas och loggas — tyst bortfall är hur "[object Object]" kunde leva
+      // vidare oupptäckt.
+      if (!nm) { unnamed++; continue; }
       map.set(id, nm); list.push({ id, name: nm });
     }
+    if (unnamed) console.log("[fastigheter] " + unnamed + " av " + (all || []).length + " saknar namn (Titel/Adress tomma) — utelämnade ur listan");
     list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
     _fCache = { list, map, ts: Date.now() };
     return _fCache;

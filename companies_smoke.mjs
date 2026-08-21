@@ -19,7 +19,17 @@ const TOUCH = new Map([
 const REV = new Map([["cc1", { 2025: 146750, 2026: 40992 }], ["cc2", { 2026: 7600 }]]);
 const AUX = {
   ClientGroup: [{ _id: "g1", name: "Acme-koncernen" }],
-  Fastighet: [{ _id: "f1", Namn: "Kungsgatan 1" }, { _id: "f2", Namn: "Vasagatan 5" }],
+  // ⚠️ VERKLIGT Fastighet-schema (Bubble-editorn 2026-08-21): namnet ligger i `Titel`,
+  // och `Adress` är ett geographic address-OBJEKT. Fixturen sa tidigare `Namn` — ett
+  // fält som inte finns — och var därmed mer förlåtande än verkligheten. Precis den
+  // sortens mock som lät "[object Object]" nå produktion.
+  // f3 har ingen Titel → ska falla tillbaka på adresstexten, inte på objektet.
+  Fastighet: [
+    { _id: "f1", Titel: "Kungsgatan 1", Adress: { address: "Kungsgatan 1, Stockholm" } },
+    { _id: "f2", Titel: "Vasagatan 5",  Adress: { address: "Vasagatan 5, Stockholm" } },
+    { _id: "f3", Adress: { address: "Drottninggatan 9, Göteborg" } },
+    { _id: "f4" },
+  ],
 };
 const CONTRACTS = [
   { _id: "ct1", "kundföretag": "cc1", "månadskostnad": 100000, "slutdatum": null, contract_type: "Subscription", contract_title: "Reception CMIAB" },   // aktiv (inget slut)
@@ -208,7 +218,8 @@ const run = async () => {
   ok("meta facets.kundstatus = [Aktiv kund, Prospekt]", JSON.stringify(meta.body.facets.kundstatus) === JSON.stringify(["Aktiv kund", "Prospekt"]));
   ok("meta users 2 st sorterade", meta.body.users.length === 2 && meta.body.users[0].name === "Anna Andersson");
   ok("meta groups 1 st", meta.body.groups.length === 1 && meta.body.groups[0].name === "Acme-koncernen");
-  ok("meta fastigheter 2 st", meta.body.fastigheter.length === 2);
+  // 3 av 4: f4 saknar både Titel och Adress → utelämnas (och loggas).
+  ok("meta fastigheter 3 namngivna av 4", meta.body.fastigheter.length === 3);
   ok("meta editable ansvarig=userref", meta.body.editable.ansvarig === "userref");
 
   // ── LIST (default sort name asc) ──
@@ -515,7 +526,7 @@ const run = async () => {
 
   // ── INSTÄLLNINGAR: KONTOR (Office) ──
   var of = await call(s.routes, "get", "/admin/companies/:id/offices", { params: { id: "cc1" } });
-  ok("offices → 2 (cc1), sorterade + dropdown-data", of.body.ok && of.body.count === 2 && of.body.fastigheter.length === 2 && of.body.coworkers.length >= 2);
+  ok("offices → 2 (cc1), sorterade + dropdown-data", of.body.ok && of.body.count === 2 && of.body.fastigheter.length === 3 && of.body.coworkers.length >= 2);
   var of1 = of.body.rows.filter(function(r){return r.id==="of1";})[0];
   ok("office nOffice: namn/fastighet/ansvarig/adress/yta/arbetsplatser/budget/rum-antal", of1.name === "CMIAB Sthlm" && of1.fastighet === "Kungsgatan 1" && of1.ansvariga.length === 1 && of1.ansvariga[0].name === "Testare Testsson" && of1.adress === "Kammakargatan 12, Stockholm" && of1.yta === 200 && of1.arbetsplatser === 10 && of1.budget === 500000 && of1.motesrum === 1 && of1.intern === 2);
   // skapa kontor + auto-rum
@@ -891,6 +902,30 @@ const run = async () => {
   ok("frontend: bolagsfilter + kall karta ger 'Beräknar…', inte 'Inga företag matchar'",
      /STATE\.f\.bolag && !STATE\.bolag_ready/.test(fl));
   ok("frontend: bolagsfilter i filterraden", /data-flf="bolag"/.test(fl) && /Alla våra bolag/.test(fl));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FASTIGHETSNAMN: "[object Object]" (bugg 2026-08-21)
+  // Namnkedjan läste `Adress` (ett geographic address-OBJEKT) FÖRE `Titel`, som är
+  // det fält Fastighet faktiskt har. String(objekt) → "[object Object]", vilket
+  // syntes i filtret, kolumnen och kortets chips. Testerna vaktar tre saker:
+  // Titel vinner · adressen används bara som textfallback · inget objekt kan bli namn.
+  // ══════════════════════════════════════════════════════════════════════════
+  const fmeta = await call(s.routes, "get", "/admin/companies/meta");
+  const fList = fmeta.body.fastigheter || [];
+  const fName = (id) => (fList.filter((x) => x.id === id)[0] || {}).name;
+  ok("fastighet: INGET namn är '[object Object]'",
+     fList.every((x) => x.name !== "[object Object]") &&
+     JSON.stringify(fList).indexOf("[object Object]") < 0);
+  ok("fastighet: Titel vinner över Adress-objektet", fName("f1") === "Kungsgatan 1" && fName("f2") === "Vasagatan 5");
+  ok("fastighet: utan Titel används adressens TEXT, inte objektet", fName("f3") === "Drottninggatan 9, Göteborg");
+  ok("fastighet: helt namnlös fastighet utelämnas ur listan", fName("f4") === undefined && fList.length === 3);
+  // Radens namnuppslag går via samma karta → kolumnen och kortets chips är också täckta.
+  const frow = await call(s.routes, "get", "/admin/companies/list", { query: {} });
+  const fr1 = frow.body.rows.filter((r) => r.id === "cc1")[0] || {};
+  ok("fastighet: listraden visar riktiga namn (kolumn + kortets chips delar karta)",
+     (fr1.fastigheter || []).join("|").indexOf("[object Object]") < 0 && (fr1.fastigheter || []).length > 0);
+  ok("frontend: selOpts faller tillbaka på värdet i st.f. att rendera ett objekt",
+     /if\(nm===null\|\|nm===undefined\|\|typeof nm==="object"\) nm=v;/.test(fl));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

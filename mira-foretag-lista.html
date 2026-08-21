@@ -1962,6 +1962,11 @@
   function selOpts(list, cur, allLabel){
     var h='<option value="">'+esc(allLabel)+'</option>';
     for(var i=0;i<list.length;i++){ var it=list[i], v=it.id!==undefined?it.id:it, nm=it.name!==undefined?it.name:it;
+      // ⚠️ Ett {id,name}-objekt utan name gav "[object Object]" som etikett (bet oss
+      // på fastighetslistan 2026-08-21, där backend råkade läsa geo-adressobjektet).
+      // Fall tillbaka på värdet i stället: ett rått id säger "något är fel", medan
+      // "[object Object]" ser ut som data. Dölj aldrig felet med en tom sträng.
+      if(nm===null||nm===undefined||typeof nm==="object") nm=v;
       h+='<option value="'+esc(v)+'"'+(String(v)===String(cur)?" selected":"")+'>'+esc(nm)+'</option>'; }
     return h;
   }
