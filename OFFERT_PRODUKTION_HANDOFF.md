@@ -356,9 +356,35 @@ om historiken** — samma siffra skulle då betyda motsatsen.
 
 ⚠️ **Taket är 95 % med flit** — 100 % först vid signering.
 
-- **`sannolikhet` behålls som UTDATA** i exakt samma format som förut (decimal 0–1,
-  skriven som sträng). Allt som läser den fortsätter fungera utan att veta att metoden
-  bytts. Ingen KPI aggregerar på fältet idag (greppat) → liten blast radius.
+- **`sannolikhet` behålls som UTDATA** (decimal 0–1). Ingen KPI aggregerar på fältet
+  idag (greppat) → liten blast radius. Bara `affar_api.js` + affärsvyn rör det i Render.
+
+#### ⚠️ OPTION-SET-KROCKEN på `sannolikhet` — skarpt fel 2026-08-22
+`deal.sannolikhet` var ett **Option Set** (`potential_affär`) med elva fasta steg
+(1 · 0,9 … 0). Den gamla väljaren skrev dess display-strängar. Ett **beräknat** värde
+(0,33 · 0,71 · 0,48 …) finns inte i setet → Bubble svarade
+
+```
+400 INVALID_DATA  Invalid data for field sannolikhet:
+                  could not parse this as a potential_affär
+```
+
+och avvisade **HELA** skrivningen: **ingen affär gick att spara alls**.
+
+- **Fältet måste vara `number`.** 95 %-taket går inte ens att representera i
+  option-setet — det hoppar 0,9 → 1,0, så antingen bryts taket (100 %) eller sänks
+  det till 90 %. Metoden kräver kontinuerliga värden.
+- **Koden skickar nu ett TAL**, inte en display-sträng.
+- **⚠️ `sannolikhet` är numera STRYPBAR i skrivningen** (`DEAL_SOFT_FIELDS`) — inte för
+  att den är oviktig, utan för att en typmiss på det ENA fältet annars blockerar hela
+  affärssparningen. Graderingen sparas alltid; svaret bär `sannolikhet_blocked`
+  `{reason, hint}` och UI:t säger det rakt ut. Tyst tapp är inte OK.
+- `_rejectedFieldName` matchar **två** Bubble-fel: `Unrecognized field: x` (saknas)
+  och `Invalid data for field x: could not parse` (fel typ). **SMALT** — fel på ett
+  ANNAT fält braker fortfarande, vaktat av eget test.
+- **Lärdom:** jag flaggade att fälttypen var overifierad men skrev ändå. Verifiera
+  måltypen INNAN man byter format på ett fält — särskilt när ett option set kan se ut
+  som ett talfält i datan.
 - **Nya Bubble-fält på `deal`** (number 1–5): `bom_relation` · `bom_beslutsprocess` ·
   `bom_timing` · `bom_budget` · `bom_battre`.
 - **⚠️ Formeln finns BARA i backend.** Frontend visar samma siffra live medan man
@@ -381,14 +407,17 @@ om historiken** — samma siffra skulle då betyda motsatsen.
 källrads-agnostisk; utan `source_type`/`source_id` skapas bara affären.
 Formuläret har titel/kategori/status/kundföretagssök/värde/ägare/region + bom-sektionen.
 
-**Verifierat:** affar_create_smoke **71/71**, companies_smoke **305/305**,
-mutationstestat (23 resp. 6 faller). Samtliga 20 sviter gröna. Harness: procenten
+**Verifierat:** affar_create_smoke **77/77**, companies_smoke **305/305**,
+mutationstestat (13 resp. 6 faller mot `2adad54`). Option-set-krocken har eget test som
+återskapar Christians exakta felkropp. Samtliga 20 sviter gröna. Harness: procenten
 uppdateras live (alla 4:or → 71 %, sänk en till 1 → 57 %, höj till 5 → 76 %),
 sparning blockeras vid 0/5 och 3/5 med besked om hur många som saknas, och
 "+ Affär" skickar ingen källrad.
 
-**Deploy:** skapa de fem `bom_*`-fälten på `deal` i Bubble · deploya `affar_api.js` ·
-klistra om `mira-affar-samlad.html` + `mira-foretag-lista.html`.
+**Deploy:** (1) skapa de fem `bom_*`-fälten på `deal` **och byt `sannolikhet` till
+number** i Bubble · (2) deploya `affar_api.js` · (3) klistra om `mira-affar-samlad.html`
++ `mira-foretag-lista.html`. Görs steg 1 sist sparas affären ändå — men utan
+sannolikhet, och användaren får se varför.
 
 ## 5. Produktionsmodul
 

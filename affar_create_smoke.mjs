@@ -235,15 +235,15 @@ const run = async () => {
   const mkDeal = (extra) => call("post", "/admin/affar/deal/create", { body: Object.assign({ titel: "Affär" }, extra) });
 
   const b1 = await mkDeal(BOM_ALLA(1));
-  ok("bom: alla ettor → 0 %", b1.body.ok === true && b1.body.sannolikhet === "0");
+  ok("bom: alla ettor → 0 %", b1.body.ok === true && b1.body.sannolikhet === 0);
   const b5 = await mkDeal(BOM_ALLA(5));
   ok("bom: alla femmor → 95 % (aldrig 100 — det kommer först vid signering)",
-     b5.body.ok === true && b5.body.sannolikhet === "0.95");
+     b5.body.ok === true && b5.body.sannolikhet === 0.95);
   const b3 = await mkDeal(BOM_ALLA(3));
-  ok("bom: alla treor → 47,5 %", b3.body.ok === true && b3.body.sannolikhet === "0.48");
+  ok("bom: alla treor → 47,5 %", b3.body.ok === true && b3.body.sannolikhet === 0.48);
   // Blandat: 5+4+3+2+1 = 15 → (15−5)/20 × 0,95 = 0,475 → 0.48
   const bMix = await mkDeal({ bom_relation: 5, bom_beslutsprocess: 4, bom_timing: 3, bom_budget: 2, bom_battre: 1 });
-  ok("bom: blandad gradering räknas på summan", bMix.body.sannolikhet === "0.48");
+  ok("bom: blandad gradering räknas på summan", bMix.body.sannolikhet === 0.48);
   // ⚠️ Riktningen: en HÖGRE gradering får aldrig ge en LÄGRE sannolikhet.
   const bLow = await mkDeal({ bom_relation: 2, bom_beslutsprocess: 2, bom_timing: 2, bom_budget: 2, bom_battre: 2 });
   const bHigh = await mkDeal({ bom_relation: 4, bom_beslutsprocess: 4, bom_timing: 4, bom_budget: 4, bom_battre: 4 });
@@ -254,8 +254,10 @@ const run = async () => {
   ok("bom: graderingarna skrivs till rätt Bubble-fält",
      dealRec.payload["bom_relation"] === 4 && dealRec.payload["bom_beslutsprocess"] === 4 &&
      dealRec.payload["bom_timing"] === 4 && dealRec.payload["bom_budget"] === 4 && dealRec.payload["bom_battre"] === 4);
-  ok("bom: sannolikhet skrivs i SAMMA form som den gamla väljaren (sträng 0–1)",
-     dealRec.payload["sannolikhet"] === "0.71");   // alla fyror: (20−5)/20 × 0,95 = 0,7125 → 0,71
+  // ⚠️ Skrivs som TAL. Den gamla väljaren skrev option-setets display-strängar,
+  // men ett beräknat värde finns inte i det setet — fältet måste vara number.
+  ok("bom: sannolikhet skrivs som ett tal, inte en option-set-sträng",
+     dealRec.payload["sannolikhet"] === 0.71);   // alla fyror: (20−5)/20 × 0,95 = 0,7125
 
   // ⚠️ Alla fem krävs — en halvifylld gradering ger falsk precision.
   const bHalf = await mkDeal({ bom_relation: 5, bom_budget: 3 });
@@ -272,13 +274,13 @@ const run = async () => {
   // patch
   DB.deal.push({ _id: "dBom", titel: "Patchbar" });
   const pb = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dBom" }, body: BOM_ALLA(5) });
-  ok("bom: patch räknar om sannolikheten", pb.body.ok === true && pb.body.patched["sannolikhet"] === "0.95" &&
+  ok("bom: patch räknar om sannolikheten", pb.body.ok === true && pb.body.patched["sannolikhet"] === 0.95 &&
      pb.body.sannolikhet_source === "bom");
   // ⚠️ Graderingen vinner över en handsatt sannolikhet — annars kunde två källor
   // skriva samma fält och den ena tysta den andra.
   const pb2 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dBom" }, body: Object.assign({ sannolikhet: "0.1" }, BOM_ALLA(1)) });
   ok("bom: graderingen vinner över medskickad sannolikhet, och källan redovisas",
-     pb2.body.patched["sannolikhet"] === "0" && pb2.body.sannolikhet_source === "bom");
+     pb2.body.patched["sannolikhet"] === 0 && pb2.body.sannolikhet_source === "bom");
   const pb3 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dBom" }, body: { titel: "Bara titel" } });
   ok("bom: patch utan gradering rör inte sannolikheten",
      pb3.body.ok === true && pb3.body.patched["sannolikhet"] === undefined);
@@ -303,7 +305,53 @@ const run = async () => {
   ok("saknade bom-fält: affären skapas ändå + vilka fält som ströks redovisas",
      miss.body.ok === true && (miss.body.bom_fields_missing || []).length === 5);
   ok("saknade bom-fält: sannolikheten skrivs ÄNDÅ (det fältet finns sedan tidigare)",
-     missCreated && missCreated["sannolikhet"] === "0.95" && missCreated["bom_relation"] === undefined);
+     missCreated && missCreated["sannolikhet"] === 0.95 && missCreated["bom_relation"] === undefined);
+
+  // ── OPTION-SET-KROCKEN på `sannolikhet` (skarpt fel 2026-08-22) ───────────
+  // `deal.sannolikhet` var ett Option Set (`potential_affär`, elva fasta steg).
+  // Ett BERÄKNAT värde (0,33 · 0,71 …) finns inte där → Bubble svarar
+  //   400 INVALID_DATA "could not parse this as a potential_affär"
+  // vilket avvisade HELA skrivningen: ingen affär gick att spara alls.
+  // ⚠️ Sannolikheten stryps därför som sista utväg — graderingen måste kunna
+  // sparas även om fältet ännu inte bytts till number. Tyst tapp är inte OK:
+  // svaret bär `sannolikhet_blocked` med orsak och åtgärd.
+  const OS_ERR = () => { const e = new Error("bubblePatch failed");
+    e.detail = { status: 400, body: JSON.stringify({ statusCode: 400, body: { status: "INVALID_DATA", message: "Invalid data for field sannolikhet: could not parse this as a potential_affär" } }) };
+    return e; };
+  const routes5 = {}; let osPatched = null;
+  registerAffarRoutes({ get: () => {}, post: (p, h) => { routes5[p] = h; }, options: () => {} },
+    Object.assign({}, deps, {
+      bubblePatch: async (t, id, payload) => {
+        if (t === "deal" && payload && payload.sannolikhet !== undefined) throw OS_ERR();
+        osPatched = payload; return deps.bubblePatch(t, id, payload);
+      },
+    }));
+  DB.deal.push({ _id: "dOS", titel: "Option-set-affär" });
+  const os = await new Promise((resolve) => {
+    const res = { _code: 200, status(c) { this._code = c; return this; }, json(o) { resolve({ code: this._code, body: o }); } };
+    routes5["/admin/affar/deal/:id/patch"]({ params: { id: "dOS" }, query: {}, headers: {}, body: Object.assign({ titel: "Nytt namn" }, BOM_ALLA(4)) }, res);
+  });
+  ok("option-set-krock: affären sparas ÄNDÅ (hela skrivningen avvisas inte längre)",
+     os.body.ok === true);
+  ok("option-set-krock: graderingen sparas även om sannolikheten inte kan skrivas",
+     osPatched && osPatched["bom_relation"] === 4 && osPatched["titel"] === "Nytt namn" &&
+     osPatched["sannolikhet"] === undefined);
+  ok("option-set-krock: svaret säger orsaken och åtgärden, inget tyst tapp",
+     os.body.sannolikhet_blocked && os.body.sannolikhet_blocked.reason === "fel_typ" &&
+     /Byt fältet till number/.test(os.body.sannolikhet_blocked.hint));
+  // ⚠️ Andra 400-fel måste fortfarande braka — nedgraderingen matchar SMALT.
+  const routes6 = {};
+  registerAffarRoutes({ get: () => {}, post: (p, h) => { routes6[p] = h; }, options: () => {} },
+    Object.assign({}, deps, {
+      bubblePatch: async () => { const e = new Error("bubblePatch failed");
+        e.detail = { status: 400, body: JSON.stringify({ body: { status: "INVALID_DATA", message: "Invalid data for field Status: could not parse this as a lead_status" } }) }; throw e; },
+    }));
+  const osOther = await new Promise((resolve) => {
+    const res = { _code: 200, status(c) { this._code = c; return this; }, json(o) { resolve({ code: this._code, body: o }); } };
+    routes6["/admin/affar/deal/:id/patch"]({ params: { id: "dOS" }, query: {}, headers: {}, body: { status: "Trams" } }, res);
+  });
+  ok("option-set-krock: fel på ett ANNAT fält braker fortfarande (döljer inga buggar)",
+     osOther.body.ok !== true);
 
   // ── FRONTEND: bom-sektionen i affärsvyn ───────────────────────────────────
   ok("frontend: stjärnkomponenten finns och listar de fem punkterna",
@@ -333,6 +381,20 @@ const run = async () => {
      !/dealCreatePanelHtml[\s\S]*?source_type/.test(af.slice(af.indexOf("function saveNewDeal"), af.indexOf("function saveNewDeal") + 1400)));
   ok("frontend: saknade bom-fält i Bubble rapporteras till användaren",
      /bom_fields_missing/.test(af) && /graderingen lagrades inte/.test(af));
+  // ⚠️ Option-set-krocken måste synas för användaren — annars ser affären sparad ut
+  // medan sannolikheten tyst uteblir. Ska finnas i BÅDA spar-vägarna (redigera + skapa).
+  ok("frontend: blockerad sannolikhet rapporteras i både redigera och skapa",
+     (af.match(/sannolikhet_blocked/g) || []).length >= 3);
+  // Skär ut funktionskropparna i st.f. att gissa ett teckenavstånd.
+  const kropp = (namn) => {
+    const i = af.indexOf("function " + namn + "(");
+    if (i < 0) return "";
+    const j = af.indexOf("\n  function ", i + 5);
+    return af.slice(i, j < 0 ? af.length : j);
+  };
+  ok("frontend: meddelandet ligger i saveDeal, inte i saveLead",
+     kropp("saveDeal").indexOf("sannolikhet_blocked") > -1 &&
+     kropp("saveLead").indexOf("sannolikhet_blocked") < 0);
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

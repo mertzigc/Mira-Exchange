@@ -1066,34 +1066,69 @@ export function registerAffarRoutes(app, deps) {
     return Math.round(pct * 100) / 100;                 // 0–0.95, två decimaler
   }
   // Lägger graderingarna + den härledda sannolikheten i payloaden.
+  // ⚠️ Skickas som TAL, inte sträng. `deal.sannolikhet` var ursprungligen ett
+  // Option Set (`potential_affär`, elva fasta steg 1 · 0,9 … 0) och den gamla
+  // väljaren skrev dess display-strängar. En BERÄKNAD sannolikhet (0,33 · 0,71 …)
+  // finns inte i det setet → Bubble svarar `INVALID_DATA: could not parse this as
+  // a potential_affär`. Metoden kräver ett number-fält; 95 %-taket går inte ens
+  // att representera i option-setet (det hoppar 0,9 → 1,0).
   function _bomApply(p, scores) {
     for (const f of BOM_FIELDS) p[f.bubble] = scores[f.key];
-    p["sannolikhet"] = _str(_bomSannolikhet(scores));   // samma sträng-form som den gamla väljaren
+    p["sannolikhet"] = _bomSannolikhet(scores);
   }
   // ⚠️ De fem fälten är NYA i Bubble. Modulen får RÅ bubbleCreate/bubblePatch →
   // ett okänt fält 400:ar HELA skrivningen, alltså hade affären inte gått att
   // spara alls före att fälten skapats. Stryp därför de fält Bubble klagar på,
   // ett i taget, och rapportera vilka. Matchar SMALT (400 + exakt fältnamn):
   // andra fel måste fortsätta braka.
-  function _unknownFieldName(e) {
+  // Två Bubble-fel som båda betyder "det här FÄLTET går inte att skriva just nu",
+  // medan resten av skrivningen är giltig:
+  //   • `Unrecognized field: x`                     → fältet finns inte (ännu)
+  //   • `Invalid data for field x: could not parse` → fel TYP (t.ex. option set
+  //                                                    som inte rymmer ett tal)
+  // ⚠️ Matchar SMALT och returnerar bara fältnamnet. Allt annat måste braka —
+  // annars döljer vi äkta buggar.
+  function _rejectedFieldName(e) {
     const d = e && e.detail;
     if (!d || d.status !== 400) return null;
     const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
-    const m = /Unrecognized field:\s*([^"'}\\]+)/.exec(body);
-    return m ? m[1].trim() : null;
+    let m = /Unrecognized field:\s*([^"'}\\]+)/.exec(body);
+    if (m) return { field: m[1].trim(), reason: "saknas" };
+    m = /Invalid data for field\s+([^:]+):/.exec(body);
+    if (m) return { field: m[1].trim(), reason: "fel_typ" };
+    return null;
   }
-  async function _writeSkippingUnknown(fn, payload, droppable) {
+  // Skriver payloaden och stryper, ett i taget, de fält Bubble avvisar — men BARA
+  // de fält som anges som strypbara. Returnerar vilka som ströks och varför, så
+  // svaret kan säga det rakt ut i st.f. att tyst tappa data.
+  async function _writeSkippingRejected(fn, payload, droppable) {
     const p = Object.assign({}, payload); const dropped = [];
     for (let i = 0; i <= droppable.length; i++) {
       try { return { value: await fn(p), dropped }; }
       catch (e) {
-        const f = _unknownFieldName(e);
-        if (!f || droppable.indexOf(f) < 0) throw e;
-        delete p[f]; dropped.push(f);
-        console.warn("[bom] fältet " + f + " saknas på deal i Bubble — affären sparas utan det");
+        const r = _rejectedFieldName(e);
+        if (!r || droppable.indexOf(r.field) < 0) throw e;
+        delete p[r.field]; dropped.push(r);
+        console.warn("[deal] fältet " + r.field + " avvisades av Bubble (" + r.reason + ") — affären sparas utan det");
       }
     }
     return { value: await fn(p), dropped };
+  }
+  // Strypbara fält vid deal-skrivning: de fem graderingarna + den härledda
+  // sannolikheten. ⚠️ `sannolikhet` är med FÖR ATT en typmiss på det fältet annars
+  // skulle blockera HELA affärssparningen — graderingen ska kunna sparas ändå.
+  const DEAL_SOFT_FIELDS = BOM_FIELDS.map((f) => f.bubble).concat(["sannolikhet"]);
+  // → { bom_fields_missing, sannolikhet_blocked } för svaret.
+  function _softReport(dropped) {
+    const out = {};
+    const bom = dropped.filter((d) => d.field !== "sannolikhet").map((d) => d.field);
+    if (bom.length) out.bom_fields_missing = bom;
+    const sa = dropped.filter((d) => d.field === "sannolikhet")[0];
+    if (sa) out.sannolikhet_blocked = { reason: sa.reason,
+      hint: sa.reason === "fel_typ"
+        ? "deal.sannolikhet är ett Option Set (potential_affär) med fasta steg och rymmer inte ett beräknat värde. Byt fältet till number, så skrivs sannolikheten."
+        : "Fältet deal.sannolikhet saknas i Bubble." };
+    return out;
   }
 
   // ── POST /admin/affar/deal/:id/patch — redigera affär (deal) inline ──
@@ -1127,11 +1162,11 @@ export function registerAffarRoutes(app, deps) {
       if (b.kontaktpersoner !== undefined) p["kontaktpersoner"] = asList(b.kontaktpersoner);
       if (b.todo            !== undefined) p["todo"]            = asList(b.todo);
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
-      const wr = await _writeSkippingUnknown((q) => bubblePatch("deal", id, q), p, BOM_FIELDS.map((f) => f.bubble));
-      return res.json({ ok: true, id, patched: p,
+      const wr = await _writeSkippingRejected((q) => bubblePatch("deal", id, q), p, DEAL_SOFT_FIELDS);
+      return res.json(Object.assign({ ok: true, id, patched: p,
         sannolikhet: p["sannolikhet"] !== undefined ? p["sannolikhet"] : undefined,
         sannolikhet_source: bomP.given ? "bom" : (b.sannolikhet !== undefined ? "manuell" : undefined),
-        bom_fields_missing: wr.dropped.length ? wr.dropped : undefined });
+      }, _softReport(wr.dropped)));
     } catch (e) {
       console.error("[/admin/affar/deal/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
@@ -1165,7 +1200,7 @@ export function registerAffarRoutes(app, deps) {
       if (bomErrC) return res.status(400).json(Object.assign({ ok: false }, bomErrC));
       if (bomC.given) _bomApply(p, bomC.scores);
 
-      const cw = await _writeSkippingUnknown((q) => bubbleCreate("deal", q), p, BOM_FIELDS.map((f) => f.bubble));
+      const cw = await _writeSkippingRejected((q) => bubbleCreate("deal", q), p, DEAL_SOFT_FIELDS);
       const dealId = cw.value;
       if (!dealId) return res.status(500).json({ ok: false, error: "deal_create_failed" });
       _dCache.ts = 0;   // invalidera deal-cache → nya affären syns i sök/kedja/kategori
@@ -1185,9 +1220,9 @@ export function registerAffarRoutes(app, deps) {
         try { await bubblePatch("Lead", sourceId, { status: "Delegerad" }); lead_status_set = true; }
         catch (e) { console.warn("[deal/create] lead-status ej satt:", e?.message); }
       }
-      return res.json({ ok: true, deal_id: dealId, titel, linked, lead_status_set,
+      return res.json(Object.assign({ ok: true, deal_id: dealId, titel, linked, lead_status_set,
         sannolikhet: p["sannolikhet"] !== undefined ? p["sannolikhet"] : null,
-        bom_fields_missing: cw.dropped.length ? cw.dropped : undefined });
+      }, _softReport(cw.dropped)));
     } catch (e) {
       console.error("[/admin/affar/deal/create]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });

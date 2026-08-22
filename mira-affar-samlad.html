@@ -938,6 +938,8 @@
     }).then(function(r){ return r.json(); }).then(function(j){
       btn.disabled=false;
       if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&j.error)||"okänt"); return; }
+      if(j.bom_fields_missing) bomMsg(box, "⚠ Sparat, men fälten "+j.bom_fields_missing.join(", ")+" saknas på deal i Bubble — graderingen lagrades inte.");
+      else if(j.sannolikhet_blocked) bomMsg(box, "⚠ Graderingen sparades, men sannolikheten kunde inte skrivas: "+j.sannolikhet_blocked.hint);
       msg.textContent="Sparat ✓";
     }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
@@ -1269,6 +1271,7 @@
         btn.disabled=false;
         if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
         if(j.bom_fields_missing) bomMsg(box, "⚠ Affären skapades, men fälten "+j.bom_fields_missing.join(", ")+" saknas på deal i Bubble — graderingen lagrades inte.");
+        else if(j.sannolikhet_blocked) bomMsg(box, "⚠ Graderingen sparades, men sannolikheten kunde inte skrivas: "+j.sannolikhet_blocked.hint);
         msg.textContent="Affär skapad ✓";
         afterCreate(box, "", "Affär");
       }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
