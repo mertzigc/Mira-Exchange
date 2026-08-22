@@ -334,6 +334,62 @@ Full beskrivning: **`handoff/FORETAG-KUNDKORT-DRIFT.md`** ("Nästa steg-grinden"
 - **✅ `salj_api.js` (mötesbokningsvyn) grindar nu också** — alla tre skrivarna täckta.
 - Verifierat: `affar_create_smoke` 43/43, mutationstestat (13 faller).
 
+### 4.7 "5 skäl till bom" → härledd sannolikhet + skapa affär från scratch (2026-08-22)
+
+Den handsatta sannolikhets-dropdownen är **borttagen**. Sannolikheten härleds nu ur
+fem kvalificeringspunkter som graderas 1–5 stjärnor.
+
+**⚠️ RIKTNING (Christians beslut):** fler stjärnor = **starkare position** = **högre**
+sannolikhet. Rubriken "5 skäl till bom" påminner om vad som brukar fälla affärer;
+graderingen mäter hur väl vi står på varje punkt. **Vänd aldrig på det utan att räkna
+om historiken** — samma siffra skulle då betyda motsatsen.
+
+**Formel:** `(summa − 5) / 20 × 0,95`, avrundat till heltalsprocent.
+
+| Gradering | Summa | Sannolikhet |
+|---|---|---|
+| alla 1:or | 5 | 0 % |
+| alla 2:or | 10 | 24 % |
+| alla 3:or | 15 | 48 % |
+| alla 4:or | 20 | 71 % |
+| alla 5:or | 25 | **95 %** |
+
+⚠️ **Taket är 95 % med flit** — 100 % först vid signering.
+
+- **`sannolikhet` behålls som UTDATA** i exakt samma format som förut (decimal 0–1,
+  skriven som sträng). Allt som läser den fortsätter fungera utan att veta att metoden
+  bytts. Ingen KPI aggregerar på fältet idag (greppat) → liten blast radius.
+- **Nya Bubble-fält på `deal`** (number 1–5): `bom_relation` · `bom_beslutsprocess` ·
+  `bom_timing` · `bom_budget` · `bom_battre`.
+- **⚠️ Formeln finns BARA i backend.** Frontend visar samma siffra live medan man
+  klickar, men servern räknar om och skriver. Ändras formeln på ett ställe måste båda
+  ändras — testerna kräver identiska uttryck i både `affar_api.js` och de två blocken.
+- **⚠️ Alla fem krävs** (`400 ofullstandig_bom_gradering` + vilka som saknas). En
+  halvifylld gradering ger en siffra som ser exakt ut men vilar på gissningar, och två
+  affärer på samma procent skulle vila på olika underlag.
+- **Graderingen VINNER över en medskickad `sannolikhet`** — svaret bär
+  `sannolikhet_source: "bom" | "manuell"` så det aldrig blir en tyst omskrivning.
+- **⚠️ Mjuk nedgradering:** fälten är nya → raw create/patch 400:ar HELA skrivningen om
+  de saknas. `_writeSkippingUnknown` stryper de fält Bubble klagar på (SMAL matchning:
+  400 + exakt fältnamn) och svarar `bom_fields_missing`. Affären sparas alltid, och
+  `sannolikhet` skrivs ändå eftersom det fältet redan finns.
+- **Fyra ytor:** affärsvyns affärsredigering · affärsvyns "skapa affär av
+  lead/aktivitet" · kundkortets motsvarande · **nya "+ Affär"**.
+
+**"+ Affär" (skapa från scratch)** ligger i affärsvyns Skapa nytt-rad bredvid
++ Aktivitet / + Todo. Backend behövde inget nytt — `deal/create` var redan
+källrads-agnostisk; utan `source_type`/`source_id` skapas bara affären.
+Formuläret har titel/kategori/status/kundföretagssök/värde/ägare/region + bom-sektionen.
+
+**Verifierat:** affar_create_smoke **71/71**, companies_smoke **305/305**,
+mutationstestat (23 resp. 6 faller). Samtliga 20 sviter gröna. Harness: procenten
+uppdateras live (alla 4:or → 71 %, sänk en till 1 → 57 %, höj till 5 → 76 %),
+sparning blockeras vid 0/5 och 3/5 med besked om hur många som saknas, och
+"+ Affär" skickar ingen källrad.
+
+**Deploy:** skapa de fem `bom_*`-fälten på `deal` i Bubble · deploya `affar_api.js` ·
+klistra om `mira-affar-samlad.html` + `mira-foretag-lista.html`.
+
 ## 5. Produktionsmodul
 
 ### 5.1 Vad den läser

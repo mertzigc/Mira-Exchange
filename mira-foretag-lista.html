@@ -211,6 +211,20 @@
   .fk-livenone{border:1px dashed var(--fl-line);border-radius:9px;padding:12px;color:var(--fl-mut);font-size:12px;text-align:center;}
   .fk-livenone b{display:block;color:#f0a070;font-weight:700;margin-bottom:3px;}
   .fk-liveerr{border:1px solid rgba(255,107,107,.4);border-radius:9px;padding:11px;color:#ff8080;font-size:11.5px;}
+  /* "5 skal till bom" - stjarngradering som harleder affarens sannolikhet. */
+  .fk-bom{grid-column:1 / -1;border:1px solid var(--fl-line);border-radius:10px;padding:12px 14px;margin:4px 0 2px;background:rgba(28,43,77,.35);}
+  .fk-bomh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px;}
+  .fk-bomh .t{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;}
+  .fk-bomh .p{font-size:15px;font-weight:800;color:var(--fl-acc);white-space:nowrap;}
+  .fk-bomh .p.na{color:var(--fl-mut);font-size:12px;font-weight:600;}
+  .fk-bomrow{display:flex;align-items:center;gap:10px;padding:4px 0;}
+  .fk-bomrow .l{flex:1;min-width:0;font-size:12.5px;}
+  .fk-bomstars{display:inline-flex;gap:3px;}
+  .fk-bomstar{cursor:pointer;font-size:17px;line-height:1;color:rgba(255,255,255,.22);background:none;border:0;padding:0 1px;}
+  .fk-bomstar.on{color:var(--fl-acc);}
+  .fk-bomstar:hover{color:var(--fl-acc);opacity:.85;}
+  .fk-bommsg{display:block;margin-top:8px;font-size:11.5px;color:var(--fl-mut);}
+  .fk-bommsg.err{color:#ff8080;}
   .fk-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0 4px;}
   .fk-stat{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:12px 14px;}
   .fk-stat .l{color:var(--fl-mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
@@ -2565,6 +2579,68 @@
   // Formen renderas som en del av kortets vanliga re-render; inmatning triggar ingen
   // re-render (bara öppna/spara gör det), så inget skrivet försvinner.
   var CD_CATS=["Food & Event","Housekeeping","Service & People","Other facility services"];
+
+  // ── "5 SKÄL TILL BOM" → sannolikhet (2026-08-22) ──────────────────────────
+  // Speglar affärsvyn (mira-affar-samlad.html). ⚠️ RIKTNING: fler stjärnor =
+  // starkare position = HÖGRE sannolikhet. Servern äger formeln; UI:t visar bara
+  // samma siffra live. ⚠️ Alla fem krävs — annars falsk precision.
+  var BOM=[["relation","Relation"],["beslutsprocess","Beslutsprocess"],["timing","Tid/timing"],["budget","Budget"],["battre","Bättre"]];
+  function bomPct(scores){
+    var sum=0,n=0;
+    for(var i=0;i<BOM.length;i++){ var v=scores[BOM[i][0]]; if(v){ sum+=v; n++; } }
+    if(n<BOM.length) return null;
+    return Math.round(((sum-BOM.length)/(BOM.length*4))*0.95*100);
+  }
+  function bomHtml(cur){
+    cur=cur||{};
+    var rows="";
+    for(var i=0;i<BOM.length;i++){
+      var k=BOM[i][0], v=Number(cur[k])||0, stars="";
+      for(var n=1;n<=5;n++) stars+='<button type="button" class="fk-bomstar'+(n<=v?" on":"")+'" data-bom="'+esc(k)+'" data-v="'+n+'" title="'+n+' av 5">★</button>';
+      rows+='<div class="fk-bomrow"><span class="l">'+esc(BOM[i][1])+'</span><span class="fk-bomstars">'+stars+'</span></div>';
+    }
+    var pct=bomPct(cur);
+    return '<div class="fk-bom" data-bomwrap="1">'+
+      '<div class="fk-bomh"><span class="t">5 skäl till bom</span>'+
+      '<span class="p'+(pct==null?" na":"")+'" data-bompct>'+(pct==null?"ej graderad":("Sannolikhet "+pct+" %"))+'</span></div>'+
+      rows+
+      '<span class="fk-bommsg" data-bommsg>Gradera alla fem — sannolikheten räknas fram. Max 95 %: 100 % först vid signering.</span>'+
+    '</div>';
+  }
+  function bomRead(wrap){
+    var scores={}, n=0;
+    for(var i=0;i<BOM.length;i++){
+      var on=wrap.querySelectorAll('.fk-bomstar.on[data-bom="'+BOM[i][0]+'"]');
+      if(on.length){ scores[BOM[i][0]]=on.length; n++; }
+    }
+    return { scores:scores, klar:(n===BOM.length), antal:n };
+  }
+  // ⚠️ Punktuppdatering — ALDRIG renderCard(), då raderas text man skrivit i
+  // formulärets andra fält (samma fälla som chipsen och nästa steg-knapparna).
+  function bomSet(star){
+    var wrap=star.closest("[data-bomwrap]"); if(!wrap) return;
+    var k=star.getAttribute("data-bom"), v=Number(star.getAttribute("data-v"))||0;
+    var all=wrap.querySelectorAll('.fk-bomstar[data-bom="'+k+'"]');
+    for(var i=0;i<all.length;i++){
+      var n=Number(all[i].getAttribute("data-v"))||0;
+      if(n<=v) all[i].classList.add("on"); else all[i].classList.remove("on");
+    }
+    var r=bomRead(wrap), pct=bomPct(r.scores);
+    var el=wrap.querySelector("[data-bompct]");
+    if(el){ el.textContent=(pct==null?"ej graderad":("Sannolikhet "+pct+" %")); el.className="p"+(pct==null?" na":""); }
+    var m=wrap.querySelector("[data-bommsg]"); if(m) m.className="fk-bommsg";
+  }
+  function bomApply(box, payload){
+    var wrap=box.querySelector("[data-bomwrap]"); if(!wrap) return "";
+    var r=bomRead(wrap);
+    if(!r.klar) return "Gradera alla fem punkterna under \u201d5 sk\u00e4l till bom\u201d ("+r.antal+" av 5 satta).";
+    for(var i=0;i<BOM.length;i++) payload["bom_"+BOM[i][0]]=r.scores[BOM[i][0]];
+    return "";
+  }
+  function bomMsg(box, txt){
+    var m=box.querySelector("[data-bommsg]"); if(!m) return;
+    m.textContent=txt||""; m.className="fk-bommsg"+(txt?" err":"");
+  }
   function dealFormHtml(sourceType, sourceId, titelPrefill, beloppPrefill){
     var users=(STATE.meta&&STATE.meta.users)||[];
     var uOpts='<option value="">— ägare —</option>';
@@ -2580,6 +2656,7 @@
         '<div class="fk-fld"><label>Prel. värde (kr)</label><input type="number" data-cd="brutto" value="'+esc(beloppPrefill==null?"":beloppPrefill)+'"></div>'+
         '<div class="fk-fld"><label>Ägare</label><select data-cd="owner">'+uOpts+'</select></div>'+
         '<div class="fk-fld" style="grid-column:1 / -1"><label>Beskrivning</label><textarea data-cd="besk" rows="2" placeholder="Kort om affären…"></textarea></div>'+
+        bomHtml(null)+
         '<div class="fk-formbtns"><button class="save" data-fk="cdsave">Skapa &amp; koppla</button>'+
         '<button class="cancel" data-fk="cdcancel">Avbryt</button><span class="msg" data-cdmsg></span></div>'+
       '</div>'+
@@ -2591,14 +2668,18 @@
     var msg=box.querySelector("[data-cdmsg]"), titel=g("titel").trim();
     if(!titel){ if(msg){ msg.textContent="Titel krävs"; msg.className="msg err"; } return; }
     var sourceType=box.getAttribute("data-cdtype"), sourceId=box.getAttribute("data-cdid");
+    var payload={ titel:titel, beskrivning:g("besk"),
+      kundforetag_id:STATE.cardId, kategori:g("kat"), value_brutto:g("brutto"),
+      deal_owner:g("owner"), source_type:sourceType, source_id:sourceId };
+    var bErr=bomApply(box, payload);
+    if(bErr){ bomMsg(box, bErr); if(msg){ msg.textContent=""; } return; }
+    bomMsg(box, "");
     if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
     btn.disabled=true;
-    apiPost("/admin/affar/deal/create", { titel:titel, beskrivning:g("besk"),
-      kundforetag_id:STATE.cardId, kategori:g("kat"), value_brutto:g("brutto"),
-      deal_owner:g("owner"), source_type:sourceType, source_id:sourceId
-    }).then(function(j){
+    apiPost("/admin/affar/deal/create", payload).then(function(j){
       btn.disabled=false;
       if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+esc((j&&(j.hint||j.error))||"fel"); msg.className="msg err"; } return; }
+      if(j.bom_fields_missing) bomMsg(box, "⚠ Affären skapades, men fälten "+j.bom_fields_missing.join(", ")+" saknas på deal i Bubble — graderingen lagrades inte.");
       // Markera källraden som kopplad lokalt + nolla formen, och låt Deals-fliken
       // och antalsbadgen hämtas om (nya affären ska synas där).
       markSourceLinked(sourceType, sourceId, j.deal_id);
@@ -3685,6 +3766,11 @@
       // ⚠️ Nästa steg-knapparna ligger INNE i historikformuläret. De får ALDRIG
       // trigga renderCard() — då försvinner texten man just skrivit i beskrivningen
       // (samma fälla som deal-formuläret och kortets fastighets-chips).
+      // ⚠️ Stjärnorna ligger INNE i affärsformuläret, som i sin tur ligger i den
+      // expanderade historik-/lead-raden. Utan den här grenen först bubblar klicket
+      // upp och kollapsar raden man just fyller i.
+      var bst=t.closest?t.closest(".fk-bomstar"):null;
+      if(bst){ e.stopPropagation(); bomSet(bst); return; }
       var nsb=t.closest?t.closest("[data-ns]"):null;
       if(nsb){ var nsw=nsb.closest("[data-nswrap]"); if(nsw) nsSelect(nsw, nsb.getAttribute("data-ns")); return; }
       // Skapa affär av lead/aktivitet (2026-08-18). OBS före histrow-hanteraren:

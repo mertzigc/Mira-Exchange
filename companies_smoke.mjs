@@ -1150,6 +1150,29 @@ const run = async () => {
   ok("frontend: historik-cachen nollställs med delete (undefined), aldrig null",
      !/STATE\.chain\.historik=null/.test(fl) && /delete STATE\.chain\.historik/.test(fl));
 
+  // ── "5 skäl till bom" på kundkortets affärsformulär (2026-08-22) ──────────
+  // ⚠️ RIKTNING: fler stjärnor = starkare position = HÖGRE sannolikhet.
+  // Formeln måste vara IDENTISK med backend, annars visar kortet en annan siffra
+  // än den som sparas.
+  ok("frontend: stjärnkomponenten finns med de fem punkterna",
+     /function bomHtml/.test(fl) &&
+     /var BOM=\[\["relation",[^\]]*\],\["beslutsprocess",[^\]]*\],\["timing",[^\]]*\],\["budget",[^\]]*\],\["battre",/.test(fl));
+  ok("frontend: samma formel som backend ((summa−5)/20 × 0,95, tak 95 %)",
+     /Math\.round\(\(\(sum-BOM\.length\)\/\(BOM\.length\*4\)\)\*0\.95\*100\)/.test(fl));
+  ok("frontend: sektionen sitter i affärsformuläret och alla fem krävs",
+     /bomHtml\(null\)/.test(fl) && /if\(!r\.klar\) return "Gradera alla fem/.test(fl) &&
+     /bomApply\(box, payload\)/.test(fl));
+  // ⚠️ Stjärnorna ligger i affärsformuläret, som ligger i en expanderbar rad —
+  // utan stopPropagation + egen gren kollapsar raden man just fyller i.
+  ok("frontend: stjärnklick hanteras före rad-hanterarna och stoppar bubblingen",
+     /if\(bst\)\{ e\.stopPropagation\(\); bomSet\(bst\); return; \}/.test(fl) &&
+     fl.indexOf('t.closest(".fk-bomstar")') < fl.indexOf('t.closest(\'[data-fk="cdopen"]\')'));
+  ok("frontend: stjärnklick punktuppdaterar, anropar aldrig renderCard",
+     /function bomSet\(star\)\{[\s\S]*?data-bompct[\s\S]*?\n  \}/.test(fl) &&
+     !/fk-bomstar[\s\S]{0,300}renderCard\(\)/.test(fl));
+  ok("frontend: saknade bom-fält i Bubble rapporteras till användaren",
+     /bom_fields_missing/.test(fl) && /graderingen lagrades inte/.test(fl));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

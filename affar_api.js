@@ -475,6 +475,11 @@ export function registerAffarRoutes(app, deps) {
           titel: _str(deal.titel), beskrivning: _str(deal.beskrivning),
           status: _str(deal.Status), region: _str(deal.Region),
           sannolikhet: (deal.sannolikhet == null || deal.sannolikhet === "") ? "" : _str(deal.sannolikhet),
+          // Graderingarna bakom sannolikheten. Tomt = ej graderad (äldre affär).
+          bom: Object.fromEntries(BOM_FIELDS.map((f) => {
+            const v = deal[f.bubble]; const n = Number(v);
+            return [f.key, (v == null || v === "" || !Number.isInteger(n)) ? null : n];
+          })),
           kategori: kategori,
           value_brutto: (deal.value_brutto == null || deal.value_brutto === "") ? null : _num(deal.value_brutto),
           value_netto: (deal.value_netto == null || deal.value_netto === "") ? null : _num(deal.value_netto),
@@ -1006,6 +1011,91 @@ export function registerAffarRoutes(app, deps) {
     }
   });
 
+  // ── "5 SKÄL TILL BOM" → sannolikhet (2026-08-22) ──────────────────────────
+  // Ersätter den handsatta sannolikhets-dropdownen. Fem kvalificeringspunkter
+  // graderas 1–5 stjärnor; sannolikheten HÄRLEDS ur dem.
+  //
+  // ⚠️ RIKTNING (Christians beslut): fler stjärnor = STARKARE position = HÖGRE
+  // sannolikhet. Rubriken "5 skäl till bom" påminner om vad som brukar fälla
+  // affärer; graderingen mäter hur väl vi står på varje punkt. Vänd aldrig på det
+  // utan att räkna om historiken — samma siffra skulle annars betyda motsatsen.
+  //
+  // Formel: (summa − 5) / 20 × 0,95. Alla ettor = 0 %, alla treor = 47,5 %,
+  // alla femmor = 95 %. ⚠️ Taket är 95 % med flit: 100 % först vid signering.
+  //
+  // ⚠️ `sannolikhet` behålls som UTDATA i samma format som förut (decimal 0–1,
+  // skriven som sträng). Allt som läser den — affärskortets header, listan,
+  // framtida KPI:er — fortsätter fungera utan att veta att metoden bytts.
+  const BOM_FIELDS = [
+    { key: "relation",       bubble: "bom_relation",       label: "Relation" },
+    { key: "beslutsprocess", bubble: "bom_beslutsprocess", label: "Beslutsprocess" },
+    { key: "timing",         bubble: "bom_timing",         label: "Tid/timing" },
+    { key: "budget",         bubble: "bom_budget",         label: "Budget" },
+    { key: "battre",         bubble: "bom_battre",         label: "Bättre" },
+  ];
+  const BOM_MAX = 0.95;
+  // Läser graderingarna ur en request-body. → { scores, given, bad } där
+  // `given` = antal ifyllda och `bad` = punkter med ogiltigt värde.
+  function _bomRead(b) {
+    const scores = {}; const bad = []; let given = 0;
+    for (const f of BOM_FIELDS) {
+      const raw = b["bom_" + f.key];
+      if (raw === undefined || raw === null || _str(raw).trim() === "") continue;
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1 || n > 5) { bad.push(f.key); continue; }
+      scores[f.key] = n; given++;
+    }
+    return { scores, given, bad };
+  }
+  // ⚠️ Kräver ALLA fem (Christians beslut). En halvifylld gradering ger en
+  // sannolikhet som ser exakt ut men vilar på gissningar, och två affärer på
+  // samma procent skulle vila på olika underlag.
+  function _bomError(r) {
+    if (r.bad.length) return { error: "ogiltig_bom_gradering", fields: r.bad, hint: "Varje punkt graderas 1–5." };
+    if (r.given === 0) return null;                     // sektionen inte ifylld alls → ingen ändring
+    if (r.given < BOM_FIELDS.length) {
+      const saknas = BOM_FIELDS.filter((f) => r.scores[f.key] === undefined).map((f) => f.label);
+      return { error: "ofullstandig_bom_gradering", saknas,
+               hint: "Alla fem punkterna måste graderas — annars går sannolikheterna inte att jämföra mellan affärer." };
+    }
+    return null;
+  }
+  function _bomSannolikhet(scores) {
+    let sum = 0; for (const f of BOM_FIELDS) sum += scores[f.key];
+    const pct = ((sum - BOM_FIELDS.length) / (BOM_FIELDS.length * 4)) * BOM_MAX;
+    return Math.round(pct * 100) / 100;                 // 0–0.95, två decimaler
+  }
+  // Lägger graderingarna + den härledda sannolikheten i payloaden.
+  function _bomApply(p, scores) {
+    for (const f of BOM_FIELDS) p[f.bubble] = scores[f.key];
+    p["sannolikhet"] = _str(_bomSannolikhet(scores));   // samma sträng-form som den gamla väljaren
+  }
+  // ⚠️ De fem fälten är NYA i Bubble. Modulen får RÅ bubbleCreate/bubblePatch →
+  // ett okänt fält 400:ar HELA skrivningen, alltså hade affären inte gått att
+  // spara alls före att fälten skapats. Stryp därför de fält Bubble klagar på,
+  // ett i taget, och rapportera vilka. Matchar SMALT (400 + exakt fältnamn):
+  // andra fel måste fortsätta braka.
+  function _unknownFieldName(e) {
+    const d = e && e.detail;
+    if (!d || d.status !== 400) return null;
+    const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
+    const m = /Unrecognized field:\s*([^"'}\\]+)/.exec(body);
+    return m ? m[1].trim() : null;
+  }
+  async function _writeSkippingUnknown(fn, payload, droppable) {
+    const p = Object.assign({}, payload); const dropped = [];
+    for (let i = 0; i <= droppable.length; i++) {
+      try { return { value: await fn(p), dropped }; }
+      catch (e) {
+        const f = _unknownFieldName(e);
+        if (!f || droppable.indexOf(f) < 0) throw e;
+        delete p[f]; dropped.push(f);
+        console.warn("[bom] fältet " + f + " saknas på deal i Bubble — affären sparas utan det");
+      }
+    }
+    return { value: await fn(p), dropped };
+  }
+
   // ── POST /admin/affar/deal/:id/patch — redigera affär (deal) inline ──
   // Scalars + OS(single/list) + refs. Skrivnycklar = display-namn (deal-round-trip 2026-08-07).
   // OS-list Kategori = array av display-strängar; ref-listor kontaktpersoner/todo = array av id.
@@ -1024,6 +1114,12 @@ export function registerAffarRoutes(app, deps) {
       if (b.status       !== undefined) p["Status"]       = _str(b.status) || null;
       if (b.region       !== undefined) p["Region"]       = _str(b.region) || null;
       if (b.sannolikhet  !== undefined) p["sannolikhet"]  = _str(b.sannolikhet) || null;
+      // ⚠️ Graderingen VINNER över en medskickad `sannolikhet` — den är härledd, inte
+      // handsatt. Svaret säger `sannolikhet_source` så det aldrig blir en tyst omskrivning.
+      const bomP = _bomRead(b);
+      const bomErrP = _bomError(bomP);
+      if (bomErrP) return res.status(400).json(Object.assign({ ok: false }, bomErrP));
+      if (bomP.given) _bomApply(p, bomP.scores);
       if (b.kategori     !== undefined) p["Kategori"]     = asList(b.kategori);
       if (b.value_brutto !== undefined) p["value_brutto"] = asNum(b.value_brutto);
       if (b.value_netto  !== undefined) p["value_netto"]  = asNum(b.value_netto);
@@ -1031,8 +1127,11 @@ export function registerAffarRoutes(app, deps) {
       if (b.kontaktpersoner !== undefined) p["kontaktpersoner"] = asList(b.kontaktpersoner);
       if (b.todo            !== undefined) p["todo"]            = asList(b.todo);
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
-      await bubblePatch("deal", id, p);
-      return res.json({ ok: true, id, patched: p });
+      const wr = await _writeSkippingUnknown((q) => bubblePatch("deal", id, q), p, BOM_FIELDS.map((f) => f.bubble));
+      return res.json({ ok: true, id, patched: p,
+        sannolikhet: p["sannolikhet"] !== undefined ? p["sannolikhet"] : undefined,
+        sannolikhet_source: bomP.given ? "bom" : (b.sannolikhet !== undefined ? "manuell" : undefined),
+        bom_fields_missing: wr.dropped.length ? wr.dropped : undefined });
     } catch (e) {
       console.error("[/admin/affar/deal/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
@@ -1060,8 +1159,14 @@ export function registerAffarRoutes(app, deps) {
       const vb = asNum(b.value_brutto); if (vb != null) p["value_brutto"] = vb;
       const owner = _str(b.deal_owner).trim(); if (owner) p["deal_owner"] = [owner];   // deal_owner = List of Users
       const region = _str(b.region).trim(); if (region) p["Region"] = region;
+      // "5 skäl till bom" → härledd sannolikhet. Alla fem krävs om sektionen rörts.
+      const bomC = _bomRead(b);
+      const bomErrC = _bomError(bomC);
+      if (bomErrC) return res.status(400).json(Object.assign({ ok: false }, bomErrC));
+      if (bomC.given) _bomApply(p, bomC.scores);
 
-      const dealId = await bubbleCreate("deal", p);
+      const cw = await _writeSkippingUnknown((q) => bubbleCreate("deal", q), p, BOM_FIELDS.map((f) => f.bubble));
+      const dealId = cw.value;
       if (!dealId) return res.status(500).json({ ok: false, error: "deal_create_failed" });
       _dCache.ts = 0;   // invalidera deal-cache → nya affären syns i sök/kedja/kategori
 
@@ -1080,7 +1185,9 @@ export function registerAffarRoutes(app, deps) {
         try { await bubblePatch("Lead", sourceId, { status: "Delegerad" }); lead_status_set = true; }
         catch (e) { console.warn("[deal/create] lead-status ej satt:", e?.message); }
       }
-      return res.json({ ok: true, deal_id: dealId, titel, linked, lead_status_set });
+      return res.json({ ok: true, deal_id: dealId, titel, linked, lead_status_set,
+        sannolikhet: p["sannolikhet"] !== undefined ? p["sannolikhet"] : null,
+        bom_fields_missing: cw.dropped.length ? cw.dropped : undefined });
     } catch (e) {
       console.error("[/admin/affar/deal/create]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });

@@ -224,6 +224,116 @@ const run = async () => {
   ok("frontend: todo utan något datum blockeras",
      /if\(!g\("t_start"\) && !g\("t_slut"\)\) return \{ error:/.test(af));
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // "5 SKÄL TILL BOM" → härledd sannolikhet (2026-08-22)
+  // Ersätter den handsatta sannolikhets-dropdownen. ⚠️ RIKTNING: fler stjärnor =
+  // starkare position = HÖGRE sannolikhet. Formel (summa−5)/20 × 0,95, tak 95 %.
+  // ⚠️ Fälten bom_* är NYA i Bubble → raw create/patch 400:ar hela skrivningen om
+  // de saknas. Testerna vaktar både formeln och att affären ändå går att spara.
+  // ══════════════════════════════════════════════════════════════════════════
+  const BOM_ALLA = (n) => ({ bom_relation: n, bom_beslutsprocess: n, bom_timing: n, bom_budget: n, bom_battre: n });
+  const mkDeal = (extra) => call("post", "/admin/affar/deal/create", { body: Object.assign({ titel: "Affär" }, extra) });
+
+  const b1 = await mkDeal(BOM_ALLA(1));
+  ok("bom: alla ettor → 0 %", b1.body.ok === true && b1.body.sannolikhet === "0");
+  const b5 = await mkDeal(BOM_ALLA(5));
+  ok("bom: alla femmor → 95 % (aldrig 100 — det kommer först vid signering)",
+     b5.body.ok === true && b5.body.sannolikhet === "0.95");
+  const b3 = await mkDeal(BOM_ALLA(3));
+  ok("bom: alla treor → 47,5 %", b3.body.ok === true && b3.body.sannolikhet === "0.48");
+  // Blandat: 5+4+3+2+1 = 15 → (15−5)/20 × 0,95 = 0,475 → 0.48
+  const bMix = await mkDeal({ bom_relation: 5, bom_beslutsprocess: 4, bom_timing: 3, bom_budget: 2, bom_battre: 1 });
+  ok("bom: blandad gradering räknas på summan", bMix.body.sannolikhet === "0.48");
+  // ⚠️ Riktningen: en HÖGRE gradering får aldrig ge en LÄGRE sannolikhet.
+  const bLow = await mkDeal({ bom_relation: 2, bom_beslutsprocess: 2, bom_timing: 2, bom_budget: 2, bom_battre: 2 });
+  const bHigh = await mkDeal({ bom_relation: 4, bom_beslutsprocess: 4, bom_timing: 4, bom_budget: 4, bom_battre: 4 });
+  ok("bom: fler stjärnor ger ALLTID högre sannolikhet (riktningen inte omvänd)",
+     Number(bLow.body.sannolikhet) < Number(bHigh.body.sannolikhet) && Number(bHigh.body.sannolikhet) <= 0.95);
+
+  const dealRec = created.filter((c) => c.t === "deal").pop();
+  ok("bom: graderingarna skrivs till rätt Bubble-fält",
+     dealRec.payload["bom_relation"] === 4 && dealRec.payload["bom_beslutsprocess"] === 4 &&
+     dealRec.payload["bom_timing"] === 4 && dealRec.payload["bom_budget"] === 4 && dealRec.payload["bom_battre"] === 4);
+  ok("bom: sannolikhet skrivs i SAMMA form som den gamla väljaren (sträng 0–1)",
+     dealRec.payload["sannolikhet"] === "0.71");   // alla fyror: (20−5)/20 × 0,95 = 0,7125 → 0,71
+
+  // ⚠️ Alla fem krävs — en halvifylld gradering ger falsk precision.
+  const bHalf = await mkDeal({ bom_relation: 5, bom_budget: 3 });
+  ok("bom: ofullständig gradering → 400 + vilka som saknas",
+     bHalf.code === 400 && bHalf.body.error === "ofullstandig_bom_gradering" &&
+     (bHalf.body.saknas || []).indexOf("Beslutsprocess") > -1 && (bHalf.body.saknas || []).length === 3);
+  const bBad = await mkDeal(Object.assign(BOM_ALLA(3), { bom_timing: 9 }));
+  ok("bom: gradering utanför 1–5 → 400", bBad.code === 400 && bBad.body.error === "ogiltig_bom_gradering" &&
+     (bBad.body.fields || []).indexOf("timing") > -1);
+  const bNone = await mkDeal({});
+  ok("bom: affär utan gradering skapas som förut (sektionen är inte obligatorisk för API:t)",
+     bNone.body.ok === true && bNone.body.sannolikhet === null);
+
+  // patch
+  DB.deal.push({ _id: "dBom", titel: "Patchbar" });
+  const pb = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dBom" }, body: BOM_ALLA(5) });
+  ok("bom: patch räknar om sannolikheten", pb.body.ok === true && pb.body.patched["sannolikhet"] === "0.95" &&
+     pb.body.sannolikhet_source === "bom");
+  // ⚠️ Graderingen vinner över en handsatt sannolikhet — annars kunde två källor
+  // skriva samma fält och den ena tysta den andra.
+  const pb2 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dBom" }, body: Object.assign({ sannolikhet: "0.1" }, BOM_ALLA(1)) });
+  ok("bom: graderingen vinner över medskickad sannolikhet, och källan redovisas",
+     pb2.body.patched["sannolikhet"] === "0" && pb2.body.sannolikhet_source === "bom");
+  const pb3 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dBom" }, body: { titel: "Bara titel" } });
+  ok("bom: patch utan gradering rör inte sannolikheten",
+     pb3.body.ok === true && pb3.body.patched["sannolikhet"] === undefined);
+
+  // ── Fälten saknas i Bubble: affären måste ändå gå att spara ───────────────
+  const routes4 = {}; let missCreated = null;
+  registerAffarRoutes({ get: () => {}, post: (p, h) => { routes4[p] = h; }, options: () => {} },
+    Object.assign({}, deps, {
+      bubbleCreate: async (t, payload) => {
+        if (t === "deal") {
+          const bad = Object.keys(payload).filter((k) => k.indexOf("bom_") === 0);
+          if (bad.length) { const e = new Error("bubbleCreate failed"); e.detail = { status: 400, body: JSON.stringify({ body: { message: "Unrecognized field: " + bad[0] } }) }; throw e; }
+          missCreated = payload;
+        }
+        return deps.bubbleCreate(t, payload);
+      },
+    }));
+  const miss = await new Promise((resolve) => {
+    const res = { _code: 200, status(c) { this._code = c; return this; }, json(o) { resolve({ code: this._code, body: o }); } };
+    routes4["/admin/affar/deal/create"]({ params: {}, query: {}, headers: {}, body: Object.assign({ titel: "Utan bom-fält" }, BOM_ALLA(5)) }, res);
+  });
+  ok("saknade bom-fält: affären skapas ändå + vilka fält som ströks redovisas",
+     miss.body.ok === true && (miss.body.bom_fields_missing || []).length === 5);
+  ok("saknade bom-fält: sannolikheten skrivs ÄNDÅ (det fältet finns sedan tidigare)",
+     missCreated && missCreated["sannolikhet"] === "0.95" && missCreated["bom_relation"] === undefined);
+
+  // ── FRONTEND: bom-sektionen i affärsvyn ───────────────────────────────────
+  ok("frontend: stjärnkomponenten finns och listar de fem punkterna",
+     /function bomHtml/.test(af) &&
+     /var BOM=\[\["relation",[^\]]*\],\["beslutsprocess",[^\]]*\],\["timing",[^\]]*\],\["budget",[^\]]*\],\["battre",/.test(af));
+  // ⚠️ Samma formel som servern, annars visar UI:t en annan siffra än den som sparas.
+  ok("frontend: samma formel som backend ((summa−5)/20 × 0,95, tak 95 %)",
+     /Math\.round\(\(\(sum-BOM\.length\)\/\(BOM\.length\*4\)\)\*0\.95\*100\)/.test(af));
+  ok("frontend: sannolikhets-dropdownen är BORTA (härleds nu)",
+     !/af-d-prob/.test(af) && !/— sannolikhet —/.test(af));
+  ok("frontend: sektionen finns i affärsredigeringen, i skapa-av-lead/aktivitet OCH i nya + Affär",
+     /bomHtml\(e\.bom\)/.test(af) && (af.match(/bomHtml\(null\)/g) || []).length >= 2);
+  ok("frontend: alla fem krävs innan sparning",
+     /if\(!r\.klar\) return "Gradera alla fem/.test(af) &&
+     (af.match(/bomApply\(box, payload\)/g) || []).length >= 3);
+  // ⚠️ Klick-ordning: stjärnorna ligger i formuläret, som ligger i en expanderbar rad.
+  ok("frontend: stjärnklick hanteras före rad-hanterarna",
+     af.indexOf('t.closest(".bom-star")') > -1 &&
+     af.indexOf('t.closest(".bom-star")') < af.indexOf('t.closest(".af-d-save")'));
+  ok("frontend: stjärnklick punktuppdaterar, re-renderar aldrig raden",
+     /function bomSet\(star\)\{[\s\S]*?data-bompct[\s\S]*?\n  \}/.test(af) &&
+     !/bom-star[\s\S]{0,300}render\(\);/.test(af));
+  // "+ Affär" från scratch
+  ok("frontend: + Affär finns i Skapa nytt-raden",
+     /data-new="affar"/.test(af) && /function dealCreatePanelHtml/.test(af) && /function saveNewDeal/.test(af));
+  ok("frontend: + Affär skickar INGEN källrad (fristående affär)",
+     !/dealCreatePanelHtml[\s\S]*?source_type/.test(af.slice(af.indexOf("function saveNewDeal"), af.indexOf("function saveNewDeal") + 1400)));
+  ok("frontend: saknade bom-fält i Bubble rapporteras till användaren",
+     /bom_fields_missing/.test(af) && /graderingen lagrades inte/.test(af));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };
