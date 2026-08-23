@@ -1404,15 +1404,32 @@ export function registerCompaniesRoutes(app, deps) {
   // "Vår personal" = Users där Associated_company contains företaget. Add-pool = Users vars
   // Company == inloggad Carotte-users company (skickas som ?user_company= från blocket).
   function nStaff(u) { return { id: bubbleId(u), name: (_str(u["First Name"] || u["Förnamn"]) + " " + _str(u["Surname"] || u["Last Name"] || u["Efternamn"])).trim() || _str(u.email || u.Email), email: _str(u.email || u.Email) }; }
+  // ⚠️ BARA VÅRA EGNA (2026-08-22). `Associated_company contains X` matchar ALLA
+  // users med företaget i sin lista — även kundens egna. Listan visade därför både
+  // Carottare och kundens medarbetare. "Vår personal" ska bara vara Carottare:
+  // `Company` == den inloggade Carotte-userns company. Kundens folk finns under
+  // Personer-fliken (Coworker), inte här.
+  // ⚠️ Utan `user_company` går det INTE att skilja dem åt. Då filtreras inget bort,
+  // och svaret bär `personnel_unfiltered:true` så UI:t kan säga varför listan kan
+  // innehålla kundens users — tyst fel filter vore värre än en synlig varning.
+  // ⚠️ INGET `.catch(() => [])`: en fallen fråga skulle läsas som "ingen personal
+  // kopplad". Faller den blir svaret `personnel_ok:false`.
   async function _personnel(companyId, userCompanyId) {
+    const fail = (what) => (e) => { console.error("[_personnel] " + what + " föll:", e?.message); return null; };
     const [linked, pool] = await Promise.all([
-      bubbleFindAll("User", { constraints: [{ key: "Associated_company", constraint_type: "contains", value: companyId }] }).catch(() => []),
-      userCompanyId ? bubbleFindAll("User", { constraints: [{ key: "Company", constraint_type: "equals", value: userCompanyId }] }).catch(() => []) : Promise.resolve([]),
+      bubbleFindAll("User", { constraints: [{ key: "Associated_company", constraint_type: "contains", value: companyId }] }).catch(fail("kopplade")),
+      userCompanyId ? bubbleFindAll("User", { constraints: [{ key: "Company", constraint_type: "equals", value: userCompanyId }] }).catch(fail("pool")) : Promise.resolve([]),
     ]);
-    const linkedIds = new Set((linked || []).map(bubbleId));
-    const personnel = (linked || []).map(nStaff).sort(_byName);
-    const personnel_available = (pool || []).filter((u) => !linkedIds.has(bubbleId(u))).map(nStaff).sort(_byName);
-    return { personnel, personnel_available };
+    if (linked === null || pool === null) {
+      return { personnel: [], personnel_available: [], personnel_ok: false, personnel_unfiltered: false };
+    }
+    const mine = userCompanyId
+      ? linked.filter((u) => _ref(u.Company) === userCompanyId)
+      : linked;
+    const linkedIds = new Set(linked.map(bubbleId));   // dedup mot ALLA kopplade, inte bara våra
+    const personnel = mine.map(nStaff).sort(_byName);
+    const personnel_available = pool.filter((u) => !linkedIds.has(bubbleId(u))).map(nStaff).sort(_byName);
+    return { personnel, personnel_available, personnel_ok: true, personnel_unfiltered: !userCompanyId };
   }
 
   // GET /admin/companies/:id/leverantorer?user_company= — dotterbolag + personal (+ tillgängliga)
@@ -1423,7 +1440,9 @@ export function registerCompaniesRoutes(app, deps) {
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
     try {
       const [sup, staff] = await Promise.all([_suppliers(id), _personnel(id, _str(req.query.user_company).trim())]);
-      return res.json({ ok: true, suppliers: sup.suppliers, available: sup.available, personnel: staff.personnel, personnel_available: staff.personnel_available });
+      return res.json({ ok: true, suppliers: sup.suppliers, available: sup.available,
+        personnel: staff.personnel, personnel_available: staff.personnel_available,
+        personnel_ok: staff.personnel_ok, personnel_unfiltered: staff.personnel_unfiltered });
     } catch (e) {
       console.error("[/admin/companies/:id/leverantorer]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });

@@ -3567,6 +3567,12 @@
       levSection("Våra dotterbolag","supplier",L.suppliers||[],L.available||[],"Lägg till leverantör…")+
       levSection("Vår personal","staff",L.personnel||[],L.personnel_available||[],"Lägg till Carotte-personal…")+
     '</div>'+
+      // ⚠️ Listan visade tidigare ALLA users med företaget i Associated_company —
+      // alltså även kundens egna. Servern filtrerar nu på Company == vår company.
+      // Går det inte (ingen user_company-bindning) filtreras INGET bort, och då
+      // måste det synas: annars ser blandningen ut som ett faktum.
+      (L.personnel_ok===false?'<div class="fk-liveerr" style="margin-top:10px">⚠ Kunde inte läsa personallistan. <b style="display:inline">Det betyder inte att ingen är kopplad.</b></div>':'')+
+      (L.personnel_unfiltered?'<div class="fk-liveerr" style="margin-top:10px">⚠ Listan kan innehålla kundens egna användare — utan <b style="display:inline">data-mira="user_company"</b> går Carottare inte att skilja ut.</div>':'')+
       (noUC?'<div class="fl-lsub" style="margin-top:10px">Personal-dropdownen är tom tills <b style="display:inline">data-mira="user_company"</b> binds till Current User\'s Company i Bubble.</div>':'')+
     '</div>';
   }

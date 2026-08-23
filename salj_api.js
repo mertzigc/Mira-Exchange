@@ -95,6 +95,11 @@ export function registerSaljRoutes(app, deps) {
       fas: normFas(r["Kundmöte"]),
       datum: _day(r["Datum_bokning"]),
       datum_ts: _ts(r["Datum_bokning"]),
+      // Skapad-datum: när mötet REGISTRERADES, inte när det ska hållas. Två helt
+      // olika frågor ("hur många möten bokades i augusti" vs "hur många hålls i
+      // augusti") och de ska gå att filtrera var för sig.
+      skapad: _day(r["Created Date"]),
+      skapad_ts: _ts(r["Created Date"]),
       company: cname(cm, r.company),
       // ⚠️ Kund-ID:t behövs för att kunna skapa uppföljaren (aktivitet/todo) knuten
       // till RÄTT företag direkt ur mötesbokningsvyn. `company` är enda kund-fältet
@@ -120,15 +125,25 @@ export function registerSaljRoutes(app, deps) {
   app.get("/admin/salj/moten", async (req, res) => {
     if (!guard(req, res)) return;
     try {
-      const from = _str(req.query.from).slice(0, 10), to = _str(req.query.to).slice(0, 10);
+      // Två OBEROENDE datumfilter: `from`/`to` på MÖTESDATUM (när mötet hålls) och
+      // `cfrom`/`cto` på SKAPAD-datum (när det bokades). De kan kombineras.
+      const dayTs = (v, slutOfDay) => {
+        const d = _str(v).slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+        return new Date(d + "T00:00:00.000Z").getTime() + (slutOfDay ? 86400000 : 0);
+      };
       const person = _str(req.query.person).trim();
-      const fromTs = /^\d{4}-\d{2}-\d{2}$/.test(from) ? new Date(from + "T00:00:00.000Z").getTime() : null;
-      const toTs = /^\d{4}-\d{2}-\d{2}$/.test(to) ? (new Date(to + "T00:00:00.000Z").getTime() + 86400000) : null;
+      const fromTs = dayTs(req.query.from, false), toTs = dayTs(req.query.to, true);
+      const cFromTs = dayTs(req.query.cfrom, false), cToTs = dayTs(req.query.cto, true);
 
       const [um, cm, dm] = [await userMap(), await companyMap(), await dealMap()];
       let rows = (await loadKundmoten()).map((r) => nMote(r, um, cm, dm));
       if (fromTs != null) rows = rows.filter((r) => r.datum_ts && r.datum_ts >= fromTs);
       if (toTs != null) rows = rows.filter((r) => r.datum_ts && r.datum_ts < toTs);
+      // ⚠️ Ett möte UTAN skapad-datum får inte tyst passera ett skapad-filter — då
+      // hade "möten skapade i augusti" innehållit rader vi inte vet något om.
+      if (cFromTs != null) rows = rows.filter((r) => r.skapad_ts && r.skapad_ts >= cFromTs);
+      if (cToTs != null) rows = rows.filter((r) => r.skapad_ts && r.skapad_ts < cToTs);
       if (person) rows = rows.filter((r) => r.ansvarig_id === person);
 
       // gruppera per fas + sortera på datum inom fas
@@ -154,7 +169,10 @@ export function registerSaljRoutes(app, deps) {
         groups, per_fas,
         summary: { total, genomforda, blev_affar, affarsvarde, konvertering: total ? Math.round((blev_affar / total) * 100) : 0 },
         personer,
-        filtered: !!(fromTs != null || toTs != null || person),
+        filtered: !!(fromTs != null || toTs != null || cFromTs != null || cToTs != null || person),
+        // Vilka filter som är på — frontenden rubricerar totalen olika beroende på
+        // om man tittar på möten som HÅLLS eller möten som SKAPATS i perioden.
+        filter: { motesdatum: !!(fromTs != null || toTs != null), skapad: !!(cFromTs != null || cToTs != null) },
       });
     } catch (e) {
       console.error("[/admin/salj/moten]", e?.message, e?.detail);

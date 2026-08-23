@@ -354,6 +354,53 @@ kravet. Regeln är nu:
 **Gör steg 2 och 3 tillsammans.** Backend med gammal frontend 400:ar för den som
 bockar "Genomfört" (gamla frontenden skickar inget `nasta_steg`).
 
+### ⚠️ "Vår personal" visade även KUNDENS users — löst 2026-08-22
+
+Inställningar → Leverantörer → "Vår personal" listade både Carottare och kundens egna
+användare. Den ska bara visa **våra**; kundens folk finns under Personer-fliken.
+
+- **Rotorsak:** `_personnel` hämtade `User` där `Associated_company contains <företag>`.
+  Det matchar **alla** som har företaget i sin lista — inklusive kundens egna users, som
+  naturligt har sitt eget bolag där. Add-**poolen** var redan filtrerad på
+  `Company == user_company`, men den visade **listan** var det inte.
+- **Fix:** listan filtreras nu också på `Company === user_company` (den inloggade
+  Carotte-userns bolag). Dedup mot add-poolen sker fortfarande mot **alla** kopplade,
+  så en kund-user inte råkar dyka upp som "tillgänglig".
+- **⚠️ Utan `user_company`-bindningen går de inte att skilja åt.** Då filtreras inget
+  bort och svaret bär `personnel_unfiltered:true` — kortet säger rakt ut att listan kan
+  innehålla kundens användare. Ett tyst fel filter vore värre än en synlig varning.
+- **⚠️ `.catch(() => [])` borttaget** på båda User-frågorna (bröt arbetsregeln). En
+  fallen fråga hade lästs som "ingen personal kopplad". Nu: `personnel_ok:false` och
+  kortet säger "Det betyder inte att ingen är kopplad".
+- **⚠️ Fixturen testade en värld där skillnaden inte fanns:** `u1` (Company `cc1`) var
+  kundens EGEN user och stod som "Vår personal" — och testet var grönt. Fixturen har nu
+  både sorterna kopplade till samma kund: `u1` (kundens) och `u3` (Carotte, Company
+  `cc2`). Samma lärdom som Fastighet-schemat: **en fixtur som inte kan uttrycka felet
+  kan inte fånga det.**
+- **Verifierat:** companies_smoke **311/311**, mutationstestat (6 faller). Deploy:
+  `companies_api.js` + klistra om `mira-foretag-lista.html`.
+
+### Mötestratten: filter på skapad-datum + total i rubriken — 2026-08-22
+
+Tratten filtrerade bara på **mötesdatum** (`Datum_bokning`). Nu finns även ett
+oberoende filter på **skapad-datum** (`Created Date`), så man kan svara på "hur många
+möten bokades i augusti" — en annan fråga än "hur många möten hålls i augusti".
+
+- `GET /admin/salj/moten?cfrom=&cto=` — kombineras fritt med `from`/`to`.
+  `nMote` bär nu `skapad`/`skapad_ts`.
+- **⚠️ Ett möte utan skapad-datum passerar INTE ett skapad-filter.** Annars hade
+  "möten skapade i augusti" innehållit rader vi inget vet om. Eget test.
+- **Totalen visas i trattens rubrik** (`.fas-total`, samma form som fas-räknarna).
+  **⚠️ Etiketten följer vilket filter som är på** — "Möten skapade i perioden" vs
+  "Möten med mötesdatum i perioden" vs "Alla möten i tratten". Svaret bär
+  `filter:{motesdatum,skapad}` just för det: samma siffra får inte påstå två olika
+  frågor. Filterraden är rubricerad i två par (Mötesdatum / Skapade).
+- **Verifierat:** salj_smoke **76/76**, mutationstestat (9 faller). Det avgörande
+  testet: `cm3` hålls i juni men bokades i augusti — den skiljer filtren åt.
+  **⚠️ Testlärdom (fjärde gången):** `x.body.filter.skapad` kraschade mot gammal kod
+  i st.f. att falla och dolde 7 fel. Assertions mot fält som kan saknas: `(x || {})`.
+- **Deploy:** `salj_api.js` + klistra om `mira-motesbokning.html`.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

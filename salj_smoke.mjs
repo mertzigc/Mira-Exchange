@@ -223,6 +223,57 @@ const run = async () => {
   ok("backend: mote-raden bär affärs-id (uppföljaren ärver affären)",
      sg8.body.mote && sg8.body.mote.deal_id === "d1");
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // SKAPAD-DATUM-FILTER i mötestratten (2026-08-22)
+  // ⚠️ Två OLIKA frågor: "vilka möten HÅLLS i perioden" (Datum_bokning) och
+  // "hur många möten BOKADES i perioden" (Created Date). Filtren är oberoende.
+  // ══════════════════════════════════════════════════════════════════════════
+  DB.activitet_crm.push(
+    { _id: "cm1", activity_type: "Kundmöte", "Kundmöte": "Fas 1", writer: "u2", "Datum_bokning": "2026-09-10", "Created Date": "2026-08-05" },
+    { _id: "cm2", activity_type: "Kundmöte", "Kundmöte": "Fas 1", writer: "u2", "Datum_bokning": "2026-09-11", "Created Date": "2026-07-05" },
+    { _id: "cm3", activity_type: "Kundmöte", "Kundmöte": "Fas 2", writer: "u2", "Datum_bokning": "2026-06-01", "Created Date": "2026-08-20" },
+  );
+  const moten = (q) => call("get", "/admin/salj/moten", { query: q });
+  const ids = (r) => (r.body.groups || []).reduce((a, g) => a.concat(g.moten.map((m) => m.id)), []).sort();
+
+  const cAug = await moten({ cfrom: "2026-08-01", cto: "2026-08-31" });
+  ok("skapad-filter: bara möten SKAPADE i augusti (oavsett mötesdatum)",
+     ids(cAug).indexOf("cm1") > -1 && ids(cAug).indexOf("cm3") > -1 && ids(cAug).indexOf("cm2") < 0);
+  // ⚠️ cm3 hålls i juni men bokades i augusti — bevisar att filtren är OLIKA.
+  const dSep = await moten({ from: "2026-09-01", to: "2026-09-30" });
+  ok("mötesdatum-filter är oberoende av skapad-filtret",
+     ids(dSep).indexOf("cm1") > -1 && ids(dSep).indexOf("cm2") > -1 && ids(dSep).indexOf("cm3") < 0);
+  const both = await moten({ from: "2026-09-01", to: "2026-09-30", cfrom: "2026-08-01", cto: "2026-08-31" });
+  ok("filtren kan kombineras (hålls i sep OCH bokades i aug → bara cm1)",
+     ids(both).length === 1 && ids(both)[0] === "cm1");
+  ok("skapad-filter: totalen speglar träffmängden", ((cAug.body.summary || {}).total) === ids(cAug).length);
+  // ⚠️ Defensivt: mot gammal kod saknas `filter` helt. `x.filter.skapad` hade
+  // KRASCHAT sviten i st.f. att falla — fjärde gången den fällan dyker upp här.
+  const flt = (r) => (r.body || {}).filter || {};
+  ok("svaret säger VILKA filter som är på (rubriken får inte påstå fel fråga)",
+     flt(cAug).skapad === true && flt(cAug).motesdatum === false &&
+     flt(dSep).skapad === false && flt(dSep).motesdatum === true &&
+     flt(both).skapad === true && flt(both).motesdatum === true);
+  ok("mote-raden bär skapad-datum", (dSep.body.groups || []).some((g) => g.moten.some((m) => m.skapad === "2026-08-05")));
+  // ⚠️ En rad UTAN skapad-datum får inte tyst passera ett skapad-filter.
+  DB.activitet_crm.push({ _id: "cmX", activity_type: "Kundmöte", "Kundmöte": "Fas 1", writer: "u2", "Datum_bokning": "2026-09-12" });
+  const cAug2 = await moten({ cfrom: "2026-08-01", cto: "2026-08-31" });
+  ok("möte utan skapad-datum räknas INTE in i ett skapad-filter", ids(cAug2).indexOf("cmX") < 0);
+
+  // ── FRONTEND ──────────────────────────────────────────────────────────────
+  ok("frontend: skapad-datum-filtret finns och skickas till servern",
+     /data-mb="cfrom"/.test(mb) && /data-mb="cto"/.test(mb) &&
+     /qs\.push\("cfrom="/.test(mb) && /qs\.push\("cto="/.test(mb));
+  ok("frontend: båda datumparen är rubricerade (mötesdatum vs skapade)",
+     />Mötesdatum:</.test(mb) && />Skapade:</.test(mb));
+  ok("frontend: Rensa nollställer även skapad-datumen",
+     /STATE\.cfrom=""; STATE\.cto=""; loadMoten\(\)/.test(mb));
+  // ⚠️ Rubriken på totalen måste följa vilket filter som är på — samma siffra får
+  // inte påstå både "hålls i perioden" och "skapades i perioden".
+  ok("frontend: totalen visas i trattens rubrik med filterberoende etikett",
+     /class="fas-total"/.test(mb) && /Möten skapade i perioden/.test(mb) &&
+     /Möten med mötesdatum i perioden/.test(mb) && /Alla möten i tratten/.test(mb));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

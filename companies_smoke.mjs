@@ -95,6 +95,11 @@ const STORE = {
 STORE.User = [
   { _id: "u1", "First Name": "Anna", "Surname": "Andersson", email: "christian.mertzig@gmail.com", Company: "cc1", "Associated_company": ["cc1"], User_role: "Ansvarig" },
   { _id: "u2", "First Name": "Bo", "Surname": "Berg", email: "bo@x.se", Company: "cc2", User_role: { display: "Medarbetare" } },   // objekt-form: option-set kan komma som {display}
+  // ⚠️ "Vår personal" ska bara visa CAROTTARE. Fixturen måste därför innehålla båda
+  // sorterna som är kopplade till cc1: u1 är KUNDENS egen user (Company cc1) och
+  // ska filtreras bort, u3 är Carottaren (Company cc2 = inloggad users company).
+  // Utan u3 testade vi en värld där skillnaden inte fanns.
+  { _id: "u3", "First Name": "Cilla", "Surname": "Carotte", email: "cilla@carotte.se", Company: "cc2", "Associated_company": ["cc1"], User_role: "Ansvarig" },
 ];
 // Dotterbolag: sup1 kopplad till cc1 (via Kundföretag-listan), sup2 tillgänglig
 STORE["Leverantör - Supplier"] = [
@@ -230,7 +235,7 @@ const run = async () => {
   const meta = await call(s.routes, "get", "/admin/companies/meta");
   ok("meta ok", meta.body.ok);
   ok("meta facets.kundstatus = [Aktiv kund, Prospekt]", JSON.stringify(meta.body.facets.kundstatus) === JSON.stringify(["Aktiv kund", "Prospekt"]));
-  ok("meta users 2 st sorterade", meta.body.users.length === 2 && meta.body.users[0].name === "Anna Andersson");
+  ok("meta users 3 st sorterade", meta.body.users.length === 3 && meta.body.users[0].name === "Anna Andersson");
   ok("meta groups 1 st", meta.body.groups.length === 1 && meta.body.groups[0].name === "Acme-koncernen");
   // 3 av 4: f4 saknar både Titel och Adress → utelämnas (och loggas).
   ok("meta fastigheter 3 namngivna av 4", meta.body.fastigheter.length === 3);
@@ -603,7 +608,30 @@ const run = async () => {
   // ── LEVERANTÖRER: dotterbolag (supplier.Kundföretag) + personal (User.Associated_company) ──
   var lev = await call(s.routes, "get", "/admin/companies/:id/leverantorer", { params: { id: "cc1" }, query: { user_company: "cc2" } });
   ok("leverantörer: dotterbolag kopplat (sup1) + tillgängligt (sup2)", lev.body.ok && lev.body.suppliers.length === 1 && lev.body.suppliers[0].name === "Carotte Housekeeping AB" && lev.body.suppliers[0].category === "Housekeeping" && lev.body.available.some(function(x){return x.id==="sup2";}));
-  ok("leverantörer: personal kopplad (u1) + pool via Company==user_company (u2)", lev.body.personnel.length === 1 && lev.body.personnel[0].name === "Anna Andersson" && lev.body.personnel_available.length === 1 && lev.body.personnel_available[0].id === "u2");
+  // ⚠️ u1 är kundens EGEN user (Company cc1) och är kopplad till cc1 — den fick
+  // tidigare stå i "Vår personal". Nu visas bara u3 (Company == user_company).
+  ok("leverantörer: bara CAROTTARE i personallistan (kundens egen user filtreras bort)",
+     lev.body.personnel.length === 1 && lev.body.personnel[0].id === "u3" &&
+     !lev.body.personnel.some(function(x){ return x.id === "u1"; }));
+  ok("leverantörer: poolen är Company==user_company minus redan kopplade",
+     lev.body.personnel_available.length === 1 && lev.body.personnel_available[0].id === "u2");
+  ok("leverantörer: personal_ok true när frågorna gick igenom", lev.body.personnel_ok === true && lev.body.personnel_unfiltered === false);
+  // ⚠️ Utan user_company går Carottare inte att skilja från kundens folk → filtrera
+  // inte, men säg det. Tyst fel filter vore värre än en synlig varning.
+  var levNo = await call(s.routes, "get", "/admin/companies/:id/leverantorer", { params: { id: "cc1" } });
+  ok("leverantörer: utan user_company filtreras inget bort MEN flaggan sätts",
+     levNo.body.personnel.length === 2 && levNo.body.personnel_unfiltered === true);
+  // ⚠️ Fallen fråga får aldrig läsas som "ingen personal kopplad".
+  var pFailDeps = Object.assign({}, deps, {
+    bubbleFindAll: async (t, o) => {
+      if (t === "User" && o && (o.constraints || []).some(function(c){ return c.key === "Associated_company"; })) throw new Error("Bubble 500");
+      return deps.bubbleFindAll(t, o);
+    },
+  });
+  var pfs = mk(); registerCompaniesRoutes(pfs.app, pFailDeps);
+  var pf = await call(pfs.routes, "get", "/admin/companies/:id/leverantorer", { params: { id: "cc1" }, query: { user_company: "cc2" } });
+  ok("leverantörer: fallen personal-fråga → personnel_ok:false (inte tom lista som svar)",
+     pf.body.ok === true && pf.body.personnel_ok === false && pf.body.personnel.length === 0);
   // koppla dotterbolag sup2
   var addSup = await call(s.routes, "post", "/admin/companies/:id/leverantor", { params: { id: "cc1" }, body: { supplier_id: "sup2" } });
   ok("leverantor add → company appendad till supplier.Kundföretag", addSup.body.ok && (STORE["Leverantör - Supplier"][1]["Kundföretag"] || []).indexOf("cc1") > -1);
@@ -1172,6 +1200,15 @@ const run = async () => {
      !/fk-bomstar[\s\S]{0,300}renderCard\(\)/.test(fl));
   ok("frontend: saknade bom-fält i Bubble rapporteras till användaren",
      /bom_fields_missing/.test(fl) && /graderingen lagrades inte/.test(fl));
+
+  // ── FRONTEND: "Vår personal" ska bara visa Carottare ──────────────────────
+  // ⚠️ Filtreringen sker i servern, men om den INTE kunde göras (ingen
+  // user_company) eller frågan föll måste kortet säga det — annars ser en
+  // blandning av Carottare och kundens users ut som ett faktum.
+  ok("frontend: säger till när listan kan innehålla kundens egna users",
+     /personnel_unfiltered/.test(fl) && /går Carottare inte att skilja ut/.test(fl));
+  ok("frontend: fallen personal-fråga rapporteras, inte tolkad som tom lista",
+     /L\.personnel_ok===false/.test(fl) && /Det betyder inte att ingen är kopplad/.test(fl));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
