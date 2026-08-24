@@ -1385,6 +1385,55 @@ const run = async () => {
      /Kunde inte hämta företagslistan/.test(afRaw) &&
      !/\.catch\(function\(\)\{ companiesPromise=null; return \[\]; \}\)/.test(afRaw));
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // KUNDANSVARIG = ALLTID EN CAROTTARE (2026-08-24)
+  // ⚠️ `_users()` sveper HELA User-tabellen — där ligger även kundernas egna
+  // inloggningar. Utan filtret kunde man sätta en kundanvändare som kundansvarig,
+  // och då gick hen inte att se under "Vår personal" (som filtrerar på samma
+  // company) → ansvaret fanns men personen syntes ingenstans. Samma bugg, två ytor.
+  // ══════════════════════════════════════════════════════════════════════════
+  const metaAll = await call(s.routes, "get", "/admin/companies/meta");
+  const metaOurs = await call(s.routes, "get", "/admin/companies/meta", { query: { user_company: "cc2" } });
+  ok("kundansvarig: utan user_company listas alla + flaggan sätts",
+     (metaAll.body.users || []).length === 3 && metaAll.body.users_unfiltered === true);
+  ok("kundansvarig: med user_company listas BARA våra egna",
+     (metaOurs.body.users || []).length === 2 &&
+     (metaOurs.body.users || []).every(function (x) { return x.id === "u2" || x.id === "u3"; }) &&
+     metaOurs.body.users_unfiltered === undefined);
+  // ⚠️ u1 är kundens EGEN user (Company cc1) — får aldrig kunna väljas som ansvarig.
+  ok("kundansvarig: kundens egen user filtreras bort",
+     !(metaOurs.body.users || []).some(function (x) { return x.id === "u1"; }));
+  const listOurs = await call(s.routes, "get", "/admin/companies/list", { query: { meta: "1", user_company: "cc2" } });
+  ok("kundansvarig: samma filter i list-metan", ((listOurs.body.meta || {}).users || []).length === 2);
+  const cardOurs = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc1" }, query: { user_company: "cc2" } });
+  ok("kundansvarig: samma filter i kortets meta", ((cardOurs.body.meta || {}).users || []).length === 2);
+  ok("frontend: user_company skickas i list- och kort-anropen",
+     /p\.push\("user_company="\+encodeURIComponent\(uc\)\)/.test(fl) &&
+     /function ucq\(\)/.test(fl) &&
+     /\/card"\+ucq\(\)/.test(fl) && /\/onboarding"\+ucq\(\)/.test(fl));
+
+  // ── Onboarding och "Vår personal" måste läsa SAMMA definition ─────────────
+  // ⚠️ Onboarding-chippet använde ENBART env-varen CAROTTE_COMPANY_ID medan
+  // personallistan filtrerar på den inloggades company. Skiljer de sig säger
+  // ytorna emot varandra: personen stod under "Vår personal" samtidigt som
+  // chippet sa "ingen Carotte-medarbetare".
+  const obDeps = Object.assign({}, deps, { CAROTTE_COMPANY_ID: "NAGOT_ANNAT_ID" });
+  const obs = mk(); registerCompaniesRoutes(obs.app, obDeps);
+  const obNoQ = await call(obs.routes, "get", "/admin/companies/:id/onboarding", { params: { id: "cc1" } });
+  const obWithQ = await call(obs.routes, "get", "/admin/companies/:id/onboarding", { params: { id: "cc1" }, query: { user_company: "cc2" } });
+  // ⚠️ Defensivt — mot gammal kod kan formen saknas helt; en krasch hade dolt resten.
+  // ⚠️ Defensivt — mot gammal kod kan formen saknas helt; en krasch hade dolt resten.
+  // Delkraven ligger under `mira.checks` (inte i topp-nivåns `steps`).
+  const staffOf = (r) => {
+    const arr = (r && r.body && r.body.mira && r.body.mira.checks) || [];
+    return (Array.isArray(arr) ? arr : []).filter(function (x) { return x && x.id === "staff"; })[0] || {};
+  };
+  ok("onboarding: env ensam hittar ingen Carottare (fel id)", staffOf(obNoQ).done !== true);
+  // u3 har Company cc2 och Associated_company innehåller cc1 → ska räknas.
+  const stQ = staffOf(obWithQ);
+  ok("onboarding: med user_company hittas samma person som i Vår personal",
+     stQ.done === true && stQ.count >= 1);
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

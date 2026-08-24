@@ -2029,11 +2029,18 @@
   function cacheClearAll(){ try{ for(var i=sessionStorage.length-1;i>=0;i--){ var k=sessionStorage.key(i); if(k&&k.indexOf("fl:")===0) sessionStorage.removeItem(k); } }catch(e){} }
 
   function qstr(){
+    // ⚠️ user_company krävs för att kundansvarig-listan ska begränsas till VÅRA
+    // egna. Utan den listas hela User-tabellen (även kundernas inloggningar) och
+    // man kan sätta en kundanvändare som kundansvarig — som sedan inte syns under
+    // "Vår personal", eftersom den filtrerar på samma company.
     var p=["q="+encodeURIComponent(STATE.q),"sort="+STATE.sort,"dir="+STATE.dir,"page="+STATE.page,"limit="+STATE.limit];
+    var uc=cfg("user_company"); if(uc) p.push("user_company="+encodeURIComponent(uc));
     var f=STATE.f; for(var k in f){ if(f[k]) p.push(k+"="+encodeURIComponent(f[k])); }
     return "/admin/companies/list?"+p.join("&");
   }
   function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+  // ?user_company= till kort-anropen (samma skäl som i qstr).
+  function ucq(){ var uc=cfg("user_company"); return uc?("?user_company="+encodeURIComponent(uc)):""; }
   function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
   function apiPost(path, body){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){ return r.json(); }); }
   function apiCoworkerPatch(id, fields){ return fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
@@ -2646,7 +2653,7 @@
   // Hämtar om kortet (levande-panelen ligger i /card-svaret).
   function refreshCard(){
     if(!STATE.cardId) return;
-    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card").then(function(cj){
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card"+ucq()).then(function(cj){
       if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); STATE.nastaDirty=false; }
       renderCard();
     }).catch(function(){ renderCard(); });
@@ -3676,6 +3683,7 @@
       // Går det inte (ingen user_company-bindning) filtreras INGET bort, och då
       // måste det synas: annars ser blandningen ut som ett faktum.
       (L.personnel_ok===false?'<div class="fk-liveerr" style="margin-top:10px">⚠ Kunde inte läsa personallistan. <b style="display:inline">Det betyder inte att ingen är kopplad.</b></div>':'')+
+      ((STATE.meta&&STATE.meta.users_unfiltered)?'<div class="fk-liveerr" style="margin-top:10px">⚠ Kundansvarig-listan visar ALLA användare — utan <b style="display:inline">data-mira="user_company"</b> går Carottare inte att skilja från kundernas inloggningar.</div>':'')+
       (L.personnel_unfiltered?'<div class="fk-liveerr" style="margin-top:10px">⚠ Listan kan innehålla kundens egna användare — utan <b style="display:inline">data-mira="user_company"</b> går Carottare inte att skilja ut.</div>':'')+
       (noUC?'<div class="fl-lsub" style="margin-top:10px">Personal-dropdownen är tom tills <b style="display:inline">data-mira="user_company"</b> binds till Current User\'s Company i Bubble.</div>':'')+
     '</div>';
@@ -3778,7 +3786,9 @@
   // inte kontrolleras", INTE som "ej klart". Samma regel som revenue_ready och
   // nasta.ok — se HANDOFF arbetsregler.
   function fetchOnboarding(id){
-    api("/admin/companies/"+encodeURIComponent(id)+"/onboarding").then(function(j){
+    // ⚠️ user_company med: onboarding-checken och "Vår personal" måste läsa SAMMA
+    // definition av "Carottare", annars säger de emot varandra.
+    api("/admin/companies/"+encodeURIComponent(id)+"/onboarding"+ucq()).then(function(j){
       if(!j||!j.ok) return;                                   // 404/500 lämnar STATE.onboarding=null → "kunde inte laddas"-tomrum
       if(STATE.cardId!==id) return;                           // bytt kund under tiden — släng svaret
       STATE.onboarding=j;
@@ -3864,7 +3874,7 @@
     if(_cardRevTimer){ clearTimeout(_cardRevTimer); _cardRevTimer=null; }
     if(!STATE.card || STATE.card.revenue_ready || STATE.cardRevTries>20 || STATE.view!=="card") return;
     _cardRevTimer=setTimeout(function(){ STATE.cardRevTries++;
-      api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card").then(function(j){ if(j&&j.ok){ STATE.card=j; cacheSet(cardKey(STATE.cardId),j); if(STATE.view==="card"&&!STATE.cardEditing) renderCard(); scheduleCardRev(); } });
+      api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card"+ucq()).then(function(j){ if(j&&j.ok){ STATE.card=j; cacheSet(cardKey(STATE.cardId),j); if(STATE.view==="card"&&!STATE.cardEditing) renderCard(); scheduleCardRev(); } });
     }, Math.min(4000+STATE.cardRevTries*1000,12000));
   }
   function openCard(id){
@@ -3874,7 +3884,7 @@
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
-    api("/admin/companies/"+encodeURIComponent(id)+"/card").then(function(j){
+    api("/admin/companies/"+encodeURIComponent(id)+"/card"+ucq()).then(function(j){
       if(!j||!j.ok){ if(!STATE.card) $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-err">Kunde inte ladda kundkort: '+esc((j&&j.error)||"okänt fel")+'</div>'; return; }
       STATE.card=j; cacheSet(cardKey(id),j);
       if(STATE.view==="card"&&!STATE.cardEditing) renderCard();
@@ -3907,7 +3917,7 @@
     apiPatch(STATE.cardId, fields).then(function(j){
       if(!j||!j.ok){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; return; }
       STATE.listDirty=true;
-      api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card").then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); } STATE.cardEditing=false; STATE.cardFast=null; renderCard(); });
+      api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card"+ucq()).then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); } STATE.cardEditing=false; STATE.cardFast=null; renderCard(); });
     }).catch(function(){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; });
   }
 

@@ -614,6 +614,39 @@ i ett fält medan personallistan var tom, och notiser som hänger på
 **Verifierat:** companies_smoke **340/340**, salj_smoke **79/79**, alla 21 sviter
 gröna, mutationstestat (8 + 3 mot `6ebde34`, 4 för ansvarig-kopplingen mot `019dbc8`).
 
+### ⚠️ "Carottare" hade TRE olika definitioner — enad 2026-08-24
+
+Tre ytor svarade på samma fråga med olika källor, och därför olika svar:
+
+| Yta | Källa före | Följd |
+|---|---|---|
+| Kundansvarig-dropdown | **ingen** — hela User-tabellen | Kundernas egna inloggningar gick att välja som kundansvarig |
+| "Vår personal" | `?user_company=` (inloggades Company) | — |
+| Onboarding-chippet "Carotte-medarbetare" | env `CAROTTE_COMPANY_ID` | Sa "ingen Carotte-medarbetare" medan personallistan visade Anette |
+
+**Alla tre läser nu `user_company`** (den inloggades Company), med env som fallback för
+anrop utan kontext (curl/cron).
+
+- **Dropdownen** filtreras i `_ourUsers()`. `_users()` bär nu `company_id` per rad.
+  Gäller `/meta`, list-metan och kortets meta — alla tre tar `?user_company=`.
+- **⚠️ De två buggarna var samma bugg.** Kunde man välja en kundanvändare som
+  kundansvarig blev hen dessutom osynlig under "Vår personal", eftersom den listan
+  filtrerar på samma company. Ansvaret fanns men personen syntes ingenstans.
+- **⚠️ Utan `user_company` filtreras INGET bort** — men svaret bär
+  `users_unfiltered:true` och kortet säger det rakt ut. Tyst fel filter vore värre än
+  en synlig varning. Samma princip som personallistan.
+- **Onboarding-checken** tar nu `?user_company=` före env-varen. Frontenden skickar
+  den via `ucq()` till både `/card` och `/onboarding`.
+
+**Verifierat:** companies_smoke **348/348**, alla 21 sviter gröna,
+mutationstestat (7 faller). Testerna vaktar bl.a. att kundens egen user (`u1`,
+Company `cc1`) aldrig kan väljas, och att onboarding hittar samma person som
+personallistan.
+
+⚠️ **Kvar:** `CAROTTE_COMPANY_ID` i Render bör peka på samma bolag som de inloggade
+Carotte-usernas `Company`. Gör den inte det skiljer sig fallback-vägen (curl/cron)
+från vad UI:t visar.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

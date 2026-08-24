@@ -112,7 +112,8 @@ export function registerCompaniesRoutes(app, deps) {
       const nm = (first + " " + last).trim() || _str(u.email || u.Email);
       if (!nm) continue;
       const em = _userEmail(u);
-      map.set(id, nm); list.push({ id, name: nm, email: em });
+      // company_id bärs med så kundansvarig-listan kan filtreras till VÅRA egna.
+      map.set(id, nm); list.push({ id, name: nm, email: em, company_id: _ref(u.Company) || null });
       if (em) byEmail.set(em, id);
     }
     list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
@@ -398,7 +399,8 @@ export function registerCompaniesRoutes(app, deps) {
         ok: true,
         facets: _facets(ctxFull),
         bolag: _bolagList(companyBolagMapWarm ? companyBolagMapWarm() : null),
-        users: u.list,
+        users: _ourUsers(u.list, _str(req.query.user_company).trim()).users,
+        users_unfiltered: _ourUsers(u.list, _str(req.query.user_company).trim()).unfiltered || undefined,
         groups: g.list,
         fastigheter: f.list,
         editable: Object.fromEntries(Object.entries(EDITABLE).map(([k, v]) => [k, v.type])),
@@ -503,7 +505,9 @@ export function registerCompaniesRoutes(app, deps) {
         out.meta = {
           facets: _facets(ctx.full),
           bolag: _bolagList(ctx.bolag),
-          users: u.list, groups: g.list, fastigheter: f.list,
+          users: _ourUsers(u.list, _str(req.query.user_company).trim()).users,
+          users_unfiltered: _ourUsers(u.list, _str(req.query.user_company).trim()).unfiltered || undefined,
+          groups: g.list, fastigheter: f.list,
           editable: Object.fromEntries(Object.entries(EDITABLE).map(([k, v]) => [k, v.type])),
           cache_total: ctx.full.size,
         };
@@ -638,7 +642,10 @@ export function registerCompaniesRoutes(app, deps) {
           personer: persCount, drift: driftCount,
         },
         meta: {
-          facets: _facets(full), users: u.list, groups: g.list, fastigheter: f.list,
+          facets: _facets(full),
+          users: _ourUsers(u.list, _str(req.query.user_company).trim()).users,
+          users_unfiltered: _ourUsers(u.list, _str(req.query.user_company).trim()).unfiltered || undefined,
+          groups: g.list, fastigheter: f.list,
           editable: Object.fromEntries(Object.entries(EDITABLE).map(([k, v]) => [k, v.type])),
         },
       });
@@ -1572,7 +1579,9 @@ export function registerCompaniesRoutes(app, deps) {
     const _q = (fn) => fn().then((v) => ({ ok: true, v })).catch((e) => { console.error("[onboarding] " + id + ":", e?.message); return { ok: false, err: e?.message || String(e) }; });
     const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
 
-    const carotteId = _str(CAROTTE_COMPANY_ID).trim();
+    // ⚠️ Den INLOGGADES company vinner över env-varen — se kommentaren vid
+    // staff-checken nedan. Env är fallback för anrop utan kontext (curl/cron).
+    const carotteId = _str(req.query.user_company).trim() || _str(CAROTTE_COMPANY_ID).trim();
     const [officesR, custUsersR, suppliersR, staffR, trainingR] = await Promise.all([
       _q(() => bubbleFindAll("Office", { constraints: eqc("Kundföretag") })),
       _q(() => bubbleFindAll("User",   { constraints: eqc("Company") })),                            // kundens egna users
@@ -1580,7 +1589,13 @@ export function registerCompaniesRoutes(app, deps) {
       // Carotte-medarbetare = User.Associated_company contains id AND User.Company == CAROTTE_COMPANY_ID
       // Utan env-id kan vi INTE skilja Carotte-users från kundens egna → checken bär då ok:false + hint.
       _q(async () => {
-        if (!carotteId) { const e = new Error("carotte_company_id_missing"); e.hint = "sätt CAROTTE_COMPANY_ID i env"; throw e; }
+        // ⚠️ SAMMA SANNING SOM "Vår personal" (rättat 2026-08-24). Checken använde
+        // ENBART env-varen CAROTTE_COMPANY_ID medan personallistan filtrerar på den
+        // inloggades `user_company`. Skiljer de sig säger ytorna emot varandra:
+        // Anette stod under "Vår personal" samtidigt som chippet sa "ingen
+        // Carotte-medarbetare". Den inloggades company vinner; env är fallback för
+        // anrop utan kontext (curl/cron).
+        if (!carotteId) { const e = new Error("carotte_company_id_missing"); e.hint = "sätt CAROTTE_COMPANY_ID i env eller bind data-mira=\"user_company\" i blocket"; throw e; }
         const all = await bubbleFindAll("User", { constraints: [{ key: "Associated_company", constraint_type: "contains", value: id }] });
         return (all || []).filter((u) => _ref(u.Company) === carotteId);
       }),
@@ -2213,6 +2228,18 @@ export function registerCompaniesRoutes(app, deps) {
   // ⚠️ Spärren går att forcera (`force:true`) — men bara medvetet, och svaret pekar
   // alltid ut det befintliga företaget så man kan öppna det i stället.
   // ⚠️ Dubblettkollen läser den delade cachen → NOLL nya Bubble-anrop.
+  // ⚠️ KUNDANSVARIG = ALLTID EN CAROTTARE (2026-08-24). `_users()` sveper HELA
+  // User-tabellen — där ligger även kundernas egna inloggningar. Utan filtret
+  // kunde man sätta en kundanvändare som kundansvarig, och då gick hen dessutom
+  // inte att se under "Vår personal" (som filtrerar på samma company) → ansvaret
+  // fanns men personen syntes ingenstans. De två buggarna var samma bugg.
+  // ⚠️ Utan `user_company` går de inte att skilja åt → filtrera INTE, men säg det
+  // (`users_unfiltered`). Tyst fel filter vore värre än en synlig varning.
+  function _ourUsers(list, userCompanyId) {
+    if (!userCompanyId) return { users: list, unfiltered: true };
+    return { users: list.filter((u) => u.company_id === userCompanyId), unfiltered: false };
+  }
+
   // ── Kundansvarig → "Vår personal" på kunden (2026-08-24) ────────────────────
   // Den som är kundansvarig ska också vara KNUTEN till kunden. Annars står ansvaret
   // i ett fält medan personallistan är tom — och notiser som hänger på
