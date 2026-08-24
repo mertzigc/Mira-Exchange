@@ -466,6 +466,73 @@ tydligt märkta "Ej live" tills organisationen bestämt hur de ska mätas.
   (manuell grön-flagga från Kundansvarig), eller härlett (alla föregående steg).
   Kräver beslut om VEM som får sätta det.
 
+### Skapa företag i listvyn + Offert i affärsvyn — BYGGT 2026-08-24
+
+Ersätter delar av den Bubble-native genvägsgruppen i headern. **Signering skippades**
+— den finns redan på kundkortets Avtal-flik.
+
+#### Skapa företag (`POST /admin/companies/create`)
+Knapp **+ Nytt företag** i listvyns header, panel ovanför filterraden.
+**Fältomfång medvetet smalt** (Christians mandat): **namn\* + org.nr\*** + kundansvarig
++ kundstatus. Resten fylls på kundkortet där fälten redan är redigerbara — samma
+fältlogik ska inte underhållas på två ställen. Efter skapande **öppnas kortet direkt**.
+
+- **⚠️ ORG.NR ÄR OBLIGATORISKT OCH DUBBLETTSPÄRRAT.** Med 5 499 rader och manuell
+  inmatning är dubbletter en tidsfråga, och dyra att städa i efterhand.
+  Jämförelsen sker på **SIFFROR** — datan bär både `5569748378` och `516409-6348`,
+  så en strängjämförelse hade missat halva fallen. Verifierat i harness: `556974-8378`
+  fångas mot befintliga `5569748378`.
+- **Spärren nekar inte bara** — den pekar ut det befintliga företaget med
+  **Öppna företaget** (det man nästan alltid ville) och **Skapa ändå** (`force:true`,
+  för filial/legitima undantag). Längd valideras till 10 siffror.
+- **Namnlikhet VARNAR men spärrar aldrig** — två bolag kan legitimt heta nästan lika.
+- Kundstatus valideras mot facetterna, som inline-editen. **Dubblettkollen läser den
+  delade cachen → noll nya Bubble-anrop.**
+- **⚠️ Nya raden läses tillbaka och läggs in i `companyPatchEntry`** — annars syns
+  företaget inte i listan förrän nästa helsvep (upp till 12 h). `verified:false`
+  rapporteras till användaren.
+
+#### Offert i affärsvyn — INGEN inflyttning behövdes
+**+ Offert** både i Skapa nytt-raden (utan kontext) och i affärskortets actions-rad
+(ärver kund + affär).
+
+- **⚠️ Offertbyggaren (`mira-offert-admin.html`, 52k) hade REDAN ett modal-API:**
+  `window.miraOffertModal.open({clientcompany, clientcompany_nm, deal, comission})`.
+  Blockets egen kommentar sa rakt ut att *"affär-blocket öppnar via
+  window.miraOffertModal"* — kontraktet fanns byggt, men affärsvyn ringde aldrig.
+  **Därför ingen inflyttning, ingen dubblering, inget nytt eventkontrakt.**
+  Lärdom: leta efter ett befintligt kontrakt innan man designar ett nytt.
+- **⚠️ KRÄVER att offertblocket ligger på affärsvy-sidan med
+  `data-mira="as_modal"` = `1`.** Bara as_modal-instansen registrerar globalen
+  (blocket hanterar multi-instans själv). Saknas den säger knappen det RAKT UT —
+  en knapp som tyst inte gör något är värre än ett felmeddelande.
+- Offert är **Food & Event-specifik** (offert_api är F&E-modulen). Knappen är generell;
+  det är värt att veta innan den erbjuds för HK/S&P-affärer.
+
+#### Verifierat
+- companies_smoke **325/325** · affar_create_smoke **82/82** · alla 20 sviter gröna ·
+  **mutationstestat: 14 resp. 5 faller.**
+- Harness: skapa-formuläret blockerar utan namn/org.nr, servern nekar fel längd,
+  dubbletten fångas trots bindestreck och visar båda knapparna, "Skapa ändå" postar
+  `force:true` och öppnar kortet. Generella **+ Offert** öppnar modalen med tom
+  kontext och lämnar ingen tom inline-panel.
+- **⚠️ Per-affär-knappen är verifierad via kodtest + mutation, INTE klickad i
+  harness** — mock-feeden renderade inga affärsrader och att jaga rätt radform var
+  inte värt tiden. Kontextärvningen (`kundforetag_id` + `deal`) är grep-testad och
+  faller mot gammal kod.
+- **⚠️ Testramens `call()` KASTADE på saknad route** → hela sviten dog på första
+  anropet vid mutationstest och dolde 13 andra fel. Svarar nu `404 no_route` så
+  testet FALLER begripligt. Samma klass av tyst missvisning som en assertion som
+  kraschar i st.f. att falla — fjärde varianten i det här repot.
+- **⚠️ Mocken var inkonsekvent med sig själv:** `bubbleCreate("ClientCompany")` skrev
+  till `STORE` medan `bubbleGet` läser `CC` → en nyskapad rad var osynlig för
+  läs-tillbaka och cache-insert. Rättad.
+
+#### Deploy
+`companies_api.js` → Render · klistra om `mira-foretag-lista.html` +
+`mira-affar-samlad.html` · **lägg `mira-offert-admin.html` på affärsvy-sidan med
+`as_modal=1`** · ta bort den native genvägsgruppen när båda är verifierade.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

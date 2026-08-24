@@ -265,6 +265,7 @@
     <button class="af-newbtn" data-new="aktivitet">＋ Aktivitet</button>
     <button class="af-newbtn" data-new="todo">＋ Todo</button>
     <button class="af-newbtn" data-new="affar">＋ Affär</button>
+    <button class="af-newbtn" data-new="offert">＋ Offert</button>
   </div>
   <div data-af="createpanel"></div>
 
@@ -1597,6 +1598,7 @@
     return '<div class="card-actions"><span class="ca-lbl">Skapa i affären:</span>'+
       '<button class="af-cardnew" data-cnew="aktivitet" data-cdeal="'+esc(did)+'">＋ Aktivitet</button>'+
       '<button class="af-cardnew" data-cnew="todo" data-cdeal="'+esc(did)+'">＋ Todo</button>'+
+      '<button class="af-cardnew" data-cnew="offert" data-cdeal="'+esc(did)+'">＋ Offert</button>'+
     '</div><div class="card-actions-panel"></div>';
   }
   // konditionell Kundmöte i aktivitet-create
@@ -1683,15 +1685,60 @@
         msg.textContent="Skapad ✓"+(j.deal_linked?" (kopplad till affär)":""); afterCreate(box, payload.deal_id, "Todo");
       }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
+  // ── OFFERT (Food & Event) ─────────────────────────────────────────────────
+  // ⚠️ Offertbyggaren är ett EGET block (`mira-offert-admin.html`, 52k) som redan
+  // exponerar ett modal-API: `window.miraOffertModal.open({clientcompany,
+  // clientcompany_nm, deal, comission})`. Blockets egen kommentar säger rakt ut att
+  // "affär-blocket öppnar via window.miraOffertModal" — kontraktet fanns, men
+  // affärsvyn ringde aldrig. Därför INGEN inflyttning och ingen dubblering här.
+  //
+  // ⚠️ Kräver att offertblocket ligger på sidan med data-mira="as_modal"=1. BARA
+  // as_modal-instansen registrerar globalen (blocket hanterar multi-instans själv).
+  // Saknas den säger vi det RAKT UT — en knapp som tyst inte gör något är värre än
+  // ett felmeddelande.
+  function offertModal(){
+    return (typeof window !== "undefined" && window.miraOffertModal) ? window.miraOffertModal : null;
+  }
+  function openOffert(pref){
+    var M=offertModal();
+    if(!M){
+      // ⚠️ Vanligaste orsaken är INTE att blocket saknas, utan att Bubble inte
+      // RENDERAT det: ett element med "collapse when hidden" (eller i en grupp vars
+      // villkor är falskt) hamnar aldrig i DOM:en → scriptet kör aldrig → globalen
+      // registreras aldrig. Blocket behöver inte döljas: med as_modal=1 är hela
+      // .ao-mh display:none tills det öppnas, så det tar noll plats av sig självt.
+      alert("Offertbyggaren är inte tillgänglig på den här sidan.\n\n"+
+            "1) Lägg in mira-offert-admin.html som ett HTML-element här, med data-mira=\"as_modal\" satt till 1.\n"+
+            "2) Låt elementet vara SYNLIGT — med as_modal är blocket redan osynligt tills det öppnas.\n"+
+            "   Döljs det med Bubbles egen visibility (särskilt \"collapse when hidden\") renderas det inte, och då kan knappen inte nå det.");
+      return;
+    }
+    M.open(pref||{});
+  }
+  // Från ett affärskort: ärv kund + affär så offerten hamnar rätt utan sökning.
+  function openOffertForDeal(did){
+    var j=chainCache[did]||null, e=(j&&j.edit)||{};
+    // ⚠️ Ärv affärens kategori → offerten hamnar i rätt nummerserie (FE/HK/SP/OF)
+    // utan att någon behöver välja. Affären kan bära flera kategorier (Kategori är
+    // en lista); då tar vi den första och låter användaren ändra i formuläret —
+    // att gissa "rätt" bland flera vore värre än att låta människan välja.
+    var kats=(e.kategori||[]);
+    openOffert({ clientcompany:e.kundforetag_id||"", clientcompany_nm:e.kundforetag_name||((j&&j.deal&&j.deal.company)||""),
+                 deal:did, kategori:(kats.length===1?kats[0]:"") });
+  }
   function openCreate(kind){
     var host=$("createpanel"); var open=(host.getAttribute("data-open")===kind);
     host.innerHTML=""; host.removeAttribute("data-open");
     if(open) return;
+    // Offert är ingen inline-panel utan en modal i ett eget block → öppna och
+    // lämna panelen stängd (annars står en tom ruta kvar under knappraden).
+    if(kind==="offert"){ openOffert({}); return; }
     host.innerHTML=(kind==="aktivitet"?aktCreatePanelHtml({}):(kind==="todo"?todoCreatePanelHtml({}):dealCreatePanelHtml({})));
     host.setAttribute("data-open",kind);
   }
   function openCardCreate(btn){
     var kind=btn.getAttribute("data-cnew"), did=btn.getAttribute("data-cdeal");
+    if(kind==="offert"){ openOffertForDeal(did); return; }
     var j=chainCache[did], ccId="", ccNm="", dealNm="";
     if(j){ ccId=(j.edit&&j.edit.kundforetag_id)||""; ccNm=(j.edit&&j.edit.kundforetag_name)||(j.deal&&j.deal.company)||""; dealNm=(j.deal&&j.deal.titel)||""; }
     var dealBox=btn.closest(".deal"); if(!dealBox) return;

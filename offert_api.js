@@ -90,22 +90,76 @@ export function registerOffertRoutes(app, deps) {
     return { summa, moms_belopp, total: _round2(summa + moms_belopp) };
   }
 
-  // ── offertnr: FE-{år}-{seq} (best-effort löpnummer) ────────────────
-  async function generateOffertnr() {
+  // ── KATEGORI + NUMMERSERIE PER BOLAG (2026-08-24) ──────────────────
+  // "Offert Allmän" (uppladdat dokument) fungerar för alla bolag — men numret och
+  // kategorin måste följa med, annars heter en HK-offert `FE-2026-0042` och räknas
+  // som Food & Event i listan.
+  //
+  // ⚠️ Kategorivärdena är Category-option-setets KANONISKA fyra. `Service & People`
+  // heter INTE `Staff` — `Staff` är anslutningens namn. Se [[bubble-option-sets]];
+  // fel värde ger 400 "could not parse this as a Category", inte ett tyst fel.
+  const OFFERT_KATEGORIER = ["Food & Event", "Housekeeping", "Service & People", "Other facility services"];
+  const KAT_PREFIX = {
+    "Food & Event": "FE",
+    "Housekeeping": "HK",
+    "Service & People": "SP",
+    "Other facility services": "OF",
+  };
+  const DEFAULT_KATEGORI = "Food & Event";   // bakåtkompatibelt: befintlig serie orörd
+  // ⚠️ `kategori` blir ett Option Set (Category) i Bubble → kan läsas tillbaka som
+  // STRÄNG eller som `{display}`-OBJEKT. `_str(objekt)` ger "[object Object]", vilket
+  // hade fallit igenom som "okänd kategori" och tyst degraderat PDF-rubriken till
+  // Food & Event på en HK-offert. Samma klass av fel som fastighetsnamnen och
+  // aktivitet_nasta_steg. Se [[bubble-option-sets]].
+  function _katOf(v) {
+    if (v == null) return "";
+    const s = (typeof v === "object") ? _str(v.display || v.Display || "") : _str(v);
+    const t = s.trim();
+    return OFFERT_KATEGORIER.indexOf(t) > -1 ? t : "";
+  }
+  // ── offertnr: {PREFIX}-{år}-{seq} — egen löpnummerserie per bolag ──
+  // ⚠️ Sekvensen söks på PREFIXET, inte på `source`. Filtrerade man som förr på
+  // source hämtades de 200 SENASTE Mira-offerterna oavsett serie — dominerar F&E
+  // hittas HK:s högsta nummer aldrig och serien börjar om på 0001 → krock.
+  async function generateOffertnr(kategori) {
     const year = new Date().getFullYear();
-    const prefix = `FE-${year}-`;
+    const pfx = KAT_PREFIX[_katOf(kategori) || DEFAULT_KATEGORI] || KAT_PREFIX[DEFAULT_KATEGORI];
+    const prefix = `${pfx}-${year}-`;
     let maxSeq = 0;
     try {
       const rows = await bubbleFind(TYPE_OFFERT, {
-        constraints: [{ key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE }],
+        constraints: [
+          { key: "source", constraint_type: "equals", value: SOURCE_MIRA_FE },
+          { key: "offertnr", constraint_type: "text contains", value: prefix },
+        ],
         limit: 200, sort_field: "Created Date", descending: true,
       });
+      const re = new RegExp("^" + pfx + "-(\\d{4})-(\\d+)$");
       for (const row of rows) {
-        const m = /^FE-(\d{4})-(\d+)$/.exec(_str(row.offertnr));
+        const m = re.exec(_str(row.offertnr));
         if (m && Number(m[1]) === year) maxSeq = Math.max(maxSeq, Number(m[2]));
       }
     } catch (_) { /* best-effort */ }
     return prefix + String(maxSeq + 1).padStart(4, "0");
+  }
+  // ⚠️ `kategori` är ett NYTT fält på Offert. Modulen får rå bubbleCreate/bubblePatch
+  // → okänt fält 400:ar HELA skrivningen. Stryp bara det fältet och rapportera, så
+  // offerten går att spara även innan fältet finns i Bubble.
+  function _unknownField(e, field) {
+    const d = e && e.detail;
+    if (!d || d.status !== 400) return false;
+    const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
+    return body.indexOf("Unrecognized field: " + field) > -1;
+  }
+  async function _writeOptional(fn, payload, field) {
+    if (payload[field] === undefined) return { value: await fn(payload), missing: false };
+    try { return { value: await fn(payload), missing: false }; }
+    catch (e) {
+      if (!_unknownField(e, field)) throw e;
+      const q = Object.assign({}, payload); delete q[field];
+      console.warn("[offert] fältet " + field + " saknas på Offert i Bubble — offerten sparas utan det");
+      return { value: await fn(q), missing: true };
+    }
   }
 
   // ── bygg offert-huvud-payload från body ────────────────────────────
@@ -131,8 +185,14 @@ export function registerOffertRoutes(app, deps) {
       recipient: Array.isArray(body.recipient) ? body.recipient : undefined,
       sender: Array.isArray(body.sender) ? body.sender : undefined,
     };
+    // Kategorin styr nummerserie + PDF-rubrik. Okänt värde avvisas hellre än skrivs.
+    // ⚠️ `source` lämnas ORÖRD (`mira_fe` = "skapad i Mira") — den används på sex
+    // ställen inkl. order-konverteringen och listan. Kategorin är ett eget fält.
+    const kat = _katOf(body.kategori);
+    if (body.kategori !== undefined) p.kategori = kat || undefined;
     if (isCreate) {
       p.source = SOURCE_MIRA_FE;
+      if (!p.kategori) p.kategori = DEFAULT_KATEGORI;
       p.status = body.status || "Draft"; // offer_approval_status
       if (body.offertdatum == null) p.offertdatum = new Date().toISOString();
     }
@@ -465,14 +525,22 @@ export function registerOffertRoutes(app, deps) {
       const body = req.body || {};
       const rows = Array.isArray(body.rows) ? body.rows : [];
       const totals = computeTotals(rows);
+      // ⚠️ Okänd kategori avvisas — annars hamnar skräp i Category-fältet och
+      // nummerserien faller tillbaka på FE utan att någon märker det.
+      if (body.kategori !== undefined && _str(body.kategori).trim() && !_katOf(body.kategori)) {
+        return res.status(400).json({ ok: false, error: "okand_kategori", value: _str(body.kategori), allowed: OFFERT_KATEGORIER });
+      }
       const payload = buildOffertPayload(body, { isCreate: true });
-      payload.offertnr = body.offertnr ? _str(body.offertnr) : await generateOffertnr();
+      payload.offertnr = body.offertnr ? _str(body.offertnr) : await generateOffertnr(payload.kategori);
       payload.summa = totals.summa;
       payload.moms_belopp = totals.moms_belopp;
       payload.total = totals.total;
-      const offertId = await bubbleCreate(TYPE_OFFERT, payload);
+      const cw = await _writeOptional((q) => bubbleCreate(TYPE_OFFERT, q), payload, "kategori");
+      const offertId = cw.value;
       const radIds = await createRows(offertId, rows);
-      return res.json({ ok: true, offert_id: offertId, offertnr: payload.offertnr, rows_created: radIds.length, totals });
+      return res.json({ ok: true, offert_id: offertId, offertnr: payload.offertnr, kategori: payload.kategori,
+        rows_created: radIds.length, totals,
+        kategori_field_missing: cw.missing || undefined });
     } catch (e) {
       console.error("[/admin/offert/create]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
@@ -536,6 +604,9 @@ export function registerOffertRoutes(app, deps) {
       const existing = await bubbleGet(TYPE_OFFERT, id);
       if (!existing) return res.status(404).json({ ok: false, error: "offert_not_found" });
 
+      if (body.kategori !== undefined && _str(body.kategori).trim() && !_katOf(body.kategori)) {
+        return res.status(400).json({ ok: false, error: "okand_kategori", value: _str(body.kategori), allowed: OFFERT_KATEGORIER });
+      }
       const payload = buildOffertPayload(body, { isCreate: false });
       if (body.status) payload.status = _str(body.status);
 
@@ -549,8 +620,23 @@ export function registerOffertRoutes(app, deps) {
         payload.total = totals.total;
         rowsResult = { rows_created: radIds.length, totals };
       }
-      if (Object.keys(payload).length) await bubblePatch(TYPE_OFFERT, id, payload);
-      return res.json({ ok: true, offert_id: id, updated: Object.keys(payload), rows: rowsResult });
+      // ⚠️ Numret följer INTE med en kategoriändring. Ett utfärdat offertnummer är
+      // en identitet — byter man serie i efterhand pekar utskickade PDF:er och
+      // signeringar på ett nummer som inte längre finns. Kategorin får ändras, numret
+      // står kvar; svaret säger det så att det inte blir en tyst inkonsekvens.
+      let numMismatch;
+      if (payload.kategori) {
+        const pfx = KAT_PREFIX[payload.kategori];
+        const cur = _str(existing.offertnr);
+        if (pfx && cur && cur.indexOf(pfx + "-") !== 0) numMismatch = { offertnr: cur, kategori: payload.kategori };
+      }
+      let missing;
+      if (Object.keys(payload).length) {
+        const pw = await _writeOptional((q) => bubblePatch(TYPE_OFFERT, id, q), payload, "kategori");
+        missing = pw.missing || undefined;
+      }
+      return res.json({ ok: true, offert_id: id, updated: Object.keys(payload), rows: rowsResult,
+        kategori_field_missing: missing, offertnr_behalls: numMismatch });
     } catch (e) {
       console.error("[PATCH /admin/offert/:id]", e?.message, e?.detail);
       return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
@@ -682,7 +768,9 @@ export function registerOffertRoutes(app, deps) {
         req,
         dokumentIds,
         payload: {
-          rubrik: `Offert ${offert.offertnr || ""} – ${offert.titel || "Food & Event"}`.trim(),
+          // ⚠️ Fallback följer offertens kategori — hårdkodat "Food & Event" hade
+          // stått som rubrik på en HK-offert utan titel.
+          rubrik: `Offert ${offert.offertnr || ""} – ${offert.titel || _katOf(offert.kategori) || DEFAULT_KATEGORI}`.trim(),
           meddelande: _str(body.meddelande || offert.beskrivning || ""),
           sender_email: _str(body.sender_email || ""),
           sender_name: _str(body.sender_name || "Carotte"),

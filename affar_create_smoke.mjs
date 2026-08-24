@@ -396,6 +396,47 @@ const run = async () => {
      kropp("saveDeal").indexOf("sannolikhet_blocked") > -1 &&
      kropp("saveLead").indexOf("sannolikhet_blocked") < 0);
 
+  // ── OFFERT i affärsvyn (2026-08-24) ───────────────────────────────────────
+  // ⚠️ Offertbyggaren är ett EGET block med ett färdigt modal-API
+  // (`window.miraOffertModal.open`). Ingen inflyttning, ingen dubblering.
+  ok("frontend: + Offert finns både generellt och i affärskortet",
+     /data-new="offert"/.test(af) && /data-cnew="offert"/.test(af));
+  ok("frontend: öppnar via det befintliga modal-API:t, ingen inbäddad kopia",
+     /window\.miraOffertModal/.test(af) && !/ao-wrap/.test(af));
+  // ⚠️ Per-affär-knappen måste ÄRVA kund + affär, annars måste man söka fram
+  // kunden igen i offertbyggaren fast vi redan vet vilken den är.
+  ok("frontend: kortets knapp ärver kundföretag och affär",
+     /function openOffertForDeal/.test(af) &&
+     /clientcompany:e\.kundforetag_id\|\|""/.test(af) && /deal:did/.test(af));
+  // ⚠️ En knapp som tyst inte gör något är värre än ett felmeddelande.
+  // ⚠️ Meddelandet ska peka ut den TROLIGA orsaken (Bubble renderade inte elementet),
+  // inte bara konstatera att blocket saknas.
+  ok("frontend: saknat offertblock rapporteras med trolig orsak, inte bara 'saknas'",
+     /Offertbyggaren är inte tillgänglig/.test(af) && /as_modal/.test(af) &&
+     /collapse when hidden/.test(af));
+  ok("frontend: offert öppnar modal utan att lämna en tom inline-panel",
+     /if\(kind==="offert"\)\{ openOffert\(\{\}\); return; \}/.test(af));
+
+  // ── Offertblockets två lägen (omdöpta 2026-08-24) ─────────────────────────
+  // Namnen ska spegla RÄCKVIDDEN, inte tekniken: "Strukturerad offert" byggde av
+  // F&E-artiklar (artikelsöket filtrerar på FE_CONNECTION_ID) medan "Ladda upp
+  // dokument" bara frågar efter kund + uppgifter + PDF och därför fungerar för alla
+  // bolag. Gamla namnen dolde den skillnaden.
+  const ao = readFileSync(new URL("./mira-offert-admin.html", import.meta.url), "utf8");
+  ok("offertblocket: lägena heter efter räckvidd, inte teknik",
+     /data-m="strukturerad"[^>]*>Offert Food &amp; Event</.test(ao) &&
+     /data-m="uppladdad"[^>]*>Offert Allmän</.test(ao) &&
+     !/>Strukturerad offert</.test(ao));
+  // ⚠️ Underrubriken måste följa läget — annars står "FOOD & EVENT" kvar över en
+  // offert som användaren just märkt "Allmän".
+  ok("offertblocket: underrubriken följer läget",
+     /function subText\(\)/.test(ao) && /Allmän · alla bolag/.test(ao) &&
+     /\$\("sub"\)\.textContent = subText\(\);/.test(ao) &&
+     !/\$\("sub"\)\.textContent = INHERITED/.test(ao));
+  // ⚠️ Kvarstående F&E-arv ska stå dokumenterat i koden, inte upptäckas i drift.
+  ok("offertblocket: FE-arvet (source + nummerserie) är utskrivet i koden",
+     /KVARSTÅENDE F&E-ARV/.test(ao) && /FE-\{år\}-\{löpnr\}/.test(ao));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

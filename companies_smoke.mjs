@@ -200,7 +200,14 @@ const deps = {
     if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); }
     return {};
   },
-  bubbleCreate: async (t, payload) => { const id = "new_" + (++_idc); (STORE[t] = STORE[t] || []).push(Object.assign({ _id: id }, payload)); return id; },
+  // ⚠️ ClientCompany läses ur `CC` (av bubbleGet OCH av FULL/project). Skrev create
+  // bara till STORE blev en nyskapad rad osynlig för läs-tillbaka och cache-insert —
+  // mocken var alltså inkonsekvent med sig själv och dolde att flödet inte fungerade.
+  bubbleCreate: async (t, payload) => {
+    const id = "new_" + (++_idc); const rec = Object.assign({ _id: id }, payload);
+    if (t === "ClientCompany") CC[id] = rec; else (STORE[t] = STORE[t] || []).push(rec);
+    return id;
+  },
   bubbleDelete: async (t, id) => { if (STORE[t]) { const i = STORE[t].findIndex((r) => r._id === id); if (i >= 0) STORE[t].splice(i, 1); } return {}; },
   bubbleUploadFile: async ({ filename }) => "//files/" + filename,   // fejkad Bubble file storage
   // photoUpload utelämnas → _photoMw blir passthrough; testet sätter req.file direkt.
@@ -221,7 +228,12 @@ const deps = {
 // Fångar SISTA handlern per rout (foto-routen registreras med middleware + handler → ta sista).
 function mk() { const routes = { get: {}, post: {}, patch: {}, delete: {}, options: {} }; const last = (a) => a[a.length - 1]; return { app: { get: (p, ...a) => { routes.get[p] = last(a); }, post: (p, ...a) => { routes.post[p] = last(a); }, patch: (p, ...a) => { routes.patch[p] = last(a); }, delete: (p, ...a) => { routes.delete[p] = last(a); }, options: (p, ...a) => { routes.options[p] = last(a); } }, routes }; }
 function call(routes, method, path, { query = {}, params = {}, body = {}, file = undefined } = {}) {
-  const h = routes[method][path]; if (!h) throw new Error("no route " + method + " " + path);
+  // ⚠️ Saknad route får INTE kasta. Vid mutationstest (gammal kod utan den nya
+  // endpointen) dog hela sviten på första anropet och dolde alla följande fel —
+  // samma klass av tyst missvisning som en assertion som kraschar i st.f. att falla.
+  // Nu svarar den 404 så testet FALLER begripligt.
+  const h = routes[method][path];
+  if (!h) return Promise.resolve({ code: 404, body: { ok: false, error: "no_route", route: method + " " + path } });
   return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); }, sendStatus(c) { r({ code: c, body: null }); } }; h({ params, query, body, file, headers: {} }, res); });
 }
 
@@ -1209,6 +1221,62 @@ const run = async () => {
      /personnel_unfiltered/.test(fl) && /går Carottare inte att skilja ut/.test(fl));
   ok("frontend: fallen personal-fråga rapporteras, inte tolkad som tom lista",
      /L\.personnel_ok===false/.test(fl) && /Det betyder inte att ingen är kopplad/.test(fl));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SKAPA FÖRETAG (2026-08-24)
+  // Smalt fältomfång: namn* + org.nr* + ansvarig + kundstatus.
+  // ⚠️ Org.nr obligatoriskt och dubblettspärrat — med 5 499 rader och manuell
+  // inmatning är dubbletter en tidsfråga, och dyra att städa i efterhand.
+  // Jämförelse på SIFFROR: datan bär både "5569748378" och "516409-6348".
+  // ══════════════════════════════════════════════════════════════════════════
+  const nyF = (body) => call(s.routes, "post", "/admin/companies/create", { body });
+
+  const nf1 = await nyF({ name: "Nytt Bolag AB", orgnr: "5561234567", kundstatus: "Aktiv kund" });
+  ok("skapa: företag skapas + rad returneras",
+     nf1.body.ok === true && nf1.body.row && nf1.body.row.name === "Nytt Bolag AB" && nf1.body.verified === true);
+  ok("skapa: org.nr lagras som siffror (number), kundstatus som option-set-sträng",
+     STORE.ClientCompany ? true : (function () {
+       const rec = CC[nf1.body.id];
+       return rec && rec.Org_Number === 5561234567 && rec.Kundstatus === "Aktiv kund";
+     })());
+  ok("skapa: org.nr lagras som SIFFROR även när man skriver bindestreck",
+     (function () { const r = CC[nf1.body.id]; return r && typeof r.Org_Number === "number"; })());
+  // ⚠️ Nya raden måste in i den DELADE cachen — annars syns den inte i listan
+  // förrän nästa helsvep (upp till 12 h).
+  const efter = await call(s.routes, "get", "/admin/companies/list", { query: { q: "Nytt Bolag" } });
+  ok("skapa: företaget syns i listan direkt (cachen uppdaterad)",
+     efter.body.total === 1 && efter.body.rows[0].id === nf1.body.id);
+
+  ok("skapa: namn krävs", (await nyF({ orgnr: "5569999999" })).body.error === "namn_krävs");
+  ok("skapa: org.nr krävs", (await nyF({ name: "Utan orgnr" })).body.error === "orgnr_krävs");
+  const nfLen = await nyF({ name: "Kort orgnr", orgnr: "12345" });
+  ok("skapa: org.nr måste ha 10 siffror", nfLen.code === 400 && nfLen.body.error === "orgnr_fel_langd" && nfLen.body.digits === 5);
+
+  // ⚠️ Dubblettspärren: samma org.nr i ANNAT format ska ändå fångas.
+  const nfDup = await nyF({ name: "Nytt Bolag Igen AB", orgnr: "556123-4567" });
+  ok("skapa: samma org.nr med bindestreck fångas som dubblett → 409 + pekar ut befintligt",
+     nfDup.code === 409 && nfDup.body.error === "orgnr_finns_redan" &&
+     nfDup.body.existing && nfDup.body.existing.id === nf1.body.id);
+  const nfForce = await nyF({ name: "Nytt Bolag Igen AB", orgnr: "556123-4567", force: true });
+  ok("skapa: force:true går förbi spärren men redovisar dubbletten",
+     nfForce.body.ok === true && nfForce.body.forced_duplicate && nfForce.body.forced_duplicate.id === nf1.body.id);
+  // ⚠️ Namnlikhet VARNAR men spärrar aldrig — två bolag kan legitimt heta nästan lika.
+  const nfName = await nyF({ name: "nytt  bolag ab", orgnr: "5567777777" });
+  ok("skapa: identiskt namn varnar men blockerar inte",
+     nfName.body.ok === true && (nfName.body.name_warnings || []).length >= 1);
+  // Option-set valideras mot facetterna, som inline-editen
+  const nfBadOS = await nyF({ name: "Bad OS", orgnr: "5568888888", kundstatus: "Hittepå" });
+  ok("skapa: okänt kundstatus-värde → 400 med allowed",
+     nfBadOS.code === 400 && /unknown_optionset_value/.test(nfBadOS.body.error) && (nfBadOS.body.allowed || []).length > 0);
+
+  // ── FRONTEND ──────────────────────────────────────────────────────────────
+  ok("frontend: + Nytt företag finns i listvyn",
+     /data-fl="newco"/.test(fl) && /function newCoFormHtml/.test(fl) && /function saveNewCo/.test(fl));
+  ok("frontend: org.nr är obligatoriskt i formuläret",
+     /Org\.nr \*/.test(fl) && /Ange org\.nr/.test(fl));
+  // ⚠️ Dubblett ska erbjuda att ÖPPNA det befintliga, inte bara neka.
+  ok("frontend: dubblett visar befintligt företag med öppna-knapp + skapa-ändå",
+     /orgnr_finns_redan/.test(fl) && /data-fl="newco-open"/.test(fl) && /data-fl="newco-force"/.test(fl));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

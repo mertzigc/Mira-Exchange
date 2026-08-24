@@ -419,6 +419,87 @@ number** i Bubble · (2) deploya `affar_api.js` · (3) klistra om `mira-affar-sa
 + `mira-foretag-lista.html`. Görs steg 1 sist sparas affären ändå — men utan
 sannolikhet, och användaren får se varför.
 
+### 4.8 Offertblockets två lägen — omdöpta 2026-08-24 + kvarstående F&E-arv
+
+Lägena i `mira-offert-admin.html` hette efter **tekniken**, inte räckvidden, vilket
+dolde en viktig skillnad:
+
+| Förut | Nu | Räckvidd |
+|---|---|---|
+| Strukturerad offert | **Offert Food & Event** | Bara F&E — artikelsöket filtrerar hårt på `FE_CONNECTION_ID` |
+| Ladda upp dokument | **Offert Allmän** | Alla bolag — bara kund + offertuppgifter + PDF, ingen artikelkoppling |
+
+Underrubriken följer nu läget (`subText()`) — annars stod "FOOD & EVENT" kvar över en
+offert användaren just märkt "Allmän".
+
+#### ✅ LÖST 2026-08-24: "Offert Allmän" fungerar för alla bolag
+Kategori + egen nummerserie per bolag. **Kräver ett nytt Bubble-fält:
+`kategori` på `Offert`** (Category-option-setet, samma fyra värden som deal.Kategori).
+
+| Kategori | Nummerserie |
+|---|---|
+| Food & Event | `FE-{år}-{löpnr}` |
+| Housekeeping | `HK-{år}-{löpnr}` |
+| Service & People | `SP-{år}-{löpnr}` |
+| Other facility services | `OF-{år}-{löpnr}` |
+
+- **⚠️ Löpnumret söks på PREFIXET, inte på `source`.** Förr hämtades de 200 senaste
+  Mira-offerterna oavsett serie — dominerar F&E hittas HK:s högsta nummer aldrig och
+  serien börjar om på 0001 → **nummerkrock**. Eget test: HK fortsätter från 0003→0004
+  trots att F&E ligger på 0007.
+- **⚠️ `source` är ORÖRD.** `mira_fe` betyder "skapad i Mira" och används på sex
+  ställen inkl. order-konverteringen och listan. Kategorin är ett eget fält.
+- **Utan kategori → Food & Event.** Befintlig serie och allt gammalt beteende orört.
+- **Okänd kategori avvisas** (`400 okand_kategori` + `allowed`). ⚠️ `Service & People`
+  heter INTE `Staff` — vaktat av eget test.
+- **⚠️ Kategoribyte i efterhand ändrar INTE numret.** Ett utfärdat offertnummer är en
+  identitet; byter man serie pekar utskickade PDF:er och signeringar på ett nummer som
+  inte finns. Svaret bär `offertnr_behalls` så det inte blir en tyst inkonsekvens.
+- **⚠️ `_katOf` läser OS-medvetet** (sträng ELLER `{display}`-objekt). Utan det blir
+  objektformen "[object Object]" → tolkas som okänd kategori och PDF-rubriken
+  degraderar tyst till Food & Event på en HK-offert.
+- **Mjuk nedgradering:** saknas fältet i Bubble sparas offerten ändå (numret hamnar i
+  rätt serie oavsett) och svaret bär `kategori_field_missing`.
+- **PDF-rubrikens fallback följer kategorin** i stället för hårdkodat "Food & Event".
+
+**Frontend:** kategoriväljare i formuläret. **⚠️ LÅST till Food & Event i
+strukturerat läge** — artikelsöket filtrerar på `FE_CONNECTION_ID`, så raderna KAN
+bara vara F&E-artiklar; att låta någon välja Housekeeping där hade gett en HK-märkt
+offert byggd av F&E-artiklar. Öppnas modalen från en **icke-F&E-affär startar den
+direkt i Allmän-läget** med kategorin förifylld — annars möts man av ett artikelsök
+som aldrig hittar något. Affärens kategori ärvs **bara när den är entydig**; bär
+affären flera kategorier får människan välja.
+
+**Verifierat:** ny svit `offert_smoke.mjs` **23/23**, mutationstestat (17 faller).
+Harness: HK-affär startar i Allmän-läget med rätt kategori, F&E-läget låser väljaren
+med förklaring, underrubriken följer läget.
+
+**Deploy:** skapa `kategori` på `Offert` i Bubble · `offert_api.js` → Render ·
+klistra om `mira-offert-admin.html` + `mira-affar-samlad.html`.
+
+#### Historik: F&E-arvet (löst ovan)
+Båda lägena går genom **samma** `POST /admin/offert/create`, som alltid sätter:
+- `payload.offertnr = generateOffertnr()` → **`FE-{år}-{löpnr}`**, hårdkodat prefix
+- `p.source = SOURCE_MIRA_FE` (`"mira_fe"`)
+
+En **Offert Allmän** för ett HK- eller S&P-uppdrag får alltså ett `FE-`-nummer och
+räknas som F&E i `/admin/offert/list` och i `convert-to-order` (som kräver
+`source === mira_fe`). Fungerar — men numret och källan ljuger om kategorin.
+
+**Om ni börjar sälja HK/S&P den här vägen** behövs två avgränsade ändringar:
+1. `generateOffertnr(prefix)` med kategoriprefix. ⚠️ Löpnummer-sökningen filtrerar
+   idag på `source` — den måste filtrera på **prefixet** i stället, annars räknas fel
+   serie och nummer krockar.
+2. Kategori på Offert. **⚠️ Byt INTE `source`** — `mira_fe` betyder i praktiken
+   "skapad i Mira" och används på sex ställen inkl. order-konverteringen. Lägg ett
+   separat kategorifält i stället, så påverkas varken listan eller kedjan.
+
+Det är en egen övning, och den bör beställas av ett faktiskt affärsbehov — inte av att
+en flik hette fel.
+
+**Verifierat:** `affar_create_smoke` 85/85, mutationstestat (3 faller).
+**Deploy:** klistra om `mira-offert-admin.html`.
+
 ## 5. Produktionsmodul
 
 ### 5.1 Vad den läser

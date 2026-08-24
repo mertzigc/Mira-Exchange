@@ -2202,6 +2202,83 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
+  // ── POST /admin/companies/create — nytt företag (CRM) ──────────────
+  // Fältomfång medvetet SMALT (Christians mandat 2026-08-24): namn* + org.nr* +
+  // kundansvarig + kundstatus. Resten fylls på kundkortet där fälten redan är
+  // redigerbara — samma fältlogik ska inte underhållas på två ställen.
+  //
+  // ⚠️ ORG.NR ÄR OBLIGATORISKT och dubblettspärrat. Med 5 499 företag och manuell
+  // inmatning är dubbletter en tidsfråga, och de är dyra att städa i efterhand.
+  // Jämförelsen sker på SIFFROR (datan bär både "5569748378" och "516409-6348").
+  // ⚠️ Spärren går att forcera (`force:true`) — men bara medvetet, och svaret pekar
+  // alltid ut det befintliga företaget så man kan öppna det i stället.
+  // ⚠️ Dubblettkollen läser den delade cachen → NOLL nya Bubble-anrop.
+  const _orgDigits = (v) => _str(v).replace(/[^\d]/g, "");
+  const _nameKey = (v) => _low(v).replace(/[^a-z0-9åäö]/g, "");
+  app.options("/admin/companies/create", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/create", async (req, res) => {
+    if (!guard(req, res)) return;
+    if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    try {
+      const b = req.body || {};
+      const namn = _str(b.name).trim();
+      if (!namn) return res.status(400).json({ ok: false, error: "namn_krävs" });
+      const org = _orgDigits(b.orgnr);
+      if (!org) return res.status(400).json({ ok: false, error: "orgnr_krävs", hint: "Org.nr krävs för nya företag — det är nyckeln som håller dubbletter borta." });
+      if (org.length !== 10) {
+        return res.status(400).json({ ok: false, error: "orgnr_fel_langd", digits: org.length,
+          hint: "Svenskt org.nr har 10 siffror (med eller utan bindestreck)." });
+      }
+
+      const full = await companyFullMap();
+      // Exakt org.nr-träff → spärr (om inte force). Namnlikhet → varning, aldrig spärr:
+      // två bolag kan legitimt heta nästan lika.
+      let dup = null; const nameHits = [];
+      const nk = _nameKey(namn);
+      for (const c of full.values()) {
+        if (!dup && _orgDigits(c.orgnr) === org) dup = { id: c.id, name: c.name, orgnr: c.orgnr };
+        if (nk && _nameKey(c.name) === nk) nameHits.push({ id: c.id, name: c.name, orgnr: c.orgnr });
+      }
+      if (dup && b.force !== true) {
+        return res.status(409).json({ ok: false, error: "orgnr_finns_redan", existing: dup,
+          hint: "Ett företag med det org.numret finns redan. Öppna det i stället — eller skicka force:true om det verkligen ska bli två rader." });
+      }
+
+      const payload = { Name_company: namn, Org_Number: Number(org) };
+      const kundstatus = _str(b.kundstatus).trim();
+      if (kundstatus) {
+        // Samma facett-validering som inline-editen — vi gissar aldrig option-set-värden.
+        const known = _facets(full).kundstatus || [];
+        if (!known.includes(kundstatus)) return res.status(400).json({ ok: false, error: "unknown_optionset_value:kundstatus", value: kundstatus, allowed: known });
+        payload["Kundstatus"] = kundstatus;
+      }
+      const ansvarig = _ref(b.ansvarig);
+      if (ansvarig) payload["Kundansvarig"] = ansvarig;
+
+      const id = await bubbleCreate("ClientCompany", payload);
+      if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
+
+      // ⚠️ Läs tillbaka och lägg in i den delade cachen — annars syns inte företaget
+      // i listan förrän nästa helsvep (upp till 12 h). Faller läsningen rapporteras
+      // det; raden finns ändå.
+      const fresh = await bubbleGet("ClientCompany", id).catch(() => null);
+      if (fresh && companyPatchEntry) companyPatchEntry(id, fresh);
+      let row = null;
+      if (fresh) {
+        const ctx = await _ctx();
+        const c = ctx.full.get(id);
+        const nowYear = new Date().getUTCFullYear();
+        if (c) row = _rowOf(c, ctx, nowYear, nowYear - 1);
+      }
+      return res.json({ ok: true, id, row, verified: !!fresh,
+        forced_duplicate: dup ? dup : undefined,
+        name_warnings: nameHits.length ? nameHits.slice(0, 5) : undefined });
+    } catch (e) {
+      console.error("[/admin/companies/create]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
   // ── PATCH /admin/companies/:id ─────────────────────────────────────
   // body { fields: { <editable-key>: value, … } }  eller  { field, value } (enskilt)
   // Skriver till Bubble via display-namn, validerar option-set mot facetterna,

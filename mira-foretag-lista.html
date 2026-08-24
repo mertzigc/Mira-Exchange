@@ -211,6 +211,19 @@
   .fk-livenone{border:1px dashed var(--fl-line);border-radius:9px;padding:12px;color:var(--fl-mut);font-size:12px;text-align:center;}
   .fk-livenone b{display:block;color:#f0a070;font-weight:700;margin-bottom:3px;}
   .fk-liveerr{border:1px solid rgba(255,107,107,.4);border-radius:9px;padding:11px;color:#ff8080;font-size:11.5px;}
+  .fl-newco{border-color:var(--fl-acc)!important;color:var(--fl-acc)!important;}
+  .fl-nc{border:1px solid var(--fl-line);border-radius:11px;padding:14px 16px;margin:10px 0 0;background:var(--fl-card2);}
+  .fl-nc h4{font-size:13px;font-weight:800;color:var(--fl-acc);margin:0 0 10px;}
+  .fl-ncgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  @media(max-width:900px){.fl-ncgrid{grid-template-columns:repeat(2,1fr);}}
+  .fl-ncgrid label{display:block;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;margin:0 0 4px;}
+  .fl-ncgrid input,.fl-ncgrid select{width:100%;background:rgba(0,0,0,.22);border:1px solid var(--fl-line);border-radius:7px;padding:8px 10px;color:var(--fl-txt);font-size:12.5px;font-family:inherit;}
+  .fl-ncbtns{display:flex;align-items:center;gap:10px;margin-top:12px;}
+  .fl-ncmsg{font-size:11.5px;color:var(--fl-mut);}
+  .fl-ncmsg.err{color:#ff8080;}
+  .fl-ncdup{border:1px solid rgba(240,160,112,.45);background:rgba(240,160,112,.08);border-radius:9px;padding:11px 12px;margin-top:11px;font-size:12px;}
+  .fl-ncdup b{display:block;color:#f0a070;margin-bottom:5px;}
+  .fl-ncdup .fl-ncbtns{margin-top:9px;}
   /* "5 skal till bom" - stjarngradering som harleder affarens sannolikhet. */
   .fk-bom{grid-column:1 / -1;border:1px solid var(--fl-line);border-radius:10px;padding:12px 14px;margin:4px 0 2px;background:rgba(28,43,77,.35);}
   .fk-bomh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px;}
@@ -1226,7 +1239,9 @@
       <h1>Företag</h1>
       <span class="fl-count" data-fl="count"></span>
       <button class="fl-refresh" data-fl="refresh">↻ Uppdatera</button>
+      <button class="fl-refresh fl-newco" data-fl="newco">+ Nytt företag</button>
     </div>
+    <div data-fl="newcopanel"></div>
     <div class="fl-filters" data-fl="filters"></div>
     <div data-fl="body"><div class="fl-msg">Laddar…</div></div>
   </div>
@@ -1972,7 +1987,7 @@
   var SRC_ETIKETT={ fortnox:"Fortnox", mira:"Mira", tengella:"Tengella (HK)" };
   var STATE={ view:"list", q:"", sort:"name", dir:"asc", page:1, limit:100,
               rows:[], total:0, pages:1, year:0, prev:0, meta:null,
-              revenue_ready:true, bolag_ready:true, revTries:0, listDirty:false,
+              revenue_ready:true, bolag_ready:true, revTries:0, listDirty:false, newCo:false,
               touch_ready:true, touchTries:0,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:"", bolag:""},
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, todoNew:false, nastaDirty:false, nsWarn:"", cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
@@ -2341,6 +2356,68 @@
     }).catch(function(){ stopProg(); if(!STATE.rows.length) $("body").innerHTML='<div class="fl-err">Nätverksfel — kontrollera api_host/token.</div>'; });
   }
   function reload(){ STATE.page=1; load(false); }
+
+  // ── SKAPA FÖRETAG ─────────────────────────────────────────────────────────
+  // Medvetet SMALT fältomfång (Christians mandat): namn* + org.nr* + ansvarig +
+  // kundstatus. Resten fylls på kundkortet där fälten redan är redigerbara —
+  // samma fältlogik ska inte underhållas på två ställen.
+  // ⚠️ Org.nr är OBLIGATORISKT och dubblettspärrat i servern. Spärren nekar inte
+  // bara: den pekar ut det befintliga företaget och erbjuder att öppna det, för
+  // det är nästan alltid det man egentligen ville.
+  function newCoFormHtml(){
+    var m=STATE.meta||{}, users=m.users||[];
+    var uOpts='<option value="">— kundansvarig —</option>';
+    for(var i=0;i<users.length;i++) uOpts+='<option value="'+esc(users[i].id)+'">'+esc(users[i].name)+'</option>';
+    var ks=((m.facets&&m.facets.kundstatus)||[]);
+    var kOpts='<option value="">— kundstatus —</option>';
+    for(var j=0;j<ks.length;j++) kOpts+='<option value="'+esc(ks[j])+'">'+esc(ks[j])+'</option>';
+    return '<div class="fl-nc" data-ncform="1">'+
+      '<h4>Nytt företag</h4>'+
+      '<div class="fl-ncgrid">'+
+        '<div><label>Företagsnamn *</label><input type="text" data-nc="name" placeholder="t.ex. Sambla AB"></div>'+
+        '<div><label>Org.nr *</label><input type="text" data-nc="orgnr" placeholder="556974-8378" inputmode="numeric"></div>'+
+        '<div><label>Kundansvarig</label><select data-nc="ansvarig">'+uOpts+'</select></div>'+
+        '<div><label>Kundstatus</label><select data-nc="kundstatus">'+kOpts+'</select></div>'+
+      '</div>'+
+      '<div class="fl-ncbtns"><button class="fk-editbtn" data-fl="newco-save">Skapa företag</button>'+
+      '<button class="fk-editbtn" data-fl="newco-cancel">Avbryt</button>'+
+      '<span class="fl-ncmsg" data-ncmsg>Org.nr krävs — det är nyckeln som håller dubbletter borta.</span></div>'+
+      '<div data-ncdup></div>'+
+    '</div>';
+  }
+  function ncMsg(txt, err){
+    var m=root.querySelector("[data-ncmsg]"); if(!m) return;
+    m.textContent=txt||""; m.className="fl-ncmsg"+(err?" err":"");
+  }
+  function saveNewCo(force){
+    var box=root.querySelector("[data-ncform]"); if(!box) return;
+    var g=function(k){ var e=box.querySelector('[data-nc="'+k+'"]'); return e?String(e.value||"").trim():""; };
+    var dupBox=box.querySelector("[data-ncdup]"); if(dupBox && !force) dupBox.innerHTML="";
+    if(!g("name")){ ncMsg("Ange företagsnamn", true); return; }
+    if(!g("orgnr")){ ncMsg("Ange org.nr", true); return; }
+    ncMsg("Skapar…");
+    apiPost("/admin/companies/create", { name:g("name"), orgnr:g("orgnr"),
+      ansvarig:g("ansvarig"), kundstatus:g("kundstatus"), force:!!force }).then(function(j){
+      if(j && j.error==="orgnr_finns_redan" && j.existing){
+        // ⚠️ Neka inte bara — erbjud det man nästan alltid ville: öppna befintligt.
+        ncMsg("", false);
+        if(dupBox) dupBox.innerHTML='<div class="fl-ncdup"><b>Org.numret finns redan</b>'+
+          esc(j.existing.name)+' · '+esc(j.existing.orgnr||"")+
+          '<div class="fl-ncbtns"><button class="fk-editbtn" data-fl="newco-open" data-id="'+esc(j.existing.id)+'">Öppna företaget</button>'+
+          '<button class="fk-editbtn" data-fl="newco-force">Skapa ändå</button></div></div>';
+        return;
+      }
+      if(!j||!j.ok){ ncMsg("✗ "+((j&&(j.hint||j.error))||"fel"), true); return; }
+      if(j.verified===false) ncMsg("⚠ Skapat, men raden kunde inte läsas tillbaka — ladda om listan.", true);
+      STATE.newCo=false; cacheClearAll();
+      // Öppna kortet direkt: resten av fälten fylls där.
+      if(j.id){ openCard(j.id); } else { reload(); }
+    }).catch(function(){ ncMsg("✗ nätverksfel", true); });
+  }
+  function renderNewCo(){
+    var host=$("newcopanel"); if(!host) return;
+    host.innerHTML=STATE.newCo?newCoFormHtml():"";
+  }
 
   // ══════════════ KORT-VY ══════════════
   var FIELDS=[
@@ -3966,6 +4043,12 @@
     if(soRt){ var s=soRt.getAttribute("data-sort"); if(STATE.sort===s) STATE.dir=(STATE.dir==="asc"?"desc":"asc"); else { STATE.sort=s; STATE.dir=(s==="modified"?"desc":"asc"); } reload(); return; }
     if(t.closest && t.closest('[data-fl="more"]')){ STATE.page++; load(true); return; }
     if(t.closest && t.closest('[data-fl="refresh"]')){ cacheClearAll(); reload(); return; }
+    if(t.closest && t.closest('[data-fl="newco"]')){ STATE.newCo=!STATE.newCo; renderNewCo(); return; }
+    if(t.closest && t.closest('[data-fl="newco-cancel"]')){ STATE.newCo=false; renderNewCo(); return; }
+    if(t.closest && t.closest('[data-fl="newco-save"]')){ saveNewCo(false); return; }
+    if(t.closest && t.closest('[data-fl="newco-force"]')){ saveNewCo(true); return; }
+    var nco=t.closest?t.closest('[data-fl="newco-open"]'):null;
+    if(nco){ STATE.newCo=false; renderNewCo(); openCard(nco.getAttribute("data-id")); return; }
     if(t.closest && t.closest('[data-fl="clear"]')){ STATE.q=""; for(var k in STATE.f) STATE.f[k]=""; renderFilters(); reload(); return; }
     // ⚠️ KLICK-ORDNING: chip-× och "Klar" ligger INNE i den redigerbara cellen. Utan
     // dessa grenar före cell-grenen (och utan data-editing-vakten) skulle varje klick

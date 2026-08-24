@@ -60,6 +60,7 @@
   .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
   /* modal-host (open-hook för affär-blocket). Default = display:contents (ingen effekt, standalone-läge).
      Vid data-mira="as_modal"=1 → JS lägger .as-modal → fixed overlay. Literal-färger (utanför .ao-wrap). */
+  .ao-hint{font-size:10.5px;opacity:.55;margin-top:4px;line-height:1.35}
   .ao-mh{display:contents}
   .ao-mh.as-modal{display:none;position:fixed;inset:0;background:rgba(10,12,22,.8);z-index:2147483000;overflow-y:auto;padding:28px 14px;align-items:flex-start;justify-content:center}
   .ao-mh.as-modal.on{display:flex}
@@ -188,8 +189,8 @@
     <div class="ao-panel" style="display:flex;align-items:center;gap:14px">
       <span class="ao-muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Skapa som</span>
       <div class="ao-seg">
-        <button class="ao-seg-btn on" data-ao="mode-btn" data-m="strukturerad">Strukturerad offert</button>
-        <button class="ao-seg-btn" data-ao="mode-btn" data-m="uppladdad">Ladda upp dokument</button>
+        <button class="ao-seg-btn on" data-ao="mode-btn" data-m="strukturerad" title="Bygg offerten av F&amp;E-artiklar">Offert Food &amp; Event</button>
+        <button class="ao-seg-btn" data-ao="mode-btn" data-m="uppladdad" title="Ladda upp ett färdigt dokument — fungerar för alla bolag">Offert Allmän</button>
       </div>
     </div>
 
@@ -259,6 +260,12 @@
         <div class="field"><label>Momstyp</label><input type="text" data-ao="f-momstyp" placeholder="SEVAT"></div>
         <div class="field"><label>Valuta</label><input type="text" data-ao="f-valuta" value="SEK"></div>
         <div class="field"><label>Titel (internt)</label><input type="text" data-ao="f-titel" placeholder="t.ex. Sommarfest Acme"></div>
+        <div class="field"><label>Bolag / kategori</label><select data-ao="f-kategori">
+          <option value="Food &amp; Event">Food &amp; Event</option>
+          <option value="Housekeeping">Housekeeping</option>
+          <option value="Service &amp; People">Service &amp; People</option>
+          <option value="Other facility services">Other facility services</option>
+        </select><div class="ao-hint" data-ao="kat-hint"></div></div>
       </div>
       <div class="ao-grid" style="margin-top:12px">
         <div class="field"><label>Leveransadress</label><input type="text" data-ao="f-leveransadress" placeholder="Gata, postnr ort"></div>
@@ -338,6 +345,7 @@
 
   var HOST  = cfg("api_host").replace(/\/+$/,"");
   var TOKEN = cfg("planning_token");
+  var PREF_KAT = "";              // kategori ärvd från affären (sätts av modal-open)
   var CC_ID = cfg("clientcompany");
   var CC_NM = cfg("clientcompany_nm");
   var COMISSION = cfg("comission");
@@ -561,12 +569,40 @@
       .catch(function(){ $("btn-createclient").disabled=false; toast("Nätverksfel","err"); });
   }
 
-  // ── läge: strukturerad vs uppladdad ──────────────────────────────
+  // ── läge: Food & Event (strukturerad) vs Allmän (uppladdad) ──────
+  // ⚠️ NAMNEN SPEGLAR RÄCKVIDDEN, inte tekniken (omdöpt 2026-08-24):
+  //   • "Offert Food & Event" bygger raderna av F&E-ARTIKLAR — artikelsöket
+  //     filtrerar hårt på FE_CONNECTION_ID, så den fungerar bara för F&E.
+  //   • "Offert Allmän" laddar upp ett färdigt dokument och frågar bara efter
+  //     kund + offertuppgifter. Ingen artikelkoppling → fungerar för alla bolag.
+  // ⚠️ KVARSTÅENDE F&E-ARV: båda lägena går genom /admin/offert/create, som
+  // alltid sätter `source = mira_fe` och nummerserien `FE-{år}-{löpnr}`. En
+  // allmän offert får alltså fortfarande ett FE-nummer. Se handoff §4.8.
+  function subText(){
+    var omr = (state.kind==="uppladdad") ? "Allmän · alla bolag" : "Food & Event";
+    return (INHERITED && CC_NM) ? (omr+" · "+CC_NM) : omr;
+  }
   function setMode(kind){
     state.kind=kind;
     root.querySelectorAll('[data-ao="mode-btn"]').forEach(function(b){ b.className="ao-seg-btn"+(b.getAttribute("data-m")===kind?" on":""); });
     $("rows-panel").className="ao-panel"+(kind==="uppladdad"?" ao-hide":"");
     $("upload-panel").className="ao-panel"+(kind==="strukturerad"?" ao-hide":"");
+    $("sub").textContent = subText();
+    // ⚠️ Kategorin är LÅST till Food & Event i strukturerat läge: artikelsöket
+    // filtrerar på FE_CONNECTION_ID, så raderna KAN bara vara F&E-artiklar. Att
+    // låta användaren välja "Housekeeping" där hade gett en HK-märkt offert byggd
+    // av F&E-artiklar — värre än att inte kunna välja.
+    var katLocked = (kind === "strukturerad");
+    var kEl = $("f-kategori");
+    if(kEl){
+      if(katLocked){ kEl.value="Food & Event"; }
+      kEl.disabled = katLocked;
+      kEl.style.opacity = katLocked ? "0.55" : "";
+    }
+    var kh = $("kat-hint");
+    if(kh) kh.textContent = katLocked
+      ? "Låst — raderna byggs av Food & Event-artiklar."
+      : "Styr offertnumrets serie (FE/HK/SP/OF).";
   }
   function uploadFile(file){
     if(!file) return;
@@ -596,6 +632,9 @@
       leveransadress: $("f-leveransadress").value.trim() || null,
       betalningsvillkor: $("f-betalningsvillkor").value.trim(),
       momstyp: $("f-momstyp").value.trim(),
+      // Styr nummerserie (FE/HK/SP/OF) + PDF-rubrik. Servern validerar mot
+      // Category-option-setets fyra kanoniska värden.
+      kategori: $("f-kategori").value,
       valuta: $("f-valuta").value.trim() || "SEK",
       recipient: state.recipient.length ? state.recipient : null,
       beskrivning: $("f-beskrivning").value,
@@ -705,6 +744,7 @@
         $("f-giltig_till").value=isoDate(o.giltig_till); $("f-leveransdatum").value=isoDate(o.leveransdatum);
         $("f-leveranstid").value=o.leveranstid||""; $("f-betalningsvillkor").value=o.betalningsvillkor||"";
         $("f-momstyp").value=o.momstyp||""; $("f-valuta").value=o.valuta||"SEK";
+        $("f-kategori").value=o.kategori||"Food & Event";
         $("f-beskrivning").value=o.beskrivning||""; $("f-villkor_text").value=o.villkor_text||"";
         $("f-leveransadress").value=(o.leveransadress && (o.leveransadress.address||o.leveransadress))||"";
         state.kind=o.kind||"strukturerad"; state.uploadDoc=null; setMode(state.kind);
@@ -721,8 +761,14 @@
     state.recipient=[];
     state.recipCache=[];
     state.newClientType="Företag";
-    state.kind="strukturerad"; state.uploadDoc=null;
-    setMode("strukturerad");
+    state.uploadDoc=null;
+    // ⚠️ Är affären INTE Food & Event kan raderna inte byggas av F&E-artiklar →
+    // starta i Allmän-läget direkt. Annars möts man av ett artikelsök som aldrig
+    // hittar något, utan att förstå varför.
+    var startKind = (PREF_KAT && PREF_KAT !== "Food & Event") ? "uppladdad" : "strukturerad";
+    state.kind=startKind;
+    setMode(startKind);
+    if(PREF_KAT && startKind==="uppladdad"){ $("f-kategori").value=PREF_KAT; }
     $("file").value=""; $("file-name").textContent=""; $("drop").className="ao-drop";
     $("newclient-form").className="ao-hide";
     $("recipients").className="ao-hide";
@@ -814,8 +860,9 @@
   function _mhOpen(pref){
     pref=pref||{};
     CC_ID=pref.clientcompany||""; CC_NM=pref.clientcompany_nm||""; DEAL=pref.deal||""; COMISSION=pref.comission||"";
+    PREF_KAT=pref.kategori||"";
     INHERITED=!!CC_ID;
-    $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
+    $("sub").textContent = subText();
     if(!INHERITED){ loadCompanies(); }
     newOffert();
     if(MH){
@@ -839,7 +886,7 @@
   // ── init ─────────────────────────────────────────────────────────
   if(!HOST || !TOKEN){ $("save-hint").textContent="Saknar api_host/planning_token."; }
   $("mode-tag").textContent = INHERITED ? "" : "";
-  $("sub").textContent = INHERITED && CC_NM ? ("Food & Event · "+CC_NM) : "Food & Event";
+  $("sub").textContent = subText();
   // Som modal: init sker vid open() (start dold). Standalone: init direkt som förr.
   if(!AS_MODAL){
     if(!INHERITED){ loadCompanies(); }   // förhämta företagslistan (snabb client-side-sök sen)
