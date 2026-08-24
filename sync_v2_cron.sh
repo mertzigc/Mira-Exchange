@@ -84,6 +84,7 @@ invoices_recent() {
     echo "[sync_v2] FULL invoices (recent) $d..$mend"
     post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"fromdate\":\"$d\",\"todate\":\"$mend\",\"throttleMs\":300}"
     post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"fromdate\":\"$d\",\"todate\":\"$mend\",\"throttleMs\":300}"
+    post /sync/v2/fortnox-invoice "{\"mode\":\"write\",\"connection_id\":\"$GROUP\",\"fromdate\":\"$d\",\"todate\":\"$mend\",\"throttleMs\":300}"
     d="$(date -u -d "$d +1 month" +%F)"
   done
 }
@@ -217,6 +218,7 @@ else
   echo "[sync_v2] NIGHTLY modified=${DB}d tengella_since=${TSINCE} @ $(date -u +%FT%TZ)"
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$FE\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
   post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$STAFF\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
+  post /sync/v2/fortnox-invoice  "{\"mode\":\"write\",\"connection_id\":\"$GROUP\",\"modifiedDaysBack\":$DB,\"throttleMs\":250}"
   post /sync/v2/tengella-invoice "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\"}"
   # ⚠️ TENGELLA-PASS (planeringsvyn). Egen väg: /v2/TimeTableEvent →
   # activity_sync.js → Bubble `Activity` (ActivityType=Housekeeping), som
@@ -239,6 +241,13 @@ else
     # Workorder saknar modified-filter → window:a på OrderDate (skippar gamla; pagar dock globalt).
     post /sync/v2/tengella-workorder "{\"mode\":\"write\",\"sinceYM\":\"$TSINCE\",\"throttleMs\":250}"
   fi
+fi
+
+# ── Health-check: larma (christian@ + ekonomi@) om någon Fortnox-connection
+#    är nere/stale, så en död token aldrig ligger tyst i månader igen (P0). ──
+if [ "$MODE" != "pdf" ]; then
+  echo "[sync_v2] connection health-check @ $(date -u +%FT%TZ)"
+  post /fortnox/connections/health "{\"staleHours\":36}"
 fi
 
 echo "[sync_v2] klart @ $(date -u +%FT%TZ)"

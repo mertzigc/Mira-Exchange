@@ -1,5 +1,5 @@
 // Node 22 har fetch inbyggt (via undici internt) – vi importerar INTE undici själva
-import { startEmailPoller } from "./emailer.js";
+import { startEmailPoller, sendViaSendGrid } from "./emailer.js";
 import { createSyncEngine } from "./invoice_sync.js";
 import { createActivityEngine, ACTIVITY_CONFIG } from "./activity_sync.js";
 import { evalPricing as _evalPricing, validateFormula as _validateFormula, validateForm as _validateForm } from "./pricing_engine.js";
@@ -1714,20 +1714,124 @@ async function ensureFortnoxAccessToken(connection_id, force = false) {
   const expiresIn = Number(rr.data.expires_in || 0);
   const newExpiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
 
-  await bubblePatch("FortnoxConnection", connection_id, {
-    access_token: newAccess,
-    refresh_token: newRefresh,
-    expires_at: newExpiresAt,
-    last_refresh_at: nowIso(),
-    last_error: "",
-    is_active: true,
-    scope: rr.data.scope || conn.scope || ""
-  });
+  // HÄRDNING: Fortnox roterar refresh-tokenen och ogiltigförklarar den gamla NU.
+  // Faller sparningen sitter vi med en stale token → permanent död vid nästa
+  // refresh. Retry:a sparningen; lyckas den ändå inte → larma (kritiskt).
+  let _saved = false;
+  for (let _a = 1; _a <= 3 && !_saved; _a++) {
+    try {
+      await bubblePatch("FortnoxConnection", connection_id, {
+        access_token: newAccess,
+        refresh_token: newRefresh,
+        expires_at: newExpiresAt,
+        last_refresh_at: nowIso(),
+        last_error: "",
+        is_active: true,
+        scope: rr.data.scope || conn.scope || ""
+      });
+      _saved = true;
+    } catch (e) {
+      console.error(`[fortnox refresh] token-save försök ${_a}/3 misslyckades för ${connection_id}:`, e?.message);
+      if (_a === 3) {
+        try {
+          await _sendOpsAlert(
+            "🔴 Fortnox token-rotation kunde inte sparas",
+            `<p>Connection <code>${connection_id}</code>: den nya refresh-tokenen gick inte att spara till Bubble efter 3 försök. ` +
+            `Fortnox har redan roterat bort den gamla → connectionen riskerar att dö vid nästa refresh. Kontrollera och re-autha vid behov: ` +
+            `<code>https://mira-exchange.onrender.com/fortnox/authorize?c=${connection_id}</code></p>`
+          );
+        } catch (_) {}
+      }
+    }
+  }
 
   const conn2 = await getConnectionOrThrow(connection_id);
 
   return { ok: true, access_token: newAccess, connection: conn2, refreshed: true };
 }
+
+// ────────────────────────────────────────────────────────────
+// Fortnox connection health-check + ops-larm.
+// P0: en död token ska ALDRIG ligga tyst i månader igen (Staff låg dött
+// 4 jun–24 aug utan larm). Cronen anropar detta nattligt efter fakturasynken.
+// ────────────────────────────────────────────────────────────
+const OPS_ALERT_TO = ["christian@carotte.se", "ekonomi@carotte.se"];
+const FTX_CONN_NAMES = {
+  "1771579463578x385222043661358460": "Food & Event",
+  "1771579472595x998707043537409700": "Staff",
+  "1771579485842x995491391876972200": "Group",
+};
+
+async function _sendOpsAlert(subject, html) {
+  for (const to of OPS_ALERT_TO) {
+    try {
+      await sendViaSendGrid({ to, toName: "", subject, html, fromName: "Mira Ops" });
+      console.log(`[ops-alert] skickat → ${to}: ${subject}`);
+    } catch (e) {
+      console.error(`[ops-alert] misslyckades → ${to}:`, e?.message);
+    }
+  }
+}
+
+// Osund om: saknar refresh_token, is_active=false, last_error ifyllt, ELLER
+// last_refresh_at äldre än staleH timmar (synken har inte lyckats förnya på >1 dygn).
+function _connectionHealth(c, staleH = 36) {
+  const reasons = [];
+  const act = c.is_active;
+  if (act === false || String(act).toLowerCase() === "nej" || String(act).toLowerCase() === "no") reasons.push("is_active=false");
+  if (String(c.last_error || "").trim()) reasons.push("last_error: " + String(c.last_error).slice(0, 200));
+  if (!c.refresh_token) reasons.push("saknar refresh_token");
+  const lr = c.last_refresh_at ? new Date(c.last_refresh_at).getTime() : null;
+  if (lr == null || Number.isNaN(lr)) reasons.push("last_refresh_at saknas");
+  else if (Date.now() - lr > staleH * 3600 * 1000) reasons.push(`ej förnyad på ${Math.round((Date.now() - lr) / 3600000)} h`);
+  return { healthy: reasons.length === 0, reasons };
+}
+
+app.post("/fortnox/connections/health", requireSyncSecret, async (req, res) => {
+  try {
+    const staleH = Number(req.body?.staleHours || 36);
+    const alert = req.body?.alert !== false;   // default: larma om något är osunt
+    // RÅ fetch — INTE getAllFortnoxConnections (den filtrerar bort is_active=false,
+    // dvs precis de döda vi vill larma på).
+    const rows = await bubbleFind("FortnoxConnection", { constraints: [], limit: 1000 }).catch(() => []);
+    const all = (Array.isArray(rows) ? rows : []).filter(c => c?._id);
+    const report = all.map(c => {
+      const id = bubbleId(c);
+      const h = _connectionHealth(c, staleH);
+      return {
+        id, name: FTX_CONN_NAMES[id] || c.Fortnox_tenant_label || id,
+        healthy: h.healthy, reasons: h.reasons,
+        last_refresh_at: c.last_refresh_at || null, last_error: c.last_error || "",
+      };
+    });
+    const unhealthy = report.filter(r => !r.healthy);
+
+    if (unhealthy.length && alert) {
+      const rowsHtml = unhealthy.map(u =>
+        `<tr><td style="padding:6px 10px;font-weight:600">${u.name}</td>` +
+        `<td style="padding:6px 10px;color:#b91c1c">${u.reasons.join(" · ")}</td>` +
+        `<td style="padding:6px 10px;font-size:12px;color:#666">${u.last_refresh_at || "—"}</td></tr>`
+      ).join("");
+      const html =
+        `<div style="font-family:-apple-system,Arial,sans-serif;max-width:640px">` +
+        `<h2 style="color:#b91c1c">⚠️ Fortnox-connection nere</h2>` +
+        `<p>En eller flera Fortnox-connections kan inte synka fakturor. <b>Fakturor från dessa bolag kommer INTE in i Mira</b> förrän det åtgärdas.</p>` +
+        `<table style="border-collapse:collapse;width:100%"><thead><tr style="text-align:left;color:#666;font-size:12px">` +
+        `<th style="padding:6px 10px">Bolag</th><th style="padding:6px 10px">Problem</th><th style="padding:6px 10px">Senast förnyad</th></tr></thead>` +
+        `<tbody>${rowsHtml}</tbody></table>` +
+        `<p style="margin-top:16px"><b>Åtgärd:</b> re-autha connectionen i webbläsaren (inloggad i Fortnox som rätt bolag):</p>` +
+        unhealthy.map(u => `<p style="margin:4px 0"><code>https://mira-exchange.onrender.com/fortnox/authorize?c=${u.id}</code></p>`).join("") +
+        `<p style="color:#666;font-size:13px">Kör sedan en datum-backfill för de saknade månaderna via <code>/sync/v2/fortnox-invoice</code>.</p>` +
+        `</div>`;
+      await _sendOpsAlert(`⚠️ Fortnox-connection nere: ${unhealthy.map(u => u.name).join(", ")}`, html);
+    }
+
+    return res.json({ ok: true, total: report.length, unhealthy: unhealthy.length, alerted: !!(unhealthy.length && alert), report });
+  } catch (e) {
+    console.error("[/fortnox/connections/health]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 
 // Fortnox v3 API fetch helper
 async function fortnoxGet(path, accessToken, query = {}) {

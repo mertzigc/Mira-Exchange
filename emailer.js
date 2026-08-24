@@ -1637,7 +1637,7 @@ async function tmplApprovalReminder(e, extra, toName, ctaLabel, item) {
 // ────────────────────────────────────────────────────────────
 // SendGrid REST (ingen SDK – matcher befintligt mönster i index.js)
 // ────────────────────────────────────────────────────────────
-async function sendViaSendGrid({ to, toName, subject, html, fromName }) {
+export async function sendViaSendGrid({ to, toName, subject, html, fromName }) {
   if (!SENDGRID_API_KEY) throw new Error("SENDGRID_API_KEY saknas");
 
   const body = {
