@@ -2250,19 +2250,28 @@ export function registerCompaniesRoutes(app, deps) {
   // ⚠️ Den TIDIGARE ansvariga kopplas medvetet INTE bort (Christians beslut
   // 2026-08-24): hen kan mycket väl fortfarande vara involverad i kunden.
   // → true = knuten (eller redan knuten) · false = försöket föll · null = inget att göra
-  async function _linkAnsvarig(companyId, userId, varifran) {
-    if (!companyId || !userId) return null;
+  // → { kopplad: true|false|null, utanfor_bolaget: bool, namn }
+  // ⚠️ Kopplingen kan LYCKAS utan att personen syns under "Vår personal": den listan
+  // filtrerar på `Company === user_company`. Är den ansvariga inte en av våra blir
+  // resultatet en tyst motsägelse — ansvaret satt, personen osynlig. Därför
+  // rapporteras `utanfor_bolaget` så UI:t kan säga det rakt ut.
+  async function _linkAnsvarig(companyId, userId, varifran, ourCompanyId) {
+    if (!companyId || !userId) return { kopplad: null, utanfor_bolaget: false, namn: "" };
     try {
       const u = await bubbleGet("User", userId);
       if (!u) throw new Error("user_not_found");
+      const namn = _str(nStaff(u).name);
+      const utanfor = !!(ourCompanyId && _ref(u.Company) !== ourCompanyId);
       const cur = (Array.isArray(u["Associated_company"]) ? u["Associated_company"] : []).map(_ref).filter(Boolean);
-      if (cur.indexOf(companyId) > -1) return true;      // redan knuten → ingen skrivning
-      cur.push(companyId);
-      await bubblePatch("User", userId, { "Associated_company": cur });
-      return true;
+      if (cur.indexOf(companyId) === -1) {
+        cur.push(companyId);
+        await bubblePatch("User", userId, { "Associated_company": cur });
+      }
+      if (utanfor) console.warn("[" + varifran + "] kundansvarig " + namn + " tillhör inte vårt bolag — knuten men syns inte under Vår personal");
+      return { kopplad: true, utanfor_bolaget: utanfor, namn };
     } catch (e) {
       console.error("[" + varifran + "] kunde inte knyta kundansvarig till kunden:", e?.message);
-      return false;
+      return { kopplad: false, utanfor_bolaget: false, namn: "" };
     }
   }
 
@@ -2321,7 +2330,7 @@ export function registerCompaniesRoutes(app, deps) {
       const fresh = await bubbleGet("ClientCompany", id).catch(() => null);
       if (fresh && companyPatchEntry) companyPatchEntry(id, fresh);
 
-      const ansvarig_kopplad = await _linkAnsvarig(id, ansvarig, "create");
+      const lnkC = await _linkAnsvarig(id, ansvarig, "create", _str(req.query.user_company).trim() || _str(b.user_company).trim());
 
       let row = null;
       if (fresh) {
@@ -2331,7 +2340,8 @@ export function registerCompaniesRoutes(app, deps) {
         if (c) row = _rowOf(c, ctx, nowYear, nowYear - 1);
       }
       return res.json({ ok: true, id, row, verified: !!fresh,
-        ansvarig_kopplad: ansvarig_kopplad === null ? undefined : ansvarig_kopplad,
+        ansvarig_kopplad: lnkC.kopplad === null ? undefined : lnkC.kopplad,
+        ansvarig_utanfor_bolaget: lnkC.utanfor_bolaget ? lnkC.namn || true : undefined,
         forced_duplicate: dup ? dup : undefined,
         name_warnings: nameHits.length ? nameHits.slice(0, 5) : undefined });
     } catch (e) {
@@ -2552,7 +2562,8 @@ export function registerCompaniesRoutes(app, deps) {
       // för företag som råkade få rätt ansvarig från början. Den GAMLA lämnas kvar.
       // Tomt värde = ansvarig rensad → inget att knyta.
       const nyAnsvarig = (payload["Kundansvarig"] !== undefined) ? _str(payload["Kundansvarig"]).trim() : "";
-      const ansvarig_kopplad = await _linkAnsvarig(id, nyAnsvarig, "companies/:id PATCH");
+      const lnkP = await _linkAnsvarig(id, nyAnsvarig, "companies/:id PATCH",
+        _str(req.query.user_company).trim() || _str(body.user_company).trim());
 
       // Bygg färsk rad från uppdaterad cache
       const ctx = await _ctx();
@@ -2560,7 +2571,8 @@ export function registerCompaniesRoutes(app, deps) {
       const c = ctx.full.get(id);
       const row = c ? _rowOf(c, ctx, nowYear, nowYear - 1) : null;
       return res.json({ ok: true, id, row,
-        ansvarig_kopplad: ansvarig_kopplad === null ? undefined : ansvarig_kopplad });
+        ansvarig_kopplad: lnkP.kopplad === null ? undefined : lnkP.kopplad,
+        ansvarig_utanfor_bolaget: lnkP.utanfor_bolaget ? lnkP.namn || true : undefined });
     } catch (e) {
       console.error("[/admin/companies/:id PATCH]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });

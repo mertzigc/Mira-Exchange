@@ -638,14 +638,31 @@ anrop utan kontext (curl/cron).
 - **Onboarding-checken** tar nu `?user_company=` före env-varen. Frontenden skickar
   den via `ucq()` till både `/card` och `/onboarding`.
 
-**Verifierat:** companies_smoke **348/348**, alla 21 sviter gröna,
-mutationstestat (7 faller). Testerna vaktar bl.a. att kundens egen user (`u1`,
+**Verifierat:** companies_smoke **352/352**, alla 21 sviter gröna,
+mutationstestat (7 + 3 faller). Testerna vaktar bl.a. att kundens egen user (`u1`,
 Company `cc1`) aldrig kan väljas, och att onboarding hittar samma person som
 personallistan.
 
 ⚠️ **Kvar:** `CAROTTE_COMPANY_ID` i Render bör peka på samma bolag som de inloggade
 Carotte-usernas `Company`. Gör den inte det skiljer sig fallback-vägen (curl/cron)
 från vad UI:t visar.
+
+#### ⚠️ Kopplingen kan LYCKAS utan att personen syns — nu synligt
+Byter man kundansvarig till någon som **inte** tillhör vårt bolag skrivs kopplingen
+(företaget hamnar i hens `Associated_company`) — men "Vår personal" filtrerar på
+`Company === user_company` och visar hen ändå inte. Resultatet blir en **tyst
+motsägelse**: ansvaret satt, personen osynlig. Det var precis vad som såg ut som
+"kopplingen fungerar inte" 2026-08-24.
+
+- `_linkAnsvarig` returnerar nu `{ kopplad, utanfor_bolaget, namn }`. Svaret bär
+  `ansvarig_utanfor_bolaget` (personens namn) och **båda editvägarna visar det**:
+  kortets Spara som banner, listans inline-edit som cellmeddelande.
+- `apiPatch` skickar `user_company` i bodyn — utan den kan servern inte avgöra saken.
+- **⚠️ Grundorsaken stängs av dropdown-filtret** (samma leverans): kan man bara välja
+  Carottare uppstår läget inte. Varningen är nätet under, för data som redan finns
+  och för anrop via curl.
+- Vaktat av tre tester: person utanför bolaget knyts men flaggas (med namn), person
+  inom bolaget flaggas inte, och båda editvägarna visar varningen.
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs

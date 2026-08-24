@@ -2041,7 +2041,11 @@
   function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
   // ?user_company= till kort-anropen (samma skäl som i qstr).
   function ucq(){ var uc=cfg("user_company"); return uc?("?user_company="+encodeURIComponent(uc)):""; }
-  function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
+  // ⚠️ user_company med i PATCH: servern behöver den för att kunna säga om den nya
+  // kundansvariga faktiskt kommer att SYNAS under "Vår personal" (den listan
+  // filtrerar på samma company). Utan den blir en felvald ansvarig en tyst
+  // motsägelse — ansvaret satt, personen osynlig.
+  function apiPatch(id, fields){ return fetch(HOST+"/admin/companies/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields, user_company:cfg("user_company")})}).then(function(r){ return r.json(); }); }
   function apiPost(path, body){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){ return r.json(); }); }
   function apiCoworkerPatch(id, fields){ return fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(id),{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify({fields:fields})}).then(function(r){ return r.json(); }); }
 
@@ -2217,6 +2221,12 @@
       td.removeAttribute("data-committing");
       if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&(j.error||""))||"fel"); msg.className="fl-save fl-errc"; } return; }
       if(j.row){ for(var i=0;i<STATE.rows.length;i++){ if(STATE.rows[i].id===id){ STATE.rows[i]=j.row; break; } } }
+      // ⚠️ Kopplingen kan ha lyckats utan att personen SYNS under Vår personal —
+      // säg det, annars blir det en tyst motsägelse.
+      if(j.ansvarig_utanfor_bolaget && msg){
+        msg.textContent="⚠ knuten, men syns ej under Vår personal (annat bolag)";
+        msg.className="fl-save fl-errc";
+      }
       cacheClearAll();
       redrawListCell(td);
     }).catch(function(){
@@ -3916,6 +3926,10 @@
     msg.textContent="Sparar…"; msg.className="msg";
     apiPatch(STATE.cardId, fields).then(function(j){
       if(!j||!j.ok){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; return; }
+      if(j.ansvarig_utanfor_bolaget){
+        STATE.nsWarn="Kundansvarig knöts till kunden, men "+(typeof j.ansvarig_utanfor_bolaget==="string"?j.ansvarig_utanfor_bolaget:"personen")+
+          " tillhör inte ditt bolag och visas därför INTE under Vår personal. Välj en Carotte-medarbetare.";
+      }
       STATE.listDirty=true;
       api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card"+ucq()).then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); } STATE.cardEditing=false; STATE.cardFast=null; renderCard(); });
     }).catch(function(){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; });

@@ -1307,6 +1307,25 @@ const run = async () => {
   const patOther = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "5560001111" } } });
   ok("patch utan ansvarig rör inte kopplingen", patOther.body.ok === true && patOther.body.ansvarig_kopplad === undefined);
   // Redan knuten → ingen onödig skrivning
+  // ⚠️ Kopplingen kan LYCKAS utan att personen syns under "Vår personal" — den
+  // listan filtrerar på Company === user_company. Utan varning blir det en tyst
+  // motsägelse: ansvaret satt, personen osynlig. (Bet oss skarpt 2026-08-24:
+  // ansvarig byttes till en person som aldrig dök upp i listan.)
+  const patUtanfor = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { ansvarig: "u1" }, user_company: "cc2" } });
+  ok("byte av ansvarig: person utanför bolaget knyts MEN flaggas",
+     patUtanfor.body.ok === true && patUtanfor.body.ansvarig_kopplad === true &&
+     patUtanfor.body.ansvarig_utanfor_bolaget &&
+     (STORE.User.find((u) => u._id === "u1")["Associated_company"] || []).indexOf("cc3") > -1);
+  ok("byte av ansvarig: varningen bär personens namn",
+     /Anna/.test(String(patUtanfor.body.ansvarig_utanfor_bolaget)));
+  const patInom = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { fields: { ansvarig: "u3" }, user_company: "cc2" } });
+  ok("byte av ansvarig: person INOM bolaget flaggas inte",
+     patInom.body.ansvarig_kopplad === true && patInom.body.ansvarig_utanfor_bolaget === undefined);
+  ok("frontend: user_company skickas i PATCH och varningen visas i båda editvägarna",
+     /user_company:cfg\("user_company"\)/.test(fl) &&
+     (fl.match(/ansvarig_utanfor_bolaget/g) || []).length >= 2 &&
+     /syns ej under Vår personal/.test(fl));
+
   const wBefore = userPatches;
   const patAgain = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { ansvarig: "u2" } } });
   ok("byte av ansvarig: redan knuten → true men ingen ny skrivning (noll WU)",
