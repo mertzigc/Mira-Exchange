@@ -319,6 +319,32 @@
   .fk-subtab:hover{color:var(--fl-txt);}
   .fk-subtab.on{color:#0f1830;background:var(--fl-acc);border-color:var(--fl-acc);}
   @media(max-width:820px){.fk-grid{grid-template-columns:1fr;}.fk-strip{grid-template-columns:repeat(2,1fr);}.fk-form{grid-template-columns:1fr;}}
+  /* ── Onboarding-strip (kundresans status: sign → leveransklar) ── */
+  .fk-onb{margin:14px 0 4px;background:var(--fl-panel);border:1px solid var(--fl-line);border-radius:12px;padding:14px 16px;}
+  .fk-onbh{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;}
+  .fk-onbh .t{font-weight:700;color:var(--fl-txt);font-size:13px;letter-spacing:.02em;}
+  .fk-onbh .p{color:var(--fl-mut);font-size:12px;}
+  .fk-onbsteps{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+  .fk-onbstep{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:10px;padding:10px 12px;cursor:pointer;transition:border-color .12s;}
+  .fk-onbstep:hover{border-color:var(--fl-acc);}
+  .fk-onbstep .n{font-size:11px;color:var(--fl-mut);letter-spacing:.06em;text-transform:uppercase;}
+  .fk-onbstep .l{font-weight:600;color:var(--fl-txt);font-size:13px;margin-top:2px;}
+  .fk-onbstep .s{font-size:11px;margin-top:6px;display:flex;align-items:center;gap:6px;}
+  .fk-onbstep.on{border-color:var(--fl-ok);}
+  .fk-onbstep.on .s{color:var(--fl-ok);}
+  .fk-onbstep.warn{border-color:#c96;}
+  .fk-onbstep.warn .s{color:#e0a060;}
+  .fk-onbstep.mock{opacity:.7;}
+  .fk-onbstep.mock .s{color:var(--fl-mut);font-style:italic;}
+  .fk-onbmockbadge{display:inline-block;background:#5a4a1c;color:#e5c884;padding:1px 6px;border-radius:4px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;margin-left:6px;}
+  .fk-onbchecks{margin-top:10px;padding-top:10px;border-top:1px dashed var(--fl-line);display:flex;flex-wrap:wrap;gap:6px;}
+  .fk-onbchip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:20px;background:var(--fl-bg);border:1px solid var(--fl-line);font-size:11px;color:var(--fl-mut);cursor:pointer;}
+  .fk-onbchip.ok{color:var(--fl-ok);border-color:rgba(80,180,120,.35);}
+  .fk-onbchip.miss{color:#e0a060;border-color:rgba(200,150,90,.35);}
+  .fk-onbchip.uncert{color:var(--fl-mut);border-style:dashed;}
+  .fk-onbchip:hover{border-color:var(--fl-acc);color:var(--fl-txt);}
+  .fk-onbtip{margin-top:8px;font-size:11px;color:var(--fl-mut);}
+  @media(max-width:820px){.fk-onbsteps{grid-template-columns:repeat(2,1fr);}}
 </style>
 
 <!-- ══ PORTAT 2026-08-17: CSS för Avtal-flikens paneler
@@ -1951,7 +1977,8 @@
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:"", bolag:""},
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, todoNew:false, nastaDirty:false, nsWarn:"", cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
-              driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null };
+              driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null,
+              onboarding:null };   // Kundresans status (avtal→leveransklar) — hämtas per kortöppning, se fetchOnboarding.
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -3664,11 +3691,94 @@
   }
   function resetAvtalPanes(){ _avtalFor.avtal=null; _avtalFor.signeringar=null; }
 
+  // ── ONBOARDING (kundresans status: sign → leveransklar) ──────────────────
+  // Strippen ovanför tabs på Hem-fliken. Skarpa steg: avtal (aktivt Contract),
+  // Mira teknisk setup (5 delkrav), utbildning genomförd (activity_type=Utbildning
+  // + genomfört=true). Mock-steg: kickoff, leveransklar — dokumenterade som
+  // "Ej live" i UI. Se /admin/companies/:id/onboarding i companies_api.js.
+  //
+  // ⚠️ TOM DATA ÄR ALDRIG ETT SVAR: en check med ok:false renderas som "kunde
+  // inte kontrolleras", INTE som "ej klart". Samma regel som revenue_ready och
+  // nasta.ok — se HANDOFF arbetsregler.
+  function fetchOnboarding(id){
+    api("/admin/companies/"+encodeURIComponent(id)+"/onboarding").then(function(j){
+      if(!j||!j.ok) return;                                   // 404/500 lämnar STATE.onboarding=null → "kunde inte laddas"-tomrum
+      if(STATE.cardId!==id) return;                           // bytt kund under tiden — släng svaret
+      STATE.onboarding=j;
+      if(STATE.view==="card" && STATE.cardTab==="hem" && !STATE.cardEditing) renderCard();
+    }).catch(function(){});                                    // nätverksfel: låt strippen visa "kunde inte laddas"
+  }
+  var ONB_STEPS=[
+    { k:"avtal",      n:"1", label:"Avtal signat",         mock:false },
+    { k:"mira",       n:"2", label:"Mira teknisk setup",   mock:false },
+    { k:"kickoff",    n:"3", label:"Kick-off-möte",        mock:true  },
+    { k:"utbildning", n:"4", label:"Utbildning genomförd", mock:false },
+    { k:"leverans",   n:"5", label:"Leveransklar",         mock:true  },
+  ];
+  var ONB_CHECK_LABELS={
+    office:  { done:"kontor finns",              miss:"inget kontor skapat",              tab:"installningar", sub:"kontor" },
+    logo:    { done:"logotyp",                   miss:"logotyp saknas",                   tab:"installningar", sub:"logo" },
+    user:    { done:"kund-user",                 miss:"ingen kund-user",                  tab:"personer",      sub:null },
+    supplier:{ done:"leverantör",                miss:"ingen leverantör",                 tab:"installningar", sub:"leverantorer" },
+    staff:   { done:"Carotte-medarbetare",       miss:"ingen Carotte-medarbetare",        tab:"installningar", sub:"leverantorer" },
+  };
+  function onbStepState(s, o){
+    if(!o) return { css:"", text:"—" };
+    var step=o.steps && o.steps[s.k];
+    if(!step) return { css:"", text:"—" };
+    if(s.mock) return { css:"mock", text:'<span class="fk-onbmockbadge">Ej live</span>' };
+    if(step.ok===false)  return { css:"warn", text:"⚠ kunde inte kontrolleras" };
+    if(step.done===true) {
+      if(s.k==="mira")       return { css:"on",   text:"✓ "+step.score+"/"+step.total+" delkrav klara" };
+      if(s.k==="utbildning") return { css:"on",   text:"✓ genomförd" };
+      if(s.k==="avtal")      return { css:"on",   text:"✓ aktivt avtal" };
+      return { css:"on", text:"✓ klar" };
+    }
+    if(s.k==="mira" && step.score!=null) return { css:"warn", text:step.score+" av "+step.total+" delkrav klara" };
+    if(s.k==="utbildning") return { css:"warn", text:"ej genomförd" };
+    if(s.k==="avtal")      return { css:"warn", text:"inget aktivt avtal" };
+    return { css:"warn", text:"ej klart" };
+  }
+  function onbChecksHtml(o){
+    if(!o || !o.mira || !o.mira.checks) return "";
+    var chips="";
+    for(var i=0;i<o.mira.checks.length;i++){
+      var c=o.mira.checks[i], lbl=ONB_CHECK_LABELS[c.id]||{done:c.id, miss:c.id};
+      var css, txt;
+      if(!c.ok)          { css="uncert"; txt="? "+esc(c.label)+" — okänt"; }
+      else if(c.done)    { css="ok";     txt="✓ "+esc(lbl.done)+(c.count!=null?(" ("+numc(c.count)+")"):""); }
+      else               { css="miss";   txt="○ "+esc(lbl.miss); }
+      chips+='<span class="fk-onbchip '+css+'" data-onbchip="'+esc(c.id)+'">'+txt+'</span>';
+    }
+    return '<div class="fk-onbchecks">'+chips+'</div>';
+  }
+  function onbStrip(){
+    var o=STATE.onboarding;
+    var head='<div class="fk-onbh"><span class="t">Onboarding — kundresan</span>';
+    if(o && o.mira){
+      var pct=o.mira.total_count?Math.round((o.mira.done_count/o.mira.total_count)*100):0;
+      head+='<span class="p">Mira teknisk setup: '+o.mira.done_count+'/'+o.mira.total_count+' ('+pct+' %)'+(o.mira.uncertain?" · <em>några checks kunde inte köras</em>":"")+'</span>';
+    } else {
+      head+='<span class="p"><em>laddar…</em></span>';
+    }
+    head+='</div>';
+    var steps="";
+    for(var i=0;i<ONB_STEPS.length;i++){
+      var s=ONB_STEPS[i], st=onbStepState(s, o);
+      steps+='<div class="fk-onbstep '+st.css+'" data-onbstep="'+esc(s.k)+'"><div class="n">'+s.n+'</div><div class="l">'+esc(s.label)+'</div><div class="s">'+st.text+'</div></div>';
+    }
+    var checks=onbChecksHtml(o);
+    var tip=(o && o.meta && o.meta.carotte_company_id_set===false)
+      ? '<div class="fk-onbtip">⚠ CAROTTE_COMPANY_ID är inte satt i Render — Carotte-medarbetare-checken kan inte köras.</div>' : "";
+    return '<div class="fk-onb">'+head+'<div class="fk-onbsteps">'+steps+'</div>'+checks+tip+'</div>';
+  }
+
   function renderCard(){
     stashPanes();
     if(!STATE.card){ $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-msg">Laddar kundkort…</div>'; return; }
+    var onb=(STATE.cardTab==="hem")?onbStrip():"";   // strippen bara på Hem-fliken (info är redundant på övriga)
     $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button>'+
-      '<div class="fk-card">'+cardHero()+cardTabs()+cardBody()+'</div>';
+      '<div class="fk-card">'+cardHero()+onb+cardTabs()+cardBody()+'</div>';
     mountPanes();   // PORTAT 2026-08-17
   }
 
@@ -3683,6 +3793,7 @@
   function openCard(id){
     STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardFast=null; STATE.todoNew=false; STATE.nastaDirty=false; STATE.nsWarn=""; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
+    STATE.onboarding=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -3692,6 +3803,7 @@
       if(STATE.view==="card"&&!STATE.cardEditing) renderCard();
       scheduleCardRev();
     }).catch(function(){ if(!STATE.card) $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-err">Nätverksfel.</div>'; });
+    fetchOnboarding(id);
   }
   function closeCard(){
     STATE.view="list"; STATE.cardEditing=false;
@@ -3730,6 +3842,18 @@
       if(t.closest && t.closest('[data-fk="back"]')){ closeCard(); return; }
       var ctab=t.closest?t.closest('[data-fk="tab"]'):null;
       if(ctab){ STATE.cardTab=ctab.getAttribute("data-t"); STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }
+      // Onboarding-strippens klick: chip → hoppa till rätt flik/subtab; steg-kort → samma.
+      // Mock-steg (kickoff/leverans) navigerar ingenstans — kortet är visuell status i denna omgång.
+      var chip=t.closest?t.closest("[data-onbchip]"):null;
+      if(chip){ var meta=ONB_CHECK_LABELS[chip.getAttribute("data-onbchip")];
+        if(meta && meta.tab){ STATE.cardTab=meta.tab; if(meta.tab==="installningar" && meta.sub) STATE.setupSub=meta.sub; STATE.cardEditing=false; renderCard(); }
+        return; }
+      var ostep=t.closest?t.closest("[data-onbstep]"):null;
+      if(ostep){ var sk=ostep.getAttribute("data-onbstep");
+        if(sk==="mira"){ STATE.cardTab="installningar"; STATE.setupSub="kontor"; renderCard(); return; }
+        if(sk==="avtal"){ STATE.cardTab="avtal"; renderCard(); return; }
+        if(sk==="utbildning"){ STATE.cardTab="historik"; renderCard(); return; }
+        return; }
       if(t.closest && t.closest('[data-fk="edit"]')){ STATE.cardEditing=true; STATE.cardFast=null; renderCard(); return; }
       // Avbryt måste betyda avbryt — därför kastas den stageade fastighetslistan.
       if(t.closest && t.closest('[data-fk="canceledit"]')){ STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }

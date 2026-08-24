@@ -32,6 +32,11 @@ export function registerCompaniesRoutes(app, deps) {
     // (LIVE 2026-06-08) ligger Tengella-workordrar i FortnoxOrder med
     // connection=TENGELLA — och de bär `ft_order_date`, aldrig ft_delivery_date.
     TENGELLA_CONNECTION_ID,
+    // ⚠️ Onboarding "Carotte-medarbetare knuten"-checken. En User räknas som
+    // Carotte-medarbetare om User.Company == CAROTTE_COMPANY_ID. Utan env-varen
+    // kan checken inte skilja Carotte-users från kundens egna → svaret bär
+    // `staff.ok:false` + hint, aldrig ett tyst noll. Env finns i Render.
+    CAROTTE_COMPANY_ID,
   } = deps;
   const _connId = (v) => (v == null ? null : (typeof v === "string" ? v : (v._id || v.id || null)));
   // multer .single-middleware (memory) för foto-upload; no-op om ej injicerat (smoke/mock).
@@ -969,7 +974,7 @@ export function registerCompaniesRoutes(app, deps) {
   // ── Historik-skrivning (activitet_crm) — lånar affär-mönstret (affar_api.js).
   // SKRIVNYCKLAR = display-namn (bekräftat 2026-08-07): activity_type/beskrivning/Kundmöte(fas)/
   // Datum_bokning/genomfört/mötesantecking. Kundmöte-typen bär fas/datum/genomfört/anteckning.
-  const AKT_TYPES = ["Säljsamtal", "Kommentar", "Kundmöte", "Pratat med", "Skickat e-post", "Fått e-post", "Sökt, ej på plats", "Mötesanteckningar"];
+  const AKT_TYPES = ["Säljsamtal", "Kommentar", "Kundmöte", "Utbildning", "Pratat med", "Skickat e-post", "Fått e-post", "Sökt, ej på plats", "Mötesanteckningar"];
   const AKT_FASER = ["Fas 1", "Fas 2", "Fas 3", "Fas 4", "Övrigt"];
 
   // ── NÄSTA STEG (2026-08-21) ────────────────────────────────────────────────
@@ -1523,6 +1528,117 @@ export function registerCompaniesRoutes(app, deps) {
       console.error("[/admin/companies/:id/leverantor/:sid DELETE]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
     }
+  });
+
+  // ══════════════ ONBOARDING — kundresans status sign → leveransklar ══════════════
+  // Fem-stegs-modell för affärsvyn + kundkortet. Steg 1 (Avtal) + steg 2 (Mira teknisk
+  // setup) är SKARPA — resten (Kick-off / Utbildning / Leveransklar) är MOCK i denna
+  // omgång, dokumenterade i frontend som "Ej live". Utbildningsspåret ligger dock på
+  // riktigt i activitet_crm med activity_type="Utbildning" (nytt värde i Bubbles
+  // Option Set, tillagt 2026-08-24 av Christian) → så snart flödet börjar användas
+  // slår `training.done` om utan kodändring.
+  //
+  // ⚠️ REGEL: tom data är ALDRIG ett svar. Faller en delfråga bär respektive check
+  // `ok:false` — kortet säger "kunde inte kontrolleras", inte "ej klart". Samma
+  // mönster som revenue_ready / bolag_ready / personnel_ok.
+  //
+  // Fältnamnen är verifierade mot hur koden faktiskt skriver/läser raderna:
+  // Office.Kundföretag, ClientCompany.logotyp, User.Company (singular = kundens
+  // egen user), Leverantör-Supplier.Kundföretag, User.Associated_company (list, för
+  // Carotte-personal). Se HANDOFF "Företagsfält per typ" + [[reference-activitet-crm-company-fields]].
+  //
+  // WU: 4 constraintade queries (Office, User×2, activity_crm) + befintlig _suppliers
+  // (cachad). Logo läses ur den redan warm-a CC-cachen (0 anrop).
+  app.options("/admin/companies/:id/onboarding", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/:id/onboarding", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    // CC-cacheträff: företaget finns + vi läser logotyp gratis.
+    const full = await companyFullMap().catch(() => new Map());
+    const proj = full.get(id);
+    if (!proj) return res.status(404).json({ ok: false, error: "company_not_found", stale_cache: true });
+
+    // Fem parallella frågor. Faller EN → egen check bär ok:false, resten fortsätter.
+    // ⚠️ INGEN `.catch(() => 0)` som skulle förvandla ett fall till tyst "ingen".
+    // Vi vill kunna skilja "verkligen 0" från "kunde inte kontrolleras".
+    const _q = (fn) => fn().then((v) => ({ ok: true, v })).catch((e) => { console.error("[onboarding] " + id + ":", e?.message); return { ok: false, err: e?.message || String(e) }; });
+    const eqc = (field) => [{ key: field, constraint_type: "equals", value: id }];
+
+    const carotteId = _str(CAROTTE_COMPANY_ID).trim();
+    const [officesR, custUsersR, suppliersR, staffR, trainingR] = await Promise.all([
+      _q(() => bubbleFindAll("Office", { constraints: eqc("Kundföretag") })),
+      _q(() => bubbleFindAll("User",   { constraints: eqc("Company") })),                            // kundens egna users
+      _q(() => _suppliers(id)),                                                                       // {suppliers, available}
+      // Carotte-medarbetare = User.Associated_company contains id AND User.Company == CAROTTE_COMPANY_ID
+      // Utan env-id kan vi INTE skilja Carotte-users från kundens egna → checken bär då ok:false + hint.
+      _q(async () => {
+        if (!carotteId) { const e = new Error("carotte_company_id_missing"); e.hint = "sätt CAROTTE_COMPANY_ID i env"; throw e; }
+        const all = await bubbleFindAll("User", { constraints: [{ key: "Associated_company", constraint_type: "contains", value: id }] });
+        return (all || []).filter((u) => _ref(u.Company) === carotteId);
+      }),
+      // Utbildning genomförd = activitet_crm.company=id AND activity_type=Utbildning AND genomfört=yes.
+      // ⚠️ activity_type är Option Set (case-sensitive) — värdet "Utbildning" MÅSTE
+      // finnas i Bubbles Option Set activity_crm_type, annars ger constraintet 0.
+      _q(() => bubbleFindAll("activitet_crm", { constraints: [
+        { key: "company",       constraint_type: "equals", value: id },
+        { key: "activity_type", constraint_type: "equals", value: "Utbildning" },
+        { key: "genomfört",     constraint_type: "equals", value: true },
+      ] })),
+    ]);
+
+    const officeCount   = officesR.ok    ? (officesR.v    || []).length : null;
+    const custUserCount = custUsersR.ok  ? (custUsersR.v  || []).length : null;
+    const supplierCount = suppliersR.ok  ? ((suppliersR.v && suppliersR.v.suppliers) || []).length : null;
+    const staffCount    = staffR.ok      ? (staffR.v      || []).length : null;
+    const trainingCount = trainingR.ok   ? (trainingR.v   || []).length : null;
+    const logoUrl       = proj && proj.logotyp ? _httpsUrl(proj.logotyp) : "";
+
+    // Mira teknisk setup (5 delkrav).
+    const mira_checks = [
+      { id: "office",   label: "Minst ett kontor skapat",     ok: officesR.ok,   done: officesR.ok   && officeCount   > 0, count: officeCount,   tab: "kontor" },
+      { id: "logo",     label: "Logotyp uppladdad",           ok: true,          done: !!logoUrl,                                                  tab: "logo" },
+      { id: "user",     label: "Minst en kund-user",          ok: custUsersR.ok, done: custUsersR.ok && custUserCount > 0, count: custUserCount, tab: "personer" },
+      { id: "supplier", label: "Minst en leverantör",         ok: suppliersR.ok, done: suppliersR.ok && supplierCount > 0, count: supplierCount, tab: "leverantorer" },
+      { id: "staff",    label: "Carotte-medarbetare knuten", ok: staffR.ok,     done: staffR.ok     && staffCount    > 0, count: staffCount,    tab: "leverantorer", hint: staffR.err },
+    ];
+    const done_count  = mira_checks.filter((c) => c.done).length;
+    const total_count = mira_checks.length;
+    // score/total tar INTE med checks som är ok:false — annars skulle en tekniskt
+    // fungerande setup se ofullständig ut bara för att en Bubble-fråga föll.
+    // "score_uncertain" flaggar att vi inte kan visa 5/5 ännu.
+    const uncertain   = mira_checks.some((c) => !c.ok);
+
+    // ── Övriga steg (mock i UI, men riktig data när flödet börjar användas) ──
+    // Avtal: minst ett aktivt Contract räknas som "signat". Vi läser inte
+    // approval-loggen här — Contract SKAPAS bara efter signat avtal och det
+    // räcker för denna check. Alternativt: OfferApprovalRequest.status=Approved
+    // per kund; kan läggas till senare utan att bryta kontraktet.
+    const contractsR = await _q(() => bubbleFindAll("Contract", { constraints: eqc("kundföretag") }));
+    const contracts  = contractsR.ok ? (contractsR.v || []) : [];
+    const nowMs      = Date.now();
+    const activeCount = contracts.filter((c) => { const e = c["slutdatum"] ? Date.parse(c["slutdatum"]) : 0; return !(e && !Number.isNaN(e) && e < nowMs); }).length;
+
+    return res.json({
+      ok: true,
+      company_id: id,
+      mira: {
+        done_count, total_count,
+        ready: !uncertain && done_count === total_count,
+        uncertain,
+        checks: mira_checks,
+      },
+      steps: {
+        avtal:      { done: contractsR.ok && activeCount > 0, ok: contractsR.ok, count: activeCount,          mock: false },
+        mira:       { done: !uncertain && done_count === total_count, ok: !uncertain, score: done_count, total: total_count, mock: false },
+        kickoff:    { done: null, mock: true, label: "Kick-off-möte" },
+        utbildning: { done: trainingR.ok && trainingCount > 0, ok: trainingR.ok, count: trainingCount, mock: false, label: "Utbildning genomförd" },
+        leverans:   { done: null, mock: true, label: "Leveransklar" },
+      },
+      meta: {
+        carotte_company_id_set: !!carotteId,
+      },
+    });
   });
 
   // ══════════════ INSTÄLLNINGAR — FASTIGHETSÄGARE (Hyresvärd) ══════════════

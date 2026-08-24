@@ -20813,6 +20813,10 @@ const _companiesApi = registerCompaniesRoutes(app, {
   clientIp: _clientIp,
   // HK vs F&E i FortnoxOrder — se nOrdF i companies_api.js.
   TENGELLA_CONNECTION_ID,
+  // Onboardingens "Carotte-medarbetare"-check behöver Carottes ClientCompany-id för
+  // att skilja våra egna users från kundens. Utan env-varen svarar checken ok:false
+  // (aldrig tyst noll) — se /admin/companies/:id/onboarding i companies_api.js.
+  CAROTTE_COMPANY_ID: process.env.CAROTTE_COMPANY_ID || "",
 });
 
 // ── POST /admin/produktion/login {code} — köks-iPad: delad kod → 12h scoped kitchen-token. ──

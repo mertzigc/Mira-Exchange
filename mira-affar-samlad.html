@@ -229,6 +229,24 @@
   .af .af-cardnew:hover{border-color:var(--orange);color:var(--orange)}
   .af .card-actions-panel:not(:empty){margin:0 18px 8px}
   .af .af-na .el{margin-top:2px}
+  /* ── Onboarding-strip på affärsvyns utfällda affärskort (kundresan sign → leveransklar) ── */
+  .af .af-onb{margin:8px 18px 4px;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+  .af .af-onbh{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:12px;}
+  .af .af-onbh .t{font-weight:700;color:var(--white);letter-spacing:.02em;text-transform:uppercase;font-size:11px;}
+  .af .af-onbh .p{color:var(--w70);}
+  .af .af-onbsteps{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+  .af .af-onbstep{background:var(--deep);border:1px solid var(--border);border-radius:8px;padding:8px 10px;}
+  .af .af-onbstep .n{font-size:10px;color:var(--w40);letter-spacing:.06em;text-transform:uppercase;}
+  .af .af-onbstep .l{font-weight:700;color:var(--white);font-size:12px;margin-top:2px;line-height:1.2;}
+  .af .af-onbstep .s{font-size:11px;margin-top:5px;color:var(--w70);}
+  .af .af-onbstep.on{border-color:var(--green);}
+  .af .af-onbstep.on .s{color:var(--green);}
+  .af .af-onbstep.warn{border-color:#c96;}
+  .af .af-onbstep.warn .s{color:#e0a060;}
+  .af .af-onbstep.mock{opacity:.6;}
+  .af .af-onbstep.mock .s{font-style:italic;}
+  .af .af-onbmockbadge{display:inline-block;background:#5a4a1c;color:#e5c884;padding:1px 6px;border-radius:4px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;}
+  @media(max-width:900px){.af .af-onbsteps{grid-template-columns:repeat(2,1fr);}}
 </style>
 
 <div class="af">
@@ -1042,9 +1060,81 @@
     if(key==="faktura")return c.faktura.items||[];
     return [];
   }
+  // ── Onboarding-strip (kundresan sign → leveransklar) ─────────────────────
+  // Data hämtas från /admin/companies/:id/onboarding och cachas per företag —
+  // upprepade expand/kollaps av samma affär triggar bara EN fetch. ⚠️ Ingen
+  // .catch(() => []) — vi vill se felet i konsolen, inte gömma det som "0".
+  var ONB_CACHE={};                                        // companyId → {ok, mira, steps, meta}
+  var ONB_INFLIGHT={};                                     // companyId → Promise (dedup)
+  var ONB_STEPS=[
+    { k:"avtal",      n:"1", label:"Avtal signat",          mock:false },
+    { k:"mira",       n:"2", label:"Mira teknisk setup",    mock:false },
+    { k:"kickoff",    n:"3", label:"Kick-off-möte",         mock:true  },
+    { k:"utbildning", n:"4", label:"Utbildning genomförd",  mock:false },
+    { k:"leverans",   n:"5", label:"Leveransklar",          mock:true  },
+  ];
+  function onbStepState(s, o){
+    if(!o) return { css:"", text:"— <span class=\"muted\">laddar…</span>" };
+    var step=o.steps && o.steps[s.k];
+    if(s.mock) return { css:"mock", text:'<span class="af-onbmockbadge">Ej live</span>' };
+    if(!step)  return { css:"", text:"—" };
+    if(step.ok===false)  return { css:"warn", text:"⚠ kunde inte kontrolleras" };
+    if(step.done===true){
+      if(s.k==="mira")       return { css:"on",   text:"✓ "+step.score+"/"+step.total+" delkrav klara" };
+      if(s.k==="utbildning") return { css:"on",   text:"✓ genomförd" };
+      if(s.k==="avtal")      return { css:"on",   text:"✓ aktivt avtal" };
+      return { css:"on", text:"✓ klar" };
+    }
+    if(s.k==="mira" && step.score!=null) return { css:"warn", text:step.score+" av "+step.total+" delkrav klara" };
+    if(s.k==="utbildning") return { css:"warn", text:"ej genomförd" };
+    if(s.k==="avtal")      return { css:"warn", text:"inget aktivt avtal" };
+    return { css:"warn", text:"ej klart" };
+  }
+  function onbStripHtml(companyId){
+    // ⚠️ Utan companyId går det inte att fråga → visar tomrum, inte falska klara pillar.
+    if(!companyId) return '<div class="af-onb" data-onb-cid=""><div class="af-onbh"><span class="t">Onboarding</span><span class="p">— affären saknar företagskoppling</span></div></div>';
+    var o=ONB_CACHE[companyId] || null;
+    var head='<div class="af-onbh"><span class="t">Onboarding — kundresan</span>';
+    if(o && o.mira){
+      var pct=o.mira.total_count?Math.round((o.mira.done_count/o.mira.total_count)*100):0;
+      head+='<span class="p">Mira teknisk setup: '+o.mira.done_count+'/'+o.mira.total_count+' ('+pct+' %)'+(o.mira.uncertain?" · <em>några checks kunde inte köras</em>":"")+'</span>';
+    } else {
+      head+='<span class="p"><em>laddar…</em></span>';
+    }
+    head+='</div>';
+    var steps="";
+    for(var i=0;i<ONB_STEPS.length;i++){
+      var s=ONB_STEPS[i], st=onbStepState(s, o);
+      steps+='<div class="af-onbstep '+st.css+'"><div class="n">'+s.n+'</div><div class="l">'+esc(s.label)+'</div><div class="s">'+st.text+'</div></div>';
+    }
+    return '<div class="af-onb" data-onb-cid="'+esc(companyId)+'">'+head+'<div class="af-onbsteps">'+steps+'</div></div>';
+  }
+  function fetchOnboarding(companyId, dealId){
+    if(!companyId) return;
+    if(ONB_CACHE[companyId] || ONB_INFLIGHT[companyId]) return;
+    ONB_INFLIGHT[companyId]=fetch(HOST+"/admin/companies/"+encodeURIComponent(companyId)+"/onboarding",{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ ONB_INFLIGHT[companyId]=null;
+        if(!j||!j.ok) return;                              // 404/500: lämna cachen tom, strippen fortsätter visa "laddar…"
+        ONB_CACHE[companyId]=j;
+        // Uppdatera BARA denna deals strip in-place — ingen re-render av hela affären.
+        // Fler dealer på samma kund uppdateras när användaren öppnar dem (SWR).
+        var host=root.querySelector('[data-affar-id="'+dealId+'"]');
+        var det=host && host.nextElementSibling;
+        var strip=det && det.querySelector && det.querySelector('.af-onb[data-onb-cid="'+companyId+'"]');
+        if(strip){ var w=document.createElement("div"); w.innerHTML=onbStripHtml(companyId); strip.replaceWith(w.firstElementChild); }
+      })
+      .catch(function(e){ ONB_INFLIGHT[companyId]=null; console.error("[onboarding] "+companyId+":", e && e.message); });
+  }
+
   function renderChainHtml(j){
     var c=j.chain, D=j.deal, did=D.id;
     chainCache[did]=j;
+    // Företags-id kommer med i edit-payloaden (affar_api.js: edit.kundforetag_id).
+    // Faller tillbaka på deal.company_id om formatet ändras. Ingen id → strippen
+    // säger det rakt ut ("affären saknar företagskoppling"), aldrig ett tyst 0/5.
+    var onbCid=(j.edit && j.edit.kundforetag_id) || D.company_id || "";
+    fetchOnboarding(onbCid, did);
     // avtal kan saknas om HTML deployas fore affar_api — guarda med ||-fallback (ej optional chaining)
     var av=c.avtal||{count:0,items:[]};
     var offSum=stepSum(c.offert.items), avSum=stepSum(av.items), ordSum=stepSum(c.order.items), invSum=stepSum(c.faktura.items);
@@ -1069,7 +1159,7 @@
     if(invSum!=null) sumParts.push('Fakturerat '+money0(invSum));
     var sumline=sumParts.length?('<div class="deal-sum">'+sumParts.map(function(p){ return '<span>'+esc(p)+'</span>'; }).join("")+'</div>'):'';
     var head='<div class="deal-h"><div>'+esc(D.company||"")+(D.value?' · est. '+esc(money(D.value)):'')+(D.sannolikhet!=null?' · '+esc(Math.round(D.sannolikhet*100))+'%':'')+'</div><div>'+esc(D.status||"")+'</div></div>';
-    return '<div class="deal">'+head+sumline+'<div class="chain">'+steps+'</div>'+
+    return '<div class="deal">'+head+onbStripHtml(onbCid)+sumline+'<div class="chain">'+steps+'</div>'+
       '<div class="cstep-detail" style="display:none"></div>'+
       cardActionsHtml(did)+
       cardKopplaHtml(did)+
