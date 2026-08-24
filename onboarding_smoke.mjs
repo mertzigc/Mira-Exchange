@@ -19,17 +19,31 @@ import { registerCompaniesRoutes } from "./companies_api.js";
 
 const CAROTTE = "carotte_id_9999";
 
-// ClientCompany-fixtur (list-projektion). logotyp finns bara på de som ska
-// klara logo-checken.
+// ClientCompany-fixtur (RAW-record). logotyp finns bara på de som ska klara
+// logo-checken.
+// ⚠️ VERIFIERAT MOT VERKLIGHETEN 2026-08-24: `logotyp` (image) ligger i det
+// RÅA CC-recordet, INTE i list-projektionen (`_projectCompany` i index.js
+// bär bara filter-/sorterings-fält). Buggen som skarpt data avslöjade var
+// exakt det: endpointen läste `proj.logotyp` som alltid är undefined, och
+// Carotte som HAR en logotyp visade "logo saknas". Fixtur speglar nu det:
+// companyFullMap → projektion UTAN logotyp; bubbleGet → raw MED logotyp.
 const CC = {
-  cc_ok:      { _id: "cc_ok",      name: "Alla klara AB",   logotyp: "//img/ok.png" },
-  cc_noOff:   { _id: "cc_noOff",   name: "Utan kontor AB",  logotyp: "//img/x.png" },
-  cc_noLogo:  { _id: "cc_noLogo",  name: "Utan logga AB",   logotyp: "" },
-  cc_noUser:  { _id: "cc_noUser",  name: "Utan user AB",    logotyp: "//img/x.png" },
-  cc_noSup:   { _id: "cc_noSup",   name: "Utan lev AB",     logotyp: "//img/x.png" },
-  cc_noStaff: { _id: "cc_noStaff", name: "Utan Carotte AB", logotyp: "//img/x.png" },
-  cc_partial: { _id: "cc_partial", name: "Halvfärdig AB",   logotyp: "" },
+  cc_ok:      { _id: "cc_ok",      Name_company: "Alla klara AB",   logotyp: "//img/ok.png" },
+  cc_noOff:   { _id: "cc_noOff",   Name_company: "Utan kontor AB",  logotyp: "//img/x.png" },
+  cc_noLogo:  { _id: "cc_noLogo",  Name_company: "Utan logga AB",   logotyp: "" },
+  cc_noUser:  { _id: "cc_noUser",  Name_company: "Utan user AB",    logotyp: "//img/x.png" },
+  cc_noSup:   { _id: "cc_noSup",   Name_company: "Utan lev AB",     logotyp: "//img/x.png" },
+  cc_noStaff: { _id: "cc_noStaff", Name_company: "Utan Carotte AB", logotyp: "//img/x.png" },
+  cc_partial: { _id: "cc_partial", Name_company: "Halvfärdig AB",   logotyp: "" },
 };
+// List-projektionen (`_projectCompany` i index.js) plockar BARA sorterings-
+// och filter-fält. Vi bygger den EXPLICIT här — utan logotyp — så en framtida
+// regression där endpointen läser proj.logotyp fångas direkt.
+function projectFromRaw(c) {
+  return { id: c._id, name: c.Name_company || "", orgnr: "", kundstatus: "", bransch: "", potential: "", lojalitet: "", region: "", customer_type: "", nki: null, antal_medarbetare: null, omsattning_field: null, ansvarig_id: null, group_id: null, fastighet_ids: [], modified: null };
+  // ⚠️ INGEN logotyp här — matchar produktionens _projectCompany.
+}
+const PROJ = new Map(Object.values(CC).map((c) => [c._id, projectFromRaw(c)]));
 
 // Alla utom cc_noOff har ≥1 kontor.
 const OFFICE = [];
@@ -112,7 +126,7 @@ const deps = {
   bubblePatch: async () => ({}),
   bubbleCreate: async () => "newid",
   bubbleDelete: async () => ({}),
-  companyFullMap: async () => new Map(Object.entries(CC)),
+  companyFullMap: async () => PROJ,          // projektion UTAN logotyp — verklighetstroget
   companyRevenueMap: async () => new Map(),
   companyRevenueMapWarm: () => new Map(),
   companyTouchMapWarm: () => new Map(),

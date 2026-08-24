@@ -1554,10 +1554,17 @@ export function registerCompaniesRoutes(app, deps) {
     if (!guard(req, res)) return;
     const id = _str(req.params.id).trim();
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
-    // CC-cacheträff: företaget finns + vi läser logotyp gratis.
+    // CC-cacheträff: företaget finns.
     const full = await companyFullMap().catch(() => new Map());
     const proj = full.get(id);
     if (!proj) return res.status(404).json({ ok: false, error: "company_not_found", stale_cache: true });
+    // ⚠️ LOGOTYPEN LIGGER INTE I LIST-PROJEKTIONEN. `_projectCompany` (index.js
+    // ~20400) bär bara filter-/sorterings-fälten — inte image-URL:er. Kortets
+    // /card-endpoint hämtar därför CC-recordet direkt för adress/email/logo.
+    // Vi gör samma här (billig punkthämtning) — utan detta returnerar
+    // proj.logotyp alltid undefined och logo-checken blir tyst falsk-negativ,
+    // oavsett vad Bubble faktiskt har.
+    const rec = await bubbleGet("ClientCompany", id).catch(() => null);
 
     // Fem parallella frågor. Faller EN → egen check bär ok:false, resten fortsätter.
     // ⚠️ INGEN `.catch(() => 0)` som skulle förvandla ett fall till tyst "ingen".
@@ -1592,7 +1599,7 @@ export function registerCompaniesRoutes(app, deps) {
     const supplierCount = suppliersR.ok  ? ((suppliersR.v && suppliersR.v.suppliers) || []).length : null;
     const staffCount    = staffR.ok      ? (staffR.v      || []).length : null;
     const trainingCount = trainingR.ok   ? (trainingR.v   || []).length : null;
-    const logoUrl       = proj && proj.logotyp ? _httpsUrl(proj.logotyp) : "";
+    const logoUrl       = (rec && rec.logotyp) ? _httpsUrl(rec.logotyp) : "";
 
     // Mira teknisk setup (5 delkrav).
     const mira_checks = [
