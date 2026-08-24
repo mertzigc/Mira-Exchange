@@ -204,6 +204,22 @@ const deps = {
   // bara till STORE blev en nyskapad rad osynlig för läs-tillbaka och cache-insert —
   // mocken var alltså inkonsekvent med sig själv och dolde att flödet inte fungerade.
   bubbleCreate: async (t, payload) => {
+    // ⚠️ MOCKA ALDRIG MER TILLÅTANDE ÄN BUBBLE. Den här mocken svalde vad som helst,
+    // och därför gick `Org_Number: Number(...)` rakt igenom testet men 400:ade skarpt
+    // ("Expected a string, but got a number"). Samma klass som used_at-buggen.
+    // Typerna nedan är VERIFIERADE (index.js ~1291: Org_Number är text).
+    const TYPES = { ClientCompany: { Org_Number: "string", Name_company: "string" } };
+    const spec = TYPES[t];
+    if (spec) {
+      for (const [f, want] of Object.entries(spec)) {
+        if (payload[f] === undefined || payload[f] === null) continue;
+        if (typeof payload[f] !== want) {
+          const e = new Error("bubbleCreate failed");
+          e.detail = { status: 400, body: JSON.stringify({ body: { status: "INVALID_DATA", message: "Invalid data for field " + f + ": Expected a " + want + ", but got a " + typeof payload[f] } }) };
+          throw e;
+        }
+      }
+    }
     const id = "new_" + (++_idc); const rec = Object.assign({ _id: id }, payload);
     if (t === "ClientCompany") CC[id] = rec; else (STORE[t] = STORE[t] || []).push(rec);
     return id;
@@ -1234,13 +1250,14 @@ const run = async () => {
   const nf1 = await nyF({ name: "Nytt Bolag AB", orgnr: "5561234567", kundstatus: "Aktiv kund" });
   ok("skapa: företag skapas + rad returneras",
      nf1.body.ok === true && nf1.body.row && nf1.body.row.name === "Nytt Bolag AB" && nf1.body.verified === true);
-  ok("skapa: org.nr lagras som siffror (number), kundstatus som option-set-sträng",
+  ok("skapa: org.nr och kundstatus lagras korrekt",
      STORE.ClientCompany ? true : (function () {
        const rec = CC[nf1.body.id];
-       return rec && rec.Org_Number === 5561234567 && rec.Kundstatus === "Aktiv kund";
+       return rec && rec.Org_Number === "5561234567" && rec.Kundstatus === "Aktiv kund";
      })());
-  ok("skapa: org.nr lagras som SIFFROR även när man skriver bindestreck",
-     (function () { const r = CC[nf1.body.id]; return r && typeof r.Org_Number === "number"; })());
+  // ⚠️ Siffror, men som STRÄNG — Org_Number är ett text-fält i Bubble.
+  ok("skapa: org.nr normaliseras till siffror men skrivs som TEXT",
+     (function () { const r = CC[nf1.body.id]; return r && typeof r.Org_Number === "string" && /^\d{10}$/.test(r.Org_Number); })());
   // ⚠️ Nya raden måste in i den DELADE cachen — annars syns den inte i listan
   // förrän nästa helsvep (upp till 12 h).
   const efter = await call(s.routes, "get", "/admin/companies/list", { query: { q: "Nytt Bolag" } });
@@ -1266,6 +1283,20 @@ const run = async () => {
      nfName.body.ok === true && (nfName.body.name_warnings || []).length >= 1);
   // Option-set valideras mot facetterna, som inline-editen
   const nfBadOS = await nyF({ name: "Bad OS", orgnr: "5568888888", kundstatus: "Hittepå" });
+  // ⚠️ Bubbles verkliga orsak måste nå UI:t — `e.message` är alltid "bubbleCreate
+  // failed". Utan hint står användaren med ett fel som inte säger vad som är fel.
+  const typDeps = Object.assign({}, deps, {
+    bubbleCreate: async () => {
+      const e = new Error("bubbleCreate failed");
+      e.detail = { status: 400, body: JSON.stringify({ body: { status: "INVALID_DATA", message: "Invalid data for field Org_Number: Expected a string, but got a number" } }) };
+      throw e;
+    },
+  });
+  const tys = mk(); registerCompaniesRoutes(tys.app, typDeps);
+  const ty = await call(tys.routes, "post", "/admin/companies/create", { body: { name: "Hint-test", orgnr: "5560000000" } });
+  ok("skapa: Bubbles faktiska felmeddelande når fram som hint",
+     ty.body.ok !== true && /Expected a string, but got a number/.test(ty.body.hint || ""));
+
   ok("skapa: okänt kundstatus-värde → 400 med allowed",
      nfBadOS.code === 400 && /unknown_optionset_value/.test(nfBadOS.body.error) && (nfBadOS.body.allowed || []).length > 0);
 

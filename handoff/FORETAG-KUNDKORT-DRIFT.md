@@ -570,8 +570,25 @@ för Kundmöte och skickas med till `aktivitet/create`.
 - **⚠️ Samma lucka finns i kundkortets och affärsvyns nästa steg-formulär** — de
   skapar också Kundmöten utan fas. Ej rättat (Christian scopade till mötestratten).
 
-**Verifierat:** companies_smoke **330/330**, salj_smoke **79/79**, alla 21 sviter
-gröna, mutationstestat (4 + 3 faller mot `6ebde34`).
+**4. Skapa företag 400:ade: `Org_Number` skrevs som TAL.**
+Bubble svarade `INVALID_DATA: Expected a string, but got a number`. **`Org_Number` är
+ett TEXT-fält** (bekräftat i `index.js` ~1291 och av `EDITABLE.orgnr` som redan hade
+`type:"text"`) — bara min create-endpoint skrev tal. Org.numret normaliseras
+fortfarande till siffror för dubblettjämförelsen, men **skrivs som sträng**.
+
+- **⚠️ VARFÖR TESTET INTE FÅNGADE DET:** smoke-mockens `bubbleCreate` svalde vad som
+  helst — den var **mer tillåtande än Bubble**. Exakt samma klass som `used_at`
+  (2026-08-18) och `Namn`-fixturen på Fastighet. Mocken validerar nu typerna för
+  verifierade fält (`ClientCompany.Org_Number`/`Name_company` = string) och kastar
+  samma 400 som Bubble. **Bevisat:** återinförs `Number(org)` faller 4 tester.
+  Utöka `TYPES` när fler fälttyper verifierats — billigaste skyddet mot den här klassen.
+- **⚠️ Felet nådde inte användaren:** UI:t visade `✗ bubbleCreate failed`, eftersom
+  `e.message` alltid är just det. Bubbles faktiska orsak ligger i `detail.body` och
+  plockas nu fram som `hint` — frontenden visade redan `hint || error`, så
+  meddelandet går hela vägen fram utan ändring där.
+
+**Verifierat:** companies_smoke **331/331**, salj_smoke **79/79**, alla 21 sviter
+gröna, mutationstestat (8 + 3 faller mot `6ebde34`).
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs

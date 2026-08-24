@@ -2244,7 +2244,11 @@ export function registerCompaniesRoutes(app, deps) {
           hint: "Ett företag med det org.numret finns redan. Öppna det i stället — eller skicka force:true om det verkligen ska bli två rader." });
       }
 
-      const payload = { Name_company: namn, Org_Number: Number(org) };
+      // ⚠️ `Org_Number` är ett TEXT-fält i Bubble (verifierat: index.js ~1291, och
+      // EDITABLE.orgnr har type:"text"). Skickas ett tal svarar Bubble
+      // `INVALID_DATA: Expected a string, but got a number` och HELA skapandet faller.
+      // Vi normaliserar till siffror för jämförbarhet — men skriver dem som sträng.
+      const payload = { Name_company: namn, Org_Number: org };
       const kundstatus = _str(b.kundstatus).trim();
       if (kundstatus) {
         // Samma facett-validering som inline-editen — vi gissar aldrig option-set-värden.
@@ -2275,7 +2279,16 @@ export function registerCompaniesRoutes(app, deps) {
         name_warnings: nameHits.length ? nameHits.slice(0, 5) : undefined });
     } catch (e) {
       console.error("[/admin/companies/create]", e?.message, e?.detail);
-      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+      // ⚠️ `e.message` är alltid "bubbleCreate failed" — värdelöst i UI:t. Bubbles
+      // FAKTISKA orsak ligger i detail.body. Plocka fram den som `hint`, annars står
+      // användaren med ett fel som inte säger vad som är fel.
+      let hint = null;
+      try {
+        const b = e?.detail?.body;
+        const o = typeof b === "string" ? JSON.parse(b) : b;
+        hint = (o && o.body && o.body.message) || (o && o.message) || null;
+      } catch (_) { /* hint är en bonus, aldrig en förutsättning */ }
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), hint, detail: e?.detail || null });
     }
   });
 
