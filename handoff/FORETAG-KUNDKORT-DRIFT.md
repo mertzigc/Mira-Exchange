@@ -401,6 +401,71 @@ möten bokades i augusti" — en annan fråga än "hur många möten hålls i au
   i st.f. att falla och dolde 7 fel. Assertions mot fält som kan saknas: `(x || {})`.
 - **Deploy:** `salj_api.js` + klistra om `mira-motesbokning.html`.
 
+### Onboarding — kundresans status (sign → leveransklar) — LIVE 2026-08-24
+
+Ny strip både på **kundkortets Hem-flik** och **affärsvyns utfällda affärskort**.
+Fem-stegs-modell — steg 1 (avtal) och steg 2 (Mira teknisk setup) + steg 4
+(utbildning) är SKARPA; steg 3 (kick-off) och steg 5 (leveransklar) är MOCKAR
+tydligt märkta "Ej live" tills organisationen bestämt hur de ska mätas.
+
+- **Ny endpoint:** `GET /admin/companies/:id/onboarding` (companies_api.js). Fem
+  parallella delkrav-frågor. **⚠️ Ingen check får svara "tyst 0" när Bubble-frågan
+  faller** — varje check bär eget `ok:false` + `mira.uncertain:true` (samma regel
+  som `revenue_ready`/`bolag_ready`/`personnel_ok`). Score/total tar INTE med
+  osäkra checks → en fungerande setup ser inte ofullständig ut bara för att
+  Bubble knuffar en 500:a.
+- **De fem Mira-delkraven (fältnamn verifierade mot koden 2026-08-24):**
+  - `office` = `Office where Kundföretag == id` (count)
+  - `logo` = `ClientCompany.logotyp` icke-tom
+  - `user` = `User where Company == id` (kundens EGNA users; singular-fält)
+  - `supplier` = `Leverantör - Supplier where Kundföretag contains id`
+  - `staff` = `User where Associated_company contains id AND Company == CAROTTE_COMPANY_ID`
+- **⚠️ `CAROTTE_COMPANY_ID` env krävs för staff-checken.** Utan den kan vi inte
+  skilja Carotte-users från kundens egna → svaret bär `staff.ok:false` + hint
+  `carotte_company_id_missing`. Aldrig ett tyst 0. Env satt i Render
+  (`1726738549743x453535655154064800`, verifierat skarpt).
+- **⚠️ LOGOTYPEN LIGGER INTE I LIST-PROJEKTIONEN — fälla vid första deploy.**
+  Första versionen läste `proj.logotyp` ur `sharedCompanyFullMap`; `_projectCompany`
+  (index.js ~20400) bär bara filter-/sorterings-fält. `proj.logotyp` var alltid
+  `undefined` → Carotte som HAR en logga visade "logo saknas". Fix: separat
+  `bubbleGet("ClientCompany", id)` (samma som `/card`-endpointen redan gör).
+  Regressionsvakt: onboarding_smoke:s fixtur speglar nu produktionen —
+  `companyFullMap` returnerar projektion UTAN logotyp, `bubbleGet` returnerar raw
+  MED logotyp. Går man tillbaka till `proj.logotyp` faller 4 tester.
+- **Utbildning = `activitet_crm` med `activity_type="Utbildning"` + `genomfört=true`.**
+  Christian har lagt värdet i Option Set `activity_crm_type` 2026-08-24. `AKT_TYPES`
+  i `companies_api.js` utökad så samma grind- och nästa-steg-mekanik gäller
+  (writer/todo/uppföljning) — inget nytt fält, ingen egen mekanik.
+- **Frontend:**
+  - Kundkortet (`mira-foretag-lista.html`, Hem-fliken): stor strip mellan hero
+    och tabs. Fem stegs-kort + delkrav-chips undertill. Klick på chip/steg
+    hoppar till rätt inställnings-subflik (t.ex. logo-checken → Inställningar →
+    Logo). Mock-steg (kickoff/leverans) navigerar ingenstans.
+  - Affärsvyn (`mira-affar-samlad.html`): kompakt strip precis under `deal-h` i
+    den utfällda affärskortet. **Cachad per företag** (SWR): upprepade
+    expand/kollaps triggar en fetch, fler affärer på samma kund delar cachen.
+    Uppdaterar strippen in-place när svaret kommer (ingen re-render av hela
+    affären → text i formulär överlever, samma fälla som deal-formuläret).
+- **Verifierat skarpt 2026-08-24** mot Carotte (`1726738549743x…4800`):
+  5/5 klart, avtal.count=10, utbildning.count=0 (rimligt — värdet har just tagits
+  in), staff.count=40, user.count=72, supplier.count=4, office.count=5.
+- **Smoke:** `onboarding_smoke.mjs` **36/36**, **mutationstestat**:
+  1. tar bort `Company==CAROTTE`-filtret på staff → 2 tester faller (impostor räknas)
+  2. utbildning-constraintet ändras till `genomfört=false` → 1 test faller
+  3. office-frågan alltid tom → 6 tester faller
+  4. gå tillbaka till `proj.logotyp` (buggen som Christian såg live) → 4 tester faller
+  Regression: samtliga **21 sviter gröna (1598 assertions)**.
+- **Deploy:** `companies_api.js` + `index.js` (env `CAROTTE_COMPANY_ID`) + klistra
+  om `mira-foretag-lista.html` OCH `mira-affar-samlad.html`. Ingen ny `data-mira`.
+
+**Steg 3–5 (mockar) — nästa organisatoriska beslut:**
+- **Kick-off:** kan mappas till `activitet_crm` `activity_type="Kundmöte"` +
+  `Kundmöte="Fas 1"` (fasnamn finns) — inget nytt fält, kan aktiveras utan
+  endpoint-ändring.
+- **Leveransklar:** kandidater = nytt yes/no-fält `leveransklar` på ClientCompany
+  (manuell grön-flagga från Kundansvarig), eller härlett (alla föregående steg).
+  Kräver beslut om VEM som får sätta det.
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.
@@ -424,6 +489,7 @@ möten bokades i augusti" — en annan fråga än "hur många möten hålls i au
 - **Kort:** `GET /admin/companies/:id/card` (kunddata + KPI + counts per flik) · `GET /admin/companies/:id/chain?type=deals|leads|offerter|ordrar|fakturor|avtal|signeringar` (reverse-lookup per typ) · `GET /admin/companies/:id/coworkers` (+offices+departments) · `GET /admin/companies/coworker/:id/activities`.
 - **Skapa/redigera:** `POST /admin/companies/:id/coworker/create` · `PATCH /admin/companies/coworker/:id` (CO_EDITABLE) · `POST /admin/companies/coworker/:id/create-account` (Bubble-wf + välkomstmail).
 - **Lösenord/onboarding (eget token-flöde via vår SendGrid-motor):** `POST /admin/companies/coworker/:id/send-password` · `POST /admin/reset-password/send {email}` (nya users) · `POST /admin/reset-password/exchange {token}` (reset_pw-sidan). `__INIT__`-läge för API Connector-init utan sidoeffekt.
+- **Onboarding (kundresans status):** `GET /admin/companies/:id/onboarding` — 5 Mira-delkrav (office/logo/user/supplier/staff) + steg-status (avtal/mira/utbildning) + två mockar (kickoff/leverans). Kräver `CAROTTE_COMPANY_ID` env. Se avsnittet "Onboarding — kundresans status" ovan.
 
 ### Företagsfält per typ (VERIFIERAT — kritiskt vid reverse-lookup)
 deal=`kundföretag` · Lead=`client_company` · Mira Offert/MiraOrder=`kundforetag` · Fortnox(FortnoxOffer/Order/Invoice)=`linked_company` · Contract=`kundföretag` · OfferApprovalRequest(signering)=`clientcompany` · **activitet_crm=`company`** (ClientCompany — ENDA kund-fältet; INGET clientcompany finns! Schema-verifierat 2026-08-14, se [[reference-activitet-crm-company-fields]]) + `taggade_personer`(List of Coworker, tagg — FINNS nu) + `writer`/`mötesanteckning_writer`(User) · Coworker→företag=`Kundföretag`, has_user=User vars **`Company`**(singular)==företaget matchar coworker-mail · Office→företag=`Kundföretag`.
