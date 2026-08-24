@@ -167,6 +167,7 @@ const BOLAG = new Map([
 
 // Verifierade Bubble-scheman (skärmdump/HANDOFF). Används av mocken för att avvisa
 // okända fält precis som Bubble gör. Utöka när fler typer verifierats.
+let userPatches = 0;
 const KNOWN_FIELDS = {
   PasswordReset: ["email", "coworker", "token_hash", "expires_at", "used"],
 };
@@ -196,6 +197,7 @@ const deps = {
       const bad = Object.keys(payload || {}).filter((k) => known.indexOf(k) < 0);
       if (bad.length) { const e = new Error("bubblePatch failed"); e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "Unrecognized field: " + bad[0] } }) }; throw e; }
     }
+    if (t === "User") userPatches++;   // för att kunna bevisa att vi inte skriver i onödan
     if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; }
     if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); }
     return {};
@@ -1261,6 +1263,55 @@ const run = async () => {
   // ⚠️ Nya raden måste in i den DELADE cachen — annars syns den inte i listan
   // förrän nästa helsvep (upp till 12 h).
   const efter = await call(s.routes, "get", "/admin/companies/list", { query: { q: "Nytt Bolag" } });
+  // ── Kundansvarig knyts som "Vår personal" på kunden ───────────────────────
+  // ⚠️ Annars står ansvaret i ett fält medan personallistan är tom, och notiser
+  // som hänger på Associated_company når aldrig fram.
+  ok("skapa: kundansvarig får företaget i sin Associated_company",
+     nf1.body.ansvarig_kopplad === undefined);   // nf1 skapades utan ansvarig
+  const nfA = await nyF({ name: "Med Ansvarig AB", orgnr: "5565550001", ansvarig: "u3" });
+  ok("skapa: vald kundansvarig knyts till kunden",
+     nfA.body.ok === true && nfA.body.ansvarig_kopplad === true &&
+     (STORE.User.find((u) => u._id === "u3")["Associated_company"] || []).indexOf(nfA.body.id) > -1);
+  // ⚠️ Befintliga kopplingar får inte skrivas över — listan appendas.
+  ok("skapa: befintliga kopplingar på användaren bevaras",
+     (STORE.User.find((u) => u._id === "u3")["Associated_company"] || []).indexOf("cc1") > -1);
+  // ⚠️ BEST-EFFORT: företaget är redan skapat när kopplingen görs. Faller den ska
+  // svaret säga det — inte kasta bort ett företag som finns i Bubble.
+  const linkFailDeps = Object.assign({}, deps, {
+    bubblePatch: async (t, id, p2) => {
+      if (t === "User" && p2 && p2["Associated_company"]) throw new Error("Bubble 500");
+      return deps.bubblePatch(t, id, p2);
+    },
+  });
+  const lnkS = mk(); registerCompaniesRoutes(lnkS.app, linkFailDeps);
+  const lnk = await call(lnkS.routes, "post", "/admin/companies/create", { body: { name: "Länk faller AB", orgnr: "5565550002", ansvarig: "u3" } });
+  ok("skapa: fallen koppling förlorar INTE företaget, men redovisas",
+     lnk.body.ok === true && lnk.body.id && lnk.body.ansvarig_kopplad === false);
+
+  // ── Byte av kundansvarig knyter den NYA (2026-08-24) ─────────────────────
+  // ⚠️ Utan detta gällde kopplingen bara företag som råkade få rätt ansvarig från
+  // början — alla senare byten lämnade personallistan tom.
+  const u3Before = (STORE.User.find((u) => u._id === "u3")["Associated_company"] || []).slice();
+  const patAns = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { ansvarig: "u2" } } });
+  ok("byte av ansvarig: den nya knyts till kunden",
+     patAns.body.ok === true && patAns.body.ansvarig_kopplad === true &&
+     (STORE.User.find((u) => u._id === "u2")["Associated_company"] || []).indexOf("cc3") > -1);
+  // ⚠️ Den GAMLA ska INTE kopplas bort (Christians beslut) — hen kan fortfarande
+  // vara involverad i kunden.
+  ok("byte av ansvarig: den gamla kopplingen rörs inte",
+     JSON.stringify((STORE.User.find((u) => u._id === "u3")["Associated_company"] || [])) === JSON.stringify(u3Before));
+  // Rensa ansvarig → inget att knyta
+  const patClr = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { ansvarig: "" } } });
+  ok("byte av ansvarig: rensning knyter ingen", patClr.body.ok === true && patClr.body.ansvarig_kopplad === undefined);
+  // Patch som inte rör ansvarig alls
+  const patOther = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "5560001111" } } });
+  ok("patch utan ansvarig rör inte kopplingen", patOther.body.ok === true && patOther.body.ansvarig_kopplad === undefined);
+  // Redan knuten → ingen onödig skrivning
+  const wBefore = userPatches;
+  const patAgain = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { ansvarig: "u2" } } });
+  ok("byte av ansvarig: redan knuten → true men ingen ny skrivning (noll WU)",
+     patAgain.body.ansvarig_kopplad === true && userPatches === wBefore);
+
   ok("skapa: företaget syns i listan direkt (cachen uppdaterad)",
      efter.body.total === 1 && efter.body.rows[0].id === nf1.body.id);
 

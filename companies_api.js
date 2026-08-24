@@ -2213,6 +2213,32 @@ export function registerCompaniesRoutes(app, deps) {
   // ⚠️ Spärren går att forcera (`force:true`) — men bara medvetet, och svaret pekar
   // alltid ut det befintliga företaget så man kan öppna det i stället.
   // ⚠️ Dubblettkollen läser den delade cachen → NOLL nya Bubble-anrop.
+  // ── Kundansvarig → "Vår personal" på kunden (2026-08-24) ────────────────────
+  // Den som är kundansvarig ska också vara KNUTEN till kunden. Annars står ansvaret
+  // i ett fält medan personallistan är tom — och notiser som hänger på
+  // `Associated_company` når aldrig fram.
+  // Samma skrivning som `POST /:id/personal`: APPEND till Userns lista.
+  // ⚠️ BEST-EFFORT. Anropas efter att företaget skapats/patchats — faller
+  // kopplingen ska svaret säga det, inte kasta bort en ändring som redan gått igenom.
+  // ⚠️ Den TIDIGARE ansvariga kopplas medvetet INTE bort (Christians beslut
+  // 2026-08-24): hen kan mycket väl fortfarande vara involverad i kunden.
+  // → true = knuten (eller redan knuten) · false = försöket föll · null = inget att göra
+  async function _linkAnsvarig(companyId, userId, varifran) {
+    if (!companyId || !userId) return null;
+    try {
+      const u = await bubbleGet("User", userId);
+      if (!u) throw new Error("user_not_found");
+      const cur = (Array.isArray(u["Associated_company"]) ? u["Associated_company"] : []).map(_ref).filter(Boolean);
+      if (cur.indexOf(companyId) > -1) return true;      // redan knuten → ingen skrivning
+      cur.push(companyId);
+      await bubblePatch("User", userId, { "Associated_company": cur });
+      return true;
+    } catch (e) {
+      console.error("[" + varifran + "] kunde inte knyta kundansvarig till kunden:", e?.message);
+      return false;
+    }
+  }
+
   const _orgDigits = (v) => _str(v).replace(/[^\d]/g, "");
   const _nameKey = (v) => _low(v).replace(/[^a-z0-9åäö]/g, "");
   app.options("/admin/companies/create", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
@@ -2267,6 +2293,9 @@ export function registerCompaniesRoutes(app, deps) {
       // det; raden finns ändå.
       const fresh = await bubbleGet("ClientCompany", id).catch(() => null);
       if (fresh && companyPatchEntry) companyPatchEntry(id, fresh);
+
+      const ansvarig_kopplad = await _linkAnsvarig(id, ansvarig, "create");
+
       let row = null;
       if (fresh) {
         const ctx = await _ctx();
@@ -2275,6 +2304,7 @@ export function registerCompaniesRoutes(app, deps) {
         if (c) row = _rowOf(c, ctx, nowYear, nowYear - 1);
       }
       return res.json({ ok: true, id, row, verified: !!fresh,
+        ansvarig_kopplad: ansvarig_kopplad === null ? undefined : ansvarig_kopplad,
         forced_duplicate: dup ? dup : undefined,
         name_warnings: nameHits.length ? nameHits.slice(0, 5) : undefined });
     } catch (e) {
@@ -2490,12 +2520,20 @@ export function registerCompaniesRoutes(app, deps) {
       const fresh = await bubbleGet("ClientCompany", id).catch(() => null);
       if (fresh && companyPatchEntry) companyPatchEntry(id, fresh);
 
+      // ⚠️ Byter man kundansvarig ska den NYA knytas till kunden på samma sätt som
+      // vid skapandet (Christians beslut 2026-08-24) — annars gäller kopplingen bara
+      // för företag som råkade få rätt ansvarig från början. Den GAMLA lämnas kvar.
+      // Tomt värde = ansvarig rensad → inget att knyta.
+      const nyAnsvarig = (payload["Kundansvarig"] !== undefined) ? _str(payload["Kundansvarig"]).trim() : "";
+      const ansvarig_kopplad = await _linkAnsvarig(id, nyAnsvarig, "companies/:id PATCH");
+
       // Bygg färsk rad från uppdaterad cache
       const ctx = await _ctx();
       const nowYear = new Date().getUTCFullYear();
       const c = ctx.full.get(id);
       const row = c ? _rowOf(c, ctx, nowYear, nowYear - 1) : null;
-      return res.json({ ok: true, id, row });
+      return res.json({ ok: true, id, row,
+        ansvarig_kopplad: ansvarig_kopplad === null ? undefined : ansvarig_kopplad });
     } catch (e) {
       console.error("[/admin/companies/:id PATCH]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });

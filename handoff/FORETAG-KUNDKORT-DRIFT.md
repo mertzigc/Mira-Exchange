@@ -587,8 +587,32 @@ fortfarande till siffror för dubblettjämförelsen, men **skrivs som sträng**.
   plockas nu fram som `hint` — frontenden visade redan `hint || error`, så
   meddelandet går hela vägen fram utan ändring där.
 
-**Verifierat:** companies_smoke **331/331**, salj_smoke **79/79**, alla 21 sviter
-gröna, mutationstestat (8 + 3 faller mot `6ebde34`).
+**5. Kundansvarig knyts nu som "Vår personal" på det nya företaget.**
+Väljer man en kundansvarig vid skapandet appendas företaget till Userns
+`Associated_company` — samma skrivning som `POST /:id/personal`. Annars stod ansvaret
+i ett fält medan personallistan var tom, och notiser som hänger på
+`Associated_company` nådde aldrig fram.
+
+- **⚠️ BEST-EFFORT:** företaget är redan skapat när kopplingen görs. Faller den
+  rapporteras `ansvarig_kopplad:false` — vi kastar aldrig bort ett företag som finns
+  i Bubble. Vaktat av test.
+- Listan **appendas**, aldrig skrivs över — befintliga kopplingar på användaren
+  bevaras (eget test).
+- **Gäller BÅDE skapande och byte** (utökat 2026-08-24). Byter man kundansvarig via
+  inline-editen i listan eller på kortets Hem-flik knyts den nya personen på samma
+  sätt — annars hade kopplingen bara gällt företag som råkade få rätt ansvarig från
+  början. Båda vägarna går genom `PATCH /admin/companies/:id`, så en fix täcker båda.
+- **⚠️ Den TIDIGARE ansvariga kopplas medvetet INTE bort** (Christians beslut):
+  hen kan mycket väl fortfarande vara involverad i kunden. Eget test som bevisar att
+  den gamla listan är oförändrad.
+- Logiken ligger i **en** hjälpare (`_linkAnsvarig`) som create och patch delar —
+  en plats att ändra på. Är användaren redan knuten görs **ingen skrivning alls**
+  (noll WU), vaktat av ett test som räknar User-patchar.
+- Rensad ansvarig (`""`) knyter ingen, och en patch som inte rör ansvarig lämnar
+  kopplingen ifred — båda testade.
+
+**Verifierat:** companies_smoke **340/340**, salj_smoke **79/79**, alla 21 sviter
+gröna, mutationstestat (8 + 3 mot `6ebde34`, 4 för ansvarig-kopplingen mot `019dbc8`).
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
