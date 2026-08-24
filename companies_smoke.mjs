@@ -1321,6 +1321,17 @@ const run = async () => {
   const patInom = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc2" }, body: { fields: { ansvarig: "u3" }, user_company: "cc2" } });
   ok("byte av ansvarig: person INOM bolaget flaggas inte",
      patInom.body.ansvarig_kopplad === true && patInom.body.ansvarig_utanfor_bolaget === undefined);
+  // ⚠️ VY-INVALIDERING (2026-08-24). Byte av kundansvarig ändrar två vyer UTANFÖR
+  // den man står i: "Vår personal" och onboarding-chippet. Båda cachas i STATE och
+  // nollställs bara när man klickar in på under-fliken — ett vanligt flikbyte gör
+  // det inte. Följd: man bytte ansvarig, gick till Leverantörer, såg en GAMMAL lista
+  // och drog slutsatsen att kopplingen inte fungerade. Bevisat i harness: utan
+  // invalideringen har servern två kopplade medan vyn visar en.
+  ok("frontend: byte av ansvarig invaliderar Vår personal OCH onboarding",
+     /function invalideraAnsvarigVyer\(\)/.test(fl) &&
+     /STATE\.setupLev=null;\s*\/\/ Vår personal hämtas om/.test(fl) &&
+     /STATE\.onboarding=null;\s*\/\/ Carotte-medarbetare-chippet räknas om/.test(fl) &&
+     (fl.match(/if\(j\.ansvarig_kopplad !== undefined\) invalideraAnsvarigVyer\(\);/g) || []).length === 2);
   ok("frontend: user_company skickas i PATCH och varningen visas i båda editvägarna",
      /user_company:cfg\("user_company"\)/.test(fl) &&
      (fl.match(/ansvarig_utanfor_bolaget/g) || []).length >= 2 &&

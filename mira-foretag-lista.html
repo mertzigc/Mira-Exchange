@@ -2227,6 +2227,7 @@
         msg.textContent="⚠ knuten, men syns ej under Vår personal (annat bolag)";
         msg.className="fl-save fl-errc";
       }
+      if(j.ansvarig_kopplad !== undefined) invalideraAnsvarigVyer();
       cacheClearAll();
       redrawListCell(td);
     }).catch(function(){
@@ -3795,6 +3796,16 @@
   // ⚠️ TOM DATA ÄR ALDRIG ETT SVAR: en check med ok:false renderas som "kunde
   // inte kontrolleras", INTE som "ej klart". Samma regel som revenue_ready och
   // nasta.ok — se HANDOFF arbetsregler.
+  // ⚠️ Byte av kundansvarig ändrar TVÅ vyer utanför den man står i: "Vår personal"
+  // (Inställningar → Leverantörer) och onboarding-chippet "Carotte-medarbetare".
+  // Båda cachas i STATE och nollställs bara när man klickar in på dem — flikbyte
+  // gör det inte. Resultatet: man bytte ansvarig, gick till Leverantörer och såg en
+  // GAMMAL lista, och drog slutsatsen att kopplingen inte fungerade. (2026-08-24)
+  function invalideraAnsvarigVyer(){
+    STATE.setupLev=null;          // Vår personal hämtas om
+    STATE.onboarding=null;        // Carotte-medarbetare-chippet räknas om
+    if(STATE.cardId) fetchOnboarding(STATE.cardId);
+  }
   function fetchOnboarding(id){
     // ⚠️ user_company med: onboarding-checken och "Vår personal" måste läsa SAMMA
     // definition av "Carottare", annars säger de emot varandra.
@@ -3930,6 +3941,7 @@
         STATE.nsWarn="Kundansvarig knöts till kunden, men "+(typeof j.ansvarig_utanfor_bolaget==="string"?j.ansvarig_utanfor_bolaget:"personen")+
           " tillhör inte ditt bolag och visas därför INTE under Vår personal. Välj en Carotte-medarbetare.";
       }
+      if(j.ansvarig_kopplad !== undefined) invalideraAnsvarigVyer();
       STATE.listDirty=true;
       api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/card"+ucq()).then(function(cj){ if(cj&&cj.ok){ STATE.card=cj; cacheSet(cardKey(STATE.cardId),cj); } STATE.cardEditing=false; STATE.cardFast=null; renderCard(); });
     }).catch(function(){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; });

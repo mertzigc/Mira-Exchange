@@ -638,8 +638,8 @@ anrop utan kontext (curl/cron).
 - **Onboarding-checken** tar nu `?user_company=` före env-varen. Frontenden skickar
   den via `ucq()` till både `/card` och `/onboarding`.
 
-**Verifierat:** companies_smoke **352/352**, alla 21 sviter gröna,
-mutationstestat (7 + 3 faller). Testerna vaktar bl.a. att kundens egen user (`u1`,
+**Verifierat:** companies_smoke **353/353**, alla 21 sviter gröna,
+mutationstestat (7 + 3 faller) + harness-bevis för vy-invalideringen. Testerna vaktar bl.a. att kundens egen user (`u1`,
 Company `cc1`) aldrig kan väljas, och att onboarding hittar samma person som
 personallistan.
 
@@ -647,7 +647,27 @@ personallistan.
 Carotte-usernas `Company`. Gör den inte det skiljer sig fallback-vägen (curl/cron)
 från vad UI:t visar.
 
-#### ⚠️ Kopplingen kan LYCKAS utan att personen syns — nu synligt
+#### ⚠️ ROTORSAKEN VAR VY-CACHEN, inte kopplingen (2026-08-24)
+"Den nya kundansvariga hamnar inte i personallistan" såg ut som en datafel men var en
+**ren vy-uppdateringsbugg**. Christians hypotes, inte min — jag gissade först på
+utebliven deploy och sedan på company-filtret. Båda fel.
+
+`STATE.setupLev` ("Vår personal") och `STATE.onboarding` cachas i kortet och nollställs
+**bara när man klickar in på under-fliken** (`data-fk="setupsub"`). Ett vanligt
+**flikbyte** gör det inte. Klickvägen som fäller det:
+
+> Inställningar → Leverantörer *(hämtar listan)* → Hem → byt kundansvarig →
+> Inställningar *(setupSub är kvar på "leverantorer")* → **gammal lista renderas**
+
+- **Fix:** `invalideraAnsvarigVyer()` nollställer båda och hämtar om onboarding.
+  Anropas från **båda** editvägarna när `ansvarig_kopplad` finns i svaret.
+- **Bevisat i harness** (samma klickväg, med och utan fixen): utan den har servern
+  två kopplade personer medan vyn visar en. Med den visas båda.
+- **Lärdom:** när "datan sparas inte" ska man kontrollera vad vyn LÄSER innan man
+  misstänker skrivningen. Två av mina tre hypoteser gällde skrivvägen, som var
+  korrekt hela tiden.
+
+#### Kopplingen kan ändå LYCKAS utan att personen syns — också synligt
 Byter man kundansvarig till någon som **inte** tillhör vårt bolag skrivs kopplingen
 (företaget hamnar i hens `Associated_company`) — men "Vår personal" filtrerar på
 `Company === user_company` och visar hen ändå inte. Resultatet blir en **tyst
