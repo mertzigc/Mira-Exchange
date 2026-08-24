@@ -341,7 +341,22 @@
   // ── scopade helpers (allt mot BROOT — gotcha 11) ─────────────────
   var $  = function(k){ return root.querySelector('[data-ao="'+k+'"]'); };
   var $$ = function(k){ return root.querySelectorAll('[data-ao="'+k+'"]'); };
-  var cfg= function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el && el.value) || ""; };
+  // ⚠️ BUBBLE STRIPPAR `value` PÅ HIDDEN INPUTS (observerat 2026-08-05 i
+  // mira-abonnemang-deal.html: ALLA data-mira-inputs fick value==="" i DOM, även
+  // hårdkodade literaler — `data-*`-attributen överlevde, `value` gjorde det inte).
+  // Det biter inte i alla kontexter, men när det gör det får blocket tomt api_host
+  // och token → 401 mot Render, utan att någon förstår varför.
+  // Därför: bär värdet i `data-val` som reserv och bootstrappa tillbaka till .value
+  // INNAN någon config läses. Sätt antingen value="…" ELLER data-val="…" i Bubble.
+  (function(){
+    var ins=root.querySelectorAll("[data-mira][data-val]");
+    for(var k=0;k<ins.length;k++){ if(!ins[k].value){ ins[k].value = ins[k].getAttribute("data-val") || ""; } }
+  })();
+  var cfg= function(k){
+    var el=root.querySelector('[data-mira="'+k+'"]');
+    if(!el) return "";
+    return el.value || el.getAttribute("data-val") || "";
+  };
 
   var HOST  = cfg("api_host").replace(/\/+$/,"");
   var TOKEN = cfg("planning_token");

@@ -160,6 +160,11 @@ const run = async () => {
   ok("frontend: kategorin är låst till Food & Event i strukturerat läge",
      /katLocked|kategori-lock|f-kategori"\)\.disabled/.test(ao));
   ok("frontend: underrubriken följer läget", /function subText\(\)/.test(ao) && /Allmän/.test(ao));
+  // ⚠️ Bubble kan strippa `value` på hidden inputs (bet oss i mira-abonnemang-deal
+  // 2026-08-05). Utan reserven får blocket tomt api_host/token → 401 utan förklaring.
+  ok("frontend: cfg klarar att Bubble strippar value (data-val som reserv)",
+     /\[data-mira\]\[data-val\]/.test(ao) &&
+     /el\.value \|\| el\.getAttribute\("data-val"\)/.test(ao));
   // ⚠️ En icke-F&E-affär ska INTE mötas av ett artikelsök som aldrig hittar något.
   ok("frontend: icke-F&E-affär startar direkt i Allmän-läget",
      /PREF_KAT && PREF_KAT !== "Food & Event"\) \? "uppladdad" : "strukturerad"/.test(ao) &&
