@@ -1794,7 +1794,10 @@ app.post("/fortnox/connections/health", requireSyncSecret, async (req, res) => {
     // RÅ fetch — INTE getAllFortnoxConnections (den filtrerar bort is_active=false,
     // dvs precis de döda vi vill larma på).
     const rows = await bubbleFind("FortnoxConnection", { constraints: [], limit: 1000 }).catch(() => []);
-    const all = (Array.isArray(rows) ? rows : []).filter(c => c?._id);
+    // BARA de Fortnox-OAuth-connections vi övervakar (FE/Staff/Group). Tengella-
+    // connectionen ligger också som FortnoxConnection men använder INTE Fortnox
+    // refresh-token → dess last_refresh_at är naturligt "stale" (false positive).
+    const all = (Array.isArray(rows) ? rows : []).filter(c => c?._id && FTX_CONN_NAMES[bubbleId(c)]);
     const report = all.map(c => {
       const id = bubbleId(c);
       const h = _connectionHealth(c, staleH);
