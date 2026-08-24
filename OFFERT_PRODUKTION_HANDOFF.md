@@ -477,6 +477,86 @@ med förklaring, underrubriken följer läget.
 **Deploy:** skapa `kategori` på `Offert` i Bubble · `offert_api.js` → Render ·
 klistra om `mira-offert-admin.html` + `mira-affar-samlad.html`.
 
+#### ⚠️ Driftsätta blocket som modal (as_modal) — två fällor
+Affärsvyns `+ Offert` kräver EN instans av `mira-offert-admin.html` på sidan med
+`data-mira="as_modal"` = `1`. Bara den instansen registrerar `window.miraOffertModal`.
+
+1. **Blocket tog plats på sidan trots modal-läge** (2026-08-24). `.ao-mh` är
+   `display:none` i modal-läge, men hosten låg kvar **inuti Bubble-elementet** tills
+   den första öppningen flyttade den till `<body>`. Bubbles layoutmotor såg ett
+   element med innehåll och reserverade höjd → en tom yta mitt på Dashboard.
+   **Fix: hosten flyttas till `<body>` redan vid init.** Bubble-elementet innehåller
+   då bara `<style>`+`<script>` (noll layouthöjd). Verifierat i harness: elementets
+   höjd blir 0 och overlayen fungerar oförändrat.
+   ⚠️ Bubble kan ändå reservera elementets **konfigurerade** höjd — sätt "Fit height
+   to content" på HTML-elementet.
+2. **`value` kan strippas av Bubble** (se [[bubble-hidden-input-strip]]). `cfg` läser
+   nu `value` först och `data-val` som reserv, plus en bootstrap. Fastnar `value="1"`
+   inte → använd `data-val="1"`.
+
+**Diagnos i konsolen:** blocket loggar vilket läge det kör i
+(`[offert] modal-läge aktivt` / `[offert] INLINE-läge`).
+
+#### ✅ INFLYTTAD I AFFÄRSVYN 2026-08-24 — as_modal-dansen borta
+Christians beslut: varje Bubble-koppling har kostat en felsökningsrunda, så modulen
+bor nu i `mira-affar-samlad.html` (sist i filen). **Bubble-popupen `PopupNewOffertFE`
+och det fristående HTML-elementet tas bort.** Avtal + signeringar ligger kvar på
+kundkortet (orörda).
+
+- **Det är en FLYTT, inte en dubblering** — de deployade instanserna försvinner.
+  ⚠️ `mira-offert-admin.html` är kvar i repot som **referens/historik** med en varning
+  i huvudet. **Ändringar görs i `mira-affar-samlad.html`**, annars driftar de isär.
+  `offert_smoke.mjs` läser numera den levande kopian.
+- Affärsvyn: 144k → **205k**.
+
+##### ✅ PANEL-LÄGE i st.f. overlay (Christians beslut, samma dag)
+Buildern är en **expanderbar rad** som `+ Aktivitet` / `+ Todo` — ingen popup.
+Det tog bort hela klassen av problem vi jagat: **ingen body-flytt, inget z-index-lyft
+(`_raiseAnc`), inget scroll-lås, ingen `as_modal`, ingen reserverad Bubble-layouthöjd.**
+
+- `data-mira="panel_mode"` = `1` (och `as_modal` tomt). Overlay-koden ligger kvar för
+  referensfilen men körs aldrig här — `PANEL_MODE` grenar av före den.
+- `window.miraOffertModal` = `{ open(pref, host), close, isOpenIn, park, panel:true }`.
+- **Toggle** som de andra panelerna: klick på en öppen panel stänger den.
+- **⚠️ PANELEN ÄR EN FLYTTAD NOD, inte genererad HTML.** `host.innerHTML=""` river ut
+  hela buildern ur DOM:en och den går inte att öppna igen. Därför `park()`, som
+  anropas **före varje host-tömning** (två ställen: `openCreate` och `openCardCreate`).
+  Vaktat av test som räknar anropen. Verifierat i harness: offert → aktivitet →
+  offert → aktivitet, noden lever hela vägen.
+- Utan `host` i panel-läge loggas en varning i st.f. att panelen hamnar oväntat.
+
+##### ⚠️ CSS-SCOPING — förutsättningen, och en bugg som redan var aktiv
+Offertblocket hade **21 oscopade selektorer** (`.field`, `.btn`, `.pill`, …). Eftersom
+allt ligger på **samma sida** (`dashboard_crm`) läckte de redan innan porten. Alla är
+nu scopade under `.ao-wrap`, och `offert_smoke` har en **vakt** som failar på oscopad
+CSS i den inflyttade delen.
+⚠️ Tre av dem satt som en **andra regel på samma rad** och missades av den första
+radbaserade scopingen — vakten hittade dem. Radbaserade CSS-scripts måste hantera
+`a{…} b{…}` på en rad.
+
+##### ⚠️ KVARSTÅENDE (eget spår): affärsvyns EGNA oscopade selektorer
+`mira-affar-samlad.html` har sedan tidigare egna oscopade regler — `.pill` (rad 51),
+`.funnel`, `.fstep`, `.bar`, `.chip`, `.row`, `.edit`. De läcker ut på dashboard_crm
+och träffar konkret:
+
+| Selektor | Träffar |
+|---|---|
+| `.pill` | 3 element i företagslistan |
+| `.row` | 6 element i företagslistan |
+| `.field` | 4 element i företagslistan |
+| `.bar` | 3 element i mötestratten |
+| `.btn` | 3 element i mötestratten |
+
+Verifierat i harness: en `<span class="pill">` utanför blocket får affärsvyns
+`border-radius:20px`. **Detta är INTE från porten** — det fanns före. Samma städning
+som offertblocket fick, men ett eget avgränsat jobb.
+
+**Verifierat:** `offert_smoke` **33/33** (+ scoping-vakt + panel-vakter),
+`affar_create_smoke` 86/86, alla 21 sviter gröna, mutationstestat (13 faller).
+Harness: panelen startar dold, öppnar `position:static` utan scroll-lås, toggle
+stänger, noden överlever att andra paneler öppnas i samma host, och offert-CSS:en
+läcker inte på sonder utanför blocket.
+
 #### Historik: F&E-arvet (löst ovan)
 Båda lägena går genom **samma** `POST /admin/offert/create`, som alltid sätter:
 - `payload.offertnr = generateOffertnr()` → **`FE-{år}-{löpnr}`**, hårdkodat prefix

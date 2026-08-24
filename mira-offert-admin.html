@@ -1,4 +1,14 @@
 <!--
+  ⚠️⚠️ EJ LÄNGRE DEN LEVANDE KOPIAN (2026-08-24) ⚠️⚠️
+  Offert-buildern är INFLYTTAD i `mira-affar-samlad.html` (sist i filen) och
+  driftas därifrån. Bubble-popupen `PopupNewOffertFE` och det fristående
+  HTML-elementet på dashboard_crm är borttagna.
+
+  GÖR ÄNDRINGAR I `mira-affar-samlad.html` — inte här. Den här filen är kvar som
+  referens/historik och kommer att drifta isär. Vill du åter driftsätta den
+  fristående: CSS:en är scopad under .ao-wrap, och `as_modal` måste sättas till 1
+  (via `value` ELLER `data-val`).
+
   MIRA — OFFERT-BUILDER (Food & Event)  ·  Carotte admin-block
   ------------------------------------------------------------------
   Bygger F&E-offerter (Mira = system of record). Fortnox-inspirerad layout,
@@ -54,10 +64,10 @@
   .ao-g2{grid-template-columns:1fr 1fr}
   .ao-g3{grid-template-columns:1fr 1fr 1fr}
   .ao-g4{grid-template-columns:1fr 1fr 1fr 1fr}
-  .field label{display:block;font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
-  .field input,.field select,.field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
-  .field textarea{resize:vertical;min-height:60px}
-  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--orange)}
+  .ao-wrap .field label{display:block;font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .ao-wrap .field input,.ao-wrap .field select,.ao-wrap .field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .ao-wrap .field textarea{resize:vertical;min-height:60px}
+  .ao-wrap .field input:focus,.ao-wrap .field select:focus,.ao-wrap .field textarea:focus{outline:none;border-color:var(--orange)}
   /* modal-host (open-hook för affär-blocket). Default = display:contents (ingen effekt, standalone-läge).
      Vid data-mira="as_modal"=1 → JS lägger .as-modal → fixed overlay. Literal-färger (utanför .ao-wrap). */
   .ao-hint{font-size:10.5px;opacity:.55;margin-top:4px;line-height:1.35}
@@ -68,7 +78,7 @@
   .ao-mh-x{display:none}
   .ao-mh.as-modal .ao-mh-x{display:block;position:absolute;top:14px;right:16px;z-index:10;background:#2e3350;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;font-size:20px;line-height:1;padding:3px 12px;cursor:pointer;font-family:Arial,sans-serif}
   .ao-mh.as-modal .ao-mh-x:hover{border-color:#F47B30;color:#F47B30}
-  .field input::placeholder,.field textarea::placeholder{color:var(--w40)}
+  .ao-wrap .field input::placeholder,.ao-wrap .field textarea::placeholder{color:var(--w40)}
 
   /* kund-sök (standalone) */
   .ao-search{position:relative}
@@ -107,12 +117,12 @@
   .ao-totals .grand{border-top:1.5px solid var(--w10);margin-top:6px;padding-top:9px;font-weight:700;font-size:16px}
 
   .ao-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;padding-top:6px}
-  .btn{border:none;border-radius:10px;padding:11px 18px;font-size:13px;font-weight:700}
-  .btn-primary{background:var(--orange);color:#1c1206}
-  .btn-primary:hover{filter:brightness(1.06)}
-  .btn-ghost{background:var(--input);border:1px solid var(--border);color:var(--white)}
-  .btn-ghost:hover{border-color:var(--orange);color:var(--orange)}
-  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .ao-wrap .btn{border:none;border-radius:10px;padding:11px 18px;font-size:13px;font-weight:700}
+  .ao-wrap .btn-primary{background:var(--orange);color:#1c1206}
+  .ao-wrap .btn-primary:hover{filter:brightness(1.06)}
+  .ao-wrap .btn-ghost{background:var(--input);border:1px solid var(--border);color:var(--white)}
+  .ao-wrap .btn-ghost:hover{border-color:var(--orange);color:var(--orange)}
+  .ao-wrap .btn[disabled]{opacity:.4;cursor:not-allowed}
   .ao-seg{display:inline-flex;background:var(--input);border:1px solid var(--border);border-radius:9px;padding:3px}
   .ao-seg-btn{background:none;border:none;color:var(--w70);padding:7px 18px;font-size:12px;font-weight:700;border-radius:7px}
   .ao-seg-btn.on{background:var(--orange);color:#1c1206}
@@ -131,13 +141,13 @@
   .ao-list-item .nr{font-family:Menlo,Consolas,monospace;font-size:12px;color:var(--orange)}
   .ao-list-item .t{font-weight:700}
   .ao-list-item .tot{font-variant-numeric:tabular-nums}
-  .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
-  .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--w40)}
-  .pill.s-Draft{background:var(--w10);color:var(--w70)}
-  .pill.s-Sent,.pill.s-Viewed,.pill.s-OTP_Sent{background:var(--orange-dim);color:var(--orange)}
-  .pill.s-Sent .dot,.pill.s-Viewed .dot,.pill.s-OTP_Sent .dot{background:var(--orange)}
-  .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green)} .pill.s-Approved .dot{background:var(--green)}
-  .pill.s-Expired,.pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red)} .pill.s-Expired .dot,.pill.s-Revoked .dot{background:var(--red)}
+  .ao-wrap .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
+  .ao-wrap .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--w40)}
+  .ao-wrap .pill.s-Draft{background:var(--w10);color:var(--w70)}
+  .ao-wrap .pill.s-Sent,.ao-wrap .pill.s-Viewed,.ao-wrap .pill.s-OTP_Sent{background:var(--orange-dim);color:var(--orange)}
+  .ao-wrap .pill.s-Sent .dot,.ao-wrap .pill.s-Viewed .dot,.ao-wrap .pill.s-OTP_Sent .dot{background:var(--orange)}
+  .ao-wrap .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green)} .ao-wrap .pill.s-Approved .dot{background:var(--green)}
+  .ao-wrap .pill.s-Expired,.ao-wrap .pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red)} .ao-wrap .pill.s-Expired .dot,.ao-wrap .pill.s-Revoked .dot{background:var(--red)}
 
   .ao-modal{position:fixed;inset:0;background:rgba(10,12,20,.78);z-index:9998;display:flex;align-items:center;justify-content:center;padding:24px}
   .ao-modal.ao-hide{display:none !important}
@@ -893,12 +903,28 @@
   // (icke-modal) instansen över den → affär-knappen pratar med fel block. Varje instans claimar egen root.
   if(AS_MODAL && MH){
     MH.classList.add("as-modal");
+    // ⚠️ FLYTTA HOSTEN TILL <body> REDAN VID INIT, inte först vid öppning.
+    // Ligger den kvar i Bubble-elementet ser Bubbles layoutmotor ett element med
+    // innehåll och reserverar höjd — blocket "syns" som en tom yta på sidan trots
+    // att .ao-mh är display:none. Flyttad hit blir Bubble-elementet tomt, och
+    // "Fit height to content" ger 0. Samma flytt som _mhOpen redan gjorde, bara
+    // tidigare; root (.ao-wrap) följer med så cfg/delegation är intakt — och
+    // config är redan inläst ovan, så ingenting tappas.
+    if(MH.parentNode !== document.body){ document.body.appendChild(MH); }
     window.miraOffertModal = { open:_mhOpen, close:_mhClose };
+    console.log("[offert] modal-läge aktivt — window.miraOffertModal registrerad");
     MH.addEventListener("click", function(e){ if(e.target===MH || (e.target.closest && e.target.closest('[data-ao="mh-close"]'))){ _mhClose(); } });
     document.addEventListener("keydown", function(e){ if(e.key==="Escape" && MH.classList.contains("on")){ _mhClose(); } });
   }
 
   // ── init ─────────────────────────────────────────────────────────
+  // ⚠️ Vanligaste driftsättningsfelet: as_modal satt i editorn men Bubble strippade
+  // `value` → blocket renderas inline och tar plats på sidan. Säg det i konsolen i
+  // st.f. att låta någon undra varför en tom yta dykt upp.
+  if(!AS_MODAL && MH){
+    console.log("[offert] INLINE-läge (as_modal ej satt). Skulle detta vara en modal: "+
+                "sätt data-mira=\"as_modal\" till 1 — och om Bubble strippar value, använd data-val=\"1\".");
+  }
   if(!HOST || !TOKEN){ $("save-hint").textContent="Saknar api_host/planning_token."; }
   $("mode-tag").textContent = INHERITED ? "" : "";
   $("sub").textContent = subText();

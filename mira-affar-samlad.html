@@ -1699,7 +1699,7 @@
   function offertModal(){
     return (typeof window !== "undefined" && window.miraOffertModal) ? window.miraOffertModal : null;
   }
-  function openOffert(pref){
+  function openOffert(pref, host){
     var M=offertModal();
     if(!M){
       // ⚠️ Vanligaste orsaken är INTE att blocket saknas, utan att Bubble inte
@@ -1713,10 +1713,13 @@
             "   Döljs det med Bubbles egen visibility (särskilt \"collapse when hidden\") renderas det inte, och då kan knappen inte nå det.");
       return;
     }
-    M.open(pref||{});
+    // ⚠️ Toggle som de andra skapa-panelerna: klick på en redan öppen panel stänger
+    // den. Utan det staplas beteendet olikt + Aktivitet/+ Todo och känns trasigt.
+    if(M.panel && host && M.isOpenIn && M.isOpenIn(host)){ M.close(); return; }
+    M.open(pref||{}, host);
   }
   // Från ett affärskort: ärv kund + affär så offerten hamnar rätt utan sökning.
-  function openOffertForDeal(did){
+  function openOffertForDeal(did, host){
     var j=chainCache[did]||null, e=(j&&j.edit)||{};
     // ⚠️ Ärv affärens kategori → offerten hamnar i rätt nummerserie (FE/HK/SP/OF)
     // utan att någon behöver välja. Affären kan bära flera kategorier (Kategori är
@@ -1724,21 +1727,34 @@
     // att gissa "rätt" bland flera vore värre än att låta människan välja.
     var kats=(e.kategori||[]);
     openOffert({ clientcompany:e.kundforetag_id||"", clientcompany_nm:e.kundforetag_name||((j&&j.deal&&j.deal.company)||""),
-                 deal:did, kategori:(kats.length===1?kats[0]:"") });
+                 deal:did, kategori:(kats.length===1?kats[0]:"") }, host);
   }
   function openCreate(kind){
     var host=$("createpanel"); var open=(host.getAttribute("data-open")===kind);
+    // ⚠️ Offert-panelen är en FLYTTAD NOD, inte genererad HTML — parkera den innan
+    // hosten töms, annars river innerHTML="" ut hela buildern ur DOM:en.
+    var M0=offertModal(); if(M0 && M0.park) M0.park();
     host.innerHTML=""; host.removeAttribute("data-open");
     if(open) return;
-    // Offert är ingen inline-panel utan en modal i ett eget block → öppna och
-    // lämna panelen stängd (annars står en tom ruta kvar under knappraden).
-    if(kind==="offert"){ openOffert({}); return; }
+    if(kind==="offert"){ openOffert({}, host); host.setAttribute("data-open","offert"); return; }
     host.innerHTML=(kind==="aktivitet"?aktCreatePanelHtml({}):(kind==="todo"?todoCreatePanelHtml({}):dealCreatePanelHtml({})));
     host.setAttribute("data-open",kind);
   }
   function openCardCreate(btn){
     var kind=btn.getAttribute("data-cnew"), did=btn.getAttribute("data-cdeal");
-    if(kind==="offert"){ openOffertForDeal(did); return; }
+    // ⚠️ Parkera offert-noden FÖRST — både när offert öppnas/stängs och när en
+    // annan panel öppnas i samma host, eftersom host.innerHTML="" nedan annars
+    // river ut buildern ur DOM:en.
+    var M0=offertModal(); if(M0 && M0.park) M0.park();
+    if(kind==="offert"){
+      var db=btn.closest(".deal"); var h=db?db.querySelector(".card-actions-panel"):null;
+      if(!h) return;
+      var wasOffert=(h.getAttribute("data-open")==="offert");
+      h.innerHTML=""; h.removeAttribute("data-open");
+      if(wasOffert) return;                       // toggle: stäng
+      openOffertForDeal(did, h); h.setAttribute("data-open","offert");
+      return;
+    }
     var j=chainCache[did], ccId="", ccNm="", dealNm="";
     if(j){ ccId=(j.edit&&j.edit.kundforetag_id)||""; ccNm=(j.edit&&j.edit.kundforetag_name)||(j.deal&&j.deal.company)||""; dealNm=(j.deal&&j.deal.titel)||""; }
     var dealBox=btn.closest(".deal"); if(!dealBox) return;
@@ -1909,5 +1925,960 @@
   if(!HOST||!TOKEN){ setHead(DOC_HEADS); $("rows").innerHTML=emptyRow("Saknar api_host/planning_token."); return; }
   loadUsers();
   loadFeed();
+})();
+</script>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     OFFERT-BUILDERN — INFLYTTAD 2026-08-24 (källa: mira-offert-admin.html)
+     ------------------------------------------------------------------
+     Låg förut som ett eget Bubble-element/popup och öppnades via
+     window.miraOffertModal. Varje sådan Bubble-koppling har kostat en
+     felsökningsrunda (value-strippning, collapse-when-hidden, reserverad
+     layouthöjd), så modulen bor nu HÄR. Christians beslut 2026-08-24.
+
+     ⚠️ DETTA ÄR NU DEN LEVANDE KOPIAN. `mira-offert-admin.html` i repot är
+     referens/historik — ändringar ska göras här, annars driftar de isär.
+
+     ⚠️ Kontraktet är oförändrat: instansen är as_modal och registrerar
+     window.miraOffertModal, som + Offert-knapparna ovan redan anropar.
+     ⚠️ All CSS är scopad under .ao-wrap (18 selektorblock scopades vid
+     flytten). .field/.btn/.pill är extremt generiska och läckte annars ut
+     på hela dashboard_crm — företagslistan, mötestratten och den här vyn
+     har alla element med de klasserna.
+     ══════════════════════════════════════════════════════════════════ -->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .ao-wrap, .ao-wrap *{box-sizing:border-box;margin:0;padding:0}
+  .ao-wrap{
+    --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e; --input:#2e3350;
+    --orange:#F47B30; --orange-dim:rgba(244,123,48,.13);
+    --white:#fff; --w70:rgba(255,255,255,.70); --w40:rgba(255,255,255,.40); --w10:rgba(255,255,255,.07);
+    --green:#4CAF7D; --red:#E05A5A; --blue:#5B8DEF;
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
+    background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;width:100%;border-radius:14px;padding:0 20px 30px;
+  }
+  .ao-wrap input[type=hidden]{display:none}
+  .ao-wrap button{font-family:var(--fb);cursor:pointer}
+  .ao-wrap a{color:var(--orange);text-decoration:none}
+
+  .ao-head{display:flex;align-items:center;justify-content:space-between;padding:22px 0 16px}
+  .ao-h1{font-family:'DM Serif Display',Georgia,serif;font-size:24px;line-height:1.1;letter-spacing:-.01em}
+  .ao-h1 span{color:var(--orange)}
+  .ao-sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
+
+  .ao-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:14px}
+  .ao-panel h2{font-family:'DM Serif Display',Georgia,serif;font-size:17px;margin-bottom:14px}
+
+  .ao-grid{display:grid;gap:12px 16px}
+  .ao-g2{grid-template-columns:1fr 1fr}
+  .ao-g3{grid-template-columns:1fr 1fr 1fr}
+  .ao-g4{grid-template-columns:1fr 1fr 1fr 1fr}
+  .ao-wrap .field label{display:block;font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .ao-wrap .field input,.ao-wrap .field select,.ao-wrap .field textarea{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb)}
+  .ao-wrap .field textarea{resize:vertical;min-height:60px}
+  .ao-wrap .field input:focus,.ao-wrap .field select:focus,.ao-wrap .field textarea:focus{outline:none;border-color:var(--orange)}
+  /* modal-host (open-hook för affär-blocket). Default = display:contents (ingen effekt, standalone-läge).
+     Vid data-mira="as_modal"=1 → JS lägger .as-modal → fixed overlay. Literal-färger (utanför .ao-wrap). */
+  .ao-hint{font-size:10.5px;opacity:.55;margin-top:4px;line-height:1.35}
+  /* PANEL-LÄGE (2026-08-24): offert-buildern är en expanderbar rad som + Aktivitet
+     och + Todo — ingen overlay, ingen body-flytt, inga z-index-trick. Overlay-
+     reglerna nedan ligger kvar för den fristående referensfilen men används inte här. */
+  .ao-mh.ao-pnl{display:none}
+  .ao-mh.ao-pnl.on{display:block;margin-top:10px}
+  .ao-mh.ao-pnl .ao-mh-panel{position:static;width:auto;max-width:none;margin:0;background:transparent;border-radius:0;box-shadow:none}
+  .ao-mh.ao-pnl .ao-mh-x{display:block;position:static;float:right;background:#2e3350;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;font-size:18px;line-height:1;padding:3px 12px;cursor:pointer;font-family:Arial,sans-serif;margin:0 0 6px 10px}
+  .ao-mh.ao-pnl .ao-mh-x:hover{border-color:#F47B30;color:#F47B30}
+  .ao-mh{display:contents}
+  .ao-mh.as-modal{display:none;position:fixed;inset:0;background:rgba(10,12,22,.8);z-index:2147483000;overflow-y:auto;padding:28px 14px;align-items:flex-start;justify-content:center}
+  .ao-mh.as-modal.on{display:flex}
+  .ao-mh.as-modal .ao-mh-panel{position:relative;width:100%;max-width:1120px;margin:auto;background:#1e2235;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  .ao-mh-x{display:none}
+  .ao-mh.as-modal .ao-mh-x{display:block;position:absolute;top:14px;right:16px;z-index:10;background:#2e3350;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;font-size:20px;line-height:1;padding:3px 12px;cursor:pointer;font-family:Arial,sans-serif}
+  .ao-mh.as-modal .ao-mh-x:hover{border-color:#F47B30;color:#F47B30}
+  .ao-wrap .field input::placeholder,.ao-wrap .field textarea::placeholder{color:var(--w40)}
+
+  /* kund-sök (standalone) */
+  .ao-search{position:relative}
+  .ao-results{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);background:var(--deep);
+    border:1px solid var(--border);border-radius:10px;max-height:260px;overflow:auto;box-shadow:0 12px 30px rgba(0,0,0,.4);display:none}
+  .ao-results.open{display:block}
+  .ao-res-item{padding:10px 13px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--w10)}
+  .ao-res-item:last-child{border-bottom:none}
+  .ao-res-item:hover,.ao-res-item.hi{background:var(--orange-dim);color:var(--orange)}
+  .ao-res-empty{padding:12px 13px;color:var(--w40);font-size:12px}
+
+  .ao-client-card{display:flex;align-items:center;justify-content:space-between;background:var(--deep);
+    border:1px solid var(--border);border-radius:10px;padding:12px 15px}
+  .ao-client-card .nm{font-weight:700}
+  .ao-client-card .meta{color:var(--w40);font-size:11px;margin-top:2px}
+  .ao-linkbtn{background:none;border:none;color:var(--orange);font-size:11px;font-weight:700}
+
+  /* rader */
+  .ao-row{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 15px;margin-bottom:10px}
+  .ao-row-top{display:grid;grid-template-columns:2.4fr .8fr .8fr 1fr .8fr .8fr;gap:10px;align-items:end}
+  .ao-row .field.rs{position:relative}
+  .ao-row textarea{width:100%;margin-top:10px;min-height:46px;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--white);padding:10px 12px;font-size:13px;font-family:var(--fb);resize:vertical}
+  .ao-row textarea:focus{outline:none;border-color:var(--orange)}
+  .ao-row textarea::placeholder{color:var(--w40)}
+  .ao-row-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+  .ao-row-sum{font-size:13px}
+  .ao-row-sum b{font-size:15px}
+  .ao-row-rm{background:none;border:1px solid var(--border);color:var(--w70);border-radius:8px;padding:6px 11px;font-size:11px}
+  .ao-row-rm:hover{border-color:var(--red);color:var(--red)}
+  .ao-addrow{width:100%;background:var(--input);border:1px dashed rgba(255,255,255,.18);color:var(--w70);
+    border-radius:10px;padding:11px;font-size:13px;font-weight:700}
+  .ao-addrow:hover{border-color:var(--orange);color:var(--orange)}
+
+  .ao-totals{margin-left:auto;width:300px;margin-top:8px}
+  .ao-totals .r{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}
+  .ao-totals .grand{border-top:1.5px solid var(--w10);margin-top:6px;padding-top:9px;font-weight:700;font-size:16px}
+
+  .ao-actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;padding-top:6px}
+  .ao-wrap .btn{border:none;border-radius:10px;padding:11px 18px;font-size:13px;font-weight:700}
+  .ao-wrap .btn-primary{background:var(--orange);color:#1c1206}
+  .ao-wrap .btn-primary:hover{filter:brightness(1.06)}
+  .ao-wrap .btn-ghost{background:var(--input);border:1px solid var(--border);color:var(--white)}
+  .ao-wrap .btn-ghost:hover{border-color:var(--orange);color:var(--orange)}
+  .ao-wrap .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .ao-seg{display:inline-flex;background:var(--input);border:1px solid var(--border);border-radius:9px;padding:3px}
+  .ao-seg-btn{background:none;border:none;color:var(--w70);padding:7px 18px;font-size:12px;font-weight:700;border-radius:7px}
+  .ao-seg-btn.on{background:var(--orange);color:#1c1206}
+  .ao-recip{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:20px;padding:6px 13px;font-size:12px;margin:0 7px 7px 0;cursor:pointer}
+  .ao-recip.on{background:var(--orange-dim);border-color:var(--orange);color:var(--orange)}
+  .ao-recip .chk{opacity:.5;margin-right:5px}
+  .ao-recip.on .chk{opacity:1}
+  .ao-drop{border:1px dashed rgba(255,255,255,.20);border-radius:10px;padding:28px;text-align:center;color:var(--w70);cursor:pointer;font-size:13px}
+  .ao-drop:hover,.ao-drop.drag{border-color:var(--orange);background:var(--orange-dim);color:var(--orange)}
+  .ao-drop.has{border-style:solid;border-color:var(--green);color:var(--green)}
+
+  /* lista */
+  .ao-list-item{display:grid;grid-template-columns:120px 1fr auto auto auto;gap:14px;align-items:center;
+    background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 15px;margin-bottom:8px;cursor:pointer}
+  .ao-list-item:hover{border-color:var(--orange)}
+  .ao-list-item .nr{font-family:Menlo,Consolas,monospace;font-size:12px;color:var(--orange)}
+  .ao-list-item .t{font-weight:700}
+  .ao-list-item .tot{font-variant-numeric:tabular-nums}
+  .ao-wrap .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700}
+  .ao-wrap .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--w40)}
+  .ao-wrap .pill.s-Draft{background:var(--w10);color:var(--w70)}
+  .ao-wrap .pill.s-Sent,.ao-wrap .pill.s-Viewed,.ao-wrap .pill.s-OTP_Sent{background:var(--orange-dim);color:var(--orange)}
+  .ao-wrap .pill.s-Sent .dot,.ao-wrap .pill.s-Viewed .dot,.ao-wrap .pill.s-OTP_Sent .dot{background:var(--orange)}
+  .ao-wrap .pill.s-Approved{background:rgba(76,175,125,.13);color:var(--green)} .ao-wrap .pill.s-Approved .dot{background:var(--green)}
+  .ao-wrap .pill.s-Expired,.ao-wrap .pill.s-Revoked{background:rgba(224,90,90,.13);color:var(--red)} .ao-wrap .pill.s-Expired .dot,.ao-wrap .pill.s-Revoked .dot{background:var(--red)}
+
+  .ao-modal{position:fixed;inset:0;background:rgba(10,12,20,.78);z-index:9998;display:flex;align-items:center;justify-content:center;padding:24px}
+  .ao-modal.ao-hide{display:none !important}
+  .ao-modal-inner{background:var(--panel);border:1px solid var(--border);border-radius:14px;width:min(920px,96vw);height:92vh;display:flex;flex-direction:column;overflow:hidden}
+  .ao-modal-bar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700}
+  .ao-modal-bar .r{display:flex;gap:16px;align-items:center;font-weight:400}
+  .ao-modal-close{background:var(--input);border:1px solid var(--border);color:var(--white);border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700}
+  .ao-modal-close:hover{border-color:var(--orange);color:var(--orange)}
+  .ao-modal iframe{flex:1;width:100%;border:none;background:#fff}
+  .ao-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--deep);
+    border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;z-index:9999;display:none;box-shadow:0 12px 30px rgba(0,0,0,.5)}
+  .ao-toast.ok{border-color:var(--green)} .ao-toast.err{border-color:var(--red)}
+  .ao-muted{color:var(--w40)}
+  .ao-hide{display:none !important}
+</style>
+<div class="ao-mh" data-ao-mh><div class="ao-mh-panel"><button class="ao-mh-x" data-ao="mh-close" title="Stäng">×</button>
+<div class="ao-wrap">
+  <input type="hidden" data-mira="api_host"        value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token"  value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="clientcompany"    value="">
+  <input type="hidden" data-mira="clientcompany_nm" value="">
+  <input type="hidden" data-mira="comission"        value="">
+  <input type="hidden" data-mira="deal"             value="">
+  <input type="hidden" data-mira="as_modal" value="" data-val="">
+  <input type="hidden" data-mira="panel_mode" value="1" data-val="1">
+
+  <div class="ao-head">
+    <div>
+      <div class="ao-h1">Offert <span data-ao="mode-tag"></span></div>
+      <div class="ao-sub" data-ao="sub">Food &amp; Event</div>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" data-ao="btn-list">Mina offerter</button>
+      <button class="btn btn-primary" data-ao="btn-new">+ Ny offert</button>
+    </div>
+  </div>
+
+  <!-- LISTA -->
+  <div data-ao="view-list" class="ao-hide">
+    <div class="ao-panel">
+      <h2>Offerter</h2>
+      <div data-ao="list-body"><div class="ao-muted">Laddar…</div></div>
+    </div>
+  </div>
+
+  <!-- FORM -->
+  <div data-ao="view-form">
+    <!-- Läge: strukturerad vs uppladdad -->
+    <div class="ao-panel" style="display:flex;align-items:center;gap:14px">
+      <span class="ao-muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Skapa som</span>
+      <div class="ao-seg">
+        <button class="ao-seg-btn on" data-ao="mode-btn" data-m="strukturerad" title="Bygg offerten av F&amp;E-artiklar">Offert Food &amp; Event</button>
+        <button class="ao-seg-btn" data-ao="mode-btn" data-m="uppladdad" title="Ladda upp ett färdigt dokument — fungerar för alla bolag">Offert Allmän</button>
+      </div>
+    </div>
+
+    <!-- Kund -->
+    <div class="ao-panel">
+      <h2>Kund</h2>
+      <!-- standalone: sök -->
+      <div data-ao="client-search" class="field ao-search ao-hide">
+        <label>Sök kundföretag</label>
+        <input type="text" data-ao="cc-input" placeholder="Skriv företagsnamn…" autocomplete="off">
+        <div class="ao-results" data-ao="cc-results"></div>
+      </div>
+      <!-- vald / ärvd kund -->
+      <div data-ao="client-card" class="ao-client-card ao-hide">
+        <div>
+          <div class="nm" data-ao="cc-name">—</div>
+          <div class="meta" data-ao="cc-meta"></div>
+        </div>
+        <button class="ao-linkbtn" data-ao="cc-change">Byt kund</button>
+      </div>
+
+      <!-- mottagare (kundens kontaktpersoner) -->
+      <div data-ao="recipients" class="ao-hide" style="margin-top:14px">
+        <div style="font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Mottagare (signerar offerten)</div>
+        <div data-ao="recip-list"></div>
+      </div>
+
+      <!-- skapa ny kund -->
+      <div data-ao="newclient-toggle" style="margin-top:10px">
+        <button class="ao-linkbtn" data-ao="btn-newclient">+ Skapa ny kund</button>
+      </div>
+      <div data-ao="newclient-form" class="ao-hide" style="margin-top:12px;border-top:1px solid var(--w10);padding-top:16px">
+        <div class="ao-seg" style="margin-bottom:14px">
+          <button class="ao-seg-btn on" data-ao="nc-type" data-val="Företag">Företag</button>
+          <button class="ao-seg-btn" data-ao="nc-type" data-val="Privat">Privat</button>
+        </div>
+        <div class="ao-grid ao-g2">
+          <div class="field"><label data-ao="nc-name-label">Företagsnamn</label><input type="text" data-ao="nc-namn" placeholder="Namn"></div>
+          <div class="field" data-ao="nc-org-wrap"><label>Organisationsnummer</label><input type="text" data-ao="nc-org" placeholder="556xxxxxxx"></div>
+          <div class="field"><label>Faktura-e-post</label><input type="email" data-ao="nc-faktura_email" placeholder="faktura@…"></div>
+          <div class="field"><label>Telefon</label><input type="text" data-ao="nc-telefon" placeholder="+46…"></div>
+          <div class="field" style="grid-column:1 / -1"><label>Fakturaadress</label><input type="text" data-ao="nc-adress" placeholder="Gata, postnr ort"></div>
+          <div class="field" style="grid-column:1 / -1"><label>Referens / PO-nummer</label><input type="text" data-ao="nc-referens" placeholder="Er referens"></div>
+        </div>
+        <div style="margin-top:14px;font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em">Beställare (blir kontaktperson)</div>
+        <div class="ao-grid ao-g3" style="margin-top:6px">
+          <div class="field"><label>Förnamn</label><input type="text" data-ao="nc-be-fornamn"></div>
+          <div class="field"><label>Efternamn</label><input type="text" data-ao="nc-be-efternamn"></div>
+          <div class="field"><label>E-post</label><input type="email" data-ao="nc-be-email"></div>
+        </div>
+        <div class="ao-actions" style="margin-top:14px">
+          <button class="btn btn-ghost" data-ao="btn-cancelclient">Avbryt</button>
+          <button class="btn btn-primary" data-ao="btn-createclient">Skapa kund</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Offertuppgifter -->
+    <div class="ao-panel">
+      <h2>Offertuppgifter</h2>
+      <div class="ao-grid ao-g4">
+        <div class="field"><label>Offertdatum</label><input type="date" data-ao="f-offertdatum"></div>
+        <div class="field"><label>Giltig t.o.m.</label><input type="date" data-ao="f-giltig_till"></div>
+        <div class="field"><label>Leveransdatum</label><input type="date" data-ao="f-leveransdatum"></div>
+        <div class="field"><label>Leveranstid</label><input type="text" data-ao="f-leveranstid" placeholder="t.ex. 12:00"></div>
+        <div class="field"><label>Betalningsvillkor</label><input type="text" data-ao="f-betalningsvillkor" placeholder="10 dagar"></div>
+        <div class="field"><label>Momstyp</label><input type="text" data-ao="f-momstyp" placeholder="SEVAT"></div>
+        <div class="field"><label>Valuta</label><input type="text" data-ao="f-valuta" value="SEK"></div>
+        <div class="field"><label>Titel (internt)</label><input type="text" data-ao="f-titel" placeholder="t.ex. Sommarfest Acme"></div>
+        <div class="field"><label>Bolag / kategori</label><select data-ao="f-kategori">
+          <option value="Food &amp; Event">Food &amp; Event</option>
+          <option value="Housekeeping">Housekeeping</option>
+          <option value="Service &amp; People">Service &amp; People</option>
+          <option value="Other facility services">Other facility services</option>
+        </select><div class="ao-hint" data-ao="kat-hint"></div></div>
+      </div>
+      <div class="ao-grid" style="margin-top:12px">
+        <div class="field"><label>Leveransadress</label><input type="text" data-ao="f-leveransadress" placeholder="Gata, postnr ort"></div>
+      </div>
+      <div class="ao-grid" style="margin-top:12px">
+        <div class="field"><label>Inledande beskrivning (visas överst i offerten)</label><textarea data-ao="f-beskrivning" placeholder="Valfri introtext…"></textarea></div>
+      </div>
+    </div>
+
+    <!-- Rader (strukturerat läge) -->
+    <div class="ao-panel" data-ao="rows-panel">
+      <h2>Rader</h2>
+      <div data-ao="rows"></div>
+      <button class="ao-addrow" data-ao="add-row">+ Lägg till rad</button>
+
+      <div class="ao-totals">
+        <div class="r"><span class="ao-muted">Summa (ex. moms)</span><span data-ao="t-summa">0,00 SEK</span></div>
+        <div class="r"><span class="ao-muted">Moms</span><span data-ao="t-moms">0,00 SEK</span></div>
+        <div class="r grand"><span>Att betala</span><span data-ao="t-total">0,00 SEK</span></div>
+      </div>
+    </div>
+
+    <!-- Dokument (uppladdat läge) -->
+    <div class="ao-panel ao-hide" data-ao="upload-panel">
+      <h2>Dokument</h2>
+      <div class="ao-drop" data-ao="drop">Dra hit en PDF eller klicka för att välja<div class="ao-muted" style="font-size:11px;margin-top:4px">PDF eller bild · max 15 MB</div></div>
+      <input type="file" data-ao="file" accept="application/pdf,image/*" style="display:none">
+      <div data-ao="file-name" class="ao-muted" style="margin-top:10px"></div>
+    </div>
+
+    <!-- Villkor -->
+    <div class="ao-panel">
+      <h2>Villkor</h2>
+      <div class="field"><textarea data-ao="f-villkor_text" placeholder="Fri villkorstext som visas i offertens fot…"></textarea></div>
+    </div>
+
+    <div class="ao-actions">
+      <span class="ao-muted" data-ao="save-hint"></span>
+      <button class="btn btn-ghost" data-ao="btn-preview" disabled>Förhandsgranska PDF</button>
+      <button class="btn btn-ghost" data-ao="btn-signing" disabled>Skicka för signering</button>
+      <button class="btn btn-primary" data-ao="btn-save">Spara offert</button>
+    </div>
+  </div>
+
+  <div class="ao-modal ao-hide" data-ao="pdf-modal">
+    <div class="ao-modal-inner">
+      <div class="ao-modal-bar">
+        <span>Förhandsgranskning</span>
+        <div class="r">
+          <a class="ao-linkbtn" data-ao="pdf-link" href="#" target="_blank" rel="noopener">Öppna i ny flik ↗</a>
+          <button class="ao-modal-close" data-ao="pdf-close">Stäng ✕</button>
+        </div>
+      </div>
+      <iframe data-ao="pdf-frame" src="about:blank" title="Offert-PDF"></iframe>
+    </div>
+  </div>
+
+  <div class="ao-toast" data-ao="toast"></div>
+</div>
+</div></div>
+<script>
+(function(){
+  "use strict";
+
+  // ── claima en oclaimad .ao-wrap (multi-instance-säkert) ──────────
+  var all = document.querySelectorAll(".ao-wrap");
+  var root = null;
+  for (var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-ao-claimed")){ root=all[i]; break; } }
+  if(!root) return;
+  root.setAttribute("data-ao-claimed","1");
+
+  // ── scopade helpers (allt mot BROOT — gotcha 11) ─────────────────
+  var $  = function(k){ return root.querySelector('[data-ao="'+k+'"]'); };
+  var $$ = function(k){ return root.querySelectorAll('[data-ao="'+k+'"]'); };
+  // ⚠️ BUBBLE STRIPPAR `value` PÅ HIDDEN INPUTS (observerat 2026-08-05 i
+  // mira-abonnemang-deal.html: ALLA data-mira-inputs fick value==="" i DOM, även
+  // hårdkodade literaler — `data-*`-attributen överlevde, `value` gjorde det inte).
+  // Det biter inte i alla kontexter, men när det gör det får blocket tomt api_host
+  // och token → 401 mot Render, utan att någon förstår varför.
+  // Därför: bär värdet i `data-val` som reserv och bootstrappa tillbaka till .value
+  // INNAN någon config läses. Sätt antingen value="…" ELLER data-val="…" i Bubble.
+  (function(){
+    var ins=root.querySelectorAll("[data-mira][data-val]");
+    for(var k=0;k<ins.length;k++){ if(!ins[k].value){ ins[k].value = ins[k].getAttribute("data-val") || ""; } }
+  })();
+  var cfg= function(k){
+    var el=root.querySelector('[data-mira="'+k+'"]');
+    if(!el) return "";
+    return el.value || el.getAttribute("data-val") || "";
+  };
+
+  var HOST  = cfg("api_host").replace(/\/+$/,"");
+  var TOKEN = cfg("planning_token");
+  var PREF_KAT = "";              // kategori ärvd från affären (sätts av modal-open)
+  var CC_ID = cfg("clientcompany");
+  var CC_NM = cfg("clientcompany_nm");
+  var COMISSION = cfg("comission");
+  var DEAL  = cfg("deal");
+  var AS_MODAL = cfg("as_modal") === "1";
+  var PANEL_MODE = cfg("panel_mode") === "1";   // expanderbar rad i st.f. overlay   // affär-blocket öppnar via window.miraOffertModal
+  var INHERITED = !!CC_ID;   // förvald kund via deal/CC-popup
+
+  // ── state ────────────────────────────────────────────────────────
+  var state = {
+    offertId: null,
+    client: { id: CC_ID || null, name: CC_NM || null, org: null, address: null },
+    rows: [],
+    recipient: [],          // valda Coworker-ids (mottagare/beställare)
+    recipCache: [],         // kundens coworkers (för picker)
+    newClientType: "Företag",
+    kind: "strukturerad",   // strukturerad | uppladdad
+    uploadDoc: null         // {id, name} för uppladdat läge
+  };
+
+  // ── util ─────────────────────────────────────────────────────────
+  function num(v){ if(v==null||v==="") return 0; var n=(typeof v==="number")?v:parseFloat(String(v).replace(",",".")); return isFinite(n)?n:0; }
+  function round2(n){ return Math.round((num(n))*100)/100; }
+  function money(n){ return round2(n).toLocaleString("sv-SE",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function headers(json){ var h={"x-admin-token":TOKEN}; if(json) h["Content-Type"]="application/json"; return h; }
+  function toast(msg, kind){ var t=$("toast"); t.textContent=msg; t.className="ao-toast "+(kind||"")+" "; t.style.display="block"; setTimeout(function(){ t.style.display="none"; }, 3200); }
+  function isoDate(v){ if(!v) return ""; return String(v).slice(0,10); }
+  function debounce(fn,ms){ var t; return function(){ var a=arguments,c=this; clearTimeout(t); t=setTimeout(function(){ fn.apply(c,a); },ms); }; }
+
+  // ── rad-beräkning ────────────────────────────────────────────────
+  function rowSum(r){ return round2(num(r.antal)*num(r.apris)*(1-num(r.rabatt)/100)); }
+  function totals(){
+    var s=0,m=0;
+    state.rows.forEach(function(r){ var rs=rowSum(r); s+=rs; m+=rs*(num(r.moms)/100); });
+    return { summa:round2(s), moms:round2(m), total:round2(s+m) };
+  }
+  function paintTotals(){
+    var t=totals();
+    $("t-summa").textContent = money(t.summa)+" SEK";
+    $("t-moms").textContent  = money(t.moms)+" SEK";
+    $("t-total").textContent = money(t.total)+" SEK";
+  }
+
+  // ── rader: render ────────────────────────────────────────────────
+  function rowHtml(r, idx){
+    return ''+
+    '<div class="ao-row" data-ridx="'+idx+'">'+
+      '<div class="ao-row-top">'+
+        '<div class="field rs"><label>Artikel / benämning</label>'+
+          '<input type="text" data-rf="benamning" value="'+esc(r.benamning)+'" placeholder="Sök artikel eller skriv fritt…" autocomplete="off">'+
+          '<div class="ao-results" data-rf="ac"></div></div>'+
+        '<div class="field"><label>Antal</label><input type="number" step="any" data-rf="antal" value="'+esc(r.antal)+'"></div>'+
+        '<div class="field"><label>Enhet</label><input type="text" data-rf="enhet" value="'+esc(r.enhet)+'"></div>'+
+        '<div class="field"><label>À-pris</label><input type="number" step="any" data-rf="apris" value="'+esc(r.apris)+'"></div>'+
+        '<div class="field"><label>Rabatt %</label><input type="number" step="any" data-rf="rabatt" value="'+esc(r.rabatt)+'"></div>'+
+        '<div class="field"><label>Moms %</label><input type="number" step="any" data-rf="moms" value="'+esc(r.moms)+'"></div>'+
+      '</div>'+
+      '<textarea data-rf="beskrivning_long" placeholder="Fri beskrivning (obegränsad, flera rader)…">'+esc(r.beskrivning_long)+'</textarea>'+
+      '<div class="ao-row-foot">'+
+        '<div class="ao-row-sum">Radsumma: <b data-rf="sum">'+money(rowSum(r))+'</b> SEK <span class="ao-muted" data-rf="art"></span></div>'+
+        '<button class="ao-row-rm" data-rf="rm">Ta bort</button>'+
+      '</div>'+
+    '</div>';
+  }
+  function renderRows(){
+    var host=$("rows");
+    host.innerHTML = state.rows.map(rowHtml).join("");
+    // sätt artikelnr-etikett
+    state.rows.forEach(function(r,idx){
+      if(r.artikelnr){ var lbl=host.querySelector('.ao-row[data-ridx="'+idx+'"] [data-rf="art"]'); if(lbl) lbl.textContent="· art "+r.artikelnr; }
+    });
+    paintTotals();
+  }
+  function addRow(){ state.rows.push({product:null,artikelnr:"",benamning:"",beskrivning_long:"",antal:1,enhet:"",apris:0,rabatt:0,moms:12}); renderRows(); }
+
+  // ── artikel-autocomplete (per rad, delegerat) ────────────────────
+  var acReq = 0;
+  var doArticleSearch = debounce(function(input, idx, q){
+    var box = input.parentNode.querySelector('[data-rf="ac"]');
+    if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
+    var my = ++acReq;
+    fetch(HOST+"/admin/offert/products?q="+encodeURIComponent(q), {headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(my!==acReq) return;
+        var res = (j && j.results) || [];
+        if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga artiklar</div>'; return; }
+        box.innerHTML = res.map(function(p){
+          return '<div class="ao-res-item" data-pid="'+esc(p.id)+'">'+
+            '<div>'+esc(p.titel)+'</div>'+
+            '<div class="ao-muted" style="font-size:11px">art '+esc(p.artikelnr)+' · '+money(p.apris)+' kr/'+esc(p.enhet||"st")+' · moms '+esc(p.moms)+'%</div></div>';
+        }).join("");
+        box.className="ao-results open";
+        // spara resultat på boxen för pick
+        box._res = res;
+      })
+      .catch(function(){});
+  }, 220);
+
+  function pickArticle(idx, pid, box){
+    var p=null, res=(box && box._res)||[];
+    for(var i=0;i<res.length;i++){ if(String(res[i].id)===String(pid)){ p=res[i]; break; } }
+    if(!p) return;
+    var r=state.rows[idx];
+    r.product=p.id; r.artikelnr=p.artikelnr; r.benamning=p.titel;
+    if(!r.enhet) r.enhet=p.enhet||""; if(!num(r.apris)) r.apris=num(p.apris); r.moms=num(p.moms)||r.moms;
+    // populera fri beskrivning från artikelns Beskrivning — bara om raden är tom (skriv ej över)
+    if(!String(r.beskrivning_long||"").trim() && p.beskrivning){ r.beskrivning_long=p.beskrivning; }
+    renderRows();
+  }
+
+  // ── kund-sök (standalone) ────────────────────────────────────────
+  // snabb kund-sök: hämta ALLA företag EN gång, cacha, filtrera client-side (som övriga block)
+  var companiesCache=null, companiesPromise=null;
+  function loadCompanies(){
+    if(companiesPromise) return companiesPromise;
+    companiesPromise = fetch(HOST+"/admin/planning/companies",{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ companiesCache=(j&&j.results)||[]; return companiesCache; })
+      .catch(function(){ companiesPromise=null; return []; });
+    return companiesPromise;
+  }
+  function doCcSearch(q){
+    var box=$("cc-results");
+    loadCompanies().then(function(list){
+      if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
+      var ql=q.toLowerCase();
+      var res=list.filter(function(c){ return String(c.name||"").toLowerCase().indexOf(ql)>=0; }).slice(0,40);
+      if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga företag</div>'; return; }
+      box.innerHTML=res.map(function(c){ return '<div class="ao-res-item" data-ccid="'+esc(c.id)+'" data-ccnm="'+esc(c.name)+'">'+esc(c.name)+'</div>'; }).join("");
+      box.className="ao-results open";
+    });
+  }
+
+  function selectClient(id, name){
+    state.client={ id:id, name:name, org:null, address:null };
+    state.recipient=[];
+    $("cc-results").className="ao-results";
+    paintClient();
+    loadRecipients(id);
+    // hämta org + adress
+    fetch(HOST+"/admin/clientcompany/"+encodeURIComponent(id)+"/details", {headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.ok && j.details){ state.client.org=j.details.org_nr||null; state.client.address=j.details.address||null; if(j.details.name){ state.client.name=j.details.name; } paintClient(); }
+      }).catch(function(){});
+  }
+  function paintClient(){
+    var hasClient=!!state.client.id;
+    $("client-card").className = "ao-client-card "+(hasClient?"":"ao-hide");
+    $("client-search").className = "field ao-search "+((hasClient||INHERITED)?"ao-hide":"");
+    // "+ Skapa ny kund" bara i standalone utan vald kund
+    $("newclient-toggle").className = (hasClient||INHERITED) ? "ao-hide" : "";
+    if(hasClient){ $("newclient-form").className = "ao-hide"; }
+    if(!hasClient){ $("recipients").className="ao-hide"; }
+    if(hasClient){
+      $("cc-name").textContent = state.client.name||"(namnlöst)";
+      var meta=[]; if(state.client.org) meta.push("Org.nr "+state.client.org); if(state.client.address) meta.push(state.client.address);
+      $("cc-meta").textContent = meta.join(" · ");
+      // ärvd kund kan inte bytas
+      $("cc-change").style.display = INHERITED ? "none" : "";
+    }
+  }
+
+  // ── mottagare (kundens Coworkers) ────────────────────────────────
+  function renderRecipients(items){
+    var host=$("recip-list");
+    if(!items || !items.length){
+      host.innerHTML='<div class="ao-muted" style="font-size:12px">Inga kontaktpersoner på kunden — lägg till en via "Skapa ny kund" (annars går signering ej).</div>';
+    } else {
+      host.innerHTML=items.map(function(c){
+        var on=state.recipient.indexOf(c.id)>=0;
+        return '<span class="ao-recip'+(on?' on':'')+'" data-recip="'+esc(c.id)+'"><span class="chk">'+(on?'✓':'○')+'</span>'+esc(c.name)+' · '+esc(c.email)+'</span>';
+      }).join("");
+    }
+    $("recipients").className = state.client.id ? "" : "ao-hide";
+  }
+  function loadRecipients(ccId){
+    state.recipCache=[];
+    if(!ccId){ renderRecipients([]); return; }
+    fetch(HOST+"/admin/offert/coworkers?clientcompany="+encodeURIComponent(ccId),{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ state.recipCache=(j&&j.items)||[]; renderRecipients(state.recipCache); })
+      .catch(function(){ renderRecipients([]); });
+  }
+
+  // ── skapa ny kund (företag/privat) + beställare ──────────────────
+  function openNewClient(){ $("newclient-form").className=""; $("newclient-toggle").className="ao-hide"; setNcType(state.newClientType); }
+  function closeNewClient(){ $("newclient-form").className="ao-hide"; if(!state.client.id && !INHERITED){ $("newclient-toggle").className=""; } }
+  function setNcType(t){
+    state.newClientType=t;
+    root.querySelectorAll('[data-ao="nc-type"]').forEach(function(b){ b.className="ao-seg-btn"+(b.getAttribute("data-val")===t?" on":""); });
+    $("nc-org-wrap").className = "field "+(t==="Privat"?"ao-hide":"");
+    $("nc-name-label").textContent = (t==="Privat") ? "Namn" : "Företagsnamn";
+  }
+  function createClient(){
+    var namn=$("nc-namn").value.trim();
+    if(!namn){ toast("Ange namn","err"); return; }
+    var payload={
+      customer_type: state.newClientType, namn: namn,
+      org_nr: $("nc-org").value.trim(), faktura_email: $("nc-faktura_email").value.trim(),
+      adress: $("nc-adress").value.trim(), telefon: $("nc-telefon").value.trim(),
+      faktura_referens: $("nc-referens").value.trim(),
+      bestallare: { fornamn:$("nc-be-fornamn").value.trim(), efternamn:$("nc-be-efternamn").value.trim(), email:$("nc-be-email").value.trim() }
+    };
+    $("btn-createclient").disabled=true;
+    fetch(HOST+"/admin/offert/client/create",{method:"POST",headers:headers(true),body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-createclient").disabled=false;
+        if(!j || !j.ok){ toast("Kunde inte skapa kund: "+((j&&j.error)||"fel"),"err"); return; }
+        state.client={ id:j.clientcompany_id, name:namn, org:j.org_nr||null, address:j.address||null };
+        state.recipient = j.coworker_id ? [j.coworker_id] : [];
+        ["nc-namn","nc-org","nc-faktura_email","nc-telefon","nc-adress","nc-referens","nc-be-fornamn","nc-be-efternamn","nc-be-email"].forEach(function(k){ $(k).value=""; });
+        $("newclient-form").className="ao-hide";
+        paintClient();
+        loadRecipients(j.clientcompany_id);
+        companiesPromise=null;  // ny kund → invalidera cache så den dyker upp i sök
+        toast("Kund skapad"+(j.coworker_id?" + beställare":""),"ok");
+      })
+      .catch(function(){ $("btn-createclient").disabled=false; toast("Nätverksfel","err"); });
+  }
+
+  // ── läge: Food & Event (strukturerad) vs Allmän (uppladdad) ──────
+  // ⚠️ NAMNEN SPEGLAR RÄCKVIDDEN, inte tekniken (omdöpt 2026-08-24):
+  //   • "Offert Food & Event" bygger raderna av F&E-ARTIKLAR — artikelsöket
+  //     filtrerar hårt på FE_CONNECTION_ID, så den fungerar bara för F&E.
+  //   • "Offert Allmän" laddar upp ett färdigt dokument och frågar bara efter
+  //     kund + offertuppgifter. Ingen artikelkoppling → fungerar för alla bolag.
+  // ⚠️ KVARSTÅENDE F&E-ARV: båda lägena går genom /admin/offert/create, som
+  // alltid sätter `source = mira_fe` och nummerserien `FE-{år}-{löpnr}`. En
+  // allmän offert får alltså fortfarande ett FE-nummer. Se handoff §4.8.
+  function subText(){
+    var omr = (state.kind==="uppladdad") ? "Allmän · alla bolag" : "Food & Event";
+    return (INHERITED && CC_NM) ? (omr+" · "+CC_NM) : omr;
+  }
+  function setMode(kind){
+    state.kind=kind;
+    root.querySelectorAll('[data-ao="mode-btn"]').forEach(function(b){ b.className="ao-seg-btn"+(b.getAttribute("data-m")===kind?" on":""); });
+    $("rows-panel").className="ao-panel"+(kind==="uppladdad"?" ao-hide":"");
+    $("upload-panel").className="ao-panel"+(kind==="strukturerad"?" ao-hide":"");
+    $("sub").textContent = subText();
+    // ⚠️ Kategorin är LÅST till Food & Event i strukturerat läge: artikelsöket
+    // filtrerar på FE_CONNECTION_ID, så raderna KAN bara vara F&E-artiklar. Att
+    // låta användaren välja "Housekeeping" där hade gett en HK-märkt offert byggd
+    // av F&E-artiklar — värre än att inte kunna välja.
+    var katLocked = (kind === "strukturerad");
+    var kEl = $("f-kategori");
+    if(kEl){
+      if(katLocked){ kEl.value="Food & Event"; }
+      kEl.disabled = katLocked;
+      kEl.style.opacity = katLocked ? "0.55" : "";
+    }
+    var kh = $("kat-hint");
+    if(kh) kh.textContent = katLocked
+      ? "Låst — raderna byggs av Food & Event-artiklar."
+      : "Styr offertnumrets serie (FE/HK/SP/OF).";
+  }
+  function uploadFile(file){
+    if(!file) return;
+    $("file-name").textContent="Laddar upp "+file.name+"…";
+    var fd=new FormData(); fd.append("file",file); fd.append("titel",file.name);
+    fetch(HOST+"/admin/dokument/upload",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.ok && j.doc_id){ state.uploadDoc={id:j.doc_id,name:file.name}; $("drop").className="ao-drop has"; $("file-name").textContent="✓ "+file.name+" uppladdad"; }
+        else { $("file-name").textContent="Kunde inte ladda upp: "+((j&&j.error)||"fel"); }
+      })
+      .catch(function(){ $("file-name").textContent="Nätverksfel vid uppladdning."; });
+  }
+
+  // ── läs formuläret → payload ─────────────────────────────────────
+  function readForm(){
+    // synka rad-inputs till state (görs löpande via input-events, men säkra här)
+    return {
+      titel: $("f-titel").value.trim(),
+      kundforetag: state.client.id || null,
+      comission: COMISSION || null,
+      deal: DEAL || null,
+      offertdatum: $("f-offertdatum").value || null,
+      giltig_till: $("f-giltig_till").value || null,
+      leveransdatum: $("f-leveransdatum").value || null,
+      leveranstid: $("f-leveranstid").value.trim(),
+      leveransadress: $("f-leveransadress").value.trim() || null,
+      betalningsvillkor: $("f-betalningsvillkor").value.trim(),
+      momstyp: $("f-momstyp").value.trim(),
+      // Styr nummerserie (FE/HK/SP/OF) + PDF-rubrik. Servern validerar mot
+      // Category-option-setets fyra kanoniska värden.
+      kategori: $("f-kategori").value,
+      valuta: $("f-valuta").value.trim() || "SEK",
+      recipient: state.recipient.length ? state.recipient : null,
+      beskrivning: $("f-beskrivning").value,
+      villkor_text: $("f-villkor_text").value,
+      rows: state.rows.map(function(r,i){ return {
+        radnr:i+1, product:r.product||null, artikelnr:r.artikelnr, benamning:r.benamning,
+        beskrivning_long:r.beskrivning_long, antal:num(r.antal), enhet:r.enhet,
+        apris:num(r.apris), rabatt:num(r.rabatt), moms:num(r.moms)
+      }; })
+    };
+  }
+
+  function save(){
+    if(!state.client.id){ toast("Välj en kund först","err"); return; }
+    if(state.kind==="uppladdad"){ if(!state.offertId && !state.uploadDoc){ toast("Ladda upp ett dokument först","err"); return; } }
+    else { if(!state.rows.length){ toast("Lägg till minst en rad","err"); return; } }
+    var payload=readForm();
+    payload.kind=state.kind;
+    if(state.kind==="uppladdad"){ payload.rows=[]; if(state.uploadDoc){ payload.dokument_ids=[state.uploadDoc.id]; } }
+    var url = state.offertId ? (HOST+"/admin/offert/"+encodeURIComponent(state.offertId)) : (HOST+"/admin/offert/create");
+    var method = state.offertId ? "PATCH" : "POST";
+    $("btn-save").disabled=true; $("save-hint").textContent="Sparar…";
+    fetch(url,{method:method,headers:headers(true),body:JSON.stringify(payload)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-save").disabled=false; $("save-hint").textContent="";
+        if(!j || !j.ok){ toast("Kunde inte spara: "+((j&&j.error)||"okänt fel"),"err"); return; }
+        if(!state.offertId){ state.offertId = j.offert_id; }
+        $("btn-preview").disabled=false; $("btn-signing").disabled=false;
+        toast("Sparad · "+(j.offertnr||"")+" · "+money((j.totals&&j.totals.total)||totals().total)+" SEK","ok");
+      })
+      .catch(function(e){ $("btn-save").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
+  }
+
+  function preview(){
+    if(!state.offertId){ toast("Spara offerten först","err"); return; }
+    $("btn-preview").disabled=true; $("save-hint").textContent="Renderar PDF…";
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/render-pdf",{method:"POST",headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-preview").disabled=false; $("btn-signing").disabled=false; $("save-hint").textContent="";
+        if(j && j.ok && j.file_url){ openPdf(j.file_url); }
+        else { toast("Kunde inte rendera PDF","err"); }
+      })
+      .catch(function(){ $("btn-preview").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
+  }
+
+  // ── PDF-förhandsvisning (inbäddad iframe — window.open blockeras i Bubbles sandbox) ──
+  function openPdf(url){ $("pdf-frame").src=url; $("pdf-link").href=url; $("pdf-modal").className="ao-modal"; }
+  function closePdf(){ $("pdf-modal").className="ao-modal ao-hide"; $("pdf-frame").src="about:blank"; }
+
+  // ── skicka för signering (befintliga OfferApproval-flödet) ──────
+  function sendForSigning(){
+    if(!state.offertId){ toast("Spara offerten först","err"); return; }
+    $("btn-signing").disabled=true; $("save-hint").textContent="Skickar för signering…";
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(state.offertId)+"/send-for-signing",{method:"POST",headers:headers(true),body:JSON.stringify({ recipient_ids: state.recipient })})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        $("btn-signing").disabled=false; $("save-hint").textContent="";
+        if(!j || !j.ok){
+          if(j && j.error==="recipients_required"){ toast("Ingen mottagare — skapa kunden med en beställare (Skapa kund)","err"); }
+          else { toast("Kunde inte skicka: "+((j&&j.error)||"fel"),"err"); }
+          return;
+        }
+        toast("Skickad för signering till "+(j.recipients||0)+" mottagare","ok");
+      })
+      .catch(function(){ $("btn-signing").disabled=false; $("save-hint").textContent=""; toast("Nätverksfel","err"); });
+  }
+
+  // ── lista ────────────────────────────────────────────────────────
+  function showView(which){
+    $("view-list").className = which==="list" ? "" : "ao-hide";
+    $("view-form").className = which==="form" ? "" : "ao-hide";
+  }
+  function loadList(){
+    showView("list");
+    var body=$("list-body"); body.innerHTML='<div class="ao-muted">Laddar…</div>';
+    fetch(HOST+"/admin/offert/list",{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var res=(j && j.results)||[];
+        if(!res.length){ body.innerHTML='<div class="ao-muted">Inga offerter än.</div>'; return; }
+        body.innerHTML = res.map(function(o){
+          var st=esc(o.status||"Draft");
+          return '<div class="ao-list-item" data-oid="'+esc(o.id)+'">'+
+            '<span class="nr">'+esc(o.offertnr||"—")+'</span>'+
+            '<span class="t">'+esc(o.titel||"(namnlös)")+'</span>'+
+            '<span class="pill s-'+st+'"><span class="dot"></span>'+st+'</span>'+
+            '<span class="ao-muted">'+esc(isoDate(o.leveransdatum)||"")+'</span>'+
+            '<span class="tot">'+money(o.total)+' '+esc(o.valuta||"SEK")+'</span></div>';
+        }).join("");
+      }).catch(function(){ body.innerHTML='<div class="ao-muted">Kunde inte ladda.</div>'; });
+  }
+
+  function loadOffert(id){
+    fetch(HOST+"/admin/offert/"+encodeURIComponent(id),{headers:headers(false)})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(!j || !j.ok){ toast("Kunde inte öppna offert","err"); return; }
+        var o=j.offert;
+        state.offertId=id;
+        state.client={ id:o.kundforetag||null, name:null, org:null, address:null };
+        if(o.kundforetag){ selectClient(o.kundforetag, o.titel||"Kund"); } // hämtar namn/org/adress + coworkers
+        state.recipient = Array.isArray(o.recipient) ? o.recipient.slice() : [];  // förvälj sparade mottagare
+        state.rows=(j.rows||[]).map(function(r){ return {product:r.product||null,artikelnr:r.artikelnr||"",benamning:r.benamning||"",beskrivning_long:r.beskrivning_long||"",antal:num(r.antal),enhet:r.enhet||"",apris:num(r.apris),rabatt:num(r.rabatt),moms:num(r.moms)}; });
+        $("f-titel").value=o.titel||""; $("f-offertdatum").value=isoDate(o.offertdatum);
+        $("f-giltig_till").value=isoDate(o.giltig_till); $("f-leveransdatum").value=isoDate(o.leveransdatum);
+        $("f-leveranstid").value=o.leveranstid||""; $("f-betalningsvillkor").value=o.betalningsvillkor||"";
+        $("f-momstyp").value=o.momstyp||""; $("f-valuta").value=o.valuta||"SEK";
+        $("f-kategori").value=o.kategori||"Food & Event";
+        $("f-beskrivning").value=o.beskrivning||""; $("f-villkor_text").value=o.villkor_text||"";
+        $("f-leveransadress").value=(o.leveransadress && (o.leveransadress.address||o.leveransadress))||"";
+        state.kind=o.kind||"strukturerad"; state.uploadDoc=null; setMode(state.kind);
+        $("file").value=""; $("file-name").textContent=(state.kind==="uppladdad")?"Dokument bifogat (ladda upp nytt för att ersätta)":""; $("drop").className="ao-drop";
+        renderRows(); paintClient(); $("btn-preview").disabled=false;
+        showView("form");
+      }).catch(function(){ toast("Nätverksfel","err"); });
+  }
+
+  function newOffert(){
+    state.offertId=null;
+    state.client={ id:CC_ID||null, name:CC_NM||null, org:null, address:null };
+    state.rows=[];
+    state.recipient=[];
+    state.recipCache=[];
+    state.newClientType="Företag";
+    state.uploadDoc=null;
+    // ⚠️ Är affären INTE Food & Event kan raderna inte byggas av F&E-artiklar →
+    // starta i Allmän-läget direkt. Annars möts man av ett artikelsök som aldrig
+    // hittar något, utan att förstå varför.
+    var startKind = (PREF_KAT && PREF_KAT !== "Food & Event") ? "uppladdad" : "strukturerad";
+    state.kind=startKind;
+    setMode(startKind);
+    if(PREF_KAT && startKind==="uppladdad"){ $("f-kategori").value=PREF_KAT; }
+    $("file").value=""; $("file-name").textContent=""; $("drop").className="ao-drop";
+    $("newclient-form").className="ao-hide";
+    $("recipients").className="ao-hide";
+    ["f-titel","f-leveranstid","f-betalningsvillkor","f-momstyp","f-leveransadress","f-beskrivning","f-villkor_text"].forEach(function(k){ $(k).value=""; });
+    ["f-offertdatum","f-giltig_till","f-leveransdatum"].forEach(function(k){ $(k).value=""; });
+    $("f-valuta").value="SEK";
+    // default offertdatum = idag, giltig_till = +30d
+    var today=new Date(); $("f-offertdatum").value=today.toISOString().slice(0,10);
+    var g=new Date(today.getTime()+30*86400000); $("f-giltig_till").value=g.toISOString().slice(0,10);
+    $("btn-preview").disabled=true; $("btn-signing").disabled=true;
+    addRow();
+    if(INHERITED && CC_ID){ selectClient(CC_ID, CC_NM||"Kund"); } else { paintClient(); }
+    showView("form");
+  }
+
+  // ── event-delegation (all DOM scopad till root) ──────────────────
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    // toolbar
+    if(t.closest('[data-ao="btn-list"]')){ loadList(); return; }
+    if(t.closest('[data-ao="btn-new"]')){ newOffert(); return; }
+    // lista → öppna
+    var li=t.closest(".ao-list-item"); if(li){ loadOffert(li.getAttribute("data-oid")); return; }
+    // rad ta bort
+    if(t.getAttribute && t.getAttribute("data-rf")==="rm"){ var rw=t.closest(".ao-row"); if(rw){ state.rows.splice(+rw.getAttribute("data-ridx"),1); renderRows(); } return; }
+    if(t.closest('[data-ao="add-row"]')){ addRow(); return; }
+    // artikel-pick
+    var ac=t.closest(".ao-res-item[data-pid]");
+    if(ac){ var rw2=t.closest(".ao-row"); var box=t.closest('[data-rf="ac"]'); if(rw2&&box){ pickArticle(+rw2.getAttribute("data-ridx"), ac.getAttribute("data-pid"), box); } return; }
+    // kund-pick
+    var cc=t.closest(".ao-res-item[data-ccid]");
+    if(cc){ selectClient(cc.getAttribute("data-ccid"), cc.getAttribute("data-ccnm")); return; }
+    // byt kund
+    if(t.closest('[data-ao="cc-change"]')){ state.client={id:null,name:null,org:null,address:null}; state.recipient=[]; paintClient(); $("cc-input").value=""; $("cc-input").focus(); return; }
+    // skapa ny kund
+    if(t.closest('[data-ao="btn-newclient"]')){ openNewClient(); return; }
+    if(t.closest('[data-ao="btn-cancelclient"]')){ closeNewClient(); return; }
+    if(t.closest('[data-ao="btn-createclient"]')){ createClient(); return; }
+    var seg=t.closest('[data-ao="nc-type"]'); if(seg){ setNcType(seg.getAttribute("data-val")); return; }
+    // läge (strukturerad/uppladdad) + dropzone
+    var mb=t.closest('[data-ao="mode-btn"]'); if(mb){ setMode(mb.getAttribute("data-m")); return; }
+    if(t.closest('[data-ao="drop"]')){ $("file").click(); return; }
+    // mottagar-chip toggle
+    var rc=t.closest('[data-recip]');
+    if(rc){ var cid=rc.getAttribute("data-recip"); var ri=state.recipient.indexOf(cid); if(ri>=0){ state.recipient.splice(ri,1); } else { state.recipient.push(cid); } renderRecipients(state.recipCache); return; }
+    // actions
+    if(t.closest('[data-ao="btn-save"]')){ save(); return; }
+    if(t.closest('[data-ao="btn-preview"]')){ preview(); return; }
+    if(t.closest('[data-ao="btn-signing"]')){ sendForSigning(); return; }
+    // pdf-modal stäng (knapp eller klick på mörk bakgrund)
+    if(t.closest('[data-ao="pdf-close"]')){ closePdf(); return; }
+    if(t.getAttribute && t.getAttribute("data-ao")==="pdf-modal"){ closePdf(); return; }
+  });
+
+  // input-events (rad-fält + sökningar) via delegation
+  root.addEventListener("input", function(e){
+    var t=e.target, rf=t.getAttribute && t.getAttribute("data-rf");
+    if(rf){
+      var rw=t.closest(".ao-row"); if(!rw) return; var idx=+rw.getAttribute("data-ridx"); var r=state.rows[idx]; if(!r) return;
+      if(rf==="benamning"){ r.benamning=t.value; doArticleSearch(t, idx, t.value.trim()); }
+      else if(rf==="beskrivning_long"){ r.beskrivning_long=t.value; }
+      else if(rf==="antal"||rf==="apris"||rf==="rabatt"||rf==="moms"){ r[rf]=t.value; var s=rw.querySelector('[data-rf="sum"]'); if(s) s.textContent=money(rowSum(r)); paintTotals(); }
+      else if(rf==="enhet"){ r.enhet=t.value; }
+      return;
+    }
+    if(t.getAttribute && t.getAttribute("data-ao")==="cc-input"){ doCcSearch(t.value.trim()); return; }
+  });
+  // filuppladdning (change-event på file-input)
+  (function(){ var fe=$("file"); if(fe){ fe.addEventListener("change", function(e){ uploadFile(e.target.files && e.target.files[0]); }); } })();
+
+  // stäng dropdowns vid klick utanför
+  document.addEventListener("click", function(e){
+    if(!root.contains(e.target)) return;
+    if(!e.target.closest(".ao-search") && !e.target.closest(".field.rs")){
+      var r1=$("cc-results"); if(r1) r1.className="ao-results";
+      root.querySelectorAll('[data-rf="ac"]').forEach(function(b){ b.className="ao-results"; });
+    }
+  });
+
+  // ── modal-host (open-hook för affär-blocket) ─────────────────────
+  // Återanvänder EN instans över olika affärer: open() uppdaterar config-vars +
+  // kör newOffert() (som läser CC_ID/CC_NM/INHERITED vid anrop) → färskt formulär.
+  // save() läser DEAL/COMISSION som modul-vars → uppdateras här. Unik global-namn
+  // (window.miraOffertModal) → ingen krock med .af/.ad. Parent-lift som avtal-wizarden.
+  var MH = root.closest ? root.closest(".ao-mh") : null;
+  // ⚠️ Panelen är en FLYTTAD NOD, inte genererad HTML. Anroparen måste kunna
+  // parkera den innan den tömmer sin host — annars river host.innerHTML="" ut
+  // hela buildern ur DOM:en och den går inte att öppna igen.
+  var HOME = MH ? MH.parentNode : null;
+  function _mhPark(){ if(MH){ MH.classList.remove("on"); if(HOME && MH.parentNode!==HOME) HOME.appendChild(MH); } }
+  function _raiseAnc(el){ el._raised=[]; var a=el.parentElement; while(a && a!==document.body && a!==document.documentElement){ var cs=getComputedStyle(a); if(cs.position!=="static"){ el._raised.push([a, a.style.zIndex]); a.style.zIndex="2147483000"; } a=a.parentElement; } }
+  function _restoreAnc(el){ if(!el || !el._raised) return; for(var i=0;i<el._raised.length;i++){ el._raised[i][0].style.zIndex=el._raised[i][1]; } el._raised=null; }
+  function _mhClose(){
+    if(MH){ MH.classList.remove("on"); if(!PANEL_MODE) _restoreAnc(MH); }
+    if(!PANEL_MODE) document.body.style.overflow="";
+  }
+  // ⚠️ PANEL-LÄGE (2026-08-24, Christians beslut): buildern är en EXPANDERBAR RAD
+  // som + Aktivitet / + Todo — inte en overlay. Det tar bort hela klassen av
+  // problem vi jagat: body-flytt, z-index-lyft, scroll-lås och Bubbles
+  // layoutreservation. `host` = elementet panelen ska rendera i.
+  // Utan host i panel-läge har vi inget att öppna I — säg det i st.f. att tyst
+  // hamna någonstans oväntat.
+  function _mhOpen(pref, host){
+    pref=pref||{};
+    CC_ID=pref.clientcompany||""; CC_NM=pref.clientcompany_nm||""; DEAL=pref.deal||""; COMISSION=pref.comission||"";
+    PREF_KAT=pref.kategori||"";
+    INHERITED=!!CC_ID;
+    $("sub").textContent = subText();
+    if(!INHERITED){ loadCompanies(); }
+    newOffert();
+    if(!MH) return;
+    if(PANEL_MODE){
+      if(!host){ console.warn("[offert] panel-läge kräver en host att öppna i"); return; }
+      if(MH.parentNode !== host) host.appendChild(MH);
+      MH.classList.add("on");
+      // Rulla in panelen i vy — den kan hamna långt ned i en expanderad affärsrad.
+      if(MH.scrollIntoView) MH.scrollIntoView({ behavior:"smooth", block:"nearest" });
+      return;
+    }
+    // Overlay-läget (fristående referensfil): flytta till body, lyft z-index.
+    if(MH.parentNode !== document.body){ document.body.appendChild(MH); }
+    MH.classList.add("on"); document.body.style.overflow="hidden";
+  }
+  // Är panelen redan öppen i den här hosten? Används för toggle-beteendet.
+  function _mhOpenIn(host){ return !!(MH && MH.classList.contains("on") && host && MH.parentNode === host); }
+  // MULTI-INSTANS: Bubble lägger ALLA offert-embeddings (affär, kundkort, deal-popup) i DOM:en
+  // samtidigt → flera .ao-wrap. BARA as_modal-instansen registrerar globalen, annars skriver sista
+  // (icke-modal) instansen över den → affär-knappen pratar med fel block. Varje instans claimar egen root.
+  if(PANEL_MODE && MH){
+    // Panel-läge: dold tills någon öppnar den i en host. Ingen overlay, ingen
+    // body-flytt vid init — hosten är tom tills dess.
+    MH.classList.add("ao-pnl");
+    window.miraOffertModal = { open:_mhOpen, close:_mhClose, isOpenIn:_mhOpenIn, park:_mhPark, panel:true };
+    MH.addEventListener("click", function(e){ if(e.target.closest && e.target.closest('[data-ao="mh-close"]')){ _mhClose(); } });
+    console.log("[offert] panel-läge aktivt — window.miraOffertModal registrerad");
+  } else if(AS_MODAL && MH){
+    MH.classList.add("as-modal");
+    // ⚠️ FLYTTA HOSTEN TILL <body> REDAN VID INIT, inte först vid öppning.
+    // Ligger den kvar i Bubble-elementet ser Bubbles layoutmotor ett element med
+    // innehåll och reserverar höjd — blocket "syns" som en tom yta på sidan trots
+    // att .ao-mh är display:none. Flyttad hit blir Bubble-elementet tomt, och
+    // "Fit height to content" ger 0. Samma flytt som _mhOpen redan gjorde, bara
+    // tidigare; root (.ao-wrap) följer med så cfg/delegation är intakt — och
+    // config är redan inläst ovan, så ingenting tappas.
+    if(MH.parentNode !== document.body){ document.body.appendChild(MH); }
+    window.miraOffertModal = { open:_mhOpen, close:_mhClose };
+    console.log("[offert] modal-läge aktivt — window.miraOffertModal registrerad");
+    MH.addEventListener("click", function(e){ if(e.target===MH || (e.target.closest && e.target.closest('[data-ao="mh-close"]'))){ _mhClose(); } });
+    document.addEventListener("keydown", function(e){ if(e.key==="Escape" && MH.classList.contains("on")){ _mhClose(); } });
+  }
+
+  // ── init ─────────────────────────────────────────────────────────
+  // ⚠️ Vanligaste driftsättningsfelet: as_modal satt i editorn men Bubble strippade
+  // `value` → blocket renderas inline och tar plats på sidan. Säg det i konsolen i
+  // st.f. att låta någon undra varför en tom yta dykt upp.
+  if(!AS_MODAL && !PANEL_MODE && MH){
+    console.log("[offert] FRITT INLINE-läge (varken panel_mode eller as_modal satt).");
+  }
+  if(!HOST || !TOKEN){ $("save-hint").textContent="Saknar api_host/planning_token."; }
+  $("mode-tag").textContent = INHERITED ? "" : "";
+  $("sub").textContent = subText();
+  // Som modal: init sker vid open() (start dold). Standalone: init direkt som förr.
+  if(!AS_MODAL && !PANEL_MODE){
+    if(!INHERITED){ loadCompanies(); }   // förhämta företagslistan (snabb client-side-sök sen)
+    newOffert();  // starta i tomt formulär (list nås via knappen)
+  }
 })();
 </script>

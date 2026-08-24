@@ -150,7 +150,10 @@ const run = async () => {
   ok("kategoribyte: okänt värde → 400 även på patch", patBad.code === 400 && patBad.body.error === "okand_kategori");
 
   // ── FRONTEND ─────────────────────────────────────────────────────────────
-  const aoRaw = readFileSync(new URL("./mira-offert-admin.html", import.meta.url), "utf8");
+  // ⚠️ DEN LEVANDE KOPIAN ligger i mira-affar-samlad.html sedan inflyttningen
+  // 2026-08-24. Testar man den gamla fristående filen testar man något som inte
+  // driftas — samma klass av fel som en fixtur mot ett påhittat schema.
+  const aoRaw = readFileSync(new URL("./mira-affar-samlad.html", import.meta.url), "utf8");
   const ao = aoRaw.split("\n").filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).join("\n");
   ok("frontend: lägena heter efter räckvidd",
      />Offert Food &amp; Event</.test(ao) && />Offert Allmän</.test(ao) && !/>Strukturerad offert</.test(ao));
@@ -162,14 +165,70 @@ const run = async () => {
   ok("frontend: underrubriken följer läget", /function subText\(\)/.test(ao) && /Allmän/.test(ao));
   // ⚠️ Bubble kan strippa `value` på hidden inputs (bet oss i mira-abonnemang-deal
   // 2026-08-05). Utan reserven får blocket tomt api_host/token → 401 utan förklaring.
+  // (Overlay-lägets body-flytt är kvar för referensfilen men används inte i
+  // panel-läget — se panel-testerna nedan.)
+  ok("frontend: säger i konsolen vilket läge blocket kör i",
+     /panel-läge aktivt/.test(ao) && /FRITT INLINE-läge/.test(ao));
   ok("frontend: cfg klarar att Bubble strippar value (data-val som reserv)",
      /\[data-mira\]\[data-val\]/.test(ao) &&
      /el\.value \|\| el\.getAttribute\("data-val"\)/.test(ao));
+
+  // ── INFLYTTNINGEN (2026-08-24) ────────────────────────────────────────────
+  // ⚠️ All CSS måste vara scopad under .ao-wrap. `.field`/`.btn`/`.pill` är extremt
+  // generiska och ligger nu på SAMMA sida som företagslistan (4 st `class="field"`),
+  // mötestratten (3 st `class="btn"`) och affärsvyn själv (2 st `class="pill"`).
+  // Oscopad CSS läcker ut på hela dashboard_crm — precis som Avtal-porten 2026-08-17.
+  // ⚠️ Bara den INFLYTTADE delen granskas — affärsvyns egen CSS har egna oscopade
+  // selektorer sedan tidigare (`.funnel`, `.fstep`, `.bar`…). De är ett eget spår;
+  // den här vakten ska inte tysta ned dem genom att blanda ihop dem med porten.
+  const _cut = aoRaw.indexOf("OFFERT-BUILDERN — INFLYTTAD");
+  const aoStyle = _cut < 0 ? "" : (aoRaw.slice(_cut).match(/<style>[\s\S]*?<\/style>/g) || []).join(" ");
+  // ⚠️ Strippa CSS-kommentarer först — annars läses kommentartext som selektorer
+  // och vakten larmar på sin egen dokumentation.
+  const aoCss = aoStyle.replace(/\/\*[\s\S]*?\*\//g, " ");
+  const oscopade = [];
+  for (const m of aoCss.matchAll(/[;{}>]\s*([^{};@\n][^{};]*?)\s*\{/g)) {
+    for (const sel of m[1].split(",").map((x) => x.trim())) {
+      if (!sel || sel.indexOf("/*") > -1 || sel.indexOf(":") === 0) continue;
+      // .af-/.ao-/.as- är blockens egna namnrymder; allt annat måste vara scopat.
+      if (/^\.(af|ao|as)[-.\s]/.test(sel)) continue;
+      if (sel.indexOf(".ao-wrap ") === 0 || sel.indexOf(".af ") === 0) continue;
+      oscopade.push(sel);
+    }
+  }
+  if (oscopade.length) console.log("     oscopade selektorer:", oscopade.slice(0, 10));
+  ok("inflyttning: ingen oscopad CSS (skulle annars läcka på hela dashboard_crm)",
+     oscopade.length === 0);
+  ok("inflyttning: offert-buildern bor i affärsvyn",
+     /OFFERT-BUILDERN — INFLYTTAD/.test(aoRaw));
+  // ⚠️ PANEL-LÄGE, inte overlay (Christians beslut 2026-08-24). Overlay-varianten
+  // krävde body-flytt, z-index-lyft och scroll-lås — hela klassen av problem vi
+  // jagat. Panelen är en expanderbar rad som + Aktivitet / + Todo.
+  ok("panel-läge: satt i markup och as_modal avstängt",
+     /data-mira="panel_mode" value="1" data-val="1"/.test(aoRaw) &&
+     /data-mira="as_modal" value="" data-val=""/.test(aoRaw));
+  ok("panel-läge: ingen body-flytt, inget scroll-lås, inget z-index-lyft",
+     /if\(PANEL_MODE\)\{[\s\S]{0,400}?host\.appendChild\(MH\)/.test(aoRaw) &&
+     /if\(!PANEL_MODE\) document\.body\.style\.overflow=""/.test(aoRaw) &&
+     /if\(!PANEL_MODE\) _restoreAnc\(MH\)/.test(aoRaw));
+  // ⚠️ Panelen är en FLYTTAD NOD. Anroparen måste parkera den innan host.innerHTML=""
+  // — annars rivs hela buildern ur DOM:en och går inte att öppna igen.
+  ok("panel-läge: park() finns och anropas före varje host-tömning",
+     /park:_mhPark/.test(aoRaw) &&
+     (aoRaw.match(/if\(M0 && M0\.park\) M0\.park\(\);/g) || []).length === 2);
+  ok("panel-läge: toggle stänger en redan öppen panel",
+     /M\.isOpenIn\(host\)\)\{ M\.close\(\); return; \}/.test(aoRaw) &&
+     /wasOffert=\(h\.getAttribute\("data-open"\)==="offert"\)/.test(aoRaw));
+  ok("panel-läge: utan host säger den ifrån i st.f. att hamna någonstans oväntat",
+     /panel-läge kräver en host att öppna i/.test(aoRaw));
+  // ⚠️ Kontraktet ska vara oförändrat: knapparna anropar samma globala API.
+  ok("inflyttning: + Offert-knapparna anropar samma API som förut",
+     /window\.miraOffertModal/.test(aoRaw) && /data-new="offert"/.test(aoRaw) && /data-cnew="offert"/.test(aoRaw));
   // ⚠️ En icke-F&E-affär ska INTE mötas av ett artikelsök som aldrig hittar något.
   ok("frontend: icke-F&E-affär startar direkt i Allmän-läget",
      /PREF_KAT && PREF_KAT !== "Food & Event"\) \? "uppladdad" : "strukturerad"/.test(ao) &&
      /\$\("f-kategori"\)\.value=PREF_KAT/.test(ao));
-  const af = readFileSync(new URL("./mira-affar-samlad.html", import.meta.url), "utf8");
+  const af = aoRaw;
   // ⚠️ Flera kategorier på affären → gissa inte, låt människan välja.
   ok("affärsvyn: ärver kategorin bara när den är ENTYDIG",
      /kats\.length===1\?kats\[0\]:""/.test(af));

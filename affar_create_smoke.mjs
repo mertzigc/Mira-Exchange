@@ -401,8 +401,17 @@ const run = async () => {
   // (`window.miraOffertModal.open`). Ingen inflyttning, ingen dubblering.
   ok("frontend: + Offert finns både generellt och i affärskortet",
      /data-new="offert"/.test(af) && /data-cnew="offert"/.test(af));
-  ok("frontend: öppnar via det befintliga modal-API:t, ingen inbäddad kopia",
-     /window\.miraOffertModal/.test(af) && !/ao-wrap/.test(af));
+  // ⚠️ ARKITEKTURBYTE 2026-08-24: offert-buildern är INFLYTTAD hit (Christians
+  // beslut — varje Bubble-koppling har kostat en felsökningsrunda). Kontraktet är
+  // dock oförändrat: knapparna anropar samma window.miraOffertModal, som nu
+  // tillhandahålls av instansen längst ned i samma fil.
+  ok("frontend: buildern bor i affärsvyn men kontraktet är oförändrat",
+     /window\.miraOffertModal/.test(af) && /ao-wrap/.test(af) &&
+     /OFFERT-BUILDERN — INFLYTTAD/.test(af));
+  // ⚠️ Bara EN instans får finnas i filen — två skulle claima varsin root och den
+  // sista (icke-modal) skriva över globalen.
+  ok("frontend: exakt en offert-instans i blocket",
+     (af.match(/<div class="ao-mh"/g) || []).length === 1);
   // ⚠️ Per-affär-knappen måste ÄRVA kund + affär, annars måste man söka fram
   // kunden igen i offertbyggaren fast vi redan vet vilken den är.
   ok("frontend: kortets knapp ärver kundföretag och affär",
@@ -414,8 +423,10 @@ const run = async () => {
   ok("frontend: saknat offertblock rapporteras med trolig orsak, inte bara 'saknas'",
      /Offertbyggaren är inte tillgänglig/.test(af) && /as_modal/.test(af) &&
      /collapse when hidden/.test(af));
-  ok("frontend: offert öppnar modal utan att lämna en tom inline-panel",
-     /if\(kind==="offert"\)\{ openOffert\(\{\}\); return; \}/.test(af));
+  // ⚠️ Offert är numera en expanderbar panel som + Aktivitet/+ Todo (2026-08-24),
+  // inte en overlay. Den öppnas I createpanel-hosten.
+  ok("frontend: offert öppnar som panel i createpanel-hosten",
+     /if\(kind==="offert"\)\{ openOffert\(\{\}, host\); host\.setAttribute\("data-open","offert"\); return; \}/.test(af));
 
   // ── Offertblockets två lägen (omdöpta 2026-08-24) ─────────────────────────
   // Namnen ska spegla RÄCKVIDDEN, inte tekniken: "Strukturerad offert" byggde av
