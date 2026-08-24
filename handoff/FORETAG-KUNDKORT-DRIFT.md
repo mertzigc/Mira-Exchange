@@ -533,6 +533,46 @@ fältlogik ska inte underhållas på två ställen. Efter skapande **öppnas kor
 `mira-affar-samlad.html` · **lägg `mira-offert-admin.html` på affärsvy-sidan med
 `as_modal=1`** · ta bort den native genvägsgruppen när båda är verifierade.
 
+### Tre buggar rättade 2026-08-24 (efter offert-porten)
+
+**1. Offertblocket i affärsvyn 401:ade på allt — såg ut som "Inga företag".**
+Den inflyttade kopian bar **sin egen** `planning_token`-input med repo-filens
+placeholder. Två inputs med samma `data-mira` i samma DOM → offertkoden läste sin
+(placeholder), inte värdblockets riktiga.
+- **Fix:** de dubblerade `api_host`/`planning_token`-inputsen är BORTA ur den
+  inflyttade kopian, och `cfg` faller tillbaka på `document`-nivå → **en bindning,
+  en plats**. Vaktat av test som räknar att det finns exakt EN token-bindning.
+- **⚠️ `.catch(() => [])` i `loadCompanies` gjorde 401 till en tom lista** — alltså
+  ett SVAR i st.f. ett fel, och användaren fick "Inga företag" på en söksträng som
+  matchar 5 000 rader. Felet bärs nu vidare: *"Kunde inte hämta företagslistan:
+  401 — fel eller saknad token"*. **Samma förbjudna mönster som arbetsreglerna
+  varnar för — det överlevde inflyttningen för att jag kopierade blocket rakt av.**
+
+**2. "Per månad" i avtalsrubriken visade 0 kr.**
+Summeringen filtrerade på `contract_type === 'Subscription'` och uteslöt därmed
+**HYBRID**-avtal, som per definition har en fast månadsdel. Sambla: rubriken sa
+`0 kr`, raden under sa `124 560 kr/mån`, och kortets KPI sa `124 560 kr` — **tre tal,
+samma vy.**
+- **Fix:** inget typfilter. Summera månadskostnaden för allt **aktivt**, exakt som
+  backend redan gör (`companies_api`: `if (isActive) mrr += månadskostnad`).
+  RateCard har normalt 0 och faller bort av sig själv. Vaktat av test som kräver att
+  frontend och backend har samma regel.
+- **⚠️ KVAR (eget beslut, ej rättat):** "Aktiva **2 st**" i rubriken mot "Aktiva avtal
+  **3**" på kortet. Frontend räknar `status ∈ {aktiv, utgar_snart}`, backend räknar
+  "har inget passerat slutdatum". Sambla har ett avtal med status **OKÄND** som
+  backend räknar som aktivt och frontend inte. Vilken definition som är rätt är en
+  verksamhetsfråga — därför orörd.
+
+**3. Mötestrattens "nästa steg" saknade fas.**
+Ett Kundmöte utan fas hamnar i **Övrigt** i tratten — och tratten är hela poängen med
+vyn. Fas-väljare tillagd, visas bara för Kundmöte (som i övriga formulär), **krävs**
+för Kundmöte och skickas med till `aktivitet/create`.
+- **⚠️ Samma lucka finns i kundkortets och affärsvyns nästa steg-formulär** — de
+  skapar också Kundmöten utan fas. Ej rättat (Christian scopade till mötestratten).
+
+**Verifierat:** companies_smoke **330/330**, salj_smoke **79/79**, alla 21 sviter
+gröna, mutationstestat (4 + 3 faller mot `6ebde34`).
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.

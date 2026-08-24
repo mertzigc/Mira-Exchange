@@ -193,6 +193,18 @@ const run = async () => {
      mb.indexOf('t.closest("[data-ns]")') > -1 &&
      mb.indexOf('t.closest("[data-ns]")') < mb.indexOf('t.closest(\'[data-mb="savemote"]\')'));
   ok("frontend: saknat Bubble-fält rapporteras", /aktivitet_nasta_steg saknas i Bubble/.test(mb));
+  // ⚠️ FAS på nästa steg-aktiviteten (2026-08-24). Ett Kundmöte utan fas hamnar i
+  // "Övrigt" i tratten — och tratten är hela poängen med vyn.
+  ok("nästa steg: fas-väljare finns och krävs för Kundmöte",
+     /data-nf="a_fas"/.test(mb) && /välj fas/.test(mb) &&
+     /typ==="Kundmöte" && !g\("a_fas"\)/.test(mb) &&
+     /hamnar det i Övrigt i tratten/.test(mb));
+  ok("nästa steg: fas visas bara för Kundmöte och följer typbytet",
+     /function nsFasToggle\(wrap\)/.test(mb) &&
+     /t\.value==="Kundmöte"\) \? "" : "none"/.test(mb) &&
+     /data-nf"\)==="a_typ"/.test(mb));
+  ok("nästa steg: fasen skickas med till aktivitets-skapandet",
+     /fas:follow\.fas\|\|""/.test(mb));
   // ⚠️ Uppföljaren skapas här också (rättat efter Christians påpekande 2026-08-21):
   // activitet_crm har `company` — kunden behöver inte gissas. `nMote` bär nu
   // `company_id`, och uppföljaren ärver både företag och affär från mötesraden.

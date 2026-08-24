@@ -265,6 +265,8 @@
     var btns="";
     for(var i=0;i<NS_STEG.length;i++) btns+='<button type="button" class="mb-nsbtn" data-ns="'+esc(NS_STEG[i][0])+'">'+esc(NS_STEG[i][1])+'</button>';
     var tOpts=""; for(var j=0;j<NS_TYPER.length;j++) tOpts+='<option value="'+esc(NS_TYPER[j])+'"'+(j===0?" selected":"")+'>'+esc(NS_TYPER[j])+'</option>';
+    var fOpts='<option value="">— välj fas —</option>';
+    for(var f=0;f<FASER.length;f++) fOpts+='<option value="'+esc(FASER[f])+'">'+esc(FASER[f])+'</option>';
     var kOpts='<option value="">— kategori —</option>'; for(var k=0;k<NS_KATS.length;k++) kOpts+='<option value="'+esc(NS_KATS[k])+'">'+esc(NS_KATS[k])+'</option>';
     // ⚠️ Uppföljaren knyts till mötets EGET företag (och affär om den finns) — id:na
     // ligger på raden (`company_id`/`deal_id` ur nMote). Ingen gissning.
@@ -276,6 +278,10 @@
         '<div class="mb-nsform" data-nsform="aktivitet" style="display:none">'+
           '<div><label>Typ</label><select data-nf="a_typ">'+tOpts+'</select></div>'+
           '<div><label>Datum *</label><input type="date" data-nf="a_datum"></div>'+
+          // ⚠️ Fas krävs för Kundmöte: utan den hamnar det nybokade mötet i
+          // "Övrigt" i tratten i st.f. i rätt fas — och tratten är hela poängen
+          // med den här vyn. Visas bara för Kundmöte, som i övriga formulär.
+          '<div class="mb-nsfas"><label>Fas *</label><select data-nf="a_fas">'+fOpts+'</select></div>'+
           '<div class="full"><label>Beskrivning</label><textarea data-nf="a_besk" rows="2" placeholder="Vad ska göras?"></textarea></div>'+
         '</div>'+
         '<div class="mb-nsform" data-nsform="todo" style="display:none">'+
@@ -288,6 +294,12 @@
         '<span class="mb-nsmsg" data-nsctx style="display:none">'+ctx+'</span>'+
       '</div></div>';
   }
+  // Fas är bara relevant för Kundmöte — samma villkorlighet som i övriga formulär.
+  function nsFasToggle(wrap){
+    var t=wrap.querySelector('[data-nf="a_typ"]'), box=wrap.querySelector(".mb-nsfas");
+    if(!box) return;
+    box.style.display = (t && t.value==="Kundmöte") ? "" : "none";
+  }
   function nsSelect(wrap, val){
     var bs=wrap.querySelectorAll(".mb-nsbtn");
     for(var i=0;i<bs.length;i++){ if(bs[i].getAttribute("data-ns")===val) bs[i].classList.add("on"); else bs[i].classList.remove("on"); }
@@ -295,6 +307,7 @@
     for(var j=0;j<fs.length;j++) fs[j].style.display=(fs[j].getAttribute("data-nsform")===val)?"grid":"none";
     var m=wrap.querySelector("[data-nsmsg]"); if(m){ m.className="mb-nsmsg"; m.textContent=""; }
     var c=wrap.querySelector("[data-nsctx]"); if(c) c.style.display=(val==="avslutat")?"none":"block";
+    if(val==="aktivitet") nsFasToggle(wrap);
   }
   function nsPick(card){
     var wrap=card.querySelector("[data-nswrap]");
@@ -305,7 +318,11 @@
     var g=function(k){ var e=wrap.querySelector('[data-nf="'+k+'"]'); return e?String(e.value||"").trim():""; };
     if(v==="aktivitet"){
       if(!g("a_datum")) return { error:"Ange datum för den nya aktiviteten." };
-      return { steg:v, follow:{ kind:"aktivitet", activity_type:g("a_typ")||"Kundmöte", motesdatum:g("a_datum"), beskrivning:g("a_besk") } };
+      var typ=g("a_typ")||"Kundmöte";
+      // ⚠️ Kundmöte utan fas hamnar i "Övrigt" i tratten — kräv den.
+      if(typ==="Kundmöte" && !g("a_fas")) return { error:"Välj fas för kundmötet — annars hamnar det i Övrigt i tratten." };
+      return { steg:v, follow:{ kind:"aktivitet", activity_type:typ, motesdatum:g("a_datum"),
+                                fas:(typ==="Kundmöte"?g("a_fas"):""), beskrivning:g("a_besk") } };
     }
     if(v==="todo"){
       if(!g("t_titel")) return { error:"Ange en titel för att-göra-punkten." };
@@ -324,7 +341,7 @@
     if(!follow) return Promise.resolve({ ok:true });
     if(follow.kind==="aktivitet"){
       return apiPost("/admin/affar/aktivitet/create", { activity_type:follow.activity_type,
-        beskrivning:follow.beskrivning, motesdatum:follow.motesdatum, genomfort:false,
+        beskrivning:follow.beskrivning, motesdatum:follow.motesdatum, fas:follow.fas||"", genomfort:false,
         company_id:companyId||"", deal_id:dealId||"", by_user:ME });
     }
     return apiPost("/admin/affar/todo/create", { titel:follow.titel, starttid:follow.starttid, sluttid:follow.sluttid,
@@ -544,6 +561,9 @@
     if(t.getAttribute("data-mb")==="person"){ STATE.person=t.value; loadMoten(); return; }
     if(t.getAttribute("data-mb")==="from"){ STATE.from=t.value; loadMoten(); return; }
     if(t.getAttribute("data-mb")==="to"){ STATE.to=t.value; loadMoten(); return; }
+    if(t.getAttribute && t.getAttribute("data-nf")==="a_typ"){
+      var w=t.closest("[data-nswrap]"); if(w) nsFasToggle(w); return;
+    }
     if(t.getAttribute("data-mb")==="cfrom"){ STATE.cfrom=t.value; loadMoten(); return; }
     if(t.getAttribute("data-mb")==="cto"){ STATE.cto=t.value; loadMoten(); return; }
   });

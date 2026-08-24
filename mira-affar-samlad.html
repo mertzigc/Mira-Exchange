@@ -2085,8 +2085,10 @@
 </style>
 <div class="ao-mh" data-ao-mh><div class="ao-mh-panel"><button class="ao-mh-x" data-ao="mh-close" title="Stäng">×</button>
 <div class="ao-wrap">
-  <input type="hidden" data-mira="api_host"        value="https://mira-exchange.onrender.com">
-  <input type="hidden" data-mira="planning_token"  value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <!-- ⚠️ INGA egna api_host/planning_token här. Den inflyttade kopian ärver
+       värdblockets bindningar (se cfg-fallbacken). Två inputs med samma
+       data-mira i samma DOM betydde att offertkoden läste SIN placeholder-token
+       → 401 på allt, och sökfältet svarade "Inga företag". En bindning, en plats. -->
   <input type="hidden" data-mira="clientcompany"    value="">
   <input type="hidden" data-mira="clientcompany_nm" value="">
   <input type="hidden" data-mira="comission"        value="">
@@ -2283,8 +2285,13 @@
   })();
   var cfg= function(k){
     var el=root.querySelector('[data-mira="'+k+'"]');
-    if(!el) return "";
-    return el.value || el.getAttribute("data-val") || "";
+    var v = el ? (el.value || el.getAttribute("data-val") || "") : "";
+    if(v) return v;
+    // ⚠️ Inflyttad kopia: api_host/planning_token bor i VÄRDBLOCKETS bindningar —
+    // en enda plats att underhålla. Utan fallbacken bär kopian sin egen
+    // placeholder och 401:ar på allt (bet oss 2026-08-24: "Inga företag").
+    var g=document.querySelector('[data-mira="'+k+'"]');
+    return g ? (g.value || g.getAttribute("data-val") || "") : "";
   };
 
   var HOST  = cfg("api_host").replace(/\/+$/,"");
@@ -2405,12 +2412,19 @@
   // ── kund-sök (standalone) ────────────────────────────────────────
   // snabb kund-sök: hämta ALLA företag EN gång, cacha, filtrera client-side (som övriga block)
   var companiesCache=null, companiesPromise=null;
+  // ⚠️ ALDRIG tyst tom lista. Ett 401 eller nätverksfel såg förut ut som
+  // "Inga företag" — alltså ett SVAR i st.f. ett fel. Nu bärs felet vidare och
+  // sökrutan säger vad som gick snett.
+  var companiesError="";
   function loadCompanies(){
     if(companiesPromise) return companiesPromise;
     companiesPromise = fetch(HOST+"/admin/planning/companies",{headers:headers(false)})
-      .then(function(r){ return r.json(); })
-      .then(function(j){ companiesCache=(j&&j.results)||[]; return companiesCache; })
-      .catch(function(){ companiesPromise=null; return []; });
+      .then(function(r){ return r.json().then(function(j){ return { s:r.status, j:j }; }); })
+      .then(function(x){
+        if(!x.j || x.j.ok===false){ companiesError = (x.s===401 ? "401 — fel eller saknad token" : ((x.j&&x.j.error)||("HTTP "+x.s))); companiesPromise=null; return []; }
+        companiesError=""; companiesCache=(x.j.results)||[]; return companiesCache;
+      })
+      .catch(function(e){ companiesError="nätverksfel"; companiesPromise=null; return []; });
     return companiesPromise;
   }
   function doCcSearch(q){
@@ -2419,7 +2433,13 @@
       if(!q){ box.className="ao-results"; box.innerHTML=""; return; }
       var ql=q.toLowerCase();
       var res=list.filter(function(c){ return String(c.name||"").toLowerCase().indexOf(ql)>=0; }).slice(0,40);
-      if(!res.length){ box.className="ao-results open"; box.innerHTML='<div class="ao-res-empty">Inga företag</div>'; return; }
+      if(!res.length){
+        box.className="ao-results open";
+        box.innerHTML = companiesError
+          ? '<div class="ao-res-empty">Kunde inte hämta företagslistan: '+companiesError+'</div>'
+          : '<div class="ao-res-empty">Inga företag matchar</div>';
+        return;
+      }
       box.innerHTML=res.map(function(c){ return '<div class="ao-res-item" data-ccid="'+esc(c.id)+'" data-ccnm="'+esc(c.name)+'">'+esc(c.name)+'</div>'; }).join("");
       box.className="ao-results open";
     });

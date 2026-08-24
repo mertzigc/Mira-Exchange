@@ -4430,8 +4430,15 @@
     var allCt = (SAMPLE.account_contracts || []).slice();
     SAMPLE.offices.forEach(function (of) { allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
     var aktiva = allCt.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
+    // ⚠️ INGET contract_type-filter (rättat 2026-08-24). Filtret på 'Subscription'
+    // uteslöt HYBRID-avtal — som per definition HAR en fast månadsdel. Sambla visade
+    // därför "0 kr/mån" i rubriken medan raden under sa 124 560 kr och kortets KPI
+    // "Avtal / mån" sa 124 560 kr. Två sanningar i samma vy.
+    // Backend räknar redan utan typfilter (companies_api: `if (isActive) mrr +=
+    // månadskostnad`) — den här raden speglar nu samma regel: summera
+    // månadskostnaden för allt AKTIVT. RateCard har normalt 0 och faller bort själv.
     var totMonthly = allCt
-      .filter(function (c) { return c.contract_type === 'Subscription' && (c.status === 'aktiv' || c.status === 'utgar_snart'); })
+      .filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; })
       .reduce(function (sum, c) { return sum + Number(c.monthly_cost || 0); }, 0);
     $('sum-count').textContent = aktiva.length + ' st';
     $('sum-cost').textContent = fmtKr(totMonthly);

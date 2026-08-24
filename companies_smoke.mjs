@@ -1278,6 +1278,31 @@ const run = async () => {
   ok("frontend: dubblett visar befintligt företag med öppna-knapp + skapa-ändå",
      /orgnr_finns_redan/.test(fl) && /data-fl="newco-open"/.test(fl) && /data-fl="newco-force"/.test(fl));
 
+  // ── "Per månad" i avtalsrubriken visade 0 (löst 2026-08-24) ───────────────
+  // ⚠️ Summeringen filtrerade på contract_type==='Subscription' och uteslöt därmed
+  // HYBRID-avtal, som per definition har en fast månadsdel. Sambla: rubriken sa
+  // 0 kr medan raden under sa 124 560 kr och kortets KPI sa 124 560 kr.
+  ok("avtal: per månad-summan filtrerar INTE på contract_type",
+     !/contract_type === 'Subscription' && \(c\.status === 'aktiv'/.test(fl) &&
+     /filter\(function \(c\) \{ return c\.status === 'aktiv' \|\| c\.status === 'utgar_snart'; \}\)\s*\n\s*\.reduce/.test(fl));
+  // ⚠️ Frontend och backend måste räkna samma sak, annars visar samma vy två tal.
+  ok("avtal: samma regel som backend (aktivt → summera månadskostnad)",
+     /if \(isActive\) \{ active\+\+; mrr \+= Math\.round\(Number\(ct\["månadskostnad"\] \|\| 0\)\); \}/
+       .test(readFileSync(new URL("./companies_api.js", import.meta.url), "utf8")));
+
+  // ── Offert-blocket i affärsvyn: EN bindning för host+token ────────────────
+  // ⚠️ Den inflyttade kopian bar sin egen placeholder-token → 401 på ALLT, och
+  // `.catch(() => [])` gjorde felet till "Inga företag" i företagssöket.
+  const afRaw = readFileSync(new URL("./mira-affar-samlad.html", import.meta.url), "utf8");
+  ok("offert i affärsvyn: exakt EN planning_token-bindning i blocket",
+     (afRaw.match(/<input[^>]*data-mira="planning_token"/g) || []).length === 1);
+  ok("offert i affärsvyn: cfg faller tillbaka på värdblockets bindning",
+     /var g=document\.querySelector\('\[data-mira="'\+k\+'"\]'\);/.test(afRaw));
+  ok("offert i affärsvyn: företagssöket rapporterar fel i st.f. tom lista",
+     /companiesError/.test(afRaw) && /401 — fel eller saknad token/.test(afRaw) &&
+     /Kunde inte hämta företagslistan/.test(afRaw) &&
+     !/\.catch\(function\(\)\{ companiesPromise=null; return \[\]; \}\)/.test(afRaw));
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };
