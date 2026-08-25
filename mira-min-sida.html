@@ -13,46 +13,62 @@
   ⚠️ Microsoft-integrationen byggs om separat senare — placeholder här, ingen logik.
 -->
 <style>
-  .ms{--ms-bg:#0f1830;--ms-card:#16223d;--ms-line:#243456;--ms-txt:#e7ecf6;--ms-mut:#8ea0c2;--ms-acc:#df6f39;--ms-ok:#2ecc71;--ms-chip:#1c2b4d;--ms-err:#e5533c;
-      color:var(--ms-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
-  .ms *{box-sizing:border-box;}
-  .ms-head{display:flex;align-items:center;gap:10px;margin:0 0 14px;}
-  .ms-head h1{font-size:20px;font-weight:800;margin:0;}
-  .ms-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;}
-  .ms-tab{background:var(--ms-chip);color:var(--ms-txt);border:1px solid var(--ms-line);border-radius:20px;padding:8px 16px;cursor:pointer;font-size:12.5px;font-weight:600;}
-  .ms-tab.on{background:var(--ms-acc);color:#0f1830;border-color:var(--ms-acc);}
-  .ms-panel{background:var(--ms-card);border:1px solid var(--ms-line);border-radius:14px;padding:18px 20px;}
-  .ms-wrap{max-width:720px;}
-  .ms-sech{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--ms-acc);font-weight:700;margin:0 0 12px;}
-  .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;}
-  .ms-fld{display:flex;flex-direction:column;gap:5px;}
-  .ms-fld.full{grid-column:1 / -1;}
-  .ms-fld label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ms-mut);font-weight:600;}
-  .ms-fld input{background:var(--ms-chip);color:var(--ms-txt);border:1px solid var(--ms-line);border-radius:9px;padding:10px 12px;font-size:13px;width:100%;}
-  .ms-fld input:focus{outline:none;border-color:var(--ms-acc);}
-  .ms-fld input[readonly]{opacity:.6;cursor:not-allowed;}
-  .ms-hint{font-size:11px;color:var(--ms-mut);margin-top:3px;line-height:1.4;}
-  .ms-actions{display:flex;align-items:center;gap:12px;margin-top:18px;}
-  .ms-btn{background:var(--ms-acc);color:#0f1830;border:1px solid var(--ms-acc);border-radius:9px;padding:10px 20px;cursor:pointer;font-size:13px;font-weight:700;}
-  .ms-btn[disabled]{opacity:.5;cursor:default;}
-  .ms-btn.ghost{background:var(--ms-chip);color:var(--ms-txt);border-color:var(--ms-line);}
-  .ms-msg{font-size:12px;color:var(--ms-mut);}
-  .ms-msg.ok{color:var(--ms-ok);}
-  .ms-msg.err{color:var(--ms-err);}
-  .ms-warn{background:rgba(229,83,60,.12);border:1px solid rgba(229,83,60,.4);border-radius:10px;padding:10px 13px;font-size:12px;color:#f0a071;margin:0 0 14px;line-height:1.45;}
-  .ms-photo{display:flex;align-items:center;gap:16px;margin:2px 0 6px;}
-  .ms-avatar{width:78px;height:78px;border-radius:50%;object-fit:cover;background:var(--ms-chip);border:1px solid var(--ms-line);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:var(--ms-mut);}
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .ms, .ms *{box-sizing:border-box;margin:0;padding:0;}
+  .ms{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;padding:22px 26px 40px;border-radius:14px;}
+  .ms input[type=hidden]{display:none;}
+  .ms-head{margin:0 0 20px;}
+  .ms-head h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px;font-weight:400;}
+  .ms-head h1 span{color:var(--orange);}
+  .ms-head .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin-top:2px;}
+  .ms-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 20px;}
+  .ms-tab{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 15px;font-size:12px;color:var(--w70);cursor:pointer;font-family:var(--fb);}
+  .ms-tab.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700;}
+  .ms-panel{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px 18px;}
+  .ms-panel + .ms-panel{margin-top:14px;}
+  .ms-panel.form{border-left:2px solid var(--orange);}
+  .ms-wrap{max-width:760px;}
+  .ms-sech{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);font-weight:700;margin:0 0 13px;}
+  .ms-grid{display:flex;flex-wrap:wrap;gap:14px;}
+  .ms-fld{flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px;}
+  .ms-fld.full{flex-basis:100%;min-width:100%;}
+  .ms-fld label{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--w40);font-weight:700;}
+  .ms-fld input{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--white);font-family:var(--fb);font-size:13px;}
+  .ms-fld input:focus{outline:none;border-color:var(--orange);}
+  .ms-fld input[readonly]{opacity:.55;cursor:not-allowed;}
+  .ms-hint{font-size:11px;color:var(--w40);margin-top:3px;line-height:1.45;}
+  .ms-actions{display:flex;align-items:center;gap:14px;border-top:1px solid var(--border);padding-top:13px;margin-top:16px;}
+  .ms-btn{background:var(--orange);border:none;border-radius:8px;padding:8px 22px;color:#1c1206;font-weight:800;font-size:12.5px;cursor:pointer;font-family:var(--fb);transition:filter .12s;}
+  .ms-btn:hover{filter:brightness(1.07);}
+  .ms-btn[disabled]{opacity:.5;cursor:default;filter:none;}
+  .ms-btn.ghost{background:var(--input);border:1px solid var(--border);color:var(--w70);font-weight:700;transition:border-color .12s,color .12s;}
+  .ms-btn.ghost:hover{filter:none;border-color:var(--orange);color:var(--orange);}
+  .ms-msg{font-size:12px;color:var(--w40);}
+  .ms-msg.ok{color:var(--green);}
+  .ms-msg.err{color:#ff8080;}
+  .ms-warn{background:rgba(224,90,90,.12);border:1px solid rgba(224,90,90,.35);border-radius:10px;padding:11px 14px;font-size:12px;color:#e0a060;margin:0 0 14px;line-height:1.5;}
+  .ms-photo{display:flex;align-items:center;gap:16px;}
+  .ms-avatar{width:74px;height:74px;border-radius:50%;object-fit:cover;background:var(--deep);border:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:var(--w40);}
   .ms-photo-btns{display:flex;gap:8px;flex-wrap:wrap;}
-  .ms-msg-block{margin-top:6px;}
-  .ms-consent-status{font-size:14px;font-weight:700;margin:0 0 6px;}
-  .ms-consent-status .yes{color:var(--ms-ok);}
-  .ms-consent-status .no{color:var(--ms-err);}
-  .ms-check{display:flex;align-items:flex-start;gap:10px;margin:14px 0;font-size:13px;color:var(--ms-txt);cursor:pointer;line-height:1.45;}
-  .ms-check input{margin-top:2px;width:16px;height:16px;flex-shrink:0;cursor:pointer;}
-  .ms-link{color:var(--ms-acc);text-decoration:underline;}
+  .ms-msg-block{margin-top:10px;}
+  .ms-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;}
+  .ms-pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40);}
+  .ms-pill.ok{background:rgba(76,175,125,.13);color:var(--green);}
+  .ms-pill.ok .d{background:var(--green);}
+  .ms-pill.no{background:rgba(224,90,90,.13);color:var(--red);}
+  .ms-pill.no .d{background:var(--red);}
+  .ms-check{display:flex;align-items:flex-start;gap:9px;margin:16px 0;font-size:13px;color:var(--white);cursor:pointer;line-height:1.5;}
+  .ms-check input{margin-top:2px;width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--orange);}
+  .ms-link{color:var(--orange);text-decoration:underline;}
   .ms-soon{opacity:.55;}
-  .ms-loading{padding:26px;text-align:center;color:var(--ms-mut);}
-  @media(max-width:560px){ .ms-grid{grid-template-columns:1fr;} }
+  .ms-loading{padding:26px;text-align:center;color:var(--w40);}
+  @media(max-width:560px){ .ms-fld{min-width:100%;} }
 </style>
 
 <div class="ms">
@@ -104,7 +120,7 @@
         '<div class="ms-photo">'+avatar+photoBtns+'</div>'+
         '<div class="ms-msg-block"><span class="ms-msg" data-ms="photomsg"></span></div>'+
       '</div>'+
-      '<div class="ms-panel" style="margin-top:14px;">'+
+      '<div class="ms-panel form">'+
         '<div class="ms-sech">Mina uppgifter</div>'+
         '<div class="ms-grid">'+
           fld("first","Förnamn",u.first,"text")+
@@ -131,12 +147,12 @@
   function consentHtml(){
     var d=STATE.data, c=(d&&d.consent)||{};
     var status=c.godkant
-      ? '<div class="ms-consent-status">Status: <span class="yes">Godkänt</span></div>'+(c.date?'<div class="ms-hint">Godkänt '+esc(c.date)+'.</div>':'')
-      : '<div class="ms-consent-status">Status: <span class="no">Ej godkänt</span></div>';
+      ? '<span class="ms-pill ok"><span class="d"></span>Godkänt</span>'+(c.date?'<div class="ms-hint" style="margin-top:8px;">Godkänt '+esc(c.date)+'.</div>':'')
+      : '<span class="ms-pill no"><span class="d"></span>Ej godkänt</span>';
     var body=c.godkant
       ? '<div class="ms-hint" style="margin-top:12px;">Du har godkänt användarvillkoren. Vill du godkänna en ny version, bocka i rutan nedan och godkänn på nytt.</div>'
       : '';
-    return '<div class="ms-wrap"><div class="ms-panel">'+
+    return '<div class="ms-wrap"><div class="ms-panel form">'+
       '<div class="ms-sech">Användarvillkor</div>'+
       status+body+
       '<label class="ms-check"><input type="checkbox" data-ms="agree"'+(STATE.agree?" checked":"")+'>'+
@@ -161,7 +177,8 @@
   function render(){
     if(STATE.loading){ $("root").innerHTML='<div class="ms-loading">Laddar…</div>'; return; }
     if(STATE.err){ $("root").innerHTML='<div class="ms-panel"><div class="ms-msg err">'+esc(STATE.err)+'</div></div>'; return; }
-    var head='<div class="ms-head"><h1>Min sida</h1></div>';
+    var nm=((STATE.data&&STATE.data.user&&(STATE.data.user.first+" "+STATE.data.user.last).trim())||"");
+    var head='<div class="ms-head"><h1>Min <span>sida</span></h1><div class="sub">'+(nm?esc(nm):"Användarprofil")+'</div></div>';
     $("root").innerHTML=head+tabsHtml()+(STATE.tab==="consent"?consentHtml():profileHtml());
   }
 
