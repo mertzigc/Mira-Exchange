@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Användarvillkor – Mira FM</title>
+<meta name="description" content="Användarvillkor för dig som använder Mira FM.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap">
+<style>
+/* Mira FM — designspråk från Min sida (.ms) */
+:root{
+  --base:#1e2235; --panel:#23283f; --card:#262b42; --deep:#2c314e; --input:#2e3350;
+  --orange:#F47B30; --orange-dim:rgba(244,123,48,.13); --orange-line:rgba(244,123,48,.35);
+  --white:#fff; --w70:rgba(255,255,255,.70); --w55:rgba(255,255,255,.55); --w40:rgba(255,255,255,.40);
+  --border:rgba(255,255,255,.07); --border-2:rgba(255,255,255,.12);
+  --green:#4CAF7D; --red:#E05A5A;
+  --fb:Arial,Helvetica,sans-serif;
+  --serif:'DM Serif Display',Georgia,serif;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+body{
+  background:var(--base); color:var(--white);
+  font-family:var(--fb); font-size:14.5px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1060px; margin:0 auto; padding:clamp(24px,4vw,44px) clamp(16px,4vw,30px) 64px}
+
+/* ---------- masthead ---------- */
+.mast{margin:0 0 24px}
+.eyebrow{
+  color:var(--w40); font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+  display:flex; align-items:center; gap:12px; margin:0 0 14px;
+}
+.eyebrow::after{content:""; flex:1; height:1px; background:var(--border)}
+h1{
+  font-family:var(--serif); font-weight:400; font-size:clamp(30px,5.5vw,44px);
+  line-height:1.1; letter-spacing:.005em; margin:0 0 10px; text-wrap:balance;
+}
+h1 span{color:var(--orange)}
+.standfirst{color:var(--w70); font-size:15px; max-width:62ch; margin:0 0 20px}
+.meta{display:flex; flex-wrap:wrap; gap:8px}
+.chip{
+  display:inline-flex; align-items:center; gap:7px;
+  background:var(--input); border:1px solid var(--border); border-radius:20px;
+  padding:5px 13px; font-size:12px; color:var(--w55); white-space:nowrap;
+}
+.chip b{color:var(--white); font-weight:700; font-variant-numeric:tabular-nums}
+.chip::before{content:""; width:6px; height:6px; border-radius:50%; background:var(--w40); flex-shrink:0}
+.chip:first-child::before{background:var(--orange)}
+
+/* ---------- redaktionell not ---------- */
+.note{
+  background:var(--orange-dim); border:1px solid var(--orange-line); border-left:2px solid var(--orange);
+  border-radius:11px; padding:18px 20px; margin:0 0 20px;
+}
+.note-tag{
+  font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; font-weight:700;
+  color:var(--orange); margin:0 0 9px;
+}
+.note h2{font-family:var(--serif); font-weight:400; font-size:23px; line-height:1.2; margin:0 0 6px}
+.note > p{color:var(--w70); font-size:13.5px; margin:0 0 18px; max-width:64ch}
+.assume{list-style:none; display:grid; gap:12px}
+.assume li{display:grid; grid-template-columns:24px 1fr; gap:11px; align-items:start; font-size:13.5px; line-height:1.55; color:var(--w70)}
+.assume .n{
+  font-size:11px; font-weight:700; color:var(--orange); font-variant-numeric:tabular-nums;
+  background:rgba(244,123,48,.14); border:1px solid var(--orange-line); border-radius:6px;
+  text-align:center; padding:2px 0; margin-top:2px;
+}
+.assume b{color:var(--white); font-weight:700}
+.open{margin-top:18px; padding-top:15px; border-top:1px solid var(--orange-line); font-size:13px; color:var(--w70)}
+.open .lbl{display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; color:var(--orange); margin-bottom:9px}
+.open ul{padding-left:17px; display:grid; gap:6px}
+.open li::marker{color:var(--orange)}
+.open b{color:var(--white)}
+
+/* ---------- layout ---------- */
+.cols{display:block}
+.toc{display:none}
+@media (min-width:940px){
+  .cols{display:grid; grid-template-columns:212px minmax(0,1fr); gap:22px; align-items:start}
+  .toc{
+    display:block; position:sticky; top:24px;
+    background:var(--panel); border:1px solid var(--border); border-radius:11px; padding:14px 12px;
+  }
+}
+.toc .lbl{
+  font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; color:var(--w40);
+  margin:0 0 10px; padding:0 6px 10px; border-bottom:1px solid var(--border);
+}
+.toc ol{list-style:none; display:grid; gap:1px}
+.toc a{
+  display:grid; grid-template-columns:20px 1fr; gap:7px; align-items:baseline;
+  font-size:12.5px; line-height:1.35; color:var(--w70); text-decoration:none;
+  padding:6px 7px; border-radius:7px; border:1px solid transparent;
+}
+.toc a span{font-variant-numeric:tabular-nums; color:var(--w40); font-size:11px; font-weight:700}
+.toc a:hover{background:var(--input); border-color:var(--border); color:var(--white)}
+.toc a:hover span{color:var(--orange)}
+a:focus-visible{outline:2px solid var(--orange); outline-offset:2px}
+
+/* ---------- innehåll ---------- */
+article{display:grid; gap:14px}
+.lead{
+  background:var(--panel); border:1px solid var(--border); border-left:2px solid var(--orange);
+  border-radius:11px; padding:16px 18px; color:var(--w70); font-size:14.5px;
+}
+.lead p{margin:0 0 10px}
+.lead p:last-child{margin:0}
+.lead b{color:var(--white)}
+section{background:var(--panel); border:1px solid var(--border); border-radius:11px; padding:16px 18px}
+h2{
+  font-family:var(--serif); font-weight:400; font-size:20px; line-height:1.25;
+  margin:0 0 14px; padding-bottom:12px; border-bottom:1px solid var(--border);
+  display:grid; grid-template-columns:auto 1fr; gap:11px; align-items:center; text-wrap:balance;
+}
+h2 .num{
+  font-family:var(--fb); font-size:11px; font-weight:700; color:var(--orange);
+  font-variant-numeric:tabular-nums; background:var(--orange-dim);
+  border:1px solid var(--orange-line); border-radius:6px; padding:3px 8px; min-width:28px; text-align:center;
+}
+p{margin:0 0 12px; color:var(--w70)}
+p:last-child{margin-bottom:0}
+section > p, .cl p{color:var(--w70)}
+.cl{display:grid; grid-template-columns:40px 1fr; gap:4px; margin:0 0 12px}
+.cl:last-child{margin-bottom:0}
+.cl > .id{font-size:12px; font-weight:700; color:var(--w40); font-variant-numeric:tabular-nums; padding-top:3px}
+.cl > div p{margin:0 0 8px}
+.cl > div p:last-child{margin:0}
+ul.plain{margin:9px 0 0; padding-left:18px; display:grid; gap:7px; color:var(--w70)}
+ul.plain li::marker{color:var(--orange)}
+b{color:var(--white)}
+.fill{
+  display:inline-block; background:var(--orange-dim); color:var(--orange);
+  border:1px dashed var(--orange-line); border-radius:6px;
+  padding:1px 7px; font-size:11.5px; font-weight:700; line-height:1.5;
+}
+a{color:var(--orange); text-underline-offset:3px}
+.card{background:var(--card); border:1px solid var(--border); border-radius:9px; padding:14px 16px}
+.card .lbl{font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; color:var(--w40); margin:0 0 9px}
+.card p{color:var(--w70); margin:0}
+footer{
+  margin-top:20px; padding:14px 4px 0; border-top:1px solid var(--border);
+  font-size:11.5px; color:var(--w40); text-transform:uppercase; letter-spacing:.06em;
+  display:flex; flex-wrap:wrap; gap:6px 18px; justify-content:space-between;
+}
+@media (max-width:560px){
+  .cl{grid-template-columns:34px 1fr}
+  .wrap{padding-bottom:44px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+</style>
+</head>
+<body>
+<main class="wrap">
+<header class="mast">
+  <p class="eyebrow">Mira FM · mira-fm.com</p>
+  <h1>Användar<span>villkor</span></h1>
+  <p class="standfirst">För dig som använder Mira FM i din arbetsgivares eller uppdragsgivares organisation.</p>
+  <div class="meta">
+    <span class="chip">Version <b>1.0 – utkast</b></span>
+    <span class="chip">Gäller från <b>ÅÅÅÅ-MM-DD</b></span>
+    <span class="chip">Leverantör <b>Carotte Group AB</b></span>
+    <span class="chip">Språk <b>Svenska</b></span>
+  </div>
+</header>
+
+<div class="cols">
+<nav class="toc" aria-label="Innehåll">
+  <p class="lbl">Innehåll</p>
+  <ol>
+    <li><a href="#s1"><span>1</span>Hur villkoren hänger ihop</a></li>
+    <li><a href="#s2"><span>2</span>Ditt konto</a></li>
+    <li><a href="#s3"><span>3</span>Så får du använda Mira</a></li>
+    <li><a href="#s4"><span>4</span>Bokningar och beställningar</a></li>
+    <li><a href="#s5"><span>5</span>Innehåll och data</a></li>
+    <li><a href="#s6"><span>6</span>Personuppgifter</a></li>
+    <li><a href="#s7"><span>7</span>Förslag och feedback</a></li>
+    <li><a href="#s8"><span>8</span>Tillgänglighet</a></li>
+    <li><a href="#s9"><span>9</span>Rättigheter till tjänsten</a></li>
+    <li><a href="#s10"><span>10</span>Avstängning</a></li>
+    <li><a href="#s11"><span>11</span>Ansvar</a></li>
+    <li><a href="#s12"><span>12</span>När åtkomsten upphör</a></li>
+    <li><a href="#s13"><span>13</span>Ändringar</a></li>
+    <li><a href="#s14"><span>14</span>Lag och tvist</a></li>
+    <li><a href="#s15"><span>15</span>Kontakt</a></li>
+  </ol>
+</nav>
+
+<article>
+  <div class="lead">
+    <p>Mira FM tillhandahålls av <b>Carotte Group AB</b>, org.nr 556305–1068, Tegeluddsvägen 92, 115 28 Stockholm (”Carotte”, ”vi”).</p>
+    <p>Du har fått tillgång till Mira FM genom din arbetsgivare eller uppdragsgivare (”Kunden”), som har ett avtal med Carotte om tjänsten (”Kundavtalet”). Dessa användarvillkor (”Villkoren”) gäller mellan dig som användare och Carotte. Genom att logga in och använda Mira FM godkänner du Villkoren.</p>
+  </div>
+
+  <section id="s1">
+    <h2><span class="num">1</span>Hur villkoren hänger ihop</h2>
+    <div class="cl"><div class="id">1.1</div><div><p>Kundavtalet reglerar förhållandet mellan Carotte och Kunden: abonnemang, priser, tillgänglighet, personuppgiftsbehandling och avtalstid.</p></div></div>
+    <div class="cl"><div class="id">1.2</div><div><p>Villkoren reglerar din personliga användning av tjänsten. De ger dig inga rättigheter utöver dem Kunden har enligt Kundavtalet.</p></div></div>
+    <div class="cl"><div class="id">1.3</div><div><p>Om Villkoren och Kundavtalet säger olika saker gäller Kundavtalet.</p></div></div>
+  </section>
+
+  <section id="s2">
+    <h2><span class="num">2</span>Ditt konto</h2>
+    <div class="cl"><div class="id">2.1</div><div><p>Kontot skapas av Kunden, eller av Carotte på Kundens begäran. Kontot är personligt och får inte delas eller överlåtas.</p></div></div>
+    <div class="cl"><div class="id">2.2</div><div><p>Du ansvarar för att hålla dina inloggningsuppgifter hemliga och för allt som sker via ditt konto. Misstänker du obehörig åtkomst ska du omgående meddela Kunden och Carotte på <span class="fill">support@mira-fm.com</span>.</p></div></div>
+    <div class="cl"><div class="id">2.3</div><div><p>Kunden bestämmer vilken behörighet du har och kan när som helst ändra, begränsa eller avsluta ditt konto.</p></div></div>
+    <div class="cl"><div class="id">2.4</div><div><p>Mira FM är ett verktyg för arbetslivet. Du ska vara minst 18 år och använda tjänsten inom ramen för din anställning eller ditt uppdrag hos Kunden.</p></div></div>
+  </section>
+
+  <section id="s3">
+    <h2><span class="num">3</span>Så får du använda Mira</h2>
+    <div class="cl"><div class="id">3.1</div><div><p>Du får använda Mira FM för Kundens verksamhet, i enlighet med Villkoren, gällande lag och Kundens egna interna regler.</p></div></div>
+    <div class="cl"><div class="id">3.2</div><div><p>Du får inte:</p>
+      <ul class="plain">
+        <li>ge någon utanför Kundens organisation tillgång till tjänsten,</li>
+        <li>kopiera, dekompilera, reverse-engineera eller kringgå säkerhetsfunktioner,</li>
+        <li>samla in data automatiserat (skrapa, botar) eller belasta tjänsten onormalt,</li>
+        <li>ladda upp skadlig kod, olagligt eller kränkande material,</li>
+        <li>lagra känsliga personuppgifter – till exempel uppgifter om hälsa, religion eller fackligt medlemskap – utan att detta särskilt har avtalats mellan Kunden och Carotte. <span class="fill">Undantag: allergier och kostpreferenser vid matbeställning – bekräfta hantering</span></li>
+      </ul>
+    </div></div>
+  </section>
+
+  <section id="s4">
+    <h2><span class="num">4</span>Bokningar och beställningar</h2>
+    <div class="cl"><div class="id">4.1</div><div><p>När du bokar eller beställer i Mira FM – till exempel fika, lunch, lokalvård, bemanning eller event – gör du det för Kundens räkning. Beställningen kan binda Kunden ekonomiskt. Se därför till att du har behörighet att beställa.</p></div></div>
+    <div class="cl"><div class="id">4.2</div><div><p>En beställning är bindande när den bekräftats i tjänsten.</p></div></div>
+    <div class="cl"><div class="id">4.3</div><div><p>Ledtider, avbokningsregler och priser för de tjänster du beställer framgår av respektive tjänstebeskrivning i Mira FM och av Kundavtalet. <span class="fill">Att fylla i: avbokningsfrister per tjänstetyp</span></p></div></div>
+    <div class="cl"><div class="id">4.4</div><div><p>Du betalar aldrig själv. All fakturering sker till Kunden.</p></div></div>
+  </section>
+
+  <section id="s5">
+    <h2><span class="num">5</span>Innehåll och data</h2>
+    <div class="cl"><div class="id">5.1</div><div><p>Information som läggs in i Mira FM tillhör Kunden, inte dig personligen.</p></div></div>
+    <div class="cl"><div class="id">5.2</div><div><p>Kunden kan ta del av, exportera och radera innehåll i tjänsten. Utgå därför inte från att det du skriver i Mira FM är privat.</p></div></div>
+    <div class="cl"><div class="id">5.3</div><div><p>Carotte får använda anonymiserad och aggregerad statistik om hur tjänsten används för att utveckla och förbättra den.</p></div></div>
+  </section>
+
+  <section id="s6">
+    <h2><span class="num">6</span>Personuppgifter</h2>
+    <div class="cl"><div class="id">6.1</div><div><p>Kunden är personuppgiftsansvarig för de personuppgifter som behandlas i Mira FM. Carotte är personuppgiftsbiträde och behandlar uppgifterna på Kundens instruktion, enligt det personuppgiftsbiträdesavtal som ingår i Kundavtalet.</p></div></div>
+    <div class="cl"><div class="id">6.2</div><div><p>Vill du veta vilka uppgifter som behandlas om dig, eller vill få dem rättade eller raderade, vänder du dig till Kunden – normalt din HR- eller dataskyddsfunktion.</p></div></div>
+    <div class="cl"><div class="id">6.3</div><div><p>För uppgifter som Carotte samlar in på egen hand via mira-fm.com, till exempel kontaktformulär, nyhetsbrev och cookies, är Carotte själv personuppgiftsansvarig. Läs mer i vår integritetspolicy. <span class="fill">Länk saknas – policy behöver tas fram</span></p></div></div>
+    <div class="cl"><div class="id">6.4</div><div><p>Tjänsten drivs på infrastruktur från Bubble.io och Amazon Web Services. Data lagras i EU/EES där det är möjligt; vid överföring till tredje land används EU-kommissionens standardavtalsklausuler.</p></div></div>
+  </section>
+
+  <section id="s7">
+    <h2><span class="num">7</span>Förslag och feedback</h2>
+    <p>Tipsar du oss om buggar, idéer eller förbättringar får Carotte fritt använda dessa i sin produktutveckling, utan ersättning och utan begränsning i tid.</p>
+  </section>
+
+  <section id="s8">
+    <h2><span class="num">8</span>Tillgänglighet och utveckling</h2>
+    <div class="cl"><div class="id">8.1</div><div><p>Vi arbetar för hög tillgänglighet, men lämnar ingen garanti om drifttid gentemot dig som användare. Någon servicenivå (SLA) gäller inte om det inte särskilt har avtalats med Kunden.</p></div></div>
+    <div class="cl"><div class="id">8.2</div><div><p>Mira FM är webbaserad och fungerar bäst i aktuella versioner av Chrome, Edge och Safari.</p></div></div>
+    <div class="cl"><div class="id">8.3</div><div><p>Mira FM utvecklas löpande. Funktioner kan komma att ändras, läggas till eller tas bort. Planerade driftstopp aviseras i förväg när det är möjligt.</p></div></div>
+    <div class="cl"><div class="id">8.4</div><div><p>Vilka funktioner du ser beror på Kundens abonnemang och din behörighet.</p></div></div>
+  </section>
+
+  <section id="s9">
+    <h2><span class="num">9</span>Rättigheter till tjänsten</h2>
+    <p>Mira FM med källkod, design, varumärken och innehåll tillhör Carotte och dess licensgivare. Du får en personlig, begränsad och icke-överlåtbar rätt att använda tjänsten så länge Kundavtalet gäller och ditt konto är aktivt. Ingen annan rätt överlåts.</p>
+  </section>
+
+  <section id="s10">
+    <h2><span class="num">10</span>Avstängning</h2>
+    <p>Carotte får omedelbart begränsa eller stänga av din åtkomst om vi har skälig anledning att tro att Villkoren har överträtts, om användningen innebär en säkerhets- eller driftrisk, eller om Kundavtalet upphör eller åtkomsten stängs på grund av utebliven betalning. Vi informerar Kunden om åtgärden.</p>
+  </section>
+
+  <section id="s11">
+    <h2><span class="num">11</span>Ansvar</h2>
+    <div class="cl"><div class="id">11.1</div><div><p>Tjänsten tillhandahålls i befintligt skick. Vi kan inte garantera att den alltid är fri från fel eller avbrott.</p></div></div>
+    <div class="cl"><div class="id">11.2</div><div><p>Eventuella krav med anledning av tjänsten regleras mellan Carotte och Kunden enligt Kundavtalet, som också innehåller ansvarsbegränsningar. Carotte har inget ansvar gentemot dig personligen för indirekt skada, till exempel utebliven vinst, dataförlust eller produktionsbortfall.</p></div></div>
+    <div class="cl"><div class="id">11.3</div><div><p>Begränsningarna gäller inte vid uppsåt eller grov vårdslöshet, eller där ansvar inte kan begränsas enligt tvingande lag.</p></div></div>
+  </section>
+
+  <section id="s12">
+    <h2><span class="num">12</span>När åtkomsten upphör</h2>
+    <p>Upphör Kundavtalet eller avslutas ditt konto förlorar du tillgången till Mira FM. Hanteringen av Kundens data – radering eller återlämnande – sker enligt Kundavtalet. Carotte har ingen skyldighet att bevara data längre än trettio (30) dagar efter att Kundavtalet upphört, om inte lag kräver annat.</p>
+  </section>
+
+  <section id="s13">
+    <h2><span class="num">13</span>Ändringar av villkoren</h2>
+    <p>Vi kan uppdatera Villkoren, till exempel när tjänsten utvecklas eller när lagkrav ändras. Väsentliga ändringar meddelas minst trettio (30) dagar i förväg i tjänsten eller via e-post. Fortsatt användning efter att ändringen trätt i kraft innebär att du godkänner den nya versionen. Gällande version finns alltid på mira-fm.com.</p>
+  </section>
+
+  <section id="s14">
+    <h2><span class="num">14</span>Tillämplig lag och tvist</h2>
+    <div class="cl"><div class="id">14.1</div><div><p>Svensk rätt gäller för Villkoren.</p></div></div>
+    <div class="cl"><div class="id">14.2</div><div><p>Tvist mellan dig och Carotte prövas av allmän domstol, med Stockholms tingsrätt som första instans. Tvister mellan Carotte och Kunden avgörs genom skiljeförfarande enligt Kundavtalet.</p></div></div>
+  </section>
+
+  <section id="s15">
+    <h2><span class="num">15</span>Kontakt</h2>
+    <div class="card">
+      <p class="lbl">Carotte Group AB</p>
+      <p>Org.nr 556305–1068<br>Tegeluddsvägen 92, 115 28 Stockholm<br>E-post: <span class="fill">support@mira-fm.com</span> · Webb: mira-fm.com</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>Mira FM — Användarvillkor v1.0 (utkast)</span>
+    <span>Carotte Group AB</span>
+  </footer>
+</article>
+</div>
+
+</main>
+</body>
+</html>

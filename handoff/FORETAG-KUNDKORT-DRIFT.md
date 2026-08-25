@@ -722,6 +722,12 @@ kopplad coworker; annars döljs bild-knapparna med förklaring.
 **⚠️ `Godkänt` är option set `Godkänd`, värden `Ja`/`Nej`** (verifierat 2026-08-25) — läses
 tillbaka OS-medvetet (`_osStr`). Created Date = tidsstämpel. Användarvillkor-filen skrivs inte.
 
+**Villkoren bäddas in i fliken** (Christian 2026-08-25) — hela v1.0-texten från
+`mira-anvandarvillkor-mira-fm.html` ligger som en scrollbar `.ms-terms`-panel i consent-fliken
+(`termsHtml()`), så användaren aldrig skickas bort. Samma designspråk (DM Serif-rubriker,
+numrerade sektioner, clause-grid). ⚠️ **Statisk text — uppdatera `termsHtml()` när villkoren
+revideras.** `data-mira="terms_url"` finns kvar som frivillig "Öppna i egen flik ↗"-länk.
+
 **⚠️ Render kan INTE skapa User/sätta lösenord** (auth ägs av Bubble) — endpointen *patchar*
 bara befintliga fält (som `Associated_company`-skrivningen redan gör).
 

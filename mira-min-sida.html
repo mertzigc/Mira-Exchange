@@ -66,6 +66,32 @@
   .ms-check{display:flex;align-items:flex-start;gap:9px;margin:16px 0;font-size:13px;color:var(--white);cursor:pointer;line-height:1.5;}
   .ms-check input{margin-top:2px;width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--orange);}
   .ms-link{color:var(--orange);text-decoration:underline;}
+  /* Inbäddade användarvillkor (scrollbar panel, samma designspråk) */
+  .ms-terms{background:var(--card);border:1px solid var(--border);border-radius:10px;margin:14px 0 4px;max-height:360px;overflow-y:auto;}
+  .ms-terms .tinner{padding:16px 18px;}
+  .ms-terms .tmeta{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px;}
+  .ms-terms .tchip{display:inline-flex;align-items:center;gap:6px;background:var(--input);border:1px solid var(--border);border-radius:20px;padding:4px 11px;font-size:11px;color:var(--w40);}
+  .ms-terms .tchip b{color:var(--white);font-weight:700;}
+  .ms-terms .tlead{background:var(--panel);border:1px solid var(--border);border-left:2px solid var(--orange);border-radius:9px;padding:13px 15px;color:var(--w70);font-size:12.5px;line-height:1.55;margin:0 0 14px;}
+  .ms-terms .tlead b{color:var(--white);}
+  .ms-terms .tsec{margin:0 0 16px;}
+  .ms-terms .tsec:last-child{margin-bottom:0;}
+  .ms-terms h4{font-family:'DM Serif Display',Georgia,serif;font-weight:400;font-size:15px;line-height:1.25;color:var(--white);margin:0 0 9px;padding-bottom:8px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px;}
+  .ms-terms h4 .tn{font-family:var(--fb);font-size:10px;font-weight:700;color:var(--orange);background:var(--orange-dim);border:1px solid rgba(244,123,48,.35);border-radius:5px;padding:2px 7px;min-width:24px;text-align:center;}
+  .ms-terms p{font-size:12.5px;color:var(--w70);line-height:1.55;margin:0 0 8px;}
+  .ms-terms p:last-child{margin-bottom:0;}
+  .ms-terms .cl{display:grid;grid-template-columns:34px 1fr;gap:4px;margin:0 0 9px;}
+  .ms-terms .cl:last-child{margin-bottom:0;}
+  .ms-terms .cl .id{font-size:11px;font-weight:700;color:var(--w40);padding-top:2px;}
+  .ms-terms ul{margin:6px 0 0;padding-left:16px;display:grid;gap:5px;}
+  .ms-terms li{font-size:12.5px;color:var(--w70);line-height:1.5;}
+  .ms-terms li::marker{color:var(--orange);}
+  .ms-terms b{color:var(--white);}
+  .ms-terms .tcard{background:var(--deep);border:1px solid var(--border);border-radius:8px;padding:12px 14px;}
+  .ms-terms .tcard .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;color:var(--w40);margin:0 0 8px;}
+  .ms-terms .fill{display:inline-block;background:var(--orange-dim);color:var(--orange);border:1px dashed rgba(244,123,48,.35);border-radius:5px;padding:0 6px;font-size:11px;font-weight:700;}
+  .ms-terms a{color:var(--orange);}
+  .ms-termshead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px;}
   .ms-soon{opacity:.55;}
   .ms-loading{padding:26px;text-align:center;color:var(--w40);}
   @media(max-width:560px){ .ms-fld{min-width:100%;} }
@@ -75,6 +101,7 @@
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
   <input type="hidden" data-mira="current_user"   value=""><!-- bind till Current User's unique id -->
+  <input type="hidden" data-mira="terms_url"      value=""><!-- URL till användarvillkoren (t.ex. https://mira-fm.com/villkor) -->
   <div data-ms="root"><div class="ms-loading">Laddar…</div></div>
 </div>
 
@@ -87,6 +114,7 @@
   var $=function(k){ return root.querySelector('[data-ms="'+k+'"]'); };
   var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), UID=cfg("current_user").trim();
+  var TERMS_URL=cfg("terms_url").trim();
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
   function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
   function post(path,bodyObj){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(function(r){ return r.json(); }); }
@@ -144,6 +172,78 @@
       '<input type="'+type+'" data-ms="f-'+k+'" value="'+esc(val)+'"></div>';
   }
 
+  // Användarvillkoren inbäddade (v1.0, från mira-anvandarvillkor-mira-fm.html) — statisk,
+  // betrodd text. ⚠️ Uppdatera denna funktion när villkoren revideras (och bumpa versionen).
+  function termsHtml(){
+    var cl=function(id,html){ return '<div class="cl"><div class="id">'+id+'</div><div>'+html+'</div></div>'; };
+    var sec=function(n,title,inner){ return '<div class="tsec"><h4><span class="tn">'+n+'</span>'+title+'</h4>'+inner+'</div>'; };
+    return '<div class="ms-terms"><div class="tinner">'+
+      '<div class="tmeta">'+
+        '<span class="tchip">Version <b>1.0 – utkast</b></span>'+
+        '<span class="tchip">Gäller från <b>ÅÅÅÅ-MM-DD</b></span>'+
+        '<span class="tchip">Leverantör <b>Carotte Group AB</b></span>'+
+      '</div>'+
+      '<div class="tlead"><p>Mira FM tillhandahålls av <b>Carotte Group AB</b>, org.nr 556305–1068, Tegeluddsvägen 92, 115 28 Stockholm ("Carotte", "vi").</p>'+
+        '<p>Du har fått tillgång till Mira FM genom din arbetsgivare eller uppdragsgivare ("Kunden"), som har ett avtal med Carotte om tjänsten ("Kundavtalet"). Dessa användarvillkor ("Villkoren") gäller mellan dig som användare och Carotte. Genom att logga in och använda Mira FM godkänner du Villkoren.</p></div>'+
+      sec("1","Hur villkoren hänger ihop",
+        cl("1.1","<p>Kundavtalet reglerar förhållandet mellan Carotte och Kunden: abonnemang, priser, tillgänglighet, personuppgiftsbehandling och avtalstid.</p>")+
+        cl("1.2","<p>Villkoren reglerar din personliga användning av tjänsten. De ger dig inga rättigheter utöver dem Kunden har enligt Kundavtalet.</p>")+
+        cl("1.3","<p>Om Villkoren och Kundavtalet säger olika saker gäller Kundavtalet.</p>"))+
+      sec("2","Ditt konto",
+        cl("2.1","<p>Kontot skapas av Kunden, eller av Carotte på Kundens begäran. Kontot är personligt och får inte delas eller överlåtas.</p>")+
+        cl("2.2","<p>Du ansvarar för att hålla dina inloggningsuppgifter hemliga och för allt som sker via ditt konto. Misstänker du obehörig åtkomst ska du omgående meddela Kunden och Carotte på <span class=\"fill\">support@mira-fm.com</span>.</p>")+
+        cl("2.3","<p>Kunden bestämmer vilken behörighet du har och kan när som helst ändra, begränsa eller avsluta ditt konto.</p>")+
+        cl("2.4","<p>Mira FM är ett verktyg för arbetslivet. Du ska vara minst 18 år och använda tjänsten inom ramen för din anställning eller ditt uppdrag hos Kunden.</p>"))+
+      sec("3","Så får du använda Mira",
+        cl("3.1","<p>Du får använda Mira FM för Kundens verksamhet, i enlighet med Villkoren, gällande lag och Kundens egna interna regler.</p>")+
+        cl("3.2","<p>Du får inte:</p><ul>"+
+          "<li>ge någon utanför Kundens organisation tillgång till tjänsten,</li>"+
+          "<li>kopiera, dekompilera, reverse-engineera eller kringgå säkerhetsfunktioner,</li>"+
+          "<li>samla in data automatiserat (skrapa, botar) eller belasta tjänsten onormalt,</li>"+
+          "<li>ladda upp skadlig kod, olagligt eller kränkande material,</li>"+
+          "<li>lagra känsliga personuppgifter – till exempel uppgifter om hälsa, religion eller fackligt medlemskap – utan att detta särskilt har avtalats mellan Kunden och Carotte. <span class=\"fill\">Undantag: allergier och kostpreferenser vid matbeställning – bekräfta hantering</span></li>"+
+          "</ul>"))+
+      sec("4","Bokningar och beställningar",
+        cl("4.1","<p>När du bokar eller beställer i Mira FM – till exempel fika, lunch, lokalvård, bemanning eller event – gör du det för Kundens räkning. Beställningen kan binda Kunden ekonomiskt. Se därför till att du har behörighet att beställa.</p>")+
+        cl("4.2","<p>En beställning är bindande när den bekräftats i tjänsten.</p>")+
+        cl("4.3","<p>Ledtider, avbokningsregler och priser för de tjänster du beställer framgår av respektive tjänstebeskrivning i Mira FM och av Kundavtalet. <span class=\"fill\">Att fylla i: avbokningsfrister per tjänstetyp</span></p>")+
+        cl("4.4","<p>Du betalar aldrig själv. All fakturering sker till Kunden.</p>"))+
+      sec("5","Innehåll och data",
+        cl("5.1","<p>Information som läggs in i Mira FM tillhör Kunden, inte dig personligen.</p>")+
+        cl("5.2","<p>Kunden kan ta del av, exportera och radera innehåll i tjänsten. Utgå därför inte från att det du skriver i Mira FM är privat.</p>")+
+        cl("5.3","<p>Carotte får använda anonymiserad och aggregerad statistik om hur tjänsten används för att utveckla och förbättra den.</p>"))+
+      sec("6","Personuppgifter",
+        cl("6.1","<p>Kunden är personuppgiftsansvarig för de personuppgifter som behandlas i Mira FM. Carotte är personuppgiftsbiträde och behandlar uppgifterna på Kundens instruktion, enligt det personuppgiftsbiträdesavtal som ingår i Kundavtalet.</p>")+
+        cl("6.2","<p>Vill du veta vilka uppgifter som behandlas om dig, eller vill få dem rättade eller raderade, vänder du dig till Kunden – normalt din HR- eller dataskyddsfunktion.</p>")+
+        cl("6.3","<p>För uppgifter som Carotte samlar in på egen hand via mira-fm.com, till exempel kontaktformulär, nyhetsbrev och cookies, är Carotte själv personuppgiftsansvarig. Läs mer i vår integritetspolicy. <span class=\"fill\">Länk saknas – policy behöver tas fram</span></p>")+
+        cl("6.4","<p>Tjänsten drivs på infrastruktur från Bubble.io och Amazon Web Services. Data lagras i EU/EES där det är möjligt; vid överföring till tredje land används EU-kommissionens standardavtalsklausuler.</p>"))+
+      sec("7","Förslag och feedback",
+        "<p>Tipsar du oss om buggar, idéer eller förbättringar får Carotte fritt använda dessa i sin produktutveckling, utan ersättning och utan begränsning i tid.</p>")+
+      sec("8","Tillgänglighet och utveckling",
+        cl("8.1","<p>Vi arbetar för hög tillgänglighet, men lämnar ingen garanti om drifttid gentemot dig som användare. Någon servicenivå (SLA) gäller inte om det inte särskilt har avtalats med Kunden.</p>")+
+        cl("8.2","<p>Mira FM är webbaserad och fungerar bäst i aktuella versioner av Chrome, Edge och Safari.</p>")+
+        cl("8.3","<p>Mira FM utvecklas löpande. Funktioner kan komma att ändras, läggas till eller tas bort. Planerade driftstopp aviseras i förväg när det är möjligt.</p>")+
+        cl("8.4","<p>Vilka funktioner du ser beror på Kundens abonnemang och din behörighet.</p>"))+
+      sec("9","Rättigheter till tjänsten",
+        "<p>Mira FM med källkod, design, varumärken och innehåll tillhör Carotte och dess licensgivare. Du får en personlig, begränsad och icke-överlåtbar rätt att använda tjänsten så länge Kundavtalet gäller och ditt konto är aktivt. Ingen annan rätt överlåts.</p>")+
+      sec("10","Avstängning",
+        "<p>Carotte får omedelbart begränsa eller stänga av din åtkomst om vi har skälig anledning att tro att Villkoren har överträtts, om användningen innebär en säkerhets- eller driftrisk, eller om Kundavtalet upphör eller åtkomsten stängs på grund av utebliven betalning. Vi informerar Kunden om åtgärden.</p>")+
+      sec("11","Ansvar",
+        cl("11.1","<p>Tjänsten tillhandahålls i befintligt skick. Vi kan inte garantera att den alltid är fri från fel eller avbrott.</p>")+
+        cl("11.2","<p>Eventuella krav med anledning av tjänsten regleras mellan Carotte och Kunden enligt Kundavtalet, som också innehåller ansvarsbegränsningar. Carotte har inget ansvar gentemot dig personligen för indirekt skada, till exempel utebliven vinst, dataförlust eller produktionsbortfall.</p>")+
+        cl("11.3","<p>Begränsningarna gäller inte vid uppsåt eller grov vårdslöshet, eller där ansvar inte kan begränsas enligt tvingande lag.</p>"))+
+      sec("12","När åtkomsten upphör",
+        "<p>Upphör Kundavtalet eller avslutas ditt konto förlorar du tillgången till Mira FM. Hanteringen av Kundens data – radering eller återlämnande – sker enligt Kundavtalet. Carotte har ingen skyldighet att bevara data längre än trettio (30) dagar efter att Kundavtalet upphört, om inte lag kräver annat.</p>")+
+      sec("13","Ändringar av villkoren",
+        "<p>Vi kan uppdatera Villkoren, till exempel när tjänsten utvecklas eller när lagkrav ändras. Väsentliga ändringar meddelas minst trettio (30) dagar i förväg i tjänsten eller via e-post. Fortsatt användning efter att ändringen trätt i kraft innebär att du godkänner den nya versionen. Gällande version finns alltid på mira-fm.com.</p>")+
+      sec("14","Tillämplig lag och tvist",
+        cl("14.1","<p>Svensk rätt gäller för Villkoren.</p>")+
+        cl("14.2","<p>Tvist mellan dig och Carotte prövas av allmän domstol, med Stockholms tingsrätt som första instans. Tvister mellan Carotte och Kunden avgörs genom skiljeförfarande enligt Kundavtalet.</p>"))+
+      sec("15","Kontakt",
+        '<div class="tcard"><p class="lbl">Carotte Group AB</p><p>Org.nr 556305–1068<br>Tegeluddsvägen 92, 115 28 Stockholm<br>E-post: <span class="fill">support@mira-fm.com</span> · Webb: mira-fm.com</p></div>')+
+    '</div></div>';
+  }
+
   function consentHtml(){
     var d=STATE.data, c=(d&&d.consent)||{};
     var status=c.godkant
@@ -152,11 +252,13 @@
     var body=c.godkant
       ? '<div class="ms-hint" style="margin-top:12px;">Du har godkänt användarvillkoren. Vill du godkänna en ny version, bocka i rutan nedan och godkänn på nytt.</div>'
       : '';
+    var openLink=TERMS_URL?('<a class="ms-link" data-ms="terms" href="'+esc(TERMS_URL)+'" target="_blank" rel="noopener">Öppna i egen flik ↗</a>'):'';
     return '<div class="ms-wrap"><div class="ms-panel form">'+
-      '<div class="ms-sech">Användarvillkor</div>'+
-      status+body+
+      '<div class="ms-termshead"><div class="ms-sech" style="margin:0;">Användarvillkor</div>'+openLink+'</div>'+
+      '<div style="margin-top:12px;">'+status+body+'</div>'+
+      termsHtml()+
       '<label class="ms-check"><input type="checkbox" data-ms="agree"'+(STATE.agree?" checked":"")+'>'+
-        '<span>Jag har läst och godkänner <a class="ms-link" data-ms="terms" href="#" target="_blank" rel="noopener">användarvillkoren för Mira</a>.</span></label>'+
+        '<span>Jag har läst och godkänner användarvillkoren för Mira ovan.</span></label>'+
       '<div class="ms-actions">'+
         '<button class="ms-btn" data-ms="consent-save"'+(STATE.agree?"":" disabled")+'>Godkänn</button>'+
         '<span class="ms-msg" data-ms="consentmsg"></span>'+
@@ -273,7 +375,7 @@
     if(t.closest && t.closest('[data-ms="photo-pick"]')){ var fi=root.querySelector('[data-ms="photo-file"]'); if(fi) fi.click(); return; }
     if(t.closest && t.closest('[data-ms="photo-clear"]')){ clearPhoto(); return; }
     if(t.closest && t.closest('[data-ms="consent-save"]')){ saveConsent(); return; }
-    if(t.closest && t.closest('[data-ms="terms"]')){ e.preventDefault(); return; }
+    if(t.closest && t.closest('[data-ms="terms"]')){ if(!TERMS_URL) e.preventDefault(); return; }
   });
   root.addEventListener("change", function(e){
     var t=e.target, k=t.getAttribute?t.getAttribute("data-ms"):null;
