@@ -685,6 +685,37 @@ motsägelse**: ansvaret satt, personen osynlig. Det var precis vad som såg ut s
   inom bolaget flaggas inte, och båda editvägarna visar varningen.
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
+
+#### 🔜 BESTÄLLT — Min sida (User-profil) som Render-block
+Christian 2026-08-25. Bubble-popupen `PopupMyPage` på `dashboard_crm` går inte längre
+att koppla input-fält i (auto-bind omarkerad, workflow-värdet tomt). Sidan har **752
+workflows** med synliga dubbletter — miljön där Bubbles editor blir opålitlig.
+**Beslut: bygg om ytan som ett Render-block**, samma mönster som allt annat vi flyttat
+den här veckan.
+- ⚠️ Popupen redigerar **`User`** (Current User's First Name / Title_user / email /
+  Telefon / profilbild). Kundkortets person-detalj redigerar **`Coworker`** via
+  `CO_EDITABLE` — **liknande fält, FEL typ**. Ny endpoint krävs för User.
+- ⚠️ **Render kan inte skapa User eller sätta lösenord via Data API** (auth ägs av
+  Bubble) — men *patcha* fält på en befintlig User går, som `Associated_company`-
+  skrivningen redan gör.
+- Profilbild fungerar idag för att uppladdning går en egen väg (file uploader), inte
+  via input-bindning. `POST /:id/logo`-mönstret finns att kopiera.
+- ⚠️ Verifiera User-fältens SKRIVNYCKLAR mot schemat innan bygget (`Title_user`,
+  `Telefon`-typ m.m.) — se sessionens `Org_Number`-bugg.
+
+#### Backlog från sessionen 2026-08-24→25
+- **Affärsvyns EGNA oscopade CSS-selektorer** (`.pill` rad 51, `.funnel`, `.fstep`,
+  `.bar`, `.chip`, `.row`, `.edit`). Läcker på dashboard_crm och träffar konkret
+  3 element i företagslistan, 3 i mötestratten. Samma städning som offertblocket fick.
+- **Fas-väljare i nästa steg-formuläret** finns bara i mötestratten. Kundkortets och
+  affärsvyns formulär skapar fortfarande Kundmöten utan fas → de hamnar i "Övrigt".
+- **"Aktiva 2 st" vs "Aktiva avtal 3"** — frontend räknar `status ∈ {aktiv,
+  utgar_snart}`, backend räknar "inget passerat slutdatum". Verksamhetsfråga.
+- **Person i affärsvyn** — native-genvägsgruppen har den, affärsvyn saknar den.
+  Behövs innan gruppen kan tas bort helt.
+- **`CAROTTE_COMPANY_ID` i Render** bör peka på samma bolag som Carotte-usernas
+  `Company`, annars skiljer sig curl/cron-vägen från UI:t.
+
 - **⚠️ Håll `OPTIONSET_SEED.bransch` i takt med Bubbles option-set.** Värden som läggs
   till i Bubble går inte att sätta från listan förrän de finns i seeden.
 - **Drift Fas 2 forts.** — skapa nytt ärende + ärendekategorier (Inställningar-flik i `mira-drift.html`) + team-redigering + avvikelse-toggle. ⚠️ Kräver skärmbild på hur ärendekategorier lagras (egen typ vs option set) innan kategoridelen byggs.
@@ -697,7 +728,7 @@ motsägelse**: ansvaret satt, personen osynlig. Det var precis vad som såg ut s
 
 ### Filer
 - **`companies_api.js`** (NY, ~70k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
-- **`mira-foretag-lista.html`** (NY, **~315k** efter Avtal-porten) — Bubble-blocket för lista + kort + ALLA flikar (inkl Drift + full Avtal-CRUD). `.fl`/`.fk`-namnrymd (+ inflyttade `.ab-`/`.wt-`/`.aa-`/`.ac-`), BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` · `planning_token` · `user_company` · `user_name` · `sender_email` · `sender_name` · `current_user` (User-id → `writer` + roll).
+- **`mira-foretag-lista.html`** (**~400k** 2026-08-25) — Bubble-blocket för lista + kort + ALLA flikar (inkl Drift + full Avtal-CRUD). `.fl`/`.fk`-namnrymd (+ inflyttade `.ab-`/`.wt-`/`.aa-`/`.ac-`), BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` · `planning_token` · `user_company` · `user_name` · `sender_email` · `sender_name` · `current_user` (User-id → `writer` + roll).
 - **`mira-drift.html`** (NY, ~14k) — stå-alone Drift-modul (aggregerat över alla kunder + sök/filter). `.dr`-namnrymd. data-mira: `api_host` + `planning_token` + `user_name`. Återanvänder detalj-endpoints.
 - **`companies_smoke.mjs`** — 201/201 gröna. **`cc_cache_smoke.mjs`** (NY) — 61/61, testar den delade CC-cachen i index.js genom att klippa ut blocket ur källkoden och räkna Bubble-sidhämtningar (se WU-städningen). `index.js` — wiring + delade cachar + Bubble-wf-callers + openPrefixes (`/admin/companies`, `/admin/drift`, `/admin/reset-password`). `emailer.js` — mallar `password_reset` + `user_welcome`.
 

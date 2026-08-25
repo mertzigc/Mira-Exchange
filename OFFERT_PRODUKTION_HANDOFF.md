@@ -303,6 +303,10 @@ Ny fristående modul `offert_api.js` (DI-mönster som `contract_render.js`) → 
 - Adoption (% nya F&E-offerter i Mira) driver takten, inte ett datum. Faktura-hämtning oförändrad oavsett offert/order-migreringens läge.
 
 **Fasad byggordning:**
+⚠️ **`mira-affar-samlad.html` är 205k sedan 2026-08-24** — offert-buildern är inflyttad
+sist i filen (se §4.8). Testsvit: **`offert_smoke.mjs`** (ny 2026-08-24) läser den
+LEVANDE kopian där, inte `mira-offert-admin.html` (referens/historik).
+
 - **P1** — ✅ **BYGGT + smoke-testat 2026-08-01.** Ny modul `affar_api.js` (`GET /admin/affar/feed` → tratt-counts + normaliserad liggare över Lead/activitet_crm/deal/Offert(mira)/FortnoxOffer/MiraOrder/FortnoxOrder/FortnoxInvoice). Fortnox via `ft_customer_name`, CRM/Mira via ClientCompany-namncache (`CC_FIELD_OVERRIDES`: deal.kundföretag, Lead.Company, activitet_crm.clientcompany). Status→pill-mappning + källbadge (HK-connection-faktura→tengella). Modul-`bubbleCount` tillagd i index.js. UI: `mira-affar-samlad.html` (live, client-side filter/sök, funnel-klick=typfilter). 18 smoke-tester gröna. **Kända P1-luckor:** TengellaWorkorder i order-count men EJ i liggaren (fältmappning ej bekräftad); ägare/deal-namn best-effort; sortering på Created Date (sync-tid för Fortnox). read-only samlad liggare + tratt över befintlig data (bevisar värdet, noll risk).
 - **P2** — ✅ **BYGGT + smoke-testat 2026-08-02.** `GET /admin/affar/deal/:id` läser Deals list-fält direkt (lead, historik=activitet_crm, offert=Offert(Mira), order=FortnoxOrder, invoice=FortnoxInvoice) + reverse-lookup MiraOrder per offert. Returnerar normaliserad kedja {lead, aktivitet, offert, order, faktura} med items + status. UI: klick på Affär-rad expanderar affärskort inline (kedje-stepper Lead→Aktivitet→Offert→Order→Faktura, done/active-states + status-pills). `bubbleGet` tillagd som affar-dep. Ingen heuristik behövs — Deal länkar redan hela kedjan. (Tengella-belopp: fallback ft_totalvat/total_price/ft_net/total_cost — bekräfta rätt fält.) affärskort/kedja per Deal.
 - **P3** — manuell koppling av legacy Fortnox-dokument till Deal.
