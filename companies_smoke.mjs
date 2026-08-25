@@ -131,6 +131,7 @@ STORE.Grade = [
   { _id: "gr2", kvalitetskontroll: "qc1", "Värde": 4 },
 ];
 STORE.PasswordReset = []; STORE.emailqueue = [];   // token-flödet skapar rader här
+STORE.consent = [];   // Min sida-godkännanden skapas här
 let _idc = 0;
 const _cmatch = (r, cs) => (cs || []).every((c) => {
   const v = r[c.key];
@@ -170,7 +171,48 @@ const BOLAG = new Map([
 let userPatches = 0;
 const KNOWN_FIELDS = {
   PasswordReset: ["email", "coworker", "token_hash", "expires_at", "used"],
+  // Verifierat User-schema (skärmdump 2026-08-25). Min sida skriver bara de fyra
+  // profilfälten + Consent; övriga listas för att INTE bryta befintliga patcher
+  // (Associated_company). email/Email/lösenord skrivs ALDRIG härifrån.
+  User: ["First Name", "Surname", "Title_user", "Phone_user", "email", "Email", "Company", "Associated_company", "User_role", "Consent"],
+  // Coworker-fält som CO_EDITABLE + create + foto + Min sida-spegling faktiskt skriver.
+  Coworker: ["Förnamn", "Efternamn", "Titel", "Email", "Telefon", "crm_info", "Avdelning", "Kontor", "Foto", "Kundföretag"],
+  // consent (Min sida): Användarvillkor(file, skrivs ej), Godkänt(OS), User(ref).
+  consent: ["Godkänt", "User", "Användarvillkor"],
 };
+// ⚠️ TYPER som skiljer sig mellan objekt är Org_Number-fällan (2026-08-24) i ny form:
+// User.Phone_user är TEXT, Coworker.Telefon är NUMBER. En spegling som skriver fel typ
+// åt något håll 400:ar skarpt — mocken måste avvisa likadant, annars testar vi en
+// påhittad värld. Skip null (rensning). Option set Godkänd: bara Ja/Nej.
+const PATCH_TYPES = {
+  User: { "Phone_user": "string", "First Name": "string", "Surname": "string", "Title_user": "string" },
+  Coworker: { "Telefon": "number" },
+};
+const OPTIONSET_VALUES = { consent: { "Godkänt": ["Ja", "Nej"] } };
+function _typeReject(t, payload, kind) {
+  const spec = PATCH_TYPES[t];
+  if (spec) {
+    for (const [f, want] of Object.entries(spec)) {
+      if (payload[f] === undefined || payload[f] === null) continue;
+      if (typeof payload[f] !== want) {
+        const e = new Error(kind + " failed");
+        e.detail = { status: 400, body: JSON.stringify({ body: { status: "INVALID_DATA", message: "Invalid data for field " + f + ": Expected a " + want + ", but got a " + typeof payload[f] } }) };
+        throw e;
+      }
+    }
+  }
+  const os = OPTIONSET_VALUES[t];
+  if (os) {
+    for (const [f, allowed] of Object.entries(os)) {
+      if (payload[f] === undefined || payload[f] === null) continue;
+      if (allowed.indexOf(String(payload[f])) < 0) {
+        const e = new Error(kind + " failed");
+        e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "could not parse " + payload[f] + " as option set value for " + f } }) };
+        throw e;
+      }
+    }
+  }
+}
 const fetchedTypes = [];
 const findAllCalls = [];   // {t, constraints} — för att bevisa att filter går NER i Bubble
 const getCalls = [];       // {t, id} — för att mäta N+1 (kontorsnamn per rad)
@@ -197,6 +239,7 @@ const deps = {
       const bad = Object.keys(payload || {}).filter((k) => known.indexOf(k) < 0);
       if (bad.length) { const e = new Error("bubblePatch failed"); e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "Unrecognized field: " + bad[0] } }) }; throw e; }
     }
+    _typeReject(t, payload || {}, "bubblePatch");
     if (t === "User") userPatches++;   // för att kunna bevisa att vi inte skriver i onödan
     if (t === "ClientCompany" && CC[id]) { Object.assign(CC[id], payload); return {}; }
     if (STORE[t]) { const r = STORE[t].find((x) => x._id === id); if (r) Object.assign(r, payload); }
@@ -222,6 +265,13 @@ const deps = {
         }
       }
     }
+    // Okänt fält + option-set-värde avvisas som Bubble (consent.Godkänt = Ja/Nej).
+    const knownC = KNOWN_FIELDS[t];
+    if (knownC) {
+      const badC = Object.keys(payload || {}).filter((k) => knownC.indexOf(k) < 0);
+      if (badC.length) { const e = new Error("bubbleCreate failed"); e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "Unrecognized field: " + badC[0] } }) }; throw e; }
+    }
+    _typeReject(t, payload || {}, "bubbleCreate");
     const id = "new_" + (++_idc); const rec = Object.assign({ _id: id }, payload);
     if (t === "ClientCompany") CC[id] = rec; else (STORE[t] = STORE[t] || []).push(rec);
     return id;
@@ -1463,6 +1513,69 @@ const run = async () => {
   const stQ = staffOf(obWithQ);
   ok("onboarding: med user_company hittas samma person som i Vår personal",
      stQ.done === true && stQ.count >= 1);
+
+  // ── MIN SIDA (User-profil: speglad skrivning User+Coworker + consent) ────────
+  // ⚠️ Sist så spegelskrivningen inte muterar tidigare User/Coworker-assertions.
+  {
+    const ms = mk(); registerCompaniesRoutes(ms.app, deps);
+    // GET: u1 (Anna) ↔ co1 (Testare) länkade via e-post christian.mertzig@gmail.com
+    const g = await call(ms.routes, "get", "/admin/companies/mypage/:userId", { params: { userId: "u1" } });
+    const gu = (g.body && g.body.user) || {};
+    const gco = (g.body && g.body.coworker) || {};
+    ok("mypage GET ok + user-fält", g.body.ok === true && gu.first === "Anna" && gu.last === "Andersson" && gu.email === "christian.mertzig@gmail.com");
+    ok("mypage GET hittar kopplad coworker via e-post", g.body.coworker_linked === true && gco.id === "co1");
+    ok("mypage GET consent tomt (u1 saknar Consent)", ((g.body || {}).consent || {}).godkant === false);
+
+    // GET: u2 (bo@x.se) saknar coworker → linked false, INTE krasch
+    const g2 = await call(ms.routes, "get", "/admin/companies/mypage/:userId", { params: { userId: "u2" } });
+    ok("mypage GET utan kopplad coworker → linked false + coworker null", g2.body.ok === true && g2.body.coworker_linked === false && g2.body.coworker === null);
+
+    // GET okänd user → 404
+    const g404 = await call(ms.routes, "get", "/admin/companies/mypage/:userId", { params: { userId: "nope" } });
+    ok("mypage GET okänd user → 404", g404.code === 404 && (g404.body || {}).error === "user_not_found");
+
+    // PATCH: speglad skrivning. Telefon formatterad — User=TEXT (behålls), Coworker=NUMBER.
+    const emailBefore = (STORE.User.find((u) => u._id === "u1") || {}).email;
+    const p = await call(ms.routes, "patch", "/admin/companies/mypage/:userId", { params: { userId: "u1" }, body: { fields: { first: "Anders", last: "Ny", title: "VD", phone: "070-111 22 33" } } });
+    const u1 = STORE.User.find((u) => u._id === "u1") || {};
+    const c1 = STORE.Coworker.find((c) => c._id === "co1") || {};
+    ok("mypage PATCH ok + coworker_linked + coworker_id", (p.body || {}).ok === true && p.body.coworker_linked === true && p.body.coworker_id === "co1");
+    ok("mypage PATCH User: First Name/Surname/Title_user", u1["First Name"] === "Anders" && u1["Surname"] === "Ny" && u1["Title_user"] === "VD");
+    ok("mypage PATCH User.Phone_user = TEXT (behåller '070-111 22 33')", u1["Phone_user"] === "070-111 22 33");
+    ok("mypage PATCH speglar Coworker: Förnamn/Efternamn/Titel", c1["Förnamn"] === "Anders" && c1["Efternamn"] === "Ny" && c1["Titel"] === "VD");
+    ok("mypage PATCH Coworker.Telefon = NUMBER 701112233", c1["Telefon"] === 701112233 && typeof c1["Telefon"] === "number");
+    ok("mypage PATCH rör ALDRIG User.email (auth + join-nyckel)", u1.email === emailBefore);
+
+    // PATCH utan kopplad coworker → user skrivs, linked false, ingen krasch
+    const p2 = await call(ms.routes, "patch", "/admin/companies/mypage/:userId", { params: { userId: "u2" }, body: { fields: { first: "Boris" } } });
+    const u2 = STORE.User.find((u) => u._id === "u2") || {};
+    ok("mypage PATCH utan coworker → user skriven + linked false", (p2.body || {}).ok === true && p2.body.coworker_linked === false && u2["First Name"] === "Boris");
+
+    // PATCH okänt fält → 400 (whitelist)
+    const pBad = await call(ms.routes, "patch", "/admin/companies/mypage/:userId", { params: { userId: "u1" }, body: { fields: { admin_crm: true } } });
+    ok("mypage PATCH okänt fält → 400 field_not_editable", pBad.code === 400 && /field_not_editable/.test((pBad.body || {}).error || ""));
+
+    // PATCH tomt → 400
+    const pEmpty = await call(ms.routes, "patch", "/admin/companies/mypage/:userId", { params: { userId: "u1" }, body: { fields: {} } });
+    ok("mypage PATCH tomt → 400 no_fields", pEmpty.code === 400 && (pEmpty.body || {}).error === "no_fields");
+
+    // CONSENT: godkänn → skapar consent{Godkänt:'Ja', User:u1} + sätter User.Consent
+    const cBefore = STORE.consent.length;
+    const cRes = await call(ms.routes, "post", "/admin/companies/mypage/:userId/consent", { params: { userId: "u1" }, body: { agree: true } });
+    const newC = STORE.consent[STORE.consent.length - 1] || {};
+    const u1c = STORE.User.find((u) => u._id === "u1") || {};
+    ok("consent POST ok + ny consent-post skapad", (cRes.body || {}).ok === true && STORE.consent.length === cBefore + 1);
+    ok("consent skriver Godkänt='Ja' + User=u1", newC["Godkänt"] === "Ja" && newC["User"] === "u1");
+    ok("consent sätter User.Consent → nya id:t", u1c.Consent === newC._id && u1c.Consent === cRes.body.consent_id);
+
+    // CONSENT GET reflekterar godkänt
+    const gAfter = await call(ms.routes, "get", "/admin/companies/mypage/:userId", { params: { userId: "u1" } });
+    ok("consent GET reflekterar godkänt=true", ((gAfter.body || {}).consent || {}).godkant === true);
+
+    // CONSENT utan agree → 400
+    const cNo = await call(ms.routes, "post", "/admin/companies/mypage/:userId/consent", { params: { userId: "u1" }, body: {} });
+    ok("consent utan agree → 400 agree_required", cNo.code === 400 && (cNo.body || {}).error === "agree_required");
+  }
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);

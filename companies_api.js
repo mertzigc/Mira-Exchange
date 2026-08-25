@@ -895,6 +895,144 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
+  // ── MIN SIDA (User-profil, render-omtag av PopupMyPage på dashboard_crm) ─────
+  // Speglad skrivning: en "Spara" patchar BÅDE User OCH den kopplade Coworkern.
+  // Kopplingen User↔Coworker sker på e-post (Coworker.Email == User.email) — samma
+  // matchning som Personer-fliken (has_user). ⚠️ FÄLTNYCKLAR OCH TYPER SKILJER SIG
+  // mellan objekten (verifierat mot Bubble 2026-08-25):
+  //   User:     "First Name"(text) · "Surname"(text) · "Title_user"(text) · "Phone_user"(TEXT)
+  //   Coworker: "Förnamn"(text)    · "Efternamn"(text) · "Titel"(text)     · "Telefon"(NUMBER)
+  // Telefon-typskillnaden är exakt Org_Number-fällan (2026-08-24): User.Phone_user
+  // behåller strängen (inledande 0/+), Coworker.Telefon skrivs som Number(siffror).
+  // ⚠️ email skrivs ALDRIG härifrån: den är Bubbles auth-login (auth ägs av Bubble)
+  // OCH join-nyckeln mot Coworker — en ändring hade kunnat bryta både inlogg och
+  // kopplingen. Profilbild går sin egen väg via /coworker/:id/photo (User saknar bildfält).
+  // RÅ bubblePatch/bubbleCreate (inte safeCreate) → okänt fält ger 400, aldrig tyst drop.
+  const MYPAGE_FIELDS = ["first", "last", "title", "phone"];   // email + foto hanteras separat
+  async function _linkedCoworker(user) {
+    const em = _email(user.email || user.Email || (user.authentication && user.authentication.email && user.authentication.email.email));
+    if (!em) return null;
+    // Ingen .catch(()=>[]) — en fallen fråga ska braka, inte läsas som "ingen coworker".
+    const cos = await bubbleFindAll("Coworker", { constraints: [{ key: "Email", constraint_type: "equals", value: em }] });
+    const list = Array.isArray(cos) ? cos : [];
+    if (!list.length) return null;
+    // Flera träffar med samma mail → föredra den under Userns eget bolag (Company).
+    const companyId = _ref(user.Company);
+    if (companyId && list.length > 1) {
+      const own = list.filter((c) => _ref(c["Kundföretag"]) === companyId);
+      if (own.length) return own[0];
+    }
+    return list[0];
+  }
+
+  // GET /admin/companies/mypage/:userId — profil för User + kopplad Coworker + consent-status
+  app.options("/admin/companies/mypage/:userId", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/mypage/:userId", async (req, res) => {
+    if (!guard(req, res)) return;
+    const uid = _str(req.params.userId).trim();
+    if (!uid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const u = await bubbleGet("User", uid).catch(() => null);
+      if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+      const co = await _linkedCoworker(u);
+      // Consent: läs tillbaka godkänt-status ur den kopplade consent-posten (om någon).
+      let consentGodkant = false, consentDate = "";
+      const consentId = _ref(u.Consent);
+      if (consentId) {
+        const c = await bubbleGet("consent", consentId).catch(() => null);
+        if (c) { consentGodkant = _osStr(c["Godkänt"]) === "Ja"; consentDate = _day(c["Created Date"]); }
+      }
+      return res.json({
+        ok: true,
+        user: {
+          id: uid,
+          first: _str(u["First Name"]),
+          last:  _str(u["Surname"]),
+          title: _str(u["Title_user"]),
+          phone: _str(u["Phone_user"]),
+          email: _str(u.email || u.Email),
+        },
+        coworker: co ? {
+          id: bubbleId(co),
+          first: _str(co["Förnamn"] || co["First Name"]),
+          last:  _str(co["Efternamn"] || co["Last Name"]),
+          title: _str(co["Titel"]),
+          phone: _str(co["Telefon"]),
+          foto:  _httpsUrl(co["Foto"] || co.foto),
+        } : null,
+        coworker_linked: !!co,
+        consent: { godkant: consentGodkant, date: consentDate },
+      });
+    } catch (e) {
+      console.error("[/admin/companies/mypage/:userId GET]", e && e.message, e && e.detail);
+      return res.status((e && e.status) || 500).json({ ok: false, error: (e && e.message) || String(e), detail: (e && e.detail) || null });
+    }
+  });
+
+  // PATCH /admin/companies/mypage/:userId — speglad skrivning User + Coworker
+  app.patch("/admin/companies/mypage/:userId", async (req, res) => {
+    if (!guard(req, res)) return;
+    const uid = _str(req.params.userId).trim();
+    if (!uid) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const u = await bubbleGet("User", uid).catch(() => null);
+      if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+      const body = req.body || {};
+      const fields = body.fields || (body.field ? { [body.field]: body.value } : null);
+      if (!fields || !Object.keys(fields).length) return res.status(400).json({ ok: false, error: "no_fields" });
+      for (const k of Object.keys(fields)) {
+        if (MYPAGE_FIELDS.indexOf(k) === -1) return res.status(400).json({ ok: false, error: `field_not_editable:${k}` });
+      }
+      const has = (k) => Object.prototype.hasOwnProperty.call(fields, k);
+      // ── User-payload (Phone_user = TEXT) ──
+      const uPayload = {};
+      if (has("first")) uPayload["First Name"] = _str(fields.first).trim();
+      if (has("last"))  uPayload["Surname"]    = _str(fields.last).trim();
+      if (has("title")) uPayload["Title_user"] = _str(fields.title).trim();
+      if (has("phone")) uPayload["Phone_user"] = _str(fields.phone).trim();   // behåll inledande 0/+
+      if (Object.keys(uPayload).length) await bubblePatch("User", uid, uPayload);
+      // ── Coworker-payload (Telefon = NUMBER) — bara om en coworker är kopplad ──
+      const co = await _linkedCoworker(u);
+      if (co) {
+        const cPayload = {};
+        if (has("first")) cPayload["Förnamn"]   = _str(fields.first).trim();
+        if (has("last"))  cPayload["Efternamn"] = _str(fields.last).trim();
+        if (has("title")) cPayload["Titel"]     = _str(fields.title).trim();
+        if (has("phone")) { const d = _str(fields.phone).replace(/\D/g, ""); cPayload["Telefon"] = d ? Number(d) : null; }
+        if (Object.keys(cPayload).length) await bubblePatch("Coworker", bubbleId(co), cPayload);
+      }
+      return res.json({ ok: true, id: uid, coworker_id: co ? bubbleId(co) : null, coworker_linked: !!co });
+    } catch (e) {
+      console.error("[/admin/companies/mypage/:userId PATCH]", e && e.message, e && e.detail);
+      return res.status((e && e.status) || 500).json({ ok: false, error: (e && e.message) || String(e), detail: (e && e.detail) || null });
+    }
+  });
+
+  // POST /admin/companies/mypage/:userId/consent — godkänn användarvillkoren
+  // Skapar en ny consent-post (revisionslogg) + sätter User.Consent → nya id:t.
+  // ⚠️ Godkänt är option set "Godkänd", värden Ja/Nej (verifierat 2026-08-25) → skriv "Ja".
+  // "Ingen fil" (Christians beslut): Användarvillkor-filen skrivs inte; Created Date = tidsstämpel.
+  app.options("/admin/companies/mypage/:userId/consent", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/mypage/:userId/consent", async (req, res) => {
+    if (!guard(req, res)) return;
+    const uid = _str(req.params.userId).trim();
+    if (!uid) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+    try {
+      const b = req.body || {};
+      const agree = b.agree === true || b.agree === "true" || b.agree === 1 || b.agree === "1";
+      if (!agree) return res.status(400).json({ ok: false, error: "agree_required" });
+      const u = await bubbleGet("User", uid).catch(() => null);
+      if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+      const consentId = await bubbleCreate("consent", { "Godkänt": "Ja", "User": uid });
+      await bubblePatch("User", uid, { "Consent": consentId });
+      return res.json({ ok: true, consent_id: consentId, godkant: true });
+    } catch (e) {
+      console.error("[/admin/companies/mypage/:userId/consent]", e && e.message, e && e.detail);
+      return res.status((e && e.status) || 500).json({ ok: false, error: (e && e.message) || String(e), detail: (e && e.detail) || null });
+    }
+  });
+
   // ── GET /admin/companies/coworker/:id/activities — aktiviteter där personen är taggad ──
   // Söker activitet_crm där taggade_personer (List of Coworker) contains personen. Nyast först.
   // activitet_crm länkas till kunden via fältet `company` (ClientCompany) — bekräftat i Bubble-schemat

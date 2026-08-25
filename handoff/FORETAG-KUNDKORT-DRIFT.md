@@ -686,22 +686,65 @@ motsägelse**: ansvaret satt, personen osynlig. Det var precis vad som såg ut s
 
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 
-#### 🔜 BESTÄLLT — Min sida (User-profil) som Render-block
-Christian 2026-08-25. Bubble-popupen `PopupMyPage` på `dashboard_crm` går inte längre
-att koppla input-fält i (auto-bind omarkerad, workflow-värdet tomt). Sidan har **752
-workflows** med synliga dubbletter — miljön där Bubbles editor blir opålitlig.
-**Beslut: bygg om ytan som ett Render-block**, samma mönster som allt annat vi flyttat
-den här veckan.
-- ⚠️ Popupen redigerar **`User`** (Current User's First Name / Title_user / email /
-  Telefon / profilbild). Kundkortets person-detalj redigerar **`Coworker`** via
-  `CO_EDITABLE` — **liknande fält, FEL typ**. Ny endpoint krävs för User.
-- ⚠️ **Render kan inte skapa User eller sätta lösenord via Data API** (auth ägs av
-  Bubble) — men *patcha* fält på en befintlig User går, som `Associated_company`-
-  skrivningen redan gör.
-- Profilbild fungerar idag för att uppladdning går en egen väg (file uploader), inte
-  via input-bindning. `POST /:id/logo`-mönstret finns att kopiera.
-- ⚠️ Verifiera User-fältens SKRIVNYCKLAR mot schemat innan bygget (`Title_user`,
-  `Telefon`-typ m.m.) — se sessionens `Org_Number`-bugg.
+#### Min sida (User-profil) som Render-block — BYGGT 2026-08-25, EJ DEPLOYAT
+Bubble-popupen `PopupMyPage` på `dashboard_crm` gick inte längre att koppla input-fält
+i (auto-bind omarkerad, workflow-värdet tomt; sidan har 752 workflows med dubbletter).
+Ersatt med nytt fristående block **`mira-min-sida.html`** (`.ms`-namnrymd) som klistras
+in i popupen/ytan bredvid användarnamnet. Två flikar: **Mina uppgifter** + **Användarvillkor**.
+
+**Verifierat User-schema (skärmdump + Christian 2026-08-25 — gissa aldrig, se `Org_Number`-buggen):**
+- `First Name`(text) · `Surname`(text, INTE "Last Name") · `Title_user`(text) ·
+  **`Phone_user`(TEXT)** · `email`(auth) · `Consent`(ref → typ `consent`).
+- **User saknar bildfält** — profilbild bor bara på Coworker.
+
+**⚠️ TELEFON-TYPEN SKILJER SIG (Org_Number-fällan i ny form):** `User.Phone_user` är
+**text**, `Coworker.Telefon` är **number**. Speglingen skriver strängen till User
+(behåller inledande 0/`+`/mellanslag) och `Number(siffror)` till Coworker. Fel typ åt
+något håll ger skarpt 400.
+
+**Speglad skrivning (Christians beslut):** en "Spara" patchar BÅDE Current User OCH den
+kopplade Coworkern. Kopplingen sker på **e-post** (`Coworker.Email == User.email`), samma
+matchning som Personer-fliken (`has_user`). Saknas coworker skrivs bara User, och svaret
+bär `coworker_linked:false` — UI:t säger det rakt ut (tyst halv-skrivning vore en lögn).
+
+**⚠️ `email` är LÄS-ONLY** (mitt beslut, flaggat): den är Bubbles auth-login (auth ägs av
+Bubble, samma regel som lösenord) OCH join-nyckeln mot Coworker — en skrivning kunde bryta
+både inlogg och kopplingen. Popupen visade den redigerbar; det är fällan, inte funktionen.
+Byte av inloggningsmail behöver en egen admin-väg om det ska in.
+
+**Profilbild:** återanvänder den LIVE-deployade `POST /admin/companies/coworker/:cid/photo`
+(→ `Coworker.Foto`). Frontenden client-komprimerar (canvas 512px, jpeg 0.82). Kräver
+kopplad coworker; annars döljs bild-knapparna med förklaring.
+
+**Consent-fliken (Christians beslut: "bara Godkänt-flagga, ingen fil"):**
+`POST /admin/companies/mypage/:userId/consent {agree:true}` → skapar en **ny** `consent`-post
+`{Godkänt:"Ja", User:<uid>}` (revisionslogg per godkännande) + patchar `User.Consent` → nya id:t.
+**⚠️ `Godkänt` är option set `Godkänd`, värden `Ja`/`Nej`** (verifierat 2026-08-25) — läses
+tillbaka OS-medvetet (`_osStr`). Created Date = tidsstämpel. Användarvillkor-filen skrivs inte.
+
+**⚠️ Render kan INTE skapa User/sätta lösenord** (auth ägs av Bubble) — endpointen *patchar*
+bara befintliga fält (som `Associated_company`-skrivningen redan gör).
+
+**Microsoft-koppling:** medvetet UTELÄMNAD — Christian bygger om hela den API-integrationen
+separat. Blocket har bara en gråtonad placeholder-ruta, ingen logik.
+
+- **Backend (`companies_api.js`):** `GET /admin/companies/mypage/:userId` (user+coworker+consent)
+  · `PATCH /admin/companies/mypage/:userId` (speglad skrivning, whitelist `first/last/title/phone`,
+  RÅ bubblePatch → okänt fält 400:ar) · `POST /admin/companies/mypage/:userId/consent`.
+  Under `/admin/companies`-prefixet → **ingen index.js-ändring**. Foto återanvänds.
+- **Verifierat:** companies_smoke **372/372** (+61), **mutationstestat: 17 av 20 nya faller**
+  mot gammal companies_api.js (sviten kraschar INTE — call() svarar 404, assertions faller).
+  De 3 som inte faller är regressionsvakter (email rörs aldrig; consent-id trivialt mot 404).
+  Mocken skärptes: `KNOWN_FIELDS` för User/Coworker/consent + typvalidering på PATCH
+  (`Phone_user`=string, `Telefon`=number) + option-set-check (`Godkänt`∈Ja/Nej) — avvisar
+  precis som Bubble. Regression: alla 22 sviter gröna.
+- **⚠️ EJ browser-testat mot skarp data** (ingen env/token i Claudes shell). Blocket är en
+  nära klon av `mira-drift.html`-mönstret (BROOT-claim, IIFE, ingen `?.`/`??`, alla handler-
+  funktioner på IIFE-nivå — verifierat), syntax-checkat. **Christian måste röktesta i browsern
+  efter inklistring.**
+- **Deploy:** `companies_api.js` (Render) + klistra in **nytt block `mira-min-sida.html`** på
+  dashboard_crm-popupen. Bind `data-mira`: `api_host` · `planning_token` · `current_user`
+  (= Current User's unique id). Ingen Bubble-schemaändring (`consent`-typen + fält finns).
 
 #### Backlog från sessionen 2026-08-24→25
 - **Affärsvyns EGNA oscopade CSS-selektorer** (`.pill` rad 51, `.funnel`, `.fstep`,
@@ -730,6 +773,7 @@ den här veckan.
 - **`companies_api.js`** (NY, ~70k) — hela backend-modulen (`registerCompaniesRoutes(app, deps)`). Alla endpoints x-admin-token-grindade (utom `reset-password/exchange` som är token-grindad publik).
 - **`mira-foretag-lista.html`** (**~400k** 2026-08-25) — Bubble-blocket för lista + kort + ALLA flikar (inkl Drift + full Avtal-CRUD). `.fl`/`.fk`-namnrymd (+ inflyttade `.ab-`/`.wt-`/`.aa-`/`.ac-`), BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` · `planning_token` · `user_company` · `user_name` · `sender_email` · `sender_name` · `current_user` (User-id → `writer` + roll).
 - **`mira-drift.html`** (NY, ~14k) — stå-alone Drift-modul (aggregerat över alla kunder + sök/filter). `.dr`-namnrymd. data-mira: `api_host` + `planning_token` + `user_name`. Återanvänder detalj-endpoints.
+- **`mira-min-sida.html`** (NY, 2026-08-25) — Min sida (User-profil), ersätter Bubble-popupen `PopupMyPage`. `.ms`-namnrymd. data-mira: `api_host` + `planning_token` + `current_user`. Flikar: Mina uppgifter (speglad User+Coworker-skrivning) + Användarvillkor (consent). Foto återanvänder `/coworker/:id/photo`.
 - **`companies_smoke.mjs`** — 201/201 gröna. **`cc_cache_smoke.mjs`** (NY) — 61/61, testar den delade CC-cachen i index.js genom att klippa ut blocket ur källkoden och räkna Bubble-sidhämtningar (se WU-städningen). `index.js` — wiring + delade cachar + Bubble-wf-callers + openPrefixes (`/admin/companies`, `/admin/drift`, `/admin/reset-password`). `emailer.js` — mallar `password_reset` + `user_welcome`.
 
 ### Backend-arkitektur (companies_api.js)

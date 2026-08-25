@@ -1,0 +1,269 @@
+<!--
+  mira-min-sida.html — Min sida (User-profil), render-omtag av Bubble-popupen PopupMyPage.
+  Ersätter den input-bindnings-trasiga popupen på dashboard_crm med ett render-block.
+  Speglad skrivning: en "Spara" patchar BÅDE Current User OCH kopplad Coworker.
+  Backend (companies_api.js):
+    GET   /admin/companies/mypage/:userId            — profil (user+coworker+consent)
+    PATCH /admin/companies/mypage/:userId            — speglad skrivning {fields:{first,last,title,phone}}
+    POST  /admin/companies/mypage/:userId/consent    — godkänn användarvillkor {agree:true}
+    POST  /admin/companies/coworker/:cid/photo       — profilbild (återanvänd, LIVE)
+  data-mira: api_host + planning_token + current_user (User-id). Konventioner: INGEN ?./??,
+  IIFE, BROOT-claim, .ms-namnrymd.
+  ⚠️ email är LÄS-ONLY: Bubbles auth-login (auth ägs av Bubble) + join-nyckel mot Coworker.
+  ⚠️ Microsoft-integrationen byggs om separat senare — placeholder här, ingen logik.
+-->
+<style>
+  .ms{--ms-bg:#0f1830;--ms-card:#16223d;--ms-line:#243456;--ms-txt:#e7ecf6;--ms-mut:#8ea0c2;--ms-acc:#df6f39;--ms-ok:#2ecc71;--ms-chip:#1c2b4d;--ms-err:#e5533c;
+      color:var(--ms-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
+  .ms *{box-sizing:border-box;}
+  .ms-head{display:flex;align-items:center;gap:10px;margin:0 0 14px;}
+  .ms-head h1{font-size:20px;font-weight:800;margin:0;}
+  .ms-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;}
+  .ms-tab{background:var(--ms-chip);color:var(--ms-txt);border:1px solid var(--ms-line);border-radius:20px;padding:8px 16px;cursor:pointer;font-size:12.5px;font-weight:600;}
+  .ms-tab.on{background:var(--ms-acc);color:#0f1830;border-color:var(--ms-acc);}
+  .ms-panel{background:var(--ms-card);border:1px solid var(--ms-line);border-radius:14px;padding:18px 20px;}
+  .ms-wrap{max-width:720px;}
+  .ms-sech{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--ms-acc);font-weight:700;margin:0 0 12px;}
+  .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;}
+  .ms-fld{display:flex;flex-direction:column;gap:5px;}
+  .ms-fld.full{grid-column:1 / -1;}
+  .ms-fld label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ms-mut);font-weight:600;}
+  .ms-fld input{background:var(--ms-chip);color:var(--ms-txt);border:1px solid var(--ms-line);border-radius:9px;padding:10px 12px;font-size:13px;width:100%;}
+  .ms-fld input:focus{outline:none;border-color:var(--ms-acc);}
+  .ms-fld input[readonly]{opacity:.6;cursor:not-allowed;}
+  .ms-hint{font-size:11px;color:var(--ms-mut);margin-top:3px;line-height:1.4;}
+  .ms-actions{display:flex;align-items:center;gap:12px;margin-top:18px;}
+  .ms-btn{background:var(--ms-acc);color:#0f1830;border:1px solid var(--ms-acc);border-radius:9px;padding:10px 20px;cursor:pointer;font-size:13px;font-weight:700;}
+  .ms-btn[disabled]{opacity:.5;cursor:default;}
+  .ms-btn.ghost{background:var(--ms-chip);color:var(--ms-txt);border-color:var(--ms-line);}
+  .ms-msg{font-size:12px;color:var(--ms-mut);}
+  .ms-msg.ok{color:var(--ms-ok);}
+  .ms-msg.err{color:var(--ms-err);}
+  .ms-warn{background:rgba(229,83,60,.12);border:1px solid rgba(229,83,60,.4);border-radius:10px;padding:10px 13px;font-size:12px;color:#f0a071;margin:0 0 14px;line-height:1.45;}
+  .ms-photo{display:flex;align-items:center;gap:16px;margin:2px 0 6px;}
+  .ms-avatar{width:78px;height:78px;border-radius:50%;object-fit:cover;background:var(--ms-chip);border:1px solid var(--ms-line);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:var(--ms-mut);}
+  .ms-photo-btns{display:flex;gap:8px;flex-wrap:wrap;}
+  .ms-msg-block{margin-top:6px;}
+  .ms-consent-status{font-size:14px;font-weight:700;margin:0 0 6px;}
+  .ms-consent-status .yes{color:var(--ms-ok);}
+  .ms-consent-status .no{color:var(--ms-err);}
+  .ms-check{display:flex;align-items:flex-start;gap:10px;margin:14px 0;font-size:13px;color:var(--ms-txt);cursor:pointer;line-height:1.45;}
+  .ms-check input{margin-top:2px;width:16px;height:16px;flex-shrink:0;cursor:pointer;}
+  .ms-link{color:var(--ms-acc);text-decoration:underline;}
+  .ms-soon{opacity:.55;}
+  .ms-loading{padding:26px;text-align:center;color:var(--ms-mut);}
+  @media(max-width:560px){ .ms-grid{grid-template-columns:1fr;} }
+</style>
+
+<div class="ms">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="current_user"   value=""><!-- bind till Current User's unique id -->
+  <div data-ms="root"><div class="ms-loading">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".ms"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-ms-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-ms-claimed","1");
+  var $=function(k){ return root.querySelector('[data-ms="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), UID=cfg("current_user").trim();
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+  function post(path,bodyObj){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(function(r){ return r.json(); }); }
+  function patch(path,bodyObj){ return fetch(HOST+path,{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(function(r){ return r.json(); }); }
+
+  var STATE={ tab:"profil", loading:true, err:"", data:null, agree:false };
+
+  function initials(u){
+    var f=(u&&u.first)?u.first.charAt(0):"", l=(u&&u.last)?u.last.charAt(0):"";
+    return (f+l).toUpperCase()||"?";
+  }
+
+  function profileHtml(){
+    var d=STATE.data, u=(d&&d.user)||{}, co=d&&d.coworker;
+    var linked=d&&d.coworker_linked;
+    var warn=linked?"":'<div class="ms-warn">Ingen kopplad medarbetare (Coworker) hittades på din e-post. '+
+      'Namn, titel och telefon sparas då bara på ditt användarkonto, och profilbild går inte att sätta '+
+      'förrän en Coworker med samma e-post finns.</div>';
+    var fotoUrl=(co&&co.foto)||"";
+    var avatar=fotoUrl?('<img class="ms-avatar" src="'+esc(fotoUrl)+'" alt="">'):('<div class="ms-avatar">'+esc(initials(u))+'</div>');
+    var photoBtns=linked?
+      ('<div class="ms-photo-btns">'+
+        '<button class="ms-btn ghost" data-ms="photo-pick">'+(fotoUrl?"Byt bild":"Ladda upp")+'</button>'+
+        (fotoUrl?'<button class="ms-btn ghost" data-ms="photo-clear">Ta bort</button>':'')+
+        '<input type="file" accept="image/*" data-ms="photo-file" style="display:none">'+
+      '</div>')
+      :'<div class="ms-hint">Profilbild kräver en kopplad medarbetare.</div>';
+    return '<div class="ms-wrap">'+warn+
+      '<div class="ms-panel">'+
+        '<div class="ms-sech">Profilbild</div>'+
+        '<div class="ms-photo">'+avatar+photoBtns+'</div>'+
+        '<div class="ms-msg-block"><span class="ms-msg" data-ms="photomsg"></span></div>'+
+      '</div>'+
+      '<div class="ms-panel" style="margin-top:14px;">'+
+        '<div class="ms-sech">Mina uppgifter</div>'+
+        '<div class="ms-grid">'+
+          fld("first","Förnamn",u.first,"text")+
+          fld("last","Efternamn",u.last,"text")+
+          fld("title","Titel",u.title,"text")+
+          fld("phone","Telefon",u.phone,"tel")+
+          '<div class="ms-fld full"><label>E-post (inloggning)</label>'+
+            '<input type="email" value="'+esc(u.email)+'" readonly>'+
+            '<div class="ms-hint">Din inloggningsmail ändras inte här — kontakta admin om den behöver bytas.</div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="ms-actions">'+
+          '<button class="ms-btn" data-ms="save">Spara</button>'+
+          '<span class="ms-msg" data-ms="savemsg"></span>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }
+  function fld(k,label,val,type){
+    return '<div class="ms-fld"><label>'+esc(label)+'</label>'+
+      '<input type="'+type+'" data-ms="f-'+k+'" value="'+esc(val)+'"></div>';
+  }
+
+  function consentHtml(){
+    var d=STATE.data, c=(d&&d.consent)||{};
+    var status=c.godkant
+      ? '<div class="ms-consent-status">Status: <span class="yes">Godkänt</span></div>'+(c.date?'<div class="ms-hint">Godkänt '+esc(c.date)+'.</div>':'')
+      : '<div class="ms-consent-status">Status: <span class="no">Ej godkänt</span></div>';
+    var body=c.godkant
+      ? '<div class="ms-hint" style="margin-top:12px;">Du har godkänt användarvillkoren. Vill du godkänna en ny version, bocka i rutan nedan och godkänn på nytt.</div>'
+      : '';
+    return '<div class="ms-wrap"><div class="ms-panel">'+
+      '<div class="ms-sech">Användarvillkor</div>'+
+      status+body+
+      '<label class="ms-check"><input type="checkbox" data-ms="agree"'+(STATE.agree?" checked":"")+'>'+
+        '<span>Jag har läst och godkänner <a class="ms-link" data-ms="terms" href="#" target="_blank" rel="noopener">användarvillkoren för Mira</a>.</span></label>'+
+      '<div class="ms-actions">'+
+        '<button class="ms-btn" data-ms="consent-save"'+(STATE.agree?"":" disabled")+'>Godkänn</button>'+
+        '<span class="ms-msg" data-ms="consentmsg"></span>'+
+      '</div>'+
+    '</div>'+
+    '<div class="ms-panel ms-soon" style="margin-top:14px;">'+
+      '<div class="ms-sech">Microsoft-koppling</div>'+
+      '<div class="ms-hint">Kalenderkopplingen mot Outlook byggs om separat och är inte aktiv i den här vyn ännu.</div>'+
+    '</div></div>';
+  }
+
+  function tabsHtml(){
+    var t=[["profil","Mina uppgifter"],["consent","Användarvillkor"]];
+    var h=""; for(var i=0;i<t.length;i++){ h+='<span class="ms-tab'+(STATE.tab===t[i][0]?" on":"")+'" data-ms="tab" data-t="'+t[i][0]+'">'+esc(t[i][1])+'</span>'; }
+    return '<div class="ms-tabs">'+h+'</div>';
+  }
+
+  function render(){
+    if(STATE.loading){ $("root").innerHTML='<div class="ms-loading">Laddar…</div>'; return; }
+    if(STATE.err){ $("root").innerHTML='<div class="ms-panel"><div class="ms-msg err">'+esc(STATE.err)+'</div></div>'; return; }
+    var head='<div class="ms-head"><h1>Min sida</h1></div>';
+    $("root").innerHTML=head+tabsHtml()+(STATE.tab==="consent"?consentHtml():profileHtml());
+  }
+
+  function load(){
+    STATE.loading=true; render();
+    if(!UID){ STATE.loading=false; STATE.err="Ingen användare kopplad (bind Current User's unique id i data-mira current_user)."; render(); return; }
+    api("/admin/companies/mypage/"+encodeURIComponent(UID)).then(function(j){
+      STATE.loading=false;
+      if(j&&j.ok){ STATE.data=j; STATE.agree=false; }
+      else { STATE.err=(j&&j.error)||"Kunde inte ladda profilen."; }
+      render();
+    }).catch(function(){ STATE.loading=false; STATE.err="Nätverksfel vid laddning."; render(); });
+  }
+
+  function saveProfile(){
+    var msg=$("savemsg"), btn=$("save");
+    var fields={
+      first:(root.querySelector('[data-ms="f-first"]')||{}).value||"",
+      last: (root.querySelector('[data-ms="f-last"]') ||{}).value||"",
+      title:(root.querySelector('[data-ms="f-title"]')||{}).value||"",
+      phone:(root.querySelector('[data-ms="f-phone"]')||{}).value||""
+    };
+    if(msg){ msg.textContent="Sparar…"; msg.className="ms-msg"; }
+    if(btn) btn.disabled=true;
+    patch("/admin/companies/mypage/"+encodeURIComponent(UID),{fields:fields}).then(function(j){
+      if(btn) btn.disabled=false;
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"kunde inte spara"); msg.className="ms-msg err"; } return; }
+      // Läs tillbaka från servern (vy-cache: visa serverns sanning, inte formulärets).
+      api("/admin/companies/mypage/"+encodeURIComponent(UID)).then(function(f){
+        if(f&&f.ok){ STATE.data=f; render(); var m2=$("savemsg"); if(m2){ m2.textContent=j.coworker_linked?"✓ Sparat":"✓ Sparat (ingen kopplad medarbetare att spegla till)"; m2.className="ms-msg ok"; } }
+      });
+    }).catch(function(){ if(btn) btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="ms-msg err"; } });
+  }
+
+  function compressImage(file, cb){
+    var url=URL.createObjectURL(file), img=new Image();
+    img.onload=function(){
+      var max=512, w=img.width, h=img.height;
+      if(w>h && w>max){ h=Math.round(h*max/w); w=max; }
+      else if(h>=w && h>max){ w=Math.round(w*max/h); h=max; }
+      var cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      cv.getContext("2d").drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      cv.toBlob(function(blob){ cb(blob||file); }, "image/jpeg", 0.82);
+    };
+    img.onerror=function(){ URL.revokeObjectURL(url); cb(file); };
+    img.src=url;
+  }
+  function uploadPhoto(file){
+    var d=STATE.data, co=d&&d.coworker, msg=$("photomsg");
+    if(!co||!co.id){ if(msg){ msg.textContent="✗ ingen kopplad medarbetare"; msg.className="ms-msg err"; } return; }
+    if(msg){ msg.textContent="Laddar upp…"; msg.className="ms-msg"; }
+    compressImage(file, function(blob){
+      var fd=new FormData(); fd.append("file", blob, "profil.jpg");
+      fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(co.id)+"/photo",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+        .then(function(r){ return r.json(); }).then(function(j){
+          if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"kunde inte ladda upp"); msg.className="ms-msg err"; } return; }
+          STATE.data.coworker.foto=j.url||""; render(); var m2=$("photomsg"); if(m2){ m2.textContent="✓ Uppdaterad"; m2.className="ms-msg ok"; }
+        }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="ms-msg err"; } });
+    });
+  }
+  function clearPhoto(){
+    var d=STATE.data, co=d&&d.coworker, msg=$("photomsg");
+    if(!co||!co.id) return;
+    if(msg){ msg.textContent="Tar bort…"; msg.className="ms-msg"; }
+    var fd=new FormData(); fd.append("clear","1");
+    fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(co.id)+"/photo",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+      .then(function(r){ return r.json(); }).then(function(j){
+        if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"kunde inte ta bort"); msg.className="ms-msg err"; } return; }
+        STATE.data.coworker.foto=""; render(); var m2=$("photomsg"); if(m2){ m2.textContent="✓ Borttagen"; m2.className="ms-msg ok"; }
+      }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="ms-msg err"; } });
+  }
+
+  function saveConsent(){
+    var msg=$("consentmsg"), btn=$("consent-save");
+    if(!STATE.agree){ if(msg){ msg.textContent="Bocka i rutan först"; msg.className="ms-msg err"; } return; }
+    if(msg){ msg.textContent="Sparar…"; msg.className="ms-msg"; }
+    if(btn) btn.disabled=true;
+    post("/admin/companies/mypage/"+encodeURIComponent(UID)+"/consent",{agree:true}).then(function(j){
+      if(!j||!j.ok){ if(btn) btn.disabled=false; if(msg){ msg.textContent="✗ "+((j&&j.error)||"kunde inte spara"); msg.className="ms-msg err"; } return; }
+      api("/admin/companies/mypage/"+encodeURIComponent(UID)).then(function(f){
+        if(f&&f.ok){ STATE.data=f; STATE.agree=false; render(); var m2=$("consentmsg"); if(m2){ m2.textContent="✓ Godkänt"; m2.className="ms-msg ok"; } }
+      });
+    }).catch(function(){ if(btn) btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="ms-msg err"; } });
+  }
+
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    var tab=t.closest?t.closest('[data-ms="tab"]'):null;
+    if(tab){ STATE.tab=tab.getAttribute("data-t"); render(); return; }
+    if(t.closest && t.closest('[data-ms="save"]')){ saveProfile(); return; }
+    if(t.closest && t.closest('[data-ms="photo-pick"]')){ var fi=root.querySelector('[data-ms="photo-file"]'); if(fi) fi.click(); return; }
+    if(t.closest && t.closest('[data-ms="photo-clear"]')){ clearPhoto(); return; }
+    if(t.closest && t.closest('[data-ms="consent-save"]')){ saveConsent(); return; }
+    if(t.closest && t.closest('[data-ms="terms"]')){ e.preventDefault(); return; }
+  });
+  root.addEventListener("change", function(e){
+    var t=e.target, k=t.getAttribute?t.getAttribute("data-ms"):null;
+    if(k==="photo-file"){ if(t.files&&t.files[0]) uploadPhoto(t.files[0]); t.value=""; return; }
+    if(k==="agree"){ STATE.agree=!!t.checked; var b=$("consent-save"); if(b) b.disabled=!STATE.agree; return; }
+  });
+
+  load();
+})();
+</script>
