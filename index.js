@@ -21078,8 +21078,19 @@ app.post("/visitor/session", async (req, res) => {
   const userId = String((req.body && req.body.user_id) || "").trim();
   if (!userId) return res.status(400).json({ ok: false, error: "missing_user_id" });
   try {
-    const u = await bubbleGet("User", userId);
-    if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+    // ⚠️ Typslugen varierar i kodbasen: index.js:12591 läser "user" (lowercase),
+    // companies_api "User". De flesta call-sites har `.catch(() => null)` och skulle
+    // därför aldrig märka att den ena formen fallerar. Vi provar båda och BÄR MED
+    // Bubbles faktiska svar i felet — "bubbleGet failed" utan status är odiagnostiserbart.
+    let u = null, lastDetail = null;
+    for (const slug of ["User", "user"]) {
+      try { u = await bubbleGet(slug, userId); if (u) break; }
+      catch (e) { lastDetail = { slug, detail: e && e.detail ? e.detail : String(e && e.message || e) }; }
+    }
+    if (!u) {
+      console.error("[/visitor/session] user-läsning misslyckades", JSON.stringify(lastDetail));
+      return res.status(404).json({ ok: false, error: "user_not_found", user_id: userId, bubble: lastDetail });
+    }
     // Option-set kan komma som sträng ELLER {display} — samma normalisering som _users().
     const roleRaw = u.User_role;
     const role = roleRaw == null ? "" : (typeof roleRaw === "string" ? roleRaw : String(roleRaw.display || roleRaw.Display || ""));
@@ -21103,8 +21114,9 @@ app.post("/visitor/session", async (req, res) => {
       fastigheter: m.fastigheter, name,
     });
   } catch (e) {
-    console.error("[/visitor/session]", e?.message);
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    // Bär med Bubbles status + svarskropp — annars är felet odiagnostiserbart i loggen.
+    console.error("[/visitor/session]", e?.message, JSON.stringify(e?.detail || null));
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 
