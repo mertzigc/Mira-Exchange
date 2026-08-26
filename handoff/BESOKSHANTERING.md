@@ -1,8 +1,32 @@
 # Besökshantering (Vasakronan)
 
-> Domänfil för besökshanteringsmodulen. Status: **STRATEGI / EJ BYGGD** (2026-08-25).
-> Väntar på Frida-möte 2026-08-26 + åtagande från Vasakronan innan bygge.
-> Detta är beslutsunderlag — inga endpoints/fält är byggda ännu.
+> Domänfil för besökshanteringsmodulen. Status: **BESLUTAD — BYGGE EJ STARTAT** (2026-08-26).
+> ✅ **GO från Vasakronan via Frida 2026-08-26.** Finansiering hanteras av Christian parallellt
+> och är inte ett hinder. Inga endpoints/fält är byggda ännu.
+>
+> **Kundunderlag (mockup, 7 vyer):** https://claude.ai/code/artifact/4bf9f49d-9c80-4f31-b0d3-924968b05609
+> Ska användas mot kund vecka 36. Källfil i sessionens scratchpad — kopiera in i repot om
+> den ska överleva.
+
+---
+
+## 0.1 ⚠️ SCOPE ÄNDRAT — växel 1 OCH 2 byggs tillsammans
+
+Vasakronan vill ha **både bemannad incheckning och självincheckning** direkt. Motivet är
+driftmässigt, inte tekniskt: receptionisten tar emot personligen när det finns tid, gästen
+checkar in själv när det är tryck i repan. **Två lägen av samma tjänst**, inte en reserv.
+
+Det gör den tidigare växel-1/växel-2-uppdelningen (§2) **obsolet som leveransplan** — den
+står kvar nedan som historik. Båda delar besökslogg, notismotor och kontaktlista, så att
+dela upp dem hade kostat mer än det sparat.
+
+**Beslutat i samma veva:**
+- **Mail OCH SMS** ingår från start (inte SMS som senare tillval).
+- **Varje ansluten hyresgäst får företagskonto + minst ett User-konto** i Mira.
+- **Kunden äger sin egen kontaktlista** — laddar upp och redigerar den själv i en ny modul
+  i `dashboard_company`, vid sidan om övriga kundmoduler.
+- **Service & People blir ett eget block** (Service Academy, värdskapsutbildning) — besökets
+  *administration* kan bo där, men den dagliga driften ligger i besöksmodulen.
 
 ---
 
@@ -76,9 +100,17 @@ kastbar besöks-silo. Det är så utrullnings-vinsten realiseras.
 
 ## 4. SMS-gateway (beslut)
 
-- **Leverantör:** 46elks (svenskt, alfanumerisk avsändare "Carotte" out-of-the-box,
-  trivial REST). Alternativ: GatewayAPI (billigare), Twilio (dyrare). Styckpris SE
-  **~0,35 kr** (46elks).
+- **Leverantör: 46elks** — rekommendation låst 2026-08-26. Svenskt bolag (Stockholm),
+  svensk faktura och support, **personuppgifterna stannar i EU**. Alfanumerisk avsändare
+  "Carotte" fungerar direkt i Sverige utan registreringsprocess. API:et är en `fetch` med
+  basic auth — ingen SDK, passar `emailer.js`-mönstret rakt av. Styckpris SE **~0,35 kr**.
+- **⚠️ GDPR är det avgörande argumentet, inte priset.** SMS:et innehåller besökarens
+  för- och efternamn samt var hen befinner sig → personuppgifter till tredjepart. En
+  svensk/EU-leverantör gör personuppgiftsbiträdesavtalet trivialt. Twilio (US, ~0,55–0,60 kr)
+  kräver hantering av tredjelandsöverföring för en tjänst som ändå är dyrare.
+- **Bortvalt:** GatewayAPI (DK, ~0,25–0,30 kr) är billigare men skillnaden är ~0,07 kr/SMS
+  ≈ 440 kr/mån i hög-scenariot — inte värt sämre supportnärhet. Sinch/LINK är rätt först
+  vid **> ~50 000 SMS/mån**, då förhandlat pris slår allt annat. Twilio: nej.
 - **Bygge:** ~halvdag. `sendSms({to, text})`-helper bredvid `sendViaSendGrid()` i
   `emailer.js` — `fetch` + basic auth, ingen SDK, env-vars för credentials.
   Alfanumerisk avsändare = enkelriktat (en ankomstnotis behöver inget svar).
@@ -155,7 +187,33 @@ faktureras separat (1–1,50 kr/st). Vid 8 hus ≈ 190–380k kr/år i tjänstei
 
 ---
 
-## 8. Nästa steg
-1. Frida-möte 2026-08-26 → klargör Vasakronans faktiska scope + volymer.
-2. Om grönt: ta fram one-pager (upplevelse + växlar + pris) till Vasakronan.
-3. Vid beställning: bryt ut växel-1-bygget till egen session (mät WU i pilot).
+## 8. Nästa steg — bygget
+
+⚠️ **Bryt ut till egen session.** Detta är ett eget spår med egen domänfil; blanda det inte
+med företagslista/personer (regeln i HANDOFF.md §"SÅ HÄR JOBBAR VI").
+
+**Innan en rad kod skrivs — verifiera i Bubble (gissa aldrig, jfr `Org_Number`/Fastighet):**
+1. Finns någon befintlig besöks-/gästtyp? (`/checkin/*` + invite-modulen använder redan en
+   gästmodell — återanvänd eller pensionera medvetet, skapa inte en tredje.)
+2. `Fastighet`-typens fält (namnet ligger i **`Titel`**, `Adress` är ett geo-OBJEKT).
+3. `Hyresvärd.Hyresgäster` ↔ `ClientCompany.Fastighet` — vilken riktning som faktiskt är ifylld
+   för Vasakronans bestånd. Utan den kopplingen kan lobbyskärmen inte begränsa sökningen till huset.
+4. `Coworker.Telefon` = **number** (inte text) — SMS-mottagare. `User.Phone_user` = text.
+   Se [[reference-user-profil-skrivnycklar]].
+
+**Föreslagen byggordning:**
+- **A. Auth-fundamentet först.** Receptionist-rollen + `/visitor`-ytan. ⚠️ `PLANNING_ADMIN_TOKEN`
+  får INTE klistras in i en yta som timanställda når — token syns i sidkällan och ger hela
+  admin-API:et. Kräver antingen `User_role`-baserad session eller scopad token per hus.
+  **Detta blockerar allt annat och har ingen befintlig lösning i repot.**
+- **B. Datamodell + besökslogg** (skapa/lista/checka in/checka ut, scopad per fastighet).
+- **C. Notismotorn:** `sendSms()` bredvid `sendViaSendGrid()` i `emailer.js` + mager gren
+  (ETT `email_queue_create` eller ETT SMS per ankomst, aldrig fan-out). Dedupe + rate-limit.
+- **D. Receptionist-vyn** (klona `mira-drift.html`-mönstret).
+- **E. Lobbyskärmen** (kioskläge, egen begränsad yta, sök scopad till huset).
+- **F. Kundens kontaktlista** i `dashboard_company`.
+- **G. CRM-vyn** + GDPR-gallringsjobb.
+
+**Öppet mot Vasakronan (från mockupens frågelista):** pilothus + tidpunkt · besöksvolym per hus
+· hur hyresgästerna introduceras · vem som äger surfplattorna i lobbyn · gallringstid · passerkort
+(rekommenderat utanför scope).

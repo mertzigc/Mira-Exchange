@@ -784,7 +784,8 @@ function wrapLayout({
   toName, logoUrl, senderName, imageUrl,
   accent = "#db6923", tag, headline, body,
   details, ctaLabel, ctaUrl, miraNote = null,
-  subhead = null, socialBlock = null, footer = null
+  subhead = null, socialBlock = null, footer = null,
+  ctaAlign = "left"
 }) {
   // E-postklienter (Outlook m.fl.) laddar inte protokoll-relativa "//"-URL:er
   const _abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
@@ -813,16 +814,20 @@ function wrapLayout({
        </div>`
     : "";
 
+  // Knapptexten friåker sig från accentfärgen: ljus accent (sand/beige) → mörk text
+  // som på landningssidan, mörk accent → vit text. Se ctaInk().
   const ctaBlock = ctaLabel && ctaUrl
-    ? `<div style="margin:28px 0 8px;">
-         <a href="${esc(ctaUrl)}"
-            style="display:inline-block;background:${accent};color:#ffffff;
-                   font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;
-                   padding:13px 30px;border-radius:8px;text-decoration:none;
-                   letter-spacing:-.1px;">
-           ${esc(ctaLabel)}
-         </a>
-       </div>`
+    ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 8px;">
+         <tr><td align="${ctaAlign === "center" ? "center" : "left"}">
+           <a href="${esc(ctaUrl)}"
+              style="display:inline-block;background:${accent};color:${ctaInk(accent)};
+                     font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;
+                     padding:13px 30px;border-radius:8px;text-decoration:none;
+                     letter-spacing:-.1px;">
+             ${esc(ctaLabel)}
+           </a>
+         </td></tr>
+       </table>`
     : miraNote
     ? `<p style="font-size:13px;color:#606880;margin:28px 0 20px;font-style:italic;">${esc(miraNote)}</p>`
     : "";
@@ -994,11 +999,36 @@ function hexAlpha(hex, alpha) {
   return hex + alpha;
 }
 
+// Kontrastsäker text på CTA-knappen. Accentfärgen sätts fritt per utskick i
+// kommunikationsadmin (färgväljare) — en ljus sand/beige gav tidigare vit text på
+// ljus knapp = oläsbar. Väljer mörk resp. vit text efter WCAG-relativ luminans.
+// Tröskeln 0.1913 är punkten där vit och #0d1117 ger EXAKT samma kontrastkvot —
+// under den vinner vit, över den mörk. Okänt format → vit (dagens beteende).
+function ctaInk(hex) {
+  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(hex || "").trim());
+  if (!m) return "#ffffff";
+  let h = m[1];
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const lin = c => { c = parseInt(c, 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const L = 0.2126 * lin(h.slice(0, 2)) + 0.7152 * lin(h.slice(2, 4)) + 0.0722 * lin(h.slice(4, 6));
+  return L > 0.1913 ? "#0d1117" : "#ffffff";
+}
+
+// Bubbles Data API kan ge datum som ISO-sträng, ms-tal, ms-STRÄNG eller sekunder.
+// `new Date("1749481200000")` ger Invalid Date → utan detta hamnar råa ms i mailet.
+// Samma fälla som _deadlineMs() i index.js.
+function _dateish(v) {
+  if (typeof v === "number") return new Date(v < 1e11 ? v * 1000 : v);
+  const s = String(v).trim();
+  if (/^\d{10,}$/.test(s)) { const n = Number(s); return new Date(n < 1e11 ? n * 1000 : n); }
+  return new Date(v);
+}
+
 // Datum → "5 maj 2026" (svensk tidszon)
 function fmtDate(v) {
   if (!v) return "";
   try {
-    const d = new Date(v);
+    const d = _dateish(v);
     if (!Number.isFinite(d.getTime())) return String(v);
     return d.toLocaleDateString("sv-SE", {
       day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Stockholm"
@@ -1012,7 +1042,7 @@ function fmtDate(v) {
 function fmtDateTime(v) {
   if (!v) return "";
   try {
-    const d = new Date(v);
+    const d = _dateish(v);
     if (!Number.isFinite(d.getTime())) return String(v);
     const tz = "Europe/Stockholm";
     return d.toLocaleDateString("sv-SE", {
@@ -1224,7 +1254,9 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
     when = fmtDateTime(x.event_start);
     if (x.event_end) { const t = String(fmtDateTime(x.event_end)).split(" ").pop(); if (t) when += "\u2013" + t; }
   }
-  const deadline = x.rsvp_deadline ? String(fmtDateTime(x.rsvp_deadline)).split(" ")[0] : "";
+  // fmtDate ger hela datumet ("10 september 2026"). Tidigare klippte
+  // fmtDateTime(...).split(" ")[0] bort allt efter dagsiffran → mailet visade "10".
+  const deadline = x.rsvp_deadline ? fmtDate(x.rsvp_deadline) : "";
 
   const subject  = item.subject_override || ("Inbjudan: " + title);
   const intro    = x.description
@@ -1246,6 +1278,7 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
     ]),
     ctaLabel: ctaLabel || "Svara p\u00e5 inbjudan",
     ctaUrl: x.invite_link || null,
+    ctaAlign: "center",
     miraNote: "Klicka p\u00e5 knappen f\u00f6r att svara p\u00e5 inbjudan.",
     footer: x.footer || null
   });

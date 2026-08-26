@@ -1,0 +1,1023 @@
+<title>Besökshantering i Mira</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* Medvetet EN visuell värld: mockupen föreställer Mira, som är mörk. En ljus/mörk-växling
+     hade suddat gränsen mellan "detta är produkten" och "detta är ramen runt den".
+     Därför målas varje färg och bakgrund explicit — sidan håller på vilken host-ground som helst. */
+  :root{
+    --ink:#12162a;          /* sidans ground, ett snäpp djupare än Miras panel */
+    --base:#1e2235;         /* Miras app-bakgrund */
+    --panel:#23283f;
+    --card:#262b42;
+    --deep:#2c314e;
+    --input:#2e3350;
+    --orange:#F47B30;
+    --orange-dim:rgba(244,123,48,.13);
+    --green:#4CAF7D;
+    --blue:#5B8DEF;
+    --red:#E05A5A;
+    --amber:#E0A060;
+    --white:#fff;
+    --w80:rgba(255,255,255,.80);
+    --w60:rgba(255,255,255,.58);
+    --w40:rgba(255,255,255,.38);
+    --w10:rgba(255,255,255,.07);
+    --border:rgba(255,255,255,.09);
+    --display:'DM Serif Display',Georgia,serif;
+    --sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mono:'IBM Plex Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--ink);
+    color:var(--w80);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1140px;margin:0 auto;padding:56px 28px 100px}
+
+  /* ── typografi ─────────────────────────────────────────────── */
+  h1,h2,h3,h4{color:var(--white);text-wrap:balance}
+  h1{font-family:var(--display);font-size:clamp(34px,5.2vw,52px);line-height:1.1;font-weight:400}
+  h1 em{font-style:normal;color:var(--orange)}
+  h2{font-family:var(--display);font-size:clamp(24px,3.2vw,32px);font-weight:400;line-height:1.2}
+  h3{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .lede{font-size:18px;color:var(--w60);max-width:62ch;margin-top:16px}
+  .eyebrow{
+    font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--orange);font-weight:500;
+  }
+  .note{font-size:13.5px;color:var(--w60);max-width:68ch}
+  .mono{font-family:var(--mono)}
+
+  /* ── sidhuvud ──────────────────────────────────────────────── */
+  header{border-bottom:1px solid var(--border);padding-bottom:40px}
+  .meta{
+    display:flex;flex-wrap:wrap;gap:10px 28px;margin-top:26px;
+    font-family:var(--mono);font-size:12px;color:var(--w40);
+  }
+  .meta b{color:var(--w80);font-weight:500}
+
+  /* ── sektioner ─────────────────────────────────────────────── */
+  section{margin-top:72px}
+  .sechead{display:flex;flex-direction:column;gap:10px;margin-bottom:26px}
+  .sechead .note{margin-top:2px}
+
+  /* ── rollkartan ────────────────────────────────────────────── */
+  .roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .role{
+    background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 18px 20px;
+    display:flex;flex-direction:column;gap:9px;
+  }
+  .role.key{border-color:rgba(244,123,48,.42);background:linear-gradient(var(--orange-dim),var(--orange-dim)),var(--panel)}
+  .role .who{font-size:15px;font-weight:600;color:var(--white)}
+  .role .where{font-family:var(--mono);font-size:11.5px;color:var(--orange)}
+  .role .what{font-size:13.5px;color:var(--w60)}
+  .role .auth{
+    margin-top:auto;padding-top:11px;border-top:1px solid var(--border);
+    font-family:var(--mono);font-size:11px;color:var(--w40);
+  }
+
+  /* ── mockup-skärm ──────────────────────────────────────────── */
+  .screen{
+    background:var(--base);border:1px solid var(--border);border-radius:14px;overflow:hidden;
+    box-shadow:0 20px 50px rgba(0,0,0,.34);
+  }
+  .chrome{
+    display:flex;align-items:center;gap:10px;padding:11px 16px;
+    background:var(--panel);border-bottom:1px solid var(--border);
+  }
+  .dots{display:flex;gap:6px}
+  .dots i{width:9px;height:9px;border-radius:50%;background:var(--w10);display:block}
+  .url{
+    font-family:var(--mono);font-size:11.5px;color:var(--w40);
+    background:var(--base);border:1px solid var(--border);border-radius:6px;padding:3px 11px;
+  }
+  .url b{color:var(--w80);font-weight:500}
+  .screenbody{padding:22px 24px 26px}
+  .scroller{overflow-x:auto}
+
+  /* app-typografi inne i skärmarna */
+  .apphead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+  .apphead h3{font-family:var(--display);font-size:23px;font-weight:400}
+  .apphead h3 span{color:var(--orange)}
+  .appsub{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--w40);
+    margin-bottom:18px;
+  }
+
+  /* ── datatabell i mockup ───────────────────────────────────── */
+  table{width:100%;border-collapse:collapse;min-width:660px}
+  th{
+    text-align:left;font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--w40);font-weight:500;padding:9px 12px;border-bottom:1.5px solid var(--w10);white-space:nowrap;
+  }
+  td{padding:13px 12px;border-bottom:1px solid var(--border);font-size:13.5px;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .tnum{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--white);font-weight:500}
+  .guest{font-weight:600;color:var(--white)}
+  .sub{display:block;font-size:11.5px;color:var(--w40);margin-top:2px}
+
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;
+    padding:3px 10px;font-size:11px;font-weight:600;white-space:nowrap;
+  }
+  .pill i{width:6px;height:6px;border-radius:50%;display:block}
+  .p-in{background:rgba(76,175,125,.13);color:var(--green)}   .p-in i{background:var(--green)}
+  .p-wait{background:var(--orange-dim);color:var(--orange)}   .p-wait i{background:var(--orange)}
+  .p-out{background:var(--w10);color:var(--w60)}              .p-out i{background:var(--w40)}
+  .chip{
+    display:inline-block;font-family:var(--mono);font-size:10.5px;color:var(--w60);
+    background:var(--w10);border-radius:5px;padding:3px 8px;white-space:nowrap;
+  }
+
+  .btn{
+    display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:8px;
+    padding:7px 13px;font-size:12px;font-weight:600;color:var(--w60);font-family:var(--sans);
+  }
+  .btn.primary{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .toolbar{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+  .field{
+    background:var(--input);border:1px solid var(--border);border-radius:8px;padding:9px 12px;
+    font-size:13px;color:var(--w40);flex:1;min-width:150px;
+  }
+
+  /* ── formulär i mockup ─────────────────────────────────────── */
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:15px}
+  .form .full{grid-column:1/-1}
+  .lbl{
+    display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--w40);margin-bottom:5px;font-weight:500;
+  }
+  .val{
+    background:var(--input);border:1px solid var(--border);border-radius:8px;padding:10px 12px;
+    font-size:13.5px;color:var(--white);
+  }
+  .val.empty{color:var(--w40)}
+  .val.picked{border-color:rgba(244,123,48,.45)}
+  .steps{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}
+  .step{
+    font-family:var(--mono);font-size:11px;padding:5px 11px;border-radius:20px;
+    background:var(--w10);color:var(--w40);border:1px solid transparent;
+  }
+  .step.on{background:var(--orange-dim);color:var(--orange);border-color:rgba(244,123,48,.4)}
+  .step.done{color:var(--green);background:rgba(76,175,125,.11)}
+
+  /* ── notiser (SMS + mail) ──────────────────────────────────── */
+  .notifs{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:20px;align-items:start}
+  .phone{
+    background:var(--deep);border:1px solid var(--border);border-radius:22px;padding:16px 14px 22px;
+  }
+  .phonetop{
+    display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;
+    color:var(--w40);padding:0 6px 14px;
+  }
+  .sms{
+    background:var(--base);border:1px solid var(--border);border-radius:14px;padding:13px 15px;
+  }
+  .smsfrom{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--orange);margin-bottom:7px;
+  }
+  .smsbody{font-size:13.5px;color:var(--white);line-height:1.5}
+  .smsmeta{
+    margin-top:11px;padding-top:10px;border-top:1px solid var(--border);
+    font-family:var(--mono);font-size:10.5px;color:var(--w40);display:flex;justify-content:space-between;gap:10px;
+  }
+  .mail{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .mailhead{padding:14px 18px;border-bottom:1px solid var(--border)}
+  .mailhead .subj{font-size:14.5px;font-weight:600;color:var(--white)}
+  .mailhead .frm{font-family:var(--mono);font-size:11px;color:var(--w40);margin-top:3px}
+  .mailbody{padding:18px}
+  .mailbody p{font-size:13.5px;color:var(--w60);margin-bottom:12px}
+  .mailcard{
+    background:var(--base);border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px 18px;
+  }
+  .mailcard div span{
+    display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--w40);margin-bottom:3px;
+  }
+  .mailcard div b{font-size:13.5px;color:var(--white);font-weight:600}
+
+  /* ── akademi-kort ──────────────────────────────────────────── */
+  .modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:13px}
+  .module{
+    background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .module .mtitle{font-size:14px;font-weight:600;color:var(--white);line-height:1.3}
+  .module .mmeta{font-family:var(--mono);font-size:10.5px;color:var(--w40)}
+  .bar{height:4px;background:var(--w10);border-radius:2px;overflow:hidden;margin-top:4px}
+  .bar i{display:block;height:100%;background:var(--orange);border-radius:2px}
+  .bar i.done{background:var(--green)}
+
+  /* ── annotationer bredvid skärm ────────────────────────────── */
+  .annot{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:16px;margin-top:20px}
+  .annot div{border-top:2px solid var(--w10);padding-top:11px}
+  .annot div.hl{border-top-color:var(--orange)}
+  .annot b{display:block;font-size:13.5px;color:var(--white);margin-bottom:4px;font-weight:600}
+  .annot p{font-size:13px;color:var(--w60)}
+
+  /* ── faser ─────────────────────────────────────────────────── */
+  .phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:15px}
+  .phase{
+    background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;
+    display:flex;flex-direction:column;gap:11px;
+  }
+  .phase.now{border-color:rgba(244,123,48,.45)}
+  .phase .ptag{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--w40);
+  }
+  .phase.now .ptag{color:var(--orange)}
+  .phase h3{font-size:16px}
+  .phase ul{list-style:none;display:flex;flex-direction:column;gap:7px}
+  .phase li{font-size:13.5px;color:var(--w60);padding-left:17px;position:relative}
+  .phase li::before{
+    content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:50%;background:var(--w10);
+  }
+  .phase.now li::before{background:var(--orange)}
+  .phase .when{
+    margin-top:auto;padding-top:12px;border-top:1px solid var(--border);
+    font-family:var(--mono);font-size:11px;color:var(--w40);
+  }
+
+  /* ── öppna frågor ──────────────────────────────────────────── */
+  .qs{display:flex;flex-direction:column;gap:0;border-top:1px solid var(--border)}
+  .q{display:grid;grid-template-columns:32px 1fr;gap:16px;padding:17px 0;border-bottom:1px solid var(--border)}
+  .q .n{font-family:var(--mono);font-size:12px;color:var(--orange);padding-top:2px}
+  .q b{display:block;color:var(--white);font-size:15px;font-weight:600;margin-bottom:5px}
+  .q p{font-size:13.5px;color:var(--w60);max-width:74ch}
+  .q .flag{
+    display:inline-block;margin-top:8px;font-family:var(--mono);font-size:10.5px;
+    background:rgba(224,160,96,.13);color:var(--amber);border-radius:5px;padding:3px 9px;
+  }
+
+  footer{
+    margin-top:76px;padding-top:26px;border-top:1px solid var(--border);
+    font-family:var(--mono);font-size:11.5px;color:var(--w40);
+  }
+
+  @media(max-width:760px){
+    .notifs{grid-template-columns:1fr}
+    .form{grid-template-columns:1fr}
+    .page{padding:40px 18px 70px}
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Underlag · Vasakronan · servicehubbarna</div>
+    <h1 style="margin-top:14px">Besökshantering<br><em>i Mira</em></h1>
+    <p class="lede">
+      Bemannad incheckning när det finns tid att ge den extra servicen — självincheckning när
+      det är tryck i receptionen. Värden får en notis direkt i fickan. Ingen ringer någon.
+    </p>
+    <div class="meta">
+      <span>Hus <b>Hötorgsskraporna + 5–6 st</b></span>
+      <span>Hyresgäster <b>hundratals</b></span>
+      <span>Ersätter <b>telefonsamtal vid varje besök</b></span>
+      <span>Status <b>beslutad — bygget startar</b></span>
+    </div>
+  </header>
+
+  <!-- ROLLKARTAN -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vem ser vad</div>
+      <h2>Tre roller, två inloggningar, noll appar för hyresgästen</h2>
+      <p class="note">
+        Den viktigaste designprincipen: hyresgästens medarbetare blir <b>mottagare</b>, inte användare.
+        De behöver varken app eller utbildning — de får bara veta att någon står i receptionen.
+        Varje hyresgäst som ansluter får ett företagskonto och minst en kontaktperson som sköter listan.
+      </p>
+    </div>
+    <div class="roles">
+      <div class="role key">
+        <div class="who">Receptionist</div>
+        <div class="where">/visitor</div>
+        <div class="what">Registrerar besök, ser dagens ankomstlista för sitt hus. Ser inget annat i Mira.</div>
+        <div class="auth">Eget inlogg · scopad till huset</div>
+      </div>
+      <div class="role">
+        <div class="who">Carotte-personal</div>
+        <div class="where">Mira → Besök</div>
+        <div class="what">Samma modul inne i CRM. Ser alla hus, kan söka historik och koppla mot kundkortet.</div>
+        <div class="auth">Vanligt Mira-inlogg</div>
+      </div>
+      <div class="role">
+        <div class="who">Värd hos hyresgästen</div>
+        <div class="where">Mail eller SMS</div>
+        <div class="what">Får notis när gästen checkar in. Ingen inloggning, ingen app, inget att lära sig.</div>
+        <div class="auth">Ingen åtkomst till Mira</div>
+      </div>
+      <div class="role key">
+        <div class="who">Kontaktperson hos hyresgästen</div>
+        <div class="where">Mira → Min arbetsplats</div>
+        <div class="what">Laddar upp och redigerar sin egen kontaktlista — vilka som tar emot besök och hur de nås.</div>
+        <div class="auth">Eget företagskonto · ser bara sitt bolag</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TVÅ VÄGAR IN -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Grundidén</div>
+      <h2>Två vägar in — samma besök, samma notis</h2>
+      <p class="note">
+        En reception har toppar och dalar. När det är lugnt tar receptionisten emot gästen personligen;
+        när kön ställer sig checkar gästen in själv på skärmen i lobbyn. Båda vägarna landar i samma
+        besökslogg och skickar samma notis till värden — det är ingen reservlösning, det är två lägen
+        av samma tjänst.
+      </p>
+    </div>
+    <div class="roles" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+      <div class="role key">
+        <div class="where">Väg 1</div>
+        <div class="who">Receptionisten checkar in gästen</div>
+        <div class="what">
+          Det personliga bemötandet. Receptionisten hälsar, registrerar besöket och guidar gästen vidare.
+          Här ligger värdskapet — och det är det Vasakronans hyresgäster betalar för.
+        </div>
+        <div class="auth">Används när det finns tid</div>
+      </div>
+      <div class="role key">
+        <div class="where">Väg 2</div>
+        <div class="who">Gästen checkar in själv</div>
+        <div class="what">
+          Skärm i lobbyn. Gästen skriver sitt namn, väljer vem hen ska träffa och är klar på tjugo sekunder.
+          Receptionisten ser incheckningen i sin lista utan att behöva göra något.
+        </div>
+        <div class="auth">Används vid tryck, eller obemannade tider</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 1: SJÄLVINCHECKNING -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 1 · skärmen i lobbyn</div>
+      <h2>Självincheckning</h2>
+      <p class="note">
+        Motsvarar det Vasakronan känner igen från Agda. Stora träffytor, ingen inloggning, inget att lära sig —
+        och den skickar exakt samma notis som receptionisten hade gjort.
+      </p>
+    </div>
+
+    <div class="screen">
+      <div class="chrome">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">iPad i lobbyn · <b>Hötorget 3</b> · kioskläge</div>
+      </div>
+      <div class="screenbody" style="padding:34px 30px 38px">
+        <div style="max-width:620px;margin:0 auto;text-align:center">
+          <div class="appsub" style="margin-bottom:10px">Välkommen till Hötorget 3</div>
+          <h3 style="font-family:var(--display);font-size:31px;font-weight:400;margin-bottom:8px">
+            Vem ska du <span style="color:var(--orange)">träffa?</span>
+          </h3>
+          <p style="font-size:14px;color:var(--w60);margin-bottom:24px">
+            Skriv namnet på personen eller företaget du besöker
+          </p>
+
+          <div class="val" style="text-align:left;padding:15px 17px;font-size:16px;border-color:rgba(244,123,48,.45)">
+            Evelina
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:9px;margin-top:12px;text-align:left">
+            <div style="background:var(--deep);border:1px solid rgba(244,123,48,.45);border-radius:10px;padding:14px 17px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+              <div>
+                <div style="font-size:15px;font-weight:600;color:var(--white)">Evelina Åblad</div>
+                <div style="font-size:12.5px;color:var(--w40);margin-top:2px">People Lead · twoday Sverige AB · plan 14</div>
+              </div>
+              <span class="chip">Tillgänglig</span>
+            </div>
+            <div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 17px">
+              <div style="font-size:15px;font-weight:600;color:var(--w60)">Evelina Sandström</div>
+              <div style="font-size:12.5px;color:var(--w40);margin-top:2px">Redovisningsekonom · Swedbank AB · plan 7</div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;justify-content:center;margin-top:24px">
+            <span class="btn primary" style="padding:13px 30px;font-size:14px">Fortsätt</span>
+          </div>
+          <p style="font-size:12px;color:var(--w40);margin-top:18px">
+            Behöver du hjälp? Receptionen står precis till höger.
+          </p>
+        </div>
+
+        <div class="annot" style="max-width:none">
+          <div class="hl">
+            <b>Sökningen är begränsad till huset</b>
+            <p>Gästen ser bara personer hos hyresgäster i den här fastigheten. Ingen kan bläddra i andra hus.</p>
+          </div>
+          <div>
+            <b>Två steg, inte fem</b>
+            <p>Vem ska du träffa → ditt namn → klart. Allt annat är valfritt och kan hoppas över.</p>
+          </div>
+          <div>
+            <b>Receptionisten kan alltid ta över</b>
+            <p>Fastnar gästen står en människa två meter bort. Det är skillnaden mot en ren kiosklösning.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 2: DAGENS BESÖK -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 2 · receptionens huvudvy</div>
+      <h2>Dagens besök</h2>
+      <p class="note">
+        Det receptionisten har uppe hela dagen. Besök från både skärmen i lobbyn och den egna
+        registreringen hamnar i samma lista.
+      </p>
+    </div>
+
+    <div class="screen">
+      <div class="chrome">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">mira-fm.com<b>/visitor</b></div>
+      </div>
+      <div class="screenbody">
+        <div class="apphead">
+          <h3>Dagens besök <span>·</span> Hötorget 3</h3>
+        </div>
+        <div class="appsub">Onsdag 26 augusti · 14 incheckade · 3 väntar</div>
+
+        <div class="toolbar">
+          <span class="btn primary">＋ Registrera besök</span>
+          <span class="field">Sök besökare eller hyresgäst…</span>
+          <span class="btn">Alla hyresgäster</span>
+          <span class="btn">Idag</span>
+        </div>
+
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr>
+                <th>Tid</th><th>Besökare</th><th>Hyresgäst</th><th>Värd</th><th>Via</th><th>Notis</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="tnum">09:42</td>
+                <td><span class="guest">Anna Lindqvist</span><span class="sub">Ramboll Sverige</span></td>
+                <td><span class="chip">twoday Sverige AB</span></td>
+                <td>Evelina Åblad<span class="sub">People Lead · plan 14</span></td>
+                <td><span class="chip">Reception</span></td>
+                <td><span class="pill p-in"><i></i>SMS levererat</span></td>
+                <td><span class="pill p-in"><i></i>Incheckad</span></td>
+              </tr>
+              <tr>
+                <td class="tnum">09:38</td>
+                <td><span class="guest">Marcus Ohlsson</span><span class="sub">Skanska</span></td>
+                <td><span class="chip">Swedbank AB</span></td>
+                <td>Morgan Abdi<span class="sub">Inköp &amp; Upphandlingar</span></td>
+                <td><span class="chip">Lobbyskärm</span></td>
+                <td><span class="pill p-in"><i></i>Mail levererat</span></td>
+                <td><span class="pill p-in"><i></i>Incheckad</span></td>
+              </tr>
+              <tr>
+                <td class="tnum">09:55</td>
+                <td><span class="guest">Sara Berglund</span><span class="sub">Nordea</span></td>
+                <td><span class="chip">Beyond Retail</span></td>
+                <td>Anton Åberg<span class="sub">Office Manager</span></td>
+                <td><span class="chip">Lobbyskärm</span></td>
+                <td><span class="pill p-wait"><i></i>Väntar på svar</span></td>
+                <td><span class="pill p-wait"><i></i>Väntar i lobbyn</span></td>
+              </tr>
+              <tr>
+                <td class="tnum">08:15</td>
+                <td><span class="guest">Jonas Ek</span><span class="sub">Privat besök</span></td>
+                <td><span class="chip">Maersk Sverige</span></td>
+                <td>Apple Abelardo<span class="sub">Office manager</span></td>
+                <td><span class="chip">Reception</span></td>
+                <td><span class="pill p-out"><i></i>SMS levererat</span></td>
+                <td><span class="pill p-out"><i></i>Utcheckad 09:20</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="annot">
+          <div class="hl">
+            <b>Notis-kolumnen är poängen</b>
+            <p>Receptionisten ser svart på vitt att värden faktiskt är nådd. Slipper undra, slipper ringa.</p>
+          </div>
+          <div>
+            <b>Väntar i lobbyn sticker ut</b>
+            <p>Orange = någon står och väntar. Det är den enda raden som kräver handling.</p>
+          </div>
+          <div>
+            <b>Båda vägarna i samma lista</b>
+            <p>Lobbyskärmen och receptionen skriver till samma logg. Receptionisten ser allt som händer i huset.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 2: REGISTRERA -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 3 · det receptionisten gör hundra gånger om dagen</div>
+      <h2>Registrera ett besök</h2>
+      <p class="note">
+        Fyra fält. Hyresgäst och värd är sökbara listor — receptionisten skriver tre bokstäver och väljer.
+        Målet är under tio sekunder med gästen framför sig.
+      </p>
+    </div>
+
+    <div class="screen">
+      <div class="chrome">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">mira-fm.com<b>/visitor</b> › nytt besök</div>
+      </div>
+      <div class="screenbody">
+        <div class="steps">
+          <span class="step done">Hus · Hötorget 3</span>
+          <span class="step done">Hyresgäst</span>
+          <span class="step on">Värd</span>
+          <span class="step">Besökare</span>
+        </div>
+
+        <div class="form">
+          <div>
+            <span class="lbl">Hyresgäst</span>
+            <div class="val picked">twoday Sverige AB</div>
+          </div>
+          <div>
+            <span class="lbl">Värd — vem gäller besöket?</span>
+            <div class="val picked">Evelina Åblad · People Lead</div>
+          </div>
+          <div>
+            <span class="lbl">Besökarens namn</span>
+            <div class="val">Anna Lindqvist</div>
+          </div>
+          <div>
+            <span class="lbl">Besökarens bolag <span style="text-transform:none;letter-spacing:0">(valfritt)</span></span>
+            <div class="val">Ramboll Sverige</div>
+          </div>
+          <div class="full">
+            <span class="lbl">Så här notifieras värden</span>
+            <div class="val" style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+              <span class="pill p-in"><i></i>SMS 070-178 59 77</span>
+              <span class="pill p-out"><i></i>Mail evelina.ablad@twoday.com</span>
+              <span style="font-size:12px;color:var(--w40)">valt av hyresgästen</span>
+            </div>
+          </div>
+          <div class="full" style="display:flex;gap:10px;margin-top:4px">
+            <span class="btn primary">Checka in och notifiera</span>
+            <span class="btn">Avbryt</span>
+          </div>
+        </div>
+
+        <div class="annot">
+          <div class="hl">
+            <b>Värdlistan kommer från hyresgästen</b>
+            <p>Kvaliteten på hela tjänsten hänger på att listan hålls aktuell. Det är hyresgästens ansvar — och det ska stå i avtalet.</p>
+          </div>
+          <div>
+            <b>Hittar receptionisten ingen värd?</b>
+            <p>Då går besöket till hyresgästens allmänna mottagare, och personen kan läggas till på plats.</p>
+          </div>
+          <div>
+            <b>Samma fält som lobbyskärmen</b>
+            <p>Receptionisten och gästen fyller i samma sak. Skillnaden är vem som håller i skärmen.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 3: NOTISEN -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 4 · vad hyresgästen faktiskt märker</div>
+      <h2>Vad värden får</h2>
+      <p class="note">
+        Detta är hela hyresgästupplevelsen. Inget konto, ingen app, ingen inloggning —
+        en notis som säger exakt vad som hänt och vad som förväntas.
+      </p>
+    </div>
+
+    <div class="notifs">
+      <div class="phone">
+        <div class="phonetop"><span>09:42</span><span>Carotte</span></div>
+        <div class="sms">
+          <div class="smsfrom">SMS · Carotte</div>
+          <div class="smsbody">
+            Din besökare Anna Lindqvist väntar i receptionen, Hötorget 3. Hälsningar Carotte
+          </div>
+          <div class="smsmeta">
+            <span>79 tecken · 1 SMS</span>
+            <span>levererat 09:42</span>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--w40);margin-top:14px;padding:0 6px">
+          Kort och utan emoji med flit — då ryms det i ett segment och kostar ett SMS, inte två.
+        </p>
+      </div>
+
+      <div class="mail">
+        <div class="mailhead">
+          <div class="subj">Din besökare Anna Lindqvist är här</div>
+          <div class="frm">från reception@carotte.se · till evelina.ablad@twoday.com</div>
+        </div>
+        <div class="mailbody">
+          <p>Hej Evelina,</p>
+          <p>Din besökare har checkat in i receptionen och väntar på dig.</p>
+          <div class="mailcard">
+            <div><span>Besökare</span><b>Anna Lindqvist</b></div>
+            <div><span>Bolag</span><b>Ramboll Sverige</b></div>
+            <div><span>Incheckad</span><b class="tnum">09:42</b></div>
+            <div><span>Plats</span><b>Hötorget 3, entréplan</b></div>
+          </div>
+          <p style="margin-top:14px;margin-bottom:0">
+            Kan du inte komma ned direkt? Svara på det här mailet eller ring receptionen på 08-655 11 22.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="annot">
+      <div class="hl">
+        <b>Mail är standard, SMS är tillval</b>
+        <p>Mail kostar oss ingenting och når alla. SMS är snabbare och prissätts per styck — hyresgästen väljer.</p>
+      </div>
+      <div>
+        <b>Går tvärs över organisationsgränser</b>
+        <p>Notisen går genom vår motor, inte genom hyresgästens IT. Ingen integration behöver upphandlas.</p>
+      </div>
+      <div>
+        <b>Push finns — men bara för oss</b>
+        <p>Carotte-personal får push i Mira-appen. Vi drar medvetet inte in hyresgästernas medarbetare i appen.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 5: KUNDENS KONTAKTLISTA -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 5 · hyresgästens egen yta</div>
+      <h2>Kontaktlistan sköter kunden själv</h2>
+      <p class="note">
+        Notisen är aldrig bättre än kontaktuppgifterna. Därför äger hyresgästen sin egen lista —
+        laddar upp den vid start och håller den aktuell därefter. Modulen ligger i kundens
+        vanliga Mira-vy, bredvid de tjänster de redan ser.
+      </p>
+    </div>
+
+    <div class="screen">
+      <div class="chrome">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">mira-fm.com<b>/dashboard_company</b> › Besök</div>
+      </div>
+      <div class="screenbody">
+        <div class="apphead"><h3>Vilka tar emot <span>besök?</span></h3></div>
+        <div class="appsub">twoday Sverige AB · Hötorget 3 · 24 personer i listan</div>
+
+        <div class="toolbar">
+          <span class="btn primary">＋ Lägg till person</span>
+          <span class="btn">Ladda upp lista (Excel)</span>
+          <span class="field">Sök i listan…</span>
+        </div>
+
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Namn</th><th>Roll</th><th>Mobil för SMS</th><th>E-post</th><th>Plan</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="guest">Evelina Åblad</span></td>
+                <td>People Lead</td>
+                <td class="tnum">070-178 59 77</td>
+                <td>evelina.ablad@twoday.com</td>
+                <td class="tnum">14</td>
+                <td><span class="pill p-in"><i></i>Klar</span></td>
+              </tr>
+              <tr>
+                <td><span class="guest">Johan Wikander</span></td>
+                <td>Säljchef</td>
+                <td class="tnum">073-402 11 08</td>
+                <td>johan.wikander@twoday.com</td>
+                <td class="tnum">14</td>
+                <td><span class="pill p-in"><i></i>Klar</span></td>
+              </tr>
+              <tr>
+                <td><span class="guest">Petra Lindholm</span></td>
+                <td>Konsultchef</td>
+                <td><span style="color:var(--w40)">saknas</span></td>
+                <td>petra.lindholm@twoday.com</td>
+                <td class="tnum">15</td>
+                <td><span class="pill p-wait"><i></i>Endast mail</span></td>
+              </tr>
+              <tr>
+                <td><span class="guest">Reception twoday</span><span class="sub">allmän mottagare</span></td>
+                <td>Delad</td>
+                <td class="tnum">08-522 78 00</td>
+                <td>reception@twoday.com</td>
+                <td class="tnum">14</td>
+                <td><span class="pill p-in"><i></i>Reserv</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="annot">
+          <div class="hl">
+            <b>Ansvaret hamnar rätt</b>
+            <p>Hyresgästen vet vem som slutat och vem som bytt nummer. Vi kan aldrig veta det åt dem.</p>
+          </div>
+          <div>
+            <b>"Endast mail" är synligt för dem</b>
+            <p>Saknas mobilnummer ser kunden det själv och kan komplettera — i stället för att undra varför notisen dröjde.</p>
+          </div>
+          <div>
+            <b>En allmän mottagare som reserv</b>
+            <p>Hittar receptionisten ingen namngiven värd går besöket hit. Ingen gäst blir stående utan att någon får veta.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 6: CRM -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 6 · samma modul, andra ytan</div>
+      <h2>Besök inne i Mira</h2>
+      <p class="note">
+        Samma funktion monterad i CRM:et, aggregerad över alla hus. Vi som har full åtkomst
+        slipper byta vy — och besöksdatan hamnar bredvid allt annat vi vet om kunden.
+      </p>
+    </div>
+
+    <div class="screen">
+      <div class="chrome">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">mira-fm.com<b>/dashboard_crm</b> › Besök</div>
+      </div>
+      <div class="screenbody">
+        <div class="apphead"><h3>Besök <span>·</span> alla hus</h3></div>
+        <div class="appsub">Denna vecka · 412 besök · 6 hus</div>
+
+        <div class="toolbar">
+          <span class="field">Sök besökare, hyresgäst eller värd…</span>
+          <span class="btn">Alla hus</span>
+          <span class="btn">Denna vecka</span>
+          <span class="btn">Exportera</span>
+        </div>
+
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th>Hus</th><th>Hyresgäst</th><th>Besök denna vecka</th><th>Snittid till värd</th><th>Notiskanal</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Hötorget 3</td>
+                <td><span class="chip">twoday Sverige AB</span></td>
+                <td class="tnum">86</td>
+                <td class="tnum">2 min 10 s</td>
+                <td><span class="pill p-in"><i></i>SMS</span></td>
+                <td><span class="pill p-in"><i></i>Värdlista aktuell</span></td>
+              </tr>
+              <tr>
+                <td>Hötorget 3</td>
+                <td><span class="chip">Swedbank AB</span></td>
+                <td class="tnum">142</td>
+                <td class="tnum">3 min 48 s</td>
+                <td><span class="pill p-out"><i></i>Mail</span></td>
+                <td><span class="pill p-in"><i></i>Värdlista aktuell</span></td>
+              </tr>
+              <tr>
+                <td>Hötorget 1</td>
+                <td><span class="chip">Beyond Retail</span></td>
+                <td class="tnum">54</td>
+                <td class="tnum">6 min 02 s</td>
+                <td><span class="pill p-out"><i></i>Mail</span></td>
+                <td><span class="pill p-wait"><i></i>3 värdar saknar kontakt</span></td>
+              </tr>
+              <tr>
+                <td>Sergelhuset</td>
+                <td><span class="chip">Maersk Sverige</span></td>
+                <td class="tnum">130</td>
+                <td class="tnum">2 min 55 s</td>
+                <td><span class="pill p-in"><i></i>SMS</span></td>
+                <td><span class="pill p-in"><i></i>Värdlista aktuell</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="annot">
+          <div class="hl">
+            <b>Snittid till värd är vårt kvitto</b>
+            <p>Det enda måttet Vasakronan egentligen bryr sig om: hur länge står gästen och väntar? Det kan vi visa svart på vitt.</p>
+          </div>
+          <div>
+            <b>"Värdlista saknar kontakt" är en säljsignal</b>
+            <p>Där systemet inte kan nå någon syns det direkt — och blir ett samtal med hyresgästen, inte ett tyst fel.</p>
+          </div>
+          <div>
+            <b>Volymen blir underlag</b>
+            <p>Antal besök per hyresgäst är förhandlingsdata både mot Vasakronan och vid prissättning per hus.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VY 5: SERVICE & PEOPLE -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Vy 7 · det andra blocket</div>
+      <h2>Service &amp; People</h2>
+      <p class="note">
+        Egen yta för Service Academy och värdskap. Här bor utbildningsmodulerna — och besökshanteringens
+        administration, eftersom det är samma personer som utbildas i värdskap som bemannar receptionen.
+      </p>
+    </div>
+
+    <div class="screen">
+      <div class="chrome">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="url">mira-fm.com<b>/dashboard_crm</b> › Service &amp; People</div>
+      </div>
+      <div class="screenbody">
+        <div class="apphead"><h3>Service <span>&amp;</span> People</h3></div>
+        <div class="appsub">Service Academy · värdskap · besöksadministration</div>
+
+        <div class="toolbar">
+          <span class="btn primary">Service Academy</span>
+          <span class="btn">Värdskap</span>
+          <span class="btn">Besök — inställningar</span>
+          <span class="btn">Certifieringar</span>
+        </div>
+
+        <div class="modules">
+          <div class="module">
+            <div class="mtitle">Värdskap i reception</div>
+            <div class="mmeta">6 avsnitt · 45 min</div>
+            <div class="bar"><i class="done" style="width:100%"></i></div>
+            <div class="mmeta" style="color:var(--green)">38 av 38 klara</div>
+          </div>
+          <div class="module">
+            <div class="mtitle">Besökssystemet — så gör du</div>
+            <div class="mmeta">4 avsnitt · 20 min</div>
+            <div class="bar"><i style="width:61%"></i></div>
+            <div class="mmeta">23 av 38 klara</div>
+          </div>
+          <div class="module">
+            <div class="mtitle">Bemötande och svåra samtal</div>
+            <div class="mmeta">5 avsnitt · 35 min</div>
+            <div class="bar"><i style="width:34%"></i></div>
+            <div class="mmeta">13 av 38 klara</div>
+          </div>
+          <div class="module">
+            <div class="mtitle">Säkerhet och utrymning</div>
+            <div class="mmeta">3 avsnitt · 25 min</div>
+            <div class="bar"><i style="width:0%"></i></div>
+            <div class="mmeta">Ej påbörjad</div>
+          </div>
+        </div>
+
+        <div class="annot">
+          <div class="hl">
+            <b>Utbildning och drift i samma yta</b>
+            <p>Receptionisten som utbildas i värdskap är samma person som checkar in gästen. Att skilja dem åt vore konstruerat.</p>
+          </div>
+          <div>
+            <b>Besöksadministrationen bor här</b>
+            <p>Vilka hus, vilka hyresgäster, vilka notiskanaler. Inställningar — inte den dagliga driften.</p>
+          </div>
+          <div>
+            <b>Certifiering blir ett säljargument</b>
+            <p>"Alla våra receptionister är certifierade i värdskap" är något Vasakronan kan ta till sina hyresgäster.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FASER -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Omfattning</div>
+      <h2>Vad som byggs nu</h2>
+      <p class="note">
+        Bemannad incheckning och självincheckning byggs tillsammans — de delar besökslogg,
+        notismotor och kontaktlista, så att dela upp dem hade kostat mer än det sparat.
+      </p>
+    </div>
+    <div class="phases">
+      <div class="phase now">
+        <div class="ptag">Leverans · pilot först i ett hus</div>
+        <h3>Hela besöksflödet</h3>
+        <ul>
+          <li>Självincheckning på skärm i lobbyn</li>
+          <li>Receptionist-vy med dagens besök</li>
+          <li>Registrera besök på under tio sekunder</li>
+          <li>Notis till värd via mail och SMS</li>
+          <li>Kontaktlista som hyresgästen sköter själv</li>
+          <li>Sökbar besökslogg per hus och hyresgäst</li>
+          <li>Vy i CRM för Carotte-personal</li>
+        </ul>
+        <div class="when">pilot i ett hus, sedan hus för hus</div>
+      </div>
+      <div class="phase">
+        <div class="ptag">Nästa steg · när flödet sitter</div>
+        <h3>Påbyggnader</h3>
+        <ul>
+          <li>Förregistrering med QR till besökaren</li>
+          <li>Utrymningslista i realtid</li>
+          <li>Återkommande besökare känns igen</li>
+          <li>Statistik per hyresgäst till Vasakronan</li>
+        </ul>
+        <div class="when">planeras efter piloten</div>
+      </div>
+      <div class="phase">
+        <div class="ptag">Egen affär</div>
+        <h3>Vasakronans plattform</h3>
+        <ul>
+          <li>Vasakronan-brandad yta per hus</li>
+          <li>Koppling mot passersystem</li>
+          <li>Rapporter till fastighetsägaren</li>
+        </ul>
+        <div class="when">kräver separat beställning</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ÖPPNA FRÅGOR -->
+  <section>
+    <div class="sechead">
+      <div class="eyebrow">Att reda ut</div>
+      <h2>Kvar att bestämma</h2>
+      <p class="note">
+        Inriktningen är klar. Det här är det som återstår att komma överens om, och som styr
+        utrullningstakt och pris.
+      </p>
+    </div>
+    <div class="qs">
+      <div class="q">
+        <div class="n">01</div>
+        <div>
+          <b>Vilket hus blir pilot, och när?</b>
+          <p>Vi vill köra skarpt i ett hus först och rätta det som skaver innan resten rullas ut. Hötorgsskraporna ligger närmast till hands eftersom bemanningen redan finns där.</p>
+        </div>
+      </div>
+      <div class="q">
+        <div class="n">02</div>
+        <div>
+          <b>Hur många besök per dag och hus?</b>
+          <p>Volymen styr SMS-kostnaden och hur många skärmar som behövs i varje lobby. En grov siffra per hus räcker — vi behöver inga exakta tal.</p>
+        </div>
+      </div>
+      <div class="q">
+        <div class="n">03</div>
+        <div>
+          <b>Hur ansluts hyresgästerna?</b>
+          <p>Varje hyresgäst som ska vara med får ett företagskonto och minst en kontaktperson som äger listan. Frågan är om Vasakronan introducerar oss, eller om vi tar kontakten själva hus för hus.</p>
+        </div>
+      </div>
+      <div class="q">
+        <div class="n">04</div>
+        <div>
+          <b>Vem står för skärmarna i lobbyn?</b>
+          <p>Självincheckningen kräver en surfplatta med ställ per entré. Enkelt och billigt, men någon ska äga inköp, montage och strömförsörjning.</p>
+        </div>
+      </div>
+      <div class="q">
+        <div class="n">05</div>
+        <div>
+          <b>Hur länge ska besöksdata sparas?</b>
+          <p>Besökarnas namn är personuppgifter. Vi föreslår automatisk gallring efter en överenskommen tid — men tiden är Vasakronans beslut, inte vårt.</p>
+          <span class="flag">GDPR</span>
+        </div>
+      </div>
+      <div class="q">
+        <div class="n">06</div>
+        <div>
+          <b>Behövs passerkort och grindar?</b>
+          <p>Det är ett eget projekt med eget säkerhetsansvar. Vi rekommenderar att hålla det utanför den första leveransen och ta det som en separat diskussion.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Underlag för kunddialog · uppdaterad 26 augusti 2026 · skisser, inte färdiga skärmar
+  </footer>
+
+</div>
