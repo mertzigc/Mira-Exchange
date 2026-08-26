@@ -2278,6 +2278,33 @@ export function registerCompaniesRoutes(app, deps) {
     for (const id of uniq) m.set(id, _offNameCache.get(id) || "");
     return m;
   }
+  // ── GET /admin/persons/companies?q= — företagsval för "+ Ny person" ──
+  // Kundkortet vet vilket bolag personen tillhör (man står på kortet); den GLOBALA listan
+  // gör inte det → create kräver ett företagsval. Sökningen går mot `companyFullMap`
+  // (redan förvärmd cache) = NOLL Bubble-anrop. Använd INTE /admin/clientcompany/search
+  // här — den gör fyra parallella Bubble-svep per tangenttryck.
+  app.options("/admin/persons/companies", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/persons/companies", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const q = _str(req.query.q).trim().toLowerCase();
+      // Golv 1 (inte 10 som listorna): en autocomplete ska få be om få förslag.
+      // `total` bär ALLTID hela träffmängden så UI:t kan säga "visar 20 av 137".
+      const limit = Math.min(50, Math.max(1, parseInt(_str(req.query.limit), 10) || 20));
+      const full = await companyFullMap().catch(() => new Map());
+      const items = [];
+      for (const [id, c] of full) {
+        if (!c || !c.name) continue;
+        if (q && c.name.toLowerCase().indexOf(q) < 0) continue;
+        items.push({ id, name: c.name });
+      }
+      items.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+      return res.json({ ok: true, total: items.length, items: items.slice(0, limit) });
+    } catch (e) {
+      console.error("[/admin/persons/companies]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
   app.options("/admin/persons/list", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.get("/admin/persons/list", async (req, res) => {
     if (!guard(req, res)) return;

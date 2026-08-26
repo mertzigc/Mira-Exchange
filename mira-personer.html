@@ -2,10 +2,15 @@
   mira-personer.html — stå-alone Personer-modul (alla Coworkers över ALLA företag).
   Render-omtag av den Bubble-native Personer-tabellen. Speglar kundkortets Personer-flik
   (lista + person-detalj + profil-redigering + foto + skapa konto + nytt lösenord) men med
-  företagskolumn, sök/filter och paginering — samma upplägg som mira-drift.html.
+  företagskolumn, sök/filter och paginering.
+
+  DESIGN: följer affärsvyns språk (mira-affar-samlad.html) — samma tokens, DM Serif-rubrik,
+  .grid-tabell, .pill-badges, .ein-formulär, orange .ebtn. ⚠️ ALLT är scopat under `.pe`
+  (affärsvyn har flera oprefixade klasser; två block på samma sida skulle annars krocka —
+  se [[reference-bubble-multiblock-collision]]).
 
   Backend:
-    GET   /admin/persons/list                              (NY — listan)
+    GET   /admin/persons/list                              (listan)
     GET   /admin/companies/coworker/:id/activities         (befintlig)
     PATCH /admin/companies/coworker/:id                    (befintlig)
     POST  /admin/companies/coworker/:id/photo              (befintlig)
@@ -13,87 +18,109 @@
     POST  /admin/companies/coworker/:id/send-password      (befintlig)
     GET   /admin/companies/:id/offices                     (befintlig — kontors-dropdown, lat + cachad per bolag)
 
-  data-mira: api_host + planning_token. Konventioner: INGEN ?./??, IIFE, BROOT-claim, .pe-namnrymd.
+  data-mira: api_host + planning_token. Konventioner: INGEN ?./??, IIFE, BROOT-claim.
 -->
 <style>
-  .pe{--pe-bg:#0f1830;--pe-card:#16223d;--pe-line:#243456;--pe-txt:#e7ecf6;--pe-mut:#8ea0c2;--pe-acc:#df6f39;--pe-ok:#2ecc71;--pe-chip:#1c2b4d;--pe-err:#e5533c;
-      color:var(--pe-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
-  .pe *{box-sizing:border-box;}
-  .pe-head{display:flex;align-items:center;gap:10px;margin:0 0 14px;}
-  .pe-head h1{font-size:20px;font-weight:800;margin:0;}
-  .pe-count{color:var(--pe-mut);font-size:12.5px;}
-  .pe-filters{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;}
-  .pe-filters input,.pe-filters select{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:9px;padding:9px 12px;font-size:12.5px;min-width:180px;}
-  .pe-filters input::placeholder{color:var(--pe-mut);}
-  .pe-panel{background:var(--pe-card);border:1px solid var(--pe-line);border-radius:14px;}
-  /* 10 kolumner ryms inte på smal skärm. Utan egen scroll klipptes ACTION-kolumnen
-     (Skapa konto / Nytt lösenord) bort och blev OÅTKOMLIG — tabellen scrollar därför
-     i sin egen container i st.f. att spilla ut ur panelen. */
-  .pe-scroll{overflow-x:auto;border-radius:14px;}
-  .pe-tbl{width:100%;border-collapse:collapse;}
-  /* min-width BARA i scroll-containern — aktivitetstabellen (4 kolumner) ska förbli responsiv */
-  .pe-scroll .pe-tbl{min-width:960px;}
-  .pe-tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--pe-mut);padding:12px 14px;border-bottom:1px solid var(--pe-line);font-weight:600;}
-  .pe-tbl td{padding:11px 14px;border-bottom:1px solid var(--pe-line);font-size:12.5px;vertical-align:middle;}
-  .pe-tbl tr:last-child td{border-bottom:none;}
-  .pe-tbl td.num{text-align:right;white-space:nowrap;}
-  .pe-row:hover td{background:var(--pe-chip);}
-  .pe-open{color:var(--pe-txt);cursor:pointer;font-weight:600;}
-  .pe-open:hover{color:var(--pe-acc);text-decoration:underline;}
-  .pe-cochip{display:inline-block;background:var(--pe-chip);border:1px solid var(--pe-line);border-radius:7px;padding:3px 9px;font-size:11.5px;color:var(--pe-txt);}
-  .pe-avatar{width:28px;height:28px;border-radius:50%;background:var(--pe-acc);color:#0f1830;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden;flex-shrink:0;}
-  .pe-avatar img{width:100%;height:100%;object-fit:cover;}
-  .pe-avatar.big{width:52px;height:52px;font-size:18px;}
-  .pe-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600;white-space:nowrap;}
-  .pe-badge.on{background:rgba(46,204,113,.16);color:#5fe0a0;}
-  .pe-badge.off{background:var(--pe-chip);color:var(--pe-mut);}
-  .pe-key{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:6px 11px;cursor:pointer;font-size:11.5px;font-weight:600;}
-  .pe-key:hover{border-color:var(--pe-acc);}
-  .pe-key.ghost{opacity:.75;}
-  .pe-key[disabled]{opacity:.5;cursor:default;}
-  .pe-acct{display:inline-flex;gap:6px;align-items:center;}
-  .pe-acct select{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:6px 9px;font-size:11.5px;}
-  .pe-kmsg{font-size:11px;color:var(--pe-mut);margin-left:8px;}
-  .pe-kmsg.err{color:var(--pe-err);}
-  .pe-kmsg.ok{color:#5fe0a0;}
-  .pe-pag{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;color:var(--pe-mut);font-size:12px;}
-  .pe-pag button{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:600;}
-  .pe-pag button[disabled]{opacity:.4;cursor:default;}
-  .pe-msg{padding:26px;text-align:center;color:var(--pe-mut);}
-  .pe-empty{padding:34px 20px;text-align:center;color:var(--pe-mut);}
-  .pe-empty b{display:block;color:var(--pe-txt);font-size:14px;margin-bottom:4px;}
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .pe, .pe *{box-sizing:border-box;margin:0;padding:0}
+  .pe{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--blue:#5B8DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);font-size:13px;line-height:1.5;
+    display:block;padding:22px 26px 40px;border-radius:14px}
+  .pe input[type=hidden]{display:none}
+  .pe h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px;font-weight:400}
+  .pe h1 span{color:var(--orange)}
+  .pe .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 20px}
+  .pe .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .pe .search{flex:1;min-width:200px;background:var(--input);border:1px solid var(--border);border-radius:9px;padding:10px 13px;color:var(--white);font-family:var(--fb);font-size:13px}
+  .pe .search:focus{outline:none;border-color:var(--orange)}
+  .pe .search::placeholder{color:var(--w40)}
+  .pe .sel{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--white);font-family:var(--fb);font-size:12px}
+  .pe .sel:focus{outline:none;border-color:var(--orange)}
+  .pe .muted{color:var(--w40)}
+  /* tabell — affärsvyns .grid */
+  .pe .tablewrap{width:100%;overflow-x:auto}
+  .pe .grid{width:100%;border-collapse:collapse;min-width:980px}
+  .pe .grid th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);padding:8px 12px;border-bottom:1.5px solid var(--w10);white-space:nowrap}
+  .pe .grid td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .pe .grid tr:hover td{background:var(--card)}
+  .pe .grid td.act{text-align:right;white-space:nowrap}
+  .pe .namecell{display:inline-flex;align-items:center;gap:9px}
+  .pe .open{font-weight:700;cursor:pointer}
+  .pe .open:hover{color:var(--orange)}
+  .pe .avatar{width:24px;height:24px;border-radius:50%;background:var(--deep);color:var(--w70);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;overflow:hidden;flex:0 0 auto}
+  .pe .avatar img{width:100%;height:100%;object-fit:cover}
+  .pe .avatar.big{width:52px;height:52px;font-size:18px;background:var(--orange-dim);color:var(--orange)}
+  .pe .cochip{display:inline-block;font-size:11px;color:var(--w70);background:var(--w10);border-radius:6px;padding:3px 9px;white-space:nowrap}
+  .pe .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+  .pe .pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40)}
+  .pe .p-ok{background:rgba(76,175,125,.13);color:var(--green)}.pe .p-ok .d{background:var(--green)}
+  .pe .p-wait{background:var(--w10);color:var(--w70)}
+  .pe .p-open{background:var(--orange-dim);color:var(--orange)}.pe .p-open .d{background:var(--orange)}
+  /* knappar */
+  .pe .btn{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);transition:border-color .12s,color .12s}
+  .pe .btn:hover{border-color:var(--orange);color:var(--orange)}
+  .pe .btn:disabled{opacity:.5;cursor:default}
+  .pe .ebtn{background:var(--orange);border:none;border-radius:8px;padding:8px 22px;color:#1c1206;font-weight:800;font-size:12.5px;cursor:pointer;font-family:var(--fb);transition:filter .12s}
+  .pe .ebtn:hover{filter:brightness(1.07)}
+  .pe .kmsg{font-size:11px;color:var(--w40);margin-left:8px}
+  .pe .kmsg.err{color:#ff8080}
+  .pe .kmsg.ok{color:var(--green)}
+  .pe .acct{display:inline-flex;gap:6px;align-items:center}
+  /* pager + tillstånd */
+  .pe .pager{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px}
+  .pe .pager button{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--white);font-size:12px;cursor:pointer;font-family:var(--fb)}
+  .pe .pager button:disabled{opacity:.4;cursor:default}
+  .pe .pager .pinfo{font-size:11px;color:var(--w40)}
+  .pe .msg{padding:26px;text-align:center;color:var(--w40)}
+  .pe .empty{padding:34px 20px;text-align:center;color:var(--w40)}
+  .pe .empty b{display:block;color:var(--white);font-size:14px;margin-bottom:4px;font-weight:700}
   /* detalj */
-  .pe-back{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:9px;padding:8px 15px;cursor:pointer;font-size:12.5px;font-weight:600;margin-bottom:14px;}
-  .pe-wrap{max-width:1000px;}
-  .pe-ph{display:flex;align-items:center;gap:10px;margin:2px 0 10px;}
-  .pe-ph h3{font-size:17px;font-weight:700;margin:0;}
-  .pe-phsub{color:var(--pe-mut);font-size:12px;}
-  .pe-subtabs{display:flex;gap:8px;margin:12px 0;}
-  .pe-subtab{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:20px;padding:7px 15px;cursor:pointer;font-size:12px;font-weight:600;}
-  .pe-subtab.on{background:var(--pe-acc);color:#0f1830;border-color:var(--pe-acc);}
-  .pe-form{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;}
-  .pe-fld{display:flex;flex-direction:column;gap:5px;}
-  .pe-fld.full{grid-column:1/-1;}
-  .pe-fld label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--pe-mut);font-weight:600;}
-  .pe-fld input,.pe-fld select,.pe-fld textarea{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:9px;padding:9px 12px;font-size:12.5px;font-family:inherit;}
-  .pe-fld textarea{min-height:70px;resize:vertical;}
-  .pe-photorow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-  .pe-photobtns{display:flex;gap:8px;}
-  .pe-photobtns button{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:11.5px;font-weight:600;}
-  .pe-photobtns button.del{color:var(--pe-err);}
-  .pe-photomsg{font-size:11.5px;color:var(--pe-mut);}
-  .pe-formbtns{grid-column:1/-1;display:flex;align-items:center;gap:10px;margin-top:4px;}
-  .pe-formbtns .save{background:var(--pe-acc);color:#0f1830;border:none;border-radius:9px;padding:9px 20px;cursor:pointer;font-size:12.5px;font-weight:700;}
-  .pe-formbtns .msg{font-size:11.5px;color:var(--pe-mut);}
-  .pe-formbtns .msg.err{color:var(--pe-err);}
-  .pe-pad{padding:16px 18px;}
-  @media(max-width:720px){ .pe-form{grid-template-columns:1fr;} }
+  .pe .back{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--w70);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--fb);margin-bottom:16px}
+  .pe .back:hover{border-color:var(--orange);color:var(--orange)}
+  .pe .wrap{max-width:1080px}
+  .pe .ph{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  .pe .ph h2{font-family:'DM Serif Display',Georgia,serif;font-size:21px;font-weight:400}
+  .pe .ph .psub{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.06em;margin-top:1px}
+  .pe .subtabs{display:flex;gap:6px;margin:14px 0 12px}
+  .pe .subtab{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 13px;font-size:12px;color:var(--w70);cursor:pointer;font-family:var(--fb)}
+  .pe .subtab.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  /* formulär — affärsvyns .erow/.el/.ein */
+  .pe .edit{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+  .pe .erow{display:flex;gap:14px;flex-wrap:wrap}
+  .pe .erow>div{flex:1;min-width:180px}
+  .pe .el{display:block;font-size:9.5px;color:var(--w40);margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .pe .ein{width:100%;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--white);font-family:var(--fb);font-size:13px}
+  .pe .ein:focus{outline:none;border-color:var(--orange)}
+  .pe textarea.ein{resize:vertical;min-height:70px}
+  .pe .eact{display:flex;align-items:center;gap:14px;border-top:1px solid var(--border);padding-top:12px}
+  .pe .eact .emsg{font-size:11.5px;color:var(--w40)}
+  .pe .eact .emsg.err{color:#ff8080}
+  .pe .photorow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .pe .photomsg{font-size:11.5px;color:var(--w40)}
+  .pe .del:hover{border-color:var(--red);color:var(--red)}
+  /* + Ny person */
+  .pe .createbar{display:flex;justify-content:flex-end;margin-bottom:12px}
+  .pe .newpanel{margin-bottom:16px}
+  .pe .newpanel h3{font-size:13px;font-weight:700;margin-bottom:2px}
+  /* Dropdownen ankras mot INPUTEN, inte mot hela fältgruppen — annars hamnar den
+     under "Valt: …"-raden och lägger sig mitt över nästa formulärrad. */
+  .pe .suggwrap{position:relative}
+  .pe .sugg{position:absolute;left:0;right:0;top:100%;z-index:30;background:var(--deep);border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;overflow:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+  .pe .sugg.on{display:block}
+  .pe .si{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)}
+  .pe .si:last-child{border-bottom:none}
+  .pe .si:hover{background:var(--input)}
+  .pe .ecur{font-size:11px;color:var(--w40);margin-top:4px}
 </style>
 
 <div class="pe">
   <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
-  <div data-pe="root"><div class="pe-msg">Laddar…</div></div>
+  <div data-pe="root"><div class="msg">Laddar…</div></div>
 </div>
 
 <script>
@@ -123,113 +150,173 @@
 
   var STATE={ q:"", email:"", companyQ:"", avdelning:"", konto:"", page:1,
               rows:[], total:0, pages:1, loading:false, departments:[], roles:[], avdelningar:[],
-              open:null, tab:"profil", acts:null, acctFor:null, offices:{}, officesFor:null };
-  var _deb=null;
+              open:null, tab:"profil", acts:null, acctFor:null, offices:{}, officesFor:null,
+              newPerson:false, newCoId:"", newCoName:"", suggs:[] };
+  var _deb=null, _sdeb=null;
 
   function findPerson(id){ for(var i=0;i<STATE.rows.length;i++) if(STATE.rows[i].id===id) return STATE.rows[i]; return null; }
 
-  function filtersHtml(){
-    return '<div class="pe-filters">'+
-      '<input type="text" data-pe="q" placeholder="Sök namn…" value="'+esc(STATE.q)+'">'+
-      '<input type="text" data-pe="email" placeholder="Sök e-post…" value="'+esc(STATE.email)+'">'+
-      '<input type="text" data-pe="companyq" placeholder="Sök företag…" value="'+esc(STATE.companyQ)+'">'+
-      '<select data-pe="avdelning"><option value="">Alla avdelningar</option>'+
-        (function(){ var h=""; for(var i=0;i<STATE.avdelningar.length;i++){ var a=STATE.avdelningar[i]; h+='<option value="'+esc(a)+'"'+(a===STATE.avdelning?" selected":"")+'>'+esc(a)+'</option>'; } return h; })()+
-      '</select>'+
-      '<select data-pe="konto">'+
-        '<option value=""'+(STATE.konto===""?" selected":"")+'>Alla</option>'+
+  function barHtml(){
+    var avdOpts='<option value="">Alla avdelningar</option>';
+    for(var i=0;i<STATE.avdelningar.length;i++){ var a=STATE.avdelningar[i]; avdOpts+='<option value="'+esc(a)+'"'+(a===STATE.avdelning?" selected":"")+'>'+esc(a)+'</option>'; }
+    return '<div class="bar">'+
+      '<input class="search" type="text" data-pe="q" placeholder="Sök namn…" value="'+esc(STATE.q)+'">'+
+      '<input class="search" type="text" data-pe="email" placeholder="Sök e-post…" value="'+esc(STATE.email)+'">'+
+      '<input class="search" type="text" data-pe="companyq" placeholder="Sök företag…" value="'+esc(STATE.companyQ)+'">'+
+      '<select class="sel" data-pe="avdelning">'+avdOpts+'</select>'+
+      '<select class="sel" data-pe="konto">'+
+        '<option value=""'+(STATE.konto===""?" selected":"")+'>Alla konton</option>'+
         '<option value="yes"'+(STATE.konto==="yes"?" selected":"")+'>Har konto</option>'+
         '<option value="no"'+(STATE.konto==="no"?" selected":"")+'>Saknar konto</option>'+
       '</select>'+
     '</div>';
   }
+  // ⚠️ Företagsväljaren är den ENDA skillnaden mot kundkortets formulär: där vet vi
+  // bolaget (man står på kortet), här måste det väljas. Utan valt bolag finns ingen
+  // :id att posta till — därför är Spara låst tills ett företag är valt.
+  function newPersonHtml(){
+    if(!STATE.newPerson) return "";
+    var fld=function(lbl,k){ return '<div><label class="el">'+esc(lbl)+'</label><input class="ein" type="text" data-np="'+k+'"></div>'; };
+    return '<div class="edit newpanel">'+
+      '<h3>Ny person</h3>'+
+      '<div class="erow"><div>'+
+        '<label class="el">Företag</label>'+
+        '<div class="suggwrap">'+
+          '<input class="ein" type="text" data-np="company" placeholder="Sök företag…" value="'+esc(STATE.newCoName)+'" autocomplete="off">'+
+          '<div class="sugg" data-pe="suggbox"></div>'+
+        '</div>'+
+        '<div class="ecur" data-np-cur>'+(STATE.newCoId?("Valt: "+esc(STATE.newCoName)):"Inget företag valt än")+'</div>'+
+      '</div></div>'+
+      '<div class="erow">'+fld("Förnamn","first")+fld("Efternamn","last")+'</div>'+
+      '<div class="erow">'+fld("E-post","email")+fld("Telefon","phone")+'</div>'+
+      '<div>'+'<label class="el">Titel</label><input class="ein" type="text" data-np="title">'+'</div>'+
+      '<div class="eact"><button class="ebtn" data-pe="saveperson">Spara person</button>'+
+        '<button class="btn" data-pe="cancelperson">Avbryt</button>'+
+        '<span class="emsg" data-np-msg></span></div>'+
+    '</div>';
+  }
+  // In-place — ALDRIG render() härifrån: en full omritning tömmer fälten användaren fyllt i.
+  function renderSuggs(){
+    var box=root.querySelector('[data-pe="suggbox"]'); if(!box) return;
+    if(!STATE.suggs.length){ box.className="sugg"; box.innerHTML=""; return; }
+    var h="";
+    for(var i=0;i<STATE.suggs.length;i++){ var s=STATE.suggs[i];
+      h+='<div class="si" data-pe="suggpick" data-cid="'+esc(s.id)+'" data-cname="'+esc(s.name)+'">'+esc(s.name)+'</div>';
+    }
+    box.innerHTML=h; box.className="sugg on";
+  }
+  function searchCompanies(q){
+    if(!q||q.length<2){ STATE.suggs=[]; renderSuggs(); return; }
+    api("/admin/persons/companies?q="+encodeURIComponent(q)).then(function(j){
+      STATE.suggs=(j&&j.ok&&j.items)?j.items:[];
+      renderSuggs();
+    }).catch(function(){ STATE.suggs=[]; renderSuggs(); });
+  }
+  function savePerson(){
+    var form=root.querySelector(".newpanel"); if(!form) return;
+    var g=function(k){ var el=form.querySelector('[data-np="'+k+'"]'); return el?el.value.trim():""; };
+    var msg=root.querySelector("[data-np-msg]");
+    if(!STATE.newCoId){ if(msg){ msg.textContent="Välj ett företag först"; msg.className="emsg err"; } return; }
+    var first=g("first"), last=g("last"), email=g("email");
+    if(!first && !last && !email){ if(msg){ msg.textContent="Fyll i namn eller e-post"; msg.className="emsg err"; } return; }
+    if(msg){ msg.textContent="Sparar…"; msg.className="emsg"; }
+    apiPost("/admin/companies/"+encodeURIComponent(STATE.newCoId)+"/coworker/create",
+            {first:first,last:last,email:email,phone:g("phone"),title:g("title")}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="emsg err"; } return; }
+      STATE.newPerson=false; STATE.newCoId=""; STATE.newCoName=""; STATE.suggs=[];
+      STATE.page=1; load();   // servern har invaliderat Coworker-cachen → listan visar personen direkt
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="emsg err"; } });
+  }
   function actionCell(r){
-    if(r.has_user) return '<button class="pe-key" data-pe="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>';
-    if(STATE.acctFor===r.id) return '<span class="pe-acct"><select data-pe="acctrole" data-cid="'+esc(r.id)+'">'+
+    if(r.has_user) return '<button class="btn" data-pe="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>';
+    if(STATE.acctFor===r.id) return '<span class="acct"><select class="sel" data-pe="acctrole" data-cid="'+esc(r.id)+'">'+
       selOpts(STATE.roles, "", "— välj roll —")+'</select>'+
-      '<button class="pe-key" data-pe="acctgo" data-cid="'+esc(r.id)+'">Skapa</button>'+
-      '<button class="pe-key ghost" data-pe="acctcancel">Avbryt</button></span>';
-    return '<button class="pe-key" data-pe="createaccount" data-cid="'+esc(r.id)+'">+ Skapa konto</button>';
+      '<button class="btn" data-pe="acctgo" data-cid="'+esc(r.id)+'">Skapa</button>'+
+      '<button class="btn" data-pe="acctcancel">Avbryt</button></span>';
+    return '<button class="btn" data-pe="createaccount" data-cid="'+esc(r.id)+'">＋ Skapa konto</button>';
   }
   function tableHtml(){
-    if(!STATE.rows.length) return '<div class="pe-panel"><div class="pe-empty"><b>Inga personer</b>Ingen person matchar filtret.</div></div>';
+    if(!STATE.rows.length) return '<div class="empty"><b>Inga personer</b>Ingen person matchar filtret.</div>';
     var body="";
     for(var i=0;i<STATE.rows.length;i++){ var r=STATE.rows[i];
-      var badge=r.has_user?'<span class="pe-badge on">Konto</span>':'<span class="pe-badge off">CRM-kontakt</span>';
-      body+='<tr class="pe-row"><td>'+(r.company?'<span class="pe-cochip">'+esc(r.company)+'</span>':"—")+'</td>'+
-        '<td>'+esc(r.ansvarig||"—")+'</td>'+
-        '<td><span style="display:flex;align-items:center;gap:9px"><span class="pe-avatar">'+avatarInner(r)+'</span>'+
-          '<span class="pe-open" data-pe="openperson" data-cid="'+esc(r.id)+'">'+esc(r.first||"—")+'</span></span></td>'+
-        '<td>'+esc(r.last||"—")+'</td>'+
-        '<td>'+esc(r.title||"—")+'</td>'+
-        '<td>'+esc(r.email||"—")+'</td>'+
-        '<td>'+(r.phone?esc(formatPhone(r.phone)):"—")+'</td>'+
-        '<td>'+esc(r.avdelning||"—")+'</td>'+
+      var badge=r.has_user?'<span class="pill p-ok"><span class="d"></span>Konto</span>':'<span class="pill p-wait">CRM-kontakt</span>';
+      body+='<tr><td>'+(r.company?'<span class="cochip">'+esc(r.company)+'</span>':'<span class="muted">—</span>')+'</td>'+
+        '<td>'+(r.ansvarig?esc(r.ansvarig):'<span class="muted">—</span>')+'</td>'+
+        '<td><span class="namecell"><span class="avatar">'+avatarInner(r)+'</span>'+
+          '<span class="open" data-pe="openperson" data-cid="'+esc(r.id)+'">'+esc(r.first||"—")+'</span></span></td>'+
+        '<td>'+(r.last?esc(r.last):'<span class="muted">—</span>')+'</td>'+
+        '<td>'+(r.title?esc(r.title):'<span class="muted">—</span>')+'</td>'+
+        '<td>'+(r.email?esc(r.email):'<span class="muted">—</span>')+'</td>'+
+        '<td>'+(r.phone?esc(formatPhone(r.phone)):'<span class="muted">—</span>')+'</td>'+
+        '<td>'+(r.avdelning?esc(r.avdelning):'<span class="muted">—</span>')+'</td>'+
         '<td>'+badge+'</td>'+
-        '<td class="num">'+actionCell(r)+'<span class="pe-kmsg" data-kmsg="'+esc(r.id)+'"></span></td></tr>';
+        '<td class="act">'+actionCell(r)+'<span class="kmsg" data-kmsg="'+esc(r.id)+'"></span></td></tr>';
     }
-    return '<div class="pe-panel"><div class="pe-scroll"><table class="pe-tbl"><thead><tr>'+
-      '<th>Företag</th><th>Ansvarig</th><th>Förnamn</th><th>Efternamn</th><th>Titel</th><th>E-post</th><th>Telefon</th><th>Avdelning</th><th>Konto</th><th class="num"></th>'+
-      '</tr></thead><tbody>'+body+'</tbody></table></div></div>';
+    return '<div class="tablewrap"><table class="grid"><thead><tr>'+
+      '<th>Företag</th><th>Ansvarig</th><th>Förnamn</th><th>Efternamn</th><th>Titel</th><th>E-post</th><th>Telefon</th><th>Avdelning</th><th>Konto</th><th></th>'+
+      '</tr></thead><tbody>'+body+'</tbody></table></div>';
   }
   function pagerHtml(){
     if(STATE.pages<=1) return "";
-    return '<div class="pe-pag"><button data-pe="prev"'+(STATE.page<=1?" disabled":"")+'>← Föregående</button>'+
-      '<span>Sida '+STATE.page+' av '+STATE.pages+' · '+STATE.total+' st</span>'+
+    return '<div class="pager"><button data-pe="prev"'+(STATE.page<=1?" disabled":"")+'>← Föregående</button>'+
+      '<span class="pinfo">Sida '+STATE.page+' av '+STATE.pages+' · '+STATE.total+' personer</span>'+
       '<button data-pe="next"'+(STATE.page>=STATE.pages?" disabled":"")+'>Nästa →</button></div>';
   }
 
   function profilForm(c){
-    var fld=function(lbl,k,v){ return '<div class="pe-fld"><label>'+esc(lbl)+'</label><input type="text" data-cw="'+k+'" value="'+esc(v||"")+'"></div>'; };
+    var fld=function(lbl,k,v){ return '<div><label class="el">'+esc(lbl)+'</label><input class="ein" type="text" data-cw="'+k+'" value="'+esc(v||"")+'"></div>'; };
     var offList=STATE.offices[c.company_id];
-    var offSel='<div class="pe-fld"><label>Kontor</label><select data-cw="kontor"'+(offList?"":" disabled")+'>'+
+    var offSel='<div><label class="el">Kontor</label><select class="ein" data-cw="kontor"'+(offList?"":" disabled")+'>'+
       (offList?selOpts(offList, c.kontor_id, "— inget —"):'<option>'+esc(c.kontor||"Laddar…")+'</option>')+'</select></div>';
-    var depSel='<div class="pe-fld"><label>Avdelning</label><select data-cw="avdelning">'+selOpts(STATE.departments, c.avdelning, "— ingen —")+'</select></div>';
-    var photoRow='<div class="pe-fld full"><label>Profilfoto</label><div class="pe-photorow">'+
-      '<div class="pe-avatar big" data-cw-avatar>'+avatarInner(c)+'</div>'+
-      '<div class="pe-photobtns"><button type="button" data-pe="photopick">'+(c.foto?"Byt foto":"Ladda upp foto")+'</button>'+
-      (c.foto?'<button type="button" class="del" data-pe="photodel">Ta bort</button>':"")+'</div>'+
-      '<input type="file" accept="image/*" data-pe="photofile" style="display:none">'+
-      '<span class="pe-photomsg" data-cw-photomsg></span></div></div>';
-    return '<div class="pe-panel pe-pad"><div class="pe-form">'+
-      photoRow+
-      fld("Förnamn","first",c.first)+fld("Efternamn","last",c.last)+
-      fld("Titel","title",c.title)+fld("E-post","email",c.email)+
-      fld("Telefon","telefon",c.phone?formatPhone(c.phone):"")+depSel+offSel+
-      '<div class="pe-fld full"><label>Allmän info</label><textarea data-cw="crm_info">'+esc(c.crm_info||"")+'</textarea></div>'+
-      '<div class="pe-formbtns"><button class="save" data-pe="savecoworker">Spara</button><span class="msg" data-cw-msg></span></div>'+
-    '</div></div>';
+    var depSel='<div><label class="el">Avdelning</label><select class="ein" data-cw="avdelning">'+selOpts(STATE.departments, c.avdelning, "— ingen —")+'</select></div>';
+    return '<div class="edit">'+
+      '<div><label class="el">Profilfoto</label><div class="photorow">'+
+        '<span class="avatar big">'+avatarInner(c)+'</span>'+
+        '<button type="button" class="btn" data-pe="photopick">'+(c.foto?"Byt foto":"Ladda upp foto")+'</button>'+
+        (c.foto?'<button type="button" class="btn del" data-pe="photodel">Ta bort</button>':"")+
+        '<input type="file" accept="image/*" data-pe="photofile" style="display:none">'+
+        '<span class="photomsg" data-cw-photomsg></span></div></div>'+
+      '<div class="erow">'+fld("Förnamn","first",c.first)+fld("Efternamn","last",c.last)+'</div>'+
+      '<div class="erow">'+fld("Titel","title",c.title)+fld("E-post","email",c.email)+'</div>'+
+      '<div class="erow">'+fld("Telefon","telefon",c.phone?formatPhone(c.phone):"")+depSel+offSel+'</div>'+
+      '<div><label class="el">Allmän info</label><textarea class="ein" data-cw="crm_info">'+esc(c.crm_info||"")+'</textarea></div>'+
+      '<div class="eact"><button class="ebtn" data-pe="savecoworker">Spara</button><span class="emsg" data-cw-msg></span></div>'+
+    '</div>';
   }
   function aktivitetBody(){
-    if(STATE.acts===null||STATE.acts==="loading") return '<div class="pe-msg">Laddar…</div>';
+    if(STATE.acts===null||STATE.acts==="loading") return '<div class="msg">Laddar…</div>';
     var rows=STATE.acts;
-    if(!rows.length) return '<div class="pe-panel"><div class="pe-empty"><b>Inga aktiviteter</b>Tagga personen på aktiviteter (fältet <b style="display:inline">taggade_personer</b> på activitet_crm) så dyker de upp här.</div></div>';
+    if(!rows.length) return '<div class="empty"><b>Inga aktiviteter</b>Tagga personen på aktiviteter (fältet <b style="display:inline">taggade_personer</b> på activitet_crm) så dyker de upp här.</div>';
     var body="";
     for(var i=0;i<rows.length;i++){ var r=rows[i];
       var typ=[r.typ,r.fas].filter(Boolean).join(" · ")||"Aktivitet";
-      var status=r.genomfort?'<span class="pe-badge on">Genomförd</span>':'<span class="pe-badge off">Planerad</span>';
+      var status=r.genomfort?'<span class="pill p-ok"><span class="d"></span>Genomförd</span>':'<span class="pill p-wait">Planerad</span>';
       body+='<tr><td>'+esc(r.date||"—")+'</td><td>'+esc(typ)+'</td><td>'+esc(r.meddelande||"—")+'</td><td>'+status+'</td></tr>';
     }
-    return '<div class="pe-panel"><table class="pe-tbl"><thead><tr><th>Datum</th><th>Typ</th><th>Anteckning</th><th>Status</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+    return '<div class="tablewrap"><table class="grid" style="min-width:0">'+
+      '<thead><tr><th>Datum</th><th>Typ</th><th>Anteckning</th><th>Status</th></tr></thead><tbody>'+body+'</tbody></table></div>';
   }
   function detailHtml(){
     var c=findPerson(STATE.open);
-    var back='<button class="pe-back" data-pe="back">← Personer</button>';
-    if(!c) return '<div class="pe-wrap">'+back+'<div class="pe-panel"><div class="pe-empty"><b>Person hittades inte</b></div></div></div>';
-    var head='<div class="pe-ph"><div class="pe-avatar big">'+avatarInner(c)+'</div>'+
-      '<div><h3>'+esc(c.name||"—")+'</h3><div class="pe-phsub">'+esc(c.company||"—")+(c.title?" · "+esc(c.title):"")+'</div></div>'+
-      (c.has_user?'<span class="pe-badge on">Konto</span>':'<span class="pe-badge off">CRM-kontakt</span>')+'</div>';
-    var tabs='<div class="pe-subtabs">'+
-      '<span class="pe-subtab'+(STATE.tab==="profil"?" on":"")+'" data-pe="ptab" data-p="profil">Profil</span>'+
-      '<span class="pe-subtab'+(STATE.tab==="aktivitet"?" on":"")+'" data-pe="ptab" data-p="aktivitet">Aktivitet</span></div>';
-    return '<div class="pe-wrap">'+back+head+tabs+((STATE.tab==="aktivitet")?aktivitetBody():profilForm(c))+'</div>';
+    var back='<button class="back" data-pe="back">← Personer</button>';
+    if(!c) return '<div class="wrap">'+back+'<div class="empty"><b>Person hittades inte</b></div></div>';
+    var badge=c.has_user?'<span class="pill p-ok"><span class="d"></span>Konto</span>':'<span class="pill p-wait">CRM-kontakt</span>';
+    var head='<div class="ph"><span class="avatar big">'+avatarInner(c)+'</span>'+
+      '<div><h2>'+esc(c.name||"—")+'</h2><div class="psub">'+esc(c.company||"Utan företag")+(c.title?" · "+esc(c.title):"")+'</div></div>'+
+      badge+'</div>';
+    var tabs='<div class="subtabs">'+
+      '<span class="subtab'+(STATE.tab==="profil"?" on":"")+'" data-pe="ptab" data-p="profil">Profil</span>'+
+      '<span class="subtab'+(STATE.tab==="aktivitet"?" on":"")+'" data-pe="ptab" data-p="aktivitet">Aktivitet</span></div>';
+    return '<div class="wrap">'+back+head+tabs+((STATE.tab==="aktivitet")?aktivitetBody():profilForm(c))+'</div>';
   }
 
   function render(){
     if(STATE.open){ $("root").innerHTML=detailHtml(); return; }
-    var head='<div class="pe-head"><h1>Personer</h1><span class="pe-count">'+(STATE.loading?"laddar…":(STATE.total+" st"))+'</span></div>';
-    var list=STATE.loading?'<div class="pe-panel"><div class="pe-msg">Laddar…</div></div>':tableHtml();
-    $("root").innerHTML=head+filtersHtml()+list+pagerHtml();
+    var head='<h1>Personer <span>·</span> alla kontakter</h1>'+
+      '<div class="sub">'+(STATE.loading?"laddar…":(STATE.total+" personer över alla företag"))+'</div>';
+    var list=STATE.loading?'<div class="msg">Laddar…</div>':tableHtml();
+    var createbar='<div class="createbar"><button class="btn" data-pe="newperson">＋ Ny person</button></div>';
+    $("root").innerHTML=head+barHtml()+createbar+newPersonHtml()+list+pagerHtml();
   }
   function qstr(){
     var p=["page="+STATE.page];
@@ -278,15 +365,15 @@
     }).catch(function(){ STATE.acts=[]; if(STATE.open&&STATE.tab==="aktivitet") render(); });
   }
   function saveCoworker(){
-    var form=root.querySelector(".pe-form"); if(!form) return;
+    var form=root.querySelector(".edit"); if(!form) return;
     var g=function(k){ var el=form.querySelector('[data-cw="'+k+'"]'); return el?el.value.trim():""; };
     var cid=STATE.open, msg=root.querySelector("[data-cw-msg]");
     var fields={first:g("first"),last:g("last"),title:g("title"),email:g("email"),telefon:g("telefon"),crm_info:g("crm_info"),avdelning:g("avdelning")};
     var offSel=form.querySelector('[data-cw="kontor"]');
     if(offSel&&!offSel.disabled) fields.kontor=offSel.value;
-    if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
+    if(msg){ msg.textContent="Sparar…"; msg.className="emsg"; }
     apiPatch("/admin/companies/coworker/"+encodeURIComponent(cid), {fields:fields}).then(function(j){
-      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="emsg err"; } return; }
       var c=findPerson(cid);   // optimistisk lokal uppdatering
       if(c){
         c.first=fields.first; c.last=fields.last; c.name=(fields.first+" "+fields.last).trim()||fields.email;
@@ -300,8 +387,8 @@
         }
       }
       render();
-      var m2=root.querySelector("[data-cw-msg]"); if(m2){ m2.textContent="Sparat ✓"; m2.className="msg"; m2.style.color="var(--pe-ok)"; }
-    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+      var m2=root.querySelector("[data-cw-msg]"); if(m2){ m2.textContent="Sparat ✓"; m2.className="emsg"; m2.style.color="var(--green)"; }
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="emsg err"; } });
   }
   function compressImage(file, cb){
     try{
@@ -318,7 +405,7 @@
       img.src=url;
     }catch(_){ cb(file); }
   }
-  function photoMsg(txt, err){ var m=root.querySelector("[data-cw-photomsg]"); if(m){ m.textContent=txt||""; m.style.color=err?"var(--pe-err)":"var(--pe-mut)"; } }
+  function photoMsg(txt, err){ var m=root.querySelector("[data-cw-photomsg]"); if(m){ m.textContent=txt||""; m.style.color=err?"#ff8080":"var(--w40)"; } }
   function onPhotoPick(input){
     var file=input.files&&input.files[0]; input.value="";
     if(!file) return;
@@ -350,28 +437,39 @@
     var msg=root.querySelector('[data-kmsg="'+cid+'"]');
     var sel=root.querySelector('[data-pe="acctrole"][data-cid="'+cid+'"]');
     var role=sel?sel.value:"";
-    if((STATE.roles||[]).length && !role){ if(msg){ msg.textContent="Välj roll först"; msg.className="pe-kmsg err"; } return; }
+    if((STATE.roles||[]).length && !role){ if(msg){ msg.textContent="Välj roll först"; msg.className="kmsg err"; } return; }
     if(!window.confirm("Skapa ett användarkonto"+(role?(" som "+role):"")+" och skicka välkomstmail till denna person?")) return;
-    btn.disabled=true; if(msg){ msg.textContent="Skapar…"; msg.className="pe-kmsg"; }
+    btn.disabled=true; if(msg){ msg.textContent="Skapar…"; msg.className="kmsg"; }
     apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/create-account", { role: role }).then(function(j){
       btn.disabled=false;
       if(j&&j.ok){ STATE.acctFor=null; var c=findPerson(cid); if(c){ c.has_user=true; c.user_id=j.user_id||null; } render(); }
-      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="pe-kmsg err"; } }
-    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="pe-kmsg err"; } });
+      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="kmsg err"; } }
+    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="kmsg err"; } });
   }
   function sendPw(cid, btn){
     var msg=root.querySelector('[data-kmsg="'+cid+'"]');
     if(!window.confirm("Skicka nytt lösenord till denna person?")) return;
-    btn.disabled=true; if(msg){ msg.textContent="Skickar…"; msg.className="pe-kmsg"; }
+    btn.disabled=true; if(msg){ msg.textContent="Skickar…"; msg.className="kmsg"; }
     apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/send-password").then(function(j){
       btn.disabled=false;
-      if(j&&j.ok){ if(msg){ msg.textContent="✓ Skickat"; msg.className="pe-kmsg ok"; } }
-      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="pe-kmsg err"; } }
-    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="pe-kmsg err"; } });
+      if(j&&j.ok){ if(msg){ msg.textContent="✓ Skickat"; msg.className="kmsg ok"; } }
+      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="kmsg err"; } }
+    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="kmsg err"; } });
   }
 
   root.addEventListener("click", function(e){
     var t=e.target;
+    var sp=t.closest?t.closest('[data-pe="suggpick"]'):null;
+    if(sp){
+      STATE.newCoId=sp.getAttribute("data-cid"); STATE.newCoName=sp.getAttribute("data-cname");
+      STATE.suggs=[]; renderSuggs();   // in-place: bevarar redan ifyllda fält
+      var inp=root.querySelector('[data-np="company"]'); if(inp) inp.value=STATE.newCoName;
+      var cur=root.querySelector("[data-np-cur]"); if(cur) cur.textContent="Valt: "+STATE.newCoName;
+      return;
+    }
+    if(t.closest && t.closest('[data-pe="newperson"]')){ STATE.newPerson=!STATE.newPerson; STATE.suggs=[]; render(); return; }
+    if(t.closest && t.closest('[data-pe="cancelperson"]')){ STATE.newPerson=false; STATE.newCoId=""; STATE.newCoName=""; STATE.suggs=[]; render(); return; }
+    if(t.closest && t.closest('[data-pe="saveperson"]')){ savePerson(); return; }
     var op=t.closest?t.closest('[data-pe="openperson"]'):null;
     if(op){ openPerson(op.getAttribute("data-cid")); return; }
     var ptab=t.closest?t.closest('[data-pe="ptab"]'):null;
@@ -391,7 +489,17 @@
     if(t.closest && t.closest('[data-pe="next"]')){ if(STATE.page<STATE.pages){ STATE.page++; load(); } return; }
   });
   root.addEventListener("input", function(e){
-    var t=e.target, k=t.getAttribute?t.getAttribute("data-pe"):null;
+    var t=e.target, np=t.getAttribute?t.getAttribute("data-np"):null;
+    if(np==="company"){
+      // Val nollställs när texten ändras — annars kan man spara mot ett bolag
+      // som inte längre står i fältet.
+      STATE.newCoId=""; STATE.newCoName=t.value;
+      var cur=root.querySelector("[data-np-cur]"); if(cur) cur.textContent="Inget företag valt än";
+      var v=t.value.trim();
+      if(_sdeb) clearTimeout(_sdeb); _sdeb=setTimeout(function(){ searchCompanies(v); }, 250);
+      return;
+    }
+    var k=t.getAttribute?t.getAttribute("data-pe"):null;
     if(k==="q"||k==="email"||k==="companyq"){
       if(k==="q") STATE.q=t.value; else if(k==="email") STATE.email=t.value; else STATE.companyQ=t.value;
       STATE.page=1; if(_deb) clearTimeout(_deb); _deb=setTimeout(load, 350);

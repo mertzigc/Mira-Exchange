@@ -897,6 +897,27 @@ const run = async () => {
   var coSweeps3 = findAllCalls.filter(function (c) { return c.t === "Coworker"; }).length;
   ok("persons: PATCH invaliderar cachen → nytt svep + ny titel syns", coSweeps3 === 2 && pAfter.body.rows[0].title === "Zoolog");
 
+  // ── "+ Ny person": företagsväljare + create ──────────────────────────────────
+  // Den globala vyn saknar kundkortets implicita bolag → create kräver ett val.
+  // Sökningen går mot companyFullMap (förvärmd) — INGA Bubble-anrop.
+  findAllCalls.length = 0;
+  var pc = await call(s.routes, "get", "/admin/persons/companies", { query: { q: "acme" } });
+  ok("persons/companies: söker i cachen → träff", pc.body.ok && pc.body.items.length === 1 && pc.body.items[0].id === "cc1");
+  ok("persons/companies: NOLL Bubble-svep (bara cache-uppslag)", findAllCalls.length === 0);
+  var pcAll = await call(s.routes, "get", "/admin/persons/companies");
+  ok("persons/companies: utan q → alla bolag, namnsorterade", pcAll.body.items.length >= 3 && pcAll.body.items[0].name.localeCompare(pcAll.body.items[1].name, "sv") <= 0);
+  var pcMiss = await call(s.routes, "get", "/admin/persons/companies", { query: { q: "finnsinte" } });
+  ok("persons/companies: utan träff → tom lista (inte fel)", pcMiss.body.ok && pcMiss.body.items.length === 0);
+  var pcLim = await call(s.routes, "get", "/admin/persons/companies", { query: { limit: "1" } });
+  ok("persons/companies: limit respekteras men total visar hela träffmängden", pcLim.body.items.length === 1 && pcLim.body.total > 1);
+
+  // create via den globala vyn: samma endpoint som kundkortet, men med valt bolag.
+  var nyBefore = STORE.Coworker.length;
+  var nyOk = await call(s.routes, "post", "/admin/companies/:id/coworker/create", { params: { id: "cc2" }, body: { first: "Ny", last: "Global", email: "ny@beta.se", phone: "070-999 88 77", title: "Kontakt" } });
+  ok("persons: create mot valt bolag → Coworker på cc2 med Telefon=number", nyOk.body.ok && STORE.Coworker.length === nyBefore + 1 && STORE.Coworker[STORE.Coworker.length - 1]["Kundföretag"] === "cc2" && STORE.Coworker[STORE.Coworker.length - 1].Telefon === 709998877);
+  var pNy = await call(s.routes, "get", "/admin/persons/list", { query: { q: "global" } });
+  ok("persons: create invaliderar cachen → nya personen syns direkt i listan", pNy.body.total === 1 && pNy.body.rows[0].company_id === "cc2");
+
   // ── DRIFT SKRIV (status + kommentar) — sist för att inte mutera tidigare assertions ──
   var cLen = STORE.Matter.filter(function(r){return r._id==="mt1";})[0]["Tråd"].length;
   var cAdd = await call(s.routes, "post", "/admin/companies/matter/:id/comment", { params: { id: "mt1" }, body: { text: "Ny kommentar från test", author: "Testaren" } });

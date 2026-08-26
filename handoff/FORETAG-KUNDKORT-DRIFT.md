@@ -691,12 +691,27 @@ aggregerat över ALLA företag. Samma upplägg som Drift stå-alone: **bara list
 är ny** — detalj, profil-PATCH, foto, aktiviteter, skapa konto och nytt lösenord
 återanvänds oförändrade eftersom `coworker/:id`-endpointsen redan är företags-agnostiska.
 
+**Design:** följer **affärsvyns** språk (`mira-affar-samlad.html`) — samma tokens
+(`--base/--panel/--card/--deep/--input/--orange/--w70/--w40/--border`), DM Serif-rubrik
+med orange separator + `.sub`-underrubrik, `.grid`-tabell, `.pill`-badges, `.erow/.el/.ein`
+-formulär, orange `.ebtn` och `.sugg`-autocomplete. ⚠️ **Allt är scopat under `.pe`** —
+affärsvyn har många oprefixade klasser (`.grid`, `.pill`, `.search`, `.bar`), och två block
+på samma sida skulle annars krocka ([[reference-bubble-multiblock-collision]]).
+
 **Backend: `GET /admin/persons/list` (companies_api.js)**
 - Params: `q`(namn) · `email` · `company`(namn→id-set via `companyFullMap`) ·
   **`company_id`**(exakt scope) · `avdelning` · `konto`(yes/no) · `page` · `limit` · `fresh=1`.
 - Svar: `{ok,total,pages,page,rows,departments,roles,facets:{avdelningar}}`. Rad bär
   `company`/`ansvarig`/`kontor`/`has_user` färdigresolvade.
 - Prefix `/admin/persons` tillagt i `openPrefixes` (index.js).
+
+**Backend: `GET /admin/persons/companies?q=&limit=` — företagsval för "+ Ny person"**
+- Kundkortet vet bolaget (man står på kortet); den globala vyn gör det inte → create
+  kräver ett val. Söker i **`companyFullMap`** (förvärmd cache) = **noll Bubble-anrop**.
+- ⚠️ Använd INTE `/admin/clientcompany/search` här — den gör **fyra parallella Bubble-svep
+  per anrop**, och fältet är debouncat (ett anrop per ~250 ms medan man skriver).
+- `total` bär hela träffmängden, `items` är kapad till `limit` (golv 1 — en autocomplete
+  ska få be om få förslag; listorna har golv 10).
 
 **⚠️ TRE fällor som styrde designen — ändra inte utan att läsa dessa:**
 1. **`sort_field` fäller tomma.** Personer UTAN Efternamn finns skarpt (Christians
@@ -719,6 +734,13 @@ aggregerat över ALLA företag. Samma upplägg som Drift stå-alone: **bara list
   · Konto · action. Sök namn/e-post/företag + avdelnings- och konto-filter + paginering.
 - Person-detalj med Profil/Aktivitet-flikar, profilfoto, hela profilformuläret, skapa
   konto (roll-väljare) och nytt lösenord — allt mot befintliga endpoints.
+- **"+ Ny person"** (speglar kundkortets formulär: Förnamn/Efternamn/E-post/Telefon/Titel)
+  **plus en företagsväljare** med autocomplete — den enda skillnaden mot kortet, se ovan.
+  Spara är låst tills ett bolag är valt (utan `:id` finns ingen endpoint att posta till),
+  och valet **nollställs om texten ändras** så man aldrig sparar mot ett bolag som inte
+  längre står i fältet. ⚠️ Förslagslistan renderas **in-place** (`renderSuggs`), aldrig via
+  `render()` — en full omritning hade tömt fälten användaren redan fyllt i (samma fälla som
+  deal-formuläret). Dropdownen ankras mot `.suggwrap` runt inputen, inte mot fältgruppen.
 - **Kontors-dropdownen** lat-laddas per bolag (`/admin/companies/:id/offices`) och cachas
   i STATE → öppnar man flera personer på samma kund blir det ETT anrop.
 - ⚠️ **`.pe-scroll` + `min-width` bara i scroll-containern.** Med 10 kolumner klipptes
@@ -726,22 +748,25 @@ aggregerat över ALLA företag. Samma upplägg som Drift stå-alone: **bara list
   Aktivitetstabellen (4 kolumner) ligger medvetet UTANFÖR scroll-wrappern.
 - data-mira: `api_host` + `planning_token`.
 
-**⚠️ VERIFIERA I BUBBLE FÖRE DEPLOY:** `create_user_account`-workflowen ska ta emot
-parametern `role` + sätta `User_role`. Render skickar redan `role` (companies_api.js),
-men saknas steget i Bubble föds kontot rollöst och kastas ut ur `dashboard_crm` —
-och en global lista med "Skapa konto" på VARJE rad multiplicerar det felet.
-(Står som öppen punkt under "KVAR I BUBBLE" i HANDOFF.md.)
+**Roll-kedjan: ✅ BEKRÄFTAD av Christian 2026-08-26** — Bubble-wf `create_user_account`
+tar emot `role` och sätter `User_role`. Render skickade redan `role`. Kedjan är hel, så
+"Skapa konto" kan tryggt ligga på varje rad i den globala listan.
 
-**Verifierat:** `companies_smoke.mjs` **394/394**, **mutationstestat** — 6 mutationer, alla
+**Verifierat:** `companies_smoke.mjs` **401/401**, **mutationstestat** — 9 mutationer, alla
 faller: (1) droppa tomma efternamn (sort_field-fällan simulerad) → 7 tester faller inkl.
 kärntestet, (2) ta bort tomma-sist-logiken → 1, (3) stäng av TTL-cachen → 2, (4) ta bort
 `_coworkersForget()` i PATCH → 1, (5) `has_user` alltid null → 3, (6) ignorera
-`company_id`-scopet → 1. Regression: **22 sviter gröna (1726 assertions)**.
+`company_id`-scopet → 1, (7) företagssök ignorerar `q` → 2, (8) `total` = slice-längden i
+st.f. hela träffmängden → 1, (9) create invaliderar inte cachen → 1.
+Regression: **22 sviter gröna (1733 assertions)**.
 Fixturen utökad med co3 (utan efternamn), co4 (Avdelning+User via u3), co5, co6 (utan
 Kundföretag). ⚠️ co4 använder **u3:s** e-post, inte u2:s — mypage-sviten bevisar att en
 User utan kopplad Coworker inte kraschar och använder u2.
 Dessutom harness-verifierat i webbläsare (lista, sortering med tom-efternamn sist,
-konto-filter, person-detalj, kontors-dropdown, Aktivitet-fliken).
+konto-filter, person-detalj, kontors-dropdown, Aktivitet-fliken, och hela "+ Ny
+person"-flödet: företagssök → välj förslag → spara, med redan ifyllda fält bevarade).
+Harnessen fångade två fel som testerna inte kunde se: den avklippta action-kolumnen
+och den felankrade dropdownen.
 
 **Deploy:** `companies_api.js` + `index.js` (openPrefix) + **nytt Bubble-block
 `mira-personer.html`** på Personer-sidan (ersätter den native tabellen).
@@ -842,7 +867,8 @@ separat. Blocket har bara en gråtonad placeholder-ruta, ingen logik.
 - **`mira-foretag-lista.html`** (**~400k** 2026-08-25) — Bubble-blocket för lista + kort + ALLA flikar (inkl Drift + full Avtal-CRUD). `.fl`/`.fk`-namnrymd (+ inflyttade `.ab-`/`.wt-`/`.aa-`/`.ac-`), BROOT-claim, SWR, INGEN `?.`/`??`. data-mira: `api_host` · `planning_token` · `user_company` · `user_name` · `sender_email` · `sender_name` · `current_user` (User-id → `writer` + roll).
 - **`mira-personer.html`** (NY 2026-08-26, ~24k) — stå-alone global personlista över alla
   Coworkers. `.pe`-namnrymd. Återanvänder samtliga `coworker/:id`-endpoints; bara
-  `/admin/persons/list` är ny. data-mira: `api_host` + `planning_token`.
+  `/admin/persons/list` + `/admin/persons/companies` är nya. Design: affärsvyns språk,
+  allt scopat under `.pe`. data-mira: `api_host` + `planning_token`.
 - **`mira-drift.html`** (NY, ~14k) — stå-alone Drift-modul (aggregerat över alla kunder + sök/filter). `.dr`-namnrymd. data-mira: `api_host` + `planning_token` + `user_name`. Återanvänder detalj-endpoints.
 - **`mira-min-sida.html`** (NY, 2026-08-25) — Min sida (User-profil), ersätter Bubble-popupen `PopupMyPage`. `.ms`-namnrymd. data-mira: `api_host` + `planning_token` + `current_user`. Flikar: Mina uppgifter (speglad User+Coworker-skrivning) + Användarvillkor (consent). Foto återanvänder `/coworker/:id/photo`.
 - **`companies_smoke.mjs`** — 201/201 gröna. **`cc_cache_smoke.mjs`** (NY) — 61/61, testar den delade CC-cachen i index.js genom att klippa ut blocket ur källkoden och räkna Bubble-sidhämtningar (se WU-städningen). `index.js` — wiring + delade cachar + Bubble-wf-callers + openPrefixes (`/admin/companies`, `/admin/drift`, `/admin/reset-password`). `emailer.js` — mallar `password_reset` + `user_welcome`.
