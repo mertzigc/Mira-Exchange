@@ -46,6 +46,8 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/TJANSTEGRID-PRIS.md](handoff/TJANSTEGRID-PRIS.md) | Tjänste-grid, prishjärna, avtals-lifecycle | 🟢 LIVE |
 | [handoff/OFFERAPPROVAL.md](handoff/OFFERAPPROVAL.md) | Offertsignering med OTP + PDF-bevis | 🟢 LIVE |
 | [handoff/SYNC-KARNAN.md](handoff/SYNC-KARNAN.md) | NIR-kärnan, §4 connection-ID:n, §8 fallgropar | 🟢 LIVE |
+| [handoff/BESOKSHANTERING.md](handoff/BESOKSHANTERING.md) | Vasakronan-besökssystem: receptionist=användare/värd=notis, SMS, WU, kalkyl | 🟡 STRATEGI · ej byggd |
+| [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
 
 **Egna handoff-filer utanför `handoff/`:**
 `OFFERT_PRODUKTION_HANDOFF.md` (F&E offert/order) · `FORFRAGAN_KALENDER_HANDOFF.md`
@@ -75,6 +77,8 @@ och hur många kunder som kan visa pass.
 | Bokningslägesvyn (UI) | Datalagret klart — vyn ej byggd | — |
 | Drift Fas 2/3 | Se FORETAG-KUNDKORT-DRIFT.md | — |
 | Caspeco F&E | Migrering startar Q1-27 → ta bort `tackning`-luckan då | — |
+| **Besökshantering (Vasakronan)** | Frida-möte 2026-08-26 → scope+volymer. Sedan one-pager + växel-1-bygge. Se BESOKSHANTERING.md | Christian/Frida |
+| **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
 - **`create_user_account`:** lägg till parametern `role` + steget "Set User_role = role". Utan den föds konton fortfarande utan roll och kastas ut från dashboard_crm.

@@ -778,6 +778,7 @@ export function registerCompaniesRoutes(app, deps) {
       if (title) payload.Titel = title;
       if (phoneDigits) payload.Telefon = Number(phoneDigits);   // Telefon = number-fält
       const id = await bubbleCreate("Coworker", payload);
+      _coworkersForget();   // global personlista cachar svepet → annars syns nya personen först om en timme
       return res.json({ ok: true, id });
     } catch (e) {
       console.error("[/admin/companies/:id/coworker/create]", e?.message);
@@ -854,6 +855,7 @@ export function registerCompaniesRoutes(app, deps) {
         else payload[spec.f] = _str(v);
       }
       await bubblePatch("Coworker", id, payload);
+      _coworkersForget();   // se create — redigeringen måste synas i den globala listan direkt
       return res.json({ ok: true, id });
     } catch (e) {
       console.error("[/admin/companies/coworker/:id PATCH]", e?.message, e?.detail);
@@ -876,6 +878,7 @@ export function registerCompaniesRoutes(app, deps) {
       const file = req.file;
       if (clear && !file) {
         await bubblePatch("Coworker", id, { Foto: "" });
+        _coworkersForget();
         return res.json({ ok: true, url: "" });
       }
       if (!file || !file.buffer || !file.buffer.length) return res.status(400).json({ ok: false, error: "no_file" });
@@ -888,6 +891,7 @@ export function registerCompaniesRoutes(app, deps) {
       const url = _httpsUrl(await bubbleUploadFile({ filename, contentType: ct, buffer: file.buffer }));
       if (!url) return res.status(502).json({ ok: false, error: "upload_failed" });
       await bubblePatch("Coworker", id, { Foto: url });
+      _coworkersForget();
       return res.json({ ok: true, url });
     } catch (e) {
       console.error("[/admin/companies/coworker/:id/photo]", e?.message, e?.detail);
@@ -999,7 +1003,7 @@ export function registerCompaniesRoutes(app, deps) {
         if (has("last"))  cPayload["Efternamn"] = _str(fields.last).trim();
         if (has("title")) cPayload["Titel"]     = _str(fields.title).trim();
         if (has("phone")) { const d = _str(fields.phone).replace(/\D/g, ""); cPayload["Telefon"] = d ? Number(d) : null; }
-        if (Object.keys(cPayload).length) await bubblePatch("Coworker", bubbleId(co), cPayload);
+        if (Object.keys(cPayload).length) { await bubblePatch("Coworker", bubbleId(co), cPayload); _coworkersForget(); }
       }
       return res.json({ ok: true, id: uid, coworker_id: co ? bubbleId(co) : null, coworker_linked: !!co });
     } catch (e) {
@@ -2228,6 +2232,138 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, type, scope, total: mTotal, pages: mPages, page, prioriteter: prioSet, rows });
     } catch (e) {
       console.error("[/admin/drift/list]", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ══════════════ PERSONER — global personlista (render-omtag av Bubble-native vyn) ══════════════
+  // Stå-alone motsvarighet till kundkortets Personer-flik, aggregerad över ALLA företag.
+  // ENDAST listan byggs här: detalj, profil-PATCH, foto, aktiviteter, skapa konto och
+  // nytt lösenord återanvänds oförändrade — de coworker/:id-endpointsen är redan
+  // företags-agnostiska (samma upplägg som Drift stå-alone gör med matter/qc-detaljerna).
+  //
+  // ⚠️ TRE fällor som styrt designen (alla verifierade mot skarp data/tidigare buggar):
+  //  1) **sort_field fäller tomma.** `bubbleFindAll` med sort_field utelämnar poster utan
+  //     värde i fältet. Personer UTAN Efternamn finns skarpt (Kajsas i Parken: Elaine,
+  //     Melissa; Mariebo: Dennis) → serverside-sortering på Efternamn hade tappat dem
+  //     TYST. Vi sorterar därför alltid i minnet, aldrig i Bubble.
+  //  2) **WU: sökfältet är debouncat** → varje tangenttryck blir en request. Ginge filtret
+  //     ner som Bubble-constraint blev det ett helsvep per tangenttryck. Därför ETT svep
+  //     per TTL (`_coworkersAll`) + all filtrering i minnet — samma filosofi som
+  //     companyFullMap ("list-svaret gör inga Bubble-anrop").
+  //  3) **has_user** matchas mot `_users().byEmail` som redan är TTL-cachad och delad →
+  //     noll extra WU för konto-badgen (kundkortet hämtar Users per företag; det skalar
+  //     inte globalt).
+  let _coCache = { list: null, ts: 0 };
+  async function _coworkersAll(force) {
+    if (!force && _coCache.list && (Date.now() - _coCache.ts) < AUX_TTL) return _coCache.list;
+    // Ingen .catch(()=>[]) — ett trasigt Bubble-svar ska braka, inte se ut som "inga personer".
+    const all = await bubbleFindAll("Coworker", {});
+    _coCache = { list: all || [], ts: Date.now() };
+    return _coCache.list;
+  }
+  function _coworkersForget() { _coCache = { list: null, ts: 0 }; }
+  // Kontorsnamn: process-cache per office-id. Första sidan betalar ≤ limit bubbleGet,
+  // därefter gratis (jfr drift-listans dolda N+1 som kostade 91 anrop för 40 rader).
+  // Cachea bara vid TRÄFF — annars fastnar ett tillfälligt fel som permanent tomt namn.
+  const _offNameCache = new Map();
+  async function _officeNamesCached(ids) {
+    const uniq = Array.from(new Set((ids || []).filter(Boolean)));
+    const miss = uniq.filter((id) => !_offNameCache.has(id));
+    await Promise.all(miss.map(async (id) => {
+      const o = await bubbleGet("Office", id).catch(() => null);
+      if (o) _offNameCache.set(id, _str(o.Office_title || o.name || o.Name));
+    }));
+    const m = new Map();
+    for (const id of uniq) m.set(id, _offNameCache.get(id) || "");
+    return m;
+  }
+  app.options("/admin/persons/list", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/persons/list", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const q = _str(req.query.q).trim().toLowerCase();               // efternamn/förnamn
+      const emailQ = _str(req.query.email).trim().toLowerCase();
+      const companyQ = _str(req.query.company).trim().toLowerCase();
+      // company_id = exakt scope (kundkort/besöksmodul kan återanvända samma endpoint).
+      const companyId = _str(req.query.company_id).trim();
+      const avd = _str(req.query.avdelning).trim();
+      const konto = _str(req.query.konto).trim().toLowerCase();        // "yes" | "no" | ""
+      const page = Math.max(1, parseInt(_str(req.query.page), 10) || 1);
+      const limit = Math.min(100, Math.max(10, parseInt(_str(req.query.limit), 10) || 40));
+      const fresh = _str(req.query.fresh) === "1";
+
+      const [cos, full, uc] = await Promise.all([
+        _coworkersAll(fresh),
+        companyFullMap().catch(() => new Map()),
+        _users(),
+      ]);
+      const byEmail = (uc && uc.byEmail) || new Map();
+      const uMap = (uc && uc.map) || new Map();
+
+      // företagsnamn-sök → id-set (in-memory mot den delade cachen, som drift-listan)
+      let companyIds = null;
+      if (companyQ) { companyIds = new Set(); for (const [id, c] of full) { if (c && c.name && c.name.toLowerCase().indexOf(companyQ) > -1) companyIds.add(id); } }
+
+      const avdSet = new Set();
+      let rows = [];
+      for (const co of (cos || [])) {
+        const id = bubbleId(co); if (!id) continue;
+        const first = _str(co["Förnamn"] || co["First Name"] || co.first_name || co.fornamn);
+        const last  = _str(co["Efternamn"] || co["Last Name"] || co.last_name || co.efternamn);
+        const email = _str(co.Email || co.email || co.email_address);
+        const cid   = _ref(co["Kundföretag"]) || null;
+        const a     = _str(co.Avdelning);
+        if (a) avdSet.add(a);
+        // filter
+        if (companyId && cid !== companyId) continue;
+        if (companyIds && !(cid && companyIds.has(cid))) continue;
+        if (avd && a !== avd) continue;
+        if (q && (first + " " + last).toLowerCase().indexOf(q) < 0) continue;
+        if (emailQ && email.toLowerCase().indexOf(emailQ) < 0) continue;
+        const uid = email ? (byEmail.get(_email(email)) || null) : null;
+        if (konto === "yes" && !uid) continue;
+        if (konto === "no" && uid) continue;
+        const c = cid ? full.get(cid) : null;
+        rows.push({
+          id, first, last,
+          name: (first + " " + last).trim() || email,
+          title: _str(co.Titel || co.title || co.Befattning || co.Roll || co.roll),
+          email,
+          phone: _str(co.Telefon || co.telefon || co.Phone || co.phone || co.Mobil || co.mobil),
+          crm_info: _str(co.crm_info),
+          avdelning: a,
+          foto: _httpsUrl(co.Foto || co.foto),
+          company_id: cid,
+          company: c ? c.name : "",
+          ansvarig: (c && c.ansvarig_id) ? (uMap.get(c.ansvarig_id) || "") : "",
+          kontor_id: _ref(co.Kontor) || null,
+          kontor: "",
+          has_user: !!uid,
+          user_id: uid,
+        });
+      }
+      // ⚠️ Sortering i MINNET (efternamn, tomma sist men ALDRIG bortfiltrerade) — se fälla 1.
+      rows.sort((a, b) => {
+        const al = a.last || "", bl = b.last || "";
+        if (!al && bl) return 1;
+        if (al && !bl) return -1;
+        return al.localeCompare(bl, "sv") || (a.first || "").localeCompare(b.first || "", "sv");
+      });
+      const total = rows.length, pages = Math.max(1, Math.ceil(total / limit));
+      const pageRows = rows.slice((page - 1) * limit, page * limit);
+      // kontorsnamn bara för sidan vi faktiskt returnerar
+      const okIds = await _officeNamesCached(pageRows.map((r) => r.kontor_id));
+      for (const r of pageRows) r.kontor = r.kontor_id ? (okIds.get(r.kontor_id) || "") : "";
+
+      return res.json({
+        ok: true, total, pages, page, rows: pageRows,
+        departments: DEPARTMENTS,
+        roles: (uc && uc.roles) || [],
+        facets: { avdelningar: Array.from(avdSet).sort((a, b) => a.localeCompare(b, "sv")) },
+      });
+    } catch (e) {
+      console.error("[/admin/persons/list]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });

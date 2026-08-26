@@ -1,0 +1,409 @@
+<!--
+  mira-personer.html — stå-alone Personer-modul (alla Coworkers över ALLA företag).
+  Render-omtag av den Bubble-native Personer-tabellen. Speglar kundkortets Personer-flik
+  (lista + person-detalj + profil-redigering + foto + skapa konto + nytt lösenord) men med
+  företagskolumn, sök/filter och paginering — samma upplägg som mira-drift.html.
+
+  Backend:
+    GET   /admin/persons/list                              (NY — listan)
+    GET   /admin/companies/coworker/:id/activities         (befintlig)
+    PATCH /admin/companies/coworker/:id                    (befintlig)
+    POST  /admin/companies/coworker/:id/photo              (befintlig)
+    POST  /admin/companies/coworker/:id/create-account     (befintlig)
+    POST  /admin/companies/coworker/:id/send-password      (befintlig)
+    GET   /admin/companies/:id/offices                     (befintlig — kontors-dropdown, lat + cachad per bolag)
+
+  data-mira: api_host + planning_token. Konventioner: INGEN ?./??, IIFE, BROOT-claim, .pe-namnrymd.
+-->
+<style>
+  .pe{--pe-bg:#0f1830;--pe-card:#16223d;--pe-line:#243456;--pe-txt:#e7ecf6;--pe-mut:#8ea0c2;--pe-acc:#df6f39;--pe-ok:#2ecc71;--pe-chip:#1c2b4d;--pe-err:#e5533c;
+      color:var(--pe-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
+  .pe *{box-sizing:border-box;}
+  .pe-head{display:flex;align-items:center;gap:10px;margin:0 0 14px;}
+  .pe-head h1{font-size:20px;font-weight:800;margin:0;}
+  .pe-count{color:var(--pe-mut);font-size:12.5px;}
+  .pe-filters{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;}
+  .pe-filters input,.pe-filters select{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:9px;padding:9px 12px;font-size:12.5px;min-width:180px;}
+  .pe-filters input::placeholder{color:var(--pe-mut);}
+  .pe-panel{background:var(--pe-card);border:1px solid var(--pe-line);border-radius:14px;}
+  /* 10 kolumner ryms inte på smal skärm. Utan egen scroll klipptes ACTION-kolumnen
+     (Skapa konto / Nytt lösenord) bort och blev OÅTKOMLIG — tabellen scrollar därför
+     i sin egen container i st.f. att spilla ut ur panelen. */
+  .pe-scroll{overflow-x:auto;border-radius:14px;}
+  .pe-tbl{width:100%;border-collapse:collapse;}
+  /* min-width BARA i scroll-containern — aktivitetstabellen (4 kolumner) ska förbli responsiv */
+  .pe-scroll .pe-tbl{min-width:960px;}
+  .pe-tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--pe-mut);padding:12px 14px;border-bottom:1px solid var(--pe-line);font-weight:600;}
+  .pe-tbl td{padding:11px 14px;border-bottom:1px solid var(--pe-line);font-size:12.5px;vertical-align:middle;}
+  .pe-tbl tr:last-child td{border-bottom:none;}
+  .pe-tbl td.num{text-align:right;white-space:nowrap;}
+  .pe-row:hover td{background:var(--pe-chip);}
+  .pe-open{color:var(--pe-txt);cursor:pointer;font-weight:600;}
+  .pe-open:hover{color:var(--pe-acc);text-decoration:underline;}
+  .pe-cochip{display:inline-block;background:var(--pe-chip);border:1px solid var(--pe-line);border-radius:7px;padding:3px 9px;font-size:11.5px;color:var(--pe-txt);}
+  .pe-avatar{width:28px;height:28px;border-radius:50%;background:var(--pe-acc);color:#0f1830;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden;flex-shrink:0;}
+  .pe-avatar img{width:100%;height:100%;object-fit:cover;}
+  .pe-avatar.big{width:52px;height:52px;font-size:18px;}
+  .pe-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10.5px;font-weight:600;white-space:nowrap;}
+  .pe-badge.on{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .pe-badge.off{background:var(--pe-chip);color:var(--pe-mut);}
+  .pe-key{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:6px 11px;cursor:pointer;font-size:11.5px;font-weight:600;}
+  .pe-key:hover{border-color:var(--pe-acc);}
+  .pe-key.ghost{opacity:.75;}
+  .pe-key[disabled]{opacity:.5;cursor:default;}
+  .pe-acct{display:inline-flex;gap:6px;align-items:center;}
+  .pe-acct select{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:6px 9px;font-size:11.5px;}
+  .pe-kmsg{font-size:11px;color:var(--pe-mut);margin-left:8px;}
+  .pe-kmsg.err{color:var(--pe-err);}
+  .pe-kmsg.ok{color:#5fe0a0;}
+  .pe-pag{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;color:var(--pe-mut);font-size:12px;}
+  .pe-pag button{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:600;}
+  .pe-pag button[disabled]{opacity:.4;cursor:default;}
+  .pe-msg{padding:26px;text-align:center;color:var(--pe-mut);}
+  .pe-empty{padding:34px 20px;text-align:center;color:var(--pe-mut);}
+  .pe-empty b{display:block;color:var(--pe-txt);font-size:14px;margin-bottom:4px;}
+  /* detalj */
+  .pe-back{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:9px;padding:8px 15px;cursor:pointer;font-size:12.5px;font-weight:600;margin-bottom:14px;}
+  .pe-wrap{max-width:1000px;}
+  .pe-ph{display:flex;align-items:center;gap:10px;margin:2px 0 10px;}
+  .pe-ph h3{font-size:17px;font-weight:700;margin:0;}
+  .pe-phsub{color:var(--pe-mut);font-size:12px;}
+  .pe-subtabs{display:flex;gap:8px;margin:12px 0;}
+  .pe-subtab{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:20px;padding:7px 15px;cursor:pointer;font-size:12px;font-weight:600;}
+  .pe-subtab.on{background:var(--pe-acc);color:#0f1830;border-color:var(--pe-acc);}
+  .pe-form{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;}
+  .pe-fld{display:flex;flex-direction:column;gap:5px;}
+  .pe-fld.full{grid-column:1/-1;}
+  .pe-fld label{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--pe-mut);font-weight:600;}
+  .pe-fld input,.pe-fld select,.pe-fld textarea{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:9px;padding:9px 12px;font-size:12.5px;font-family:inherit;}
+  .pe-fld textarea{min-height:70px;resize:vertical;}
+  .pe-photorow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .pe-photobtns{display:flex;gap:8px;}
+  .pe-photobtns button{background:var(--pe-chip);color:var(--pe-txt);border:1px solid var(--pe-line);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:11.5px;font-weight:600;}
+  .pe-photobtns button.del{color:var(--pe-err);}
+  .pe-photomsg{font-size:11.5px;color:var(--pe-mut);}
+  .pe-formbtns{grid-column:1/-1;display:flex;align-items:center;gap:10px;margin-top:4px;}
+  .pe-formbtns .save{background:var(--pe-acc);color:#0f1830;border:none;border-radius:9px;padding:9px 20px;cursor:pointer;font-size:12.5px;font-weight:700;}
+  .pe-formbtns .msg{font-size:11.5px;color:var(--pe-mut);}
+  .pe-formbtns .msg.err{color:var(--pe-err);}
+  .pe-pad{padding:16px 18px;}
+  @media(max-width:720px){ .pe-form{grid-template-columns:1fr;} }
+</style>
+
+<div class="pe">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <div data-pe="root"><div class="pe-msg">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".pe"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-pe-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-pe-claimed","1");
+  var $=function(k){ return root.querySelector('[data-pe="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token");
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function api(path){ return fetch(HOST+path,{headers:{"x-admin-token":TOKEN}}).then(function(r){ return r.json(); }); }
+  function apiPost(path, body){ return fetch(HOST+path,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){ return r.json(); }); }
+  function apiPatch(path, body){ return fetch(HOST+path,{method:"PATCH",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(function(r){ return r.json(); }); }
+  function initials(n){ var p=String(n||"").trim().split(/\s+/); if(!p[0]) return "?"; return (p[0].charAt(0)+(p.length>1?p[p.length-1].charAt(0):"")).toUpperCase(); }
+  function avatarInner(c){ return (c&&c.foto)?('<img src="'+esc(c.foto)+'" alt="">'):esc(initials(c&&c.name)); }
+  function formatPhone(v){ var d=String(v==null?"":v).replace(/\D/g,""); if(!d) return "—"; if(d.charAt(0)!=="0") d="0"+d; if(d.length===10) return d.slice(0,3)+"-"+d.slice(3,6)+" "+d.slice(6,8)+" "+d.slice(8,10); return d; }
+  function selOpts(list, cur, emptyLabel){
+    var h='<option value="">'+esc(emptyLabel||"— välj —")+'</option>';
+    for(var i=0;i<(list||[]).length;i++){
+      var o=list[i], v=(typeof o==="string")?o:o.id, lbl=(typeof o==="string")?o:o.name;
+      h+='<option value="'+esc(v)+'"'+(String(v)===String(cur||"")?" selected":"")+'>'+esc(lbl)+'</option>';
+    }
+    return h;
+  }
+
+  var STATE={ q:"", email:"", companyQ:"", avdelning:"", konto:"", page:1,
+              rows:[], total:0, pages:1, loading:false, departments:[], roles:[], avdelningar:[],
+              open:null, tab:"profil", acts:null, acctFor:null, offices:{}, officesFor:null };
+  var _deb=null;
+
+  function findPerson(id){ for(var i=0;i<STATE.rows.length;i++) if(STATE.rows[i].id===id) return STATE.rows[i]; return null; }
+
+  function filtersHtml(){
+    return '<div class="pe-filters">'+
+      '<input type="text" data-pe="q" placeholder="Sök namn…" value="'+esc(STATE.q)+'">'+
+      '<input type="text" data-pe="email" placeholder="Sök e-post…" value="'+esc(STATE.email)+'">'+
+      '<input type="text" data-pe="companyq" placeholder="Sök företag…" value="'+esc(STATE.companyQ)+'">'+
+      '<select data-pe="avdelning"><option value="">Alla avdelningar</option>'+
+        (function(){ var h=""; for(var i=0;i<STATE.avdelningar.length;i++){ var a=STATE.avdelningar[i]; h+='<option value="'+esc(a)+'"'+(a===STATE.avdelning?" selected":"")+'>'+esc(a)+'</option>'; } return h; })()+
+      '</select>'+
+      '<select data-pe="konto">'+
+        '<option value=""'+(STATE.konto===""?" selected":"")+'>Alla</option>'+
+        '<option value="yes"'+(STATE.konto==="yes"?" selected":"")+'>Har konto</option>'+
+        '<option value="no"'+(STATE.konto==="no"?" selected":"")+'>Saknar konto</option>'+
+      '</select>'+
+    '</div>';
+  }
+  function actionCell(r){
+    if(r.has_user) return '<button class="pe-key" data-pe="pw" data-cid="'+esc(r.id)+'">🔑 Nytt lösenord</button>';
+    if(STATE.acctFor===r.id) return '<span class="pe-acct"><select data-pe="acctrole" data-cid="'+esc(r.id)+'">'+
+      selOpts(STATE.roles, "", "— välj roll —")+'</select>'+
+      '<button class="pe-key" data-pe="acctgo" data-cid="'+esc(r.id)+'">Skapa</button>'+
+      '<button class="pe-key ghost" data-pe="acctcancel">Avbryt</button></span>';
+    return '<button class="pe-key" data-pe="createaccount" data-cid="'+esc(r.id)+'">+ Skapa konto</button>';
+  }
+  function tableHtml(){
+    if(!STATE.rows.length) return '<div class="pe-panel"><div class="pe-empty"><b>Inga personer</b>Ingen person matchar filtret.</div></div>';
+    var body="";
+    for(var i=0;i<STATE.rows.length;i++){ var r=STATE.rows[i];
+      var badge=r.has_user?'<span class="pe-badge on">Konto</span>':'<span class="pe-badge off">CRM-kontakt</span>';
+      body+='<tr class="pe-row"><td>'+(r.company?'<span class="pe-cochip">'+esc(r.company)+'</span>':"—")+'</td>'+
+        '<td>'+esc(r.ansvarig||"—")+'</td>'+
+        '<td><span style="display:flex;align-items:center;gap:9px"><span class="pe-avatar">'+avatarInner(r)+'</span>'+
+          '<span class="pe-open" data-pe="openperson" data-cid="'+esc(r.id)+'">'+esc(r.first||"—")+'</span></span></td>'+
+        '<td>'+esc(r.last||"—")+'</td>'+
+        '<td>'+esc(r.title||"—")+'</td>'+
+        '<td>'+esc(r.email||"—")+'</td>'+
+        '<td>'+(r.phone?esc(formatPhone(r.phone)):"—")+'</td>'+
+        '<td>'+esc(r.avdelning||"—")+'</td>'+
+        '<td>'+badge+'</td>'+
+        '<td class="num">'+actionCell(r)+'<span class="pe-kmsg" data-kmsg="'+esc(r.id)+'"></span></td></tr>';
+    }
+    return '<div class="pe-panel"><div class="pe-scroll"><table class="pe-tbl"><thead><tr>'+
+      '<th>Företag</th><th>Ansvarig</th><th>Förnamn</th><th>Efternamn</th><th>Titel</th><th>E-post</th><th>Telefon</th><th>Avdelning</th><th>Konto</th><th class="num"></th>'+
+      '</tr></thead><tbody>'+body+'</tbody></table></div></div>';
+  }
+  function pagerHtml(){
+    if(STATE.pages<=1) return "";
+    return '<div class="pe-pag"><button data-pe="prev"'+(STATE.page<=1?" disabled":"")+'>← Föregående</button>'+
+      '<span>Sida '+STATE.page+' av '+STATE.pages+' · '+STATE.total+' st</span>'+
+      '<button data-pe="next"'+(STATE.page>=STATE.pages?" disabled":"")+'>Nästa →</button></div>';
+  }
+
+  function profilForm(c){
+    var fld=function(lbl,k,v){ return '<div class="pe-fld"><label>'+esc(lbl)+'</label><input type="text" data-cw="'+k+'" value="'+esc(v||"")+'"></div>'; };
+    var offList=STATE.offices[c.company_id];
+    var offSel='<div class="pe-fld"><label>Kontor</label><select data-cw="kontor"'+(offList?"":" disabled")+'>'+
+      (offList?selOpts(offList, c.kontor_id, "— inget —"):'<option>'+esc(c.kontor||"Laddar…")+'</option>')+'</select></div>';
+    var depSel='<div class="pe-fld"><label>Avdelning</label><select data-cw="avdelning">'+selOpts(STATE.departments, c.avdelning, "— ingen —")+'</select></div>';
+    var photoRow='<div class="pe-fld full"><label>Profilfoto</label><div class="pe-photorow">'+
+      '<div class="pe-avatar big" data-cw-avatar>'+avatarInner(c)+'</div>'+
+      '<div class="pe-photobtns"><button type="button" data-pe="photopick">'+(c.foto?"Byt foto":"Ladda upp foto")+'</button>'+
+      (c.foto?'<button type="button" class="del" data-pe="photodel">Ta bort</button>':"")+'</div>'+
+      '<input type="file" accept="image/*" data-pe="photofile" style="display:none">'+
+      '<span class="pe-photomsg" data-cw-photomsg></span></div></div>';
+    return '<div class="pe-panel pe-pad"><div class="pe-form">'+
+      photoRow+
+      fld("Förnamn","first",c.first)+fld("Efternamn","last",c.last)+
+      fld("Titel","title",c.title)+fld("E-post","email",c.email)+
+      fld("Telefon","telefon",c.phone?formatPhone(c.phone):"")+depSel+offSel+
+      '<div class="pe-fld full"><label>Allmän info</label><textarea data-cw="crm_info">'+esc(c.crm_info||"")+'</textarea></div>'+
+      '<div class="pe-formbtns"><button class="save" data-pe="savecoworker">Spara</button><span class="msg" data-cw-msg></span></div>'+
+    '</div></div>';
+  }
+  function aktivitetBody(){
+    if(STATE.acts===null||STATE.acts==="loading") return '<div class="pe-msg">Laddar…</div>';
+    var rows=STATE.acts;
+    if(!rows.length) return '<div class="pe-panel"><div class="pe-empty"><b>Inga aktiviteter</b>Tagga personen på aktiviteter (fältet <b style="display:inline">taggade_personer</b> på activitet_crm) så dyker de upp här.</div></div>';
+    var body="";
+    for(var i=0;i<rows.length;i++){ var r=rows[i];
+      var typ=[r.typ,r.fas].filter(Boolean).join(" · ")||"Aktivitet";
+      var status=r.genomfort?'<span class="pe-badge on">Genomförd</span>':'<span class="pe-badge off">Planerad</span>';
+      body+='<tr><td>'+esc(r.date||"—")+'</td><td>'+esc(typ)+'</td><td>'+esc(r.meddelande||"—")+'</td><td>'+status+'</td></tr>';
+    }
+    return '<div class="pe-panel"><table class="pe-tbl"><thead><tr><th>Datum</th><th>Typ</th><th>Anteckning</th><th>Status</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  }
+  function detailHtml(){
+    var c=findPerson(STATE.open);
+    var back='<button class="pe-back" data-pe="back">← Personer</button>';
+    if(!c) return '<div class="pe-wrap">'+back+'<div class="pe-panel"><div class="pe-empty"><b>Person hittades inte</b></div></div></div>';
+    var head='<div class="pe-ph"><div class="pe-avatar big">'+avatarInner(c)+'</div>'+
+      '<div><h3>'+esc(c.name||"—")+'</h3><div class="pe-phsub">'+esc(c.company||"—")+(c.title?" · "+esc(c.title):"")+'</div></div>'+
+      (c.has_user?'<span class="pe-badge on">Konto</span>':'<span class="pe-badge off">CRM-kontakt</span>')+'</div>';
+    var tabs='<div class="pe-subtabs">'+
+      '<span class="pe-subtab'+(STATE.tab==="profil"?" on":"")+'" data-pe="ptab" data-p="profil">Profil</span>'+
+      '<span class="pe-subtab'+(STATE.tab==="aktivitet"?" on":"")+'" data-pe="ptab" data-p="aktivitet">Aktivitet</span></div>';
+    return '<div class="pe-wrap">'+back+head+tabs+((STATE.tab==="aktivitet")?aktivitetBody():profilForm(c))+'</div>';
+  }
+
+  function render(){
+    if(STATE.open){ $("root").innerHTML=detailHtml(); return; }
+    var head='<div class="pe-head"><h1>Personer</h1><span class="pe-count">'+(STATE.loading?"laddar…":(STATE.total+" st"))+'</span></div>';
+    var list=STATE.loading?'<div class="pe-panel"><div class="pe-msg">Laddar…</div></div>':tableHtml();
+    $("root").innerHTML=head+filtersHtml()+list+pagerHtml();
+  }
+  function qstr(){
+    var p=["page="+STATE.page];
+    if(STATE.q) p.push("q="+encodeURIComponent(STATE.q));
+    if(STATE.email) p.push("email="+encodeURIComponent(STATE.email));
+    if(STATE.companyQ) p.push("company="+encodeURIComponent(STATE.companyQ));
+    if(STATE.avdelning) p.push("avdelning="+encodeURIComponent(STATE.avdelning));
+    if(STATE.konto) p.push("konto="+encodeURIComponent(STATE.konto));
+    return "/admin/persons/list?"+p.join("&");
+  }
+  function load(){
+    STATE.loading=true; render();
+    api(qstr()).then(function(j){
+      STATE.loading=false;
+      if(j&&j.ok){
+        STATE.rows=j.rows||[]; STATE.total=j.total||0; STATE.pages=j.pages||1;
+        if(j.departments) STATE.departments=j.departments;
+        if(j.roles) STATE.roles=j.roles;
+        if(j.facets&&j.facets.avdelningar) STATE.avdelningar=j.facets.avdelningar;
+      } else { STATE.rows=[]; STATE.total=0; STATE.pages=1; }
+      render();
+    }).catch(function(){ STATE.loading=false; STATE.rows=[]; STATE.total=0; STATE.pages=1; render(); });
+  }
+  // Kontors-dropdownen behöver bolagets kontor. Lat-laddas när en person öppnas och
+  // cachas per bolag (öppnar man flera personer på samma kund = ETT anrop).
+  function ensureOffices(cid){
+    if(!cid||STATE.offices[cid]||STATE.officesFor===cid) return;
+    STATE.officesFor=cid;
+    api("/admin/companies/"+encodeURIComponent(cid)+"/offices").then(function(j){
+      var list=[]; var rows=(j&&j.ok&&j.rows)?j.rows:[];
+      for(var i=0;i<rows.length;i++) list.push({id:rows[i].id,name:rows[i].name});
+      STATE.offices[cid]=list; STATE.officesFor=null;
+      if(STATE.open&&STATE.tab==="profil") render();
+    }).catch(function(){ STATE.offices[cid]=[]; STATE.officesFor=null; if(STATE.open) render(); });
+  }
+  function openPerson(id){
+    STATE.open=id; STATE.tab="profil"; STATE.acts=null; render();
+    var c=findPerson(id); if(c) ensureOffices(c.company_id);
+  }
+  function fetchActs(){
+    if(STATE.acts==="loading"||(STATE.acts&&STATE.acts.length!==undefined)) return;
+    STATE.acts="loading";
+    api("/admin/companies/coworker/"+encodeURIComponent(STATE.open)+"/activities").then(function(j){
+      STATE.acts=(j&&j.ok&&j.rows)?j.rows:[];
+      if(STATE.open&&STATE.tab==="aktivitet") render();
+    }).catch(function(){ STATE.acts=[]; if(STATE.open&&STATE.tab==="aktivitet") render(); });
+  }
+  function saveCoworker(){
+    var form=root.querySelector(".pe-form"); if(!form) return;
+    var g=function(k){ var el=form.querySelector('[data-cw="'+k+'"]'); return el?el.value.trim():""; };
+    var cid=STATE.open, msg=root.querySelector("[data-cw-msg]");
+    var fields={first:g("first"),last:g("last"),title:g("title"),email:g("email"),telefon:g("telefon"),crm_info:g("crm_info"),avdelning:g("avdelning")};
+    var offSel=form.querySelector('[data-cw="kontor"]');
+    if(offSel&&!offSel.disabled) fields.kontor=offSel.value;
+    if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
+    apiPatch("/admin/companies/coworker/"+encodeURIComponent(cid), {fields:fields}).then(function(j){
+      if(!j||!j.ok){ if(msg){ msg.textContent="✗ "+((j&&j.error)||"fel"); msg.className="msg err"; } return; }
+      var c=findPerson(cid);   // optimistisk lokal uppdatering
+      if(c){
+        c.first=fields.first; c.last=fields.last; c.name=(fields.first+" "+fields.last).trim()||fields.email;
+        c.title=fields.title; c.email=fields.email; c.phone=(fields.telefon||"").replace(/\D/g,"");
+        c.crm_info=fields.crm_info; c.avdelning=fields.avdelning;
+        if(fields.kontor!==undefined){
+          c.kontor_id=fields.kontor||null;
+          var lst=STATE.offices[c.company_id]||[], nm="";
+          for(var i=0;i<lst.length;i++) if(lst[i].id===fields.kontor) nm=lst[i].name;
+          c.kontor=nm;
+        }
+      }
+      render();
+      var m2=root.querySelector("[data-cw-msg]"); if(m2){ m2.textContent="Sparat ✓"; m2.className="msg"; m2.style.color="var(--pe-ok)"; }
+    }).catch(function(){ if(msg){ msg.textContent="✗ nätverksfel"; msg.className="msg err"; } });
+  }
+  function compressImage(file, cb){
+    try{
+      var img=new Image(), url=URL.createObjectURL(file);
+      img.onload=function(){
+        var mx=512,w=img.width,h=img.height;
+        if(w>h){ if(w>mx){ h=Math.round(h*mx/w); w=mx; } } else { if(h>mx){ w=Math.round(w*mx/h); h=mx; } }
+        var cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+        cv.getContext("2d").drawImage(img,0,0,w,h);
+        URL.revokeObjectURL(url);
+        cv.toBlob(function(b){ cb(b||file); }, "image/jpeg", 0.82);
+      };
+      img.onerror=function(){ URL.revokeObjectURL(url); cb(file); };
+      img.src=url;
+    }catch(_){ cb(file); }
+  }
+  function photoMsg(txt, err){ var m=root.querySelector("[data-cw-photomsg]"); if(m){ m.textContent=txt||""; m.style.color=err?"var(--pe-err)":"var(--pe-mut)"; } }
+  function onPhotoPick(input){
+    var file=input.files&&input.files[0]; input.value="";
+    if(!file) return;
+    if(!/^image\//.test(file.type)){ photoMsg("✗ välj en bildfil", true); return; }
+    var cid=STATE.open; photoMsg("Laddar upp…");
+    compressImage(file, function(blob){
+      var fd=new FormData(); fd.append("file", blob, "foto.jpg");
+      fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(cid)+"/photo",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+        .then(function(r){ return r.json(); }).then(function(j){
+          if(!j||!j.ok){ photoMsg("✗ "+((j&&j.error)||"fel"), true); return; }
+          var c=findPerson(cid); if(c) c.foto=j.url||"";
+          render(); photoMsg("Sparat ✓");
+        }).catch(function(){ photoMsg("✗ nätverksfel", true); });
+    });
+  }
+  function removePhoto(){
+    var cid=STATE.open; photoMsg("Tar bort…");
+    var fd=new FormData(); fd.append("clear","1");
+    fetch(HOST+"/admin/companies/coworker/"+encodeURIComponent(cid)+"/photo",{method:"POST",headers:{"x-admin-token":TOKEN},body:fd})
+      .then(function(r){ return r.json(); }).then(function(j){
+        if(!j||!j.ok){ photoMsg("✗ "+((j&&j.error)||"fel"), true); return; }
+        var c=findPerson(cid); if(c) c.foto=""; render(); photoMsg("Borttaget ✓");
+      }).catch(function(){ photoMsg("✗ nätverksfel", true); });
+  }
+  // ⚠️ User_role MÅSTE sättas: dashboard_crm har en page-load-guard ("Current User's
+  // User_role is empty" → /index) som annars kastar ut personen direkt efter inloggning.
+  // Rollerna härleds ur datan; saknas de helt släpper vi igenom så flödet inte blockeras.
+  function createAccount(cid, btn){
+    var msg=root.querySelector('[data-kmsg="'+cid+'"]');
+    var sel=root.querySelector('[data-pe="acctrole"][data-cid="'+cid+'"]');
+    var role=sel?sel.value:"";
+    if((STATE.roles||[]).length && !role){ if(msg){ msg.textContent="Välj roll först"; msg.className="pe-kmsg err"; } return; }
+    if(!window.confirm("Skapa ett användarkonto"+(role?(" som "+role):"")+" och skicka välkomstmail till denna person?")) return;
+    btn.disabled=true; if(msg){ msg.textContent="Skapar…"; msg.className="pe-kmsg"; }
+    apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/create-account", { role: role }).then(function(j){
+      btn.disabled=false;
+      if(j&&j.ok){ STATE.acctFor=null; var c=findPerson(cid); if(c){ c.has_user=true; c.user_id=j.user_id||null; } render(); }
+      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="pe-kmsg err"; } }
+    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="pe-kmsg err"; } });
+  }
+  function sendPw(cid, btn){
+    var msg=root.querySelector('[data-kmsg="'+cid+'"]');
+    if(!window.confirm("Skicka nytt lösenord till denna person?")) return;
+    btn.disabled=true; if(msg){ msg.textContent="Skickar…"; msg.className="pe-kmsg"; }
+    apiPost("/admin/companies/coworker/"+encodeURIComponent(cid)+"/send-password").then(function(j){
+      btn.disabled=false;
+      if(j&&j.ok){ if(msg){ msg.textContent="✓ Skickat"; msg.className="pe-kmsg ok"; } }
+      else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="pe-kmsg err"; } }
+    }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="pe-kmsg err"; } });
+  }
+
+  root.addEventListener("click", function(e){
+    var t=e.target;
+    var op=t.closest?t.closest('[data-pe="openperson"]'):null;
+    if(op){ openPerson(op.getAttribute("data-cid")); return; }
+    var ptab=t.closest?t.closest('[data-pe="ptab"]'):null;
+    if(ptab){ STATE.tab=ptab.getAttribute("data-p"); if(STATE.tab==="aktivitet") fetchActs(); render(); return; }
+    if(t.closest && t.closest('[data-pe="back"]')){ STATE.open=null; STATE.acts=null; render(); return; }
+    if(t.closest && t.closest('[data-pe="savecoworker"]')){ saveCoworker(); return; }
+    if(t.closest && t.closest('[data-pe="photopick"]')){ var f=root.querySelector('[data-pe="photofile"]'); if(f) f.click(); return; }
+    if(t.closest && t.closest('[data-pe="photodel"]')){ removePhoto(); return; }
+    var ca=t.closest?t.closest('[data-pe="createaccount"]'):null;
+    if(ca){ STATE.acctFor=ca.getAttribute("data-cid"); render(); return; }
+    var cg=t.closest?t.closest('[data-pe="acctgo"]'):null;
+    if(cg){ createAccount(cg.getAttribute("data-cid"), cg); return; }
+    if(t.closest && t.closest('[data-pe="acctcancel"]')){ STATE.acctFor=null; render(); return; }
+    var pw=t.closest?t.closest('[data-pe="pw"]'):null;
+    if(pw){ sendPw(pw.getAttribute("data-cid"), pw); return; }
+    if(t.closest && t.closest('[data-pe="prev"]')){ if(STATE.page>1){ STATE.page--; load(); } return; }
+    if(t.closest && t.closest('[data-pe="next"]')){ if(STATE.page<STATE.pages){ STATE.page++; load(); } return; }
+  });
+  root.addEventListener("input", function(e){
+    var t=e.target, k=t.getAttribute?t.getAttribute("data-pe"):null;
+    if(k==="q"||k==="email"||k==="companyq"){
+      if(k==="q") STATE.q=t.value; else if(k==="email") STATE.email=t.value; else STATE.companyQ=t.value;
+      STATE.page=1; if(_deb) clearTimeout(_deb); _deb=setTimeout(load, 350);
+    }
+  });
+  root.addEventListener("change", function(e){
+    var t=e.target, k=t.getAttribute?t.getAttribute("data-pe"):null;
+    if(k==="avdelning"){ STATE.avdelning=t.value; STATE.page=1; load(); return; }
+    if(k==="konto"){ STATE.konto=t.value; STATE.page=1; load(); return; }
+    if(k==="photofile"){ onPhotoPick(t); return; }
+  });
+
+  load();
+})();
+</script>

@@ -66,6 +66,17 @@ const STORE = {
   Coworker: [
     { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1", Foto: "//files/co1.jpg" },  // har User (matchar u1) + foto
     { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
+    // ⚠️ SKARPT FALL (Christians skärmbild 2026-08-26): personer UTAN Efternamn finns
+    // (Kajsas i Parken: "Elaine", "Melissa"; Mariebo: "Dennis"). Sorterar man i Bubble
+    // på Efternamn fälls de TYST ([[reference-bubble-sort-drops-empty]]). Fixturen måste
+    // kunna uttrycka felet — annars är den mer förlåtande än verkligheten.
+    { _id: "co3", "Kundföretag": "cc2", "Förnamn": "Elaine", Email: "elaine@beta.se" },                       // inget Efternamn + annat företag
+    // ⚠️ E-posten MÅSTE vara u3:s (cilla@), inte u2:s (bo@) — mypage-sviten bevisar att en
+    // User UTAN kopplad Coworker inte kraschar, och den använder u2. Ger vi u2 en Coworker
+    // här testar den svitens "utan koppling"-fall en värld som inte längre finns.
+    { _id: "co4", "Kundföretag": "cc2", "Förnamn": "Cilla", "Efternamn": "Berg", Email: "cilla@carotte.se", Avdelning: "IT", Telefon: 701234567 },   // har User (u3) via e-post
+    { _id: "co5", "Kundföretag": "cc3", "Förnamn": "Zeb", "Efternamn": "Zoo", Email: "" },                     // ingen e-post → aldrig konto
+    { _id: "co6", "Förnamn": "Ingen", "Efternamn": "Utan", Email: "utan@x.se" },                               // INGET Kundföretag → company/ansvarig måste bli tomma, inte krascha
   ],
   Office: [
     { _id: "of1", "Kundföretag": "cc1", "Office_title": "CMIAB Sthlm", "Fastighet": "f1", "Kontorsansvarig": ["co1"], "office_address": { address: "Kammakargatan 12, Stockholm" }, "Yta": 200, "Arbetsplatser": 10, "Budget": 500000, "Mötesrum": ["m1"], "intern_lokal": ["i1", "i2"] },
@@ -805,6 +816,86 @@ const run = async () => {
   ok("drift qc företagsfilter (på rådata) → 1 (qc1)", qcCo.body.total === 1 && qcCo.body.rows[0].id === "qc1");
   var qcCoMiss = await call(s.routes, "get", "/admin/drift/list", { query: { type: "qc", company: "zeta" } });
   ok("drift qc företagsfilter utan träff → 0", qcCoMiss.body.total === 0);
+
+  // ══════════ PERSONER — global personlista (/admin/persons/list) ══════════
+  // Läget här: co1 Testsson(cc1, Kontor of2, har User u1) · co2 Kontakt(cc1) · co3 Elaine(cc2,
+  // INGET efternamn) · co4 Berg(cc2, Avdelning IT, har User u3) · co5 Zoo(cc3) · co6 Utan(INGET
+  // företag) · new_N Ny/Nils(cc1, skapad av create-testet). Totalt 7.
+  // ⚠️ Assertions får INTE hårdkoda företagsnamn/ansvarig: 390 tester har redan patchat
+  // cc2:s namn och satt Kundansvarig på cc3. Vi jämför därför mot cacharnas FAKTISKA
+  // innehåll — det testar resolveringen, inte fixturens ursprungstillstånd.
+  findAllCalls.length = 0;
+  getCalls.length = 0;
+  var pl = await call(s.routes, "get", "/admin/persons/list");
+  ok("persons/list ok + 7 personer över alla företag", pl.body.ok && pl.body.total === 7 && pl.body.rows.length === 7);
+
+  // ⚠️ KÄRNTESTET: personen utan Efternamn (co3 Elaine) MÅSTE finnas kvar. Sorteras det
+  // i Bubble på Efternamn fälls hon tyst → total blir 5 och detta test faller.
+  var harElaine = pl.body.rows.filter(function (r) { return r.id === "co3"; });
+  ok("persons: person UTAN efternamn finns kvar i listan (sort_field-fällan)", harElaine.length === 1);
+  var ordning = pl.body.rows.map(function (r) { return r.last || "(tom)"; });
+  ok("persons: sorterad på efternamn, tomma SIST", JSON.stringify(ordning) === JSON.stringify(["Berg", "Kontakt", "Ny", "Testsson", "Utan", "Zoo", "(tom)"]));
+
+  // Företagsnamn + kundansvarig hämtas ur de delade cacharna (noll Bubble-anrop)
+  var rBerg = pl.body.rows.filter(function (r) { return r.id === "co4"; })[0];
+  var cc2Now = FULL.get("cc2") || {};
+  var ansvNow = STORE.User.filter(function (u) { return u._id === cc2Now.ansvarig_id; })[0] || {};
+  var ansvNamn = ((ansvNow["First Name"] || "") + " " + (ansvNow["Surname"] || "")).trim();
+  ok("persons: company + ansvarig resolvade ur de delade cacharna", rBerg.company === cc2Now.name && rBerg.ansvarig === ansvNamn && !!cc2Now.name);
+  var rUtan = pl.body.rows.filter(function (r) { return r.id === "co6"; })[0];
+  ok("persons: person utan Kundföretag → tom company/ansvarig (inte krasch)", rUtan.company === "" && rUtan.ansvarig === "" && rUtan.company_id === null);
+
+  // has_user via _users().byEmail (delad TTL-cache) — inte ett User-svep per företag
+  ok("persons: has_user satt för co1(u1) + co4(u3), inte för de andra",
+    pl.body.rows.filter(function (r) { return r.has_user; }).map(function (r) { return r.id; }).sort().join(",") === "co1,co4");
+
+  // Kontorsnamn resolvas BARA för sidan, och cachas per office-id
+  var rTest = pl.body.rows.filter(function (r) { return r.id === "co1"; })[0];
+  ok("persons: kontorsnamn resolvat för raden", rTest.kontor === "CMIAB Göteborg" && rTest.kontor_id === "of2");
+  var officeGets1 = getCalls.filter(function (g) { return g.t === "Office"; }).length;
+  var coSweeps1 = findAllCalls.filter(function (c) { return c.t === "Coworker"; }).length;
+  ok("persons: ETT Coworker-svep på första anropet", coSweeps1 === 1);
+
+  // WU: andra anropet (paginering/sök) får INTE svepa Coworker igen — TTL-cache.
+  var pl2 = await call(s.routes, "get", "/admin/persons/list", { query: { page: "1", limit: "10" } });
+  var coSweeps2 = findAllCalls.filter(function (c) { return c.t === "Coworker"; }).length;
+  var officeGets2 = getCalls.filter(function (g) { return g.t === "Office"; }).length;
+  ok("persons: andra anropet gör INGET nytt Coworker-svep (TTL-cache)", pl2.body.ok && coSweeps2 === 1);
+  ok("persons: kontorsnamn cachas per office-id (inga nya bubbleGet)", officeGets2 === officeGets1);
+
+  // Sök/filter — allt i minnet mot cachen
+  var pQ = await call(s.routes, "get", "/admin/persons/list", { query: { q: "elaine" } });
+  ok("persons: namnsök träffar även den utan efternamn", pQ.body.total === 1 && pQ.body.rows[0].id === "co3");
+  var pQ2 = await call(s.routes, "get", "/admin/persons/list", { query: { q: "testsson" } });
+  ok("persons: namnsök matchar efternamn", pQ2.body.total === 1 && pQ2.body.rows[0].id === "co1");
+  var pMail = await call(s.routes, "get", "/admin/persons/list", { query: { email: "cilla@carotte.se" } });
+  ok("persons: e-postsök → co4", pMail.body.total === 1 && pMail.body.rows[0].id === "co4");
+  var pCo = await call(s.routes, "get", "/admin/persons/list", { query: { company: "beta" } });
+  ok("persons: företagsnamn-sök → cc2:s två personer", pCo.body.total === 2 && pCo.body.rows.map(function (r) { return r.id; }).sort().join(",") === "co3,co4");
+  var pCid = await call(s.routes, "get", "/admin/persons/list", { query: { company_id: "cc2" } });
+  ok("persons: company_id-scope (återbruk för kundkort/besöksmodul) → samma två", pCid.body.total === 2);
+  var pAvd = await call(s.routes, "get", "/admin/persons/list", { query: { avdelning: "IT" } });
+  ok("persons: avdelningsfilter → co4", pAvd.body.total === 1 && pAvd.body.rows[0].id === "co4");
+  var pKontoJa = await call(s.routes, "get", "/admin/persons/list", { query: { konto: "yes" } });
+  ok("persons: konto=yes → 2 (co1+co4)", pKontoJa.body.total === 2);
+  var pKontoNej = await call(s.routes, "get", "/admin/persons/list", { query: { konto: "no" } });
+  ok("persons: konto=no → 5 (resten)", pKontoNej.body.total === 5);
+
+  // Facetter härleds UR DATAN (som drift-prioriteter/roller) — aldrig hårdkodade
+  ok("persons: facets.avdelningar härledd ur datan + sorterad", pl.body.facets.avdelningar.indexOf("IT") > -1 && JSON.stringify(pl.body.facets.avdelningar) === JSON.stringify(pl.body.facets.avdelningar.slice().sort()));
+  ok("persons: departments (option-set) + roles följer med för redigering/kontoskapande", pl.body.departments.length > 0 && Array.isArray(pl.body.roles));
+
+  // Paginering
+  var pPag = await call(s.routes, "get", "/admin/persons/list", { query: { limit: "10", page: "2" } });
+  ok("persons: limit-golv 10 → 1 sida, sida 2 tom", pPag.body.pages === 1 && pPag.body.rows.length === 0);
+
+  // ⚠️ Cache-invalidering: en redigering måste synas DIREKT i den globala listan.
+  // Utan _coworkersForget() i PATCH:en visar listan gammal data i upp till en timme
+  // (samma klass som [[reference-bubble-vy-cache-slapar]]).
+  await call(s.routes, "patch", "/admin/companies/coworker/:id", { params: { id: "co5" }, body: { fields: { title: "Zoolog" } } });
+  var pAfter = await call(s.routes, "get", "/admin/persons/list", { query: { q: "zoo" } });
+  var coSweeps3 = findAllCalls.filter(function (c) { return c.t === "Coworker"; }).length;
+  ok("persons: PATCH invaliderar cachen → nytt svep + ny titel syns", coSweeps3 === 2 && pAfter.body.rows[0].title === "Zoolog");
 
   // ── DRIFT SKRIV (status + kommentar) — sist för att inte mutera tidigare assertions ──
   var cLen = STORE.Matter.filter(function(r){return r._id==="mt1";})[0]["Tråd"].length;
