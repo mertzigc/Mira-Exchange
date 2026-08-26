@@ -17,6 +17,7 @@ import { createIntelliplanClient, describeReportPayload, profileCsvColumns, norm
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT,
          scoreScheduleColumns, malFinnsInte, normalizePass, IP_PASS_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
+import { makeVisitorAuth } from "./visitor_auth.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
 import express from "express";
@@ -460,6 +461,9 @@ function requireApiKey(req, res, next) {
     "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad
     "/admin/drift",                // Drift stå-alone (ärenden+kvalitetskontroller aggregerat), x-admin-token-grindad
     "/admin/persons",              // Personer stå-alone (global personlista), x-admin-token-grindad (companies_api.js)
+    "/visitor",                    // Receptionistens yta. INTE x-api-key: /visitor/session grindas av
+                                   // x-visitor-secret (Bubble-wf, server-side), övriga av x-visitor-token
+                                   // som bär fastighets-scopet. Se handoff/BESOKSHANTERING.md §7.5.
     "/admin/reset-password",       // Lösenords-reset exchange (token-grindad, publik — reset_pw-sidan) (companies_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
@@ -18868,6 +18872,14 @@ function _planningCors(req, res) {
 //    Logik i kitchen_auth.js (testbar). Signeras med PLANNING_ADMIN_TOKEN (stannar server-side).
 const KITCHEN_ACCESS_CODE = String(process.env.KITCHEN_ACCESS_CODE || "").trim();
 const _kitchenAuth = makeKitchenAuth({ secret: PLANNING_ADMIN_TOKEN, ttlMs: 12 * 60 * 60 * 1000, code: KITCHEN_ACCESS_CODE });
+
+// ── Receptionist-session för /visitor (besökshantering). Se handoff/BESOKSHANTERING.md §7.5. ──
+//    Till skillnad från köks-iPaden finns INGEN delad kod: sessionen mintas server-till-server
+//    från en Bubble backend-wf som känner Current User. Tokenen bär receptionistens
+//    FASTIGHETSLISTA och all scope-filtrering sker mot den.
+//    ⚠️ Koppla ALDRIG in _visitorAuth.authed i planningAuthed för andra moduler.
+const VISITOR_SESSION_SECRET = String(process.env.VISITOR_SESSION_SECRET || "").trim();
+const _visitorAuth = makeVisitorAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecret: VISITOR_SESSION_SECRET, ttlMs: 12 * 60 * 60 * 1000 });
 // Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)
 const PLANNING_SRC = {
   [ACTIVITY_CONFIG.AT_BOKNING]: { type: ACTIVITY_CONFIG.COMISSION_TYPE, status: ACTIVITY_CONFIG.C_STATUS, thread: "Tråd", start: ACTIVITY_CONFIG.C_DELIVERY, end: ACTIVITY_CONFIG.C_END },
@@ -20939,6 +20951,54 @@ app.post("/admin/produktion/login", (req, res) => {
   const out = _kitchenAuth.verifyCode(String((req.body && req.body.code) || "").trim());
   if (!out.ok) return res.status(out.status || 401).json({ ok: false, error: out.error });
   return res.json({ ok: true, token: out.token, exp: out.exp });
+});
+
+// ── POST /visitor/session — Bubble backend-wf → Render. Mintar receptionistens session. ──
+// ⚠️ ANROPAS ALDRIG FRÅN BROWSERN. Bubble-wf:en kör server-side, känner Current User och
+//    bär VISITOR_SESSION_SECRET. Skulle den hemligheten hamna i ett HTML-block kan vem som
+//    helst minta en session åt vilken user_id som helst — hela scope-modellen faller.
+// Kräver: User_role == "Receptionist" + minst en fastighet i receptionist_fastigheter.
+// Se handoff/BESOKSHANTERING.md §7.5.3.
+app.options("/visitor/session", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+app.post("/visitor/session", async (req, res) => {
+  _planningCors(req, res);
+  if (_publicRateLimited && _publicRateLimited("vsession:" + _clientIp(req), 60)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+  const sec = _visitorAuth.verifySessionSecret(req.headers["x-visitor-secret"]);
+  if (!sec.ok) return res.status(sec.status || 401).json({ ok: false, error: sec.error });
+
+  const userId = String((req.body && req.body.user_id) || "").trim();
+  if (!userId) return res.status(400).json({ ok: false, error: "missing_user_id" });
+  try {
+    const u = await bubbleGet("User", userId);
+    if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+    // Option-set kan komma som sträng ELLER {display} — samma normalisering som _users().
+    const roleRaw = u.User_role;
+    const role = roleRaw == null ? "" : (typeof roleRaw === "string" ? roleRaw : String(roleRaw.display || roleRaw.Display || ""));
+    if (role !== "Receptionist") return res.status(403).json({ ok: false, error: "not_receptionist", role: role || null });
+
+    const rawList = u.receptionist_fastigheter;
+    const fastigheter = (Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []))
+      .map((v) => (v == null ? null : (typeof v === "string" ? v : (v._id || v.id || null))))
+      .filter(Boolean);
+    // ⚠️ Ingen fastighet = ingen session. Att minta en tom token vore att skapa en
+    //    inloggning som inte kan göra något — felet ska synas här, inte som en tom lista.
+    if (!fastigheter.length) return res.status(403).json({ ok: false, error: "no_fastigheter_assigned" });
+
+    const name = (String(u["First Name"] || "") + " " + String(u["Surname"] || u["Last Name"] || "")).trim();
+    const m = _visitorAuth.mint({ uid: userId, fastigheter, name });
+    // exp = epoch ms (för blocket), exp_iso = ISO-sträng (Bubbles date-fält kan inte sättas
+    // från ett tal — utan denna måste Bubble-workflowen räkna om, vilket blir fel i tidszon).
+    return res.json({
+      ok: true, token: m.token,
+      exp: m.exp, exp_iso: new Date(m.exp).toISOString(),
+      fastigheter: m.fastigheter, name,
+    });
+  } catch (e) {
+    console.error("[/visitor/session]", e?.message);
+    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
 });
 
 // ── GET /admin/affar/doc-url — lazy PDF-resolver för affär-liggarens Visa-knapp ──

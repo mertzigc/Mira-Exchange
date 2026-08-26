@@ -187,6 +187,75 @@ faktureras separat (1–1,50 kr/st). Vid 8 hus ≈ 190–380k kr/år i tjänstei
 
 ---
 
+## 7.5 AUTH + SCOPE-MODELL — LÅST 2026-08-26
+
+### 7.5.1 Beslut
+**Receptionisten är en riktig Mira-användare med begränsad behörighet — inte en kiosk.**
+Skälet: hon ska utöver besök även hantera **ärenden** och **boka åt kunder**. En delad
+kod à la `kitchen_auth` (en scope, en yta) räcker då inte. Det tidigare "alternativ A"
+för receptionisten är **förkastat**.
+
+**Lobbyskärmen** är däremot fortsatt opersonlig → enhetstoken enligt `kitchen_auth`-mönstret.
+⚠️ Den är **inte** låst till ett hus: en servicehub servar flera fastigheter (Sergelstan
+= flera Hötorgsskrapor), så även kioskens token bär en fastighets-LISTA.
+
+### 7.5.2 Datamodell (verifierad mot Bubble-editorn 2026-08-26, skärmbilder)
+
+**`User_role`** (option set) — befintliga värden: `Ansvarig` · `Medarbetare` · `Konsult` ·
+`Ansvarig konsult`. Christian: värdena är i praktiken obsoleta → **lägg till `Receptionist`
+här** i stället för ett separat yes/no-fält. En sanning om vad en användare är.
+- ⚠️ **`dashboard_crm` har en page-load-guard på `User_role is empty`.** Den måste ändras:
+  `User_role = Receptionist` → redirect till `/visitor`, annars kommer receptionister in i CRM:et.
+
+**`User.receptionist_fastigheter`** (List of Fastighet) — NYTT fält. Receptionistens scope.
+
+**Kundlistan LAGRAS INTE — den härleds.** ⚠️ Kanonisk väg:
+```
+ClientCompany.Fastighet contains <fastighet_id>
+```
+**Verifierat i kod:** `companies_api.js:285` (`fastighet` = reflist på ClientCompany) och
+`:1360`. **`Fastighet.Hyresgäster` (List of ClientCompany) finns i schemat men skrivs
+ALDRIG av vår kod** — den kan vara tom eller stale. Scopar man via den blir kundlistan
+tyst fel. Använd den inte. (`Hyresvärd.Hyresgäster` skrivs däremot, `:1897`, men är
+hyresvärdens kundlista — en annan sak.)
+
+**`Cluster`** (verifierad typ): `Titel` · `Fastighet` (List of Fastighets) · `Hyresvärd` ·
+`Kontor` · `Leverantör` · `Address` · `Description` · `Image`.
+→ Använd som **UI-genväg vid tilldelning** ("lägg till alla fastigheter i Sergelstan"),
+men **rulla ut till fastigheter** i `receptionist_fastigheter`. Lagrar man klustret får en
+ny fastighet i klustret automatiskt access — explicit lista är säkrare och lättare att resonera om.
+
+### 7.5.3 Sessionsflöde — Bubble→Render identitet (server-till-server)
+
+Problemet: Render har ingen session mot Bubble, och `data-mira="current_user"` i ett
+HTML-block kan användaren ändra till någon annans id. `PLANNING_ADMIN_TOKEN` får aldrig
+ligga i `/visitor` (syns i sidkällan → hela admin-API:et).
+
+```
+1. Receptionist loggar in i Bubble (vanlig auth)
+2. Page-load-guard: User_role = Receptionist  →  /visitor
+3. /visitor-blocket triggar Bubble backend-wf `visitor_session`
+4. Bubble-wf (SERVER-side, känner Current User) → POST Render /visitor/session
+   header: x-visitor-secret: <VISITOR_SESSION_SECRET>     ← lämnar aldrig serversidan
+   body:   { user_id: Current User's unique id }
+5. Render: verifiera secret (timing-safe) → bubbleGet User →
+   kräv User_role == "Receptionist" → läs receptionist_fastigheter →
+   minta HMAC-token { scope:"visitor", uid, fast:[...], exp }
+6. Token → blocket → localStorage, skickas som x-visitor-token
+```
+Browsern ser bara den mintade, scopade, tidsbegränsade tokenen. Bubble garanterar
+identiteten eftersom workflowen kör server-side som Current User.
+
+### 7.5.4 Scope-enforcement (regler som INTE får brytas)
+- **Egen guard** för visitor-routes — koppla ALDRIG in `_visitorAuth.authed` i
+  `planningAuthed` för andra moduler. (Jfr `_kitchenAuth`, som korrekt bara injiceras i
+  `registerProduktionRoutes`, index.js:20817 — companies_api får ren `_planningAuthed`.)
+- **Lita aldrig på fastighet/kund-id från klienten.** Alltid skärningen mot tokenens lista.
+  Begärt hus utanför scope → 403, inte tom lista (tyst tomt döljer buggar).
+- **En modul i taget.** Besök först. Ärenden och bokning släpps in först när scopet är
+  bevisat skarpt — varje ny modul måste göras scope-medveten (drift-listan får inte visa
+  alla kunders ärenden, bokningen inte alla kunders rum).
+
 ## 8. Nästa steg — bygget
 
 ⚠️ **Bryt ut till egen session.** Detta är ett eget spår med egen domänfil; blanda det inte
@@ -201,11 +270,34 @@ med företagslista/personer (regeln i HANDOFF.md §"SÅ HÄR JOBBAR VI").
 4. `Coworker.Telefon` = **number** (inte text) — SMS-mottagare. `User.Phone_user` = text.
    Se [[reference-user-profil-skrivnycklar]].
 
-**Föreslagen byggordning:**
-- **A. Auth-fundamentet först.** Receptionist-rollen + `/visitor`-ytan. ⚠️ `PLANNING_ADMIN_TOKEN`
-  får INTE klistras in i en yta som timanställda når — token syns i sidkällan och ger hela
-  admin-API:et. Kräver antingen `User_role`-baserad session eller scopad token per hus.
-  **Detta blockerar allt annat och har ingen befintlig lösning i repot.**
+**Byggordning:**
+- **A. Auth-fundamentet — ✅ BYGGT 2026-08-26 (EJ DEPLOYAT).**
+  - **`visitor_auth.js`** (NY) — HMAC-signerad, scopad session. Speglar `kitchen_auth.js`
+    men `authed()` returnerar **payloaden** (anroparen behöver fastighetslistan), och det
+    finns ingen delad kod. Scope-hjälpare: `hasFastighet()`, `resolveScope()`.
+    ⚠️ **Tom fastighetslista = INGEN åtkomst, aldrig "alla".** Testat explicit.
+  - **`POST /visitor/session`** (index.js, bredvid köks-loginen) — Bubble-wf → Render.
+    Verifierar `x-visitor-secret` (timing-safe) → `bubbleGet User` → kräver
+    `User_role == "Receptionist"` → läser `receptionist_fastigheter` → mintar token.
+    Nekar med **403 `no_fastigheter_assigned`** hellre än att minta en tom session.
+  - **`/visitor` tillagt i `openPrefixes`** — annars kräver den globala x-api-key-middlewaren
+    en nyckel som receptionistblocket aldrig kan bära.
+  - **Env som måste sättas på Render: `VISITOR_SESSION_SECRET`.** Utan den svarar
+    endpointen **503**, aldrig tyst genomsläpp.
+  - **Verifierat:** `visitor_auth_smoke.mjs` **24/24**, **mutationstestat** — 5 mutationer,
+    alla faller: (1) tom lista = "alla" → 1, (2) `resolveScope` släpper främmande hus → 1,
+    (3) scope-kontroll borttagen → 1, (4) HMAC-verifiering överhoppad → 2,
+    (5) okonfigurerad secret släpper igenom → 1. Regression: **24 sviter gröna**.
+
+  **⚠️ KVAR I BUBBLE innan A fungerar skarpt (Christian):**
+  1. Lägg **`Receptionist`** i option set `User_role`.
+  2. Nytt fält **`User.receptionist_fastigheter`** (List of Fastighet).
+  3. **Ändra page-load-guarden i `dashboard_crm`:** `User_role = Receptionist` → redirect
+     till `/visitor`. Idag gate:ar den bara på "User_role is empty" → receptionister
+     hamnar annars i CRM:et.
+  4. Bygg backend-wf **`visitor_session`**: anropar `POST {HOST}/visitor/session` med
+     header `x-visitor-secret` + body `{user_id: Current User's unique id}`, returnerar
+     token till blocket. ⚠️ Hemligheten får ALDRIG exponeras i ett HTML-block.
 - **B. Datamodell + besökslogg** (skapa/lista/checka in/checka ut, scopad per fastighet).
 - **C. Notismotorn:** `sendSms()` bredvid `sendViaSendGrid()` i `emailer.js` + mager gren
   (ETT `email_queue_create` eller ETT SMS per ankomst, aldrig fan-out). Dedupe + rate-limit.
