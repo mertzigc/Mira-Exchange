@@ -89,7 +89,15 @@
 
 <div class="vi">
   <input type="hidden" data-mira="api_host"      value="https://mira-exchange.onrender.com">
-  <input type="hidden" data-mira="visitor_token" value=""><!-- bind till Current User's visitor_token -->
+
+  <!-- ▼▼▼ HÄR SKA TOKEN IN DYNAMISKT ▼▼▼
+       Ersätt det TOMMA value-attributet nedan med Bubbles "Insert dynamic data"
+       → Current User's visitor_token
+       Rätt gjort blir det en blå platshållare i editorn, inte texten du ser här.
+       ⚠️ Utan bindningen ser blocket ingen session och väntar för evigt — även om
+          användaren HAR en giltig token i databasen. -->
+  <input type="hidden" data-mira="visitor_token" value="">
+  <!-- ▲▲▲ HÄR SKA TOKEN IN DYNAMISKT ▲▲▲ -->
   <div data-vi="root"><div class="msg">Startar session…</div></div>
 </div>
 
@@ -125,11 +133,17 @@
   // så vi pollar tills det dyker upp i stället för att felaktigt visa "utloggad".
   var waited=0;
   function waitForToken(){
-    if(TOK()){ STATE.ready=true; boot(); return; }
+    if(TOK()){ console.log("[visitor] session hittad, startar"); STATE.ready=true; boot(); return; }
     waited+=400;
     if(waited>25000){
-      $("root").innerHTML='<div class="empty"><b>Sessionen kunde inte startas</b>'+
-        'Ladda om sidan. Kvarstår det: kontrollera att du är upplagd som receptionist med minst en fastighet.</div>';
+      // Vanligaste orsaken är INTE roll/fastighet utan att value-attributet aldrig
+      // bands till Current User's visitor_token — blocket läser bara attributet.
+      console.error("[visitor] ingen token efter 25 s. Fältet data-mira=\"visitor_token\" var:",
+        JSON.stringify(TOK()), "· är det bundet till Current User's visitor_token?");
+      $("root").innerHTML='<div class="empty"><b>Sessionen nådde inte fram</b>'+
+        'Kontrollera i tur och ordning:<br>1. att fältet <b style="display:inline">visitor_token</b> i HTML-blocket är kopplat till <b style="display:inline">Current User\'s visitor_token</b><br>'+
+        '2. att du har rollen Receptionist med minst en fastighet<br><br>'+
+        '<span style="font-size:12px">Detaljer finns i webbläsarens konsol.</span></div>';
       return;
     }
     setTimeout(waitForToken, 400);
