@@ -1,12 +1,13 @@
 # Besökshantering (Vasakronan)
 
-> Domänfil för besökshanteringsmodulen. Status: **BESLUTAD — BYGGE EJ STARTAT** (2026-08-26).
-> ✅ **GO från Vasakronan via Frida 2026-08-26.** Finansiering hanteras av Christian parallellt
-> och är inte ett hinder. Inga endpoints/fält är byggda ännu.
+> Domänfil för besökshanteringsmodulen. Status: **UNDER BYGGE** (2026-08-26).
+> ✅ **GO från Vasakronan via Frida 2026-08-26.** Finansiering hanteras av Christian parallellt.
+>
+> **Klart och verifierat skarpt:** auth + receptionist-session (steg A, §7.5).
+> **Nästa:** besöksloggen (steg B, §8).
 >
 > **Kundunderlag (mockup, 7 vyer):** https://claude.ai/code/artifact/4bf9f49d-9c80-4f31-b0d3-924968b05609
-> Ska användas mot kund vecka 36. Källfil i sessionens scratchpad — kopiera in i repot om
-> den ska överleva.
+> Källa i repot: `prototypes/besok-mockup.html`. Används mot kund vecka 36.
 
 ---
 
@@ -225,7 +226,46 @@ hyresvärdens kundlista — en annan sak.)
 men **rulla ut till fastigheter** i `receptionist_fastigheter`. Lagrar man klustret får en
 ny fastighet i klustret automatiskt access — explicit lista är säkrare och lättare att resonera om.
 
-### 7.5.3 Sessionsflöde — Bubble→Render identitet (server-till-server)
+### 7.5.3 Sessionsflöde — ✅ LIVE OCH VERIFIERAT 2026-08-26
+
+**Skarpt testat:** testanvändare med `User_role = Receptionist` + 2 fastigheter loggar in,
+stannar på `/visitor`, och får `Visitor_token` + `Visitor_token_exp` (12h fram) skrivna på
+sin User. Hela kedjan Bubble → Render → Bubble fungerar.
+
+**Bubble-sidan (byggd av Christian):**
+1. **API Connector** `Mira Render` → call `visitor_session` (Action, POST,
+   `{HOST}/visitor/session`). Header `x-visitor-secret` = **Private**. Body:
+   `{"user_id": "<user_id>"}`. "Include errors in response" ikryssad.
+   - ⚠️ **`exp_iso` måste sättas till typ `date`** i *Returned values* — Bubble lär sig
+     den som text vid initialisering, och text går inte i ett date-fält. `exp` (number)
+     lämnas orörd; den används av blocket, inte av Bubble.
+   - ⚠️ Med "Include errors" lindas svaret → uttrycken heter **`Result of step 1's body's …`**.
+2. **Backend workflow `visitor_session`** — *ej* exponerad, **inga parametrar**.
+   - Step 1: `Mira Render - visitor_session` med `user_id = Current User's unique id`.
+     ⚠️ Ingen user-parameter: uttrycket utvärderas server-side och kan inte manipuleras.
+   - Step 2: `Make changes to Current User` →
+     `visitor_token = …body's token`, `visitor_token_exp = …body's exp_iso`.
+     **Only when `…body's token is not empty`** (inte `ok is yes` — vid HTTP-fel hamnar
+     svaret i `error`-grenen och `body's ok` finns då inte).
+   - **Inget steg som nollställer token vid fel** — en tillfällig Render-hicka får inte
+     slå ut en fungerande session mitt i ett arbetspass.
+3. **`/visitor` Page is loaded:**
+   - Step 1 (FÖRST): `Go to page index` **Only when** `User_role is not Receptionist`
+     **AND** `admin_crm is not yes`.
+     ⚠️ **AND, aldrig OR.** Med OR kastas varje receptionist som inte också är admin ut —
+     sidan går då aldrig att öppna. Använd `is not yes` framför `is no`: ett tomt yes/no
+     är varken, och `is no` släpper då in den som saknar värde.
+   - Step 2: `Schedule API Workflow visitor_session` **Only when**
+     `visitor_token is empty` **or** `visitor_token_exp < Current date/time`
+     → självförnyande, och ingen onödig WU vid varje sidladdning.
+4. **User-fält:** `visitor_token` (text), `visitor_token_exp` (date),
+   `receptionist_fastigheter` (List of Fastighet), `User_role = Receptionist`.
+
+⚠️ **Timing:** `Schedule API Workflow` är asynkron — sidan renderar innan token finns.
+Blocket måste vänta in fältet (Bubble uppdaterar det reaktivt, ~1 s) och visa ett
+"startar session"-läge under tiden. Det är inte ett fel.
+
+### 7.5.3b Ursprunglig skiss (historik)
 
 Problemet: Render har ingen session mot Bubble, och `data-mira="current_user"` i ett
 HTML-block kan användaren ändra till någon annans id. `PLANNING_ADMIN_TOKEN` får aldrig
@@ -271,12 +311,12 @@ med företagslista/personer (regeln i HANDOFF.md §"SÅ HÄR JOBBAR VI").
    Se [[reference-user-profil-skrivnycklar]].
 
 **Byggordning:**
-- **A. Auth-fundamentet — ✅ BYGGT 2026-08-26 (EJ DEPLOYAT).**
+- **A. Auth-fundamentet — ✅ KLART, DEPLOYAT OCH VERIFIERAT SKARPT 2026-08-26.**
   - **`visitor_auth.js`** (NY) — HMAC-signerad, scopad session. Speglar `kitchen_auth.js`
     men `authed()` returnerar **payloaden** (anroparen behöver fastighetslistan), och det
     finns ingen delad kod. Scope-hjälpare: `hasFastighet()`, `resolveScope()`.
     ⚠️ **Tom fastighetslista = INGEN åtkomst, aldrig "alla".** Testat explicit.
-  - **`POST /visitor/session`** (index.js, bredvid köks-loginen) — Bubble-wf → Render.
+  - **`POST /visitor/session`** (index.js, bredvid köks-loginen) — ✅ **LIVE**, se §7.5.3. Bubble-wf → Render.
     Verifierar `x-visitor-secret` (timing-safe) → `bubbleGet User` → kräver
     `User_role == "Receptionist"` → läser `receptionist_fastigheter` → mintar token.
     Nekar med **403 `no_fastigheter_assigned`** hellre än att minta en tom session.
@@ -298,7 +338,60 @@ med företagslista/personer (regeln i HANDOFF.md §"SÅ HÄR JOBBAR VI").
   4. Bygg backend-wf **`visitor_session`**: anropar `POST {HOST}/visitor/session` med
      header `x-visitor-secret` + body `{user_id: Current User's unique id}`, returnerar
      token till blocket. ⚠️ Hemligheten får ALDRIG exponeras i ett HTML-block.
-- **B. Datamodell + besökslogg** (skapa/lista/checka in/checka ut, scopad per fastighet).
+- **B. Datamodell + besökslogg — ✅ BYGGT 2026-08-26 (EJ DEPLOYAT, Bubble-typ saknas).**
+
+  **⚠️ Ny typ `Visit` — INTE återbruk av `InviteGuest`.** Den senare är *evenemangsbunden*
+  (`guest.invitation == Invitation`, se `/checkin/toggle` i index.js) och används av
+  RSVP/deltagarlistor. Ett besök hör till fastighet + hyresgäst + värd; att tvinga in det
+  i en Invitation hade krävt en fejkad inbjudan per besök. Verifierat i kod, inte antaget.
+
+  **Bubble-typ `Visit` — Christian måste skapa (fältnamn = `VISIT`-konstanten i visitor_api.js):**
+  | Fält | Typ | Not |
+  |---|---|---|
+  | `fastighet` | Fastighet | **scope-nyckeln** |
+  | `hyresgast` | ClientCompany | |
+  | `vard` | Coworker | valfri |
+  | `vard_namn` | text | fallback när värden inte är Coworker |
+  | `besokare_namn` | text | **personuppgift → GDPR-gallring** |
+  | `besokare_bolag` | text | |
+  | `incheckad_at` / `utcheckad_at` | date | |
+  | `via` | text | `reception` \| `lobby` |
+  | `registrerad_av` | User | tom vid självincheckning |
+  | `registrerad_av_namn` | text | signering (§7.5) |
+  | `notis_kanal` / `notis_status` / `notis_fel` | text | `vantar` \| `skickad` \| `fel` |
+  | `notis_at` | date | |
+
+  ⚠️ **text, inte option sets** på `via`/`notis_*`. Vi kontrollerar värdena i koden, och
+  slipper option-set-fällan (felstavning ger tyst 400 — [[reference-bubble-option-sets]]).
+
+  **Endpoints (`visitor_api.js`, egen gate — INTE `planningAuthed`):**
+  - `GET /visitor/context` — mina fastigheter + härledda hyresgäster + användarens namn
+  - `GET /visitor/hosts?hyresgast=` — värdar + **kanaltillgänglighet** (`has_sms`/`has_mail`)
+    så receptionisten ser direkt om personen går att nå
+  - `GET /visitor/visits?fastighet=&datum=&q=&open=1` — dagens besök, scopat
+  - `POST /visitor/visits` — registrera (reception eller lobby)
+  - `POST /visitor/visits/:id/checkout` — idempotent
+
+  **Scope-regler som INTE får brytas (alla mutationstestade):**
+  - Hyresgäst utanför scope → **403**, aldrig tom lista.
+  - Hyresgästen måste ligga i **den angivna fastigheten**, inte bara i mitt scope —
+    annars hamnar besöket i fel hus och fel receptionists lista.
+  - Utcheckning kollar besökets fastighet mot tokenen — annars kan ett gissat id
+    checkas ut i andras hus.
+  - `Fastighet`-namnet läses från **`Titel`**, med adressen som textfallback
+    (`Adress` är ett geo-OBJEKT → annars "[object Object]").
+
+  **WU:** hyresgästlistan per fastighet TTL-cachas (10 min). Bubble saknar OR → en fråga
+  per fastighet; med 2–6 hus per receptionist är det bundet.
+
+  **Notisen skickas INTE av create-routen** (egen route, steg C). Ett notisfel får aldrig
+  hindra att besöket loggas — gästen står ju faktiskt i lobbyn.
+
+  **Verifierat:** `visitor_api_smoke.mjs` **35/35**, **mutationstestat** — 7 mutationer,
+  alla faller: (1) hosts utan scope-koll → kontaktuppgifter läcker, (2) hyresgäst-i-fastighet
+  borttagen → 4 tester, (3) checkout utan scope-koll, (4) Fastighet-namn via `Namn`
+  (gamla [object Object]-buggen) → 2, (5) listan utan scope-filter → 2, (6) TTL-cachen av,
+  (7) lobby-incheckning signerad som person.
 - **C. Notismotorn:** `sendSms()` bredvid `sendViaSendGrid()` i `emailer.js` + mager gren
   (ETT `email_queue_create` eller ETT SMS per ankomst, aldrig fan-out). Dedupe + rate-limit.
 - **D. Receptionist-vyn** (klona `mira-drift.html`-mönstret).

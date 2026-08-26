@@ -19,6 +19,7 @@
 
 import nodeCron from "node-cron";
 import { normBlocks, renderBlocksEmail } from "./content_blocks.js";
+import { mailPalette, MAIL_PAL_DARK, contrastInk } from "./mail_theme.js";
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL       = process.env.EMAIL_FROM      || "support@mira-fm.com";
@@ -155,7 +156,7 @@ async function processEmailQueue() {
 const _BLOCKS_TTL = 5 * 60 * 1000;
 const _blocksCache = new Map();   // invitation_id → { blocks, ts }
 
-async function blocksHtmlFor(extra, accent) {
+async function blocksHtmlFor(extra, accent, pal = MAIL_PAL_DARK) {
   const x = extra || {};
   const want = Number(x.blocks_count || 0);
   if (!Number.isFinite(want) || want <= 0) return "";
@@ -181,7 +182,7 @@ async function blocksHtmlFor(extra, accent) {
     _blocksCache.delete(invId);   // cacha aldrig ett svar vi underkänt
     throw new Error(`content_blocks: förväntade ${want} block på Invitation ${invId}, fick ${blocks.length} – fältet content_blocks saknas eller har ändrats sedan utskicket köades`);
   }
-  return renderBlocksEmail(blocks, accent);
+  return renderBlocksEmail(blocks, accent, pal);
 }
 
 async function buildEmail(item) {
@@ -785,7 +786,7 @@ function wrapLayout({
   accent = "#db6923", tag, headline, body,
   details, ctaLabel, ctaUrl, miraNote = null,
   subhead = null, socialBlock = null, footer = null,
-  ctaAlign = "left"
+  ctaAlign = "left", pal = MAIL_PAL_DARK
 }) {
   // E-postklienter (Outlook m.fl.) laddar inte protokoll-relativa "//"-URL:er
   const _abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
@@ -793,7 +794,7 @@ function wrapLayout({
   const logoBlock = logoUrl
     ? `<img src="${esc(logoUrl)}" alt="${esc(senderName)}"
             style="height:32px;max-width:140px;object-fit:contain;display:block;margin-bottom:20px;">`
-    : `<span style="font-size:15px;font-weight:600;color:#e8eaf0;">${esc(senderName || "Mira")}</span>`;
+    : `<span style="font-size:15px;font-weight:600;color:${pal.headline};">${esc(senderName || "Mira")}</span>`;
 
   const imageBlock = imageUrl
     ? `<img src="${esc(imageUrl)}" alt=""
@@ -820,7 +821,7 @@ function wrapLayout({
     ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 8px;">
          <tr><td align="${ctaAlign === "center" ? "center" : "left"}">
            <a href="${esc(ctaUrl)}"
-              style="display:inline-block;background:${accent};color:${ctaInk(accent)};
+              style="display:inline-block;background:${accent};color:${contrastInk(accent)};
                      font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;
                      padding:13px 30px;border-radius:8px;text-decoration:none;
                      letter-spacing:-.1px;">
@@ -829,7 +830,7 @@ function wrapLayout({
          </td></tr>
        </table>`
     : miraNote
-    ? `<p style="font-size:13px;color:#606880;margin:28px 0 20px;font-style:italic;">${esc(miraNote)}</p>`
+    ? `<p style="font-size:13px;color:${pal.dim};margin:28px 0 20px;font-style:italic;">${esc(miraNote)}</p>`
     : "";
 
   return `<!DOCTYPE html>
@@ -839,12 +840,12 @@ function wrapLayout({
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(headline)}</title>
 </head>
-<body style="margin:0;padding:0;background:#0d1117;font-family:'DM Sans',Arial,sans-serif;">
+<body style="margin:0;padding:0;background:${pal.pageBg};font-family:'DM Sans',Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr><td align="center" style="padding:40px 16px;">
 
   <table width="600" cellpadding="0" cellspacing="0" border="0"
-         style="background:#161c2d;border-radius:12px;overflow:hidden;
+         style="background:${pal.cardBg};border-radius:12px;overflow:hidden;
                 max-width:600px;width:100%;">
 
     <!-- Top accent bar -->
@@ -862,12 +863,12 @@ function wrapLayout({
     <tr><td style="padding:24px 36px 0;">
       ${tagBlock}
       <h1 style="margin:0 0 12px;font-size:22px;font-weight:600;
-                 color:#e8eaf0;line-height:1.25;letter-spacing:-.3px;">
+                 color:${pal.headline};line-height:1.25;letter-spacing:-.3px;">
         ${esc(headline)}
       </h1>
-      ${subhead ? `<p style="margin:0 0 14px;font-size:11px;color:#8892aa;letter-spacing:.06em;text-transform:uppercase;font-weight:600;">${esc(subhead)}</p>` : ""}
-      ${toName ? `<p style="margin:0 0 6px;font-size:14px;color:#8892aa;">Hej ${esc(toName)},</p>` : ""}
-      <div style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:12px 0 0;">
+      ${subhead ? `<p style="margin:0 0 14px;font-size:11px;color:${pal.muted};letter-spacing:.06em;text-transform:uppercase;font-weight:600;">${esc(subhead)}</p>` : ""}
+      ${toName ? `<p style="margin:0 0 6px;font-size:14px;color:${pal.muted};">Hej ${esc(toName)},</p>` : ""}
+      <div style="font-size:14px;color:${pal.body};line-height:1.65;margin:12px 0 0;">
         ${body || ""}
       </div>
     </td></tr>
@@ -876,7 +877,7 @@ function wrapLayout({
     ${details ? `
     <tr><td style="padding:20px 36px 0;">
       <table width="100%" cellpadding="0" cellspacing="0" border="0"
-             style="background:#0d1117;border:1px solid #262b42;border-radius:10px;overflow:hidden;">
+             style="background:${pal.rowA};border:1px solid ${pal.border};border-radius:10px;overflow:hidden;">
         ${details}
       </table>
     </td></tr>` : ""}
@@ -890,8 +891,8 @@ function wrapLayout({
     ${socialBlock ? `<tr><td style="padding:18px 36px 8px;">${socialBlock}</td></tr>` : ""}
 
     <!-- Footer -->
-    <tr><td style="padding:24px 36px;border-top:1px solid #1e2437;">
-      ${footer ? buildFooterBlock(footer, senderName) : `<p style="font-size:11px;color:#3a4055;line-height:1.6;margin:0;">Mira · Carotte Group AB</p>`}
+    <tr><td style="padding:24px 36px;border-top:1px solid ${pal.hairline};">
+      ${footer ? buildFooterBlock(footer, senderName, pal) : `<p style="font-size:11px;color:${pal.faint};line-height:1.6;margin:0;">Mira · Carotte Group AB</p>`}
     </td></tr>
 
   </table>
@@ -905,35 +906,35 @@ function wrapLayout({
 // Boilerplate-footer för utgående mejl: kontaktuppgifter + copyright + policy.
 // Mejl-säker (ren HTML, inga externa bilder). Renderar bara ifyllda fält.
 // ────────────────────────────────────────────────────────────
-function buildFooterBlock(f, fallbackName) {
+function buildFooterBlock(f, fallbackName, pal = MAIL_PAL_DARK) {
   f = f || {};
   const abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
   const showUrl = u => String(u || "").replace(/^https?:\/\//i, "").replace(/\/$/, "");
   const year = new Date().getFullYear();
   const org  = String(f.org_name || f.company_name || fallbackName || "Carotte Group AB").trim();
-  const link = "color:#8892aa;text-decoration:none;";
+  const link = `color:${pal.muted};text-decoration:none;`;
   const rows = [];
 
   const contact = [];
   if (f.website) contact.push(`<a href="${esc(abs(f.website))}" style="${link}">${esc(showUrl(f.website))}</a>`);
   if (f.email)   contact.push(`<a href="mailto:${esc(f.email)}" style="${link}">${esc(f.email)}</a>`);
-  if (f.phone)   contact.push(`<span style="color:#8892aa;">${esc(f.phone)}</span>`);
+  if (f.phone)   contact.push(`<span style="color:${pal.muted};">${esc(f.phone)}</span>`);
   if (contact.length) rows.push(contact.join(" &nbsp;·&nbsp; "));
 
-  if (f.address) rows.push(`<span style="color:#606880;">${esc(f.address)}</span>`);
+  if (f.address) rows.push(`<span style="color:${pal.dim};">${esc(f.address)}</span>`);
 
   let legal = `© ${year} ${esc(org)}. Alla rättigheter förbehållna.`;
-  if (f.privacy_url) legal += ` &nbsp;·&nbsp; <a href="${esc(abs(f.privacy_url))}" style="color:#606880;text-decoration:underline;">Integritetspolicy</a>`;
-  rows.push(`<span style="color:#606880;">${legal}</span>`);
+  if (f.privacy_url) legal += ` &nbsp;·&nbsp; <a href="${esc(abs(f.privacy_url))}" style="color:${pal.dim};text-decoration:underline;">Integritetspolicy</a>`;
+  rows.push(`<span style="color:${pal.dim};">${legal}</span>`);
 
   // Avregistrering (GDPR): per-mottagare-länk injicerad i send-flödet. Renderas bara om satt.
   const unsub = f.unsubscribe_url
-    ? `<p style="font-size:11px;line-height:1.7;margin:6px 0 0;"><a href="${esc(abs(f.unsubscribe_url))}" style="color:#606880;text-decoration:underline;">Avregistrera dig från utskick</a></p>`
+    ? `<p style="font-size:11px;line-height:1.7;margin:6px 0 0;"><a href="${esc(abs(f.unsubscribe_url))}" style="color:${pal.dim};text-decoration:underline;">Avregistrera dig från utskick</a></p>`
     : "";
 
   return rows.map(r => `<p style="font-size:11px;line-height:1.7;margin:0 0 4px;">${r}</p>`).join("")
        + unsub
-       + `<p style="font-size:10px;color:#3a4055;margin:8px 0 0;">Drivs av Mira</p>`;
+       + `<p style="font-size:10px;color:${pal.faint};margin:8px 0 0;">Drivs av Mira</p>`;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -960,20 +961,20 @@ function buildSocialBlock(linkedin, facebook, instagram) {
 // Skicka in: [[label, value], false, null, …]
 // Falskt/null filtreras bort automatiskt
 // ────────────────────────────────────────────────────────────
-function detailRows(pairs) {
+function detailRows(pairs, pal = MAIL_PAL_DARK) {
   const valid = pairs.filter(Boolean);
   if (!valid.length) return "";
 
   return valid.map(([label, value], i) => {
-    const bg = i % 2 === 0 ? "#0d1117" : "#0a0d15";
+    const bg = i % 2 === 0 ? pal.rowA : pal.rowB;
     return `<tr style="background:${bg};">
-      <td style="padding:10px 16px;font-size:11px;font-weight:600;color:#4a5068;
+      <td style="padding:10px 16px;font-size:11px;font-weight:600;color:${pal.label};
                  text-transform:uppercase;letter-spacing:.07em;white-space:nowrap;
-                 border-bottom:1px solid #1a1f2e;width:38%;">
+                 border-bottom:1px solid ${pal.rowLine};width:38%;">
         ${esc(label)}
       </td>
-      <td style="padding:10px 16px;font-size:13px;color:#c0c4d6;
-                 border-bottom:1px solid #1a1f2e;">
+      <td style="padding:10px 16px;font-size:13px;color:${pal.body};
+                 border-bottom:1px solid ${pal.rowLine};">
         ${value}
       </td>
     </tr>`;
@@ -997,21 +998,6 @@ function esc(v) {
 // Konvertera hex-färg till hex + 2-siffrig alpha ("1a" = 10%, "33" = 20%)
 function hexAlpha(hex, alpha) {
   return hex + alpha;
-}
-
-// Kontrastsäker text på CTA-knappen. Accentfärgen sätts fritt per utskick i
-// kommunikationsadmin (färgväljare) — en ljus sand/beige gav tidigare vit text på
-// ljus knapp = oläsbar. Väljer mörk resp. vit text efter WCAG-relativ luminans.
-// Tröskeln 0.1913 är punkten där vit och #0d1117 ger EXAKT samma kontrastkvot —
-// under den vinner vit, över den mörk. Okänt format → vit (dagens beteende).
-function ctaInk(hex) {
-  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(hex || "").trim());
-  if (!m) return "#ffffff";
-  let h = m[1];
-  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-  const lin = c => { c = parseInt(c, 16) / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-  const L = 0.2126 * lin(h.slice(0, 2)) + 0.7152 * lin(h.slice(2, 4)) + 0.0722 * lin(h.slice(4, 6));
-  return L > 0.1913 ? "#0d1117" : "#ffffff";
 }
 
 // Bubbles Data API kan ge datum som ISO-sträng, ms-tal, ms-STRÄNG eller sekunder.
@@ -1263,19 +1249,22 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
     ? esc(x.description).replace(/\n/g, "<br>")
     : "Du \u00e4r varmt v\u00e4lkommen! H\u00e4r \u00e4r detaljerna:";
 
-  const blocks = await blocksHtmlFor(x, accent);
+  // bg_color är ETT eget reglage. Tomt värde → mailPalette ger dagens mörka
+  // standardpalett, så utskick utan vald bakgrund ser exakt likadana ut som förut.
+  const pal    = mailPalette(x.bg_color);
+  const blocks = await blocksHtmlFor(x, accent, pal);
 
   const html = wrapLayout({
-    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent, pal,
     tag: "Inbjudan",
     headline: title,
-    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">' + intro + '</p>' + blocks,
+    body: '<p style="font-size:14px;color:' + pal.body + ';line-height:1.65;">' + intro + '</p>' + blocks,
     details: detailRows([
       when && ["N\u00e4r", esc(when)],
       x.event_location && ["Plats", esc(x.event_location)],
       x.event_address && ["Adress", esc(x.event_address)],
       deadline && ["Sista anm\u00e4lan", esc(deadline)]
-    ]),
+    ], pal),
     ctaLabel: ctaLabel || "Svara p\u00e5 inbjudan",
     ctaUrl: x.invite_link || null,
     ctaAlign: "center",
@@ -1294,9 +1283,10 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
   const accent     = x.accent_color || "#df6f39";
   const title      = x.event_title || "Nyhet";
 
+  const pal     = mailPalette(x.bg_color);
   const subject = item.subject_override || title;
   const body    = x.description
-    ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
+    ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:" + pal.body + ";line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
     : "";
   const ctaUrl  = String(x.cta_url || "").trim();
   // CTA-precedens: per-utskick (x.cta_label) > template-default (ctaLabel) > hårdkodad fallback
@@ -1309,15 +1299,15 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
   // Sociala ikoner i mailfot (om angivna)
   const socialBlock = buildSocialBlock(x.linkedin_url, x.facebook_url, x.instagram_url);
 
-  const blocks = await blocksHtmlFor(x, accent);
+  const blocks = await blocksHtmlFor(x, accent, pal);
 
   const html = wrapLayout({
     // toName tomt = ingen "Hej Namn,"-hälsning för nyhetsutskick
-    toName: "", logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    toName: "", logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent, pal,
     tag: "Nyhetsutskick",
     headline: title,
     subhead,
-    body: (body ? '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>' : '') + blocks,
+    body: (body ? '<p style="font-size:14px;color:' + pal.body + ';line-height:1.65;margin:0 0 14px;">' + body + '</p>' : '') + blocks,
     details: null,
     ctaLabel: ctaUrl ? finalCtaLabel : null,
     ctaUrl: ctaUrl || null,
@@ -1338,20 +1328,21 @@ async function tmplSurveyInvitation(e, extra, toName, ctaLabel, item) {
   const guest      = x.guest_name || toName || "";
   const title      = x.event_title || "Undersökning";
 
+  const pal     = mailPalette(x.bg_color);
   const subject = item.subject_override || title;
   const body    = x.description
-    ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
+    ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:" + pal.body + ";line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
     : "Vi skulle uppskatta om du kan ta några minuter att besvara vår undersökning.";
   // CTA: per-utskick (x.cta_label) > template-default > hårdkodad fallback
   const finalCtaLabel = (x.cta_label || ctaLabel || "Svara på undersökningen").trim();
 
-  const blocks = await blocksHtmlFor(x, accent);
+  const blocks = await blocksHtmlFor(x, accent, pal);
 
   const html = wrapLayout({
-    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent,
+    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent, pal,
     tag: "Undersökning",
     headline: title,
-    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;margin:0 0 14px;">' + body + '</p>' + blocks,
+    body: '<p style="font-size:14px;color:' + pal.body + ';line-height:1.65;margin:0 0 14px;">' + body + '</p>' + blocks,
     details: null,
     ctaLabel: finalCtaLabel,
     ctaUrl: x.invite_link || null,

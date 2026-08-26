@@ -12,12 +12,14 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
+import { mailPalette } from "./mail_theme.js";
 import { feOverlap, describeEmptySide, bokningslageSummary, kallaFarskhet } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT,
          scoreScheduleColumns, malFinnsInte, normalizePass, IP_PASS_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { makeVisitorAuth } from "./visitor_auth.js";
+import { registerVisitorRoutes } from "./visitor_api.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
 import express from "express";
@@ -13317,6 +13319,7 @@ app.post("/admin/invite/create", async (req, res) => {
       description:     String(d.description || ""),
       tags:            _normTags(d.tags),
       accent_color:    d.accent_color || "#df6f39",
+      bg_color:        _admHex(d.bg_color),
       event_address:   safeText(d.event_address || "", 300),
       location_name:   safeText(d.location_name || "", 200),
       start_date:      d.start_date ? toBubbleDate(d.start_date) : null,
@@ -13358,6 +13361,7 @@ app.patch("/admin/invite/update", async (req, res) => {
     const f = {};
     const map = {
       title: v => safeText(v, 200), description: v => String(v), accent_color: v => v,
+      bg_color: v => _admHex(v),
       event_address: v => safeText(v, 300), location_name: v => safeText(v, 200),
       host_name: v => safeText(v, 120), max_plus_ones: v => asNumberOrNull(v) ?? 0,
       form_schema: v => (typeof v === "string" ? v : JSON.stringify(v || [])),
@@ -13377,7 +13381,7 @@ app.patch("/admin/invite/update", async (req, res) => {
     if (b.allow_plus_ones !== undefined) f.allow_plus_ones = !!b.allow_plus_ones;
     if (b.client_company !== undefined) f.client_company = b.client_company || null;
     if (b.image !== undefined || b.image_url !== undefined) f.image_url = _admAbs(b.image || b.image_url || "");
-    await bubblePatch(ADM_INVITATION, b.id, f);
+    await safePatch(ADM_INVITATION, b.id, f);
     const blocksSaved = b.content_blocks === undefined
       ? null
       : await _verifyBlocksSaved(b.id, _normBlocks(b.content_blocks).length);
@@ -13431,7 +13435,7 @@ app.get("/admin/invite/:id", async (req, res) => {
       anonymous: i.anonymous === true,
       tags: _tagsArr(i.tags),
       client_company: i.client_company || "", title: i.title || "", description: i.description || "",
-      accent_color: i.accent_color || "#df6f39", event_address: i.event_address || "", location_name: i.location_name || "",
+      accent_color: i.accent_color || "#df6f39", bg_color: i.bg_color || "", event_address: i.event_address || "", location_name: i.location_name || "",
       start_date: i.start_date || null, end_date: i.end_date || null, rsvp_deadline: i.rsvp_deadline || null,
       allow_plus_ones: i.allow_plus_ones !== false, max_plus_ones: asNumberOrNull(i.max_plus_ones) ?? 0,
       image_url: i.image_url || "", host_name: i.host_name || "", form_schema: i.form_schema || "[]",
@@ -14202,6 +14206,7 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_title: inv.title || "", event_address: inv.event_address || "", event_location: inv.location_name || "",
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
+      bg_color: brand.bg_color,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
       // Avsändarnamn i inkorgen: använd ifyllt "Avsändarnamn i mail" (host_name) om satt,
       // annars ClientCompanyns namn, annars Carotte. Tomt fält läcker aldrig.
@@ -14316,11 +14321,30 @@ async function getInvitationByToken(t) {
   } catch (_) { return null; }
 }
 
+// Hex-normalisering för färgfält: "#AABBCC" eller "" — aldrig skräp vidare till
+// Bubble eller till en style-attribut-injektion i mail/landningssida.
+function _admHex(v) {
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return "";
+  const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(s);
+  if (!m) return "";
+  let h = m[1];
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  return "#" + h.toLowerCase();
+}
+
 function inviteBrand(inv, cc) {
+  const bg = _admHex(inv.bg_color);
   return {
     company_name: inv.company_name || cc?.Name_company || inv.host_name || "",
     logo_url:     _inviteAbsUrl(cc?.logotyp || cc?.logo_url || cc?.Logo || ""),
-    accent_color: inv.accent_color || INVITE.DEFAULT_ACCENT
+    accent_color: inv.accent_color || INVITE.DEFAULT_ACCENT,
+    // Fri bakgrundsfärg. Tom sträng = landningssidan behåller sin standardpalett.
+    // Fristående från accent_color — de två reglagen rör aldrig varandra.
+    bg_color:     bg,
+    // Paletten räknas HÄR, av samma modul som mejlet använder. Landningssidan
+    // härleder ingenting själv — annars driftar mail och webb isär.
+    palette:      bg ? mailPalette(bg) : null
   };
 }
 
@@ -14815,6 +14839,34 @@ function _hedgeKeys(obj) {
   }
   return out;
 }
+// Självläkande PATCH. Bubble avvisar HELA patchen vid ett okänt fält — ett
+// nytillkommet fält som ännu inte finns i datatypen skulle alltså blockera
+// sparningen av allt annat. Droppar den nyckel Bubble klagar på och försöker igen.
+async function safePatch(typeName, id, fields) {
+  const p = { ...(fields || {}) };
+  for (let i = 0; i < 30; i++) {
+    try {
+      return await bubblePatch(typeName, id, p);
+    } catch (e) {
+      // OBS: bubblePatch lägger svaret i err.detail.bodyJson/bodyText — INTE i
+      // err.detail.body som bubbleCreate gör. Fel källa här = tyst nollverkan.
+      const d = (e && e.detail) || {};
+      const j = d.bodyJson || null;
+      const msg = String((j && (j.body?.message || j.message)) || d.bodyText || (e && e.message) || "");
+      // Icke-ankrad: meddelandet ligger ofta inbäddat i en JSON-sträng.
+      const m = /Unrecognized field:\s*([^"'}\n,]+)/i.exec(msg);
+      const field = m ? m[1].trim() : null;
+      if (field && Object.prototype.hasOwnProperty.call(p, field)) {
+        console.warn(`[safePatch] ${typeName}: okänt fält "${field}" droppat — skapa det i Bubble`);
+        delete p[field];
+        continue;
+      }
+      throw e;
+    }
+  }
+  return await bubblePatch(typeName, id, p);
+}
+
 async function safeCreate(typeName, exactObj, uncertainObj = {}) {
   const clean = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== null && v !== undefined));
   const p = { ...clean(exactObj), ..._hedgeKeys(uncertainObj || {}) };
@@ -20820,6 +20872,18 @@ registerAffarRoutes(app, {
   renderOrderPdf: (id, kind) => (offertEngine && offertEngine.renderOrderPdf)
     ? offertEngine.renderOrderPdf(id, kind)
     : Promise.reject(new Error("offert_engine_not_ready")),
+});
+
+// ── Besöksloggen (/visitor). Se handoff/BESOKSHANTERING.md §7.5. ──
+// ⚠️ EGEN gate: `visitorAuth`, INTE `planningAuthed`. Visitor-tokenen får aldrig
+//    ge åtkomst till någon annan modul — scope-isoleringen sker här, vid injektionen
+//    (samma princip som _kitchenAuth, som bara injiceras i registerProduktionRoutes).
+registerVisitorRoutes(app, {
+  bubbleFindAll, bubbleGet, bubbleId, bubbleCreate, bubblePatch,
+  visitorAuth: _visitorAuth,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
 });
 
 registerProduktionRoutes(app, {

@@ -164,10 +164,54 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 | Fält på `AudienceSegment` | `members` (text — JSON-array med {name,email,company,region}) | statiska list-målgrupper (3b) |
 | Fält på `Invitation` | **`content_blocks` (text — JSON-array med designblocken)** | designblock (3l) — utan fältet sparas inga block |
 | Fält på `AudienceSegment` | **`owners` (text — JSON-array med User-id)** | spara målgruppsurval med kundansvarig-filter (3m) |
+| Fält på `Invitation` | **`bg_color` (text — hex, t.ex. `#f4efe6`)** | fri bakgrundsfärg (3n). Tomt = standardmörkt |
 
 > Den **inbyggda** avprickningen (3i a) kräver ingen Bubble-setup. Den **fristående** sidan (3i b) kräver `checkin_token` + `checkin_code` ovan.
 >
 > ⚠️ **Alla nya datatyper måste vara API-modify-bara** (datatypens inställning "modifierbar via API"). Detta var grundorsaken till buggarna i `SurveyResponse` (`bubbleCreate failed`) och `EmailOptout` (`Type not found`). Se kritisk konvention i §1.
+
+---
+
+## 3n. Utseende: accent + fri bakgrundsfärg (2026-08-26)
+
+**Två oberoende reglage.** `accent_color` är oförändrad (eyebrow, topplist,
+rubrikstreck, länkar, knappens yta). `bg_color` är ny och styr BARA bakgrunden —
+alla texttoner härleds ur den. Ändrar du den ena rör sig aldrig den andra.
+
+- **`mail_theme.js`** är enda källan. `mailPalette(bg)` ger namngivna roller
+  (`pageBg`, `cardBg`, `surface`, `headline`, `body`, `muted`, `dim`, `label`,
+  `border`, `rowA/rowB/rowLine`, `hairline`). `contrastInk(färg)` ger läsbar text
+  mot en godtycklig färg.
+- **Tomt `bg_color` → `MAIL_PAL_DARK`**, som är byte-för-byte dagens hårdkodade
+  färger. Utskick utan vald bakgrund ser exakt likadana ut som förut.
+- **Texterna löses mot kontrastmål** (brödtext 7:1, dämpad 3.5:1), inte fasta
+  blandningsandelar. En mellanton (mättad turkos) ligger långt från både svart och
+  vitt — fasta andelar gav där ~5:1. Nås inte målet används bästa möjliga.
+  Golvet för en mellanton är ~4.4:1; det är en egenskap hos färgen, inte en bugg.
+- **Kedjan:** admin (`iv-bg-hex`, tomt fält = standard) → `bg_color` på
+  `Invitation` → mailets `extra_data.bg_color` → `mailPalette()` i emailer.js +
+  content_blocks.js · och → `/invite/config` som `brand.palette`, som
+  `invite.html` mappar rakt på sina CSS-variabler. **Landningssidan räknar
+  ingenting själv** — annars driftar mail och webb isär.
+- **Knapptexten följer ACCENTEN** (`contrastInk`), inte bakgrunden. En ljus sand
+  som accent gav tidigare vit text på ljus knapp = oläsbar. Gäller mailets CTA,
+  designblockens CTA och landningssidans `--accent-ink`.
+- **CTA i inbjudningsmailet är centrerad** via `ctaAlign` i `wrapLayout`
+  (default `left` → övriga mallar orörda). Centreringen görs med
+  `<td align="center">`; `text-align` på en div är inte att lita på i Outlook.
+- **`safePatch()` i index.js**: `bubblePatch` avvisar HELA patchen vid ett okänt
+  fält. Utan självläkningen gick inbjudningar inte att spara alls förrän
+  `bg_color` fanns i Bubble. OBS: felet ligger i `err.detail.bodyJson/bodyText`,
+  inte i `err.detail.body` som `bubbleCreate` använder.
+
+**Inte gjort:** `mira-undersokning.html` (undersökningens landningssida) har egna
+hårdkodade färger utan CSS-variabler och följer INTE `bg_color`. Mejlet för
+nyhet/undersökning gör det (samma `wrapLayout`), men bakgrundsväljaren finns bara
+i inbjudnings-editorn. Vill man ha den i alla tre: lägg till `nv-bg`/`sv-bg`
+efter samma mönster som `iv-bg` och variabel-ifiera undersökningssidan.
+
+**Röktest:** `node invite_mall_smoke.mjs` (101 gröna). Mutationstestad: mot koden
+före ändringen faller 83 av 103.
 
 ---
 
@@ -272,4 +316,6 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 
 > "Vi fortsätter på Mira FM:s kommunikations-/undersökningsmodul. Du finner handoff-dokumentet plus alla filer i repo (`Mira-Exchange/`). Senaste filer: index.js, emailer.js, mira-kommunikation-admin.html, mira-undersokning.html. Backend ändras av båda → kolla versionsdrift först. v1.0 är klar — nästa steg: [mer filtrering i deltagarlistan / WYSIWYG / nyhetsbrev med block / annan punkt]."
 
-*Senast uppdaterad 2026-06-25: v1.0 i drift. Tillägg: statiska list-målgrupper (3b). Buggfixar: deadline-parsning (3c), tysta API-fel på SurveyResponse/EmailOptout (§1, 3d, 3h), påminnelse till alla på anonyma undersökningar (3d-invarianten + 3c).*
+*Senast uppdaterad 2026-08-26: fri bakgrundsfärg + kontrastsäkrad CTA (3n).*
+
+*Tidigare 2026-06-25: v1.0 i drift. Tillägg: statiska list-målgrupper (3b). Buggfixar: deadline-parsning (3c), tysta API-fel på SurveyResponse/EmailOptout (§1, 3d, 3h), påminnelse till alla på anonyma undersökningar (3d-invarianten + 3c).*

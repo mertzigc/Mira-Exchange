@@ -375,7 +375,16 @@
                     <input class="ea-fi ea-color" id="iv-accent" type="color" value="#df6f39" style="width:46px;flex:none;padding:3px">
                     <input class="ea-fi" id="iv-accent-hex" value="#df6f39" placeholder="#df6f39" maxlength="7" style="flex:1;font-family:ui-monospace,monospace">
                   </div>
+                  <span class="ea-fh">Eyebrow, topplist, rubrikstreck, länkar och knappen.</span>
                 </div>
+              </div>
+              <div class="ea-fg"><label class="ea-fl">Bakgrundsfärg</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <input class="ea-fi ea-color" id="iv-bg" type="color" value="#0f1b2d" style="width:46px;flex:none;padding:3px">
+                  <input class="ea-fi" id="iv-bg-hex" value="" placeholder="Standard (mörk)" maxlength="7" style="flex:1;font-family:ui-monospace,monospace">
+                  <button type="button" class="ck-btn-gh" id="iv-bg-clear" style="flex:none">Rensa</button>
+                </div>
+                <span class="ea-fh">Styr mejlets och landningssidans bakgrund. Alla texttoner anpassas automatiskt efter den — ljus bakgrund ger mörk text. Tomt fält = standardmörkt. Påverkar inte accentfärgen.</span>
               </div>
               <div class="ea-fg"><label class="ea-fl">Adress</label><input class="ea-fi" id="iv-addr" placeholder="Gatuadress, ort"></div>
               <div class="ea-2col">
@@ -1267,6 +1276,16 @@
     hex.addEventListener('input', function(){ var v=hex.value.trim(); if(/^#?[0-9a-fA-F]{6}$/.test(v)){ if(v[0]!=='#') v='#'+v; pick.value=v; hex.value=v; } });
   })();
 
+  // Bakgrundsfärg: HEX-FÄLTET är sanningen, inte color-väljaren. <input type=color>
+  // kan inte vara tom och skulle annars tvinga på varje utskick en bakgrund.
+  // Tomt hex = ingen egen bakgrund = standardmörkt.
+  (function wireBgColor(){
+    var pick=g('iv-bg'), hex=g('iv-bg-hex');
+    pick.addEventListener('input', function(){ hex.value=pick.value; });
+    hex.addEventListener('input', function(){ var v=hex.value.trim(); if(/^#?[0-9a-fA-F]{6}$/.test(v)){ if(v[0]!=='#') v='#'+v; pick.value=v; hex.value=v; } });
+    g('iv-bg-clear').addEventListener('click', function(){ hex.value=''; pick.value='#0f1b2d'; });
+  })();
+
   var customQs = [];
   g('q-plus').addEventListener('change', function(e){ g('q-plus-max').style.display=e.target.checked?'block':'none'; renderSchema(); });
   g('q-allerg').addEventListener('change', renderSchema);
@@ -1337,6 +1356,7 @@
     g('iv-loc').value=inv.location_name||''; g('iv-addr').value=inv.event_address||'';
     g('iv-host').value=inv.host_name||''; g('iv-image').value=inv.image_url||''; g('iv-video').value=inv.video_url||'';
     g('iv-accent').value=inv.accent_color||'#df6f39'; g('iv-accent-hex').value=inv.accent_color||'#df6f39';
+    g('iv-bg-hex').value=inv.bg_color||''; g('iv-bg').value=inv.bg_color||'#0f1b2d';
     g('iv-start').value=fromISOLocalDT(inv.start_date); g('iv-end').value=fromISOLocalDT(inv.end_date);
     g('iv-deadline').value=fromISOLocalDT(inv.rsvp_deadline);
     g('iv-active').checked=inv.active!==false; g('iv-maxplus').value=inv.max_plus_ones||0;
@@ -1359,6 +1379,7 @@
     EDIT_ID=null;
     ['iv-title','iv-desc','iv-tags','iv-loc','iv-addr','iv-host','iv-image','iv-video','iv-start','iv-end','iv-deadline','iv-cc','iv-cc-search'].forEach(function(id){ g(id).value=''; });
     g('iv-accent').value='#df6f39'; g('iv-accent-hex').value='#df6f39';
+    g('iv-bg').value='#0f1b2d'; g('iv-bg-hex').value='';
     g('iv-active').checked=true; g('iv-maxplus').value=2;
     g('q-plus').checked=false; g('q-allerg').checked=false; g('q-plus-max').style.display='none';
     customQs=[]; renderCustom(); renderSchema();
@@ -1386,7 +1407,7 @@
     var body={
       title:title, client_company:g('iv-cc').value||null, description:g('iv-desc').value,
       tags:g('iv-tags').value,
-      location_name:g('iv-loc').value, accent_color:g('iv-accent').value, event_address:g('iv-addr').value,
+      location_name:g('iv-loc').value, accent_color:g('iv-accent').value, bg_color:g('iv-bg-hex').value.trim(), event_address:g('iv-addr').value,
       start_date:toISO(g('iv-start').value), end_date:toISO(g('iv-end').value), rsvp_deadline:toISO(g('iv-deadline').value),
       image:g('iv-image').value||'', image_url:g('iv-image').value||'', video_url:g('iv-video').value||'', host_name:g('iv-host').value, active:g('iv-active').checked,
       allow_plus_ones:g('q-plus').checked, max_plus_ones:Number(g('iv-maxplus').value)||0,

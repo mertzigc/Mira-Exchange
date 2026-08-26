@@ -282,12 +282,52 @@ function fail(msg){
   show("mp-error");
 }
 
-function applyAccent(c){ document.querySelector(".mira-portal").style.setProperty("--accent", c || "#2bb6a3"); }
+// Två oberoende reglage från /invite/config:
+//   brand.accent_color — som förut: eyebrow, fokusringar, chips, knappens yta.
+//   brand.palette      — NYTT, räknas serverside av mail_theme.js så mejlet och
+//                        den här sidan aldrig kan drifta isär. Saknas den behåller
+//                        sidan sin egen mörka standardpalett.
+// Knapptexten (--accent-ink) härleds ur ACCENTEN, inte ur bakgrunden — en mörk
+// accent gav annars mörk text på mörk knapp.
+function contrastInk(hex){
+  var m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(hex||"").trim());
+  if (!m) return "#ffffff";
+  var h = m[1]; if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var lin = function(c){ c = parseInt(c,16)/255; return c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); };
+  var L = 0.2126*lin(h.slice(0,2)) + 0.7152*lin(h.slice(2,4)) + 0.0722*lin(h.slice(4,6));
+  return L > 0.1913 ? "#0d1117" : "#ffffff";
+}
+
+function applyTheme(brand){
+  var root = document.querySelector(".mira-portal");
+  var accent = (brand && brand.accent_color) || "#2bb6a3";
+  root.style.setProperty("--accent", accent);
+  root.style.setProperty("--accent-ink", contrastInk(accent));
+
+  var p = brand && brand.palette;
+  if (!p) return;
+  var set = function(k, v){ if (v) root.style.setProperty(k, v); };
+  set("--bg", p.pageBg);
+  set("--bg-soft", p.cardBg);
+  set("--card", p.surface);
+  set("--line", p.border);
+  set("--ink", p.headline);
+  set("--ink-soft", p.body);
+  set("--ink-dim", p.muted);
+  // Designblockens webbvariabler (BLOCK_CSS läser dem med fallback).
+  set("--mb-head", p.headline);
+  set("--mb-text", p.body);
+  set("--mb-mut", p.muted);
+  set("--mb-bd", p.border);
+  // Standardbakgrunden ligger under två färgade radialgradienter. De är tonade
+  // för den mörka paletten och grumlar en vald bakgrundsfärg → platt färg i stället.
+  root.style.background = p.pageBg;
+}
 
 function render(){
   hide("mp-loading");
   const b = CFG.brand || {}, ev = CFG.event || {};
-  applyAccent(b.accent_color);
+  applyTheme(b);
 
   // brand
   if (b.logo_url){ $("mp-logo").src = b.logo_url; show("mp-logo"); }
