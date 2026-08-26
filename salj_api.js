@@ -556,20 +556,50 @@ export function registerSaljRoutes(app, deps) {
         // Category-värde avvisas av Bubble (400) eller ljuger i datan.
         const todoId = await bubbleCreate("Todo", tp);
         if (!todoId) return res.status(500).json({ ok: false, error: "todo_utan_id", aktivitet_id: item.aktivitet_id, skapade });
+        // ⚠️ LÄS TILLBAKA MARKÖREN. `bubblePatch` avvisar HELA patchen vid ett okänt
+        // fält (400) — MEN den kan också ignorera en okänd nyckel TYST. Båda
+        // beteendena är dokumenterade ([[reference-bubble-data-api-keys]],
+        // [[reference-bubble-tysta-faltdrop]]). En tyst dropp hade gett samma todo
+        // VARJE natt utan att något syntes i loggen: körningen ser lyckad ut.
+        // Kostnad: en läsning per SKAPAD rad — d.v.s. en gång per möte, aldrig igen.
+        let felkod = null, feldetalj = null, rullaTillbaka = true;
         try {
           await bubblePatch("activitet_crm", item.aktivitet_id, { [TODO_FIELD]: todoId });
         } catch (e) {
-          let rollback = "bubbleDelete ej inkopplad — todon ligger kvar och måste tas bort manuellt";
-          if (bubbleDelete) {
-            try { await bubbleDelete("Todo", todoId); rollback = "todon raderad"; }
-            catch (de) { rollback = "todon kunde INTE raderas: " + (de && de.message); }
+          felkod = "anteckning_todo_markor_misslyckades";
+          feldetalj = (e && e.message) || String(e);
+        }
+        if (!felkod) {
+          let back = null, lasfel = null;
+          try { back = await bubbleGet("activitet_crm", item.aktivitet_id); }
+          catch (e) { lasfel = (e && e.message) || String(e); }
+          if (lasfel || !back) {
+            // ⚠️ Okänt är INTE samma sak som saknat. Markören KAN ha fastnat — raderar
+            // vi todon nu pekar aktiviteten på en död rad och mötet får aldrig mer en
+            // påminnelse. Avbryt utan rollback och låt en människa titta.
+            felkod = "anteckning_todo_verifiering_misslyckades";
+            feldetalj = lasfel || "raden gick inte att läsa tillbaka";
+            rullaTillbaka = false;
+          } else if (_ref(back[TODO_FIELD]) !== todoId) {
+            felkod = "anteckning_todo_markor_ej_verifierad";
+            feldetalj = "Bubble tog emot skrivningen men markören finns inte på raden (tyst fältdropp).";
           }
-          console.error("[salj/anteckning-todo] markören gick inte att skriva — avbryter", e && e.message);
+        }
+        if (felkod) {
+          let rollback = "todon lämnades kvar med flit (markören kan ha fastnat)";
+          if (rullaTillbaka) {
+            rollback = "bubbleDelete ej inkopplad — todon ligger kvar och måste tas bort manuellt";
+            if (bubbleDelete) {
+              try { await bubbleDelete("Todo", todoId); rollback = "todon raderad"; }
+              catch (de) { rollback = "todon kunde INTE raderas: " + (de && de.message); }
+            }
+          }
+          console.error("[salj/anteckning-todo] " + felkod + " — avbryter", feldetalj);
           return res.status(500).json({
-            ok: false, error: "anteckning_todo_markor_misslyckades", todo_id: todoId,
+            ok: false, error: felkod, todo_id: todoId,
             aktivitet_id: item.aktivitet_id, rollback, skapade,
-            hint: "Fältet `anteckning_todo` (typ Todo) saknas troligen på activitet_crm i Bubble. Utan markören skapas samma todo varje natt — körningen avbröts med flit.",
-            detalj: (e && e.message) || String(e),
+            hint: "Kontrollera fältet `anteckning_todo` (typ Todo) på activitet_crm i Bubble. Utan en verifierad markör skapas samma todo varje natt — körningen avbröts med flit.",
+            detalj: feldetalj,
           });
         }
         skapade.push({ todo_id: todoId, aktivitet_id: item.aktivitet_id, user_id: item.user_id, titel: item.titel });

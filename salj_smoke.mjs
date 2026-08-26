@@ -501,6 +501,47 @@ const run = async () => {
      (DB.Todo || []).length === todosFore && /raderad/.test((failRun.body || {}).rollback || ""));
   MISSING.delete("activitet_crm.anteckning_todo");
 
+  // ── ...och den TYSTA droppen, som 400-vakten ovan inte ser ────────────────
+  // ⚠️ bubblePatch avvisar HELA patchen vid okänt fält (400) MEN kan också ignorera
+  // en okänd nyckel TYST — båda beteendena är dokumenterade. Utan läs-tillbaka hade
+  // en tyst dropp gett samma todo VARJE natt och loggen sagt "lyckades".
+  const freshApp = (over) => {
+    const r = { get: {}, post: {}, options: {} };
+    const a = { get: (pp, h) => { r.get[pp] = h; }, post: (pp, h) => { r.post[pp] = h; }, options: (pp, h) => { r.options[pp] = h; } };
+    registerSaljRoutes(a, Object.assign({}, deps, over));
+    // ⚠️ Samma regel som call(): saknas routen svarar vi 404 — vi KASTAR aldrig.
+    // Mot gammal kod finns cron-routen inte, och en kastande hjälpare hade dödat
+    // sviten och gjort mutationstestets siffra påhittad (sjunde gången samma fälla).
+    return (query) => new Promise((resolve) => {
+      const h = r.post["/salj/anteckning-todo/cron"];
+      if (typeof h !== "function") return resolve({ code: 404, body: { ok: false, error: "no_route" } });
+      const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { resolve({ code: this._c, body: o }); } };
+      h({ params: {}, query, body: {}, headers: {} }, res);
+    });
+  };
+  DB.activitet_crm.push({ _id: "cz2", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-4) });
+  const foreTyst = (DB.Todo || []).length;
+  const tystRun = freshApp({ bubblePatch: async (t, id, pl) => { if (t === "activitet_crm" && pl && pl.anteckning_todo !== undefined) return {}; return deps.bubblePatch(t, id, pl); } });
+  const tyst = await tystRun(CQ);
+  ok("cron: TYST fältdropp fångas av läs-tillbaka (500, inte falsk success)",
+     tyst.code === 500 && (tyst.body || {}).error === "anteckning_todo_markor_ej_verifierad");
+  ok("cron: todon rullas tillbaka även vid tyst dropp",
+     (DB.Todo || []).length === foreTyst && /raderad/.test((tyst.body || {}).rollback || ""));
+
+  // ⚠️ Går VERIFIERINGEN inte att göra är det OKÄNT, inte "saknas". Markören kan ha
+  // fastnat — raderas todon då pekar aktiviteten på en död rad och mötet får aldrig
+  // mer en påminnelse. Avbryt, men rulla INTE tillbaka.
+  const foreLasfel = (DB.Todo || []).length;
+  const lasfelRun = freshApp({ bubbleGet: async (t, id) => { if (t === "activitet_crm") throw new Error("bubbleGet failed"); return deps.bubbleGet(t, id); } });
+  const lasfel = await lasfelRun(CQ);
+  ok("cron: misslyckad verifiering ger 500 av EGEN felkod (okänt ≠ saknat)",
+     lasfel.code === 500 && (lasfel.body || {}).error === "anteckning_todo_verifiering_misslyckades");
+  ok("cron: vid misslyckad verifiering rullas todon INTE tillbaka",
+     (DB.Todo || []).length === foreLasfel + 1 && /med flit/.test((lasfel.body || {}).rollback || ""));
+  // Städa upp så efterföljande assertions inte ser den kvarlämnade todon.
+  DB.Todo = (DB.Todo || []).slice(0, foreLasfel);
+  DB.activitet_crm = DB.activitet_crm.filter((x) => x._id !== "cz2");
+
   // ── FRONTEND (mål 1 + mål 2) ──────────────────────────────────────────────
   ok("frontend: avsluta-formuläret har ett obligatoriskt varför-fält",
      /data-nsform="avslutat"/.test(mb) && /data-nf="x_varfor"/.test(mb) && /Varfor avslutas sparet\? \*/.test(mb));

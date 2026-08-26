@@ -861,6 +861,21 @@ mötesanteckning**, får en Todo tilldelad mötets ägare (`writer`).
   **rullas todon tillbaka (`bubbleDelete`) och hela körningen avbryts med 500** — med
   flit. Utan markören hade samma todo skapats om igen VARJE natt, i allas listor.
   `bubbleDelete` skickas nu in i `registerSaljRoutes` (en rad i `index.js`).
+- **⚠️ MARKÖREN LÄSES TILLBAKA — 400-vakten räckte inte.** `bubblePatch` avvisar hela
+  patchen vid okänt fält (400) **men kan också ignorera en okänd nyckel TYST** — båda
+  beteendena står i [[reference-bubble-data-api-keys]] / [[reference-bubble-tysta-faltdrop]].
+  Den tysta droppen hade gått rakt igenom fail-closed-kontrollen och gett samma todo
+  varje natt, med en logg som sa "lyckades". Nu läses raden tillbaka efter varje
+  markör-skrivning. Kostnad: en läsning per SKAPAD rad — en gång per möte, aldrig igen.
+  Tre distinkta felkoder:
+  | Läge | Felkod | Rollback? |
+  |---|---|---|
+  | Bubble svarar 400 | `anteckning_todo_markor_misslyckades` | ja |
+  | Skrivningen "lyckas" men markören finns inte på raden | `anteckning_todo_markor_ej_verifierad` | ja |
+  | Läs-tillbaka går inte att göra | `anteckning_todo_verifiering_misslyckades` | **nej** |
+  **⚠️ Sista raden är avsiktlig.** Okänt är inte samma sak som saknat: markören KAN ha
+  fastnat, och raderas todon då pekar aktiviteten på en död rad — mötet får aldrig mer
+  en påminnelse. Bättre en synlig kvarlämnad todo än en tyst tappad påminnelse.
 - **⚠️ Fönstret är ett BACKFILL-SKYDD, inte en optimering.** `DAYS=14` bakåt +
   `GRACE=1` dygn framåt. Utan bakre gräns hade första körningen skapat en todo för
   varje gammalt oavbockat möte i basen. Kör `DAYS=90 DRY=1` först och läs
@@ -889,18 +904,36 @@ mötesanteckning**, får en Todo tilldelad mötets ägare (`writer`).
   nyckel kastar) och `constraint_type` valideras mot Bubbles faktiska lista.
 
 #### Verifierat
-- **Alla 22 sviter gröna.** salj_smoke **123/123** · companies_smoke **411/411** ·
+- **Alla 22 sviter gröna.** salj_smoke **127/127** · companies_smoke **411/411** ·
   affar_create_smoke **96/96**.
-- **Mutationstestat mot `1b9d015`: 37 · 10 · 10 faller.** Inga krascher —
+- **Mutationstestat mot `1b9d015`: 41 · 10 · 10 faller.** Inga krascher —
   utfallet lästes rad för rad.
-  **⚠️ Två fällor fångades i just den läsningen:**
+  **⚠️ Tre fällor fångades i just den läsningen:**
   1. `todo1._id` **kraschade** mot gammal kod och dödade sviten (sjätte gången samma
      fälla). Hårdnad till `!!todo1 && …`.
   2. Tre assertions var **vacuöst gröna** mot gammal kod: negativa påståenden
      ("skriver ingenting", "faller bort") är sanna när ingenting kördes. Bundna till
      `dry.body.ok === true`. **En grön negativ assertion bevisar ingenting om routen
      inte ens finns.**
+  3. Test-hjälparen `freshApp` (egen dep-override för nedgraderingsfallen) **kastade**
+     på saknad route och dödade sviten — sjunde gången samma fälla, och den här gången
+     i en hjälpare, inte i en assertion. Svarar nu `404 no_route`, precis som `call()`.
+     **Regeln gäller varje testhjälpare som slår upp en route, inte bara ramen.**
 - Route-inventarium i sviten (exakt lista på GET/POST) — en omdöpt route faller nu.
+
+#### Skarp körning 2026-08-26 (commit `94852d7`)
+Första skarpa cron-körningen: `lasta 36 · kandidater 15 · skapade 15 · utan_agare 0 ·
+capped false`, fördelat på **sex** säljare (max fem på en). **15 av 36 möten (42 %) i
+ett tvåveckorsfönster saknade anteckning och var inte avbockade** — backloggen är alltså
+normalläget, inte ett hörnfall. `utan_agare: 0` betyder att alla möten har `writer`, så
+varje todo når rätt person.
+**Idempotensen bevisad skarpt tre minuter senare:** en andra körning gav
+`lasta 36 · kandidater 0 · skapade 0`. Samma 36 rader lästes, ingen blev kandidat —
+markören hade alltså fastnat på alla 15. Fältet `anteckning_todo` beter sig som
+förväntat i Bubble (lagrar värdet), inte som en tyst dropp.
+⚠️ Båda körningarna gjordes **innan** läs-tillbaka-härdningen ovan fanns i koden — den
+är alltså inte det som räddade oss här, utan skyddet mot att fältet någon gång i
+framtiden börjar bete sig som en tyst dropp (t.ex. efter en omdöpning i Bubble).
 
 #### Deploy
 1. **Skapa de två Bubble-fälten först** (tabellen överst i avsnittet).

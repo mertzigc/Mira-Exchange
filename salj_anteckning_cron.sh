@@ -58,7 +58,17 @@ printf '%s\n' "${body%$'\n'*}" | python3 -m json.tool 2>/dev/null || printf '%s\
 # Inget `|| true` här — ett tyst grönt cron-jobb är värre än inget cron-jobb.
 if [ "$rc" -ne 0 ] || [ "$http" != "200" ]; then
   echo "❌ Körningen misslyckades (curl exit $rc, HTTP $http)."
-  echo "   Är felet anteckning_todo_markor_misslyckades saknas fältet \`anteckning_todo\` (typ Todo) på activitet_crm i Bubble."
+  # Hinten bara när den FAKTISKT gäller — en felaktig diagnos är värre än ingen.
+  if printf '%s' "${body%$'\n'*}" | grep -q 'anteckning_todo_markor_misslyckades'; then
+    echo "   → Fältet \`anteckning_todo\` (typ Todo) saknas troligen på activitet_crm i Bubble."
+    echo "     Utan markören skapas samma todo varje natt — därför avbröts körningen med flit."
+  fi
+  if [ "$http" = "401" ]; then
+    echo "   → 401: fel eller saknad API_KEY. Ska vara samma värde som MIRA_RENDER_API_KEY på webbtjänsten."
+  fi
+  if [ "$http" = "404" ]; then
+    echo "   → 404: routen finns inte i den kod som kör. Är salj_api.js deployad? Kolla /version ovan."
+  fi
   echo "=== Mötesanteckning-todo FAILED @ $(date -u +%FT%TZ) ==="
   exit 1
 fi
