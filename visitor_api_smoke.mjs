@@ -66,7 +66,10 @@ const ok = (n, c) => { if (c) pass++; else { fail++; console.log("  ✗ " + n); 
 const run = async () => {
   const auth = makeVisitorAuth({ secret: "s", sessionSecret: "x", ttlMs: 3600000 });
   const s = mk();
-  registerVisitorRoutes(s.app, Object.assign({}, deps, { visitorAuth: auth }));
+  const smsSent = [], mailSent = [];
+  const sms = { configured: true, send: async ({ to, text }) => { smsSent.push({ to, text }); return { ok: true, id: "s1", segments: 1 }; } };
+  const sendMail = async (m) => { mailSent.push(m); };
+  registerVisitorRoutes(s.app, Object.assign({}, deps, { visitorAuth: auth, sms, sendMail }));
 
   const mine = auth.mint({ uid: "u1", fastigheter: ["f1", "f2"], name: "Anna Reception" });
   const H = { "x-visitor-token": mine.token };
@@ -159,6 +162,68 @@ const run = async () => {
   ok("utcheckning av okänt id → 404", co404.code === 404);
   const openList = await call(s.routes, "get", "/visitor/visits", { headers: H, query: { open: "1" } });
   ok("open=1 filtrerar bort utcheckade", openList.body.total === 1);
+
+
+  // ── NOTIS ─────────────────────────────────────────────────────────────────
+  // Värd co1 har telefon → SMS. Besöket skapades tidigare i sviten.
+  const nvis = await call(s.routes, "post", "/visitor/visits", {
+    headers: H, body: { fastighet: "f1", hyresgast: "cc1", gast: "Nils Notis", vard: "co1", vard_namn: "Evelina Åblad" },
+  });
+  const n1 = await call(s.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: nvis.body.id } });
+  ok("notis: SMS valt när värden har mobil", n1.body.ok && n1.body.kanal === "sms");
+  ok("notis: texten är emoji-fri och nämner gäst + hus",
+    smsSent[0].text.indexOf("Nils Notis") > -1 && smsSent[0].text.indexOf("Hötorget 3") > -1 && !/\p{Extended_Pictographic}/u.test(smsSent[0].text));
+  const nrow = STORE.Visit.find((v) => v._id === nvis.body.id);
+  ok("notis: status skickad + kanal + tid skrivna", nrow[VISIT.F_STATUS] === "skickad" && nrow[VISIT.F_KANAL] === "sms" && !!nrow[VISIT.F_NOTIS_AT]);
+
+  // ⚠️ Dedupe: varje SMS kostar pengar och värden ska inte spammas.
+  const smsCountBefore = smsSent.length;
+  const n2 = await call(s.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: nvis.body.id } });
+  ok("notis: andra försöket skickar INTE om (already)", n2.body.already === true && smsSent.length === smsCountBefore);
+  const n3 = await call(s.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: nvis.body.id }, body: { force: true } });
+  ok("notis: force skickar om", n3.body.ok && smsSent.length === smsCountBefore + 1);
+
+  // Värd utan telefon → mail
+  const mvis = await call(s.routes, "post", "/visitor/visits", {
+    headers: H, body: { fastighet: "f1", hyresgast: "cc1", gast: "Maja Mail", vard: "co2", vard_namn: "Petra Lindholm" },
+  });
+  const nm = await call(s.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: mvis.body.id } });
+  ok("notis: mail när mobil saknas", nm.body.ok && nm.body.kanal === "mail" && mailSent.length === 1);
+  ok("notis: mailet går till värdens adress med gästen i ämnet",
+    mailSent[0].to === "petra@twoday.com" && mailSent[0].subject.indexOf("Maja Mail") > -1);
+
+  // ⚠️ Ingen kontaktväg alls → SYNLIGT fel, inte tystnad.
+  STORE.Coworker.push({ _id: "co3", "Kundföretag": "cc1", "Förnamn": "Utan", "Efternamn": "Kontakt" });
+  const uvis = await call(s.routes, "post", "/visitor/visits", {
+    headers: H, body: { fastighet: "f1", hyresgast: "cc1", gast: "Ove Okontakt", vard: "co3" },
+  });
+  const nu = await call(s.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: uvis.body.id } });
+  const urow = STORE.Visit.find((v) => v._id === uvis.body.id);
+  ok("notis: värd utan kanal → 422 + status fel + orsak i loggen",
+    nu.code === 422 && urow[VISIT.F_STATUS] === "fel" && urow[VISIT.F_KANAL] === "ingen" && urow[VISIT.F_NOTIS_FEL].indexOf("saknar") > -1);
+
+  // ⚠️ Gateway-fel: besöket är registrerat, bara notisen gick inte fram.
+  const s2 = mk();
+  const failSms = { configured: true, send: async () => ({ ok: false, error: "sms_failed_500", detail: "upstream boom" }) };
+  registerVisitorRoutes(s2.app, Object.assign({}, deps, { visitorAuth: auth, sms: failSms, sendMail }));
+  const fvis = await call(s2.routes, "post", "/visitor/visits", {
+    headers: H, body: { fastighet: "f1", hyresgast: "cc1", gast: "Frida Fel", vard: "co1" },
+  });
+  const nf = await call(s2.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: fvis.body.id } });
+  const frow = STORE.Visit.find((v) => v._id === fvis.body.id);
+  ok("notis: gatewayfel → status fel + felorsak sparad, INGET 500",
+    nf.code === 200 && nf.body.ok === false && nf.body.status === "fel" && frow[VISIT.F_STATUS] === "fel" && frow[VISIT.F_NOTIS_FEL].indexOf("boom") > -1);
+
+  // Okonfigurerad gateway får aldrig se ut som "skickat".
+  const s3 = mk();
+  registerVisitorRoutes(s3.app, Object.assign({}, deps, { visitorAuth: auth, sms: { configured: false, send: async () => ({ ok: false }) }, sendMail: null }));
+  const cvis = await call(s3.routes, "post", "/visitor/visits", { headers: H, body: { fastighet: "f1", hyresgast: "cc1", gast: "Karin Konfig", vard: "co1" } });
+  const nc = await call(s3.routes, "post", "/visitor/visits/:id/notify", { headers: H, params: { id: cvis.body.id } });
+  ok("notis: okonfigurerad kanal → 503, aldrig tyst 'skickat'", nc.code === 503 && nc.body.error === "channel_not_configured");
+
+  // Scope gäller även notisen.
+  const nOut = await call(s.routes, "post", "/visitor/visits/:id/notify", { headers: H9, params: { id: nvis.body.id } });
+  ok("notis av besök utanför mitt scope → 403", nOut.code === 403);
 
   // ── WU: hyresgästlistan cachas ────────────────────────────────────────────
   findAllCalls.length = 0;

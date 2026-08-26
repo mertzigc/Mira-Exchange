@@ -1423,6 +1423,7 @@
         if(!j.ok) throw new Error(j.error||'fel');
         var ok=g('iv-ok');
         bbWarnIfMissing('iv', j);
+        bgWarnIfMissing('iv', j);
         if(editing){ ok.textContent='Ändringar sparade.'; ok.classList.add('show'); g('iv-status').textContent='Redigerar: '+title; }
         else { ok.innerHTML='Inbjudan skapad. Öppen länk: <code>'+esc(PUBLIC_INVITE_URL)+'?t='+esc(j.token)+'</code>'; ok.classList.add('show'); g('iv-title').value=''; g('iv-desc').value=''; }
         loadInvites();
@@ -3771,6 +3772,15 @@
     if(!j || j.blocks_saved !== false) return;
     var el=g(p+'-err');
     if(el){ el.textContent='⚠️ Designblocken sparades INTE: textfältet "content_blocks" saknas på datatypen Invitation i Bubble. Allt annat är sparat.'; el.classList.add('show'); }
+  }
+
+  // Samma tysta fältdrop som ovan, fast för bakgrundsfärgen. Utan varningen ser
+  // sparningen lyckad ut medan färgen aldrig nådde Bubble — och man felsöker
+  // mejlmallen i stället för det saknade fältet.
+  function bgWarnIfMissing(p, j){
+    if(!j || j.bg_color_saved !== false) return;
+    var el=g(p+'-err');
+    if(el){ el.textContent='⚠️ Bakgrundsfärgen sparades INTE: textfältet "bg_color" saknas på datatypen Invitation i Bubble. Allt annat är sparat.'; el.classList.add('show'); }
   }
 
   attachAudienceTools({ prefix:'iv', getInvId:function(){ return IVG_INVITE_ID; }, reload:function(){ if(IVG_INVITE_ID) loadGuests(IVG_INVITE_ID); } });

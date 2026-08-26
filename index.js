@@ -12,7 +12,7 @@ import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
-import { mailPalette } from "./mail_theme.js";
+import { mailPalette, readableAccent } from "./mail_theme.js";
 import { feOverlap, describeEmptySide, bokningslageSummary, kallaFarskhet } from "./bokningslage.js";
 import { createIntelliplanClient, describeReportPayload, profileCsvColumns, normalizeRevenueDay, IP_REVENUE_DAY_REPORT,
          normalizeOrderMonth, suggestAccountMatches, IP_ORDER_MONTH_REPORT,
@@ -20,6 +20,7 @@ import { createIntelliplanClient, describeReportPayload, profileCsvColumns, norm
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { makeVisitorAuth } from "./visitor_auth.js";
 import { registerVisitorRoutes } from "./visitor_api.js";
+import { makeSms } from "./sms.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
 import express from "express";
@@ -13282,6 +13283,17 @@ app.get("/admin/cc/list", async (req, res) => {
 // som `form_schema`). Saknas fältet i Bubble droppas det TYST av safeCreate/bubblePatch
 // → vi läser tillbaka raden och rapporterar `content_blocks_field_missing` i stället
 // för att låtsas ha sparat. Se §1-fällan i mira-undersokning-handoff.md.
+async function _verifyFieldSaved(invId, field, expectedValue) {
+  if (!invId || !expectedValue) return null;           // inget värde skickat → inget att verifiera
+  try {
+    const row = await bubbleGet(ADM_INVITATION, invId);
+    return String((row && row[field]) || "").trim().toLowerCase() === String(expectedValue).trim().toLowerCase();
+  } catch (e) {
+    console.warn(`[${field}] kunde inte verifiera:`, e?.message);
+    return null;                                       // okänt ≠ saknat fält
+  }
+}
+
 async function _verifyBlocksSaved(invId, expectedCount) {
   if (!invId || !expectedCount) return null;          // inga block skickade → inget att verifiera
   try {
@@ -13345,7 +13357,9 @@ app.post("/admin/invite/create", async (req, res) => {
     // fält TYST (§1-fällan) → utan denna koll skulle admin få "sparat" men blocken
     // vore borta. Samma härdning som `members` på AudienceSegment.
     const blocksSaved = await _verifyBlocksSaved(id, _normBlocks(d.content_blocks).length);
-    res.json({ ok: true, id, token, blocks_saved: blocksSaved, ...(blocksSaved === false ? { warning: "content_blocks_field_missing" } : {}) });
+    const bgSaved = await _verifyFieldSaved(id, "bg_color", exact.bg_color);
+    res.json({ ok: true, id, token, blocks_saved: blocksSaved, bg_color_saved: bgSaved,
+      ...(blocksSaved === false ? { warning: "content_blocks_field_missing" } : {}) });
   } catch (e) {
     const detail = _bubbleErrText(e);
     console.error("[admin/invite/create]", e?.message, detail, e?.detail);
@@ -13385,7 +13399,9 @@ app.patch("/admin/invite/update", async (req, res) => {
     const blocksSaved = b.content_blocks === undefined
       ? null
       : await _verifyBlocksSaved(b.id, _normBlocks(b.content_blocks).length);
-    res.json({ ok: true, blocks_saved: blocksSaved, ...(blocksSaved === false ? { warning: "content_blocks_field_missing" } : {}) });
+    const bgSaved = await _verifyFieldSaved(b.id, "bg_color", f.bg_color);
+    res.json({ ok: true, blocks_saved: blocksSaved, bg_color_saved: bgSaved,
+      ...(blocksSaved === false ? { warning: "content_blocks_field_missing" } : {}) });
   } catch (e) {
     const detail = _bubbleErrText(e);
     console.error("[admin/invite/update]", e?.message, detail, e?.detail);
@@ -14333,12 +14349,21 @@ function _admHex(v) {
   return "#" + h.toLowerCase();
 }
 
+// Landningssidans standardbakgrund när ingen egen är vald (måste spegla
+// --bg i invite.html, annars räknas accent_strong mot fel underlag).
+const INVITE_DEFAULT_BG = "#0f1b2d";
+
 function inviteBrand(inv, cc) {
   const bg = _admHex(inv.bg_color);
+  const accent = inv.accent_color || INVITE.DEFAULT_ACCENT;
   return {
     company_name: inv.company_name || cc?.Name_company || inv.host_name || "",
     logo_url:     _inviteAbsUrl(cc?.logotyp || cc?.logo_url || cc?.Logo || ""),
-    accent_color: inv.accent_color || INVITE.DEFAULT_ACCENT,
+    accent_color: accent,
+    // Accenten justerad till läsbar mot den faktiska bakgrunden — för rubrik och
+    // faktaetiketter. Räcker accenten som den är returneras den OFÖRÄNDRAD, så
+    // den vanliga kunden ser exakt sin egen färg.
+    accent_strong: readableAccent(accent, bg || INVITE_DEFAULT_BG),
     // Fri bakgrundsfärg. Tom sträng = landningssidan behåller sin standardpalett.
     // Fristående från accent_color — de två reglagen rör aldrig varandra.
     bg_color:     bg,
@@ -18930,6 +18955,15 @@ const _kitchenAuth = makeKitchenAuth({ secret: PLANNING_ADMIN_TOKEN, ttlMs: 12 *
 //    från en Bubble backend-wf som känner Current User. Tokenen bär receptionistens
 //    FASTIGHETSLISTA och all scope-filtrering sker mot den.
 //    ⚠️ Koppla ALDRIG in _visitorAuth.authed i planningAuthed för andra moduler.
+// SMS-gateway (46elks) för besöksnotisen. Se handoff/BESOKSHANTERING.md §4 — svenskt
+// bolag valt för att personuppgifterna (besökarens namn) ska stanna i EU.
+// Okonfigurerad → send() svarar 503; notisen markeras "fel", aldrig tyst "skickad".
+const _sms = makeSms({
+  username: process.env.ELKS_USERNAME,
+  password: process.env.ELKS_PASSWORD,
+  from: process.env.SMS_FROM || "Carotte",
+});
+
 const VISITOR_SESSION_SECRET = String(process.env.VISITOR_SESSION_SECRET || "").trim();
 const _visitorAuth = makeVisitorAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecret: VISITOR_SESSION_SECRET, ttlMs: 12 * 60 * 60 * 1000 });
 // Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)
@@ -20881,6 +20915,8 @@ registerAffarRoutes(app, {
 registerVisitorRoutes(app, {
   bubbleFindAll, bubbleGet, bubbleId, bubbleCreate, bubblePatch,
   visitorAuth: _visitorAuth,
+  sms: _sms,
+  sendMail: sendViaSendGrid,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,

@@ -18,7 +18,8 @@
     --ink-soft: #a9b8cc;
     --ink-dim: #7488a3;
     --accent: #2bb6a3;            /* sätts dynamiskt från config */
-    --accent-ink: #06241f;
+    --accent-ink: #06241f;        /* text PÅ accentfärgen (knappen) */
+    --accent-strong: #2bb6a3;     /* accenten justerad till läsbar MOT bakgrunden */
     --danger: #e2655a;
     --radius: 18px;
     --maxw: 680px;
@@ -34,6 +35,7 @@
     -webkit-font-smoothing: antialiased;
     box-sizing: border-box;
   }
+  .mira-portal::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--accent); z-index: 1; }
   .mira-portal *, .mira-portal *::before, .mira-portal *::after { box-sizing: border-box; }
 
   .mp-wrap { max-width: var(--maxw); margin: 0 auto; padding: 28px 20px 96px; }
@@ -47,21 +49,21 @@
   .mp-hero-img { width: 100%; aspect-ratio: 16/7; object-fit: cover; border-radius: var(--radius); border: 1px solid var(--line); margin-bottom: 22px; background: var(--bg-soft); }
   .mp-eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 0 0 12px; }
   .mp-eyebrow::before { content: ""; width: 22px; height: 1px; background: var(--accent); display: inline-block; }
-  h1.mp-title { font-family: "Fraunces", serif; font-weight: 600; font-size: clamp(28px, 5vw, 40px); line-height: 1.08; margin: 0 0 14px; letter-spacing: -.01em; }
+  h1.mp-title { font-family: "Fraunces", serif; font-weight: 600; font-size: clamp(28px, 5vw, 40px); line-height: 1.08; margin: 0 0 14px; letter-spacing: -.01em; color: var(--accent-strong); }
   .mp-desc { font-size: 16px; line-height: 1.65; color: var(--ink-soft); margin: 0 0 24px; white-space: pre-line; }
 
   /* fakta-rader */
-  .mp-facts { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 0 0 28px; }
+  .mp-facts { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 14px; overflow: hidden; margin: 0 0 28px; }
   .mp-fact { display: grid; grid-template-columns: 116px 1fr; gap: 12px; background: var(--bg-soft); padding: 14px 16px; }
-  .mp-fact dt { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-dim); font-weight: 600; }
+  .mp-fact dt { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-strong); font-weight: 600; }
   .mp-fact dd { margin: 0; font-size: 15px; color: var(--ink); }
   .mp-media { position: relative; width: 100%; padding-top: 56.25%; margin: 0 0 24px; border-radius: 12px; overflow: hidden; background: var(--bg-soft); }
   .mp-media iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .mp-map { padding-top: 0; height: 260px; }
 
   /* card */
-  .mp-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px 24px; }
-  .mp-card h2 { font-family: "Fraunces", serif; font-weight: 600; font-size: 22px; margin: 0 0 4px; }
+  .mp-card { background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: var(--radius); padding: 26px 24px; }
+  .mp-card h2 { font-family: "Fraunces", serif; font-weight: 600; font-size: 22px; margin: 0 0 4px; color: var(--accent-strong); }
   .mp-card .mp-sub { font-size: 14px; color: var(--ink-soft); margin: 0 0 22px; }
 
   .mp-field { margin: 0 0 20px; }
@@ -303,6 +305,9 @@ function applyTheme(brand){
   var accent = (brand && brand.accent_color) || "#2bb6a3";
   root.style.setProperty("--accent", accent);
   root.style.setProperty("--accent-ink", contrastInk(accent));
+  // accent_strong räknas serverside mot den faktiska bakgrunden. Saknas den
+  // (äldre backend) faller vi tillbaka på accenten som den är.
+  root.style.setProperty("--accent-strong", (brand && brand.accent_strong) || accent);
 
   var p = brand && brand.palette;
   if (!p) return;

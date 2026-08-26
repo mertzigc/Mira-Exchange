@@ -392,9 +392,63 @@ med företagslista/personer (regeln i HANDOFF.md §"SÅ HÄR JOBBAR VI").
   borttagen → 4 tester, (3) checkout utan scope-koll, (4) Fastighet-namn via `Namn`
   (gamla [object Object]-buggen) → 2, (5) listan utan scope-filter → 2, (6) TTL-cachen av,
   (7) lobby-incheckning signerad som person.
-- **C. Notismotorn:** `sendSms()` bredvid `sendViaSendGrid()` i `emailer.js` + mager gren
-  (ETT `email_queue_create` eller ETT SMS per ankomst, aldrig fan-out). Dedupe + rate-limit.
-- **D. Receptionist-vyn** (klona `mira-drift.html`-mönstret).
+- **C. Notismotorn — ✅ BYGGT 2026-08-26 (EJ DEPLOYAT).**
+
+  **`sms.js` (NY, egen fil — INTE i `emailer.js`).** Avsteg från den ursprungliga planen:
+  `emailer.js` är 85k och stod under aktiv ombyggnad (mail_theme) → merge-konflikt. SMS är
+  dessutom en egen kanal med egen felmodell och blir testbar isolerat, som `visitor_auth.js`.
+  - `makeSms({username, password, from})` → 46elks. Env: **`ELKS_USERNAME`**,
+    **`ELKS_PASSWORD`**, valfri `SMS_FROM` (default "Carotte", kapas till 11 tecken).
+  - **`send()` KASTAR ALDRIG** — returnerar `{ok:false, error}`. En trasig gateway får inte
+    välta besöksregistreringen.
+  - **`smsSegments(text)`** — kostnadskontroll. ⚠️ Svenska å/ä/ö är gratis (GSM-7), men
+    **EN emoji tvingar hela meddelandet till UCS-2 med 70 tecken/segment = dubbel kostnad**.
+    Mallen är emoji-fri och testas mot 1 segment.
+  - **`toE164()`** — ⚠️ `Coworker.Telefon` är ett **number**-fält, så inledande nolla är
+    borta (`0701785977` → `701785977`). Utan normaliseringen går SMS:et till fel land.
+
+  **`POST /visitor/visits/:id/notify`** — egen route, **medvetet skild från create**.
+  Ett notisfel får aldrig hindra att besöket loggas; gästen står i lobbyn oavsett.
+  - Kanalval: **SMS om värden har mobil, annars mail.** Kanalerna läses FÄRSKT ur
+    `Coworker` — besöksraden bär ingen kopia som kan bli inaktuell.
+  - **Dedupe:** redan `skickad` → `already:true` utan omsändning (varje SMS kostar, och
+    värden ska inte spammas av en feltryckande receptionist). `{force:true}` skickar om.
+  - **Ingen kontaktväg** → `422` + `notis_status="fel"` + orsak i `notis_fel`. Aldrig tystnad.
+  - **Gatewayfel** → **HTTP 200** med `ok:false, status:"fel"`. Besöket ÄR registrerat;
+    receptionisten ska se felet i listan och kunna trycka om, inte få ett rött API-fel.
+  - **Okonfigurerad gateway** → `503`, aldrig tyst "skickat".
+
+  **Verifierat:** `sms_smoke.mjs` **29/29** + `visitor_api_smoke.mjs` **46/46**.
+  **Mutationstestat (11 totalt på visitor_api):** utöver B:s sju — (8) dedupe borttagen → 2,
+  (9) gatewayfel skrivs som "skickad", (10) okonfigurerad gateway ger tyst OK,
+  (11) notis utan scope-koll. Alla faller.
+- **D. Receptionist-vyn — ✅ BYGGT 2026-08-26 (EJ DEPLOYAT).** `mira-visitor.html`
+  (`.vi`-namnrymd), klistras på Bubble-sidan **`visitor`**.
+  - **Bär ALDRIG `PLANNING_ADMIN_TOKEN`.** Enda credential är `x-visitor-token` som Bubble
+    skriver till `Current User's visitor_token`. `data-mira`: `api_host` + `visitor_token`.
+  - **Väntar in sessionen.** Backend-wf:en är asynkron → blocket startar utan token och
+    pollar fältet (400 ms, ger upp efter 25 s med en begriplig instruktion). Visar
+    "Startar session…" under tiden. Det är förväntat, inte ett fel.
+  - Dagens besök + husväljare + sök + registreringsformulär + Notifiera/Notifiera igen +
+    Checka ut. Notisen är ett **eget anrop efter** create — misslyckas den är besöket ändå loggat.
+  - **Kanalen visas INNAN incheckning:** värdlistan skriver ut "— SMS" / "— endast mail" /
+    "— ingen kontaktväg" per person, och vid val visas en pill ("Endast mail — kan dröja").
+    Receptionisten ska veta om värden går att nå innan hon lovar gästen något.
+  - `!important` på knapparnas hover ([[reference-bubble-button-hover-important]]).
+
+  **⚠️ TVÅ BUGGAR SOM BARA HARNESSEN KUNDE FÅNGA** (smoke-testerna var gröna hela tiden):
+  1. **Hyresgästlistan filtrerade på fel hus.** Formuläret visade "Hötorget 3" men listade
+     bolag från alla hus, eftersom den filtrerade på *listfiltret* (tomt = alla) i stället
+     för formulärets eget val. Receptionisten hade fått `403 tenant_not_in_fastighet` på en
+     kombination UI:t själv erbjöd. → Eget `STATE.formHus`, skilt från `STATE.fastighet`.
+  2. **`loadHosts()` anropade `render()` → formuläret tömdes.** Skriver receptionisten
+     gästens namn och väljer hyresgäst sedan, raderades namnet. Samma fälla som
+     deal-formuläret och autocompleten i personlistan. → `paintHosts()` uppdaterar bara
+     värd-selecten **in-place**; `STATE.formHyresgast` överlever en verklig omritning.
+
+  **Harness-verifierat i webbläsare:** lista, husväljare, hela registreringsflödet
+  (hus → hyresgäst → värd → kanalindikator → spara → notis), utcheckning (knappen försvinner,
+  "ut 15:23" visas), och att fälten överlever i rätt ordning.
 - **E. Lobbyskärmen** (kioskläge, egen begränsad yta, sök scopad till huset).
 - **F. Kundens kontaktlista** i `dashboard_company`.
 - **G. CRM-vyn** + GDPR-gallringsjobb.

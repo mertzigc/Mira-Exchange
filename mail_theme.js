@@ -57,6 +57,25 @@ export function contrastRatio(a, b) {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
+// Accentfärgen vald för ett utskick är fri — den kan mycket väl ligga för nära
+// bakgrunden för att bära text (ljusbeige accent på ljusbeige bakgrund). Den här
+// funktionen behåller accentens KULÖR men flyttar den mot mörkare/ljusare tills
+// den når `target` mot bakgrunden. Räcker accenten redan returneras den orörd —
+// det vanliga fallet, och den enda varianten som är exakt kundens färg.
+export function readableAccent(accent, bg, target = 4.5) {
+  const a = parseHex(accent), b = parseHex(bg);
+  if (!a || !b) return accent;
+  const accHex = toHex(a), bgHex = toHex(b);
+  if (contrastRatio(accHex, bgHex) >= target) return accHex;
+  const ink = contrastInk(bgHex);
+  // Monotont: ju mer bläck, desto mer kontrast mot bakgrunden.
+  for (let t = 0.05; t <= 1.0001; t += 0.05) {
+    const c = mix(accHex, ink, t);
+    if (contrastRatio(c, bgHex) >= target) return c;
+  }
+  return ink;
+}
+
 // Blanda `t` (0–1) av `to` in i `from`.
 function mix(from, to, t) {
   const a = parseHex(from), b = parseHex(to);

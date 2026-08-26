@@ -23,8 +23,8 @@ async function load(spec, names) {
   }
   return out;
 }
-const { mailPalette, MAIL_PAL_DARK, contrastInk, contrastRatio } =
-  await load("./mail_theme.js", ["mailPalette", "MAIL_PAL_DARK", "contrastInk", "contrastRatio"]);
+const { mailPalette, MAIL_PAL_DARK, contrastInk, contrastRatio, readableAccent } =
+  await load("./mail_theme.js", ["mailPalette", "MAIL_PAL_DARK", "contrastInk", "contrastRatio", "readableAccent"]);
 const { renderBlocksEmail } = await load("./content_blocks.js", ["renderBlocksEmail"]);
 
 const read = f => { try { return fs.readFileSync(f, "utf8"); } catch { return ""; } };
@@ -93,6 +93,19 @@ ok("paletten tar bara emot en bakgrundsfärg — ingen accent kan smitta in",
 ok("knappens text följer ACCENTEN, inte bakgrunden",
    contrastInk("#df6f39") === contrastInk("#df6f39") && contrastInk("#e8dcc8") !== contrastInk("#1b2a4a"));
 
+// ── 2b. Accenten som bärare av text ───────────────────────────────────────
+// Accenten är fri och kan ligga för nära bakgrunden för att bära text. Ytor
+// (topplist, kantlinje) ska ALLTID vara exakt kundens färg; bara text justeras.
+sec("Läsbar accent (readableAccent)");
+ok("räcker accenten redan lämnas den OFÖRÄNDRAD (kundens exakta färg)",
+   readableAccent("#551e23", "#ece7dd") === "#551e23" && readableAccent("#df6f39", "#161c2d") === "#df6f39");
+for (const [a, bg] of [["#2bb6a3", "#ffffff"], ["#e8dcc8", "#f4efe6"], ["#ffffff", "#f4efe6"]]) {
+  const r = readableAccent(a, bg);
+  ok(`${a} mot ${bg} justeras till ${r} (${num(contrastRatio(r, bg)).toFixed(1)}:1)`,
+     r !== a && num(contrastRatio(r, bg)) >= 4.45);
+}
+ok("ogiltig indata lämnas orörd", readableAccent("inte-hex", "#ffffff") === "inte-hex");
+
 // ── 3. Designblocken följer paletten ──────────────────────────────────────
 sec("Designblock (renderBlocksEmail)");
 const BLOCKS = [
@@ -126,9 +139,17 @@ ok("kortets bakgrund kommer från paletten", /background:\$\{pal\.cardBg\}/.test
 ok("CTA-texten kommer från contrastInk(accent), inte hårdkodad vit",
    /color:\$\{contrastInk\(accent\)\}/.test(wrapSrc) && !/color:#ffffff/.test(wrapSrc));
 ok("CTA-cellens align styrs av ctaAlign", /align="\$\{ctaAlign === "center" \? "center" : "left"\}"/.test(wrapSrc));
+// Accent-tonen är OPT-IN. Default false → de 17 övriga mallarna är oförändrade.
+ok("accentTone är avstängd som default", /accentTone = false/.test(wrapSrc));
+ok("rubriken tar accenten bara när accentTone är på",
+   /accentTone \? readableAccent\(accent, pal\.cardBg\) : pal\.headline/.test(wrapSrc));
+ok("faktatabellens vänsterkant får RÅ accent (yta, inte text)",
+   /accentTone \? `border-left:3px solid \$\{accent\};` : ""/.test(wrapSrc));
 
 const rowsSrc = slice(EMAILER, "function detailRows(", "// Säker HTML-escape", "detailRows");
 ok("faktatabellen har inga hårdkodade färger", (rowsSrc.match(HEX) || []).length === 0);
+ok("faktaetiketterna tar accenten när den skickas med, annars palettens etikettfärg",
+   /const labelColor = accent \? readableAccent\(accent, pal\.rowA\) : pal\.label;/.test(rowsSrc));
 const footSrc = slice(EMAILER, "function buildFooterBlock(", "function buildSocialBlock(", "buildFooterBlock");
 ok("footern har inga hårdkodade färger", (footSrc.match(HEX) || []).length === 0);
 
@@ -137,11 +158,12 @@ for (const [fn, label] of [["tmplInviteInvitation", "inbjudan"], ["tmplNewsAnnou
   ok(`${label}: paletten byggs ur x.bg_color`, /const pal\s*=\s*mailPalette\(x\.bg_color\)/.test(src));
   ok(`${label}: paletten skickas till wrapLayout`, /accent, pal,/.test(src));
   ok(`${label}: designblocken får paletten`, /blocksHtmlFor\(x, accent, pal\)/.test(src));
+  ok(`${label}: accent-tonen är påslagen`, /accentTone: true,/.test(src));
 }
 const invSrc = slice(EMAILER, "async function tmplInviteInvitation(", "\n}", "tmplInviteInvitation");
 ok("inbjudan: CTA centrerad", /ctaAlign:\s*"center"/.test(invSrc));
 ok("inbjudan: deadline använder fmtDate (hela datumet)", /const deadline = x\.rsvp_deadline \? fmtDate\(x\.rsvp_deadline\) : ""/.test(invSrc));
-ok("inbjudan: faktatabellen får paletten", /\], pal\),/.test(invSrc));
+ok("inbjudan: faktaetiketterna får både palett och accent", /\], pal, accent\),/.test(invSrc));
 ok("ms-strängar parsas som datum (Bubble kan ge båda)", /function _dateish\(v\)/.test(EMAILER));
 
 // ── 5. Källkodskontrakt: index.js ─────────────────────────────────────────
@@ -151,11 +173,23 @@ ok("update mappar bg_color", /bg_color: v => _admHex\(v\)/.test(INDEX));
 ok("GET /admin/invite/:id returnerar bg_color", /bg_color: i\.bg_color \|\| ""/.test(INDEX));
 ok("mailets extra_data bär bg_color", /bg_color: brand\.bg_color/.test(INDEX));
 ok("landningssidans config får färdig palett", /palette:\s*bg \? mailPalette\(bg\) : null/.test(INDEX));
+// Räknas accenten mot fel underlag blir rubriken oläsbar på standardbakgrunden.
+ok("accent_strong räknas mot den FAKTISKA bakgrunden (vald eller sidans standard)",
+   /accent_strong: readableAccent\(accent, bg \|\| INVITE_DEFAULT_BG\)/.test(INDEX)
+   && /const INVITE_DEFAULT_BG = "#0f1b2d"/.test(INDEX));
 ok("hex normaliseras innan den når Bubble/HTML", /function _admHex\(v\)/.test(INDEX));
 // Utan självläkande patch blockerar ETT okänt fält hela sparningen av inbjudan.
 ok("inbjudan sparas med självläkande patch", /await safePatch\(ADM_INVITATION, b\.id, f\)/.test(INDEX));
 ok("safePatch läser felet ur detail.bodyJson/bodyText (inte detail.body)",
    /const j = d\.bodyJson \|\| null;/.test(INDEX) && /d\.bodyText/.test(INDEX));
+// Ett droppat fält MÅSTE synas. Annars ser sparningen lyckad ut och man
+// felsöker mejlmallen i stället för det saknade Bubble-fältet.
+ok("create läser tillbaka bg_color och rapporterar bg_color_saved",
+   /_verifyFieldSaved\(id, "bg_color", exact\.bg_color\)/.test(INDEX) && /bg_color_saved: bgSaved/.test(INDEX));
+ok("update läser tillbaka bg_color och rapporterar bg_color_saved",
+   /_verifyFieldSaved\(b\.id, "bg_color", f\.bg_color\)/.test(INDEX));
+ok("verifieringen skiljer 'okänt' (null) från 'saknas' (false)",
+   /return null;\s*\/\/ okänt ≠ saknat fält/.test(INDEX));
 
 // ── 6. Landningssidan ─────────────────────────────────────────────────────
 sec("invite.html");
@@ -167,6 +201,17 @@ ok("knapptexten härleds ur ACCENTEN", /root\.style\.setProperty\("--accent-ink"
 ok("accenten sätts fortfarande separat", /root\.style\.setProperty\("--accent", accent\);/.test(LANDING));
 ok("gradienterna ersätts av platt färg när bakgrund valts", /root\.style\.background = p\.pageBg;/.test(LANDING));
 
+sec("invite.html — accentens ytor");
+ok("--accent-strong sätts från servern, med accenten som fallback",
+   /setProperty\("--accent-strong", \(brand && brand\.accent_strong\) \|\| accent\)/.test(LANDING));
+ok("topplist i RÅ accent", /\.mira-portal::before \{[^}]*background: var\(--accent\)/.test(LANDING));
+ok("rubriken i läsbar accent", /h1\.mp-title \{[^}]*color: var\(--accent-strong\)/.test(LANDING));
+ok("faktaetiketterna i läsbar accent", /\.mp-fact dt \{[^}]*color: var\(--accent-strong\)/.test(LANDING));
+ok("faktablockets vänsterkant i RÅ accent", /\.mp-facts \{[^}]*border-left: 3px solid var\(--accent\)/.test(LANDING));
+ok("svarskortets överkant i RÅ accent", /\.mp-card \{[^}]*border-top: 3px solid var\(--accent\)/.test(LANDING));
+ok("svarskortets rubrik i läsbar accent", /\.mp-card h2 \{[^}]*color: var\(--accent-strong\)/.test(LANDING));
+ok("knappens text följer fortfarande --accent-ink", /background: var\(--accent\); color: var\(--accent-ink\)/.test(LANDING));
+
 // ── 7. Admin ──────────────────────────────────────────────────────────────
 sec("mira-kommunikation-admin.html");
 ok("bakgrundsfältet finns", /id="iv-bg-hex"/.test(ADMIN) && /id="iv-bg"/.test(ADMIN));
@@ -174,6 +219,9 @@ ok("hex-fältet är sanningen vid sparning (tomt = standard)", /bg_color:g\('iv-
 ok("värdet laddas tillbaka vid redigering", /g\('iv-bg-hex'\)\.value=inv\.bg_color\|\|''/.test(ADMIN));
 ok("Rensa-knappen nollar fältet", /iv-bg-clear'\)\.addEventListener\('click'/.test(ADMIN));
 ok("accentfältet är orört", /id="iv-accent-hex"/.test(ADMIN) && /accent_color:g\('iv-accent'\)\.value/.test(ADMIN));
+ok("admin varnar synligt när bg_color droppats av Bubble",
+   /function bgWarnIfMissing\(p, j\)/.test(ADMIN) && /bgWarnIfMissing\('iv', j\);/.test(ADMIN)
+   && /bg_color" saknas på datatypen Invitation/.test(ADMIN));
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

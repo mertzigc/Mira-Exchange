@@ -210,8 +210,36 @@ nyhet/undersökning gör det (samma `wrapLayout`), men bakgrundsväljaren finns 
 i inbjudnings-editorn. Vill man ha den i alla tre: lägg till `nv-bg`/`sv-bg`
 efter samma mönster som `iv-bg` och variabel-ifiera undersökningssidan.
 
-**Röktest:** `node invite_mall_smoke.mjs` (101 gröna). Mutationstestad: mot koden
-före ändringen faller 83 av 103.
+### Accentens ytor (2026-08-26, andra passet)
+
+Accenten syntes bara i eyebrow-raden. Den bär nu, i BÅDA ytorna:
+
+| Plats | Färg | Varför |
+|---|---|---|
+| Topplist (4 px) | rå accent | yta — bär ingen text |
+| Faktablockets vänsterkant (3 px) | rå accent | yta |
+| Svarskortets överkant (3 px) | rå accent | yta |
+| Rubrik (h1) | `readableAccent` | text |
+| Faktaetiketter (NÄR/PLATS/…) | `readableAccent` | text |
+| "Ditt svar"-rubriken | `readableAccent` | text (bara landningssidan) |
+| Knappen | rå accent + `contrastInk` | yta + text |
+
+**`readableAccent(accent, bg, target=4.5)`** behåller accentens kulör men flyttar
+den mot bakgrundens bläck tills den når 4.5:1 — och returnerar den **oförändrad**
+när den redan räcker, vilket är normalfallet. Turkos `#2bb6a3` på vitt blir
+`#217c72`; vinrött `#551e23` på sand lämnas exakt som kunden valt.
+Ytor justeras ALDRIG — bara text.
+
+Servern skickar `brand.accent_strong` i `/invite/config`, räknad mot den faktiska
+bakgrunden (`bg_color` eller sidans `INVITE_DEFAULT_BG` = `#0f1b2d`). Räknas den
+mot fel underlag blir rubriken oläsbar på standardbakgrunden.
+
+I mejlet är accent-tonen **opt-in** via `accentTone` i `wrapLayout` (default
+`false`) — bara invite/news/survey har den på, de 17 övriga mallarna är orörda.
+
+**Röktest:** `node invite_mall_smoke.mjs` (126 gröna). Mutationstestad mot HEAD:
+25 av 127 faller, ingen krasch. Kör mutationstestet på en KOPIA
+(`git show HEAD:fil > kopia`), aldrig med `git checkout` i arbetsträdet.
 
 ---
 

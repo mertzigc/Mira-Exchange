@@ -19,7 +19,7 @@
 
 import nodeCron from "node-cron";
 import { normBlocks, renderBlocksEmail } from "./content_blocks.js";
-import { mailPalette, MAIL_PAL_DARK, contrastInk } from "./mail_theme.js";
+import { mailPalette, MAIL_PAL_DARK, contrastInk, readableAccent } from "./mail_theme.js";
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL       = process.env.EMAIL_FROM      || "support@mira-fm.com";
@@ -786,7 +786,7 @@ function wrapLayout({
   accent = "#db6923", tag, headline, body,
   details, ctaLabel, ctaUrl, miraNote = null,
   subhead = null, socialBlock = null, footer = null,
-  ctaAlign = "left", pal = MAIL_PAL_DARK
+  ctaAlign = "left", pal = MAIL_PAL_DARK, accentTone = false
 }) {
   // E-postklienter (Outlook m.fl.) laddar inte protokoll-relativa "//"-URL:er
   const _abs = u => { u = String(u || "").trim(); return u.startsWith("//") ? "https:" + u : u; };
@@ -863,7 +863,7 @@ function wrapLayout({
     <tr><td style="padding:24px 36px 0;">
       ${tagBlock}
       <h1 style="margin:0 0 12px;font-size:22px;font-weight:600;
-                 color:${pal.headline};line-height:1.25;letter-spacing:-.3px;">
+                 color:${accentTone ? readableAccent(accent, pal.cardBg) : pal.headline};line-height:1.25;letter-spacing:-.3px;">
         ${esc(headline)}
       </h1>
       ${subhead ? `<p style="margin:0 0 14px;font-size:11px;color:${pal.muted};letter-spacing:.06em;text-transform:uppercase;font-weight:600;">${esc(subhead)}</p>` : ""}
@@ -877,7 +877,7 @@ function wrapLayout({
     ${details ? `
     <tr><td style="padding:20px 36px 0;">
       <table width="100%" cellpadding="0" cellspacing="0" border="0"
-             style="background:${pal.rowA};border:1px solid ${pal.border};border-radius:10px;overflow:hidden;">
+             style="background:${pal.rowA};border:1px solid ${pal.border};${accentTone ? `border-left:3px solid ${accent};` : ""}border-radius:10px;overflow:hidden;">
         ${details}
       </table>
     </td></tr>` : ""}
@@ -961,14 +961,17 @@ function buildSocialBlock(linkedin, facebook, instagram) {
 // Skicka in: [[label, value], false, null, …]
 // Falskt/null filtreras bort automatiskt
 // ────────────────────────────────────────────────────────────
-function detailRows(pairs, pal = MAIL_PAL_DARK) {
+function detailRows(pairs, pal = MAIL_PAL_DARK, accent = null) {
   const valid = pairs.filter(Boolean);
   if (!valid.length) return "";
+  // Etiketterna i accentens kulör när mallen bett om det — men aldrig svagare
+  // än läsbart mot radens bakgrund.
+  const labelColor = accent ? readableAccent(accent, pal.rowA) : pal.label;
 
   return valid.map(([label, value], i) => {
     const bg = i % 2 === 0 ? pal.rowA : pal.rowB;
     return `<tr style="background:${bg};">
-      <td style="padding:10px 16px;font-size:11px;font-weight:600;color:${pal.label};
+      <td style="padding:10px 16px;font-size:11px;font-weight:600;color:${labelColor};
                  text-transform:uppercase;letter-spacing:.07em;white-space:nowrap;
                  border-bottom:1px solid ${pal.rowLine};width:38%;">
         ${esc(label)}
@@ -1256,6 +1259,7 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
 
   const html = wrapLayout({
     toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent, pal,
+    accentTone: true,
     tag: "Inbjudan",
     headline: title,
     body: '<p style="font-size:14px;color:' + pal.body + ';line-height:1.65;">' + intro + '</p>' + blocks,
@@ -1264,7 +1268,7 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
       x.event_location && ["Plats", esc(x.event_location)],
       x.event_address && ["Adress", esc(x.event_address)],
       deadline && ["Sista anm\u00e4lan", esc(deadline)]
-    ], pal),
+    ], pal, accent),
     ctaLabel: ctaLabel || "Svara p\u00e5 inbjudan",
     ctaUrl: x.invite_link || null,
     ctaAlign: "center",
@@ -1304,6 +1308,7 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
   const html = wrapLayout({
     // toName tomt = ingen "Hej Namn,"-hälsning för nyhetsutskick
     toName: "", logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent, pal,
+    accentTone: true,
     tag: "Nyhetsutskick",
     headline: title,
     subhead,
@@ -1340,6 +1345,7 @@ async function tmplSurveyInvitation(e, extra, toName, ctaLabel, item) {
 
   const html = wrapLayout({
     toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: x.image_url || "", accent, pal,
+    accentTone: true,
     tag: "Undersökning",
     headline: title,
     body: '<p style="font-size:14px;color:' + pal.body + ';line-height:1.65;margin:0 0 14px;">' + body + '</p>' + blocks,
