@@ -52,10 +52,13 @@ const run = async () => {
 
   // ── aktivitet: Kundmöte + genomfört + anteckning ──
   // ⚠️ genomfort:true kräver nu ett nästa steg (grinden 2026-08-21).
-  const a2 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Möte", fas: "Fas 2", motesdatum: "2026-08-10", genomfort: true, motesanteckning: "Bra möte", nasta_steg: "avslutat" } });
-  const c2 = created.filter((c) => c.t === "activitet_crm")[1];
-  ok("Kundmöte: Kundmöte(fas)+Datum_bokning ISO", c2.payload["Kundmöte"] === "Fas 2" && /^2026-08-10T/.test(c2.payload["Datum_bokning"]));
-  ok("Kundmöte: genomfört=true + mötesantecking", c2.payload["genomfört"] === true && c2.payload["mötesantecking"] === "Bra möte");
+  const a2 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Möte", fas: "Fas 2", motesdatum: "2026-08-10", genomfort: true, motesanteckning: "Bra möte", nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" } });
+  // ⚠️ (x || {}) — en assertion mot ett objekt som kan saknas måste FALLA, inte
+  // krascha. En krasch dödar mutationstestet och döljer allt som kommer efter.
+  const c2 = (created.filter((c) => c.t === "activitet_crm")[1] || {}).payload || {};
+  ok("Kundmöte: Kundmöte(fas)+Datum_bokning ISO", c2["Kundmöte"] === "Fas 2" && /^2026-08-10T/.test(c2["Datum_bokning"] || ""));
+  ok("Kundmöte: genomfört=true + mötesantecking", c2["genomfört"] === true && c2["mötesantecking"] === "Bra möte");
+  ok("Kundmöte: motiveringen skrivs till nasta_steg_kommentar", c2["nasta_steg_kommentar"] === "Kunden valde konkurrent");
 
   // ── aktivitet: tom → 400 ──
   const a3 = await call("post", "/admin/affar/aktivitet/create", { body: {} });
@@ -164,7 +167,7 @@ const run = async () => {
       return deps.bubbleCreate(t, payload);
     },
   }));
-  const nf = await call2("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Utan fält", genomfort: true, nasta_steg: "avslutat" } });
+  const nf = await call2("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Utan fält", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" } });
   ok("saknat Bubble-fält: aktiviteten sparas ändå + nasta_steg_field_missing:true",
      nf.body.ok === true && nf.body.nasta_steg_field_missing === true && noFieldCreates === 1);
   const nfRec = created.filter((c) => c.t === "activitet_crm").pop();
@@ -193,6 +196,41 @@ const run = async () => {
   });
   ok("option set som {display}-objekt: ingen falsk 'fältet saknas'-varning",
      osRes.body.ok === true && osRes.body.nasta_steg_field_missing === false);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MOTIVERING VID AVSLUTAT SPÅR (2026-08-26) — affärsvyns aktivitet
+  // ⚠️ Kravet gäller i ALLA TRE skrivarna; grindades bara mötestratten hade man
+  // kunnat avsluta spåret utan motivering härifrån i stället.
+  // ⚠️ Bubble-fält: `nasta_steg_kommentar` (TEXT, inte option set).
+  // ══════════════════════════════════════════════════════════════════════════
+  const av1 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Avslutas", genomfort: true, nasta_steg: "avslutat" } });
+  ok("affärsvyn: avslutat utan motivering → 400 avslut_kommentar_krävs",
+     av1.code === 400 && (av1.body || {}).error === "avslut_kommentar_krävs" && (av1.body || {}).min === 3);
+  const avBefore = created.filter((c) => c.t === "activitet_crm").length;
+  const av2 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Avslutas", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "ok" } });
+  ok("affärsvyn: för kort motivering → 400 och INGEN rad skapad",
+     av2.code === 400 && created.filter((c) => c.t === "activitet_crm").length === avBefore);
+  const av3 = await call("post", "/admin/affar/aktivitet/create", { body: { activity_type: "Kundmöte", beskrivning: "Avslutas", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "  Fel tajming  " } });
+  const av3p = (created.filter((c) => c.t === "activitet_crm").pop() || {}).payload || {};
+  ok("affärsvyn: med motivering → sparas trimmad + exponeras på raden",
+     av3.body.ok === true && av3p["nasta_steg_kommentar"] === "Fel tajming" &&
+     ((av3.body || {}).row || {}).nasta_steg_kommentar === "Fel tajming");
+  ok("affärsvyn: båda saknat-flaggorna är false när fälten finns",
+     (av3.body || {}).nasta_steg_field_missing === false && (av3.body || {}).avslut_kommentar_field_missing === false);
+  // ⚠️ Får inte hänga på att sparningen rör avklarandet.
+  const av4 = await call("post", "/admin/affar/aktivitet/:id/patch", { params: { id: "aktG" }, body: { nasta_steg: "avslutat" } });
+  ok("affärsvyn: patch som BARA sätter avslutat grindas också",
+     av4.code === 400 && (av4.body || {}).error === "avslut_kommentar_krävs");
+
+  // ── FRONTEND (mira-affar-samlad.html) ─────────────────────────────────────
+  ok("frontend affär: avsluta-formuläret har ett obligatoriskt varför-fält",
+     /data-nsform="avslutat"/.test(af) && /data-nf="x_varfor"/.test(af) && /Varför avslutas spåret\? \*/.test(af));
+  ok("frontend affär: kort motivering blockerar sparningen",
+     /if\(why\.length<3\) return \{ error:/.test(af));
+  ok("frontend affär: motiveringen skickas till servern",
+     /if\(ns\.kommentar\) payload\.nasta_steg_kommentar=ns\.kommentar;/.test(af));
+  ok("frontend affär: saknat kommentarsfält rapporteras SEPARAT från beslutet",
+     /avslut_kommentar_field_missing/.test(af) && /MOTIVERINGEN lagrades inte/.test(af));
 
   ok("frontend: grinden renderas i aktivitetsformuläret",
      /function nsHtml/.test(af) && /data-ns="aktivitet"/.test(af) && /data-ns="todo"/.test(af) && /data-ns="avslutat"/.test(af));

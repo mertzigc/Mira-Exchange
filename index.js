@@ -20829,7 +20829,10 @@ registerProduktionRoutes(app, {
 });
 
 registerSaljRoutes(app, {
-  bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleId,
+  // bubbleDelete: rullar tillbaka en skapad todo om idempotens-markören inte går
+  // att skriva (/salj/anteckning-todo/cron). Utan rollback lämnas en föräldralös
+  // todo kvar vid varje avbruten körning.
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleDelete, bubbleId,
   companyMap: sharedCompanyMap,   // delad förvärmd CC-cache
   planningAuthed: _planningAuthed,
   planningCors: _planningCors,

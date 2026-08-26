@@ -18,7 +18,7 @@
 
 export function registerSaljRoutes(app, deps) {
   const {
-    bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleId,
+    bubbleFind, bubbleFindAll, bubbleGet, bubbleCreate, bubblePatch, bubbleDelete, bubbleId,
     planningAuthed, planningCors, publicRateLimited, clientIp,
   } = deps;
 
@@ -46,7 +46,9 @@ export function registerSaljRoutes(app, deps) {
   let _uCache = { map: null, ts: 0 };
   async function userMap() {
     if (_uCache.map && (Date.now() - _uCache.ts) < CC_TTL) return _uCache.map;
-    const all = await bubbleFindAll("User", {}).catch(() => []);
+    // ⚠️ INGET .catch(() => []) — en fallen User-fråga hade blivit "0 kundansvariga"
+    // i filtret i st.f. ett fel. Tom data får aldrig bli ett svar.
+    const all = await bubbleFindAll("User", {});
     const m = new Map();
     for (const u of all) {
       const id = bubbleId(u); if (!id) continue;
@@ -60,7 +62,7 @@ export function registerSaljRoutes(app, deps) {
   async function companyMap() {
     if (deps.companyMap) return deps.companyMap();   // delad förvärmd CC-cache
     if (_ccCache.map && (Date.now() - _ccCache.ts) < CC_TTL) return _ccCache.map;
-    const all = await bubbleFindAll("ClientCompany", {}).catch(() => []);
+    const all = await bubbleFindAll("ClientCompany", {});
     const m = new Map();
     for (const c of all) { const id = bubbleId(c); if (id) m.set(id, _str(c.Name_company) || _str(c.name)); }
     _ccCache = { map: m, ts: Date.now() };
@@ -70,7 +72,7 @@ export function registerSaljRoutes(app, deps) {
   let _dCache = { map: null, ts: 0 };
   async function dealMap() {
     if (_dCache.map && (Date.now() - _dCache.ts) < CC_TTL) return _dCache.map;
-    const all = await bubbleFindAll("deal", {}).catch(() => []);
+    const all = await bubbleFindAll("deal", {});
     const m = new Map();
     for (const d of all) { const id = bubbleId(d); if (id) m.set(id, { titel: _str(d.titel) || _str(d.Namn) || _str(d.name) || "(namnlös affär)", value: _num(d.value_brutto), status: _str(d.Status) }); }
     _dCache = { map: m, ts: Date.now() };
@@ -81,7 +83,7 @@ export function registerSaljRoutes(app, deps) {
   // Alla Kundmöte-aktiviteter (activity_type=Kundmöte). Datumfiltrering client-side
   // (Datum_bokning = datum-sträng; numerisk constraint saknas → filtrera i JS).
   async function loadKundmoten() {
-    return bubbleFindAll("activitet_crm", { constraints: [{ key: "activity_type", constraint_type: "equals", value: "Kundmöte" }] }).catch(() => []);
+    return bubbleFindAll("activitet_crm", { constraints: [{ key: "activity_type", constraint_type: "equals", value: "Kundmöte" }] });
   }
   const aktRep = (r) => _ref(r.writer) || _ref(r["Created By"]);   // ansvarig säljare
 
@@ -111,6 +113,11 @@ export function registerSaljRoutes(app, deps) {
       // Nästa steg-beslutet. Frontenden grindar bara när det saknas (annars skulle
       // varje redigering av ett avklarat möte kräva ett nytt beslut).
       nasta_steg: _osStr(r["aktivitet_nasta_steg"]),
+      // Motiveringen bakom ett avslutat spår. Ren text (inget option set) — men
+      // fältet kan saknas i Bubble, då blir den tom och UI:t säger det rakt ut.
+      nasta_steg_kommentar: _str(r["nasta_steg_kommentar"]),
+      // Markör: cronen har redan skapat en "lägg in mötesanteckning"-todo för raden.
+      anteckning_todo_id: _ref(r["anteckning_todo"]),
       meddelande: _str(r.beskrivning),
       motesanteckning: _str(r["mötesantecking"]),   // Bubble-fält misstavat (mötesantecking)
       deal_id: dId || null,
@@ -138,6 +145,15 @@ export function registerSaljRoutes(app, deps) {
 
       const [um, cm, dm] = [await userMap(), await companyMap(), await dealMap()];
       let rows = (await loadKundmoten()).map((r) => nMote(r, um, cm, dm));
+
+      // ⚠️ PERSONLISTAN BYGGS UR HELA DATASETET, inte ur den filtrerade mängden.
+      // Byggdes den efteråt (som fram till 2026-08-26) kollapsade dropdownen till
+      // den valda personen så fort man filtrerade — enda vägen tillbaka var "Rensa".
+      // Akut nu när vyn ÖPPNAR med "kundansvarig = jag själv": man hade låsts inne
+      // på sig själv utan synlig väg till en kollega.
+      const persSeen = new Map();
+      for (const r of rows) if (r.ansvarig_id && !persSeen.has(r.ansvarig_id)) persSeen.set(r.ansvarig_id, r.ansvarig);
+
       if (fromTs != null) rows = rows.filter((r) => r.datum_ts && r.datum_ts >= fromTs);
       if (toTs != null) rows = rows.filter((r) => r.datum_ts && r.datum_ts < toTs);
       // ⚠️ Ett möte UTAN skapad-datum får inte tyst passera ett skapad-filter — då
@@ -159,9 +175,7 @@ export function registerSaljRoutes(app, deps) {
       const affarsvarde = rows.reduce((s, r) => s + (r.blev_affar ? r.deal_value : 0), 0);
       const per_fas = {}; for (const g of groups) per_fas[g.fas] = g.moten.length;
 
-      // personer (för filter-dropdown): unika ansvariga i datasetet
-      const persSeen = new Map();
-      for (const r of rows) if (r.ansvarig_id && !persSeen.has(r.ansvarig_id)) persSeen.set(r.ansvarig_id, r.ansvarig);
+      // personer (för filter-dropdown) — härledd ovan, FÖRE filtren.
       const personer = [...persSeen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "sv"));
 
       return res.json({
@@ -203,7 +217,7 @@ export function registerSaljRoutes(app, deps) {
       const um = await userMap(), dm = await dealMap();
 
       // SalesBudgets för månaden: Startdatum inom månaden (en budget per User+månad).
-      const allBudgets = await bubbleFindAll("SalesBudget", {}).catch(() => []);
+      const allBudgets = await bubbleFindAll("SalesBudget", {});
       const monthBudgets = allBudgets.filter((b) => { const t = _ts(b.Startdatum); return t >= mb.start && t < mb.end; });
 
       // Kundmöten i månaden (utfall) → gruppera per ansvarig
@@ -324,6 +338,12 @@ export function registerSaljRoutes(app, deps) {
   // → `_osStr`. Se [[reference-bubble-option-sets]].
   const NASTA_STEG = ["aktivitet", "todo", "avslutat"];
   const NASTA_FIELD = "aktivitet_nasta_steg";
+  // ⚠️ MOTIVERINGEN VID AVSLUTAT SPÅR (2026-08-26). Bubble-fält: `nasta_steg_kommentar`
+  // (TEXT, inte option set — läses därför med _str, inte _osStr). "Avslutat" är det
+  // enda beslutet som inte lämnar något spår efter sig i systemet: ingen aktivitet,
+  // ingen todo. Utan motivering försvinner varför:et med personen som fattade det.
+  const KOMM_FIELD = "nasta_steg_kommentar";
+  const KOMM_MIN = 3;
   const _osStr = (v) => {
     if (v == null) return "";
     if (typeof v === "object") return _str(v.display || v.Display || "");
@@ -335,15 +355,25 @@ export function registerSaljRoutes(app, deps) {
     const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
     return body.indexOf("Unrecognized field: " + field) > -1;
   }
-  async function _writeOptional(fn, payload, field) {
-    if (payload[field] === undefined) return { value: await fn(payload), missing: false };
-    try { return { value: await fn(payload), missing: false }; }
-    catch (e) {
-      if (!_isUnknownField(e, field)) throw e;
-      const q = Object.assign({}, payload); delete q[field];
-      console.warn("[nasta_steg] fältet saknas på activitet_crm i Bubble — mötet sparas utan det");
-      return { value: await fn(q), missing: true };
+  // ⚠️ TVÅ valfria Bubble-fält nu (beslutet OCH motiveringen). `bubblePatch` avvisar
+  // HELA patchen vid ETT okänt fält — droppas de inte ETT i taget hade ett saknat
+  // kommentarsfält tagit med sig beslutet, anteckningen och allt annat i fallet.
+  // Matchningen är fortsatt SMAL (400 + exakt fältnamnet); andra okända fält och 5xx
+  // måste braka. Returnerar `missing` som ett objekt: { <fält>: true }.
+  async function _writeOptional(fn, payload, fields) {
+    const list = (Array.isArray(fields) ? fields : [fields]).filter((f) => payload[f] !== undefined);
+    const missing = {};
+    const q = Object.assign({}, payload);
+    for (let i = 0; i <= list.length; i++) {
+      try { return { value: await fn(q), missing }; }
+      catch (e) {
+        const hit = list.find((f) => q[f] !== undefined && _isUnknownField(e, f));
+        if (!hit) throw e;
+        missing[hit] = true; delete q[hit];
+        console.warn("[nasta_steg] fältet " + hit + " saknas på activitet_crm i Bubble — raden sparas utan det");
+      }
     }
+    throw new Error("write_failed_after_field_drop");
   }
   // ⚠️ Grinden gäller sparningar som handlar om AVKLARANDET — d.v.s. som rör
   // `genomfört` eller mötesanteckningen. En patch som bara ändrar beskrivning eller
@@ -353,6 +383,16 @@ export function registerSaljRoutes(app, deps) {
     const incoming = _str(p[NASTA_FIELD]).trim();
     if (incoming && NASTA_STEG.indexOf(incoming) < 0) {
       return { error: "okänt_nasta_steg", value: incoming, allowed: NASTA_STEG };
+    }
+    // ⚠️ Kravet hänger på att `avslutat` SKRIVS — inte på om sparningen råkar röra
+    // avklarandet. Låg kontrollen efter NASTA_TRIGGERS-utgången nedan hade en patch
+    // som BARA sätter nasta_steg=avslutat sluppit igenom utan motivering.
+    if (incoming === "avslutat") {
+      const komm = _str(p[KOMM_FIELD]).trim();
+      if (komm.length < KOMM_MIN) {
+        return { error: "avslut_kommentar_krävs", min: KOMM_MIN,
+                 hint: "Skriv varför spåret avslutas — minst " + KOMM_MIN + " tecken." };
+      }
     }
     if (!NASTA_TRIGGERS.some((k) => p[k] !== undefined)) return null;
     const curDone = !!(cur && cur["genomfört"] === true);
@@ -394,22 +434,156 @@ export function registerSaljRoutes(app, deps) {
       if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
       if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
       if (b.nasta_steg      !== undefined) p[NASTA_FIELD]      = _str(b.nasta_steg).trim() || null;
+      if (b.nasta_steg_kommentar !== undefined) p[KOMM_FIELD]  = _str(b.nasta_steg_kommentar).trim() || null;
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
       // `akt` är redan hämtad ovan (ägarkontrollen) → ingen extra Bubble-läsning.
       const gErr = _nastaStegError(p, akt);
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
-      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
+      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, [NASTA_FIELD, KOMM_FIELD]);
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
       // Läs tillbaka OS-medvetet: null = kunde inte verifieras, inte "saknas".
       const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
+      // ⚠️ Motiveringen är TEXT → _str, inte _osStr. Läses den med _osStr blir en sparad
+      // sträng jämförd som objekt och verifieringen ljuger.
+      const kVerified = fresh ? (_str(fresh[KOMM_FIELD]) === _str(p[KOMM_FIELD] || "")) : null;
       const um = await userMap(), cm = await companyMap(), dm = await dealMap();
       return res.json({ ok: true, id, mote: fresh ? nMote(fresh, um, cm, dm) : null,
-                        nasta_steg_field_missing: pw.missing || (verified === false && !!p[NASTA_FIELD]) });
+                        nasta_steg_field_missing: !!pw.missing[NASTA_FIELD] || (verified === false && !!p[NASTA_FIELD]),
+                        // ⚠️ Egen flagga: motiveringen kan gå förlorad utan att beslutet gör det.
+                        // Slås de ihop säger UI:t "beslutet sparades inte" när det gjorde det.
+                        avslut_kommentar_field_missing: !!pw.missing[KOMM_FIELD] || (kVerified === false && !!p[KOMM_FIELD]) });
     } catch (e) {
       console.error("[/admin/salj/mote/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 
-  console.log("[salj_api] routes registered (/admin/salj/*)");
+
+  // ── POST /salj/anteckning-todo/cron — automatisk todo för passerade möten ────
+  // MÅL: ingen ska missa att lägga in mötesanteckningar. Ett Kundmöte vars datum
+  // passerat, som inte är avbockat och saknar anteckning, får en Todo tilldelad
+  // mötets ÄGARE (`writer`).
+  //
+  // ⚠️ LIGGER MEDVETET UTANFÖR `/admin/salj`-prefixet. Det prefixet är undantaget
+  // från index.js globala `requireApiKey` och grindas bara av PLANNING_ADMIN_TOKEN
+  // — som ligger i KLARTEXT i Bubble-HTML-blocket. En skrivande massjobbs-endpoint
+  // bakom den token hade kunnat triggas från vilken webbläsare som helst. Här
+  // gäller `x-api-key` (MIRA_RENDER_API_KEY), samma grind som /fortnox/cron/v1.
+  //
+  // ⚠️ IDEMPOTENS hänger HELT på Bubble-fältet `anteckning_todo` (Todo-ref) på
+  // activitet_crm. Saknas det skapas samma todo om igen VARJE natt, i allas
+  // att-göra-listor. Därför fail-closed: går markören inte att skriva rullas todon
+  // tillbaka och hela körningen avbryts med 500 — en högljudd stopp är oändligt
+  // mycket bättre än N dubbletter per natt.
+  //
+  // Query: ?dry=1 (skriv inget) · ?days=14 (hur långt bak) · ?grace=1 (dygn efter
+  // mötet innan vi tjatar) · ?limit=50 (tak per körning, aldrig tyst avhugget).
+  const TODO_FIELD = "anteckning_todo";
+  const TODO_DAYS = 14, TODO_GRACE = 1, TODO_LIMIT = 50;
+  app.post("/salj/anteckning-todo/cron", async (req, res) => {
+    try {
+      if (!bubbleCreate || !bubblePatch) return res.status(501).json({ ok: false, error: "write_not_wired" });
+      const q = req.query || {};
+      const dry = _str(q.dry) === "1";
+      const pInt = (v, d, min, max) => { const n = parseInt(_str(v), 10); return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : d; };
+      const days  = pInt(q.days,  TODO_DAYS,  1, 365);
+      const grace = pInt(q.grace, TODO_GRACE, 0, 30);
+      const limit = pInt(q.limit, TODO_LIMIT, 1, 500);
+
+      const now = Date.now();
+      const endTs   = now - grace * 86400000;   // mötet måste ligga FÖRE denna
+      const startTs = now - days  * 86400000;   // ...men inte längre bak än denna
+      const iso = (t) => new Date(t).toISOString();
+
+      // ⚠️ FÖNSTRET ÄR ETT BACKFILL-SKYDD, inte en optimering. Utan bakre gräns hade
+      // första körningen skapat en todo för VARJE gammalt oavbockat möte i basen.
+      // ⚠️ Constraints = SLUG-form (`datum_bokning_date`), verifierad i index.js.
+      // `activity_type` constraintas exakt som loadKundmoten redan gör i skarp drift.
+      // ⚠️ Bubble saknar >= och <= — inklusivt intervall görs med exklusiva gränser.
+      // ⚠️ INGET .catch(() => []) — en fallen fråga får aldrig bli "inga eftersläpande möten".
+      const rows = await bubbleFindAll("activitet_crm", { constraints: [
+        { key: "activity_type",      constraint_type: "equals",       value: "Kundmöte" },
+        { key: "datum_bokning_date", constraint_type: "greater than", value: iso(startTs) },
+        { key: "datum_bokning_date", constraint_type: "less than",    value: iso(endTs) },
+      ] });
+
+      const kandidater = [];
+      for (const r of rows) {
+        if (r["genomfört"] === true) continue;                       // redan avbockat
+        if (_str(r["mötesantecking"]).trim()) continue;              // anteckning finns (OBS stavningen)
+        if (_ref(r[TODO_FIELD])) continue;                           // todo redan skapad
+        kandidater.push(r);
+      }
+      // ⚠️ `writer` är enda användbara ägarfältet — "Created By" är API-nyckelns user
+      // och en todo tilldelad den når INGEN. Rader utan writer hoppas över och
+      // RAPPORTERAS; ett tyst bortfall hade sett ut som "inga eftersläpande möten".
+      const utan_agare = kandidater.filter((r) => !_ref(r.writer));
+      const kan = kandidater.filter((r) => _ref(r.writer));
+      const capped = kan.length > limit;
+      const batch = kan.slice(0, limit);
+
+      const cm = await companyMap();
+      const plan = batch.map((r) => {
+        const co = cname(cm, r.company), dag = _day(r["Datum_bokning"]);
+        return {
+          aktivitet_id: bubbleId(r), user_id: _ref(r.writer), company_id: _ref(r.company) || null,
+          company: co, motesdatum: dag,
+          titel: "Mötesanteckning saknas — " + (co || "(företag saknas)"),
+        };
+      });
+      if (dry) {
+        return res.json({ ok: true, dry: true, fonster: { fran: iso(startTs), till: iso(endTs), days, grace },
+                          lasta: rows.length, kandidater: kandidater.length, skulle_skapas: plan.length,
+                          utan_agare: utan_agare.length, utan_agare_ids: utan_agare.map(bubbleId).slice(0, 20),
+                          capped, kvar: capped ? (kan.length - limit) : 0, limit, rader: plan });
+      }
+
+      const skapade = [];
+      for (const item of plan) {
+        const tp = {
+          "Titel": item.titel,
+          "Beskrivning": "Kundmötet " + (item.motesdatum || "(utan datum)") + (item.company ? (" med " + item.company) : "") +
+                         " har passerat utan mötesanteckning. Fyll i anteckningen och sätt nästa steg i mötestratten.",
+          "Status": "Pågående",                        // status_reminder-OS, verifierat värde
+          // ⚠️ MINST ETT FRAMTIDA DATUM krävs — kundkortets levande-panel räknar
+          // framtida start ELLER slut. Utan det hade todon varit osynlig som planerad.
+          "Starttid": iso(now),
+          "Sluttid": iso(now + 2 * 86400000),
+          "user": item.user_id,                        // Tilldela = mötets ägare
+        };
+        if (item.company_id) tp["Företag"] = item.company_id;
+        // ⚠️ Kategori sätts INTE: den går inte att härleda ur mötet, och ett gissat
+        // Category-värde avvisas av Bubble (400) eller ljuger i datan.
+        const todoId = await bubbleCreate("Todo", tp);
+        if (!todoId) return res.status(500).json({ ok: false, error: "todo_utan_id", aktivitet_id: item.aktivitet_id, skapade });
+        try {
+          await bubblePatch("activitet_crm", item.aktivitet_id, { [TODO_FIELD]: todoId });
+        } catch (e) {
+          let rollback = "bubbleDelete ej inkopplad — todon ligger kvar och måste tas bort manuellt";
+          if (bubbleDelete) {
+            try { await bubbleDelete("Todo", todoId); rollback = "todon raderad"; }
+            catch (de) { rollback = "todon kunde INTE raderas: " + (de && de.message); }
+          }
+          console.error("[salj/anteckning-todo] markören gick inte att skriva — avbryter", e && e.message);
+          return res.status(500).json({
+            ok: false, error: "anteckning_todo_markor_misslyckades", todo_id: todoId,
+            aktivitet_id: item.aktivitet_id, rollback, skapade,
+            hint: "Fältet `anteckning_todo` (typ Todo) saknas troligen på activitet_crm i Bubble. Utan markören skapas samma todo varje natt — körningen avbröts med flit.",
+            detalj: (e && e.message) || String(e),
+          });
+        }
+        skapade.push({ todo_id: todoId, aktivitet_id: item.aktivitet_id, user_id: item.user_id, titel: item.titel });
+      }
+
+      return res.json({ ok: true, dry: false, fonster: { fran: iso(startTs), till: iso(endTs), days, grace },
+                        lasta: rows.length, kandidater: kandidater.length, skapade: skapade.length,
+                        utan_agare: utan_agare.length, utan_agare_ids: utan_agare.map(bubbleId).slice(0, 20),
+                        capped, kvar: capped ? (kan.length - limit) : 0, limit, rader: skapade });
+    } catch (e) {
+      console.error("[/salj/anteckning-todo/cron]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  console.log("[salj_api] routes registered (/admin/salj/* + /salj/anteckning-todo/cron)");
 }

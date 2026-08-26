@@ -778,6 +778,142 @@ och den felankrade dropdownen.
 **Deploy:** `companies_api.js` + `index.js` (openPrefix) + **nytt Bubble-block
 `mira-personer.html`** på Personer-sidan (ersätter den native tabellen).
 
+### Mötestratten: motivering vid avslut · defaultvy · anteckningstodo — BYGGT 2026-08-26, EJ DEPLOYAT
+
+Tre saker i mötestratten (`salj_api.js` / `mira-motesbokning.html`). Mål 1 spred sig
+med flit till alla tre skrivarna av `genomfört`.
+
+#### ⚠️ TVÅ NYA BUBBLE-FÄLT KRÄVS FÖRE DEPLOY (Christian)
+
+Båda på `activitet_crm`:
+
+| Fält | Typ | Används av |
+|---|---|---|
+| `nasta_steg_kommentar` | **text** | Motiveringen vid avslutat spår (mål 1) |
+| `anteckning_todo` | **Todo** (ref, single) | Idempotensmarkör för cronen (mål 3) |
+
+Fältnamnen är konstanter (`KOMM_FIELD`, `TODO_FIELD`) överst i respektive modul →
+en omdöpning är en rad per fil.
+
+#### Mål 1 — obligatorisk motivering när spåret avslutas
+
+**Varför:** `avslutat` är det enda av de tre besluten som INTE lämnar något spår efter
+sig i systemet — ingen aktivitet, ingen todo. Utan motivering försvinner varför:et med
+personen som fattade beslutet.
+
+- Servern grindar: `400 avslut_kommentar_krävs` (+ `min:3`) så fort `avslutat` **skrivs**.
+- **⚠️ Kravet hänger på att `avslutat` SKRIVS, inte på om sparningen råkar röra
+  avklarandet.** Låg kontrollen efter `NASTA_TRIGGERS`-utgången hade en patch som BARA
+  sätter `nasta_steg=avslutat` (ingen `genomfört`, ingen anteckning) sluppit igenom
+  utan motivering. Eget test i alla tre sviterna.
+- `aktivitet` och `todo` kräver INGEN motivering — de lämnar ett spår efter sig.
+- **ALLA TRE SKRIVARNA grindar** (Christians beslut): `salj_api` (tratten),
+  `companies_api` (kortets Historik) och `affar_api` (affärsvyn). Samma fält, samma
+  felkod, samma minimilängd. Grindades bara tratten hade man kunnat avsluta spåret
+  utan motivering från de två andra vyerna — exakt felet som stängdes 2026-08-21.
+- **⚠️ `_writeOptional` hanterar nu FLERA valfria fält.** Bubble avvisar HELA
+  skrivningen vid ETT okänt fält; droppas de inte **ett i taget** hade ett saknat
+  kommentarsfält tagit med sig beslutet, anteckningen och allt annat i fallet.
+  `missing` är nu ett objekt (`{ <fält>: true }`), inte en boolean.
+- **⚠️ Egen saknat-flagga:** `avslut_kommentar_field_missing` vid sidan av
+  `nasta_steg_field_missing`. Slås de ihop säger UI:t "beslutet sparades inte" när
+  beslutet faktiskt sparades. Testat åt båda hållen (fält A saknas / fält B saknas).
+- **⚠️ Motiveringen är TEXT, inte option set** → läses med `_str`, aldrig `_osStr`.
+  Med `_osStr` hade en sparad sträng jämförts som objekt och verifieringen ljugit.
+- Fattat beslut + motivering visas nu **read-only** i mötestrattens detaljvy (`nsDone`),
+  i båda behörighetslägena. Lagras den men syns aldrig är den lika bra som borta.
+- **Backloggen omfattas INTE retroaktivt.** Rader som redan står som `avslutat` utan
+  motivering frågas inte igen — till skillnad från nästa steg-grinden, som betar av
+  backloggen. Motivet: ett varför för ett spår som avslutades för månader sedan är
+  ofta bortglömt, och att kräva det för att rätta ett stavfel är ren friktion.
+  Ändras med en rad i `_nastaStegError` om det visar sig fel.
+
+#### Mål 2 — vyn öppnar på "mina möten den här veckan"
+
+- Vid boot: `person = current_user`, mötesdatum `idag −7` → `idag +7`. Skapad-datum-
+  filtret lämnas tomt (annars hade möten som bokades tidigare men hålls den här veckan
+  fallit ur). Sparas **avsiktligt inte** mellan sessioner — poängen är att alltid landa
+  i sitt eget just nu.
+- **"Min vecka"-knapp** återställer defaulten och markeras när den är aktiv;
+  **"Rensa"** nollställer allt (= visa allt).
+- **⚠️ BUGG SOM DEFAULTEN HADE GJORT AKUT (rättad):** `personer` byggdes ur den
+  **filtrerade** mängden. Så fort man valde en person kollapsade dropdownen till just
+  den personen och enda vägen till en kollega var "Rensa". Med defaultfiltret hade vyn
+  **öppnat inlåst på användaren själv utan synlig väg ut.** Listan härleds nu ur HELA
+  Kundmöte-datasetet, före både datum- och personfiltret. Noll extra WU (samma rader).
+- **⚠️ Utan `current_user` sätts inget personfilter** — och blocket säger det rakt ut
+  ("Kunde inte identifiera dig … visar ALLA kundansvariga"). En tom tratt hade annars
+  lästs som "inga möten".
+
+#### Mål 3 — automatisk "lägg in mötesanteckning"-todo
+
+`POST /salj/anteckning-todo/cron` + `salj_anteckning_cron.sh` (Render Cron Job, morgon).
+Ett Kundmöte vars mötesdatum passerat, som **inte är avbockat** och **saknar
+mötesanteckning**, får en Todo tilldelad mötets ägare (`writer`).
+
+- **⚠️ ROUTEN LIGGER MEDVETET UTANFÖR `/admin/salj`.** Det prefixet är undantaget från
+  index.js globala `requireApiKey` och grindas bara av `PLANNING_ADMIN_TOKEN` — som
+  ligger i **klartext i Bubble-HTML-blocket**. En skrivande massjobbs-endpoint bakom den
+  token hade kunnat triggas från vilken webbläsare som helst. Här gäller `x-api-key`,
+  samma grind som `/fortnox/cron/v1`. Egen regressionsvakt i sviten, plus en som kräver
+  att routen saknar CORS-preflight.
+- **⚠️ IDEMPOTENSEN HÄNGER HELT PÅ `anteckning_todo`.** Går markören inte att skriva
+  **rullas todon tillbaka (`bubbleDelete`) och hela körningen avbryts med 500** — med
+  flit. Utan markören hade samma todo skapats om igen VARJE natt, i allas listor.
+  `bubbleDelete` skickas nu in i `registerSaljRoutes` (en rad i `index.js`).
+- **⚠️ Fönstret är ett BACKFILL-SKYDD, inte en optimering.** `DAYS=14` bakåt +
+  `GRACE=1` dygn framåt. Utan bakre gräns hade första körningen skapat en todo för
+  varje gammalt oavbockat möte i basen. Kör `DAYS=90 DRY=1` först och läs
+  `skulle_skapas` innan du höjer.
+- **Taket (`LIMIT=50`) rapporteras** som `capped` + `kvar`. Ingen tyst avhuggning.
+- **Rader utan `writer` hoppas över och RAPPORTERAS** (`utan_agare` + ids). "Created By"
+  är API-nyckelns user — en todo tilldelad den når ingen. Ett tyst bortfall hade sett
+  ut som "inga eftersläpande möten".
+- Todon får `Status: Pågående`, `Företag`, `user` = ägaren, och **ett framtida
+  `Sluttid`** (+2 dygn) — utan framtida datum syns den aldrig som planerad på
+  kundkortets levande-panel. **`Kategori` gissas INTE**: den går inte att härleda ur
+  mötet och ett gissat Category-värde avvisas av Bubble eller ljuger i datan.
+- Constraints i slug-form (`datum_bokning_date`) med `greater than` / `less than` —
+  Bubble saknar `>=`/`<=`.
+
+#### Städat på vägen (samma spår)
+- **`.catch(() => [])` borttaget på alla fem Bubble-frågor i `salj_api.js`**
+  (`User`, `ClientCompany`, `deal`, `activitet_crm`, `SalesBudget`). Bröt arbetsregeln.
+  **⚠️ Beteendeändring:** en fallen Bubble-fråga ger nu 500 i st.f. en tom tratt. Det
+  är avsikten — tom data får aldrig bli ett svar — men det är en synlig skillnad.
+- **`salj_smoke.mjs` `call()` kastade på okänd route** → svarar nu `404 no_route`.
+  Med den kvar hade mutationstestet dött på första anropet mot cron-routen och
+  rapporterat en påhittad siffra (samma fälla som 2026-08-24, dolde då 13 fel).
+- **Mocken skärpt** (`salj_smoke`): `KNOWN_FIELDS` för `activitet_crm` + `Todo` kastar
+  Bubbles 400 `Unrecognized field`; constraint-nycklar måste vara **slug-form** (okänd
+  nyckel kastar) och `constraint_type` valideras mot Bubbles faktiska lista.
+
+#### Verifierat
+- **Alla 22 sviter gröna.** salj_smoke **123/123** · companies_smoke **411/411** ·
+  affar_create_smoke **96/96**.
+- **Mutationstestat mot `1b9d015`: 37 · 10 · 10 faller.** Inga krascher —
+  utfallet lästes rad för rad.
+  **⚠️ Två fällor fångades i just den läsningen:**
+  1. `todo1._id` **kraschade** mot gammal kod och dödade sviten (sjätte gången samma
+     fälla). Hårdnad till `!!todo1 && …`.
+  2. Tre assertions var **vacuöst gröna** mot gammal kod: negativa påståenden
+     ("skriver ingenting", "faller bort") är sanna när ingenting kördes. Bundna till
+     `dry.body.ok === true`. **En grön negativ assertion bevisar ingenting om routen
+     inte ens finns.**
+- Route-inventarium i sviten (exakt lista på GET/POST) — en omdöpt route faller nu.
+
+#### Deploy
+1. **Skapa de två Bubble-fälten först** (tabellen överst i avsnittet).
+2. Deploya `salj_api.js` + `companies_api.js` + `affar_api.js` + `index.js`
+   (`bubbleDelete` in i salj-deps).
+3. Klistra om **`mira-motesbokning.html`**, **`mira-foretag-lista.html`** OCH
+   **`mira-affar-samlad.html`**.
+4. Torrkör cronen, läs `skulle_skapas`, sätt sedan upp Render Cron Job på
+   `salj_anteckning_cron.sh` (morgon svensk tid).
+
+**Gör steg 2 och 3 tillsammans.** Backend med gammal frontend 400:ar för den som väljer
+"Avsluta spåret" (gamla frontenden skickar ingen motivering).
+
 ### ⏭️ NÄSTA STEG (välj vid ny session)
 
 #### Min sida (User-profil) som Render-block — BYGGT 2026-08-25, EJ DEPLOYAT
@@ -1055,7 +1191,10 @@ Nyckelknapp/skapa-konto → vår endpoint skapar token (PasswordReset-typ) + mai
 
 ### Bubble-delar (byggda av Christian, LIVE): typer `PasswordReset`{email,coworker,token_hash,expires_at,used} · wf `assign_temp_password`(email→temp) · wf `create_user_account`(email/password/firstname/surname/company/coworker_id→user_id) · API Connector-calls (exchange/send/create) · reset_pw-sidan. **Env (Render):** `PW_RESET_TEMPLATE_ID`, `WELCOME_TEMPLATE_ID`, `BUBBLE_ASSIGN_TEMP_WF=assign_temp_password`, `BUBBLE_CREATE_USER_WF=create_user_account`, `APP_BASE_URL=https://mira-fm.com`, `BUBBLE_PW_RESET_WF` (gammal, utgår).
 ### Status Ärende-OS (verifierat i bild 2026-08-16): **Pågående · Avslutat · Utkast**. Drift closed-flik = exakt `status=="Avslutat"` (Utkast hamnar i varken öppet/avslutat). counts.drift + open = "Pågående". Status-dropdown härleds ur datan (visar de som finns).
-### KVAR ATT SKAPA I BUBBLE: **`taggade_personer` (List of Coworker) på activitet_crm** — Aktivitet-fliken hämtar mot det; tom lista tills fältet finns + aktiviteter taggas.
+### KVAR ATT SKAPA I BUBBLE
+- **`taggade_personer`** (List of Coworker) på `activitet_crm` — Aktivitet-fliken hämtar mot det; tom lista tills fältet finns + aktiviteter taggas.
+- **`nasta_steg_kommentar`** (**text**) på `activitet_crm` — motiveringen vid avslutat spår (2026-08-26). Utan fältet sparas beslutet men motiveringen tappas; svaret bär `avslut_kommentar_field_missing:true` och UI:t säger det rakt ut.
+- **`anteckning_todo`** (**Todo**, ref) på `activitet_crm` — idempotensmarkör för anteckningstodo-cronen (2026-08-26). **Utan fältet avbryter cronen med 500 och rullar tillbaka todon — med flit.**
 
 ### Gotchas (nya i detta spår)
 - **⚠️ ALDRIG `setInterval` på ett helsvep.** En bakgrundsloop som sveper en hel Bubble-typ kostar dygnet runt även när appen är tom. Bubble tar ~**1,65 WU per 100-radssida** → 5 400 rader = ~89 WU per svep. Var 10:e min = ~13k WU/dygn. Använd stale-while-revalidate (lat) + delta på `Modified Date`. Se WU-städningen 2026-08-17 ovan.

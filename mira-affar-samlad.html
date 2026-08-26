@@ -651,7 +651,11 @@
           '<div><label class="el">Klart senast</label><input type="date" class="ein" data-nf="t_slut"></div>'+
           '<div><label class="el">Kategori</label><select class="ein" data-nf="t_kat">'+katOpts+'</select></div></div></div>'+
         '<div class="af-nsform" data-nsform="avslutat" style="display:none">'+
-          '<div class="ecur">Inget mer planeras på det här spåret.</div></div>'+
+          '<div class="ecur">Inget mer planeras på det här spåret.</div>'+
+          // ⚠️ Avslutat lämnar inget spår efter sig i systemet — ingen aktivitet,
+          // ingen todo. Utan motivering försvinner varför:et med personen.
+          '<div><label class="el">Varför avslutas spåret? *</label>'+
+            '<textarea class="ein" data-nf="x_varfor" rows="3" placeholder="T.ex. kunden valde konkurrent, budget drogs in, fel tajming — återkom Q2"></textarea></div></div>'+
       '</div>'+
       '<div class="ecur af-nsmsg">Välj hur du går vidare innan du sparar.</div>'+
     '</div>';
@@ -685,7 +689,12 @@
       if(!g("t_start") && !g("t_slut")) return { error:"Ange startdatum eller när den ska vara klar — annars syns att-göra-punkten inte som planerad på kunden." };
       return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), starttid:g("t_start"), sluttid:g("t_slut"), kategori:g("t_kat") } };
     }
-    return { steg:"avslutat" };
+    if(v==="avslutat"){
+      var why=g("x_varfor");
+      if(why.length<3) return { error:"Skriv varför spåret avslutas — minst 3 tecken." };
+      return { steg:"avslutat", kommentar:why };
+    }
+    return { error:"Välj ett nästa steg: boka aktivitet, skapa att-göra eller avsluta." };
   }
   // ⚠️ Uppföljaren skapas FÖRE aktiviteten sparas — faller den sparas ingenting.
   // Annars står mötet som genomfört med nasta_steg="aktivitet" utan att någon
@@ -977,6 +986,7 @@
     var ns=nsResolve(box);
     if(ns.error){ nsMsg(box, ns.error, true); return; }
     if(ns.steg) payload.nasta_steg=ns.steg;
+    if(ns.kommentar) payload.nasta_steg_kommentar=ns.kommentar;
     var row=findRow(id);
     btn.disabled=true; msg.textContent="Sparar…";
     nsCreateFollow(ns.follow, row&&row.company_id, row&&row.affar_id).then(function(fj){
@@ -990,6 +1000,7 @@
       btn.disabled=false;
       if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
       if(j.nasta_steg_field_missing) nsMsg(box, "⚠ Sparat — men fältet aktivitet_nasta_steg saknas på activitet_crm i Bubble, så valet lagrades inte.", true);
+      else if(j.avslut_kommentar_field_missing) nsMsg(box, "⚠ Sparat — men fältet nasta_steg_kommentar saknas på activitet_crm i Bubble, så MOTIVERINGEN lagrades inte.", true);
       replaceRow(id, j.row);
     }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }
@@ -1654,6 +1665,7 @@
     var ns=nsResolve(box);
     if(ns.error){ nsMsg(box, ns.error, true); return; }
     if(ns.steg) payload.nasta_steg=ns.steg;
+    if(ns.kommentar) payload.nasta_steg_kommentar=ns.kommentar;
     btn.disabled=true; msg.textContent="Skapar…";
     nsCreateFollow(ns.follow, payload.company_id, payload.deal_id).then(function(fj){
       if(!fj||!fj.ok){ btn.disabled=false; msg.textContent="";
@@ -1665,6 +1677,7 @@
         btn.disabled=false;
         if(!j||!j.ok){ msg.textContent="Fel: "+esc((j&&(j.hint||j.error))||"okänt"); return; }
         if(j.nasta_steg_field_missing) nsMsg(box, "⚠ Sparad — men fältet aktivitet_nasta_steg saknas på activitet_crm i Bubble, så valet lagrades inte.", true);
+      else if(j.avslut_kommentar_field_missing) nsMsg(box, "⚠ Sparat — men fältet nasta_steg_kommentar saknas på activitet_crm i Bubble, så MOTIVERINGEN lagrades inte.", true);
         msg.textContent="Skapad ✓"; afterCreate(box, payload.deal_id, "Aktivitet");
       }).catch(function(){ btn.disabled=false; msg.textContent="Nätverksfel."; });
   }

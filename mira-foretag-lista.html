@@ -2892,6 +2892,11 @@
         '</div>'+
         '<div class="fk-nsform" data-nsform="avslutat" style="display:none">'+
           '<div class="fk-nshint">Inget mer planeras på det här spåret. Aktiviteten markeras som avslutad.</div>'+
+          // ⚠️ Avslutat är det enda beslutet som inte lämnar något spår efter sig —
+          // ingen aktivitet, ingen todo. Utan motivering försvinner varför:et med
+          // personen. Servern grindar (400 avslut_kommentar_krävs); detta är UX-lagret.
+          '<div class="fk-fld full"><label>Varför avslutas spåret? *</label>'+
+            '<textarea data-nf="x_varfor" rows="3" placeholder="T.ex. kunden valde konkurrent, budget drogs in, fel tajming — återkom Q2"></textarea></div>'+
         '</div>'+
       '</div>'+
       '<div class="fk-nshint" data-nsmsg>Välj hur du går vidare innan du sparar.</div>'+
@@ -2924,7 +2929,12 @@
       if(!g("t_start") && !g("t_slut")) return { error:"Ange startdatum eller när den ska vara klar — annars syns att-göra-punkten inte som planerad på kunden." };
       return { steg:v, follow:{ kind:"todo", titel:g("t_titel"), starttid:g("t_start"), sluttid:g("t_slut"), kategori:g("t_kat") } };
     }
-    return { steg:"avslutat" };
+    if(v==="avslutat"){
+      var why=g("x_varfor");
+      if(why.length<3) return { error:"Skriv varför spåret avslutas — minst 3 tecken." };
+      return { steg:"avslutat", kommentar:why };
+    }
+    return { error:"Välj ett nästa steg: boka aktivitet, skapa att-göra eller avsluta." };
   }
   function nsMsg(box, txt, err){
     var m=box.querySelector("[data-nsmsg]"); if(!m) return;
@@ -3193,6 +3203,11 @@
   // re-renderas kortet och formuläret rivs, så varningen hann aldrig läsas.
   // Den läggs i STATE och renderas som en banner ovanför historikflödet i stället.
   function nsAfterSave(j, box){
+    // ⚠️ Två separata flaggor: motiveringen kan gå förlorad utan att beslutet gör det.
+    // Slås de ihop säger vyn "beslutet sparades inte" när det faktiskt sparades.
+    if(j && j.avslut_kommentar_field_missing){
+      STATE.nsWarn="Aktiviteten sparades, men fältet nasta_steg_kommentar saknas på activitet_crm i Bubble — MOTIVERINGEN lagrades INTE. Skapa fältet och skriv om den.";
+    }
     if(j && j.nasta_steg_field_missing){
       STATE.nsWarn="Aktiviteten sparades, men fältet aktivitet_nasta_steg saknas på activitet_crm i Bubble — ditt val av nästa steg lagrades INTE. Kontrollera fältet i Bubble-editorn.";
       nsMsg(box, "⚠ Sparat — men fältet aktivitet_nasta_steg saknas i Bubble, så valet lagrades inte.", true);
@@ -3209,6 +3224,7 @@
     var ns=nsResolve(box);
     if(ns.error){ nsMsg(box, ns.error, true); if(msg){ msg.textContent=""; } return; }
     if(ns.steg) p.nasta_steg=ns.steg;
+    if(ns.kommentar) p.nasta_steg_kommentar=ns.kommentar;
     if(msg){ msg.textContent="Skapar…"; msg.className="msg"; }
     nsCreateFollow(ns.follow).then(function(fj){
       if(!fj||!fj.ok){ nsMsg(box, "✗ Kunde inte skapa uppföljningen: "+((fj&&fj.error)||"fel")+" — aktiviteten sparades INTE.", true); if(msg){ msg.textContent=""; } return null; }
@@ -3230,6 +3246,7 @@
     var ns=nsResolve(box);
     if(ns.error){ nsMsg(box, ns.error, true); if(msg){ msg.textContent=""; } return; }
     if(ns.steg) p.nasta_steg=ns.steg;
+    if(ns.kommentar) p.nasta_steg_kommentar=ns.kommentar;
     if(msg){ msg.textContent="Sparar…"; msg.className="msg"; }
     nsCreateFollow(ns.follow).then(function(fj){
       if(!fj||!fj.ok){ nsMsg(box, "✗ Kunde inte skapa uppföljningen: "+((fj&&fj.error)||"fel")+" — aktiviteten sparades INTE.", true); if(msg){ msg.textContent=""; } return null; }

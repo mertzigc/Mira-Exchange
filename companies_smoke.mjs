@@ -604,7 +604,7 @@ const run = async () => {
   // ── HISTORIK: skapa + redigera aktivitet (activitet_crm) ──
   var abefore = STORE.activitet_crm.length;
   // ⚠️ genomfort:true kräver nu ett nästa steg (grinden 2026-08-21) — utan det 400:ar den.
-  var hc = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Nytt möte", fas: "Fas 3", motesdatum: "2026-08-20", genomfort: true, motesanteckning: "Genomgång", nasta_steg: "avslutat" } });
+  var hc = await call(s.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Nytt möte", fas: "Fas 3", motesdatum: "2026-08-20", genomfort: true, motesanteckning: "Genomgång", nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" } });
   ok("historik/create ok + rad skapad", hc.body.ok && STORE.activitet_crm.length === abefore + 1 && hc.body.row && hc.body.row.typ === "Kundmöte");
   var newAkt = STORE.activitet_crm[STORE.activitet_crm.length - 1];
   ok("ny aktivitet: company=cc1 + Kundmöte-fält (display-nycklar)", newAkt.company === "cc1" && newAkt.clientcompany === undefined && newAkt.activity_type === "Kundmöte" && newAkt["Kundmöte"] === "Fas 3" && newAkt["genomfört"] === true && newAkt["mötesantecking"] === "Genomgång" && /^2026-08-20/.test(newAkt["Datum_bokning"]));
@@ -1218,7 +1218,7 @@ const run = async () => {
   const g4id = g4.body.id;
   const g5 = await nsPatch(g4id, { genomfort: true, motesanteckning: "Klart" });
   ok("grind: patch som markerar genomförd utan nästa steg → 400", g5.code === 400 && g5.body.error === "nasta_steg_krävs");
-  const g6 = await nsPatch(g4id, { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat" });
+  const g6 = await nsPatch(g4id, { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" });
   ok("grind: patch med nästa steg går igenom", g6.body.ok === true);
   const g7 = await nsPatch(g4id, { motesanteckning: "Rättar stavfel" });
   ok("grind: rad med beslut kan redigeras utan att frågas igen", g7.body.ok === true);
@@ -1251,7 +1251,7 @@ const run = async () => {
   });
   const nfs = mk(); registerCompaniesRoutes(nfs.app, noFieldDeps);
   const nfBefore = STORE.activitet_crm.length;
-  const nf = await call(nfs.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Möte utan fält", genomfort: true, nasta_steg: "avslutat" } });
+  const nf = await call(nfs.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Möte utan fält", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" } });
   ok("saknat Bubble-fält: mötet sparas ändå + nasta_steg_field_missing:true",
      nf.body.ok === true && nf.body.nasta_steg_field_missing === true && STORE.activitet_crm.length === nfBefore + 1);
   ok("saknat Bubble-fält: raden bär övriga fält (hela skrivningen tappades INTE)",
@@ -1262,7 +1262,7 @@ const run = async () => {
     bubbleCreate: async () => { const e = new Error("bubbleCreate failed"); e.detail = { status: 400, body: JSON.stringify({ body: { message: "Unrecognized field: nagot_annat" } }) }; throw e; },
   });
   const ofs = mk(); registerCompaniesRoutes(ofs.app, otherFieldDeps);
-  const of2 = await call(ofs.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "x", genomfort: true, nasta_steg: "avslutat" } });
+  const of2 = await call(ofs.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "x", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" } });
   ok("annat okänt fält braker fortfarande (nedgraderingen matchar SMALT)", of2.code >= 400 && of2.body.ok !== true);
 
   // ── OPTION SET läses tillbaka som {display}-OBJEKT ────────────────────────
@@ -1286,6 +1286,60 @@ const run = async () => {
      os1.body.ok === true && os1.body.nasta_steg_field_missing === false);
   ok("option set som {display}-objekt: raden exponerar värdet som ren sträng",
      os1.body.row && os1.body.row.nasta_steg === "todo");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MOTIVERING VID AVSLUTAT SPÅR (2026-08-26) — kundkortets Historik
+  // ⚠️ Kravet gäller i ALLA TRE skrivarna. Grindades bara mötestratten hade man
+  // kunnat avsluta spåret utan motivering härifrån i stället.
+  // ⚠️ Bubble-fält: `nasta_steg_kommentar` (TEXT, inte option set).
+  // ══════════════════════════════════════════════════════════════════════════
+  const kk1 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Avslutas", genomfort: true, nasta_steg: "avslutat" });
+  ok("kortet: avslutat utan motivering → 400 avslut_kommentar_krävs",
+     kk1.code === 400 && (kk1.body || {}).error === "avslut_kommentar_krävs" && (kk1.body || {}).min === 3);
+  const kkBefore = STORE.activitet_crm.length;
+  const kk2 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Avslutas", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "ok" });
+  ok("kortet: för kort motivering → 400 och INGEN rad skapad",
+     kk2.code === 400 && STORE.activitet_crm.length === kkBefore);
+  const kk3 = await nsCreate({ activity_type: "Kundmöte", beskrivning: "Avslutas", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "  Budget drogs in  " });
+  const kkRow = STORE.activitet_crm[STORE.activitet_crm.length - 1];
+  ok("kortet: med motivering → sparas trimmad i rätt fält + exponeras på raden",
+     kk3.body.ok === true && kkRow["nasta_steg_kommentar"] === "Budget drogs in" &&
+     ((kk3.body || {}).row || {}).nasta_steg_kommentar === "Budget drogs in");
+  ok("kortet: båda saknat-flaggorna är false när fälten finns",
+     (kk3.body || {}).nasta_steg_field_missing === false && (kk3.body || {}).avslut_kommentar_field_missing === false);
+  // ⚠️ Får inte hänga på att sparningen rör avklarandet — annars slipper en patch
+  // som BARA sätter avslutat igenom utan motivering.
+  const kk4 = await nsPatch(g4id, { nasta_steg: "avslutat" });
+  ok("kortet: patch som BARA sätter avslutat grindas också",
+     kk4.code === 400 && (kk4.body || {}).error === "avslut_kommentar_krävs");
+  // ⚠️ Saknat kommentarsfält får INTE ta med sig beslutet i fallet (Bubble avvisar
+  // hela skrivningen vid ett okänt fält → fälten måste droppas ETT i taget).
+  const noKommDeps = Object.assign({}, deps, {
+    bubbleCreate: async (t, payload) => {
+      if (t === "activitet_crm" && payload && payload.nasta_steg_kommentar !== undefined) {
+        const e = new Error("bubbleCreate failed");
+        e.detail = { status: 400, body: JSON.stringify({ body: { status: "ERROR", message: "Unrecognized field: nasta_steg_kommentar" } }) };
+        throw e;
+      }
+      return deps.bubbleCreate(t, payload);
+    },
+  });
+  const nks = mk(); registerCompaniesRoutes(nks.app, noKommDeps);
+  const nk = await call(nks.routes, "post", "/admin/companies/:id/historik/create", { params: { id: "cc1" }, body: { activity_type: "Kundmöte", beskrivning: "Utan kommentarsfält", genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "Fel tajming" } });
+  const nkRow = STORE.activitet_crm[STORE.activitet_crm.length - 1];
+  ok("kortet: saknat kommentarsfält stoppar INTE beslutet, och rapporteras separat",
+     nk.body.ok === true && nkRow["aktivitet_nasta_steg"] === "avslutat" &&
+     (nk.body || {}).avslut_kommentar_field_missing === true && (nk.body || {}).nasta_steg_field_missing === false);
+
+  // ── FRONTEND (mira-foretag-lista.html) ────────────────────────────────────
+  ok("frontend kort: avsluta-formuläret har ett obligatoriskt varför-fält",
+     /data-nsform="avslutat"/.test(fl) && /data-nf="x_varfor"/.test(fl) && /Varför avslutas spåret\? \*/.test(fl));
+  ok("frontend kort: kort motivering blockerar sparningen",
+     /if\(why\.length<3\) return \{ error:/.test(fl));
+  ok("frontend kort: motiveringen skickas till servern",
+     /if\(ns\.kommentar\) p\.nasta_steg_kommentar=ns\.kommentar;/.test(fl));
+  ok("frontend kort: saknat kommentarsfält rapporteras SEPARAT från beslutet",
+     /avslut_kommentar_field_missing/.test(fl) && /MOTIVERINGEN lagrades INTE/.test(fl));
 
   // ── LEVANDE AKTIVITET / TODO på kortet ────────────────────────────────────
   const lc1 = await call(s.routes, "get", "/admin/companies/:id/card", { params: { id: "cc1" } });

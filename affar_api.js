@@ -278,6 +278,8 @@ export function registerAffarRoutes(app, deps) {
       // OS-medvetet (kan komma som {display}-objekt) — `_osStr` definieras längre
       // ned i samma scope och är initierad när raden normaliseras vid request-tid.
       nasta_steg: _osStr(r["aktivitet_nasta_steg"]),
+      // Motiveringen bakom ett avslutat spår (TEXT-fält, kan saknas i Bubble → tom).
+      nasta_steg_kommentar: _str(r["nasta_steg_kommentar"]),
     };
   }
   // Företags-id:n vars namn matchar q (för ref-företags-sök som Bubble ej klarar direkt)
@@ -759,6 +761,14 @@ export function registerAffarRoutes(app, deps) {
   // fältet heter **`aktivitet_nasta_steg`** och är ett **Option Set** med samma namn,
   // värden `aktivitet` · `todo` · `avslutat`. Inte `nasta_steg`, inte text.
   const NASTA_FIELD = "aktivitet_nasta_steg";
+  // ⚠️ MOTIVERINGEN VID AVSLUTAT SPÅR (2026-08-26). Bubble-fält: `nasta_steg_kommentar`
+  // (TEXT, inte option set — läses därför med _str, inte _osStr). "Avslutat" är det
+  // enda beslutet som inte lämnar något spår efter sig i systemet: ingen aktivitet,
+  // ingen todo. Utan motivering försvinner varför:et med personen som fattade det.
+  // ⚠️ Kravet gäller i ALLA TRE skrivarna (kortet, affärsvyn, mötestratten) — annars
+  // är det en UI-artighet i två vyer av tre och går att kringgå via en annan vy.
+  const KOMM_FIELD = "nasta_steg_kommentar";
+  const KOMM_MIN = 3;
   // ⚠️ Option sets läses tillbaka som STRÄNG **eller** som `{display}`-OBJEKT. Ett
   // rakt `String(v)` på objekt-formen ger "[object Object]" — då hade läs-tillbaka-
   // verifieringen nedan flaggat fältet som saknat fast allt sparats rätt. Samma
@@ -774,15 +784,24 @@ export function registerAffarRoutes(app, deps) {
     const body = typeof d.body === "string" ? d.body : JSON.stringify(d.body || "");
     return body.indexOf("Unrecognized field: " + field) > -1;
   }
-  async function _writeOptional(fn, payload, field) {
-    if (payload[field] === undefined) return { value: await fn(payload), missing: false };
-    try { return { value: await fn(payload), missing: false }; }
-    catch (e) {
-      if (!_isUnknownField(e, field)) throw e;
-      const q = Object.assign({}, payload); delete q[field];
-      console.warn("[nasta_steg] fältet saknas på activitet_crm i Bubble — aktiviteten sparas utan det");
-      return { value: await fn(q), missing: true };
+  // ⚠️ TVÅ valfria Bubble-fält nu (beslutet OCH motiveringen). Bubble avvisar HELA
+  // skrivningen vid ETT okänt fält — droppas de inte ETT i taget hade ett saknat
+  // kommentarsfält tagit med sig beslutet, anteckningen och allt annat i fallet.
+  // Returnerar `missing` som ett objekt: { <fält>: true }.
+  async function _writeOptional(fn, payload, fields) {
+    const list = (Array.isArray(fields) ? fields : [fields]).filter((f) => payload[f] !== undefined);
+    const missing = {};
+    const q = Object.assign({}, payload);
+    for (let i = 0; i <= list.length; i++) {
+      try { return { value: await fn(q), missing }; }
+      catch (e) {
+        const hit = list.find((f) => q[f] !== undefined && _isUnknownField(e, f));
+        if (!hit) throw e;
+        missing[hit] = true; delete q[hit];
+        console.warn("[nasta_steg] fältet " + hit + " saknas på activitet_crm i Bubble — aktiviteten sparas utan det");
+      }
     }
+    throw new Error("write_failed_after_field_drop");
   }
   // Grinden. Returnerar ett felobjekt eller null.
   // ⚠️ REGELN ÄNDRAD 2026-08-21 (Christian såg att en redan genomförd aktivitet inte
@@ -802,6 +821,16 @@ export function registerAffarRoutes(app, deps) {
     const incoming = _str(p[NASTA_FIELD]).trim();
     if (incoming && NASTA_STEG.indexOf(incoming) < 0) {
       return { error: "okänt_nasta_steg", value: incoming, allowed: NASTA_STEG };
+    }
+    // ⚠️ Kravet hänger på att `avslutat` SKRIVS — inte på om sparningen råkar röra
+    // avklarandet. Låg kontrollen efter NASTA_TRIGGERS-utgången nedan hade en patch
+    // som BARA sätter nasta_steg=avslutat sluppit igenom utan motivering.
+    if (incoming === "avslutat") {
+      const komm = _str(p[KOMM_FIELD]).trim();
+      if (komm.length < KOMM_MIN) {
+        return { error: "avslut_kommentar_krävs", min: KOMM_MIN,
+                 hint: "Skriv varför spåret avslutas — minst " + KOMM_MIN + " tecken." };
+      }
     }
     if (!NASTA_TRIGGERS.some((k) => p[k] !== undefined)) return null;   // rör inte avklarandet
     const curDone = !!(cur && cur["genomfört"] === true);
@@ -835,18 +864,24 @@ export function registerAffarRoutes(app, deps) {
       if (b.genomfort       !== undefined) p["genomfört"]      = (b.genomfort === true || b.genomfort === "true");
       if (b.motesanteckning !== undefined) p["mötesantecking"] = _str(b.motesanteckning);
       if (b.nasta_steg      !== undefined) p[NASTA_FIELD]      = _str(b.nasta_steg).trim() || null;
+      if (b.nasta_steg_kommentar !== undefined) p[KOMM_FIELD] = _str(b.nasta_steg_kommentar).trim() || null;
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
       // Grinden gäller ÖVERGÅNGEN ej→genomförd → läs radens nuvarande läge först.
       const cur = await bubbleGet("activitet_crm", id).catch(() => null);
       const gErr = _nastaStegError(p, cur);
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
-      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, NASTA_FIELD);
+      const pw = await _writeOptional((q) => bubblePatch("activitet_crm", id, q), p, [NASTA_FIELD, KOMM_FIELD]);
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
       // Läs tillbaka: null = kunde inte verifieras, inte "saknas".
       const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
+      // ⚠️ Motiveringen är TEXT → _str, inte _osStr. Läses den OS-medvetet blir en
+      // sparad sträng jämförd som objekt och verifieringen ljuger.
+      const kVerified = fresh ? (_str(fresh[KOMM_FIELD]) === _str(p[KOMM_FIELD] || "")) : null;
       const row = fresh ? nAktFull(fresh, await companyMap(), await userMap(), await supplierMap(), await dealMap()) : null;
       return res.json({ ok: true, id, patched: p, row,
-                        nasta_steg_field_missing: pw.missing || (verified === false && !!p[NASTA_FIELD]) });
+                        nasta_steg_field_missing: !!pw.missing[NASTA_FIELD] || (verified === false && !!p[NASTA_FIELD]),
+                        // ⚠️ Egen flagga: motiveringen kan gå förlorad utan att beslutet gör det.
+                        avslut_kommentar_field_missing: !!pw.missing[KOMM_FIELD] || (kVerified === false && !!p[KOMM_FIELD]) });
     } catch (e) {
       console.error("[/admin/affar/aktivitet/:id/patch]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
@@ -882,17 +917,23 @@ export function registerAffarRoutes(app, deps) {
       const byUser = _str(b.by_user);
       if (byUser) p["writer"] = byUser;
       if (b.nasta_steg !== undefined) p[NASTA_FIELD] = _str(b.nasta_steg).trim() || null;
+      if (b.nasta_steg_kommentar !== undefined) p[KOMM_FIELD] = _str(b.nasta_steg_kommentar).trim() || null;
       if (!p["beskrivning"] && !p["activity_type"]) return res.status(400).json({ ok: false, error: "tom_aktivitet", hint: "kräver minst beskrivning eller typ" });
       const gErr = _nastaStegError(p, null);   // ny rad → inget lagrat beslut
       if (gErr) return res.status(400).json(Object.assign({ ok: false }, gErr));
-      const cw = await _writeOptional((q) => bubbleCreate("activitet_crm", q), p, NASTA_FIELD);
+      const cw = await _writeOptional((q) => bubbleCreate("activitet_crm", q), p, [NASTA_FIELD, KOMM_FIELD]);
       const id = cw.value;
       if (!id) return res.status(500).json({ ok: false, error: "create_returned_no_id" });
       const fresh = await bubbleGet("activitet_crm", id).catch(() => null);
       const verified = fresh ? (_osStr(fresh[NASTA_FIELD]) === _str(p[NASTA_FIELD] || "")) : null;
+      // ⚠️ Motiveringen är TEXT → _str, inte _osStr. Läses den OS-medvetet blir en
+      // sparad sträng jämförd som objekt och verifieringen ljuger.
+      const kVerified = fresh ? (_str(fresh[KOMM_FIELD]) === _str(p[KOMM_FIELD] || "")) : null;
       const row = fresh ? nAktFull(fresh, await companyMap(), await userMap(), await supplierMap(), await dealMap()) : null;
       return res.json({ ok: true, id, created: p, row,
-                        nasta_steg_field_missing: cw.missing || (verified === false && !!p[NASTA_FIELD]) });
+                        nasta_steg_field_missing: !!cw.missing[NASTA_FIELD] || (verified === false && !!p[NASTA_FIELD]),
+                        // ⚠️ Egen flagga: motiveringen kan gå förlorad utan att beslutet gör det.
+                        avslut_kommentar_field_missing: !!cw.missing[KOMM_FIELD] || (kVerified === false && !!p[KOMM_FIELD]) });
     } catch (e) {
       console.error("[/admin/affar/aktivitet/create]", e?.message, e?.detail);
       return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });

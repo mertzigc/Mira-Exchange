@@ -3,8 +3,13 @@ import { registerSaljRoutes } from "./salj_api.js";
 import { readFileSync } from "node:fs";
 const routes = { get: {}, post: {}, options: {} };
 const app = { get: (p, h) => { routes.get[p] = h; }, post: (p, h) => { routes.post[p] = h; }, options: (p, h) => { routes.options[p] = h; } };
+// ⚠️ call() svarar 404 på okänd route — den KASTAR aldrig. En kastande testram
+// dödar hela sviten vid första anropet mot en route som inte finns i gammal kod,
+// och då rapporterar mutationstestet en påhittad siffra (2026-08-24: dolde 13 fel).
+// Se [[feedback-testet-ska-falla-inte-krascha]].
 function call(method, path, { params = {}, query = {}, body = {} } = {}) {
-  const h = routes[method][path]; if (!h) throw new Error("no route " + method + " " + path);
+  const h = routes[method][path];
+  if (!h) return Promise.resolve({ code: 404, body: { ok: false, error: "no_route", route: method + " " + path } });
   return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); } }; h({ params, query, body, headers: {} }, res); });
 }
 let seq = 1;
@@ -24,14 +29,59 @@ const DB = {
   ],
 };
 const _n = (v) => (typeof v === "number" ? v : parseFloat(v));
-const _match = (r, c) => { const v = r[c.key]; if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value); if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v)); return true; };
+
+// ⚠️ MOCKA ALDRIG MER TILLÅTANDE ÄN BUBBLE ([[feedback-mocka-aldrig-mer-tillatande]]).
+// Fyra skarpa buggar har passerat gröna sviter för att fixturen accepterade mer än
+// verkligheten. Här härmas tre av Bubbles avvisningar:
+//   1. okänt FÄLT vid skrivning → 400 "Unrecognized field: X", HELA skrivningen faller
+//   2. constraint-nyckel = SLUG-form, inte display-namn (de skiljer sig!)
+//   3. constraint_type utanför Bubbles lista (det finns t.ex. INGET "greater than or equal")
+const KNOWN_FIELDS = {
+  // Schema-verifierat 2026-08-14 + de tre fält som lagts till sedan dess.
+  activitet_crm: new Set(["activity_type", "beskrivning", "company", "Datum_bokning", "deal", "genomfört",
+    "Kundmöte", "lead", "Leverantör", "mötesantecking", "mötesanteckning_writer", "taggade_personer",
+    "user_tag", "writer", "aktivitet_nasta_steg", "nasta_steg_kommentar", "anteckning_todo", "Created Date"]),
+  // Todo-fält enligt [[reference-bubble-todo-fields]] (skärmdump 2026-08-07).
+  Todo: new Set(["Titel", "Beskrivning", "Kategori", "Status", "frekvens_kontroll", "Starttid", "Sluttid",
+    "Företag", "Medarbetare", "user", "lead", "contracts", "Tråd", "kvalitetskontroll", "qualitycontrol", "reminder_sent"]),
+};
+// Fält som "ännu inte finns i Bubble" — driver nedgraderings-testerna.
+const MISSING = new Set();
+function bubble400(field) {
+  const e = new Error("bubble write failed");
+  e.detail = { status: 400, body: { status: "ERROR", message: "Unrecognized field: " + field } };
+  throw e;
+}
+function assertFields(t, p) {
+  const known = KNOWN_FIELDS[t];
+  for (const k of Object.keys(p || {})) {
+    if (MISSING.has(t + "." + k)) bubble400(k);
+    if (known && !known.has(k)) bubble400(k);
+  }
+}
+// Constraint-nyckel (slug) → läsnyckel (display). Okänd nyckel KASTAR: ett felstavat
+// constraint ska falla högljutt, inte tyst matcha allt (jfr FortnoxOrder.connection_id).
+const CONSTRAINT_KEY = { activity_type: "activity_type", datum_bokning_date: "Datum_bokning", User: "User" };
+const _cts = (v) => { const t = Date.parse(String(v == null ? "" : v)); return Number.isNaN(t) ? null : t; };
+const _match = (r, c) => {
+  const key = CONSTRAINT_KEY[c.key];
+  if (!key) throw new Error("okänd constraint-nyckel: " + c.key + " (constraints använder SLUG-form)");
+  const v = r[key];
+  if (c.constraint_type === "equals") return String(v == null ? "" : v) === String(c.value);
+  if (c.constraint_type === "in") return Array.isArray(c.value) && c.value.map(String).includes(String(v));
+  // ⚠️ Bubble saknar >= och <=. En ogiltig constraint_type avvisar HELA frågan.
+  if (c.constraint_type === "greater than") { const a = _cts(v), b = _cts(c.value); return a != null && b != null && a > b; }
+  if (c.constraint_type === "less than")    { const a = _cts(v), b = _cts(c.value); return a != null && b != null && a < b; }
+  throw new Error("ogiltig constraint_type: " + c.constraint_type);
+};
 const deps = {
   bubbleId: (r) => (r ? r._id : null),
   bubbleFindAll: async (t, { constraints = [] } = {}) => (DB[t] || []).filter((r) => constraints.every((c) => _match(r, c))),
   bubbleFind: async (t, { constraints = [], limit = 300 } = {}) => (DB[t] || []).filter((r) => constraints.every((c) => _match(r, c))).slice(0, limit),
   bubbleGet: async (t, id) => (DB[t] || []).find((r) => r._id === id) || null,
-  bubbleCreate: async (t, p) => { const id = t.toLowerCase() + "_" + (seq++); (DB[t] = DB[t] || []).push({ _id: id, ...p }); return id; },
-  bubblePatch: async (t, id, p) => { const r = (DB[t] || []).find((x) => x._id === id); if (r) Object.assign(r, p); return {}; },
+  bubbleCreate: async (t, p) => { assertFields(t, p); const id = t.toLowerCase() + "_" + (seq++); (DB[t] = DB[t] || []).push({ _id: id, ...p }); return id; },
+  bubblePatch: async (t, id, p) => { assertFields(t, p); const r = (DB[t] || []).find((x) => x._id === id); if (r) Object.assign(r, p); return {}; },
+  bubbleDelete: async (t, id) => { const a = DB[t] || []; const i = a.findIndex((x) => x._id === id); if (i > -1) a.splice(i, 1); return {}; },
   planningAuthed: () => true, planningCors: () => {}, publicRateLimited: () => false, clientIp: () => "x",
 };
 registerSaljRoutes(app, deps);
@@ -113,11 +163,12 @@ const run = async () => {
 
   // ── mötes-redigering (a3 ägs av u2) ──
   // ⚠️ genomfort:true kräver nu ett nästa steg (grinden 2026-08-21) — även här.
-  const pOwner = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "a3" }, body: { by_user: "u2", fas: "Fas 2", genomfort: true, motesanteckning: "Bra möte", beskrivning: "Uppföljning", nasta_steg: "avslutat" } });
+  const pOwner = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "a3" }, body: { by_user: "u2", fas: "Fas 2", genomfort: true, motesanteckning: "Bra möte", beskrivning: "Uppföljning", nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden valde konkurrent" } });
   ok("ägare (u2) redigerar eget möte → ok", pOwner.body.ok && pOwner.body.mote);
   const a3 = DB.activitet_crm.find((x) => x._id === "a3");
   ok("möte patchat: fas/genomfört/anteckning/beskr", a3["Kundmöte"] === "Fas 2" && a3["genomfört"] === true && a3["mötesantecking"] === "Bra möte" && a3.beskrivning === "Uppföljning");
-  ok("returnerat mote har motesanteckning", pOwner.body.mote.motesanteckning === "Bra möte" && pOwner.body.mote.genomfort === true);
+  const mo = (r) => (r.body || {}).mote || {};
+  ok("returnerat mote har motesanteckning", mo(pOwner).motesanteckning === "Bra möte" && mo(pOwner).genomfort === true);
 
   // salesmanager (u1) redigerar annans möte (a3) → ok
   const pMgr = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "a3" }, body: { by_user: "u1", fas: "Fas 3" } });
@@ -147,7 +198,7 @@ const run = async () => {
      sg1.code === 400 && sg1.body.error === "nasta_steg_krävs");
   const sg2 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "hittepa" } });
   ok("grind: okänt värde → 400", sg2.code === 400 && sg2.body.error === "okänt_nasta_steg");
-  const sg3 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat" } });
+  const sg3 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat", nasta_steg_kommentar: "Budget drogs in" } });
   ok("grind: med nästa steg → sparas i RÄTT Bubble-fält",
      sg3.body.ok === true && DB.activitet_crm.find((x) => x._id === "aG1")["aktivitet_nasta_steg"] === "avslutat" &&
      sg3.body.nasta_steg_field_missing === false);
@@ -164,7 +215,7 @@ const run = async () => {
   DB.activitet_crm.push({ _id: "aG3", activity_type: "Kundmöte", writer: "u2", "genomfört": true, aktivitet_nasta_steg: { display: "todo" } });
   const sg7 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG3" }, body: { motesanteckning: "x" } });
   ok("grind: {display}-objekt läses som ett riktigt beslut (ingen ny fråga)", sg7.body.ok === true);
-  ok("mote-raden exponerar nasta_steg som ren sträng", sg7.body.mote && sg7.body.mote.nasta_steg === "todo");
+  ok("mote-raden exponerar nasta_steg som ren sträng", mo(sg7).nasta_steg === "todo");
 
   // ── FRONTEND (mira-motesbokning.html) ─────────────────────────────────────
   const mbRaw = readFileSync(new URL("./mira-motesbokning.html", import.meta.url), "utf8");
@@ -231,9 +282,9 @@ const run = async () => {
   DB.activitet_crm.push({ _id: "aG4", activity_type: "Kundmöte", writer: "u2", "genomfört": false, company: "cc1", deal: "d1" });
   const sg8 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aG4" }, body: { fas: "Fas 2" } });
   ok("backend: mote-raden bär kundens id (uppföljaren knyts till rätt företag)",
-     sg8.body.mote && sg8.body.mote.company_id === "cc1" && sg8.body.mote.company === "Acme AB");
+     mo(sg8).company_id === "cc1" && mo(sg8).company === "Acme AB");
   ok("backend: mote-raden bär affärs-id (uppföljaren ärver affären)",
-     sg8.body.mote && sg8.body.mote.deal_id === "d1");
+     mo(sg8).deal_id === "d1");
 
   // ══════════════════════════════════════════════════════════════════════════
   // SKAPAD-DATUM-FILTER i mötestratten (2026-08-22)
@@ -285,6 +336,196 @@ const run = async () => {
   ok("frontend: totalen visas i trattens rubrik med filterberoende etikett",
      /class="fas-total"/.test(mb) && /Möten skapade i perioden/.test(mb) &&
      /Möten med mötesdatum i perioden/.test(mb) && /Alla möten i tratten/.test(mb));
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MÅL 1 — MOTIVERING VID AVSLUTAT SPÅR (2026-08-26)
+  // "Avslutat" är enda beslutet som inte lämnar något spår efter sig i systemet.
+  // ⚠️ Bubble-fält: `nasta_steg_kommentar` (TEXT, inte option set).
+  // ══════════════════════════════════════════════════════════════════════════
+  DB.activitet_crm.push({ _id: "aK1", activity_type: "Kundmöte", writer: "u2", "genomfört": false, company: "cc1" });
+  const k1 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat" } });
+  ok("avslut: utan motivering → 400 avslut_kommentar_krävs",
+     k1.code === 400 && k1.body.error === "avslut_kommentar_krävs" && k1.body.min === 3);
+  ok("avslut: inget skrevs när grinden fällde",
+     DB.activitet_crm.find((x) => x._id === "aK1")["aktivitet_nasta_steg"] === undefined);
+  const k2 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK1" }, body: { genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "ok" } });
+  ok("avslut: för kort motivering (2 tecken) → 400", k2.code === 400 && k2.body.error === "avslut_kommentar_krävs");
+  const k3 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK1" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat", nasta_steg_kommentar: "  Kunden valde konkurrent  " } });
+  const aK1 = DB.activitet_crm.find((x) => x._id === "aK1");
+  ok("avslut: med motivering → sparas trimmad i RÄTT Bubble-fält",
+     k3.body.ok === true && aK1["nasta_steg_kommentar"] === "Kunden valde konkurrent" && aK1["aktivitet_nasta_steg"] === "avslutat");
+  ok("avslut: motiveringen exponeras på mote-raden", mo(k3).nasta_steg_kommentar === "Kunden valde konkurrent");
+  ok("avslut: båda saknat-flaggorna är false när fälten finns",
+     (k3.body || {}).nasta_steg_field_missing === false && (k3.body || {}).avslut_kommentar_field_missing === false);
+  // ⚠️ Kravet får INTE hänga på att sparningen råkar röra avklarandet — annars
+  // slipper en patch som BARA sätter avslutat igenom utan motivering.
+  DB.activitet_crm.push({ _id: "aK2", activity_type: "Kundmöte", writer: "u2", "genomfört": true });
+  const k4 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK2" }, body: { nasta_steg: "avslutat" } });
+  ok("avslut: patch som BARA sätter avslutat grindas också",
+     k4.code === 400 && k4.body.error === "avslut_kommentar_krävs");
+  // De andra två stegen lämnar spår efter sig (aktivitet/todo) → ingen motivering.
+  DB.activitet_crm.push({ _id: "aK3", activity_type: "Kundmöte", writer: "u2", "genomfört": false });
+  const k5 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK3" }, body: { genomfort: true, nasta_steg: "todo" } });
+  ok("avslut: 'todo' som nästa steg kräver INGEN motivering", k5.body.ok === true);
+  DB.activitet_crm.push({ _id: "aK4", activity_type: "Kundmöte", writer: "u2", "genomfört": false });
+  const k6 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK4" }, body: { genomfort: true, nasta_steg: "aktivitet" } });
+  ok("avslut: 'aktivitet' som nästa steg kräver INGEN motivering", k6.body.ok === true);
+
+  // ── Nedgradering: fälten kan saknas i Bubble, VAR FÖR SIG ──────────────────
+  // ⚠️ bubblePatch avvisar HELA patchen vid ETT okänt fält. Droppas de inte ett i
+  // taget hade ett saknat kommentarsfält tagit med sig beslutet i fallet.
+  DB.activitet_crm.push({ _id: "aK5", activity_type: "Kundmöte", writer: "u2", "genomfört": false });
+  MISSING.add("activitet_crm.nasta_steg_kommentar");
+  const k7 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK5" }, body: { genomfort: true, motesanteckning: "Klart", nasta_steg: "avslutat", nasta_steg_kommentar: "Fel tajming" } });
+  const aK5 = DB.activitet_crm.find((x) => x._id === "aK5");
+  ok("nedgradering: saknat kommentarsfält stoppar INTE beslutet",
+     k7.body.ok === true && aK5["aktivitet_nasta_steg"] === "avslutat" && aK5["mötesantecking"] === "Klart");
+  ok("nedgradering: saknad motivering rapporteras på EGEN flagga",
+     (k7.body || {}).avslut_kommentar_field_missing === true && (k7.body || {}).nasta_steg_field_missing === false);
+  MISSING.delete("activitet_crm.nasta_steg_kommentar");
+  DB.activitet_crm.push({ _id: "aK6", activity_type: "Kundmöte", writer: "u2", "genomfört": false });
+  MISSING.add("activitet_crm.aktivitet_nasta_steg");
+  const k8 = await call("post", "/admin/salj/mote/:id/patch", { params: { id: "aK6" }, body: { genomfort: true, nasta_steg: "avslutat", nasta_steg_kommentar: "Kunden pausade" } });
+  ok("nedgradering: saknat beslutsfält stoppar INTE motiveringen",
+     k8.body.ok === true && DB.activitet_crm.find((x) => x._id === "aK6")["nasta_steg_kommentar"] === "Kunden pausade" &&
+     (k8.body || {}).nasta_steg_field_missing === true && (k8.body || {}).avslut_kommentar_field_missing === false);
+  MISSING.delete("activitet_crm.aktivitet_nasta_steg");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MÅL 2 — PERSONLISTAN FÅR INTE KOLLAPSA (2026-08-26)
+  // Vyn öppnar med "kundansvarig = jag själv". Byggdes personlistan ur den
+  // FILTRERADE mängden (som fram till nu) kunde man inte byta till en kollega.
+  // ══════════════════════════════════════════════════════════════════════════
+  const pAll = await call("get", "/admin/salj/moten", { query: {} });
+  const pids = (r) => ((r.body || {}).personer || []).map((x) => x.id).sort().join(",");
+  const alla = pids(pAll);
+  ok("personer: minst två ansvariga i ofiltrerad tratt", alla.indexOf("u1") > -1 && alla.indexOf("u2") > -1);
+  const pMine = await call("get", "/admin/salj/moten", { query: { person: "u1" } });
+  ok("personer: listan är HELA uppsättningen även med personfilter på", pids(pMine) === alla);
+  ok("personer: filtret biter fortfarande på raderna",
+     ((pMine.body || {}).groups || []).every((g) => g.moten.every((m) => m.ansvarig_id === "u1")));
+  const pNarrow = await call("get", "/admin/salj/moten", { query: { from: "2026-08-01", to: "2026-08-02", person: "u1" } });
+  ok("personer: listan krymper inte heller av ett smalt datumfönster", pids(pNarrow) === alla);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // MÅL 3 — AUTOMATISK "LÄGG IN MÖTESANTECKNING"-TODO (2026-08-26)
+  // ⚠️ Idempotensen hänger HELT på Bubble-fältet `anteckning_todo`.
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── ROUTE-INVENTARIET ─────────────────────────────────────────────────────
+  // ⚠️ Ett aritetstest räcker inte — varje registrerad route ska vara med i sviten.
+  // Se [[feedback-testa-alla-routes]].
+  const POSTS = Object.keys(routes.post).sort();
+  ok("routes: exakt de POST-routes vi tror finns",
+     POSTS.join(" | ") === ["/admin/salj/budget/set", "/admin/salj/mote/:id/patch", "/salj/anteckning-todo/cron"].join(" | "));
+  ok("routes: exakt de GET-routes vi tror finns",
+     Object.keys(routes.get).sort().join(" | ") === ["/admin/salj/budget", "/admin/salj/moten"].join(" | "));
+  // ⚠️ SÄKERHET: `/admin/salj` är undantaget från index.js globala requireApiKey och
+  // grindas bara av PLANNING_ADMIN_TOKEN — som ligger i KLARTEXT i Bubble-blocket.
+  // En SKRIVANDE massjobbs-endpoint under det prefixet hade kunnat triggas från vilken
+  // webbläsare som helst. Cron-routen MÅSTE ligga utanför.
+  ok("routes: cron-routen ligger UTANFÖR /admin/salj (x-api-key, inte planning-token)",
+     POSTS.some((r) => r === "/salj/anteckning-todo/cron") && !POSTS.some((r) => r.indexOf("/admin/salj/anteckning") === 0));
+  // Och den får inte ha en OPTIONS/CORS-öppning — den anropas av cron, inte av en browser.
+  ok("routes: cron-routen har ingen CORS-preflight (den anropas inte från browsern)",
+     Object.keys(routes.options).indexOf("/salj/anteckning-todo/cron") < 0);
+
+  const CRON = "/salj/anteckning-todo/cron";
+  const dagar = (n) => new Date(Date.now() + n * 86400000).toISOString();
+  DB.activitet_crm.push(
+    { _id: "cr1", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-3) },                                  // ska få todo
+    { _id: "cr2", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-3), "genomfört": true },               // avbockat
+    { _id: "cr3", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-3), "mötesantecking": "Gick bra" },    // har anteckning
+    { _id: "cr4", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(3) },                                   // i framtiden
+    { _id: "cr5", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-60) },                                 // utanför fönstret
+    { _id: "cr6", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-0.2) },                                // inom grace
+    { _id: "cr7", activity_type: "Kundmöte", company: "cc1", "Datum_bokning": dagar(-3) },                                                // saknar writer
+    { _id: "cr8", activity_type: "Säljsamtal", writer: "u1", company: "cc1", "Datum_bokning": dagar(-3) },                                // ej Kundmöte
+  );
+  // ⚠️ days=7 håller de FASTA fixtur-datumen (a1-a4, cm*) utanför fönstret — annars
+  // hade testet varit beroende av hur långt från 2026-08 väggklockan råkar stå.
+  // Assertionerna testar MEDLEMSKAP, inte antal, av samma skäl.
+  const CQ = { days: "7" };
+  const dry = await call("post", CRON, { query: Object.assign({ dry: "1" }, CQ) });
+  const dids = ((dry.body || {}).rader || []).map((x) => x.aktivitet_id).sort();
+  ok("cron dry: cr1 (passerat, ej avbockat, utan anteckning) är kandidat",
+     dry.body.ok === true && dids.indexOf("cr1") > -1);
+  ok("cron dry: avbockat/anteckning/framtid/utanför fönstret/inom grace/utan writer/annan typ faller bort",
+     dry.body.ok === true && ["cr2", "cr3", "cr4", "cr5", "cr6", "cr7", "cr8"].every((id) => dids.indexOf(id) < 0));
+  ok("cron dry: rader utan writer hoppas över och RAPPORTERAS (aldrig tyst bortfall)",
+     (dry.body || {}).utan_agare === 1 && ((dry.body || {}).utan_agare_ids || []).indexOf("cr7") > -1);
+  ok("cron dry: skriver ingenting", dry.body.ok === true && (DB.Todo || []).length === 0 &&
+     DB.activitet_crm.find((x) => x._id === "cr1")["anteckning_todo"] === undefined);
+
+  const run1 = await call("post", CRON, { query: CQ });
+  const forAkt = (id) => ((run1.body || {}).rader || []).find((x) => x.aktivitet_id === id);
+  const todo1 = (DB.Todo || []).find((t) => forAkt("cr1") && t._id === forAkt("cr1").todo_id);
+  ok("cron: skapar en todo för cr1", run1.body.ok === true && !!todo1);
+  ok("cron: todon tilldelas mötets ÄGARE (writer), inte Created By", todo1 && todo1["user"] === "u1");
+  ok("cron: todon knyts till kunden och namnger den i titeln",
+     todo1 && todo1["Företag"] === "cc1" && /Acme AB/.test(todo1["Titel"]));
+  // ⚠️ Utan framtida datum syns todon aldrig som planerad på kundkortet.
+  ok("cron: todon har status Pågående och ett FRAMTIDA slutdatum",
+     todo1 && todo1["Status"] === "Pågående" && Date.parse(todo1["Sluttid"]) > Date.now());
+  // ⚠️ Kategori går inte att härleda ur mötet — ett gissat Category-värde avvisas av Bubble.
+  ok("cron: Kategori gissas INTE", todo1 && todo1["Kategori"] === undefined);
+  // ⚠️ (todo1 || {}) — mot gammal kod finns ingen todo. `todo1._id` KRASCHADE och
+  // dödade mutationstestet (femte gången samma fälla). Assertions mot något som kan
+  // saknas måste FALLA, inte kasta. Se [[feedback-testet-ska-falla-inte-krascha]].
+  ok("cron: markören sätts på aktiviteten",
+     !!todo1 && DB.activitet_crm.find((x) => x._id === "cr1")["anteckning_todo"] === todo1._id);
+
+  const antalEfter1 = (DB.Todo || []).length;
+  const run2 = await call("post", CRON, { query: CQ });
+  ok("cron: IDEMPOTENT — andra körningen skapar ingenting",
+     run2.body.ok === true && (run2.body || {}).skapade === 0 && (DB.Todo || []).length === antalEfter1);
+
+  // ── Taket får aldrig vara tyst ────────────────────────────────────────────
+  DB.activitet_crm.push(
+    { _id: "cx1", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-4) },
+    { _id: "cx2", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-5) },
+    { _id: "cx3", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-6) },
+  );
+  const cap = await call("post", CRON, { query: Object.assign({ limit: "2" }, CQ) });
+  ok("cron: taket rapporteras (capped + kvar), aldrig tyst avhugget",
+     (cap.body || {}).skapade === 2 && (cap.body || {}).capped === true && (cap.body || {}).kvar === 1);
+
+  // ── Fail-closed: utan markör-fältet skulle samma todo skapas VARJE natt ───
+  DB.activitet_crm.push({ _id: "cz1", activity_type: "Kundmöte", writer: "u1", company: "cc1", "Datum_bokning": dagar(-4) });
+  const todosFore = (DB.Todo || []).length;
+  MISSING.add("activitet_crm.anteckning_todo");
+  const failRun = await call("post", CRON, { query: CQ });
+  ok("cron: saknad markör avbryter körningen med 500 (fail-closed)",
+     failRun.code === 500 && failRun.body.error === "anteckning_todo_markor_misslyckades");
+  ok("cron: den skapade todon RULLAS TILLBAKA — inga föräldralösa rader",
+     (DB.Todo || []).length === todosFore && /raderad/.test((failRun.body || {}).rollback || ""));
+  MISSING.delete("activitet_crm.anteckning_todo");
+
+  // ── FRONTEND (mål 1 + mål 2) ──────────────────────────────────────────────
+  ok("frontend: avsluta-formuläret har ett obligatoriskt varför-fält",
+     /data-nsform="avslutat"/.test(mb) && /data-nf="x_varfor"/.test(mb) && /Varfor avslutas sparet\? \*/.test(mb));
+  ok("frontend: kort motivering blockerar sparningen",
+     /if\(why\.length<3\) return \{ error:/.test(mb));
+  ok("frontend: motiveringen skickas till servern",
+     /if\(ns\.kommentar\) body\.nasta_steg_kommentar=ns\.kommentar;/.test(mb));
+  ok("frontend: saknat kommentarsfält rapporteras SEPARAT från beslutet",
+     /avslut_kommentar_field_missing/.test(mb) && /MOTIVERINGEN lagrades inte/.test(mb));
+  ok("frontend: fattat beslut + motivering visas read-only i båda vyerna",
+     /function nsDone\(mt\)/.test(mb) && /nsDone\(mt\)\+nsHtml\(mt\)/.test(mb) && /var det=nsDone\(mt\);/.test(mb));
+  // ⚠️ Defaultvyn: kundansvarig = jag själv, mötesdatum idag ±7 dagar.
+  ok("frontend: defaultfiltret sätts vid boot",
+     /function defaultFilter\(\)\{ return \{ person:\(ME\|\|""\), from:dayShift\(-7\), to:dayShift\(7\)/.test(mb) &&
+     /\n  applyDefault\(\);/.test(mb));
+  ok("frontend: skapad-datumfiltret lämnas tomt i defaulten", /cfrom:"", cto:"" \}; \}/.test(mb));
+  // ⚠️ Utan current_user hade defaultfiltret gett en tom tratt som såg ut som "inga möten".
+  ok("frontend: saknad current_user faller tillbaka på alla OCH säger det",
+     /Kunde inte identifiera dig \(current_user saknas\)/.test(mb));
+  ok("frontend: 'Min vecka' återställer defaulten och markeras när den är aktiv",
+     /data-mb="mine"/.test(mb) && /applyDefault\(\); loadMoten\(\); return;/.test(mb) && /isDefaultFilter\(\)\?" on":""/.test(mb));
+  // ⚠️ Hjälparna måste ligga på IIFE-nivå (två blanksteg), inte i en render-funktion.
+  ok("frontend: default-hjälparna ligger på IIFE-nivå",
+     /\n  function defaultFilter\(/.test(mb) && /\n  function applyDefault\(/.test(mb) &&
+     /\n  function isDefaultFilter\(/.test(mb) && /\n  function dayShift\(/.test(mb));
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
