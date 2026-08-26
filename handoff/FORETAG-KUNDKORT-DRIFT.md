@@ -743,9 +743,16 @@ på samma sida skulle annars krocka ([[reference-bubble-multiblock-collision]]).
   deal-formuläret). Dropdownen ankras mot `.suggwrap` runt inputen, inte mot fältgruppen.
 - **Kontors-dropdownen** lat-laddas per bolag (`/admin/companies/:id/offices`) och cachas
   i STATE → öppnar man flera personer på samma kund blir det ETT anrop.
-- ⚠️ **`.pe-scroll` + `min-width` bara i scroll-containern.** Med 10 kolumner klipptes
+- ⚠️ **`.tablewrap` + `min-width` bara på listtabellen.** Med 10 kolumner klipptes
   action-kolumnen (Skapa konto/Nytt lösenord) bort och blev OÅTKOMLIG på smal skärm.
-  Aktivitetstabellen (4 kolumner) ligger medvetet UTANFÖR scroll-wrappern.
+  Aktivitetstabellen (4 kolumner) ligger medvetet UTANFÖR den regeln.
+- ⚠️⚠️ **`!important` KRÄVS på knapparnas `:hover`** — se [[reference-bubble-button-hover-important]].
+  `dashboard_crm` har en global `button:hover{background;color}` med **!important**. Utan
+  matchande !important blev "+ Ny person", "Nytt lösenord" och "Skapa konto" **helorange
+  med osynlig text** (Christians skärmbild 2026-08-26). Specificitet hjälper INTE mot
+  !important. Verifierat genom att injicera samma regel i harnessen: utan fixen försvinner
+  texten, med fixen står knappen emot. Gäller alla `<button>`: `.btn`, `.ebtn`,
+  `.pager button`, `.back` — `.subtab`/`.si` är span/div och träffas inte.
 - data-mira: `api_host` + `planning_token`.
 
 **Roll-kedjan: ✅ BEKRÄFTAD av Christian 2026-08-26** — Bubble-wf `create_user_account`

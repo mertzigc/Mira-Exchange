@@ -61,11 +61,18 @@
   .pe .p-wait{background:var(--w10);color:var(--w70)}
   .pe .p-open{background:var(--orange-dim);color:var(--orange)}.pe .p-open .d{background:var(--orange)}
   /* knappar */
+  /* ⚠️⚠️ !important KRÄVS PÅ HOVER — verifierat 2026-08-26, inte en gissning.
+     Bubble-sidan (dashboard_crm) har en global `button:hover{background:…;color:…}` med
+     **!important**. Utan matchande !important slår den igenom och VARJE knapp blir
+     helorange med osynlig text (Christians skärmbild: "+ Ny person", "Nytt lösenord",
+     "Skapa konto"). Specificitet räcker INTE mot !important — bara !important gör det.
+     Gäller alla <button> i blocket: .btn, .ebtn, .pager button, .back.
+     (.subtab/.si är span/div och träffas inte av regeln.) */
   .pe .btn{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11.5px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb);transition:border-color .12s,color .12s}
-  .pe .btn:hover{border-color:var(--orange);color:var(--orange)}
-  .pe .btn:disabled{opacity:.5;cursor:default}
+  .pe .btn:hover,.pe .btn:focus{background:var(--input)!important;border-color:var(--orange);color:var(--orange)!important;outline:none}
+  .pe .btn:disabled,.pe .btn:disabled:hover{opacity:.5;cursor:default;background:var(--input)!important;border-color:var(--border);color:var(--w70)!important}
   .pe .ebtn{background:var(--orange);border:none;border-radius:8px;padding:8px 22px;color:#1c1206;font-weight:800;font-size:12.5px;cursor:pointer;font-family:var(--fb);transition:filter .12s}
-  .pe .ebtn:hover{filter:brightness(1.07)}
+  .pe .ebtn:hover,.pe .ebtn:focus{background:var(--orange)!important;color:#1c1206!important;filter:brightness(1.07);outline:none}
   .pe .kmsg{font-size:11px;color:var(--w40);margin-left:8px}
   .pe .kmsg.err{color:#ff8080}
   .pe .kmsg.ok{color:var(--green)}
@@ -73,21 +80,23 @@
   /* pager + tillstånd */
   .pe .pager{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px}
   .pe .pager button{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--white);font-size:12px;cursor:pointer;font-family:var(--fb)}
-  .pe .pager button:disabled{opacity:.4;cursor:default}
+  .pe .pager button:hover,.pe .pager button:focus{background:var(--input)!important;border-color:var(--orange);color:var(--orange)!important;outline:none}
+  .pe .pager button:disabled,.pe .pager button:disabled:hover{opacity:.4;cursor:default;background:var(--input)!important;border-color:var(--border);color:var(--white)!important}
   .pe .pager .pinfo{font-size:11px;color:var(--w40)}
   .pe .msg{padding:26px;text-align:center;color:var(--w40)}
   .pe .empty{padding:34px 20px;text-align:center;color:var(--w40)}
   .pe .empty b{display:block;color:var(--white);font-size:14px;margin-bottom:4px;font-weight:700}
   /* detalj */
   .pe .back{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--w70);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--fb);margin-bottom:16px}
-  .pe .back:hover{border-color:var(--orange);color:var(--orange)}
+  .pe .back:hover,.pe .back:focus{background:var(--input)!important;border-color:var(--orange);color:var(--orange)!important;outline:none}
   .pe .wrap{max-width:1080px}
   .pe .ph{display:flex;align-items:center;gap:12px;margin-bottom:4px}
   .pe .ph h2{font-family:'DM Serif Display',Georgia,serif;font-size:21px;font-weight:400}
   .pe .ph .psub{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.06em;margin-top:1px}
   .pe .subtabs{display:flex;gap:6px;margin:14px 0 12px}
   .pe .subtab{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 13px;font-size:12px;color:var(--w70);cursor:pointer;font-family:var(--fb)}
-  .pe .subtab.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .pe .subtab:hover{background:var(--input);border-color:var(--orange);color:var(--orange)}
+  .pe .subtab.on,.pe .subtab.on:hover{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
   /* formulär — affärsvyns .erow/.el/.ein */
   .pe .edit{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
   .pe .erow{display:flex;gap:14px;flex-wrap:wrap}
