@@ -1378,11 +1378,13 @@ async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
     ? "Vi har registrerat att du kommer. H\u00e4r \u00e4r detaljerna:"
     : "Vi har registrerat att du tyv\u00e4rr inte har m\u00f6jlighet att komma. Tack f\u00f6r att du svarade.";
 
+  const pal = mailPalette(x.bg_color);
   const html = wrapLayout({
-    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: "", accent,
+    toName: guest || toName, logoUrl: x.logo_url || "", senderName, imageUrl: "", accent, pal,
+    accentTone: true,
     tag: coming ? "Anm\u00e4ld" : "Svar mottaget",
     headline,
-    body: '<p style="font-size:14px;color:#c0c4d6;line-height:1.65;">' + esc(intro) + '</p>',
+    body: '<p style="font-size:14px;color:' + pal.body + ';line-height:1.65;">' + esc(intro) + '</p>',
     details: detailRows([
       title && ["Event", esc(title)],
       when && ["N\u00e4r", esc(when)],
@@ -1390,7 +1392,7 @@ async function tmplInviteRsvpConfirmation(e, extra, toName, ctaLabel, item) {
       x.event_address && ["Adress", esc(x.event_address)],
       (coming && Number(x.plus_ones_count) > 0) && ["Medf\u00f6ljande", String(x.plus_ones_count)],
       (coming && x.allergens_summary) && ["Specialkost", esc(x.allergens_summary)]
-    ]),
+    ], pal, accent),
     ctaLabel: null, ctaUrl: null,
     miraNote: "Beh\u00f6ver du \u00e4ndra ditt svar? Anv\u00e4nd samma l\u00e4nk som i din inbjudan.",
     footer: x.footer || null

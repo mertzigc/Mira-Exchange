@@ -14158,11 +14158,33 @@ function _checkinAuthRate(ip) {
   return n <= 10;   // max 10 kod-försök per minut per IP
 }
 const _sendList = {};
+// Landningssidans standardbakgrund när ingen egen är vald (måste spegla --bg i
+// invite.html, annars räknas accent_strong mot fel underlag).
+const INVITE_DEFAULT_BG = "#0f1b2d";
+
+// ⚠️ ENDA stället där ett utskicks färger bestäms. Både _inviteBrand (mejlet) och
+// inviteBrand (landningssidan) spreadar in den här — de får skilja sig i
+// avsändarnamn och logo, ALDRIG i färg. Två kopior av färglogiken var precis
+// varför bg_color slog igenom på landningssidan men inte i mejlet (2026-08-26).
+function _inviteColors(inv) {
+  const accent = inv.accent_color || INVITE.DEFAULT_ACCENT;
+  const bg     = _admHex(inv.bg_color);
+  return {
+    accent_color:  accent,
+    // Accenten justerad till läsbar mot den FAKTISKA bakgrunden. Räcker den redan
+    // returneras den oförändrad — vanligaste fallet.
+    accent_strong: readableAccent(accent, bg || INVITE_DEFAULT_BG),
+    bg_color:      bg,
+    // Färdig palett till landningssidan. null = sidan behåller sin standardpalett.
+    palette:       bg ? mailPalette(bg) : null
+  };
+}
+
 function _inviteBrand(inv, cc) {
   return {
     company_name: inv.host_name || _admName(cc || {}) || "Carotte",
-    accent_color: inv.accent_color || "#df6f39",
-    logo_url: _admAbs((cc && (cc.logo_url || cc.Logo || cc.logo || cc.Logotyp || cc.logotyp)) || "")
+    logo_url: _admAbs((cc && (cc.logo_url || cc.Logo || cc.logo || cc.Logotyp || cc.logotyp)) || ""),
+    ..._inviteColors(inv)
   };
 }
 app.post("/admin/invite/:id/send", async (req, res) => {
@@ -14349,27 +14371,11 @@ function _admHex(v) {
   return "#" + h.toLowerCase();
 }
 
-// Landningssidans standardbakgrund när ingen egen är vald (måste spegla
-// --bg i invite.html, annars räknas accent_strong mot fel underlag).
-const INVITE_DEFAULT_BG = "#0f1b2d";
-
 function inviteBrand(inv, cc) {
-  const bg = _admHex(inv.bg_color);
-  const accent = inv.accent_color || INVITE.DEFAULT_ACCENT;
   return {
     company_name: inv.company_name || cc?.Name_company || inv.host_name || "",
     logo_url:     _inviteAbsUrl(cc?.logotyp || cc?.logo_url || cc?.Logo || ""),
-    accent_color: accent,
-    // Accenten justerad till läsbar mot den faktiska bakgrunden — för rubrik och
-    // faktaetiketter. Räcker accenten som den är returneras den OFÖRÄNDRAD, så
-    // den vanliga kunden ser exakt sin egen färg.
-    accent_strong: readableAccent(accent, bg || INVITE_DEFAULT_BG),
-    // Fri bakgrundsfärg. Tom sträng = landningssidan behåller sin standardpalett.
-    // Fristående från accent_color — de två reglagen rör aldrig varandra.
-    bg_color:     bg,
-    // Paletten räknas HÄR, av samma modul som mejlet använder. Landningssidan
-    // härleder ingenting själv — annars driftar mail och webb isär.
-    palette:      bg ? mailPalette(bg) : null
+    ..._inviteColors(inv)
   };
 }
 
@@ -14710,6 +14716,7 @@ app.post("/invite/rsvp", async (req, res) => {
       event_end:        inv.end_date || "",
       company_name:     brand.company_name,
       accent_color:     brand.accent_color,
+      bg_color:         brand.bg_color,
       host_name:        inv.host_name || brand.company_name,
       rsvp_status:      rsvp,
       plus_ones_count:  isComing ? plusOnes : 0,

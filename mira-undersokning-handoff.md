@@ -237,8 +237,30 @@ mot fel underlag blir rubriken oläsbar på standardbakgrunden.
 I mejlet är accent-tonen **opt-in** via `accentTone` i `wrapLayout` (default
 `false`) — bara invite/news/survey har den på, de 17 övriga mallarna är orörda.
 
-**Röktest:** `node invite_mall_smoke.mjs` (126 gröna). Mutationstestad mot HEAD:
-25 av 127 faller, ingen krasch. Kör mutationstestet på en KOPIA
+### ⚠️ Fällan: TVÅ brand-byggare (2026-08-26, kostade en felsökning)
+
+`index.js` har **två** funktioner som bygger ett utskicks varumärke:
+
+| Funktion | Används av |
+|---|---|
+| `_inviteBrand(inv, cc)` | **mejlet** — `/admin/invite/:id/send` |
+| `inviteBrand(inv, cc)` | **landningssidan** — `/invite/config` + svarsbekräftelsen |
+
+`bg_color` lades först bara till i `inviteBrand`. Resultat: bakgrunden slog
+igenom på landningssidan men **inte i mejlet** — och källkoden såg korrekt ut
+i den funktion man råkade läsa. Det syntes först i inkorgen.
+
+**Färgerna bor nu i `_inviteColors(inv)`, som båda spreadar in.** De får skilja
+sig i avsändarnamn och logo-fältordning (det är avsiktligt), aldrig i färg.
+Röktestet vaktar detta: ingen av brand-byggarna får sätta `accent_color`,
+`bg_color`, `accent_strong` eller `palette` på egen hand, och `_inviteColors`
+körs på riktigt (utklippt + evaluerad), inte bara lästs.
+
+**Svarsbekräftelsen** (`invite_rsvp_confirmation`) följer samma palett — annars
+byter varumärket skepnad mitt i gästens flöde.
+
+**Röktest:** `node invite_mall_smoke.mjs` (147 gröna). Mutationstestad mot HEAD:
+17 av 149 faller, ingen krasch. Kör mutationstestet på en KOPIA
 (`git show HEAD:fil > kopia`), aldrig med `git checkout` i arbetsträdet.
 
 ---

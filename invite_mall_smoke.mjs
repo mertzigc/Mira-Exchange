@@ -153,12 +153,17 @@ ok("faktaetiketterna tar accenten när den skickas med, annars palettens etikett
 const footSrc = slice(EMAILER, "function buildFooterBlock(", "function buildSocialBlock(", "buildFooterBlock");
 ok("footern har inga hårdkodade färger", (footSrc.match(HEX) || []).length === 0);
 
-for (const [fn, label] of [["tmplInviteInvitation", "inbjudan"], ["tmplNewsAnnouncement", "nyhetsutskick"], ["tmplSurveyInvitation", "undersökning"]]) {
+for (const [fn, label] of [["tmplInviteInvitation", "inbjudan"], ["tmplNewsAnnouncement", "nyhetsutskick"],
+                           ["tmplSurveyInvitation", "undersökning"], ["tmplInviteRsvpConfirmation", "svarsbekräftelse"]]) {
   const src = slice(EMAILER, "async function " + fn + "(", "\n}", fn);
   ok(`${label}: paletten byggs ur x.bg_color`, /const pal\s*=\s*mailPalette\(x\.bg_color\)/.test(src));
   ok(`${label}: paletten skickas till wrapLayout`, /accent, pal,/.test(src));
-  ok(`${label}: designblocken får paletten`, /blocksHtmlFor\(x, accent, pal\)/.test(src));
   ok(`${label}: accent-tonen är påslagen`, /accentTone: true,/.test(src));
+  // Svarsbekräftelsen har inga designblock — bara de tre utskicksmallarna.
+  if (fn !== "tmplInviteRsvpConfirmation") {
+    ok(`${label}: designblocken får paletten`, /blocksHtmlFor\(x, accent, pal\)/.test(src));
+  }
+  ok(`${label}: ingen hårdkodad brödtextfärg kvar`, !/color:#c0c4d6/.test(src));
 }
 const invSrc = slice(EMAILER, "async function tmplInviteInvitation(", "\n}", "tmplInviteInvitation");
 ok("inbjudan: CTA centrerad", /ctaAlign:\s*"center"/.test(invSrc));
@@ -177,6 +182,64 @@ ok("landningssidans config får färdig palett", /palette:\s*bg \? mailPalette\(
 ok("accent_strong räknas mot den FAKTISKA bakgrunden (vald eller sidans standard)",
    /accent_strong: readableAccent\(accent, bg \|\| INVITE_DEFAULT_BG\)/.test(INDEX)
    && /const INVITE_DEFAULT_BG = "#0f1b2d"/.test(INDEX));
+
+// ⚠️ REGRESSIONSVAKT. Det finns TVÅ brand-byggare: _inviteBrand (mejlet) och
+// inviteBrand (landningssidan). De får skilja sig i avsändarnamn och logo men
+// ALDRIG i färg. När bg_color bara lades till i den ena slog bakgrunden igenom
+// på landningssidan men inte i mejlet — och det syntes först i inkorgen.
+sec("index.js — en enda färgkälla");
+const colorsSrc = slice(INDEX, "function _inviteColors(inv)", "\n}", "_inviteColors");
+ok("_inviteColors finns och äger accent, accent_strong, bg_color och palett",
+   /accent_color:/.test(colorsSrc) && /accent_strong:/.test(colorsSrc)
+   && /bg_color:/.test(colorsSrc) && /palette:/.test(colorsSrc));
+
+const mailBrandSrc = slice(INDEX, "function _inviteBrand(inv, cc)", "\n}", "_inviteBrand");
+const webBrandSrc  = slice(INDEX, "function inviteBrand(inv, cc)", "\n}", "inviteBrand");
+ok("mejlets brand-byggare spreadar in _inviteColors", /\.\.\._inviteColors\(inv\)/.test(mailBrandSrc));
+ok("landningssidans brand-byggare spreadar in _inviteColors", /\.\.\._inviteColors\(inv\)/.test(webBrandSrc));
+ok("ingen av dem sätter egna färger vid sidan om",
+   !/accent_color:|bg_color:|accent_strong:|palette:/.test(mailBrandSrc)
+   && !/accent_color:|bg_color:|accent_strong:|palette:/.test(webBrandSrc));
+// Beteendetest, inte bara källkodskontrakt: klipp ut _inviteColors och kör den.
+// Det här är testet som HADE fångat buggen — källkodsläsning såg rätt ut i den
+// ena funktionen medan mejlets brand-objekt saknade fältet.
+{
+  const srcAdmHex = slice(INDEX, "function _admHex(v)", "\n}", "_admHex");
+  let colors = null;
+  try {
+    // INVITE_DEFAULT_BG läses ur källan — hårdkodas den här kan testet gröna
+    // sig mot fel underlag om konstanten ändras i index.js.
+    const defBg = (INDEX.match(/const INVITE_DEFAULT_BG = "(#[0-9a-fA-F]{6})"/) || [])[1] || "";
+    ok("INVITE_DEFAULT_BG finns i index.js", !!defBg);
+    colors = new Function("mailPalette", "readableAccent", "INVITE", "INVITE_DEFAULT_BG",
+      `${srcAdmHex}\n${colorsSrc}\nreturn _inviteColors;`)(mailPalette, readableAccent, { DEFAULT_ACCENT: "#df6f39" }, defBg);
+  } catch (e) { fail++; console.log("  ✗ [eval] _inviteColors gick inte att köra — " + (e?.message || e)); }
+  const run = (inv) => { try { return colors ? colors(inv) : {}; } catch { return {}; } };
+
+  const valt = run({ accent_color: "#551e23", bg_color: "#ece7dd" });
+  ok("vald bakgrund når färgobjektet", valt.bg_color === "#ece7dd");
+  ok("vald bakgrund ger en färdig palett", !!valt.palette && valt.palette.pageBg === "#ece7dd");
+  ok("accenten lämnas orörd när den räcker mot bakgrunden", valt.accent_color === "#551e23" && valt.accent_strong === "#551e23");
+
+  const tomt = run({ accent_color: "#df6f39" });
+  ok("utan bakgrund: bg_color är tom och paletten null (standardutseende)",
+     tomt.bg_color === "" && tomt.palette === null);
+  ok("utan bakgrund räknas accenten mot sidans standardbakgrund",
+     tomt.accent_strong === readableAccent("#df6f39", (INDEX.match(/const INVITE_DEFAULT_BG = "(#[0-9a-fA-F]{6})"/) || [])[1]));
+
+  const skrap = run({ accent_color: "#df6f39", bg_color: "lila" });
+  ok("skräp i bg_color faller tillbaka på standardutseendet",
+     skrap.bg_color === "" && skrap.palette === null);
+}
+
+ok("readableAccent anropas på EXAKT ett ställe i index.js",
+   (INDEX.match(/readableAccent\(/g) || []).length === 1);
+ok("mailPalette anropas på EXAKT ett ställe i index.js",
+   (INDEX.match(/mailPalette\(/g) || []).length === 1);
+// BÅDA mejlvägarna: utskicket (baseExtra) och svarsbekräftelsen. Ett ensamt
+// träffat ställe räckte inte — det var precis så buggen såg ut.
+ok("båda mejlvägarnas extra_data bär bg_color (utskick + svarsbekräftelse)",
+   (INDEX.match(/bg_color:\s+brand\.bg_color,/g) || []).length === 2);
 ok("hex normaliseras innan den når Bubble/HTML", /function _admHex\(v\)/.test(INDEX));
 // Utan självläkande patch blockerar ETT okänt fält hela sparningen av inbjudan.
 ok("inbjudan sparas med självläkande patch", /await safePatch\(ADM_INVITATION, b\.id, f\)/.test(INDEX));
