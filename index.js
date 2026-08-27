@@ -13413,6 +13413,112 @@ app.patch("/admin/invite/update", async (req, res) => {
   }
 });
 
+// ── Duplicera inbjudan/undersökning/nyhet ─────────────────────────────────────
+// Kopierar innehållet till ett NYTT utskick, valfritt med mottagarlistan.
+//
+// ⚠️ Vad som ALDRIG kopieras, och varför:
+//   token / guest_token — måste vara nya. Delade tokens gör att getGuestByToken
+//     returnerar fel rad och två utskick skriver över varandras svar.
+//   checkin_token / checkin_code — avprickningsgrinden är per event.
+//   svar (rsvp_status, response_json, allergens_json, arrived, rsvp_at)
+//     och invite_sent — en kopia ska stå på noll, annars ser den ut som
+//     halvskickad och påminnelsen får fel urval.
+app.post("/admin/invite/:id/duplicate", async (req, res) => {
+  try {
+    const srcId = req.params.id;
+    const d = req.body || {};
+    const src = await bubbleGet(ADM_INVITATION, srcId).catch(() => null);
+    if (!src) return res.status(404).json({ ok: false, error: "invitation_not_found" });
+
+    const title = safeText(String(d.title || "").trim() || ("Kopia av " + (src.title || "utskick")), 200);
+    const token = _admToken();
+    const exact = {
+      token,
+      active:          d.active !== undefined ? d.active !== false : src.active !== false,
+      kind:            _normKind(src.kind),
+      anonymous:       src.anonymous === true,
+      client_company:  src.client_company || null,
+      title,
+      description:     String(src.description || ""),
+      tags:            _normTags(src.tags),
+      accent_color:    src.accent_color || INVITE.DEFAULT_ACCENT,
+      bg_color:        _admHex(src.bg_color),
+      event_address:   safeText(src.event_address || "", 300),
+      location_name:   safeText(src.location_name || "", 200),
+      start_date:      src.start_date ? toBubbleDate(src.start_date) : null,
+      end_date:        src.end_date ? toBubbleDate(src.end_date) : null,
+      rsvp_deadline:   src.rsvp_deadline ? toBubbleDate(src.rsvp_deadline) : null,
+      allow_plus_ones: src.allow_plus_ones !== false,
+      max_plus_ones:   asNumberOrNull(src.max_plus_ones) ?? 0,
+      form_schema:     typeof src.form_schema === "string" ? src.form_schema : JSON.stringify(src.form_schema || []),
+      content_blocks:  JSON.stringify(_normBlocks(src.content_blocks)),
+      host_name:       safeText(src.host_name || "", 120),
+      cta_label:       safeText(src.cta_label || "", 80),
+      cta_url:         _admAbs(src.cta_url || ""),
+      linkedin_url:    _admAbs(src.linkedin_url || ""),
+      facebook_url:    _admAbs(src.facebook_url || ""),
+      instagram_url:   _admAbs(src.instagram_url || ""),
+      video_url:       _admAbs(src.video_url || "")
+    };
+    const uncertain = src.image_url ? { image_url: _admAbs(src.image_url) } : {};
+    const newId = await safeCreate(ADM_INVITATION, exact, uncertain);
+
+    // ── Mottagarlistan (opt-in) ──
+    let guestsRequested = 0, guestsCopied = 0;
+    if (d.copy_guests !== false) {
+      const srcGuests = await bubbleFindAll(ADM_GUEST, {
+        constraints: [{ key: "invitation", constraint_type: "equals", value: srcId }]
+      }).catch(() => []);
+      const nowIso = new Date().toISOString();
+      const seen = new Set();
+      const rows = [];
+      for (const gst of srcGuests) {
+        const email = String(gst.email || "").trim().toLowerCase();
+        if (!email || seen.has(email)) continue;   // källan kan innehålla dubbletter
+        seen.add(email);
+        rows.push({
+          invitation:      newId,
+          guest_token:     _admToken(),          // ALDRIG återanvänd källans token
+          name:            safeText(gst.name || email, 120),
+          email,
+          phone:           safeText(gst.phone || "", 60) || undefined,
+          client_company:  gst.client_company || undefined,
+          region:          safeText(gst.region || "", 120) || undefined,
+          source:          "copy",
+          rsvp_status:     "pending",
+          plus_ones_count: 0,
+          invited_at:      nowIso
+        });
+      }
+      guestsRequested = rows.length;
+      // Chunkat: en bulk-post med hundratals rader är en enda punkt att falla på.
+      for (let i = 0; i < rows.length; i += 200) {
+        await _bulkCreate(ADM_GUEST, rows.slice(i, i + 200));
+      }
+      // ⚠️ Räkna om från Bubble i stället för att lita på _bulkCreate:s retur —
+      // den rapporterar `ok || rows.length` och kan alltså säga "lyckat" när
+      // ingenting skapades. Det här är sanningen admin får se.
+      const check = await bubbleFindAll(ADM_GUEST, {
+        constraints: [{ key: "invitation", constraint_type: "equals", value: newId }]
+      }).catch(() => null);
+      guestsCopied = check ? check.length : -1;   // -1 = kunde inte verifieras
+      delete _guestEmailSet[newId];
+    }
+
+    res.json({
+      ok: true, id: newId, token, title,
+      guests_requested: guestsRequested,
+      guests_copied: guestsCopied,
+      guests_verified: guestsCopied >= 0,
+      partial: guestsCopied >= 0 && guestsCopied < guestsRequested
+    });
+  } catch (e) {
+    const detail = _bubbleErrText(e);
+    console.error("[admin/invite/duplicate]", e?.message, detail);
+    res.status(500).json({ ok: false, error: e?.message, detail });
+  }
+});
+
 // ── Lista inbjudningar ────────────────────────────────────────────────────────
 app.get("/admin/invite/list", async (req, res) => {
   try {
@@ -21538,8 +21644,21 @@ async function _buildServicesDashboard(companyId) {
   const activeByOffice = {};       // facility-tiles, key = office_id
   offices.forEach((o) => { activeByOffice[o.id] = {}; });
 
+  // Master-avtal (paketavtal som splittats i delrader) hoppas över: deras
+  // belopp och erbjudande finns nu på barnen, och räknades de med skulle
+  // Housekeeping-tile:n visa hela paketets total igen. Härleds ur samma
+  // hämtning — INGEN extra Bubble-fråga, och ingen flagga att städa om
+  // splitten backas (raderas barnen är mastern en vanlig rad direkt).
+  const masterIds = new Set();
+  for (const ct of contracts) {
+    const m = _ffIdOf(ct[SERVICES.CT_MASTER]);
+    if (m) masterIds.add(m);
+  }
+
   const now = Date.now();
   for (const ct of contracts) {
+    if (masterIds.has(bubbleId(ct))) continue;
+
     const end = ct[SERVICES.CT_END] ? new Date(ct[SERVICES.CT_END]).getTime() : null;
     if (end != null && !Number.isNaN(end) && end < now) continue;
 
@@ -21557,6 +21676,18 @@ async function _buildServicesDashboard(companyId) {
     const status = _deriveContractStatus(ct, now);
     const contractId = bubbleId(ct);
     const contractType = ct[SERVICES.CT_TYPE] || SERVICES.TYPE_SUBSCRIPTION;
+    // Rörligt debiterad tjänst (t.ex. Frukt 45 kr/kg): månadskostnaden är 0 men
+    // tjänsten ÄR aktiv. Första rate_card-raden som inte är en engångspost bär
+    // det avtalade styckpriset → frontend kan visa "45 kr/kg" i stället för
+    // tomt, och falla tillbaka på prismotorns uppskattning för månadssiffran.
+    let unit = null, unitPrice = null;
+    try {
+      const rc = JSON.parse(ct[SERVICES.CT_RATE_CARD_JSON] || "[]");
+      const variable = (Array.isArray(rc) ? rc : []).find(
+        (r) => r && r.unit && String(r.unit).toLowerCase() !== "engång");
+      if (variable) { unit = String(variable.unit); unitPrice = Number(variable.price_per_h) || null; }
+    } catch (_) { /* ogiltig JSON → ingen styckprisvisning */ }
+
     const entry = {
       option_id: offerId,
       qty,
@@ -21567,6 +21698,9 @@ async function _buildServicesDashboard(companyId) {
       contract_id: contractId,
       contract_type: String(contractType),
       end_date: ct[SERVICES.CT_END] || null,
+      unit,
+      unit_price: unitPrice,
+      master_contract_id: _ffIdOf(ct[SERVICES.CT_MASTER]) || null,
     };
 
     const category = slugCategory.get(slug);
@@ -22142,6 +22276,21 @@ app.get("/admin/contracts/by-company", async (req, res) => {
 
     // 6) Bygg account-scope + per-office-grupper
     const enriched = contracts.map((ct) => _enrichContract(ct, ctx));
+
+    // Paketavtal: markera vilka rader som är master (någon annan rad pekar på
+    // dem) så frontend kan rendera barnen nästlade i stället för som fem
+    // sidoställda avtal. Räknas ur den redan hämtade listan — ingen extra fråga.
+    const childCount = new Map();
+    for (const e of enriched) {
+      if (!e.master_contract_id) continue;
+      childCount.set(e.master_contract_id, (childCount.get(e.master_contract_id) || 0) + 1);
+    }
+    for (const e of enriched) {
+      e.child_count = childCount.get(e.id) || 0;
+      e.is_master   = e.child_count > 0;
+      e.is_child    = !!e.master_contract_id;
+    }
+
     const accountContracts = [];
     const byOffice = {};
     for (const o of officesRaw) byOffice[bubbleId(o)] = [];
@@ -22666,6 +22815,319 @@ app.post("/admin/contracts/:id/send-for-signing", async (req, res) => {
       dokument_count: dokumentIds.length, recipients_count: result.recipients_count, approvals: result.approvals });
   } catch (e) {
     console.error("[/admin/contracts/:id/send-for-signing] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ── Fribeläggning av paketavtal: master + child-Contracts ───────────────────
+//
+// Bakgrund (2026-08-27, Planhat): ett HK-avtal innehåller ofta flera tjänster
+// i EN prisbild. Planhats §5 lyder:
+//     Lokalvård 25 100 · Tillsyn 13 856 · Växter 7 691 · Entrèmatta 450  = 47 097
+//     Frukt 45 kr/kg (rörligt) · uppstart 10 000 · växtleverans 1 590 (engång)
+// Importen skapade EN Contract med ETT erbjudande (Housekeeping) och hela
+// 47 097 kr. Kund-dashboarden tänder tiles via Contract.erbjudande → alltså
+// tändes bara Housekeeping, med fel belopp, och Växter fanns inte alls.
+//
+// Lösningen använder det redan schemalagda men oanvända fältet
+// Contract.master_contract (self-ref, Fas 1). INGA nya Bubble-fält:
+//   • Master = dokumentet. Behåller signed_pdf, bilagor, bindning/uppsägning,
+//     prisreglering, offer_approval och den avtalade totalen.
+//   • Child  = en per tjänsterad. Eget erbjudande (→ slug → tile), egen
+//     månadskostnad, egen kategori. master_contract pekar på mastern.
+// Rörliga rader (45 kr/kg) och engångsposter läggs i childens rate_card_json
+// med `unit` — samma form som LLM-importen redan producerar.
+//
+// ⚠️ Mastern MODIFIERAS INTE (utom valfri omdöpning). Att den är master
+// härleds av att någon annan Contract pekar på den — se _buildServicesDashboard.
+// Det gör splitten reversibel: raderas barnen är mastern omedelbart en vanlig
+// rad igen, utan att ett fält behöver städas.
+
+// Rader som räknas in i den fasta månadstotalen. Rörliga enheter (per kg / per
+// timme / per tillfälle) och engångsposter gör det INTE — de har ingen
+// månadskostnad att stämma av mot.
+const SPLIT_FIXED_UNITS = ["per månad", "per manad", "månad", "manad", ""];
+function _splitLineIsFixed(line) {
+  const u = String(line?.unit || "").trim().toLowerCase();
+  return SPLIT_FIXED_UNITS.includes(u);
+}
+
+// Bygger rate_card_json för en child: den rörliga raden + ev. engångskostnad.
+// Tom → null (så fältet inte skrivs alls).
+function _splitChildRateCard(line) {
+  const rows = [];
+  if (!_splitLineIsFixed(line)) {
+    const price = Number(line.unit_price != null ? line.unit_price : line.monthly_cost) || 0;
+    if (price > 0) rows.push({ role: String(line.label || "Rörlig post"), price_per_h: price, unit: String(line.unit) });
+  }
+  const setup = Number(line.setup_cost || 0);
+  if (setup > 0) rows.push({ role: String(line.label || "Post") + " (uppstart)", price_per_h: setup, unit: "engång" });
+  return rows.length ? JSON.stringify(rows) : null;
+}
+
+// Hämtar alla child-Contracts för en master. Bubble-constraint på ref-fält
+// matchar på id-strängen.
+async function _splitChildrenOf(masterId) {
+  return await bubbleFindAll(SERVICES.CONTRACT_TYPE, {
+    constraints: [{ key: SERVICES.CT_MASTER, constraint_type: "equals", value: masterId }],
+  }).catch(() => []);
+}
+
+// ── POST /admin/contracts/:id/split ─────────────────────────────────────────
+// Body:
+//   {
+//     lines: [{ label, offer_id, monthly_cost, category?, contract_type?,
+//               office_id?, unit?, unit_price?, setup_cost?, qty?,
+//               volume_json?, contract_title? }],
+//     master_title?: string,   // döper om mastern (importen gissar ofta fel kund)
+//     dry_run?: bool,          // true → returnera planen, skriv inget
+//     force?: bool             // förbi avstämningen + redan-splittad-spärren
+//   }
+//
+// Spärrar: 404 not_found · 409 is_child · 409 already_split · 400 inga_rader
+//        · 400 rad_saknar_erbjudande · 400 reconciliation_failed
+app.options("/admin/contracts/:id/split", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/:id/split", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+
+  const created = [];   // för rollback om en child failar mitt i
+  try {
+    const contractId = String(req.params.id || "").trim();
+    const b = req.body || {};
+    const force  = b.force === true;
+    const dryRun = b.dry_run === true;
+    if (!contractId) return res.status(400).json({ ok: false, error: "contract_id_krävs" });
+
+    const master = await bubbleGet(SERVICES.CONTRACT_TYPE, contractId).catch(() => null);
+    if (!master) return res.status(404).json({ ok: false, error: "contract_not_found" });
+
+    // Ett barn får inte bli master — då blir trädet två nivåer djupt och
+    // dashboardens "hoppa över masters" slutar räcka.
+    if (_ffIdOf(master[SERVICES.CT_MASTER])) {
+      return res.status(409).json({ ok: false, error: "is_child",
+        master_contract_id: _ffIdOf(master[SERVICES.CT_MASTER]),
+        hint: "Avtalet är redan en delrad under ett annat avtal. Splitta mastern i stället." });
+    }
+
+    const existing = await _splitChildrenOf(contractId);
+    if (existing.length && !force) {
+      return res.status(409).json({ ok: false, error: "already_split", child_count: existing.length,
+        child_ids: existing.map(bubbleId),
+        hint: "Avtalet är redan uppdelat. Kör /unsplit först, eller skicka force:true för att lägga till fler rader." });
+    }
+
+    const lines = Array.isArray(b.lines) ? b.lines.filter((l) => l && typeof l === "object") : [];
+    if (!lines.length) return res.status(400).json({ ok: false, error: "inga_rader" });
+
+    // Varje rad MÅSTE ha ett erbjudande — utan det tänds ingen tile, och då är
+    // splitten meningslös (raden hade lika gärna kunnat stanna i mastern).
+    const missingOffer = lines.filter((l) => !String(l.offer_id || "").trim()).map((l) => l.label || "(namnlös)");
+    if (missingOffer.length && !force) {
+      return res.status(400).json({ ok: false, error: "rad_saknar_erbjudande", lines: missingOffer,
+        hint: "Varje rad behöver ett Erbjudande — det är erbjudandet som tänder tile:n på kundens dashboard." });
+    }
+
+    // Avstämning: de FASTA raderna ska summera till avtalets månadskostnad.
+    // Detta är spärren som gör att ett dåligt LLM-svar inte tyst blir fem
+    // felaktiga avtal — stämmer det inte får operatören se differensen.
+    const masterMonthly = Math.round(Number(master[SERVICES.CT_MONTHLY] || 0));
+    const fixedSum = lines.filter(_splitLineIsFixed)
+      .reduce((s, l) => s + Math.round(Number(l.monthly_cost || 0)), 0);
+    const diff = fixedSum - masterMonthly;
+    const reconciled = Math.abs(diff) <= 1;   // 1 kr tolerans för öresavrundning
+    if (!reconciled && !force) {
+      return res.status(400).json({
+        ok: false, error: "reconciliation_failed",
+        master_monthly: masterMonthly, lines_sum: fixedSum, diff,
+        hint: `Raderna summerar till ${fixedSum} kr men avtalet säger ${masterMonthly} kr/mån (diff ${diff}). Rätta raderna, eller skicka force:true om avtalet verkligen ser ut så.`,
+      });
+    }
+
+    // Fält som barnen ärver av dokumentet. signed_pdf, bilagor och
+    // offer_approval ärvs MEDVETET INTE — de hör till dokumentet och ska finnas
+    // på ett ställe. signed_at ärvs (barnen ÄR påskrivna, av samma dokument).
+    const inherited = {
+      [SERVICES.CT_COMPANY]:        _ffIdOf(master[SERVICES.CT_COMPANY]) || null,
+      [SERVICES.CT_DEAL]:           _ffIdOf(master[SERVICES.CT_DEAL]) || null,
+      [SERVICES.CT_SUPPLIER]:       _ffIdOf(master[SERVICES.CT_SUPPLIER]) || null,
+      [SERVICES.CT_START]:          master[SERVICES.CT_START] || null,
+      [SERVICES.CT_END]:            master[SERVICES.CT_END] || null,
+      [SERVICES.CT_BINDING]:        master[SERVICES.CT_BINDING] != null ? Number(master[SERVICES.CT_BINDING]) : null,
+      [SERVICES.CT_NOTICE]:         master[SERVICES.CT_NOTICE] != null ? Number(master[SERVICES.CT_NOTICE]) : null,
+      [SERVICES.CT_AUTO_RENEW]:     master[SERVICES.CT_AUTO_RENEW] != null ? Number(master[SERVICES.CT_AUTO_RENEW]) : null,
+      [SERVICES.CT_PRICE_REG_TYPE]: master[SERVICES.CT_PRICE_REG_TYPE] || null,
+      [SERVICES.CT_PRICE_REG_NEXT]: master[SERVICES.CT_PRICE_REG_NEXT] || null,
+      [SERVICES.CT_SIGNED_AT]:      master[SERVICES.CT_SIGNED_AT] || null,
+    };
+    const masterOffice = _ffIdOf(master[SERVICES.CT_OFFICE]) || null;
+    const masterCat    = master[SERVICES.CT_KATEGORI] || null;
+    const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Service & People", "Other facility services"];
+
+    const plan = lines.map((l) => {
+      const fixed   = _splitLineIsFixed(l);
+      const monthly = fixed ? Math.round(Number(l.monthly_cost || 0)) : 0;
+      const cat     = VALID_CATEGORIES.includes(l.category) ? l.category : masterCat;
+      // En rad utan fast månadskostnad är per definition en prislisterad →
+      // RateCard. Anroparen kan överstyra (t.ex. Hybrid för bas + tillägg).
+      const type = [SERVICES.TYPE_SUBSCRIPTION, SERVICES.TYPE_RATECARD, SERVICES.TYPE_HYBRID].includes(l.contract_type)
+        ? l.contract_type
+        : (fixed ? SERVICES.TYPE_SUBSCRIPTION : SERVICES.TYPE_RATECARD);
+      return {
+        label:        String(l.label || "").trim() || "Tjänst",
+        offer_id:     String(l.offer_id || "").trim() || null,
+        office_id:    String(l.office_id || "").trim() || masterOffice,
+        monthly_cost: monthly,
+        category:     cat,
+        contract_type: type,
+        unit:         fixed ? "per månad" : String(l.unit),
+        unit_price:   fixed ? null : (Number(l.unit_price != null ? l.unit_price : l.monthly_cost) || 0),
+        setup_cost:   Number(l.setup_cost || 0) || null,
+        qty:          l.qty != null ? Number(l.qty) : 1,
+        rate_card_json: _splitChildRateCard(l),
+        volume_json:  l.volume_json == null ? null
+                        : (typeof l.volume_json === "string" ? l.volume_json : JSON.stringify(l.volume_json)),
+        contract_title: String(l.contract_title || l.label || "").trim().toLowerCase() || null,
+      };
+    });
+
+    // ⚠️ ETT DELAVTAL PER ERBJUDANDE+KONTOR — inte per avtalsrad.
+    // _buildServicesDashboard gör `activeByOffice[officeId][slug] = entry`, så två
+    // Contracts mot samma erbjudande SKRIVER ÖVER VARANDRA och tile:n visar bara
+    // den sista. Planhat är exakt det fallet: Lokalvård 25 100 + Tillsyn 13 856
+    // (+ Entrémattor 450, som saknar egen katalog-slug) pekar alla på
+    // Housekeeping-erbjudandet. De ska bli EN rad på 39 406, inte tre som slåss.
+    // Radernas uppdelning sparas i volume_json så den inte går förlorad.
+    const groups = [];
+    const groupByKey = new Map();
+    for (const p of plan) {
+      const key = String(p.offer_id) + "|" + String(p.office_id || "");
+      let g = groupByKey.get(key);
+      if (!g) {
+        g = { offer_id: p.offer_id, office_id: p.office_id, labels: [], monthly_cost: 0,
+              rate_rows: [], category: null, qty: 1, volume_json: null, contract_title: null,
+              has_fixed: false, has_variable: false, parts: [] };
+        groupByKey.set(key, g);
+        groups.push(g);
+      }
+      g.labels.push(p.label);
+      g.monthly_cost += p.monthly_cost;
+      g.qty = Math.max(g.qty, p.qty || 1);
+      if (!g.category && p.category) g.category = p.category;
+      if (!g.volume_json && p.volume_json) g.volume_json = p.volume_json;
+      if (!g.contract_title && p.contract_title) g.contract_title = p.contract_title;
+      if (p.monthly_cost > 0) g.has_fixed = true;
+      if (p.unit !== "per månad") g.has_variable = true;
+      g.parts.push({ label: p.label, monthly: p.monthly_cost,
+                     unit: p.unit, unit_price: p.unit_price, setup: p.setup_cost });
+      try {
+        const rows = JSON.parse(p.rate_card_json || "[]");
+        if (Array.isArray(rows)) g.rate_rows.push(...rows);
+      } catch (_) { /* redan serialiserad av oss — kan inte gå fel, men var tyst om det gör det */ }
+    }
+    for (const g of groups) {
+      // Fast bas + rörliga tillägg = Hybrid. Bara rörligt = RateCard.
+      g.contract_type = g.has_fixed && g.has_variable ? SERVICES.TYPE_HYBRID
+                      : g.has_fixed ? SERVICES.TYPE_SUBSCRIPTION
+                      : SERVICES.TYPE_RATECARD;
+      if (!g.contract_title) g.contract_title = String(g.labels[0] || "tjänst").toLowerCase();
+      // Slogs flera rader ihop och anroparen gav ingen egen volym → behåll
+      // uppdelningen, annars vet ingen vad 39 406 kr består av.
+      if (!g.volume_json && g.parts.length > 1) g.volume_json = JSON.stringify({ lines: g.parts });
+    }
+
+    if (dryRun) {
+      return res.json({ ok: true, dry_run: true, contract_id: contractId,
+        master_monthly: masterMonthly, lines_sum: fixedSum, diff, reconciled, plan,
+        children_preview: groups.map((g) => ({
+          offer_id: g.offer_id, office_id: g.office_id, contract_type: g.contract_type,
+          contract_title: g.contract_title, monthly_cost: g.monthly_cost,
+          category: g.category, merged_lines: g.labels, rate_card: g.rate_rows })) });
+    }
+
+    for (const g of groups) {
+      const payload = {
+        ...inherited,
+        [SERVICES.CT_MASTER]:         contractId,
+        [SERVICES.CT_OFFER]:          g.offer_id,
+        [SERVICES.CT_OFFICE]:         g.office_id,
+        [SERVICES.CT_TYPE]:           g.contract_type,
+        [SERVICES.CT_KATEGORI]:       g.category,
+        [SERVICES.CT_MONTHLY]:        g.monthly_cost,
+        [SERVICES.CT_QTY]:            g.qty,
+        [SERVICES.CT_TITLE]:          g.contract_title,
+        [SERVICES.CT_RATE_CARD_JSON]: g.rate_rows.length ? JSON.stringify(g.rate_rows) : null,
+        [SERVICES.CT_VOLUME_JSON]:    g.volume_json,
+      };
+      // ⚠️ bubbleCreate droppar okända fält TYST — men null-fält vill vi inte ens
+      // skicka (Bubble tolkar dem olika per fälttyp).
+      const clean = Object.fromEntries(Object.entries(payload).filter(([, v]) => v != null));
+      const childId = await bubbleCreate(SERVICES.CONTRACT_TYPE, clean);
+      created.push({ id: childId, label: g.labels.join(" + "), monthly_cost: g.monthly_cost,
+                     offer_id: g.offer_id, merged_lines: g.labels.length });
+    }
+
+    // Valfri omdöpning av mastern. Importens contract_title kommer ur LLM:en och
+    // ärver ibland exempelnamnet ur prompten ("housekeeping ox2 ab" på ett
+    // Planhat-avtal) — det är dyrt att lämna kvar när raden nu blir en rubrik.
+    let masterRenamed = null;
+    if (b.master_title && String(b.master_title).trim()) {
+      masterRenamed = String(b.master_title).trim();
+      await bubblePatch(SERVICES.CONTRACT_TYPE, contractId, { [SERVICES.CT_TITLE]: masterRenamed })
+        .catch((e) => { masterRenamed = null; console.warn("[contracts/split] omdöpning misslyckades", e?.message); });
+    }
+
+    console.log(`[contracts/split] Contract ${contractId} → ${created.length} delavtal ur ${plan.length} rader (${created.map((c) => c.label).join(", ")}) · summa ${fixedSum}/${masterMonthly} kr`);
+    return res.json({ ok: true, contract_id: contractId, children: created,
+      master_monthly: masterMonthly, lines_sum: fixedSum, diff, reconciled, master_title: masterRenamed });
+  } catch (e) {
+    // Rullbaka halvfärdig split — annars står kunden med tre av fem delavtal och
+    // en total som inte stämmer med något.
+    for (const c of created) {
+      await bubbleDelete(SERVICES.CONTRACT_TYPE, c.id).catch(() => {});
+    }
+    console.error("[/admin/contracts/:id/split] failed", e?.message, e?.detail, `(rullade tillbaka ${created.length})`);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e),
+      detail: e?.detail || null, rolled_back: created.length });
+  }
+});
+
+// ── POST /admin/contracts/:id/unsplit ───────────────────────────────────────
+// Raderar samtliga child-Contracts. Mastern är orörd hela tiden, så den blir
+// omedelbart en vanlig avtalsrad igen.
+app.options("/admin/contracts/:id/unsplit", (req, res) => {
+  _approvalCors(req, res); res.sendStatus(204);
+});
+app.post("/admin/contracts/:id/unsplit", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  try {
+    const contractId = String(req.params.id || "").trim();
+    if (!contractId) return res.status(400).json({ ok: false, error: "contract_id_krävs" });
+
+    const children = await _splitChildrenOf(contractId);
+    if (!children.length) return res.status(404).json({ ok: false, error: "inga_delavtal" });
+
+    const removed = [], failed = [];
+    for (const ch of children) {
+      const cid = bubbleId(ch);
+      try { await bubbleDelete(SERVICES.CONTRACT_TYPE, cid); removed.push(cid); }
+      catch (e) { failed.push({ id: cid, error: e?.message || String(e) }); }
+    }
+    console.log(`[contracts/unsplit] Contract ${contractId}: raderade ${removed.length}/${children.length} delavtal`);
+    return res.json({ ok: failed.length === 0, contract_id: contractId, removed, failed });
+  } catch (e) {
+    console.error("[/admin/contracts/:id/unsplit] failed", e?.message, e?.detail);
     return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });

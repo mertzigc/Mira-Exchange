@@ -5,6 +5,78 @@
 > Minne: `reference-avtal-signering-flode` · `reference-scanned-pdf-vision-ocr`
 
 ---
+### Paketavtal → master + delavtal (Contract.master_contract) — BYGGT 2026-08-27, EJ DEPLOYAT
+
+**Utlösare (Planhat, `Signerat Planhat Avtal 2026-05-08.pdf`):** ett HK-avtal innehöll fem tjänster i EN prisbild. Kund-dashboarden tände bara Housekeeping-tile:n, med hela paketets belopp, och Växter fanns inte alls.
+
+**Avtalets §5 PRISER:**
+| Rad | Belopp | Anmärkning |
+|---|---|---|
+| Lokalvård | 25 100 /mån | |
+| Tillsyn 2 h/dag | 13 856 /mån | §3 "Övriga tjänster" — **beslut: hör till Housekeeping** |
+| Växter inkl service av 25 st | 7 691 /mån | + leveransavgift 1 590 engång |
+| Entrèmatta | 450 /mån | |
+| **Summa fast** | **47 097 /mån** | = avtalets `monthly_cost` på kronan |
+| Frukt | 45 kr/kg | rörligt — **aktiv tile, inget månadsbelopp** |
+| Uppstart städmaterial | 10 000 engång | |
+
+**Tre problem, bara ett var parsning:**
+1. **Datamodellen.** En tile tänds via `Contract.erbjudande` → `ServiceCatalog.offers` → slug. Ett Contract har ETT erbjudande → en importerad PDF blev en tile.
+2. **Extraction-tool:et har en skalär `monthly_cost`.** Allt annat kunde bara ramla i `rate_card` — därför blev Lokalvård/Tillsyn rate_card-rader med **0 kr**, Entrèmatta hamnade fel (fast månad i rate_card), och Växter 7 691 **försvann helt**.
+3. **⚠️ §3:s kryssrutelista är OSYNLIG för textparsning.** Inga AcroForm-fält, inga annots, inga glyfer i textlagret — `pypdf` ger samma blanksteg oavsett om rutan är kryssad. Bara vision ser markeringarna. **§5 PRISER är den maskinläsbara sanningen** och stämmer av mot totalen. Se `memory/reference-carotte-avtal-omfattningslista.md`.
+
+**Lösning — `Contract.master_contract` (self-ref, schemalagd i Fas 1, aldrig läst). INGA nya Bubble-fält:**
+- **Master** = dokumentet. Behåller `signed_pdf`, `attachments`, bindning/uppsägning/auto-förlängning, prisreglering, `offer_approval` och den avtalade totalen.
+- **Child** = en per tjänsterad. Eget `erbjudande` (→ slug → tile), egen `månadskostnad`, egen `kategori`. Ärver datum + villkor + `signed_at`, men **INTE** `signed_pdf`/`attachments`/`offer_approval` — dokumentet ska finnas på ETT ställe.
+- Rörliga rader (45 kr/kg) och engångsposter läggs i childens `rate_card_json` med `unit` — samma form som LLM-importen redan producerar.
+
+**⚠️ Mastern MODIFIERAS INTE** (utom valfri omdöpning). Att den är master härleds av att någon annan rad pekar på den. Det ger tre saker gratis: ingen extra Bubble-fråga (samma hämtning), inget fält att städa, och en split som backas genom att bara radera barnen.
+
+**Nya endpoints:**
+- `POST /admin/contracts/:id/split` — `{lines:[{label, offer_id, monthly_cost, category?, contract_type?, office_id?, unit?, unit_price?, setup_cost?, qty?}], master_title?, dry_run?, force?}`. Spärrar: `404 not_found` · `409 is_child` · `409 already_split` · `400 inga_rader` · `400 rad_saknar_erbjudande` · `400 reconciliation_failed`. **Rullar tillbaka** skapade barn om ett create failar mitt i.
+- `POST /admin/contracts/:id/unsplit` — raderar barnen; mastern blir en vanlig rad igen.
+
+**⚠️ AVSTÄMNINGEN är kärnan.** De FASTA raderna måste summera till avtalets `monthly_cost` (1 kr tolerans). Rörliga och engångsposter deltar inte. Det är den spärren som gör att ett dåligt LLM-svar inte tyst blir fem felaktiga avtal — går det isär får operatören se differensen i stället.
+
+**⚠️ Varje rad KRÄVER `offer_id`.** Utan erbjudande tänds ingen tile, och då är splitten meningslös.
+
+**⚠️ ETT DELAVTAL PER ERBJUDANDE+KONTOR — inte per avtalsrad.** `_buildServicesDashboard` gör `activeByOffice[officeId][slug] = entry`: **två Contracts mot samma erbjudande skriver över varandra** och tile:n visar bara den sista. Endpointen grupperar därför raderna på `offer_id|office_id`, summerar beloppen och slår ihop rate_card-raderna. Uppdelningen sparas i `volume_json` (`{"lines":[…]}`) så den inte går förlorad, och `dry_run` returnerar `children_preview` med `merged_lines` så operatören SER sammanslagningen innan den sker.
+
+Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en fixtur med fem unika offer-id:n och kunde aldrig fånga den. Fixturen använder nu Planhats riktiga id:n. **Lärdom: en fixtur som är snyggare än verkligheten testar inte verkligheten.**
+
+**⚠️ Katalogen har ingen `entrematta`-slug.** Live-slugar 2026-08-27: `mira` · `reception` · `catering` · `housekeeping` · `kaffe` · `vatten` · `vaxter` · `skrivare` · `frukt`. Planhats Entrèmatta 450 kr/mån mappas därför på Housekeeping-erbjudandet och rider med i den sammanslagna raden. Vill man ha en egen Entrémattor-tile krävs en ny ServiceCatalog-post + Erbjudande.
+
+**Planhats faktiska uppdelning:** fem avtalsrader → **tre delavtal**.
+| Delavtal | Erbjudande-id | Belopp | Ur raderna |
+|---|---|---|---|
+| housekeeping | `1782395223010x689078291907920800` | 39 406 /mån | Lokalvård 25 100 + Tillsyn 13 856 + Entrémattor 450 |
+| vaxter | `1782809947795x913565829062136700` | 7 691 /mån | Växtservice (+1 590 engång) |
+| frukt | `1782810241005x966476239136509600` | 0 /mån | Frukt 45 kr/kg (rörlig) |
+
+**Ändrat i befintlig kod:**
+- `_buildServicesDashboard`: bygger `masterIds` ur samma hämtning och hoppar över masters (annars dubbelräkning). Tile-entryn får `unit`/`unit_price` ur `rate_card_json` (första raden vars `unit` ≠ `engång`).
+- `/admin/contracts/by-company`: flaggar `is_master`/`is_child`/`child_count`.
+- `mira-abonnemang-kund.html`: `nestPackages()` renderar barnen inuti masterns panel som riktiga `.ab-row` (all befintlig expand/edit/pausa-bindning gäller dem). Masterraden får en `N tjänster`-pill och visar delradernas summa mot totalen.
+- `mira-kund-dashboard-tjanster.html`: `activePriceParts()` — aktiv tile med 0 kr/mån visar styckpriset (`45 kr/kg`) + prismotorns månadsuppskattning via `adaptedUnitPrice` (samma frukt-kalkyl som driver "Från"-priset).
+
+**⚠️ CSS-fälla som nästlingen införde:** `.ab-row.open .ab-rowbody` och `.ab-row.open .ab-chev` var DESCENDANT-selektorer. Med nästlade barnrader hade ett öppnat masteravtal fällt ut **alla barns paneler samtidigt**. Båda ändrade till barn-kombinator (`> .ab-rowbody`, `> .ab-rowhead .ab-chev`). Vaktas av två assertions.
+
+**Två buggar som föll ut på vägen (båda rättade):**
+- Kundkortets månadstotal filtrerade på `contract_type === 'Subscription'` → en **Hybrid** som Planhat räknades som 0 kr. Nu `!== 'RateCard'` (RateCard har ingen fast månad).
+- Totalen dubbelräknade master + barn. Nu räknas mastern, barnen hoppas över.
+
+**Verifierat:** `avtal_split_smoke.mjs` **68/68** — kör den riktiga route-handlern mot mockad Bubble med Planhats faktiska kronor. **Mutationstestat: 25 mutationer, 25 faller, 0 kraschar.** Bl.a.: borttagen avstämning fäller 1 · master ej överhoppad fäller 1 · borttagen rollback fäller 2 · barn som duplicerar `signed_pdf`+bilagor fäller 2 · descendant-selektorn tillbaka fäller 1 · Hybrid ur totalen fäller 1 · borttaget `nestPackages`-anrop fäller 4 · borttagen gruppering (ett barn per rad igen) fäller 4. De fyra svaga strängassertions som först ÖVERLEVDE gjordes om till beteendetester (funktionerna extraheras och körs). Regression: samtliga övriga sviter gröna (`komm_blocks_smoke` 114/4 är **pre-existerande** — faller identiskt mot HEAD:s `index.js`, `emailer.js` slicas utan `MAIL_PAL_DARK`).
+
+**⚠️ Separat bugg, EJ rättad:** importens `contract_title` ärver promptens EXEMPELNAMN — Planhats avtal fick titeln `"housekeeping ox2 ab"`. `CONTRACT_EXTRACT_TOOL.contract_title` säger *"t.ex. 'Housekeeping OX2 AB'"* och Haiku kopierar exemplet i stället för kundnamnet. `split` kan döpa om mastern via `master_title`, men prompten bör härdas.
+
+**KVAR:**
+1. **Split-UI:t** — idag bara curl. Operatören behöver en modal som listar raderna och låter hen välja `Erbjudande` per rad (det är den biten en LLM gissar fel på). `dry_run:true` är byggt för att driva previewen.
+2. **`lines[]` i `CONTRACT_EXTRACT_TOOL`** — låt importen föreslå uppdelningen direkt (beslut 2026-08-27: tas efter att splitten validerats på Planhat).
+3. **Beslut: egen `entrematta`-slug eller inte?** Idag rider Entrémattor med på Housekeeping-raden.
+
+**Deploy:** `index.js` (Render) + klistra om `mira-abonnemang-kund.html` och `mira-kund-dashboard-tjanster.html`. **Inga Bubble-schemaändringar** — `master_contract` finns sedan Fas 1.
+
+---
 ### Inläst OSIGNERAT avtal → signering → stämpling — BYGGT 2026-08-19, EJ DEPLOYAT
 **Utlösare:** en kollega läste in ett osignerat avtal via PDF-importen på kundkortet, la till en bilaga, och ville få det signerat. Tre luckor gjorde det omöjligt att göra rätt:
 

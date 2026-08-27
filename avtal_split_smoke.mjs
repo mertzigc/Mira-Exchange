@@ -1,0 +1,415 @@
+// Smoke: paketavtal → master + delavtal (Contract.master_contract).
+//   node avtal_split_smoke.mjs
+//
+// Bakgrund (2026-08-27, Planhat): ett HK-avtal innehöll fem tjänster i EN
+// prisbild — Lokalvård 25 100 · Tillsyn 13 856 · Växter 7 691 · Entrèmatta 450
+// (= 47 097) plus Frukt 45 kr/kg. Importen gjorde ETT Contract med ETT
+// erbjudande, så kund-dashboarden tände bara Housekeeping-tile:n, med hela
+// paketets belopp, och Växter fanns inte alls.
+//
+// Sviten vaktar fyra saker som var för sig kan förstöra kundens siffror:
+//   1. avstämningen (delraderna MÅSTE summera till avtalets månadskostnad)
+//   2. att mastern inte dubbelräknas mot sina barn på dashboarden
+//   3. att rörliga rader (45 kr/kg) tänder tile men inte bidrar med 0 kr
+//   4. att en halvfärdig split rullas tillbaka
+//
+// index.js är för sidoeffektsfylld att importera → route-handlern klipps ut ur
+// källan och körs mot en mockad Bubble (samma teknik som avtal_signering_smoke).
+import fs from "node:fs";
+
+let pass = 0, fail = 0;
+const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
+const sec = (t) => console.log("\n── " + t + " " + "─".repeat(Math.max(0, 56 - t.length)));
+function slice(src, a, b, label) {
+  const i = src.indexOf(a);
+  const j = i < 0 ? -1 : src.indexOf(b, i);
+  if (i < 0 || j < 0) { fail++; console.log(`  ✗ [utklipp saknas] ${label} — hittade inte "${a}"`); return ""; }
+  return src.slice(i, j + b.length);
+}
+async function group(label, fn) {
+  try { await fn(); } catch (e) { fail++; console.log(`  ✗ [${label} kraschade] ${e && e.message}`); }
+}
+// Plockar ut en funktion ur en källfil och gör den anropbar. Saknas den (t.ex.
+// mot äldre kod under mutationstest) returneras null i stället för att kasta —
+// en krasch här skulle ta med sig resten av gruppens assertions.
+function fnFrom(src, start, end, label, argNames = [], args = []) {
+  const i = src.indexOf(start);
+  const j = i < 0 ? -1 : src.indexOf(end, i);
+  if (i < 0 || j < 0) return null;
+  const name = /function\s+([A-Za-z0-9_$]+)/.exec(start)?.[1];
+  try { return new Function(...argNames, src.slice(i, j + end.length) + "\nreturn " + name + ";")(...args); }
+  catch (_) { return null; }
+}
+
+const SRC  = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
+const KUND = fs.readFileSync(new URL("./mira-abonnemang-kund.html", import.meta.url), "utf8");
+const GRID = fs.readFileSync(new URL("./mira-kund-dashboard-tjanster.html", import.meta.url), "utf8");
+
+// Fältnamnen läses ur källan — testet ska inte ha en egen sanning om Bubble-
+// slugar (fel namn = tysta nollresultat, inte röda tester).
+const SERVICES = (() => {
+  const blk = slice(SRC, "  CT_COMPANY:     \"kundföretag\",", "  TYPE_HYBRID:              \"Hybrid\",", "SERVICES");
+  const o = {};
+  for (const m of blk.matchAll(/(\w+):\s*"([^"]*)"/g)) o[m[1]] = m[2];
+  o.CONTRACT_TYPE = "Contract";
+  return o;
+})();
+
+// ── Planhat §5, kronorna ur det riktiga avtalet ───────────────────────────
+// ⚠️ Erbjudande-id:na speglar den RIKTIGA katalogen (hämtad live 2026-08-27).
+// Katalogen har ingen `entrematta`-slug, och Christian har beslutat att Tillsyn
+// hör till Housekeeping → TRE rader pekar på SAMMA erbjudande. Det är precis
+// den kollisionen som en fixtur med fem unika id:n aldrig kunde fånga.
+const OFFER_HK    = "1782395223010x689078291907920800";
+const OFFER_VAX   = "1782809947795x913565829062136700";
+const OFFER_FRUKT = "1782810241005x966476239136509600";
+const PLANHAT_LINES = [
+  { label: "Lokalvård",         offer_id: OFFER_HK,    monthly_cost: 25100, category: "Housekeeping", contract_title: "housekeeping planhat" },
+  { label: "Tillsyn 2 h/dag",   offer_id: OFFER_HK,    monthly_cost: 13856, category: "Housekeeping" },
+  { label: "Entrémattor",       offer_id: OFFER_HK,    monthly_cost: 450,   category: "Housekeeping" },
+  { label: "Växtservice 25 st", offer_id: OFFER_VAX,   monthly_cost: 7691,  category: "Other facility services", setup_cost: 1590 },
+  { label: "Frukt",             offer_id: OFFER_FRUKT, unit: "per kg", unit_price: 45, category: "Other facility services" },
+];
+const PLANHAT_TOTAL = 47097;
+const HK_MERGED     = 25100 + 13856 + 450;   // 39 406
+
+// ── Mockad Bubble ─────────────────────────────────────────────────────────
+function makeBubble(rows) {
+  const db = new Map(Object.entries(rows));
+  let seq = 0;
+  const calls = { create: [], patch: [], del: [] };
+  let failCreateAt = -1;
+  return {
+    calls,
+    db,
+    failCreateAfter(n) { failCreateAt = n; },
+    api: {
+      bubbleGet: async (t, id) => db.get(id) || null,
+      bubbleFindAll: async (t, { constraints = [] } = {}) => {
+        const c = constraints[0];
+        if (!c) return [...db.values()];
+        return [...db.values()].filter((r) => {
+          const v = r[c.key];
+          return (v && typeof v === "object" ? v._id : v) === c.value;
+        });
+      },
+      bubbleCreate: async (t, payload) => {
+        if (failCreateAt >= 0 && calls.create.length >= failCreateAt) throw new Error("bubbleCreate failed");
+        const id = "child" + (++seq);
+        calls.create.push({ id, payload });
+        db.set(id, { _id: id, ...payload });
+        return id;
+      },
+      bubblePatch: async (t, id, payload) => { calls.patch.push({ id, payload }); Object.assign(db.get(id) || {}, payload); },
+      bubbleDelete: async (t, id) => { calls.del.push(id); db.delete(id); },
+      bubbleId: (r) => r && (r._id || r.id),
+      _ffIdOf: (v) => (v && typeof v === "object" ? v._id || null : v || null),
+      _ffIdsOf: (v) => (Array.isArray(v) ? v.map((x) => (x && typeof x === "object" ? x._id : x)).filter(Boolean) : []),
+    },
+  };
+}
+
+// Klipper ut split-handlern och kör den som en vanlig funktion (req,res).
+function loadSplitHandler(api) {
+  const body = slice(SRC, 'app.post("/admin/contracts/:id/split", async (req, res) => {', "\n});", "split-handler")
+    .replace('app.post("/admin/contracts/:id/split", async (req, res) => {', "")
+    .replace(/\n\}\);$/, "");
+  const helpers = slice(SRC, "const SPLIT_FIXED_UNITS", "\n}\n", "split-helpers")
+    + slice(SRC, "function _splitChildRateCard(line) {", "\n}", "_splitChildRateCard")
+    + "\nasync function _splitChildrenOf(masterId){ return await bubbleFindAll(SERVICES.CONTRACT_TYPE, { constraints:[{key:SERVICES.CT_MASTER, constraint_type:'equals', value:masterId}] }); }\n";
+  const fn = new Function(
+    "SERVICES", "PLANNING_ADMIN_TOKEN", "_approvalCors", "console",
+    "bubbleGet", "bubbleFindAll", "bubbleCreate", "bubblePatch", "bubbleDelete", "bubbleId", "_ffIdOf", "_ffIdsOf",
+    helpers + "\nreturn async (req, res) => {" + body + "\n};"
+  );
+  return fn(SERVICES, "tok", () => {}, { log() {}, warn() {}, error() {} },
+    api.bubbleGet, api.bubbleFindAll, api.bubbleCreate, api.bubblePatch, api.bubbleDelete,
+    api.bubbleId, api._ffIdOf, api._ffIdsOf);
+}
+function mkRes() {
+  const r = { code: 200, body: null, sent: false };
+  r.status = (c) => { r.code = c; return r; };
+  r.json = (b) => { r.body = b; r.sent = true; return r; };
+  r.sendStatus = () => r;
+  return r;
+}
+const mkReq = (id, body) => ({ params: { id }, headers: { "x-admin-token": "tok" }, body });
+
+const masterRow = () => ({
+  _id: "m1",
+  [SERVICES.CT_COMPANY]: "cc1",
+  [SERVICES.CT_OFFER]: "o_hk",
+  [SERVICES.CT_OFFICE]: "off1",
+  [SERVICES.CT_MONTHLY]: PLANHAT_TOTAL,
+  [SERVICES.CT_KATEGORI]: "Housekeeping",
+  [SERVICES.CT_TYPE]: "Hybrid",
+  [SERVICES.CT_START]: "2026-05-25",
+  [SERVICES.CT_END]: "2027-05-24",
+  [SERVICES.CT_BINDING]: 12,
+  [SERVICES.CT_NOTICE]: 3,
+  [SERVICES.CT_AUTO_RENEW]: 12,
+  [SERVICES.CT_PRICE_REG_TYPE]: "index_cleaning",
+  [SERVICES.CT_SIGNED_AT]: "2026-05-25",
+  [SERVICES.CT_SIGNED_PDF]: "https://cdn/planhat.pdf",
+  [SERVICES.CT_ATTACHMENTS]: ["dok1"],
+  [SERVICES.CT_TITLE]: "housekeeping ox2 ab",
+});
+
+const run = async () => {
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Avstämning — delraderna måste summera till avtalets månadskostnad");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("reconciliation", async () => {
+    // Det HÄR är spärren som gör att ett dåligt LLM-svar inte tyst blir fem
+    // felaktiga avtal. Planhats fyra fasta rader ska gå exakt jämnt ut.
+    {
+      const bb = makeBubble({ m1: masterRow() });
+      const h = loadSplitHandler(bb.api);
+      const res = mkRes();
+      await h(mkReq("m1", { lines: PLANHAT_LINES, dry_run: true }), res);
+      ok("Planhats fyra fasta rader summerar till 47 097 exakt",
+         res.code === 200 && res.body.lines_sum === PLANHAT_TOTAL && res.body.diff === 0 && res.body.reconciled === true);
+      ok("Frukt (45 kr/kg) räknas INTE in i den fasta totalen",
+         res.body.plan.find((p) => p.label === "Frukt").monthly_cost === 0);
+      ok("dry_run skriver ingenting", bb.calls.create.length === 0 && bb.calls.patch.length === 0);
+      // Operatören måste SE sammanslagningen innan den sker — annars upptäcks
+      // den först som ett saknat belopp på kundens dashboard.
+      const prev = res.body.children_preview || [];
+      const hkPrev = prev.find((p) => p.offer_id === OFFER_HK) || {};
+      ok("dry_run visar de grupperade delavtalen, inte bara raderna", prev.length === 3);
+      ok("förhandsvyn namnger vilka rader som slogs ihop",
+         (hkPrev.merged_lines || []).join() === "Lokalvård,Tillsyn 2 h/dag,Entrémattor");
+      ok("förhandsvyn visar det sammanslagna beloppet", hkPrev.monthly_cost === HK_MERGED);
+    }
+    {
+      // Växter borttappade — precis den bugg produktionen hade.
+      const bb = makeBubble({ m1: masterRow() });
+      const h = loadSplitHandler(bb.api);
+      const res = mkRes();
+      await h(mkReq("m1", { lines: PLANHAT_LINES.filter((l) => l.label !== "Växtservice 25 st") }), res);
+      ok("saknad rad (Växter 7 691) → 400 reconciliation_failed, inget skrivet",
+         res.code === 400 && res.body.error === "reconciliation_failed" && bb.calls.create.length === 0);
+      ok("felet säger vad differensen är", res.body.diff === -7691 && res.body.lines_sum === 39406);
+    }
+    {
+      const bb = makeBubble({ m1: masterRow() });
+      const h = loadSplitHandler(bb.api);
+      const res = mkRes();
+      await h(mkReq("m1", { lines: PLANHAT_LINES.filter((l) => l.label !== "Växtservice 25 st"), force: true }), res);
+      ok("force: true går förbi avstämningen", res.code === 200 && bb.calls.create.length === 2);
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Split — barnen ärver dokumentet men duplicerar det inte");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("split", async () => {
+    const bb = makeBubble({ m1: masterRow() });
+    const h = loadSplitHandler(bb.api);
+    const res = mkRes();
+    await h(mkReq("m1", { lines: PLANHAT_LINES, master_title: "serviceavtal planhat ab" }), res);
+    // ⚠️ FEM rader men TRE delavtal — annars krockar de tre HK-raderna på
+    // dashboarden (activeByOffice[office][slug] skriver över) och tile:n hade
+    // visat 450 kr i stället för 39 406.
+    ok("fem rader → tre delavtal (ett per erbjudande)",
+       res.code === 200 && bb.calls.create.length === 3);
+
+    const kids = bb.calls.create.map((c) => c.payload);
+    ok("alla barn pekar på mastern", kids.every((k) => k[SERVICES.CT_MASTER] === "m1"));
+    ok("varje barn har ett UNIKT erbjudande (= sin egen tile, ingen överskrivning)",
+       new Set(kids.map((k) => k[SERVICES.CT_OFFER])).size === 3);
+    const hk = kids.find((k) => k[SERVICES.CT_OFFER] === OFFER_HK);
+    ok("Lokalvård + Tillsyn + Entrémattor slås ihop till 39 406 kr",
+       hk[SERVICES.CT_MONTHLY] === HK_MERGED);
+    ok("den sammanslagna radens uppdelning sparas i volume_json",
+       /Tillsyn/.test(hk[SERVICES.CT_VOLUME_JSON] || "") && /25100/.test(hk[SERVICES.CT_VOLUME_JSON] || ""));
+    ok("sammanslagen rad ärver den första radens titel",
+       hk[SERVICES.CT_TITLE] === "housekeeping planhat");
+    ok("delavtalens summa är fortfarande avtalets total",
+       kids.reduce((s, k) => s + Number(k[SERVICES.CT_MONTHLY] || 0), 0) === PLANHAT_TOTAL);
+    ok("barnen ärver bindning/uppsägning/prisreglering",
+       kids.every((k) => k[SERVICES.CT_BINDING] === 12 && k[SERVICES.CT_NOTICE] === 3
+                      && k[SERVICES.CT_PRICE_REG_TYPE] === "index_cleaning"));
+    ok("barnen ärver signed_at (de ÄR påskrivna — av samma dokument)",
+       kids.every((k) => k[SERVICES.CT_SIGNED_AT] === "2026-05-25"));
+    // ⚠️ Kärnan i master/child: dokumentet ska finnas på EXAKT ett ställe.
+    ok("barnen ärver INTE signed_pdf", kids.every((k) => !k[SERVICES.CT_SIGNED_PDF]));
+    ok("barnen ärver INTE bilagorna", kids.every((k) => !k[SERVICES.CT_ATTACHMENTS]));
+    ok("barnen ärver INTE offer_approval", kids.every((k) => !k[SERVICES.CT_OFFER_APPROVAL]));
+
+    const vax = kids.find((k) => k[SERVICES.CT_OFFER] === OFFER_VAX);
+    ok("Växter får sin egen månadskostnad 7 691", vax[SERVICES.CT_MONTHLY] === 7691);
+    ok("Växters leveransavgift 1 590 hamnar som engångspost i rate_card",
+       /"unit":"engång"/.test(vax[SERVICES.CT_RATE_CARD_JSON] || "") && /1590/.test(vax[SERVICES.CT_RATE_CARD_JSON] || ""));
+
+    const frukt = kids.find((k) => k[SERVICES.CT_OFFER] === OFFER_FRUKT);
+    ok("Frukt blir RateCard med 0 kr/mån", frukt[SERVICES.CT_TYPE] === "RateCard" && !frukt[SERVICES.CT_MONTHLY]);
+    ok("Frukts styckpris 45 kr/kg sparas i rate_card",
+       /"price_per_h":45/.test(frukt[SERVICES.CT_RATE_CARD_JSON]) && /"unit":"per kg"/.test(frukt[SERVICES.CT_RATE_CARD_JSON]));
+    ok("fasta rader blir Subscription", kids.filter((k) => k[SERVICES.CT_MONTHLY] > 0).every((k) => k[SERVICES.CT_TYPE] === "Subscription"));
+    ok("mastern döps om (importen ärvde promptens exempelnamn 'ox2')",
+       bb.calls.patch.length === 1 && bb.calls.patch[0].payload[SERVICES.CT_TITLE] === "serviceavtal planhat ab");
+    // Mastern får INTE tömmas på erbjudande/belopp — dashboarden hoppar över
+    // den på relationen, inte på ett städat fält. Det gör splitten reversibel.
+    ok("masterns erbjudande och belopp är orörda",
+       bb.db.get("m1")[SERVICES.CT_OFFER] === "o_hk" && bb.db.get("m1")[SERVICES.CT_MONTHLY] === PLANHAT_TOTAL);
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Spärrar");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("guards", async () => {
+    {
+      const bb = makeBubble({ m1: masterRow(), c1: { _id: "c1", [SERVICES.CT_MASTER]: "m1" } });
+      const res = mkRes();
+      await loadSplitHandler(bb.api)(mkReq("m1", { lines: PLANHAT_LINES }), res);
+      ok("redan splittat → 409 already_split", res.code === 409 && res.body.error === "already_split");
+    }
+    {
+      const bb = makeBubble({ c1: { _id: "c1", [SERVICES.CT_MASTER]: "m1", [SERVICES.CT_MONTHLY]: 100 } });
+      const res = mkRes();
+      await loadSplitHandler(bb.api)(mkReq("c1", { lines: PLANHAT_LINES }), res);
+      ok("splitta ett barn → 409 is_child (trädet får inte bli två nivåer)",
+         res.code === 409 && res.body.error === "is_child");
+    }
+    {
+      const bb = makeBubble({ m1: masterRow() });
+      const res = mkRes();
+      await loadSplitHandler(bb.api)(mkReq("m1", { lines: [{ label: "Lokalvård", monthly_cost: PLANHAT_TOTAL }] }), res);
+      ok("rad utan erbjudande → 400 (utan erbjudande tänds ingen tile)",
+         res.code === 400 && res.body.error === "rad_saknar_erbjudande");
+    }
+    {
+      const bb = makeBubble({ m1: masterRow() });
+      const res = mkRes();
+      await loadSplitHandler(bb.api)(mkReq("m1", { lines: [] }), res);
+      ok("tomma rader → 400 inga_rader", res.code === 400 && res.body.error === "inga_rader");
+    }
+    {
+      const bb = makeBubble({});
+      const res = mkRes();
+      await loadSplitHandler(bb.api)(mkReq("saknas", { lines: PLANHAT_LINES }), res);
+      ok("okänt avtal → 404", res.code === 404);
+    }
+    {
+      const bb = makeBubble({ m1: masterRow() });
+      const res = mkRes();
+      await loadSplitHandler(bb.api)({ params: { id: "m1" }, headers: {}, body: { lines: PLANHAT_LINES } }, res);
+      ok("utan admin-token → 401", res.code === 401);
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Rollback — halvfärdig split lämnar inga föräldralösa delavtal");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("rollback", async () => {
+    const bb = makeBubble({ m1: masterRow() });
+    bb.failCreateAfter(2);                      // två delavtal skapas, tredje smäller
+    const res = mkRes();
+    await loadSplitHandler(bb.api)(mkReq("m1", { lines: PLANHAT_LINES }), res);
+    ok("felet propagerar som 500", res.code === 500);
+    ok("de skapade delavtalen raderas igen", bb.calls.del.length === 2 && res.body.rolled_back === 2);
+    ok("inga barn ligger kvar i databasen", [...bb.db.keys()].join() === "m1");
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Kund-dashboard — mastern dubbelräknas inte, rörlig tjänst tänds");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("dashboard", () => {
+    const dash = slice(SRC, "async function _buildServicesDashboard(companyId) {", "\n}\n", "_buildServicesDashboard");
+    ok("masters härleds ur relationen (ingen extra Bubble-fråga, inget fält att städa)",
+       /const masterIds = new Set\(\);/.test(dash) && /_ffIdOf\(ct\[SERVICES\.CT_MASTER\]\)/.test(dash));
+    ok("masteravtal hoppas över i tile-loopen",
+       /if \(masterIds\.has\(bubbleId\(ct\)\)\) continue;/.test(dash));
+    // Styckpris-utvinningen KÖRS, inte bara regex:as — en `if (false)` runt
+    // tilldelningen lämnar alla söksträngar på plats och skulle annars passera.
+    const rcSnippet = slice(SRC, "    let unit = null, unitPrice = null;",
+                            "catch (_) { /* ogiltig JSON → ingen styckprisvisning */ }", "rate_card-utvinning");
+    const extractRate = new Function("SERVICES", "ct", rcSnippet + "\nreturn { unit, unitPrice };");
+    {
+      const frukt = extractRate(SERVICES, {
+        [SERVICES.CT_RATE_CARD_JSON]: JSON.stringify([{ role: "Frukt", price_per_h: 45, unit: "per kg" }]) });
+      ok("styckpris plockas ur rate_card till tile-entryn", frukt.unit === "per kg" && frukt.unitPrice === 45);
+      const eng = extractRate(SERVICES, {
+        [SERVICES.CT_RATE_CARD_JSON]: JSON.stringify([{ role: "Uppstart", price_per_h: 10000, unit: "engång" }]) });
+      ok("engångsposter räknas INTE som styckpris (uppstart är inget löpande pris)",
+         eng.unit === null && eng.unitPrice === null);
+      ok("ogiltig rate_card-JSON kraschar inte tile-bygget",
+         extractRate(SERVICES, { [SERVICES.CT_RATE_CARD_JSON]: "{trasig" }).unit === null);
+      ok("avtal utan rate_card ger inget styckpris", extractRate(SERVICES, {}).unit === null);
+    }
+
+    // Frontend: en aktiv tile med 0 kr/mån får inte bli tom. Funktionen körs.
+    const partsFn = fnFrom(GRID, "  function activePriceParts(item, act){", "\n  }", "activePriceParts",
+      ["num", "adaptedUnitPrice"],
+      [(v) => (v === null || v === undefined || isNaN(v) ? 0 : Number(v)), () => 1610]);
+    ok("activePriceParts finns i gridet", !!partsFn);
+    if (partsFn) {
+      const item = { options: [{ id: "o_frukt" }] };
+      const fast = partsFn(item, { option_id: "o_hk", monthly_cost: 25100 });
+      ok("aktiv tjänst med fast pris → avtalspriset", fast.kind === "fast" && fast.monthly === 25100);
+      const rorlig = partsFn(item, { option_id: "o_frukt", monthly_cost: 0, unit_price: 45, unit: "per kg" });
+      ok("gridet visar styckpris när avtalet saknar fast månadskostnad",
+         rorlig.kind === "rorlig" && rorlig.rate === 45 && rorlig.unit === "per kg");
+      ok("gridet kompletterar med prismotorns månadsuppskattning (frukt-kalkylen)", rorlig.est === 1610);
+      ok("aktiv tjänst helt utan pris ger ingen prisrad", partsFn(item, { option_id: "o_x", monthly_cost: 0 }) === null);
+    }
+    ok("renderTile anropar faktiskt prisuppdelningen", /var pp = activePriceParts\(item, act\);/.test(GRID));
+    ok("tile-foten renderar den rörliga varianten", /pp\.kind === 'fast'/.test(GRID) && /mt-foot-est/.test(GRID));
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Admin-panelen — delraderna nästlas, inte sidoställs");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("admin-panel", () => {
+    // nestPackages är ren → körs på riktigt. Ett borttaget ANROP fångas separat.
+    const nest = fnFrom(KUND, "  function nestPackages(contracts) {", "\n  }", "nestPackages");
+    ok("nestPackages finns i panelen", !!nest);
+    if (nest) {
+      const rows = [
+        { id: "m1" }, { id: "c1", master_contract_id: "m1" }, { id: "c2", master_contract_id: "m1" },
+        { id: "fri" }, { id: "orphan", master_contract_id: "borta" },
+      ];
+      const out = nest(rows);
+      ok("barn plockas ur toppnivån och skickas in i sin master",
+         out.length === 3 && out[0].ct.id === "m1" && out[0].kids.map((k) => k.id).join() === "c1,c2");
+      ok("fristående avtal påverkas inte", (out.find((n) => n.ct.id === "fri") || {}).kids?.length === 0);
+      // ⚠️ Ett barn vars master ligger i en annan sektion får ALDRIG bara försvinna.
+      ok("barn vars master saknas renderas fristående (försvinner aldrig tyst)",
+         !!out.find((n) => n.ct.id === "orphan"));
+      ok("inget avtal tappas bort totalt sett",
+         out.length + out.reduce((s, n) => s + n.kids.length, 0) === rows.length);
+    }
+    ok("sectionHtml anropar faktiskt nästlingen",
+       /var rows = nestPackages\(contracts\)\.map\(function \(n\) \{ return rowHtml\(n\.ct, n\.kids\); \}\)/.test(KUND));
+    ok("masterraden får en 'N tjänster'-pill", /ab-pill t-pkg/.test(KUND));
+    ok("panelen visar delradernas summa mot avtalets total", /ab-kids-sum/.test(KUND) && /ab-kids-diff/.test(KUND));
+    // ⚠️ Descendant-selektorn hade fällt ut ALLA barns paneler när mastern öppnas.
+    ok("expand-selektorn är barn-kombinator (annars öppnas barnens paneler med masterns)",
+       /\.ab-row\.open > \.ab-rowbody \{ display:block; \}/.test(KUND));
+    ok("chevron-rotationen är också scopad till egen rubrikrad",
+       /\.ab-row\.open > \.ab-rowhead \.ab-chev/.test(KUND));
+    ok("bilagor visas bara på mastern (dokumentet finns på ETT ställe)",
+       /ct\.is_child \? '' :/.test(KUND));
+    ok("totalen räknar mastern och hoppar över barnen",
+       /allCt\.filter\(function \(c\) \{ return !c\.master_contract_id; \}\)/.test(KUND));
+    ok("Hybrid räknas in i månadstotalen (Planhat är Hybrid → blev annars 0)",
+       /c\.contract_type !== 'RateCard'/.test(KUND));
+    const varRate = fnFrom(KUND, "  function variableRateOf(ct) {", "\n  }", "variableRateOf");
+    ok("variableRateOf finns i panelen", !!varRate);
+    ok("rörlig delrad visar styckpris i stället för 0 kr/mån",
+       !!varRate && (varRate({ rate_card_json: JSON.stringify([{ role: "Frukt", price_per_h: 45, unit: "per kg" }]) }) || {}).price === 45);
+    ok("engångspost räknas inte som styckpris i panelen",
+       !!varRate && varRate({ rate_card_json: JSON.stringify([{ role: "Uppstart", price_per_h: 10000, unit: "engång" }]) }) === null);
+    ok("rowHtml anropar faktiskt styckprisuppslaget", /var vr = variableRateOf\(ct\);/.test(KUND));
+    // Backend måste flagga master/child, annars har frontend inget att nästla på.
+    const byc = slice(SRC, 'app.get("/admin/contracts/by-company"', "\n});", "by-company");
+    ok("by-company flaggar is_master/is_child/child_count",
+       /e\.is_master   = e\.child_count > 0;/.test(byc) && /e\.is_child    = !!e\.master_contract_id;/.test(byc));
+  });
+
+  console.log(`\n${fail === 0 ? "✅" : "❌"}  ${pass} pass · ${fail} fail`);
+  process.exit(fail === 0 ? 0 : 1);
+};
+run();

@@ -154,6 +154,10 @@
 .ck-item:last-child { border-bottom:none; }
 .ck-item-t { font-weight:600;font-size:13px;color:var(--tx); }
 .ck-item-m { font-size:11px;color:var(--fa);margin-top:1px; }
+.ck-item-r { display:flex;align-items:center;gap:8px;flex:0 0 auto; }
+.ck-dup { background:transparent;border:1px solid var(--bd);color:var(--mu);font-size:12px;line-height:1;
+  padding:5px 8px;border-radius:6px;cursor:pointer;font-family:var(--f); }
+.ck-dup:hover { background:var(--sf2);color:var(--tx); }
 .ck-tag { display:inline-block;font-size:10px;color:var(--fa);background:rgba(223,111,57,.12);border:1px solid rgba(223,111,57,.3);border-radius:6px;padding:1px 6px;margin:2px 3px 0 0;white-space:nowrap; }
 .ck-tagbar { display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px; }
 .ck-tagf { font-size:11px;color:var(--fa);background:transparent;border:1px solid var(--bd,#1c2230);border-radius:999px;padding:3px 11px;cursor:pointer;user-select:none; }
@@ -1444,6 +1448,46 @@
       .finally(function(){ btn.disabled=false; if(!EDIT_ID) g('iv-status').textContent=''; });
   });
 
+  // ── Duplicera ett utskick (inbjudan/undersökning/nyhet) ──
+  // Samma endpoint för alla tre — kind kopieras från källan. Rör aldrig källan.
+  function ckDuplicate(id, srcTitle, reload){
+    if(!id) return;
+    var title = prompt('Namn på kopian:', 'Kopia av ' + (srcTitle||''));
+    if(title === null) return;                       // avbrutet
+    title = String(title).trim();
+    if(!title){ alert('Kopian måste ha ett namn.'); return; }
+    var copyGuests = confirm('Kopiera även mottagarlistan?\n\nOK = ta med mottagarna (utan svar och utan skickat-status).\nAvbryt = kopiera bara innehållet.');
+    fetch(api('/admin/invite/'+encodeURIComponent(id)+'/duplicate'),
+      {method:'POST',headers:H(),body:JSON.stringify({title:title, copy_guests:copyGuests})})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(!j.ok) throw new Error(j.error||'fel');
+        var msg = 'Kopian "'+j.title+'" är skapad.';
+        if(copyGuests){
+          if(!j.guests_verified) msg += '\n\n⚠️ Mottagarna kunde inte verifieras — öppna kopian och kontrollera listan.';
+          else if(j.partial)     msg += '\n\n⚠️ Bara '+j.guests_copied+' av '+j.guests_requested+' mottagare kopierades. Öppna kopian och kontrollera.';
+          else                   msg += '\n'+j.guests_copied+' mottagare följde med.';
+        }
+        alert(msg);
+        if(typeof reload==='function') reload();
+      })
+      .catch(function(e){ alert('Kunde inte duplicera: '+(e.message||'')); });
+  }
+
+  // Kopplar duplicera-knapparna i en lista. stopPropagation eftersom hela raden
+  // är klickbar för redigering.
+  function wireDupButtons(box, reload){
+    box.querySelectorAll('.ck-dup').forEach(function(b){
+      b.addEventListener('click', function(e){
+        e.stopPropagation();
+        ckDuplicate(b.getAttribute('data-dup-id'), b.getAttribute('data-dup-title'), reload);
+      });
+    });
+  }
+  function dupBtnHtml(i){
+    return '<button type="button" class="ck-dup" data-dup-id="'+esc(i.id||'')+'" data-dup-title="'+esc(i.title||'')+'" title="Duplicera">⧉</button>';
+  }
+
   function loadInvites(){
     var box=g('inviteList');
     fetch(api('/admin/invite/list'),{headers:H()})
@@ -1454,9 +1498,10 @@
         box.innerHTML=list.map(function(i){
           var d=i.start_date?fdDate(i.start_date):'—';
           return '<div class="ck-item ck-item-clk" data-id="'+esc(i.id)+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att redigera"><div><div class="ck-item-t">'+esc(i.title||'(namnlös)')+'</div><div class="ck-item-m">'+esc(i.location_name||'')+(i.location_name?' · ':'')+d+'</div>'+tagChipsHtml(i)+'</div>'+
-            '<span class="ea-bdg '+(i.active?'bi':'bg2')+'">'+(i.active?'Aktiv':'Av')+'</span></div>';
+            '<span class="ck-item-r"><span class="ea-bdg '+(i.active?'bi':'bg2')+'">'+(i.active?'Aktiv':'Av')+'</span>'+dupBtnHtml(i)+'</span></div>';
         }).join('');
         box.querySelectorAll('.ck-item-clk').forEach(function(el){ el.addEventListener('click', function(){ openInviteForEdit(el.dataset.id); }); });
+        wireDupButtons(box, loadInvites);
         buildTagFilter(g('inviteTagFilter'), box);
       })
       .catch(function(){ box.innerHTML='<div class="ea-empty">Kunde inte ladda.</div>'; });
@@ -2548,9 +2593,10 @@
         if(!list.length){ box.innerHTML='<div class="ea-empty"><div class="ea-empty-ico">📭</div>Inga nyhetsutskick ännu</div>'; return; }
         box.innerHTML=list.map(function(i){
           return '<div class="ck-item ck-item-clk" data-id="'+esc(i.id)+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att redigera"><div><div class="ck-item-t">'+esc(i.title||'(namnlös)')+'</div><div class="ck-item-m">'+(i.cta_url?esc(i.cta_url.replace(/^https?:\/\//,'').slice(0,40))+'…':'(ingen CTA-länk)')+'</div>'+tagChipsHtml(i)+'</div>'+
-            '<span class="ea-bdg '+(i.active?'bi':'bg2')+'">'+(i.active?'Aktiv':'Av')+'</span></div>';
+            '<span class="ck-item-r"><span class="ea-bdg '+(i.active?'bi':'bg2')+'">'+(i.active?'Aktiv':'Av')+'</span>'+dupBtnHtml(i)+'</span></div>';
         }).join('');
         box.querySelectorAll('.ck-item-clk').forEach(function(el){ el.addEventListener('click', function(){ openNewsForEdit(el.dataset.id); }); });
+        wireDupButtons(box, loadNewsList);
         buildTagFilter(g('newsTagFilter'), box);
       })
       .catch(function(){ box.innerHTML='<div class="ea-empty">Kunde inte ladda.</div>'; });
@@ -2941,11 +2987,13 @@
         box.innerHTML = invites.map(function(i){
           var name = esc(i.title||'(utan rubrik)');
           var meta = (i.active?'<span class="ea-bdg bi">Aktiv</span>':'<span class="ea-bdg bg2">Av</span>');
-          return '<div class="ck-item ck-item-clk" data-sv-id="'+esc(i.id||'')+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att öppna"><div><div class="ck-item-t">'+name+'</div><div class="ck-item-m">'+meta+'</div>'+tagChipsHtml(i)+'</div></div>';
+          return '<div class="ck-item ck-item-clk" data-sv-id="'+esc(i.id||'')+'" data-tags="'+esc(tagDataAttr(i))+'" title="Klicka för att öppna"><div><div class="ck-item-t">'+name+'</div><div class="ck-item-m">'+meta+'</div>'+tagChipsHtml(i)+'</div>'+
+            '<span class="ck-item-r">'+dupBtnHtml(i)+'</span></div>';
         }).join('');
         box.querySelectorAll('[data-sv-id]').forEach(function(el){
           el.addEventListener('click', function(){ openSurveyForEdit(el.getAttribute('data-sv-id')); });
         });
+        wireDupButtons(box, loadSurveyList);
         buildTagFilter(g('surveyTagFilter'), box);
       })
       .catch(function(){ g('surveyList').innerHTML='<div class="ck-mut">Kunde inte ladda lista.</div>'; });

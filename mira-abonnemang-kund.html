@@ -98,6 +98,17 @@
   .ab-pill.t-sub { background:rgba(219,105,35,0.18); color:var(--acc); border:0.5px solid rgba(219,105,35,0.35); }
   .ab-pill.t-rate { background:rgba(99,102,241,0.18); color:#a5a8f0; border:0.5px solid rgba(99,102,241,0.35); }
   .ab-pill.t-hyb { background:rgba(168,85,247,0.18); color:#c4a4f5; border:0.5px solid rgba(168,85,247,0.35); }
+  .ab-pill.t-pkg { background:rgba(56,189,248,0.16); color:#7dd3fc; border:0.5px solid rgba(56,189,248,0.38); }
+
+  /* Paketavtal: delraderna nästlade i masterns panel */
+  .ab-kids { margin:0 0 16px; }
+  .ab-kids-h { display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+    font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--t3); margin:0 0 8px; }
+  .ab-kids-sum { text-transform:none; letter-spacing:0; font-weight:500; }
+  .ab-kids-sum.ab-kids-diff { color:var(--warn); }
+  .ab-kids .ab-rows { gap:5px; }
+  .ab-kid-var { font-size:11px; color:var(--t3); margin-top:2px; }
   .ab-cat { font-size:11px; color:var(--t3); }
 
   /* Cell: status */
@@ -121,12 +132,12 @@
   .ab-rh-act { display:flex; align-items:center; gap:6px; }
   .ab-chev { width:22px; height:22px; display:flex; align-items:center; justify-content:center;
     color:var(--t3); transition:transform 0.2s, color 0.2s; }
-  .ab-row.open .ab-chev { transform:rotate(180deg); color:var(--acc); }
+  .ab-row.open > .ab-rowhead .ab-chev { transform:rotate(180deg); color:var(--acc); }
 
   /* Expand-panel */
   .ab-rowbody { display:none; border-top:0.5px solid var(--line); padding:18px 20px;
     background:var(--bg-deep); }
-  .ab-row.open .ab-rowbody { display:block; }
+  .ab-row.open > .ab-rowbody { display:block; }
 
   .ab-bgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:18px; }
   @media (max-width:820px){ .ab-bgrid { grid-template-columns:repeat(2,1fr); } }
@@ -1475,10 +1486,43 @@
     return '<span class="ab-st s-' + esc(s) + '">' + esc(label) + '</span>';
   }
 
-  function rowHtml(ct) {
-    var costLine = ct.contract_type === 'RateCard'
-      ? '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · ' + (ct.rate_card_json ? JSON.parse(ct.rate_card_json).length : 0) + ' roller</div>'
-      : '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div><div class="ab-cost-end">Utgår ' + fmtDate(ct.slutdatum) + '</div>';
+  // Första rörliga raden i ett rate_card ("Frukt 45 kr/kg") — används för att
+  // visa styckpris på delrader som saknar fast månadskostnad.
+  function variableRateOf(ct) {
+    if (!ct.rate_card_json) return null;
+    try {
+      var arr = JSON.parse(ct.rate_card_json);
+      if (!Array.isArray(arr)) return null;
+      for (var i = 0; i < arr.length; i++) {
+        var r = arr[i];
+        if (r && r.unit && String(r.unit).toLowerCase() !== 'engång') {
+          return { price: Number(r.price_per_h) || 0, unit: String(r.unit), role: String(r.role || '') };
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // kids = delavtal under ett paketavtal (Contract.master_contract pekar hit).
+  // Renderas som riktiga .ab-row inuti masterns panel så all befintlig
+  // expand/edit/pausa-bindning gäller dem oförändrat.
+  function rowHtml(ct, kids) {
+    kids = kids || [];
+    var vr = variableRateOf(ct);
+    var costLine;
+    if (kids.length) {
+      // Master: beloppet är avtalets total, inte en enskild tjänst.
+      costLine = '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div>'
+               + '<div class="ab-cost-end">Totalt · utgår ' + fmtDate(ct.slutdatum) + '</div>';
+    } else if (ct.contract_type === 'RateCard' && vr && Number(ct.monthly_cost || 0) === 0) {
+      // Rörlig delrad: visa det avtalade styckpriset i stället för "0 kr/mån".
+      costLine = '<div class="ab-cost-v">' + fmtKr(vr.price) + '<small>' + esc(vr.unit) + '</small></div>'
+               + '<div class="ab-cost-end">Efter förbrukning</div>';
+    } else if (ct.contract_type === 'RateCard') {
+      costLine = '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · ' + (ct.rate_card_json ? JSON.parse(ct.rate_card_json).length : 0) + ' roller</div>';
+    } else {
+      costLine = '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div><div class="ab-cost-end">Utgår ' + fmtDate(ct.slutdatum) + '</div>';
+    }
 
     var attList = ct.attachments || [];
     var attCount = attList.length;
@@ -1518,6 +1562,23 @@
       } catch (_) {}
     }
 
+    // Delraderna: summan av de FASTA raderna ska matcha masterns månadskostnad.
+    // Visas explicit — går den isär är splitten fel och det ska synas direkt,
+    // inte upptäckas via kundens dashboard.
+    var kidsHtml = '';
+    if (kids.length) {
+      var kidSum = kids.reduce(function (s, k) { return s + Number(k.monthly_cost || 0); }, 0);
+      var kidDiff = kidSum - Number(ct.monthly_cost || 0);
+      kidsHtml = '<div class="ab-kids">'
+        + '<div class="ab-kids-h"><span>Tjänster i avtalet (' + kids.length + ')</span>'
+        +   '<span class="ab-kids-sum' + (Math.abs(kidDiff) > 1 ? ' ab-kids-diff' : '') + '">'
+        +     fmtKr(kidSum) + '/mån av ' + fmtKr(ct.monthly_cost) + '/mån'
+        +     (Math.abs(kidDiff) > 1 ? ' · diff ' + fmtKr(kidDiff) : '')
+        +   '</span></div>'
+        + '<div class="ab-rows">' + kids.map(function (k) { return rowHtml(k, null); }).join('') + '</div>'
+        + '</div>';
+    }
+
     return ''
       + '<div class="ab-row" data-id="' + esc(ct.id) + '">'
       +   '<div class="ab-rowhead">'
@@ -1526,7 +1587,8 @@
       +       '<div class="ab-svcvar">' + esc(ct.variant) + '</div>'
       +     '</div>'
       +     '<div class="ab-rh-meta">'
-      +       '<div class="ab-pills">' + typePillHtml(ct.contract_type) + '</div>'
+      +       '<div class="ab-pills">' + typePillHtml(ct.contract_type)
+      +         (kids.length ? '<span class="ab-pill t-pkg">' + kids.length + ' tjänster</span>' : '') + '</div>'
       +       '<div class="ab-cat">' + esc(ct.category) + '</div>'
       +     '</div>'
       +     '<div class="ab-rh-status">' + statusPillHtml(ct.status, ct.slutdatum) + '</div>'
@@ -1551,13 +1613,18 @@
       +     '</div>'
       +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">' + esc(ct.volume_json) + '</div></div>' : '')
       +     rateCardPreview
-      +     '<div class="ab-att" data-att-wrap data-ct-id="' + esc(ct.id) + '">'
+      +     kidsHtml
+      // Bilagor visas bara på masteravtalet — den signerade PDF:en hör till
+      // DOKUMENTET, inte till varje tjänsterad. Duplicerad skulle den bli fem
+      // ställen att glömma vid omförhandling.
+      +     (ct.is_child ? '' :
+            '<div class="ab-att" data-att-wrap data-ct-id="' + esc(ct.id) + '">'
       +       '<div class="ab-att-h">'
       +         '<div class="ab-att-t">Bilagor (<span data-att-count>' + attCount + '</span>)</div>'
       +         '<button class="ab-btn ghost tiny" data-act="att-upload" data-ct-id="' + esc(ct.id) + '">+ Ladda upp</button>'
       +       '</div>'
       +       '<div class="ab-att-list" data-att-list>' + attListHtml + '</div>'
-      +     '</div>'
+      +     '</div>')
       +     '<div class="ab-rowact">'
       +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="' + esc(ct.id) + '">Redigera</button>'
       +       (ct.status === 'pausat'
@@ -1571,8 +1638,25 @@
       + '</div>';
   }
 
+  // Ett paketavtal ska INTE ligga sida vid sida med sina egna delrader — då
+  // ser kunden sex avtal där det finns ett. Barnen plockas ur listan och
+  // skickas in i sin master. Ett barn vars master ligger i en annan sektion
+  // (eller är borta) renderas fristående så det aldrig försvinner tyst.
+  function nestPackages(contracts) {
+    var byId = {}, kidsOf = {};
+    contracts.forEach(function (c) { byId[c.id] = c; });
+    contracts.forEach(function (c) {
+      if (!c.master_contract_id) return;
+      if (!byId[c.master_contract_id]) return;
+      (kidsOf[c.master_contract_id] = kidsOf[c.master_contract_id] || []).push(c);
+    });
+    return contracts
+      .filter(function (c) { return !(c.master_contract_id && byId[c.master_contract_id]); })
+      .map(function (c) { return { ct: c, kids: kidsOf[c.id] || [] }; });
+  }
+
   function sectionHtml(title, kontorsId, addr, contracts, isAccount) {
-    var rows = contracts.map(rowHtml).join('');
+    var rows = nestPackages(contracts).map(function (n) { return rowHtml(n.ct, n.kids); }).join('');
     var idLabel = kontorsId ? '<span class="ab-sect-id">' + esc(kontorsId) + '</span>' : '';
     var addrLabel = addr ? '<div class="ab-sect-addr">' + esc(addr) + '</div>' : '';
     return ''
@@ -1623,9 +1707,16 @@
     // Sätt total + count
     var allCt = (SAMPLE.account_contracts || []).slice();
     SAMPLE.offices.forEach(function (of) { allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
-    var aktiva = allCt.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
-    var totMonthly = allCt
-      .filter(function (c) { return c.contract_type === 'Subscription' && (c.status === 'aktiv' || c.status === 'utgar_snart'); })
+    // Paketavtal: mastern OCH dess delrader bär samma pengar. Räkna mastern och
+    // hoppa över barnen — mastern är avtalet kunden faktiskt har skrivit på, och
+    // dess belopp är den avtalade totalen.
+    var countable = allCt.filter(function (c) { return !c.master_contract_id; });
+    var aktiva = countable.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
+    // Hybrid räknas med: en Hybrid har en fast bas i månadskostnad (Planhat
+    // 47 097 kr) som annars tyst blev 0 i totalen. RateCard har ingen fast
+    // månad alls och hör därför inte hemma här.
+    var totMonthly = countable
+      .filter(function (c) { return c.contract_type !== 'RateCard' && (c.status === 'aktiv' || c.status === 'utgar_snart'); })
       .reduce(function (sum, c) { return sum + Number(c.monthly_cost || 0); }, 0);
     $('sum-count').textContent = aktiva.length + ' st';
     $('sum-cost').textContent = fmtKr(totMonthly);

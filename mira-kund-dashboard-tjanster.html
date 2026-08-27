@@ -107,6 +107,7 @@
   .mt-tile.off .mt-sub { color:rgba(255,255,255,0.35); }
 
   .mt-foot-incl { margin-top:auto; padding-top:10px; font-size:11px; color:var(--t2); }
+  .mt-foot-est { color:rgba(255,255,255,0.42); margin-left:5px; }
   .mt-foot-link { margin-top:auto; padding-top:10px; font-size:13px; font-weight:600; color:var(--acc); }
   .mt-foot-link:hover { color:#ff8c45; }
 
@@ -482,6 +483,21 @@
     return '<div class="mt-hero'+(img?' mt-hero-img':'')+'" style="'+bg+'">'+icon+pill+'</div>';
   }
 
+  // Rörligt debiterad AKTIV tjänst (t.ex. Frukt 45 kr/kg i Planhat-avtalet):
+  // delavtalet har monthly_cost 0 eftersom priset debiteras per kg — men
+  // tjänsten ÄR aktiv och tile:n får inte vara tom. Visa det avtalade
+  // styckpriset, och komplettera med prismotorns månadsuppskattning för
+  // kundens arbetsplatser (exakt samma kalkyl som driver "Från"-priset på en
+  // icke-aktiv tile, via adaptedUnitPrice → Erbjudandets pricing_formula_json).
+  function activePriceParts(item, act){
+    if (!act) return null;
+    if (num(act.monthly_cost) > 0) return { kind:'fast', monthly:num(act.monthly_cost) };
+    var rate = num(act.unit_price);
+    if (rate <= 0) return null;
+    var opt = (item.options||[]).filter(function(o){ return o.id===act.option_id; })[0];
+    return { kind:'rorlig', rate:rate, unit:(act.unit||'').trim(), est:(opt ? adaptedUnitPrice(opt) : 0) };
+  }
+
   function renderTile(item){
     var act = ACTIVE[item.slug];
     var isActive = !!act, isPremium = item.category==='platform' && isActive;
@@ -492,9 +508,13 @@
     if (isPremium) {
       foot = '<div class="mt-foot-incl">Ingår i avtalet</div>';
     } else if (isActive) {
-      foot = (act && num(act.monthly_cost)>0)
-        ? '<div class="mt-foot-incl">'+fmtKr(act.monthly_cost)+' / mån</div>'
-        : '';
+      var pp = activePriceParts(item, act);
+      if (!pp) { foot = ''; }
+      else if (pp.kind === 'fast') { foot = '<div class="mt-foot-incl">'+fmtKr(pp.monthly)+' / mån</div>'; }
+      else {
+        foot = '<div class="mt-foot-incl">'+fmtKr(pp.rate)+' '+esc(pp.unit)+
+               (pp.est>0 ? '<span class="mt-foot-est">· ca '+fmtKr(pp.est)+'/mån</span>' : '')+'</div>';
+      }
     } else {
       foot = '<div class="mt-foot-link" data-act="open" data-slug="'+esc(item.slug)+'">Läs mer →</div>';
     }
@@ -706,10 +726,16 @@
 
     var actionsCol;
     if (isActive) {
-      var activeCostHtml = (act && num(act.monthly_cost)>0)
-        ? '<div class="mt-mprice-r">Ert pris<b>'+fmtKr(act.monthly_cost)+'<small> / mån</small></b></div>'+
-          '<div style="font-size:10px;color:rgba(255,255,255,0.42);margin:-4px 0 10px">Enligt ert avtal</div>'
-        : '';
+      var mpp = activePriceParts(item, act);
+      var activeCostHtml = '';
+      if (mpp && mpp.kind === 'fast') {
+        activeCostHtml = '<div class="mt-mprice-r">Ert pris<b>'+fmtKr(mpp.monthly)+'<small> / mån</small></b></div>'+
+          '<div style="font-size:10px;color:rgba(255,255,255,0.42);margin:-4px 0 10px">Enligt ert avtal</div>';
+      } else if (mpp) {
+        activeCostHtml = '<div class="mt-mprice-r">Ert pris<b>'+fmtKr(mpp.rate)+'<small> '+esc(mpp.unit)+'</small></b></div>'+
+          '<div style="font-size:10px;color:rgba(255,255,255,0.42);margin:-4px 0 10px">Enligt ert avtal · debiteras efter förbrukning'+
+          (mpp.est>0 ? ' (ca '+fmtKr(mpp.est)+'/mån för er)' : '')+'</div>';
+      }
       actionsCol =
         '<div class="mt-active-info"><b>Aktiv tjänst</b>Den här tjänsten ingår redan i ert avtal. Hör av er till oss om ni vill ändra nivå eller antal.</div>'+
         activeCostHtml +

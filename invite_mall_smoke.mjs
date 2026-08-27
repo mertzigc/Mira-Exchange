@@ -350,6 +350,60 @@ ok("sändvägen skriver INGEN subject_override-kolumn på EmailQueue",
 ok("flaggan ligger i extra_data, som redan är ett fungerande fält",
    /extra_data: JSON\.stringify\(extra\)/.test(sendSrc));
 
+// ── Duplicera utskick ─────────────────────────────────────────────────────
+sec("Duplicera (inbjudan/undersökning/nyhet)");
+const dupSrc = slice(INDEX, 'app.post("/admin/invite/:id/duplicate"', "\n});", "duplicate-route");
+const createSrc = slice(INDEX, 'app.post("/admin/invite/create"', "\n});", "create-route");
+// Nycklarna i `exact = {...}` — plockas ur båda rutterna och jämförs.
+const exactKeys = (src) => {
+  const a = src.indexOf("const exact = {");
+  if (a < 0) return [];
+  const seg = src.slice(a, src.indexOf("\n    };", a));
+  const named = (seg.match(/^\s{6}([a-z_]+):/gm) || []).map(m => m.trim().replace(":", ""));
+  const short = (seg.match(/^\s{6}([a-z_]+),\s*$/gm) || []).map(m => m.trim().replace(",", ""));
+  return [...new Set([...named, ...short])].sort();
+};
+const kCreate = exactKeys(createSrc), kDup = exactKeys(dupSrc);
+// ⚠️ Utan det här testet tappar kopian tyst varje NYTT fält som läggs till i
+// create — precis som bg_color tappades mellan de två brand-byggarna.
+ok(`kopian skriver samma fältuppsättning som create (${kDup.length} vs ${kCreate.length})`,
+   kCreate.length > 10 && kCreate.join(",") === kDup.join(","));
+const missing = kCreate.filter(k => !kDup.includes(k));
+if (missing.length) console.log("     saknas i kopian: " + missing.join(", "));
+
+ok("kopian får ett NYTT token", /const token = _admToken\(\);/.test(dupSrc) && /token,/.test(dupSrc));
+ok("varje kopierad gäst får ett NYTT guest_token",
+   /guest_token:\s+_admToken\(\),\s+\/\/ ALDRIG återanvänd källans token/.test(dupSrc));
+// En kopia ska stå på noll. Följer svar eller skickat-status med ser den ut som
+// halvskickad, och påminnelsens urval blir fel från start.
+for (const f of ["invite_sent", "response_json", "allergens_json", "arrived", "rsvp_at"]) {
+  ok(`svarsfältet ${f} kopieras INTE`, !new RegExp(f + "\\s*:").test(dupSrc));
+}
+ok("avprickningsgrinden (checkin_token/-code) kopieras inte", !/checkin_(token|code)\s*:/.test(dupSrc));
+ok("mottagarna nollställs till pending utan medföljande",
+   /rsvp_status:\s+"pending"/.test(dupSrc) && /plus_ones_count:\s+0/.test(dupSrc));
+ok("dubbletter i källistan filtreras på e-post", /if \(!email \|\| seen\.has\(email\)\) continue;/.test(dupSrc));
+ok("stora listor skrivs chunkat", /i \+= 200/.test(dupSrc));
+// _bulkCreate returnerar `ok || rows.length` → kan rapportera lyckat vid totalfel.
+ok("antalet mottagare räknas om från Bubble, inte från _bulkCreate",
+   /const check = await bubbleFindAll\(ADM_GUEST/.test(dupSrc) && /guestsCopied = check \? check\.length : -1/.test(dupSrc));
+ok("svaret skiljer verifierat, delvis och misslyckat",
+   /guests_verified:/.test(dupSrc) && /partial:/.test(dupSrc));
+ok("källan skrivs aldrig", !/bubblePatch\(|safePatch\(/.test(dupSrc));
+
+sec("Duplicera (admin-UI)");
+ok("duplicera-knapp i alla tre listorna", (ADMIN.match(/\+dupBtnHtml\(i\)\+/g) || []).length === 3);
+ok("knapparna kopplas i alla tre listorna", (ADMIN.match(/wireDupButtons\(box, load/g) || []).length === 3);
+ok("radklicket (redigera) blockeras av knappen", /e\.stopPropagation\(\);\s*\n\s*ckDuplicate\(/.test(ADMIN));
+ok("kopian kräver ett namn", /alert\('Kopian måste ha ett namn\.'\)/.test(ADMIN));
+ok("mottagarlistan är ett aktivt val, inte en gissning", /copy_guests:copyGuests/.test(ADMIN));
+ok("delvis kopierad lista varnas synligt", /Bara '\+j\.guests_copied\+' av '\+j\.guests_requested/.test(ADMIN));
+// Reload-funktionerna heter olika per flik; fel namn ger ReferenceError vid klick.
+for (const fn of ["loadInvites", "loadNewsList", "loadSurveyList"]) {
+  ok(`${fn} finns och används som reload`,
+     new RegExp("function " + fn + "\\(").test(ADMIN) && new RegExp("wireDupButtons\\(box, " + fn + "\\)").test(ADMIN));
+}
+
 // ── Bubble-bindningen i admin-blocket ─────────────────────────────────────
 // Bubble strippar `value` på hidden inputs — attributet överlever, värdet inte.
 // En bindning till value ger därför alltid tom sträng och förvalet dör tyst.

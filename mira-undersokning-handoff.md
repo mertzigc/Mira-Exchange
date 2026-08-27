@@ -337,8 +337,32 @@ dyker upp. Inga API-anrop, ingen WU.
 JS-fallback (`_EA_KEY`) sedan samma stripping-incident. Den följer med vid
 inklistring — rör den inte.
 
-**Röktest:** `node invite_mall_smoke.mjs` (176 gröna). Mutationstestad mot HEAD:
-14 av 177 faller, ingen krasch. Kör mutationstestet på en KOPIA
+### Duplicera utskick (2026-08-27)
+
+`POST /admin/invite/:id/duplicate` `{title?, copy_guests?, active?}` → nytt utskick.
+Samma endpoint för alla tre typerna — `kind` kopieras från källan. Knappen ⧉ finns
+i alla tre listorna. **Källan skrivs aldrig.**
+
+**Kopieras inte, med flit:**
+| Fält | Varför |
+|---|---|
+| `token`, `guest_token` | Delade tokens gör att `getGuestByToken` returnerar fel rad och två utskick skriver över varandras svar |
+| `checkin_token`, `checkin_code` | Avprickningsgrinden är per event |
+| `rsvp_status`, `response_json`, `allergens_json`, `arrived`, `rsvp_at`, `invite_sent` | En kopia ska stå på noll, annars ser den ut som halvskickad och påminnelsens urval blir fel från start |
+
+Mottagarna dedupliceras på e-post och skrivs chunkat (200/bulk).
+
+⚠️ **Antalet mottagare räknas om från Bubble efter kopieringen** — `_bulkCreate`
+returnerar `ok || rows.length` och kan alltså säga "lyckat" när ingenting skapades.
+Svaret bär `guests_verified` och `partial`, och admin varnar synligt vid delvis
+kopiering.
+
+⚠️ **Röktestet jämför fältuppsättningen i `duplicate` mot den i `create`.** Läggs ett
+nytt fält till på Invitation utan att kopian får det tappas det tyst i varje kopia —
+samma klass av fel som `bg_color` mellan de två brand-byggarna.
+
+**Röktest:** `node invite_mall_smoke.mjs` (200 gröna). Mutationstestad mot HEAD:
+18 av 201 faller, ingen krasch. Kör mutationstestet på en KOPIA
 (`git show HEAD:fil > kopia`), aldrig med `git checkout` i arbetsträdet.
 
 ---
