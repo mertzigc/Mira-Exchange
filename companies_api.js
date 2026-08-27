@@ -937,20 +937,53 @@ export function registerCompaniesRoutes(app, deps) {
   // kopplingen. Profilbild går sin egen väg via /coworker/:id/photo (User saknar bildfält).
   // RÅ bubblePatch/bubbleCreate (inte safeCreate) → okänt fält ger 400, aldrig tyst drop.
   const MYPAGE_FIELDS = ["first", "last", "title", "phone"];   // email + foto hanteras separat
+
+  // ⚠️ User.email finns INTE alltid på toppnivå i Bubbles Data API — för auth-users
+  //    ligger den under authentication.email.email. Läses den bara som `u.email` blir
+  //    den tom, och då faller BÅDE e-postjoinen och e-postfältet i Min sida (2026-08-27).
+  const _userEmailRaw = (u) => _str(
+    (u && (u.email || u.Email)) ||
+    (u && u.authentication && u.authentication.email && u.authentication.email.email) || ""
+  );
+
+  // ── Coworker för en User ───────────────────────────────────────────────────
+  // ⚠️ Bubbles `equals` på text är SKIFTLÄGESKÄNSLIGT. Coworker.Email skrivs av
+  //    människor ("Ossian.Eliasson@avtalat.se") medan User.email är gemener →
+  //    exakt-matchningen missade och Min sida sa "ingen kopplad medarbetare"
+  //    trots att raden fanns (Christians Coworker 2026-08-27).
+  // ⚠️ Coworker.User (ref → User) är den STARKA joinen: oberoende av skiftläge och
+  //    av att e-posten ändras. E-post är fallback för rader som saknar referensen.
+  //    Nyckeln får ALDRIG bli enbart e-post igen — det var exakt det som brast.
   async function _linkedCoworker(user) {
-    const em = _email(user.email || user.Email || (user.authentication && user.authentication.email && user.authentication.email.email));
+    const companyId = _ref(user.Company);
+    // Flera träffar → föredra den under Userns eget bolag (Company).
+    const pick = (list) => {
+      const arr = (Array.isArray(list) ? list : []).filter(Boolean);
+      if (!arr.length) return null;
+      if (companyId && arr.length > 1) {
+        const own = arr.filter((c) => _ref(c["Kundföretag"]) === companyId);
+        if (own.length) return own[0];
+      }
+      return arr[0];
+    };
+
+    // 1) Direkt referens. Starkast — .catch här är OK: faller den finns e-postvägen kvar.
+    const uid = bubbleId(user);
+    if (uid) {
+      const byRef = pick(await bubbleFindAll("Coworker", {
+        constraints: [{ key: "User", constraint_type: "equals", value: uid }]
+      }).catch(() => null));
+      if (byRef) return byRef;
+    }
+
+    // 2) E-post, skiftlägesokänsligt: hämta brett med "text contains" (case-insensitivt
+    //    i Bubble) och jämför sedan EXAKT i JS. Utan JS-filtret hade "olle@x.se" kunnat
+    //    matcha "rolle@x.se" — contains är substring, inte likhet.
+    const em = _email(_userEmailRaw(user));
     if (!em) return null;
     // Ingen .catch(()=>[]) — en fallen fråga ska braka, inte läsas som "ingen coworker".
-    const cos = await bubbleFindAll("Coworker", { constraints: [{ key: "Email", constraint_type: "equals", value: em }] });
-    const list = Array.isArray(cos) ? cos : [];
-    if (!list.length) return null;
-    // Flera träffar med samma mail → föredra den under Userns eget bolag (Company).
-    const companyId = _ref(user.Company);
-    if (companyId && list.length > 1) {
-      const own = list.filter((c) => _ref(c["Kundföretag"]) === companyId);
-      if (own.length) return own[0];
-    }
-    return list[0];
+    const cos = await bubbleFindAll("Coworker", { constraints: [{ key: "Email", constraint_type: "text contains", value: em }] });
+    return pick((Array.isArray(cos) ? cos : []).filter((c) => _email(c.Email || c.email) === em));
   }
 
   // ── MIN SIDA: EN logik, TVÅ ingångar (2026-08-27) ─────────────────────────
@@ -1023,7 +1056,7 @@ export function registerCompaniesRoutes(app, deps) {
           last:  _str(u["Surname"]),
           title: _str(u["Title_user"]),
           phone: _str(u["Phone_user"]),
-          email: _str(u.email || u.Email),
+          email: _userEmailRaw(u),
         },
         coworker: co ? {
           id: bubbleId(co),

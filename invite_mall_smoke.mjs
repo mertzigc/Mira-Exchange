@@ -275,6 +275,25 @@ ok("svarskortets överkant i RÅ accent", /\.mp-card \{[^}]*border-top: 3px soli
 ok("svarskortets rubrik i läsbar accent", /\.mp-card h2 \{[^}]*color: var\(--accent-strong\)/.test(LANDING));
 ok("knappens text följer fortfarande --accent-ink", /background: var\(--accent\); color: var\(--accent-ink\)/.test(LANDING));
 
+// ── Vem svaret binds till ─────────────────────────────────────────────────
+// Personlig länk (?g=) döljer namn/e-post eftersom de redan är kända. Utan en
+// synlig bekräftelse ser det ut som att uppgifterna fallit bort — det var precis
+// därför någon lade till dubblettfält i form_schema.
+sec("invite.html — känd gäst");
+const whoSrc = slice(LANDING, "function showWhoami(g)", "\n}", "showWhoami");
+ok("raden visas i ALLA lägen utom öppen länk utan känd gäst",
+   /if \(OPEN_MODE && !CFG\.guest\) show\("mp-contact"\);\s*\n\s*else showWhoami\(CFG\.guest\);/.test(LANDING));
+ok("byggs med textContent — namn och e-post är användardata",
+   whoSrc.includes("textContent") && !whoSrc.includes("innerHTML"));
+ok("visar inget när varken namn eller e-post finns", /if \(!name && !mail\) return;/.test(whoSrc));
+ok("klarar gäst med bara namn eller bara e-post",
+   /if \(name\)\{/.test(whoSrc) && /if \(mail\)\{/.test(whoSrc));
+ok("elementet finns i markupen och är dolt från start",
+   /id="mp-whoami" class="mp-whoami mp-hidden"/.test(LANDING));
+ok("egen stil med accentkant", /\.mp-whoami \{[^}]*border-left: 3px solid var\(--accent\)/.test(LANDING));
+ok("kontaktfälten visas fortfarande BARA i öppet läge utan gäst",
+   /kontaktuppgifter: visas bara i öppet läge/.test(LANDING));
+
 // ── 7. Admin ──────────────────────────────────────────────────────────────
 sec("mira-kommunikation-admin.html");
 ok("bakgrundsfältet finns", /id="iv-bg-hex"/.test(ADMIN) && /id="iv-bg"/.test(ADMIN));

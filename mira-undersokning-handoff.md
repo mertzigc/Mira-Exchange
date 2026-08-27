@@ -259,8 +259,30 @@ körs på riktigt (utklippt + evaluerad), inte bara lästs.
 **Svarsbekräftelsen** (`invite_rsvp_confirmation`) följer samma palett — annars
 byter varumärket skepnad mitt i gästens flöde.
 
-**Röktest:** `node invite_mall_smoke.mjs` (147 gröna). Mutationstestad mot HEAD:
-17 av 149 faller, ingen krasch. Kör mutationstestet på en KOPIA
+### De två länklägena — och varför dubblettfält uppstår
+
+| Länk | Namn/e-post | Vad som händer vid svar |
+|---|---|---|
+| `?g=GÄSTTOKEN` (systemets utskick) | **kända** — fälten renderas aldrig | `bubblePatch` på befintlig `Guest` |
+| `?t=TOKEN` (delad fritt, t.ex. eget Outlook-mail) | okända — krävs, valideras klient + server (`email_required`) | `safeCreate` av NY `Guest` |
+
+`form_schema`-fälten renderas i **båda** lägena — `buildDynamic()` bryr sig inte om
+läget. Ett eget "Mailadress"-fält i schemat frågar därför även den vi redan har
+fullständiga uppgifter om, och svaret hamnar i `response_json` i stället för på
+`Guest.email`. Klumpen läses INTE av bekräftelsemejl, deltagarlista, dubblettkoll,
+påminnelser, unsubscribe eller avprickning → uppgiften blir osynlig för flödet.
+**Lägg aldrig namn/e-post i `form_schema`.**
+
+Grundorsaken till att någon gör det: i `?g=`-läget förifylldes gästens uppgifter i
+*dolda* fält och visades aldrig — det såg ut som att de fallit bort. Sidan visar nu
+raden *"Dina uppgifter är redan ifyllda – du svarar som **Namn** · mejl"*
+(`showWhoami()`, byggd med `textContent` eftersom det är användardata).
+
+⚠️ Öppna länken gör **ingen dedupe på mejladress** — varje inskickat svar skapar en
+ny gästrad. Vidarebefordrat `?t=`-mejl kan alltså ge dubbletter.
+
+**Röktest:** `node invite_mall_smoke.mjs` (154 gröna). Mutationstestad mot HEAD:
+7 av 155 faller, ingen krasch. Kör mutationstestet på en KOPIA
 (`git show HEAD:fil > kopia`), aldrig med `git checkout` i arbetsträdet.
 
 ---

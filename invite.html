@@ -65,6 +65,11 @@
   .mp-card { background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: var(--radius); padding: 26px 24px; }
   .mp-card h2 { font-family: "Fraunces", serif; font-weight: 600; font-size: 22px; margin: 0 0 4px; color: var(--accent-strong); }
   .mp-card .mp-sub { font-size: 14px; color: var(--ink-soft); margin: 0 0 22px; }
+  .mp-whoami { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 13.5px;
+    line-height: 1.5; color: var(--ink-soft); background: var(--bg-soft); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 10px; padding: 11px 14px; margin: -6px 0 22px; }
+  .mp-whoami b { color: var(--ink); font-weight: 600; }
+  .mp-whoami .mp-whoami-mail { color: var(--ink-dim); }
 
   .mp-field { margin: 0 0 20px; }
   .mp-label { display: block; font-size: 14px; font-weight: 600; margin: 0 0 9px; color: var(--ink); }
@@ -182,6 +187,12 @@
       <div id="mp-form-card" class="mp-card">
         <h2 id="mp-form-title">Ditt svar</h2>
         <p id="mp-form-sub" class="mp-sub">Låt oss veta om du kan komma.</p>
+
+        <!-- Vem svaret binds till. Visas BARA för personlig länk (?g=), där namn och
+             e-post redan är kända och därför inte efterfrågas. Utan den här raden
+             ser gästen ingenting som bekräftar att uppgifterna följt med, och det
+             ser ut som att de fallit bort. -->
+        <p id="mp-whoami" class="mp-whoami mp-hidden"></p>
 
         <!-- kontaktuppgifter: visas bara i öppet läge (?t=), när ingen känd gäst finns -->
         <div id="mp-contact" class="mp-hidden">
@@ -376,8 +387,32 @@ function render(){
 
   // öppet läge (?t=) utan känd gäst → samla in namn + e-post
   if (OPEN_MODE && !CFG.guest) show("mp-contact");
+  else showWhoami(CFG.guest);
 
   $("mp-submit").addEventListener("click", submit);
+}
+
+// Talar om vem svaret binds till när uppgifterna redan är kända. Byggs med
+// textContent, inte innerHTML — namn och e-post är användardata.
+function showWhoami(g){
+  const name = String((g && g.name) || "").trim();
+  const mail = String((g && g.email) || "").trim();
+  if (!name && !mail) return;                    // inget att visa → visa inget
+
+  const el = $("mp-whoami");
+  el.textContent = "";
+  const lead = document.createElement("span");
+  lead.textContent = "Dina uppgifter är redan ifyllda – du svarar som";
+  el.appendChild(lead);
+
+  if (name){ const b = document.createElement("b"); b.textContent = name; el.appendChild(b); }
+  if (mail){
+    const m = document.createElement("span");
+    m.className = "mp-whoami-mail";
+    m.textContent = name ? "· " + mail : mail;
+    el.appendChild(m);
+  }
+  show("mp-whoami");
 }
 
 // bygg dynamiska fält ur form_schema (utöver attending som alltid finns)

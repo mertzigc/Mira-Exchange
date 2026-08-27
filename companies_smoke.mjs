@@ -66,7 +66,11 @@ const STORE = {
   Coworker: [
     // ⚠️ BÅDA bildfälten satta, med OLIKA värden (2026-08-27). Prodilbild ska vinna.
     // En fixture med bara ett fält hade inte kunnat uttrycka fel läs-ordning.
-    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1", Prodilbild: "//files/co1.jpg", Foto: "//files/PENSIONERAD.jpg" },  // har User (matchar u1) + bild i båda fälten
+    // ⚠️ VERSALER i Email (2026-08-27). Ossians rad hade "Ossian.Eliasson@avtalat.se"
+    // medan User.email är gemener → Bubbles skiftlägeskänsliga `equals` missade och
+    // Min sida sa "ingen kopplad medarbetare". Fixturen var lowercase i båda ändar
+    // och kunde därför inte uttrycka felet — den var snällare än Bubble.
+    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "Christian.Mertzig@Gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1", Prodilbild: "//files/co1.jpg", Foto: "//files/PENSIONERAD.jpg" },  // har User (matchar u1) + bild i båda fälten
     { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
     // ⚠️ SKARPT FALL (Christians skärmbild 2026-08-26): personer UTAN Efternamn finns
     // (Kajsas i Parken: "Elaine", "Melissa"; Mariebo: "Dennis"). Sorterar man i Bubble
@@ -521,7 +525,7 @@ const run = async () => {
   ok("coworkers ok, 2 rader", cw.body.ok && cw.body.count === 2);
   var coTest = cw.body.rows.filter(function(r){return r.id==="co1";})[0];
   var coRen = cw.body.rows.filter(function(r){return r.id==="co2";})[0];
-  ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "christian.mertzig@gmail.com" && coTest.phone === "755678900");
+  ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "Christian.Mertzig@Gmail.com" && coTest.phone === "755678900");
   ok("coworker crm_info/avdelning/kontor resolvat", coTest.crm_info === "Nyckelkontakt" && coTest.avdelning === "Försäljning" && coTest.kontor_id === "of1" && coTest.kontor === "CMIAB Sthlm");
   ok("coworker foto (https-normaliserat) + tom när saknas", coTest.foto === "https://files/co1.jpg" && coRen.foto === "");
   // ⚠️ Prodilbild MÅSTE vinna över det pensionerade Foto. Faller detta visar kortet
@@ -533,7 +537,12 @@ const run = async () => {
   // ── LÖSENORDS-RESET (eget token-flöde) ──
   STORE.PasswordReset.length = 0; STORE.emailqueue.length = 0;
   var pw = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "co1" } });
-  ok("send-password ok + email", pw.body.ok && pw.body.email === "christian.mertzig@gmail.com");
+  // ⚠️ E-posten går ut SOM DEN STÅR på Coworker-raden — inklusive versaler. Reset-flödet
+  // skickar den vidare till Bubble-wf:en assign_temp_password som slår upp User på den.
+  // User.email är alltid gemener (Bubble normaliserar auth-mail), så matchningen vilar på
+  // att Bubbles egen search är skiftlägesokänslig. Håller inte det antagandet får en
+  // Coworker med versal-mail ingen reset. EJ verifierat mot skarp Bubble — se HANDOFF.
+  ok("send-password ok + email (versaler bevaras)", pw.body.ok && pw.body.email === "Christian.Mertzig@Gmail.com");
   ok("send-password skapade PasswordReset + emailqueue", STORE.PasswordReset.length === 1 && STORE.emailqueue.length === 1);
   var eq = STORE.emailqueue[0];
   ok("emailqueue: rätt template_id + email_sent false", eq.template_id === "tpl_pw" && eq.email_sent === false);
@@ -544,7 +553,7 @@ const run = async () => {
 
   // exchange: byt token mot temp
   var ex = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: rawTok } });
-  ok("exchange ok → email + temp_password", ex.body.ok && ex.body.email === "christian.mertzig@gmail.com" && ex.body.temp_password === "TMP-christian.mertzig@gmail.com");
+  ok("exchange ok → email + temp_password", ex.body.ok && ex.body.email === "Christian.Mertzig@Gmail.com" && ex.body.temp_password === "TMP-Christian.Mertzig@Gmail.com");
   ok("exchange brände token (used=true)", STORE.PasswordReset[0].used === true);
   var ex2 = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: rawTok } });
   ok("exchange samma token igen → 400 invalid_or_expired", ex2.code === 400 && ex2.body.error === "invalid_or_expired");
@@ -1718,6 +1727,21 @@ const run = async () => {
     const mp = mk();
     registerCompaniesRoutes(mp.app, Object.assign({}, deps, { mypageAuth: auth }));
     const tok = (uid) => ({ headers: { "x-mypage-token": auth.mint({ uid }).token } });
+
+    // ⚠️ BUBBLES VERKLIGA USER-FORM (2026-08-27). Auth-users bär e-posten under
+    //    authentication.email.email — INTE som ett toppnivå-`email`. Fixturens övriga
+    //    users har toppnivå-email och kan därför inte uttrycka det: en mutation som
+    //    tog bort authentication-fallbacken passerade sviten. Läggs och plockas bort
+    //    lokalt så antal-assertions i andra block inte rubbas.
+    STORE.User.push({ _id: "u9", "First Name": "Auth", "Surname": "Only",
+      authentication: { email: { email: "auth.only@carotte.se" } }, Company: "cc1" });
+    STORE.Coworker.push({ _id: "co9", "Kundföretag": "cc1", "Förnamn": "Auth", "Efternamn": "Only",
+      Email: "Auth.Only@Carotte.SE" });
+    const authOnly = await call(mp.routes, "get", "/mypage/me", tok("u9"));
+    ok("mypage/me: e-post läses ur authentication.email.email", (authOnly.body.user || {}).email === "auth.only@carotte.se");
+    ok("mypage/me: coworker hittas trots att BÅDA leden skiljer i skiftläge",
+       authOnly.body.coworker_linked === true && (authOnly.body.coworker || {}).id === "co9");
+    STORE.User.pop(); STORE.Coworker.pop();
 
     const me = await call(mp.routes, "get", "/mypage/me", tok("u1"));
     ok("mypage/me: token → egen profil", me.body.ok === true && (me.body.user || {}).id === "u1" && me.body.user.first === "Anna");
