@@ -64,13 +64,15 @@ const STORE = {
     { _id: "inv2", linked_company: "cc1", ft_document_number: "F-2", ft_total: 5000, ft_invoice_date: "2026-06-01", ft_balance: 5000, ft_due_date: "2020-01-01", ft_cancelled: false },
   ],
   Coworker: [
-    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1", Foto: "//files/co1.jpg" },  // har User (matchar u1) + foto
+    // ⚠️ BÅDA bildfälten satta, med OLIKA värden (2026-08-27). Prodilbild ska vinna.
+    // En fixture med bara ett fält hade inte kunnat uttrycka fel läs-ordning.
+    { _id: "co1", "Kundföretag": "cc1", "Förnamn": "Testare", "Efternamn": "Testsson", Titel: "Projektledare", Email: "christian.mertzig@gmail.com", Telefon: 755678900, crm_info: "Nyckelkontakt", Avdelning: "Försäljning", Kontor: "of1", Prodilbild: "//files/co1.jpg", Foto: "//files/PENSIONERAD.jpg" },  // har User (matchar u1) + bild i båda fälten
     { _id: "co2", "Kundföretag": "cc1", "Förnamn": "Rena", "Efternamn": "Kontakt", Email: "rena@acme.se" },  // ren CRM-kontakt
     // ⚠️ SKARPT FALL (Christians skärmbild 2026-08-26): personer UTAN Efternamn finns
     // (Kajsas i Parken: "Elaine", "Melissa"; Mariebo: "Dennis"). Sorterar man i Bubble
     // på Efternamn fälls de TYST ([[reference-bubble-sort-drops-empty]]). Fixturen måste
     // kunna uttrycka felet — annars är den mer förlåtande än verkligheten.
-    { _id: "co3", "Kundföretag": "cc2", "Förnamn": "Elaine", Email: "elaine@beta.se" },                       // inget Efternamn + annat företag
+    { _id: "co3", "Kundföretag": "cc2", "Förnamn": "Elaine", Email: "elaine@beta.se", Foto: "//files/legacy_co3.jpg" },  // inget Efternamn + annat företag + BARA pensionerat Foto (fallback-fallet)
     // ⚠️ E-posten MÅSTE vara u3:s (cilla@), inte u2:s (bo@) — mypage-sviten bevisar att en
     // User UTAN kopplad Coworker inte kraschar, och den använder u2. Ger vi u2 en Coworker
     // här testar den svitens "utan koppling"-fall en värld som inte längre finns.
@@ -187,7 +189,9 @@ const KNOWN_FIELDS = {
   // (Associated_company). email/Email/lösenord skrivs ALDRIG härifrån.
   User: ["First Name", "Surname", "Title_user", "Phone_user", "email", "Email", "Company", "Associated_company", "User_role", "Consent"],
   // Coworker-fält som CO_EDITABLE + create + foto + Min sida-spegling faktiskt skriver.
-  Coworker: ["Förnamn", "Efternamn", "Titel", "Email", "Telefon", "crm_info", "Avdelning", "Kontor", "Foto", "Kundföretag"],
+  // Prodilbild = kanonisk skrivnyckel för profilbild (2026-08-27). "Foto" står kvar
+  // ENBART för att upload/clear nollar det pensionerade fältet — inget skriver dit ett värde.
+  Coworker: ["Förnamn", "Efternamn", "Titel", "Email", "Telefon", "crm_info", "Avdelning", "Kontor", "Prodilbild", "Foto", "Kundföretag"],
   // consent (Min sida): Användarvillkor(file, skrivs ej), Godkänt(OS), User(ref).
   consent: ["Godkänt", "User", "Användarvillkor"],
 };
@@ -306,14 +310,17 @@ const deps = {
 
 // Fångar SISTA handlern per rout (foto-routen registreras med middleware + handler → ta sista).
 function mk() { const routes = { get: {}, post: {}, patch: {}, delete: {}, options: {} }; const last = (a) => a[a.length - 1]; return { app: { get: (p, ...a) => { routes.get[p] = last(a); }, post: (p, ...a) => { routes.post[p] = last(a); }, patch: (p, ...a) => { routes.patch[p] = last(a); }, delete: (p, ...a) => { routes.delete[p] = last(a); }, options: (p, ...a) => { routes.options[p] = last(a); } }, routes }; }
-function call(routes, method, path, { query = {}, params = {}, body = {}, file = undefined } = {}) {
+// headers stöds sedan 2026-08-27: kundens Min sida-ingång auth:ar på x-mypage-token,
+// och utan dem hade varje token-test tyst blivit "ingen header → 401" i stället för
+// att testa det det påstår sig testa.
+function call(routes, method, path, { query = {}, params = {}, body = {}, file = undefined, headers = {} } = {}) {
   // ⚠️ Saknad route får INTE kasta. Vid mutationstest (gammal kod utan den nya
   // endpointen) dog hela sviten på första anropet och dolde alla följande fel —
   // samma klass av tyst missvisning som en assertion som kraschar i st.f. att falla.
   // Nu svarar den 404 så testet FALLER begripligt.
   const h = routes[method][path];
   if (!h) return Promise.resolve({ code: 404, body: { ok: false, error: "no_route", route: method + " " + path } });
-  return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); }, sendStatus(c) { r({ code: c, body: null }); } }; h({ params, query, body, file, headers: {} }, res); });
+  return new Promise((r) => { const res = { _c: 200, status(c) { this._c = c; return this; }, json(o) { r({ code: this._c, body: o }); }, sendStatus(c) { r({ code: c, body: null }); } }; h({ params, query, body, file, headers }, res); });
 }
 
 let pass = 0, fail = 0;
@@ -517,6 +524,9 @@ const run = async () => {
   ok("coworker namn/titel/email/telefon", coTest.name === "Testare Testsson" && coTest.title === "Projektledare" && coTest.email === "christian.mertzig@gmail.com" && coTest.phone === "755678900");
   ok("coworker crm_info/avdelning/kontor resolvat", coTest.crm_info === "Nyckelkontakt" && coTest.avdelning === "Försäljning" && coTest.kontor_id === "of1" && coTest.kontor === "CMIAB Sthlm");
   ok("coworker foto (https-normaliserat) + tom när saknas", coTest.foto === "https://files/co1.jpg" && coRen.foto === "");
+  // ⚠️ Prodilbild MÅSTE vinna över det pensionerade Foto. Faller detta visar kortet
+  // en gammal bild som ingen längre underhåller.
+  ok("coworker bild: Prodilbild slår pensionerat Foto", coTest.foto === "https://files/co1.jpg" && coTest.foto.indexOf("PENSIONERAD") === -1);
   ok("coworkers svar bär offices + departments", cw.body.offices.length === 2 && cw.body.offices[0].name === "CMIAB Göteborg" && cw.body.departments.indexOf("Försäljning") > -1);
   ok("coworker has_user (email matchar User vars Company==företaget)", coTest.has_user === true && coTest.user_id === "u1");
   ok("ren coworker = CRM-kontakt (has_user false)", coRen.has_user === false && coRen.user_id === null);
@@ -589,11 +599,15 @@ const run = async () => {
   var cop404 = await call(s.routes, "patch", "/admin/companies/coworker/:id", { params: { id: "nope" }, body: { field: "title", value: "X" } });
   ok("coworker PATCH okänt id → 404", cop404.code === 404);
 
-  // ── PROFILFOTO (Coworker.Foto): sätt / rensa / valideringar ──
+  // ── PROFILBILD (Coworker.Prodilbild): sätt / rensa / valideringar ──
   var ph = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, file: { buffer: Buffer.from("abc"), mimetype: "image/png" } });
-  ok("photo upload ok → url + Foto satt på Coworker", ph.body.ok && ph.body.url === "https://files/coworker_co2_foto.png" && STORE.Coworker[1].Foto === "https://files/coworker_co2_foto.png");
+  ok("photo upload ok → url + Prodilbild satt på Coworker", ph.body.ok && ph.body.url === "https://files/coworker_co2_foto.png" && STORE.Coworker[1].Prodilbild === "https://files/coworker_co2_foto.png");
+  // ⚠️ Uppladdning måste också nolla det pensionerade fältet — annars bär raden två bilder.
+  ok("photo upload → pensionerat Foto nollat", STORE.Coworker[1].Foto === "");
   var phClr = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, body: { clear: "1" } });
-  ok("photo clear → Foto tömt", phClr.body.ok && phClr.body.url === "" && STORE.Coworker[1].Foto === "");
+  // ⚠️ BÅDA fälten. Töms bara Prodilbild återuppstår en gammal Foto-bild via läs-fallbacken
+  // och "Ta bort" ser ut att inte fungera.
+  ok("photo clear → BÅDA bildfälten tömda", phClr.body.ok && phClr.body.url === "" && STORE.Coworker[1].Prodilbild === "" && STORE.Coworker[1].Foto === "");
   var phNo = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, body: {} });
   ok("photo utan fil (ej clear) → 400 no_file", phNo.code === 400 && phNo.body.error === "no_file");
   var phBad = await call(s.routes, "post", "/admin/companies/coworker/:id/photo", { params: { id: "co2" }, file: { buffer: Buffer.from("x"), mimetype: "application/pdf" } });
@@ -1679,6 +1693,49 @@ const run = async () => {
   const stQ = staffOf(obWithQ);
   ok("onboarding: med user_company hittas samma person som i Vår personal",
      stQ.done === true && stQ.count >= 1);
+
+  // ── MIN SIDA VIA KUNDINGÅNGEN /mypage/me (2026-08-27) ───────────────────────
+  // ⚠️ HELA POÄNGEN: kundvägen får uid ur den SIGNERADE TOKENEN, aldrig ur URL:en.
+  //    Sviten ska falla om någon någonsin lägger tillbaka ett :userId där.
+  {
+    const { makeMypageAuth } = await import("./mypage_auth.js");
+    const auth = makeMypageAuth({ secret: "smoke-secret", sessionSecret: "smoke-session" });
+    const mp = mk();
+    registerCompaniesRoutes(mp.app, Object.assign({}, deps, { mypageAuth: auth }));
+    const tok = (uid) => ({ headers: { "x-mypage-token": auth.mint({ uid }).token } });
+
+    const me = await call(mp.routes, "get", "/mypage/me", tok("u1"));
+    ok("mypage/me: token → egen profil", me.body.ok === true && (me.body.user || {}).id === "u1" && me.body.user.first === "Anna");
+    ok("mypage/me: coworker kopplad via e-post", me.body.coworker_linked === true && (me.body.coworker || {}).id === "co1");
+
+    // ⚠️ ANGREPPET: giltig token för u1, men försök läsa u2. Vägen har inget :userId,
+    //    så ett påhittat params-objekt får INTE kunna styra vem som läses.
+    const cross = await call(mp.routes, "get", "/mypage/me", Object.assign({ params: { userId: "u2" } }, tok("u1")));
+    ok("mypage/me: params kan INTE peka om till annan user", (cross.body.user || {}).id === "u1");
+
+    ok("mypage/me: ingen token → 401", (await call(mp.routes, "get", "/mypage/me", {})).code === 401);
+    ok("mypage/me: skräptoken → 401", (await call(mp.routes, "get", "/mypage/me", { headers: { "x-mypage-token": "skrap.skrap" } })).code === 401);
+    // Admin-tokenen får aldrig duga på kundvägen — det är hela skälet till modulen.
+    ok("mypage/me: x-admin-token duger inte", (await call(mp.routes, "get", "/mypage/me", { headers: { "x-admin-token": "T" } })).code === 401);
+
+    // PATCH via kundingången skriver på tokenens user, inte på params.
+    const pw = await call(mp.routes, "patch", "/mypage/me", Object.assign({ params: { userId: "u2" }, body: { fields: { title: "Kundchef" } } }, tok("u1")));
+    ok("mypage/me PATCH skriver tokenens user", pw.body.ok === true && (STORE.User.find((x) => x._id === "u1") || {})["Title_user"] === "Kundchef");
+    ok("mypage/me PATCH rörde INTE u2", (STORE.User.find((x) => x._id === "u2") || {})["Title_user"] !== "Kundchef");
+    ok("mypage/me PATCH okänt fält → 400", (await call(mp.routes, "patch", "/mypage/me", Object.assign({ body: { fields: { admin_crm: true } } }, tok("u1")))).code === 400);
+
+    // Profilbild: coworkern slås upp ur tokenen. u2 saknar coworker → 409, inte tyst ok.
+    const ph = await call(mp.routes, "post", "/mypage/me/photo", Object.assign({ file: { buffer: Buffer.from("x"), mimetype: "image/png" } }, tok("u1")));
+    ok("mypage/me/photo → Prodilbild på EGEN coworker", ph.body.ok === true && (STORE.Coworker.find((c) => c._id === "co1") || {}).Prodilbild === ph.body.url && ph.body.coworker_id === "co1");
+    const phNo = await call(mp.routes, "post", "/mypage/me/photo", Object.assign({ file: { buffer: Buffer.from("x"), mimetype: "image/png" } }, tok("u2")));
+    ok("mypage/me/photo utan kopplad coworker → 409, inte tyst ok", phNo.code === 409 && (phNo.body || {}).error === "no_coworker_linked");
+
+    // ⚠️ Utan mypageAuth ska kundvägen INTE finnas. Hellre 404 än en ogrindad route.
+    const utan = mk(); registerCompaniesRoutes(utan.app, deps);
+    ok("utan mypageAuth registreras /mypage/me inte alls",
+       !Object.keys(utan.routes.get).some((r) => r.indexOf("/mypage/me") === 0) &&
+       !Object.keys(utan.routes.patch).some((r) => r.indexOf("/mypage/me") === 0));
+  }
 
   // ── MIN SIDA (User-profil: speglad skrivning User+Coworker + consent) ────────
   // ⚠️ Sist så spegelskrivningen inte muterar tidigare User/Coworker-assertions.

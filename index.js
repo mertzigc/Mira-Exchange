@@ -19,6 +19,7 @@ import { createIntelliplanClient, describeReportPayload, profileCsvColumns, norm
          scoreScheduleColumns, malFinnsInte, normalizePass, IP_PASS_REPORT } from "./intelliplan.js";
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { makeVisitorAuth } from "./visitor_auth.js";
+import { makeMypageAuth } from "./mypage_auth.js";
 import { registerVisitorRoutes } from "./visitor_api.js";
 import { makeSms } from "./sms.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
@@ -464,6 +465,9 @@ function requireApiKey(req, res, next) {
     "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad
     "/admin/drift",                // Drift stå-alone (ärenden+kvalitetskontroller aggregerat), x-admin-token-grindad
     "/admin/persons",              // Personer stå-alone (global personlista), x-admin-token-grindad (companies_api.js)
+    "/mypage",                     // Kundens Min sida. INTE x-api-key: /mypage/session grindas av
+                                   // x-mypage-secret (Bubble-wf, server-side), /mypage/me/* av
+                                   // x-mypage-token som bär user-scopet. Se mypage_auth.js.
     "/visitor",                    // Receptionistens yta. INTE x-api-key: /visitor/session grindas av
                                    // x-visitor-secret (Bubble-wf, server-side), övriga av x-visitor-token
                                    // som bär fastighets-scopet. Se handoff/BESOKSHANTERING.md §7.5.
@@ -16148,11 +16152,10 @@ const KUND_KPI = {
   ANSVARIG_FIELD:      "Kundansvarig",              // ClientCompany → ref User
   COWORKER_TYPE:       "Coworker",                  // bär profilbilden (User saknar bildfält)
 
-  // ⚠️ TVÅ bildfält på Coworker, och de är INTE utbytbara:
-  //   "Prodilbild" (ja, felstavat i Bubble) = där de befintliga bilderna ligger.
-  //                 Fanns inte på ett enda ställe i koden före 2026-08-27.
-  //   "Foto"      = det fält /admin/companies/coworker/:id/photo skriver till.
-  // Läs båda, Prodilbild först — annars visas initialer trots att bilden finns.
+  // ⚠️ Profilbilden bor på Coworker."Prodilbild" — ja, felstavat i Bubble.
+  //    "Foto" är PENSIONERAT (2026-08-27, "vi använder inte foto") och läses bara
+  //    som fallback för bilder som endpointen hann skriva dit. Samma ordning som
+  //    CO_PHOTO_READ i companies_api.js — håll de två listorna i synk.
   COWORKER_PHOTO_FIELDS: ["Prodilbild", "Foto"]
 };
 
@@ -19073,6 +19076,11 @@ const _sms = makeSms({
 
 const VISITOR_SESSION_SECRET = String(process.env.VISITOR_SESSION_SECRET || "").trim();
 const _visitorAuth = makeVisitorAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecret: VISITOR_SESSION_SECRET, ttlMs: 12 * 60 * 60 * 1000 });
+
+// ── Min sida (kundens yta) ────────────────────────────────────────────────
+// Egen hemlighet, egen token, eget scope (EN user). Se mypage_auth.js.
+const MYPAGE_SESSION_SECRET = String(process.env.MYPAGE_SESSION_SECRET || "").trim();
+const _mypageAuth = makeMypageAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecret: MYPAGE_SESSION_SECRET, ttlMs: 8 * 60 * 60 * 1000 });
 // Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)
 const PLANNING_SRC = {
   [ACTIVITY_CONFIG.AT_BOKNING]: { type: ACTIVITY_CONFIG.COMISSION_TYPE, status: ACTIVITY_CONFIG.C_STATUS, thread: "Tråd", start: ACTIVITY_CONFIG.C_DELIVERY, end: ACTIVITY_CONFIG.C_END },
@@ -21022,6 +21030,7 @@ registerAffarRoutes(app, {
 registerVisitorRoutes(app, {
   bubbleFindAll, bubbleGet, bubbleId, bubbleCreate, bubblePatch,
   visitorAuth: _visitorAuth,
+  mypageAuth: _mypageAuth,                     // kundens Min sida — EGEN gate, ej planningAuthed
   sms: _sms,
   sendMail: sendViaSendGrid,
   planningCors: _planningCors,
@@ -21216,6 +21225,44 @@ app.post("/visitor/session", async (req, res) => {
   } catch (e) {
     // Bär med Bubbles status + svarskropp — annars är felet odiagnostiserbart i loggen.
     console.error("[/visitor/session]", e?.message, JSON.stringify(e?.detail || null));
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ── POST /mypage/session — Bubble backend-wf → Render. Mintar kundens Min sida-session. ──
+// ⚠️ ANROPAS ALDRIG FRÅN BROWSERN. Bubble-wf:en kör server-side, känner Current User och
+//    bär MYPAGE_SESSION_SECRET. Hamnar den hemligheten i ett HTML-block kan vem som helst
+//    minta en session åt vilket user_id som helst — hela scope-modellen faller.
+// Ingen roll-kontroll: alla inloggade users har en Min sida. Kravet är bara att usern finns.
+app.options("/mypage/session", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+app.post("/mypage/session", async (req, res) => {
+  _planningCors(req, res);
+  if (_publicRateLimited && _publicRateLimited("mpsession:" + _clientIp(req), 60)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+  const sec = _mypageAuth.verifySessionSecret(req.headers["x-mypage-secret"]);
+  if (!sec.ok) return res.status(sec.status || 401).json({ ok: false, error: sec.error });
+
+  const userId = String((req.body && req.body.user_id) || "").trim();
+  if (!userId) return res.status(400).json({ ok: false, error: "missing_user_id" });
+  try {
+    // Samma slug-osäkerhet som /visitor/session: prova båda och bär med Bubbles svar.
+    let u = null, lastDetail = null;
+    for (const slug of ["User", "user"]) {
+      try { u = await bubbleGet(slug, userId); if (u) break; }
+      catch (e) { lastDetail = { slug, detail: e && e.detail ? e.detail : String(e && e.message || e) }; }
+    }
+    if (!u) {
+      console.error("[/mypage/session] user-läsning misslyckades", JSON.stringify(lastDetail));
+      return res.status(404).json({ ok: false, error: "user_not_found", user_id: userId, bubble: lastDetail });
+    }
+    const name = (String(u["First Name"] || "") + " " + String(u["Surname"] || u["Last Name"] || "")).trim();
+    const m = _mypageAuth.mint({ uid: userId, name });
+    if (!m) return res.status(400).json({ ok: false, error: "missing_user_id" });
+    // exp_iso för Bubbles date-fält (kan inte sättas från ett tal) — samma skäl som visitor.
+    return res.json({ ok: true, token: m.token, exp: m.exp, exp_iso: new Date(m.exp).toISOString(), name });
+  } catch (e) {
+    console.error("[/mypage/session]", e?.message, JSON.stringify(e?.detail || null));
     return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });

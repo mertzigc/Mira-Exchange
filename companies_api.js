@@ -37,6 +37,9 @@ export function registerCompaniesRoutes(app, deps) {
     // kan checken inte skilja Carotte-users från kundens egna → svaret bär
     // `staff.ok:false` + hint, aldrig ett tyst noll. Env finns i Render.
     CAROTTE_COMPANY_ID,
+    // ⚠️ EGEN gate för kundens Min sida — INTE planningAuthed. Se mypage_auth.js.
+    //    Saknas den registreras /mypage/* helt enkelt inte (admin-vägen påverkas ej).
+    mypageAuth,
   } = deps;
   const _connId = (v) => (v == null ? null : (typeof v === "string" ? v : (v._id || v.id || null)));
   // multer .single-middleware (memory) för foto-upload; no-op om ej injicerat (smoke/mock).
@@ -49,6 +52,23 @@ export function registerCompaniesRoutes(app, deps) {
   const _num = (v) => { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
   const _low = (v) => _str(v).toLowerCase();
   const _httpsUrl = (v) => { const s = _str(v); return s ? s.replace(/^\/\//, "https://") : ""; };
+
+  // ── PROFILBILD PÅ COWORKER (städat 2026-08-27) ────────────────────────────
+  // ⚠️ Fältet heter "Prodilbild" i Bubble — felstavat, men det ÄR namnet.
+  //    Christian: "vi använder inte foto". Därför är Prodilbild enda SKRIVnyckeln.
+  // ⚠️ "Foto" läses fortfarande som fallback: endpointen skrev dit fram till
+  //    2026-08-27, och de bilderna ska inte försvinna. Den som RENSAR måste
+  //    därför tömma BÅDA — annars poppar den gamla Foto-bilden upp igen via
+  //    fallbacken, och "Ta bort" ser ut att inte fungera.
+  const CO_PHOTO_WRITE = "Prodilbild";
+  const CO_PHOTO_READ  = ["Prodilbild", "Foto"];
+  const _coPhoto = (co) => {
+    for (const f of CO_PHOTO_READ) {
+      const v = _httpsUrl(co?.[f] ?? co?.[f.toLowerCase()]);
+      if (v) return v;
+    }
+    return "";
+  };
   const _day = (v) => (v ? _str(v).slice(0, 10) : "");
 
   // ── Kedje-normaliserare (kundkortets Deals/Leads/Offerter/Ordrar/Fakturor-flikar) ──
@@ -739,7 +759,7 @@ export function registerCompaniesRoutes(app, deps) {
           phone: _str(co.Telefon || co.telefon || co.Phone || co.phone || co.Mobil || co.mobil),
           crm_info: _str(co.crm_info),
           avdelning: _str(co.Avdelning),
-          foto: _httpsUrl(co.Foto || co.foto),
+          foto: _coPhoto(co),
           kontor_id: kontorId || null,
           kontor: kontorId ? (officeMap.get(kontorId) || "") : "",
           has_user: !!uid,
@@ -863,9 +883,10 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
-  // ── POST /admin/companies/coworker/:id/photo — sätt/ta bort profilfoto (Coworker.Foto) ──
-  // Multipart: fält "file" (bild) → laddas upp till Bubble file storage → Foto=url.
-  // Rensa: skicka fält "clear"=1 (utan fil) → Foto="". Foto är ett Bubble image-fält (URL-sträng).
+  // ── POST /admin/companies/coworker/:id/photo — sätt/ta bort profilfoto ──
+  // Multipart: fält "file" (bild) → laddas upp till Bubble file storage → Prodilbild=url.
+  // Rensa: skicka fält "clear"=1 (utan fil) → BÅDA bildfälten töms (se CO_PHOTO_WRITE).
+  // Prodilbild/Foto är Bubble image-fält (URL-strängar).
   app.options("/admin/companies/coworker/:id/photo", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
   app.post("/admin/companies/coworker/:id/photo", _photoMw, async (req, res) => {
     if (!guard(req, res)) return;
@@ -877,7 +898,8 @@ export function registerCompaniesRoutes(app, deps) {
       const clear = req.body && (req.body.clear === "1" || req.body.clear === 1 || req.body.clear === true || req.body.clear === "true");
       const file = req.file;
       if (clear && !file) {
-        await bubblePatch("Coworker", id, { Foto: "" });
+        // BÅDA fälten — annars återuppstår en gammal Foto-bild via läs-fallbacken.
+        await bubblePatch("Coworker", id, { [CO_PHOTO_WRITE]: "", Foto: "" });
         _coworkersForget();
         return res.json({ ok: true, url: "" });
       }
@@ -890,7 +912,9 @@ export function registerCompaniesRoutes(app, deps) {
       const filename = ("coworker_" + id + "_foto." + ext).replace(/[^\w.\-]/g, "_");
       const url = _httpsUrl(await bubbleUploadFile({ filename, contentType: ct, buffer: file.buffer }));
       if (!url) return res.status(502).json({ ok: false, error: "upload_failed" });
-      await bubblePatch("Coworker", id, { Foto: url });
+      // Skriv den nya bilden till Prodilbild och töm det pensionerade Foto-fältet,
+      // så en rad aldrig bär två olika bilder.
+      await bubblePatch("Coworker", id, { [CO_PHOTO_WRITE]: url, Foto: "" });
       _coworkersForget();
       return res.json({ ok: true, url });
     } catch (e) {
@@ -929,12 +953,57 @@ export function registerCompaniesRoutes(app, deps) {
     return list[0];
   }
 
+  // ── MIN SIDA: EN logik, TVÅ ingångar (2026-08-27) ─────────────────────────
+  // /admin/companies/mypage/:userId → guard() (x-admin-token). Carotte-personal.
+  // /mypage/me                      → mypageAuth (x-mypage-token). KUNDENS yta.
+  //
+  // ⚠️ Kund-ingången läser uid ur den SIGNERADE TOKENEN, aldrig ur URL:en. Ett
+  //    :userId i kundvägen hade gjort varje profil läsbar för varje inloggad kund —
+  //    byt id i DOM:en och läs vem som helst. Här FINNS inget id att byta.
+  // ⚠️ Saknas mypageAuth registreras kundvägen inte alls. Hellre 404 än en
+  //    öppen route som råkar sakna sin grind.
+  const MYPAGE_ENTRIES = [
+    {
+      path: "/admin/companies/mypage/:userId",
+      uid: (req, res) => {
+        if (!guard(req, res)) return null;
+        const id = _str(req.params.userId).trim();
+        if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return null; }
+        return id;
+      },
+    },
+  ];
+  if (mypageAuth && typeof mypageAuth.authed === "function") {
+    MYPAGE_ENTRIES.push({
+      path: "/mypage/me",
+      uid: (req, res) => {
+        if (planningCors) planningCors(req, res);
+        const p = mypageAuth.authed(req);
+        if (!p) { res.status(401).json({ ok: false, error: "unauthorized" }); return null; }
+        if (publicRateLimited && clientIp && publicRateLimited(clientIp(req), 300, 60 * 60 * 1000, "mypage")) {
+          res.status(429).json({ ok: false, error: "rate_limited" }); return null;
+        }
+        return String(p.uid);
+      },
+    });
+  }
+  // Registrerar samma handler på båda ingångarna. Handlern ser BARA ett uid och
+  // kan därför inte råka lita på req.params.
+  function _mpRegister(method, suffix, handler, mw) {
+    for (const e of MYPAGE_ENTRIES) {
+      const path = e.path + (suffix || "");
+      app.options(path, (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+      const run = async (req, res) => {
+        const uid = e.uid(req, res);
+        if (!uid) return;
+        return handler(uid, req, res);
+      };
+      if (mw) app[method](path, mw, run); else app[method](path, run);
+    }
+  }
+
   // GET /admin/companies/mypage/:userId — profil för User + kopplad Coworker + consent-status
-  app.options("/admin/companies/mypage/:userId", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
-  app.get("/admin/companies/mypage/:userId", async (req, res) => {
-    if (!guard(req, res)) return;
-    const uid = _str(req.params.userId).trim();
-    if (!uid) return res.status(400).json({ ok: false, error: "missing_id" });
+  _mpRegister("get", "", async (uid, req, res) => {
     try {
       const u = await bubbleGet("User", uid).catch(() => null);
       if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
@@ -962,7 +1031,7 @@ export function registerCompaniesRoutes(app, deps) {
           last:  _str(co["Efternamn"] || co["Last Name"]),
           title: _str(co["Titel"]),
           phone: _str(co["Telefon"]),
-          foto:  _httpsUrl(co["Foto"] || co.foto),
+          foto:  _coPhoto(co),
         } : null,
         coworker_linked: !!co,
         consent: { godkant: consentGodkant, date: consentDate },
@@ -973,11 +1042,8 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
-  // PATCH /admin/companies/mypage/:userId — speglad skrivning User + Coworker
-  app.patch("/admin/companies/mypage/:userId", async (req, res) => {
-    if (!guard(req, res)) return;
-    const uid = _str(req.params.userId).trim();
-    if (!uid) return res.status(400).json({ ok: false, error: "missing_id" });
+  // PATCH — speglad skrivning User + Coworker
+  _mpRegister("patch", "", async (uid, req, res) => {
     try {
       const u = await bubbleGet("User", uid).catch(() => null);
       if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
@@ -1016,11 +1082,7 @@ export function registerCompaniesRoutes(app, deps) {
   // Skapar en ny consent-post (revisionslogg) + sätter User.Consent → nya id:t.
   // ⚠️ Godkänt är option set "Godkänd", värden Ja/Nej (verifierat 2026-08-25) → skriv "Ja".
   // "Ingen fil" (Christians beslut): Användarvillkor-filen skrivs inte; Created Date = tidsstämpel.
-  app.options("/admin/companies/mypage/:userId/consent", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
-  app.post("/admin/companies/mypage/:userId/consent", async (req, res) => {
-    if (!guard(req, res)) return;
-    const uid = _str(req.params.userId).trim();
-    if (!uid) return res.status(400).json({ ok: false, error: "missing_id" });
+  _mpRegister("post", "/consent", async (uid, req, res) => {
     if (typeof bubbleCreate !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
     try {
       const b = req.body || {};
@@ -1036,6 +1098,46 @@ export function registerCompaniesRoutes(app, deps) {
       return res.status((e && e.status) || 500).json({ ok: false, error: (e && e.message) || String(e), detail: (e && e.detail) || null });
     }
   });
+
+  // ── Profilbild via MIN SIDA-ingången ──────────────────────────────────────
+  // Kundens block kan INTE anropa /admin/companies/coworker/:cid/photo — den ligger
+  // bakom guard(), och ett fritt :cid hade låtit vilken kund som helst byta bild på
+  // vem som helst. Här slås coworkern upp ur uid:t i tokenen, precis som PATCH gör.
+  // Samma skrivregler som foto-endpointen: Prodilbild är skrivnyckel, Foto nollas.
+  _mpRegister("post", "/photo", async (uid, req, res) => {
+    try {
+      const u = await bubbleGet("User", uid).catch(() => null);
+      if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+      const co = await _linkedCoworker(u);
+      // ⚠️ Ingen kopplad Coworker = ingenstans att lagra bilden (User saknar bildfält).
+      //    Säg det rakt ut — annars ser uppladdningen ut att lyckas och bilden försvinner.
+      if (!co) return res.status(409).json({ ok: false, error: "no_coworker_linked",
+        hint: "Profilbild kräver en kopplad medarbetare (Coworker med samma e-post)." });
+      const id = bubbleId(co);
+      const clear = req.body && (req.body.clear === "1" || req.body.clear === 1 || req.body.clear === true || req.body.clear === "true");
+      const file = req.file;
+      if (clear && !file) {
+        await bubblePatch("Coworker", id, { [CO_PHOTO_WRITE]: "", Foto: "" });
+        _coworkersForget();
+        return res.json({ ok: true, url: "" });
+      }
+      if (!file || !file.buffer || !file.buffer.length) return res.status(400).json({ ok: false, error: "no_file" });
+      const ct = _str(file.mimetype || "image/jpeg");
+      if (!/^image\//i.test(ct)) return res.status(400).json({ ok: false, error: "not_image" });
+      if (file.buffer.length > 8 * 1024 * 1024) return res.status(413).json({ ok: false, error: "too_large" });
+      if (typeof bubbleUploadFile !== "function") return res.status(501).json({ ok: false, error: "not_configured" });
+      const ext = /png/i.test(ct) ? "png" : (/webp/i.test(ct) ? "webp" : "jpg");
+      const filename = ("coworker_" + id + "_foto." + ext).replace(/[^\w.\-]/g, "_");
+      const url = _httpsUrl(await bubbleUploadFile({ filename, contentType: ct, buffer: file.buffer }));
+      if (!url) return res.status(502).json({ ok: false, error: "upload_failed" });
+      await bubblePatch("Coworker", id, { [CO_PHOTO_WRITE]: url, Foto: "" });
+      _coworkersForget();
+      return res.json({ ok: true, url, coworker_id: id });
+    } catch (e) {
+      console.error("[mypage /photo]", e && e.message, e && e.detail);
+      return res.status((e && e.status) || 500).json({ ok: false, error: (e && e.message) || String(e), detail: (e && e.detail) || null });
+    }
+  }, _photoMw);
 
   // ── GET /admin/companies/coworker/:id/activities — aktiviteter där personen är taggad ──
   // Söker activitet_crm där taggade_personer (List of Coworker) contains personen. Nyast först.
@@ -2400,7 +2502,7 @@ export function registerCompaniesRoutes(app, deps) {
           phone: _str(co.Telefon || co.telefon || co.Phone || co.phone || co.Mobil || co.mobil),
           crm_info: _str(co.crm_info),
           avdelning: a,
-          foto: _httpsUrl(co.Foto || co.foto),
+          foto: _coPhoto(co),
           company_id: cid,
           company: c ? c.name : "",
           ansvarig: (c && c.ansvarig_id) ? (uMap.get(c.ansvarig_id) || "") : "",
