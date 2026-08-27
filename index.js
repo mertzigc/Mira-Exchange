@@ -16142,7 +16142,11 @@ const KUND_KPI = {
   CONN_SUPPLIER_FIELD:   "supplier",
   SUPPLIER_NAME_FIELD:   "Företagsnamn",
 
-  INVOICE_YEAR:        "2026"
+  INVOICE_YEAR:        "2026",
+
+  // Kundansvarig-kortet (ersatte "Investering" 2026-08-27)
+  ANSVARIG_FIELD:      "Kundansvarig",              // ClientCompany → ref User
+  COWORKER_TYPE:       "Coworker"                   // bär profilbilden (User saknar bildfält)
 };
 
 // ---- små utils ------------------------------------------------------------
@@ -16166,10 +16170,85 @@ function _kDedupByDoc(arr) {
   return out;
 }
 
+// ---- KUNDANSVARIG: Carotte-kontakten på kundens dashboard ----------------
+// ClientCompany.Kundansvarig → User. Kortet ersatte "Investering" 2026-08-27.
+//
+// ⚠️ User HAR INGET BILDFÄLT. Profilbilden bor bara på Coworker.Foto, och
+//    User↔Coworker joinas på E-POST (samma nyckel som Personer-flikens has_user).
+//    Utan Coworker-raden finns ingen bild — då faller kortet tillbaka på initialer.
+// ⚠️ Coworker.Telefon är ett NUMBER-fält → inledande 0 är redan borta i Bubble
+//    (samma fälla som Org_Number). User.Phone_user är TEXT och behåller nollan,
+//    därför föredras den ALLTID. Först när den är tom återställs nollan heuristiskt,
+//    annars hade kortet renderat en tel:-länk som inte går att ringa.
+// ⚠️ Aldrig kast: kortet är en trevlighet, ingen siffra. Faller något returneras
+//    null och blocket döljer kortet — hellre inget kort än ett halvt.
+const _kRef = (v) => {
+  if (!v) return "";
+  if (typeof v === "string") return v.trim();
+  if (Array.isArray(v)) return _kRef(v[0]);
+  return String(bubbleId(v) || "").trim();
+};
+const _kEmail = (u) =>
+  String(u?.email || u?.Email || u?.authentication?.email?.email || "").trim().toLowerCase();
+
+// Coworker.Telefon = number → "701234567". Svenska nationella nummer utan
+// riktnummer-0 är 9 siffror; lägg tillbaka nollan så tel:-länken funkar.
+function _kPhoneFromCoworker(v) {
+  const d = String(v ?? "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.length === 9) return "0" + d;                 // 7xxxxxxxx / 8xxxxxxxx
+  if (d.startsWith("46")) return "+" + d;             // redan landskod
+  return d;
+}
+
+async function _kKundansvarig(ccRow) {
+  const userId = _kRef(ccRow?.[KUND_KPI.ANSVARIG_FIELD]);
+  if (!userId) return null;
+
+  let u = null;
+  try { u = await bubbleGet("User", userId); }
+  catch (e) { console.error("[kpi kundansvarig] User-hämtningen föll:", e?.message); return null; }
+  if (!u) return null;
+
+  // "Surname" är rätt nyckel — "Last Name" bara som fallback mot äldre rader.
+  let first = String(u["First Name"] || "").trim();
+  let last  = String(u["Surname"] || u["Last Name"] || "").trim();
+  const email   = _kEmail(u);
+  let title   = String(u["Title_user"] || "").trim();
+  let phone   = String(u["Phone_user"] || "").trim();
+  let photo   = "";
+
+  if (email) {
+    try {
+      const cos = await bubbleFindAll(KUND_KPI.COWORKER_TYPE, {
+        constraints: [{ key: "Email", constraint_type: "equals", value: email }]
+      });
+      const co = (Array.isArray(cos) ? cos : [])[0];
+      if (co) {
+        photo = String(co.Foto || co.foto || "").trim().replace(/^\/\//, "https://");
+        if (!first) first = String(co["Förnamn"] || "").trim();
+        if (!last)  last  = String(co["Efternamn"] || "").trim();
+        if (!title) title = String(co.Titel || co.Befattning || "").trim();
+        if (!phone) phone = _kPhoneFromCoworker(co.Telefon);
+      }
+    } catch (e) {
+      console.warn("[kpi kundansvarig] Coworker-slagningen föll (kortet visas utan bild):", e?.message);
+    }
+  }
+
+  const name = (first + " " + last).trim();
+  if (!name && !email) return null;                   // inget att visa
+  return { name: name || email, title, email, phone, photo };
+}
+
 // ---- huvudberäkningen: bygg KPI-JSON för ETT företag ----------------------
 async function buildKundKpi(companyId) {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // ClientCompany-raden hämtas EN gång och återanvänds (ekonomi-bryggan §4 +
+  // kundansvarig §6). Två bubbleGet på samma rad är ren WU-slöseri.
+  const ccRow = await bubbleGet(KUND_KPI.CLIENTCOMPANY_TYPE, companyId).catch(() => null);
 
   // 1) BOKNINGAR – Comission där Company = companyId
   const comissions = await bubbleFindAll(KUND_KPI.COMISSION_TYPE, {
@@ -16227,8 +16306,7 @@ async function buildKundKpi(companyId) {
   // direkt så Tengella/Housekeeping-ekonomin syns även på dashboard-posten. Kollisionssäkert:
   // 34 är det riktiga Fortnox-kundnr, inte ett internt Tengella-id.
   try {
-    const _ccObj = await bubbleGet("ClientCompany", companyId).catch(() => null);
-    const _ccNum = String(_ccObj?.ft_customer_number ?? "").trim();
+    const _ccNum = String(ccRow?.ft_customer_number ?? "").trim();
     if (_ccNum && !pairs.some(p => p.conn === TENGELLA_CONNECTION_ID && p.cust === _ccNum)) {
       pairs.push({ conn: TENGELLA_CONNECTION_ID, cust: _ccNum });
     }
@@ -16291,7 +16369,12 @@ async function buildKundKpi(companyId) {
       status: String(r.Status ?? "Pågående")
     }));
 
-  return { generated_at: new Date().toISOString(), bookings, matters: mattersOut, ratings, economy, reminders };
+  // 6) KUNDANSVARIG – Carotte-kontakten (ersatte "Investering"-tilen i kundvyn).
+  //    `economy` ligger KVAR i JSON:en även om kortet inte längre visar den:
+  //    datan är billig här och andra vyer/exporter läser samma kpi_json.
+  const contact = await _kKundansvarig(ccRow);
+
+  return { generated_at: new Date().toISOString(), bookings, matters: mattersOut, ratings, economy, reminders, contact };
 }
 
 // ---- ROUTE: trigga recompute + write-back (returnerar ALDRIG data) --------

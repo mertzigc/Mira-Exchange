@@ -16,10 +16,20 @@
     • Uppdatera: POST:ar company_id till /kpi/company/refresh (Render räknar +
       skriver tillbaka kpi_json) och laddar sedan om sidan. Ingen backend workflow.
     • Är #mira_company_id tomt (t.ex. preview) visas DEMO_DATA.
+
+  KORT I BLOCKET:
+    Bokningar · Ärenden · Kvalitet & betyg · Tjänstefördelning · Din kontakt hos Carotte
+
+  ⚠️ 2026-08-27: "Investering" (fakturerat/utestående/kommande) ERSATTES av
+     kundansvarig-kortet. `economy.invoiced_2026` och `economy.balance` finns
+     KVAR i kpi_json — bara kortet är borta, inte datan. Avvikelse-signalen som
+     låg i utfall-kortet finns redan i Ärenden-tilen.
+     Kontakten kommer ur `contact` (ClientCompany.Kundansvarig → User + Coworker.Foto).
+     Är fältet tomt i Bubble visar kortet "Ingen kundansvarig tilldelad ännu".
 -->
 
 <style>
-  .mc-wrap * { box-sizing: border-box; }
+  .mc-wrap * { box-sizing: border-box; word-break: normal; overflow-wrap: break-word; }
   .mc-wrap {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     width: 100%;
@@ -81,17 +91,37 @@
   .mc-ts-pct { font-size:30px; font-weight:800; color:var(--acc); letter-spacing:-0.03em; line-height:1; }
   .mc-ts-pct-lbl { font-size:9px; text-transform:uppercase; letter-spacing:0.08em; color:var(--t4); margin-top:3px; }
 
-  /* Aktivitet & utfall-kortet */
-  .mc-out-hero-lbl { font-size:12px; color:var(--t3); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:6px; }
-  .mc-out-hero-lbl span { text-transform:none; letter-spacing:0; color:var(--t4); }
-  .mc-out-hero { font-size:34px; font-weight:800; letter-spacing:-0.03em; color:var(--acc); line-height:1; }
-  .mc-out-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
-  .mc-out-lbl { font-size:11px; color:var(--t3); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px; }
-  .mc-out-val { font-size:19px; font-weight:700; color:var(--t1); letter-spacing:-0.02em; }
-  .mc-status-line { display:flex; align-items:center; gap:8px; margin-top:16px; padding-top:13px; border-top:0.5px solid var(--line); font-size:13px; font-weight:600; }
-  .mc-status-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-  .mc-status-line.ok { color:var(--up); } .mc-status-line.ok .mc-status-dot { background:var(--up); box-shadow:0 0 5px rgba(16,185,129,0.6); }
-  .mc-status-line.warn { color:var(--down); } .mc-status-line.warn .mc-status-dot { background:var(--down); box-shadow:0 0 5px rgba(248,113,113,0.6); }
+  /* Kundansvarig-kortet (ersatte "Investering" 2026-08-27) */
+  .mc-contact { display:flex; flex-direction:column; flex:1; }
+  .mc-ct-head { display:flex; align-items:center; gap:15px; }
+  .mc-ct-avatar { width:66px; height:66px; border-radius:50%; flex-shrink:0; overflow:hidden;
+    background:linear-gradient(150deg, rgba(219,105,35,0.28), rgba(219,105,35,0.08));
+    border:1.5px solid rgba(219,105,35,0.40); display:flex; align-items:center; justify-content:center; }
+  .mc-ct-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+  .mc-ct-initials { font-size:23px; font-weight:800; color:var(--acc); letter-spacing:0.01em; }
+  .mc-ct-id { min-width:0; flex:1; }
+  .mc-ct-name { font-size:20px; font-weight:800; color:var(--t1); letter-spacing:-0.02em; line-height:1.2;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-ct-title { font-size:13px; color:var(--t2); margin-top:4px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-ct-pill { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--acc);
+    background:rgba(219,105,35,0.15); border:0.5px solid rgba(219,105,35,0.35); border-radius:20px;
+    padding:2px 8px; margin-top:8px; display:inline-block; }
+  .mc-ct-note { font-size:13px; color:var(--t3); line-height:1.5; margin-top:15px; }
+  .mc-ct-links { display:flex; flex-direction:column; gap:8px; margin-top:auto; padding-top:16px; }
+  /* <a> och INTE <button>: Bubbles globala button:hover har !important och hade
+     gjort knapparna helorange med osynlig text. mailto:/tel: är ändå länkar. */
+  .mc-ct-link { display:flex; align-items:center; gap:11px; text-decoration:none;
+    border:0.5px solid rgba(255,255,255,0.10); border-radius:9px; padding:11px 13px;
+    background:rgba(255,255,255,0.02); transition:border-color 0.18s, background 0.18s; min-width:0; }
+  .mc-ct-link:hover { border-color:rgba(219,105,35,0.55); background:rgba(219,105,35,0.08); }
+  .mc-ct-link svg { flex-shrink:0; }
+  .mc-ct-lk-txt { min-width:0; }
+  .mc-ct-lk-lbl { font-size:10px; text-transform:uppercase; letter-spacing:0.07em; color:var(--t4); }
+  .mc-ct-lk-val { font-size:14px; font-weight:600; color:var(--t1); margin-top:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* Tjänstefördelningens andels-barer */
   .mc-supp { display:flex; flex-direction:column; gap:9px; }
   .mc-supp-row { display:grid; grid-template-columns:1fr auto; gap:4px 10px; align-items:center; }
   .mc-supp-name { font-size:13px; color:var(--t2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -155,14 +185,8 @@
       <div class="mc-supp" id="mc-suppliers"><span class="mc-dots" style="font-size:12px">···</span></div>
     </div>
     <div class="mc-card">
-      <div class="mc-label">Investering</div>
-      <div class="mc-out-hero-lbl">Fakturerat i år <span>· ex moms</span></div>
-      <div class="mc-out-hero" id="mc-out-invoiced">–</div>
-      <div class="mc-out-row">
-        <div><div class="mc-out-lbl">Utestående</div><div class="mc-out-val" id="mc-out-balance">–</div></div>
-        <div><div class="mc-out-lbl">Kommande bokningar</div><div class="mc-out-val" id="mc-out-upcoming">–</div></div>
-      </div>
-      <div class="mc-status-line ok" id="mc-status-line"><span class="mc-status-dot"></span><span>–</span></div>
+      <div class="mc-label">Din kontakt hos Carotte</div>
+      <div class="mc-contact" id="mc-contact"><span class="mc-dots">···</span></div>
     </div>
   </div>
 
@@ -183,7 +207,9 @@
     economy: { invoiced_2026:482000, balance:56250, by_supplier:[
       {name:"Carotte Housekeeping",invoiced:295000,balance:31000},
       {name:"Carotte Food & Event",invoiced:142000,balance:18250},
-      {name:"Carotte Staff",invoiced:45000,balance:7000} ] }
+      {name:"Carotte Staff",invoiced:45000,balance:7000} ] },
+    contact: { name:"Anna Lindqvist", title:"Key Account Manager",
+      email:"anna.lindqvist@carotte.se", phone:"070-123 45 67", photo:"" }
   };
 
   var MATTER_CFG = [
@@ -289,26 +315,56 @@
     }).join('');
   }
 
-  // Aktivitet & utfall: reella siffror från ekonomi (2026) + bokningar + ärenden.
-  function renderOutcome(e,m,b){
-    e=e||{}; m=m||{}; b=b||{};
-    el('mc-out-invoiced').textContent=fmtKr(e.invoiced_2026);
-    el('mc-out-balance').textContent=fmtKr(e.balance);
-    el('mc-out-upcoming').textContent=num(b.upcoming);
-    var av=num(m.avvikelser), line=el('mc-status-line');
-    if(!line) return;
-    if(av>0){
-      line.className='mc-status-line warn';
-      line.innerHTML='<span class="mc-status-dot"></span><span>'+av+' '+(av===1?'avvikelse registrerad':'avvikelser registrerade')+'</span>';
-    } else {
-      line.className='mc-status-line ok';
-      line.innerHTML='<span class="mc-status-dot"></span><span>Inga avvikelser</span>';
+  // Kundansvarig: Carotte-kontakten med bild, namn, mail och telefon.
+  // Datan kommer ur kpi_json.contact (Render: ClientCompany.Kundansvarig → User,
+  // bild via Coworker.Foto — User har inget bildfält).
+  function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function initials(name){
+    var parts=String(name||'').trim().split(/\s+/).filter(Boolean);
+    if(!parts.length) return '?';
+    return (parts[0].charAt(0)+(parts.length>1?parts[parts.length-1].charAt(0):'')).toUpperCase();
+  }
+  var ICON_MAIL='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#db6923" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2.5"/><path d="m2.5 6.5 9.5 6.5 9.5-6.5"/></svg>';
+  var ICON_PHONE='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#db6923" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3h-3A1.5 1.5 0 0 0 2 4.6C2 13.1 10.9 22 19.4 22a1.5 1.5 0 0 0 1.6-1.5v-3l-4.5-1.5-2 2.5a15.6 15.6 0 0 1-6-6l2.5-2L6.5 3Z"/></svg>';
+
+  function renderContact(c){
+    var host=el('mc-contact'); if(!host) return;
+    if(!c || (!c.name && !c.email)){
+      host.innerHTML='<div class="mc-empty">Ingen kundansvarig tilldelad ännu</div>';
+      return;
     }
+    var name=esc(c.name||''), title=esc(c.title||'');
+    var avatar = c.photo
+      ? '<img id="mc-ct-img" src="'+esc(c.photo)+'" alt="'+name+'">'
+      : '<span class="mc-ct-initials">'+esc(initials(c.name))+'</span>';
+
+    var links='';
+    if(c.email) links+='<a class="mc-ct-link" href="mailto:'+esc(c.email)+'">'+ICON_MAIL+
+      '<span class="mc-ct-lk-txt"><span class="mc-ct-lk-lbl">E-post</span>'+
+      '<div class="mc-ct-lk-val">'+esc(c.email)+'</div></span></a>';
+    if(c.phone) links+='<a class="mc-ct-link" href="tel:'+esc(String(c.phone).replace(/[^\d+]/g,''))+'">'+ICON_PHONE+
+      '<span class="mc-ct-lk-txt"><span class="mc-ct-lk-lbl">Telefon</span>'+
+      '<div class="mc-ct-lk-val">'+esc(c.phone)+'</div></span></a>';
+
+    host.innerHTML=
+      '<div class="mc-ct-head"><div class="mc-ct-avatar">'+avatar+'</div>'+
+      '<div class="mc-ct-id"><div class="mc-ct-name">'+name+'</div>'+
+      (title?'<div class="mc-ct-title">'+title+'</div>':'')+
+      '<span class="mc-ct-pill">Kundansvarig</span></div></div>'+
+      '<div class="mc-ct-note">Hör av dig direkt vid frågor om bokningar, ärenden eller nya behov.</div>'+
+      (links?'<div class="mc-ct-links">'+links+'</div>':'');
+
+    // Trasig bild-URL (Bubble-fil borttagen) ska inte lämna en tom cirkel efter sig.
+    var img=el('mc-ct-img');
+    if(img) img.addEventListener('error',function(){
+      var w=img.parentNode; if(w) w.innerHTML='<span class="mc-ct-initials">'+esc(initials(c.name))+'</span>';
+    });
   }
 
   function renderAll(d){
     renderBookings(d.bookings); renderMatters(d.matters); renderRatings(d.ratings);
-    renderServices(d.economy); renderOutcome(d.economy, d.matters, d.bookings);
+    renderServices(d.economy); renderContact(d.contact);
   }
 
   function setStatus(mode,text){
