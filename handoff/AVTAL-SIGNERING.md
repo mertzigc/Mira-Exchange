@@ -30,7 +30,7 @@ Splitten fanns men krävde curl med handplockade Bubble-id:n. Nu gör importen j
 
 **Nytt praktiskt flöde för kollegan:** dra in PDF → Haiku läser §PRISER som rader → modalen visar "Avtalet innehåller 7 prissatta rader", avstämning **47 097 av 47 097 ✓**, och **→ 3 delavtal** → tryck Skapa. Ett huvudavtal med tre delrader, tre tända tiles. Ingen terminal.
 
-**Verifierat:** `avtal_split_smoke.mjs` **110/110**, **43 mutationer, 43 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
+**Verifierat:** `avtal_split_smoke.mjs` **166/166**, **56 mutationer, 56 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
 
 **Kvar:** ingen skarp körning mot ett riktigt avtal än — Planhat splittades via curl innan A+B fanns. Nästa importerade paketavtal är testet.
 
@@ -86,7 +86,7 @@ Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en 
 **Ändrat i befintlig kod:**
 - `_buildServicesDashboard`: bygger `masterIds` ur samma hämtning och hoppar över masters (annars dubbelräkning). Tile-entryn får `unit`/`unit_price` ur `rate_card_json` (första raden vars `unit` ≠ `engång`).
 - `/admin/contracts/by-company`: flaggar `is_master`/`is_child`/`child_count`.
-- `mira-abonnemang-kund.html`: `nestPackages()` renderar barnen inuti masterns panel som riktiga `.ab-row` (all befintlig expand/edit/pausa-bindning gäller dem). Masterraden får en `N tjänster`-pill och visar delradernas summa mot totalen.
+- `mira-foretag-lista.html` (+ deal-klonen): `nestPackages()` renderar barnen inuti masterns panel som riktiga `.ab-row` (all befintlig expand/edit/pausa-bindning gäller dem). Masterraden får en `N tjänster`-pill och visar delradernas summa mot totalen.
 - `mira-kund-dashboard-tjanster.html`: `activePriceParts()` — aktiv tile med 0 kr/mån visar styckpriset (`45 kr/kg`) + prismotorns månadsuppskattning via `adaptedUnitPrice` (samma frukt-kalkyl som driver "Från"-priset).
 
 **⚠️ CSS-fälla som nästlingen införde:** `.ab-row.open .ab-rowbody` och `.ab-row.open .ab-chev` var DESCENDANT-selektorer. Med nästlade barnrader hade ett öppnat masteravtal fällt ut **alla barns paneler samtidigt**. Båda ändrade till barn-kombinator (`> .ab-rowbody`, `> .ab-rowhead .ab-chev`). Vaktas av två assertions.
@@ -95,16 +95,64 @@ Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en 
 - Kundkortets månadstotal filtrerade på `contract_type === 'Subscription'` → en **Hybrid** som Planhat räknades som 0 kr. Nu `!== 'RateCard'` (RateCard har ingen fast månad).
 - Totalen dubbelräknade master + barn. Nu räknas mastern, barnen hoppas över.
 
-**Verifierat:** `avtal_split_smoke.mjs` **68/68** — kör den riktiga route-handlern mot mockad Bubble med Planhats faktiska kronor. **Mutationstestat: 25 mutationer, 25 faller, 0 kraschar.** Bl.a.: borttagen avstämning fäller 1 · master ej överhoppad fäller 1 · borttagen rollback fäller 2 · barn som duplicerar `signed_pdf`+bilagor fäller 2 · descendant-selektorn tillbaka fäller 1 · Hybrid ur totalen fäller 1 · borttaget `nestPackages`-anrop fäller 4 · borttagen gruppering (ett barn per rad igen) fäller 4. De fyra svaga strängassertions som först ÖVERLEVDE gjordes om till beteendetester (funktionerna extraheras och körs). Regression: samtliga övriga sviter gröna (`komm_blocks_smoke` 114/4 är **pre-existerande** — faller identiskt mot HEAD:s `index.js`, `emailer.js` slicas utan `MAIL_PAL_DARK`).
+**Verifierat:** `avtal_split_smoke.mjs` **166/166** — kör den riktiga route-handlern mot mockad Bubble med Planhats faktiska kronor. **Mutationstestat: 56 mutationer, 56 faller, 0 kraschar.** Bl.a.: borttagen avstämning fäller 1 · master ej överhoppad fäller 1 · borttagen rollback fäller 2 · barn som duplicerar `signed_pdf`+bilagor fäller 2 · descendant-selektorn tillbaka fäller 1 · Hybrid ur totalen fäller 1 · borttaget `nestPackages`-anrop fäller 4 · borttagen gruppering (ett barn per rad igen) fäller 4. De fyra svaga strängassertions som först ÖVERLEVDE gjordes om till beteendetester (funktionerna extraheras och körs). Regression: samtliga övriga sviter gröna (`komm_blocks_smoke` 114/4 är **pre-existerande** — faller identiskt mot HEAD:s `index.js`, `emailer.js` slicas utan `MAIL_PAL_DARK`).
 
-**Falskt alarm (utrett 2026-08-27):** "housekeeping ox2 ab" i avtalsmodalens Avtalstitel-fält såg ut som en LLM-hallucination men är ett `placeholder`-attribut i `mira-abonnemang-kund.html` rad 807. `contract_title` är tomt på Planhat-avtalet — verifierat via `/admin/contracts/by-company`. Importen hade inget fel. (Kosmetiskt: placeholdern namnger en riktig kund.)
+**Falskt alarm (utrett 2026-08-27):** "housekeeping ox2 ab" i avtalsmodalens Avtalstitel-fält såg ut som en LLM-hallucination men är ett `placeholder`-attribut i avtalsmodalen (`placeholder="housekeeping ox2 ab"`). `contract_title` är tomt på Planhat-avtalet — verifierat via `/admin/contracts/by-company`. Importen hade inget fel. (Kosmetiskt: placeholdern namnger en riktig kund.)
 
 **KVAR:**
 1. **Split-UI:t** — idag bara curl. Operatören behöver en modal som listar raderna och låter hen välja `Erbjudande` per rad (det är den biten en LLM gissar fel på). `dry_run:true` är byggt för att driva previewen.
 2. **`lines[]` i `CONTRACT_EXTRACT_TOOL`** — låt importen föreslå uppdelningen direkt (beslut 2026-08-27: tas efter att splitten validerats på Planhat).
 3. **Beslut: egen `entrematta`-slug eller inte?** Idag rider Entrémattor med på Housekeeping-raden.
 
-**Deploy:** `index.js` (Render) + klistra om `mira-abonnemang-kund.html` och `mira-kund-dashboard-tjanster.html`. **Inga Bubble-schemaändringar** — `master_contract` finns sedan Fas 1.
+### ⚠️ NATIVE KUNDKORTET ÄR PENSIONERAT (2026-08-27)
+
+Christian dödade Bubbles native kundkort. **Kundkort OCH avtalsfliken går nu genom `mira-foretag-lista.html`** — den bär `.ab-wrap`-markupen själv (rad ~1257), registrerar panelmodulen (`FKAVTAL.ab`, rad ~5423) och `mountPanes()` flyttar sin EGNA nod in i mount-punkten. Ingen extern panel inblandad.
+
+**Fyra filer bär samma panel — vilka som ska klistras om:**
+
+| Fil | Roll | Klistra om? |
+|---|---|---|
+| **`mira-foretag-lista.html`** | **LIVE** kundkort + avtal — OCH portens källa | **JA** |
+| `mira-abonnemang-deal.html` | `.ad-wrap` — namnrymdsklon i affärs-popupen | **JA** |
+| `mira-kund-dashboard-tjanster.html` | kundens tjänste-grid | **JA** |
+
+**`mira-abonnemang-kund.html` är RADERAD (2026-08-27).** Den var det fristående kundkorts-blocket och blev överflödig när native-kortet pensionerades. Verifierat före radering: **noll** funktioner och **noll** `data-ab`-fält fanns bara där — en strikt delmängd av företagslistan, som dessutom var nyare på tre punkter (`is_signed`-kryssrutan, send-for-signing-UI:t, den rättade månadstotalen). Innehållet lever vidare inne i `mira-foretag-lista.html`. Återställs med `git checkout <commit> -- mira-abonnemang-kund.html` om något visar sig saknas.
+
+`merge_avtal.mjs` läste den, men skriptet **kunde redan inte köras** (dess egen header: "assertions failar mot HEAD") — det är ren dokumentation av porten 2026-08-17. Headern är uppdaterad.
+
+**⚠️ Rättelse av en felaktig slutsats jag drog 2026-08-27:** företagslistans `rowHtml` är INTE död kod. Den anropas via `contracts.map(rowHtml)` — **utan parentes efter namnet**, så en grep på `rowHtml(` missar den. Slutsatsen "monterar bara, renderar inte" var fel och hann bli ett test som passerade just för att porten saknades. Testet är omskrivet.
+
+**Klonen kan INTE regenereras ur källan.** `deal` har egen logik som företagslistan saknar: `DEAL_LIVE`, `window.miraAvtalModal`, `AS_MODAL_D`/`.ad-modal`, `keepDeal()`, `deal:` i submit-payloaden. En namnrymds-sed raderar allt det tyst. **Porta riktat**, alltid från `mira-foretag-lista.html`.
+
+**⚠️ Deal-klonen kan INTE regenereras med namnrymds-sed:en** (som filens header föreslår). Filerna har glidit isär: deal har egen logik som kund saknar — `DEAL_LIVE` (muterbar deal-id för open-hooken), `window.miraAvtalModal`, `AS_MODAL_D`/`.ad-modal`, `keepDeal()`, `deal:`-fältet i submit-payloaden. En sed hade tyst raderat allt det. Ändringar måste **portas riktat**.
+
+Namnrymden är smalare än headern antyder: bara **wrapper** (`ab-wrap`→`ad-wrap`), **onclick-suffix** (`_k`→`_d`) och **wizard-id:n** (`wiz-*-k`→`wiz-*-d`). Alla inre klasser (`ab-row`, `ab-sect`, `data-ab=`) är identiska — så ändringar i dem portar rakt av.
+
+**Fem fällor porten gick i — alla gav grönt tills de kontrollerades:**
+1. Kostnadsraden i deal är en **ternär**; ett ankare som bara svalde `?`-grenen lämnade `:`-grenen som en föräldralös rad.
+2. `loadLive()` och `submitForm()` inleds med **exakt samma två rader** → `find()` tog fel funktion och klippte ut ett helt try/catch.
+3. Paket-CSS-grabben innehöll redan split-CSS:en → den lades in **två gånger** (separat CSS-port borttagen).
+4. Bilage-porten grep:ade fram till `'<div class="ab-rowact">'` — i `foretag-lista` ligger **hela send-for-signing-UI:t däremellan** och raderades. Fångades av `avtal_signering_smoke` (49/50).
+5. Total-porten skrev över `foretag-listas` regel med min egen. Fångades av `companies_smoke` (428/429). Se nedan.
+
+Port-skriptet validerar nu JS efter varje steg och kräver att varje ankare matchar exakt en gång.
+
+**⚠️ Månadstotalen: INGET `contract_type`-filter — det var redan löst.** Jag "upptäckte" att `=== 'Subscription'` uteslöt Hybrid och satte `!== 'RateCard'`. `mira-foretag-lista.html` hade rättat exakt den buggen **2026-08-24** (Sambla visade "0 kr/mån" i rubriken mot 124 560 kr i raden under), och enklare: inget typfilter alls, för att spegla backend (`companies_api`: `if (isActive) mrr += månadskostnad`). RateCard har normalt 0 kr och faller bort själv. Alla tre blocken kör nu den regeln; `companies_smoke` vaktar den.
+
+**⚠️ TVÅ MOTSATTA PAKET-REGLER, båda avsiktliga:**
+
+| Var | Hoppar över | Varför |
+|---|---|---|
+| `_buildServicesDashboard` | **mastern** | tiles kommer från delradernas erbjudanden |
+| `companies_api` kort-KPI + HTML-blockens `countable` | **delraderna** | pengar och antal hör till dokumentet; mastern bär den avtalade totalen oberoende av om delraderna glider |
+
+Inverteras backend-regeln blir antalet fel (3 st) medan summan *råkar* stämma så länge avstämningen håller — vilket är precis den sortens fel som inte syns. Vaktas av en egen assertion.
+
+**`companies_api.js` fixad:** kortets rubrikrad räknas i backend, inte i blocket. Efter Planhat-splitten visade den **94 194 kr · 4 st** i stället för 47 097 kr · 1 st.
+
+**Sviten vaktar alla tre blocken mot EN gemensam kravlista** (`PANEL_FEATURES` + `PANEL_CSS_ONCE`): en ny funktion läggs till en gång och vaktas då i alla tre. Plus filspecifika assertions — deal-klonens egen logik, företagslistans `is_signed`-kryssruta, `ab-sign`-rutan och `data-signwrap`-fästet.
+
+**Deploy:** `index.js` + `companies_api.js` (Render) + klistra om `mira-foretag-lista.html`, `mira-abonnemang-deal.html` och `mira-kund-dashboard-tjanster.html`. **Inga Bubble-schemaändringar** — `master_contract` finns sedan Fas 1.
 
 ---
 ### Inläst OSIGNERAT avtal → signering → stämpling — BYGGT 2026-08-19, EJ DEPLOYAT

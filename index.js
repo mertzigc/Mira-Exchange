@@ -22205,7 +22205,7 @@ function _enrichContract(ct, ctx) {
 }
 
 // ── GET /admin/contracts/by-company?company_id=… ─────────────────────────────
-// För kundkort-fliken (mira-abonnemang-kund.html). Returnerar ALLA Contracts
+// För kundkort-fliken (mira-foretag-lista.html). Returnerar ALLA Contracts
 // för kunden (även avslutade), grupperade per Office + account-scope.
 // Skiljer sig från /services/dashboard som är kund-facing och filtrerar
 // utgångna tiles + är bunden till ServiceCatalog.
@@ -25381,7 +25381,7 @@ app.post("/admin/approval/:id/send-to-customer", async (req, res) => {
 // PROTOTYP-ROUTES (Fas 5, 2026-07-14)
 // Serverar statiska HTML-filer från ./prototypes/ under /prototyp/*-prefix.
 // Ingen auth, ingen data — bara UI-mockups för Carotte-testare utan Bubble-
-// eller Claude-inlogg. När wizarden bäddas in i mira-abonnemang-kund.html
+// eller Claude-inlogg. När wizarden bäddas in i mira-foretag-lista.html
 // för produktion kan dessa routes plockas bort.
 // ═══════════════════════════════════════════════════════════════════════════
 async function _servePrototyp(res, filename) {

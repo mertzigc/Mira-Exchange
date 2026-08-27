@@ -265,6 +265,43 @@ sin User. Hela kedjan Bubble → Render → Bubble fungerar.
 Blocket måste vänta in fältet (Bubble uppdaterar det reaktivt, ~1 s) och visa ett
 "startar session"-läge under tiden. Det är inte ett fel.
 
+### 7.5.4 FELSÖKNINGSGUIDE — sessionen startar inte (skarpa fynd 2026-08-26)
+
+Fyra timmars felsökning destillerad. Läs den HÄR innan du gissar nästa gång.
+
+**⚠️ "Action condition failed" på `Schedule API Workflow visitor_session` är INTE ett fel.**
+Det betyder att villkoret var falskt → sessionen behövde inte förnyas, för användaren har
+redan en giltig token. Korrekt beteende. Leta inte där.
+
+**Den vanligaste orsaken till att blocket hänger på "Startar session…" är att
+`data-mira="visitor_token"` inte är bundet** till `Current User's visitor_token` i
+HTML-elementet. Blocket läser bara attributet — har databasen en token spelar det ingen
+roll om värdet aldrig når DOM:en. Verifiera i devtools att `value` faktiskt är ifyllt
+(jfr [[reference-bubble-hidden-input-strip]]). Blocket loggar numera till konsolen vad
+det läste.
+
+**Felsökningsordning som faktiskt fungerar:**
+| Symptom | Betydelse |
+|---|---|
+| `503 visitor_session_secret_not_configured` | env saknas på Render |
+| `401 unauthorized` från `/visitor/session` | secret satt på Render men fel/tom i anropet — kolla `${#VISITOR_SESSION_SECRET}` i shellen, den är ofta oexporterad |
+| `403 not_receptionist` | `User_role` läses inte som "Receptionist" |
+| `403 no_fastigheter_assigned` | rollen stämmer, `receptionist_fastigheter` är tom |
+| `404 user_not_found` + `bubble.detail` | id:t finns inte i den databas API:et når |
+| Blocket hänger, Bubble-loggen tyst | token-bindningen (se ovan) |
+
+**⚠️ LÄS ALDRIG BUBBLE-ID:N FRÅN EN SKÄRMBILD.** Editorns "Unique id"-fält klipper
+visningen. Ett id lästes som `…x1992822347341327` men var i själva verket
+`…x199282234734132770` — två tecken kortare, och `MISSING_DATA` skickade oss på en lång
+villospårsjakt efter dev/live-databaser. Hämta id:t från Data API eller kopiera från
+Bubble direkt.
+
+**⚠️ `.catch(() => null)` döljer att User-läsningen fallerar.** `companies_api.js` läser
+User på fem ställen så (939, 982, 1029, 1654, 1673) → ett trasigt svar blir tyst `null`
+i stället för ett fel. `/visitor/session` har medvetet ingen sådan catch, vilket är
+skälet till att den blev först med att skrika. Bryter mot regeln "aldrig
+`.catch(() => [])` på en Bubble-fråga" — värt en genomgång, men inte i detta spår.
+
 ### 7.5.3b Ursprunglig skiss (historik)
 
 Problemet: Render har ingen session mot Bubble, och `data-mira="current_user"` i ett

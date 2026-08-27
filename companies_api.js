@@ -577,8 +577,21 @@ export function registerCompaniesRoutes(app, deps) {
         constraints: [{ key: "kundföretag", constraint_type: "equals", value: id }],
       }).catch(() => []);
       const now = Date.now();
+      // ⚠️ Paketavtal (2026-08-27): ett splittat avtal är EN master + N delrader
+      // som bär SAMMA pengar. Räknas båda visar kortet dubbelt — Planhat blev
+      // "4 st · 94 194 kr" i stället för "1 st · 47 097 kr".
+      //
+      // ⚠️ HÄR hoppas DELRADERNA över, inte mastern. Det är MOTSATSEN till
+      // _buildServicesDashboard, och båda är avsiktliga:
+      //   • kund-dashboarden vill ha TILES → varje delrad har sitt erbjudande,
+      //     så där hoppas mastern över.
+      //   • det här är PENGAR OCH ANTAL → mastern är avtalet kunden skrivit på
+      //     och bär den avtalade totalen, oberoende av om delraderna glider.
+      // Samma regel som HTML-blockens `countable`-filter.
       let mrr = 0, active = 0;
       for (const ct of (contracts || [])) {
+        const parent = ct["master_contract"];
+        if (parent && (typeof parent === "object" ? parent._id : parent)) continue;
         const endRaw = ct["slutdatum"];
         const end = endRaw ? new Date(endRaw).getTime() : null;
         const isActive = !(end != null && !Number.isNaN(end) && end < now);

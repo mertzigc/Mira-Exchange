@@ -6,9 +6,12 @@
 // Kör:  node merge_avtal.mjs            (skriver mira-foretag-lista.html)
 //       node merge_avtal.mjs --dry      (skriver bara .merged.html för diff)
 //
-// ⚠️ HISTORIK: kördes EN gång 2026-08-17 mot den då omergade filen. Sen dess är
-// mira-foretag-lista.html committad och redigerad direkt — skriptet kan INTE köras
-// om mot HEAD (assertions failar). Det ligger här som dokumentation av porten.
+// ⚠️ HISTORIK — SKRIPTET KAN INTE KÖRAS. Kördes EN gång 2026-08-17 mot den då
+// omergade filen. Sen dess är mira-foretag-lista.html committad och redigerad
+// direkt (assertions failar), och 2026-08-27 RADERADES källblocket
+// mira-abonnemang-kund.html helt — dess innehåll lever nu bara inne i
+// mira-foretag-lista.html. Filen ligger kvar enbart som dokumentation av hur
+// porten gick till. Vill du läsa källblocket: git show <commit före 2026-08-27>.
 // CSS-scopingen nedan (scopeCss) lades till EFTER första körningen, som efterfix
 // via scope_avtal_css.mjs — se den filen och HANDOFF §0k.
 

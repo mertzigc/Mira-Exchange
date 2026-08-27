@@ -1,13 +1,19 @@
 <!--
   MIRA – AVTAL (AFFÄRS-POPUP-FLIK)  — deal-variant 2026-08-02
   -------------------------------------------------------------
-  ⚠️ KLON av mira-abonnemang-kund.html med EGEN NAMNRYMD (.ad-wrap,
+  ⚠️ KLON med EGEN NAMNRYMD (.ad-wrap,
   wiz-*-d, window.*_d, adInit) så den kan samexistera i samma DOM som
   kund-varianten (.ab-wrap) OCH admin-varianten (.aa-wrap) utan krock.
   Wizardens window.*-onclicks + globala open/close-query är singletons →
   kräver separat namnrymd per samtidig instans (gotcha 11). Ändra ALDRIG
-  bara en av filerna: strukturändringar måste porteras kund→deal manuellt
-  (kör om namnrymds-sed:en: ab-wrap→ad-wrap, _k→_d, wiz-*-k→wiz-*-d).
+  bara en av filerna: strukturändringar måste porteras manuellt.
+  ⚠️ KÄLLAN ÄR NU mira-foretag-lista.html (2026-08-27) — mira-abonnemang-kund.html
+  är raderad. Företagslistan är LIVE-blocket (native kundkortet pensionerat) och
+  dessutom nyast. Namnrymden är smalare än den ser ut: bara wrapper
+  (ab-wrap→ad-wrap), onclick-suffix (_k→_d) och wizard-id (wiz-*-k→wiz-*-d).
+  Inre klasser (ab-row, ab-sect, data-ab=) är IDENTISKA och portas rakt av.
+  Regenerera ALDRIG med sed — den här filen har egen logik (DEAL_LIVE,
+  miraAvtalModal, AS_MODAL_D, keepDeal) som då raderas tyst.
 
   Bäddas i affärs-popupens Avtal-flik. data-mira="deal" satt → visar BARA
   avtal knutna till affären (Contract.deal) + skapar deal-länkade avtal.
@@ -105,6 +111,41 @@
   .ab-pill.t-sub { background:rgba(219,105,35,0.18); color:var(--acc); border:0.5px solid rgba(219,105,35,0.35); }
   .ab-pill.t-rate { background:rgba(99,102,241,0.18); color:#a5a8f0; border:0.5px solid rgba(99,102,241,0.35); }
   .ab-pill.t-hyb { background:rgba(168,85,247,0.18); color:#c4a4f5; border:0.5px solid rgba(168,85,247,0.35); }
+  .ab-svcname-pkg::first-letter { text-transform:uppercase; }
+
+  /* Raduppdelning i granskningsmodalen (import) */
+  .ab-split { border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:0 0 16px;
+    background:rgba(56,189,248,0.05); }
+  .ab-split-h { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin:0 0 4px; }
+  .ab-split-t { font-size:13px; font-weight:600; color:var(--t1); }
+  .ab-split-sub { font-size:11.5px; color:var(--t3); margin:0 0 12px; max-width:70ch; }
+  .ab-split-tog { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--t2); cursor:pointer; }
+  .ab-split-row { display:grid; grid-template-columns:1.4fr 0.9fr 1.6fr; gap:10px; align-items:center;
+    padding:7px 0; border-bottom:0.5px solid var(--line); }
+  @media (max-width:640px){ .ab-split-row { grid-template-columns:1fr; gap:5px; } }
+  .ab-split-lbl { font-size:12.5px; color:var(--t1); }
+  .ab-split-amt { font-size:12.5px; color:var(--t2); text-align:right; white-space:nowrap; }
+  .ab-split-amt small { color:var(--t3); margin-left:3px; }
+  .ab-split-row select { width:100%; font-size:12px; padding:5px 7px; }
+  .ab-split-row.ab-split-unmapped select { border-color:rgba(250,204,21,0.55); }
+  .ab-split-foot { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin-top:11px; font-size:12px; }
+  .ab-split-sum { color:var(--t2); }
+  .ab-split-sum b { color:var(--ok); }
+  .ab-split-sum.ab-split-bad b { color:var(--warn); }
+  .ab-split-out { color:var(--t3); }
+  .ab-pill.t-pkg { background:rgba(56,189,248,0.16); color:#7dd3fc; border:0.5px solid rgba(56,189,248,0.38); }
+
+  /* Paketavtal: delraderna nästlade i masterns panel */
+  .ab-kids { margin:0 0 16px; }
+  .ab-kids-h { display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+    font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--t3); margin:0 0 8px; }
+  .ab-kids-sum { text-transform:none; letter-spacing:0; font-weight:500; }
+  .ab-kids-sum.ab-kids-diff { color:var(--warn); }
+  .ab-kids .ab-rows { gap:5px; }
+  .ab-kid-var { font-size:11px; color:var(--t3); margin-top:2px; }
   .ab-cat { font-size:11px; color:var(--t3); }
 
   /* Cell: status */
@@ -118,6 +159,7 @@
   .ab-st.s-vilande,
   .ab-st.s-tvistig { background:rgba(248,113,113,0.12); color:var(--err); border:0.5px solid rgba(248,113,113,0.40); }
 
+
   /* Cell: pris + slutdatum */
   .ab-rh-cost { text-align:right; }
   .ab-cost-v { font-size:14px; font-weight:700; color:var(--t1); letter-spacing:-0.01em; }
@@ -128,12 +170,12 @@
   .ab-rh-act { display:flex; align-items:center; gap:6px; }
   .ab-chev { width:22px; height:22px; display:flex; align-items:center; justify-content:center;
     color:var(--t3); transition:transform 0.2s, color 0.2s; }
-  .ab-row.open .ab-chev { transform:rotate(180deg); color:var(--acc); }
+  .ab-row.open > .ab-rowhead .ab-chev { transform:rotate(180deg); color:var(--acc); }
 
   /* Expand-panel */
   .ab-rowbody { display:none; border-top:0.5px solid var(--line); padding:18px 20px;
     background:var(--bg-deep); }
-  .ab-row.open .ab-rowbody { display:block; }
+  .ab-row.open > .ab-rowbody { display:block; }
 
   .ab-bgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:18px; }
   @media (max-width:820px){ .ab-bgrid { grid-template-columns:repeat(2,1fr); } }
@@ -879,6 +921,9 @@
           <label>Volym (JSON — strukturerad: kvm, housekeepers, hours_mf…)</label>
           <textarea rows="2" placeholder='{"kvm": 12600, "housekeepers": 7, "hours_mf": 25, "hours_sun": 4}' data-ab="f-volume"></textarea>
         </div>
+
+        <!-- Raduppdelning: syns bara i import-läge när LLM:en hittat flera prisrader -->
+        <div class="ab-split" data-ab="split-panel" style="display:none;"></div>
       </div>
       <div class="ab-modal-foot">
         <button class="ab-btn ghost" data-ab="create-cancel">Avbryt</button>
@@ -1490,10 +1535,43 @@
     return '<span class="ab-st s-' + esc(s) + '">' + esc(label) + '</span>';
   }
 
-  function rowHtml(ct) {
-    var costLine = ct.contract_type === 'RateCard'
-      ? '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · ' + (ct.rate_card_json ? JSON.parse(ct.rate_card_json).length : 0) + ' roller</div>'
-      : '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div><div class="ab-cost-end">Utgår ' + fmtDate(ct.slutdatum) + '</div>';
+  // Första rörliga raden i ett rate_card ("Frukt 45 kr/kg") — används för att
+  // visa styckpris på delrader som saknar fast månadskostnad.
+  function variableRateOf(ct) {
+    if (!ct.rate_card_json) return null;
+    try {
+      var arr = JSON.parse(ct.rate_card_json);
+      if (!Array.isArray(arr)) return null;
+      for (var i = 0; i < arr.length; i++) {
+        var r = arr[i];
+        if (r && r.unit && String(r.unit).toLowerCase() !== 'engång') {
+          return { price: Number(r.price_per_h) || 0, unit: String(r.unit), role: String(r.role || '') };
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // kids = delavtal under ett paketavtal (Contract.master_contract pekar hit).
+  // Renderas som riktiga .ab-row inuti masterns panel så all befintlig
+  // expand/edit/pausa-bindning gäller dem oförändrat.
+  function rowHtml(ct, kids) {
+    kids = kids || [];
+    var vr = variableRateOf(ct);
+    var costLine;
+    if (kids.length) {
+      // Master: beloppet är avtalets total, inte en enskild tjänst.
+      costLine = '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div>'
+               + '<div class="ab-cost-end">Totalt · utgår ' + fmtDate(ct.slutdatum) + '</div>';
+    } else if (ct.contract_type === 'RateCard' && vr && Number(ct.monthly_cost || 0) === 0) {
+      // Rörlig delrad: visa det avtalade styckpriset i stället för "0 kr/mån".
+      costLine = '<div class="ab-cost-v">' + fmtKr(vr.price) + '<small>' + esc(vr.unit) + '</small></div>'
+               + '<div class="ab-cost-end">Efter förbrukning</div>';
+    } else if (ct.contract_type === 'RateCard') {
+      costLine = '<div class="ab-cost-v">Per uppdrag</div><div class="ab-cost-end">Rate-card · ' + (ct.rate_card_json ? JSON.parse(ct.rate_card_json).length : 0) + ' roller</div>';
+    } else {
+      costLine = '<div class="ab-cost-v">' + fmtKr(ct.monthly_cost) + '<small>/mån</small></div><div class="ab-cost-end">Utgår ' + fmtDate(ct.slutdatum) + '</div>';
+    }
 
     var attList = ct.attachments || [];
     var attCount = attList.length;
@@ -1533,15 +1611,41 @@
       } catch (_) {}
     }
 
+    // Masterraden namnges av avtalet, delraden av tjänsten. Underrubriken listar
+    // vilka tjänster paketet innehåller så innehållet syns utan att fälla ut.
+    var headName = ct.service_name, headSub = ct.variant;
+    if (kids.length) {
+      headName = ct.contract_title || ct.service_name || 'Avtal';
+      headSub  = kids.map(function (k) { return k.service_name || k.contract_title || 'Tjänst'; }).join(' · ');
+    }
+
+    // Delraderna: summan av de FASTA raderna ska matcha masterns månadskostnad.
+    // Visas explicit — går den isär är splitten fel och det ska synas direkt,
+    // inte upptäckas via kundens dashboard.
+    var kidsHtml = '';
+    if (kids.length) {
+      var kidSum = kids.reduce(function (s, k) { return s + Number(k.monthly_cost || 0); }, 0);
+      var kidDiff = kidSum - Number(ct.monthly_cost || 0);
+      kidsHtml = '<div class="ab-kids">'
+        + '<div class="ab-kids-h"><span>Tjänster i avtalet (' + kids.length + ')</span>'
+        +   '<span class="ab-kids-sum' + (Math.abs(kidDiff) > 1 ? ' ab-kids-diff' : '') + '">'
+        +     fmtKr(kidSum) + '/mån av ' + fmtKr(ct.monthly_cost) + '/mån'
+        +     (Math.abs(kidDiff) > 1 ? ' · diff ' + fmtKr(kidDiff) : '')
+        +   '</span></div>'
+        + '<div class="ab-rows">' + kids.map(function (k) { return rowHtml(k, null); }).join('') + '</div>'
+        + '</div>';
+    }
+
     return ''
       + '<div class="ab-row" data-id="' + esc(ct.id) + '">'
       +   '<div class="ab-rowhead">'
       +     '<div class="ab-rh-svc">'
-      +       '<div class="ab-svcname">' + esc(ct.service_name) + '</div>'
-      +       '<div class="ab-svcvar">' + esc(ct.variant) + '</div>'
+      +       '<div class="ab-svcname' + (kids.length ? ' ab-svcname-pkg' : '') + '">' + esc(headName) + '</div>'
+      +       '<div class="ab-svcvar">' + esc(headSub) + '</div>'
       +     '</div>'
       +     '<div class="ab-rh-meta">'
-      +       '<div class="ab-pills">' + typePillHtml(ct.contract_type) + '</div>'
+      +       '<div class="ab-pills">' + typePillHtml(ct.contract_type)
+      +         (kids.length ? '<span class="ab-pill t-pkg">' + kids.length + ' tjänster</span>' : '') + '</div>'
       +       '<div class="ab-cat">' + esc(ct.category) + '</div>'
       +     '</div>'
       +     '<div class="ab-rh-status">' + statusPillHtml(ct.status, ct.slutdatum) + '</div>'
@@ -1566,13 +1670,18 @@
       +     '</div>'
       +     (ct.volume_json ? '<div class="ab-att" style="margin-top:0;"><div class="ab-att-h"><div class="ab-att-t">Volym</div></div><div style="font-family:\'SF Mono\',Menlo,Consolas,monospace; font-size:11px; color:var(--t2); padding:8px 10px; background:rgba(0,0,0,0.20); border-radius:6px;">' + esc(ct.volume_json) + '</div></div>' : '')
       +     rateCardPreview
-      +     '<div class="ab-att" data-att-wrap data-ct-id="' + esc(ct.id) + '">'
+      +     kidsHtml
+      // Bilagor visas bara på masteravtalet — den signerade PDF:en hör till
+      // DOKUMENTET, inte till varje tjänsterad. Duplicerad skulle den bli fem
+      // ställen att glömma vid omförhandling.
+      +     (ct.is_child ? '' :
+            '<div class="ab-att" data-att-wrap data-ct-id="' + esc(ct.id) + '">'
       +       '<div class="ab-att-h">'
       +         '<div class="ab-att-t">Bilagor (<span data-att-count>' + attCount + '</span>)</div>'
       +         '<button class="ab-btn ghost tiny" data-act="att-upload" data-ct-id="' + esc(ct.id) + '">+ Ladda upp</button>'
       +       '</div>'
       +       '<div class="ab-att-list" data-att-list>' + attListHtml + '</div>'
-      +     '</div>'
+      +     '</div>')
       +     '<div class="ab-rowact">'
       +       '<button class="ab-btn ghost tiny" data-act="edit" data-id="' + esc(ct.id) + '">Redigera</button>'
       +       (ct.status === 'pausat'
@@ -1586,8 +1695,25 @@
       + '</div>';
   }
 
+  // Ett paketavtal ska INTE ligga sida vid sida med sina egna delrader — då
+  // ser kunden sex avtal där det finns ett. Barnen plockas ur listan och
+  // skickas in i sin master. Ett barn vars master ligger i en annan sektion
+  // (eller är borta) renderas fristående så det aldrig försvinner tyst.
+  function nestPackages(contracts) {
+    var byId = {}, kidsOf = {};
+    contracts.forEach(function (c) { byId[c.id] = c; });
+    contracts.forEach(function (c) {
+      if (!c.master_contract_id) return;
+      if (!byId[c.master_contract_id]) return;
+      (kidsOf[c.master_contract_id] = kidsOf[c.master_contract_id] || []).push(c);
+    });
+    return contracts
+      .filter(function (c) { return !(c.master_contract_id && byId[c.master_contract_id]); })
+      .map(function (c) { return { ct: c, kids: kidsOf[c.id] || [] }; });
+  }
+
   function sectionHtml(title, kontorsId, addr, contracts, isAccount) {
-    var rows = contracts.map(rowHtml).join('');
+    var rows = nestPackages(contracts).map(function (n) { return rowHtml(n.ct, n.kids); }).join('');
     var idLabel = kontorsId ? '<span class="ab-sect-id">' + esc(kontorsId) + '</span>' : '';
     var addrLabel = addr ? '<div class="ab-sect-addr">' + esc(addr) + '</div>' : '';
     return ''
@@ -1638,9 +1764,19 @@
     // Sätt total + count
     var allCt = (SAMPLE.account_contracts || []).slice();
     SAMPLE.offices.forEach(function (of) { allCt = allCt.concat(SAMPLE.contracts_by_office[of.id] || []); });
-    var aktiva = allCt.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
-    var totMonthly = allCt
-      .filter(function (c) { return c.contract_type === 'Subscription' && (c.status === 'aktiv' || c.status === 'utgar_snart'); })
+    // Paketavtal: mastern OCH dess delrader bär samma pengar. Räkna mastern och
+    // hoppa över barnen — mastern är avtalet kunden faktiskt har skrivit på, och
+    // dess belopp är den avtalade totalen.
+    var countable = allCt.filter(function (c) { return !c.master_contract_id; });
+    var aktiva = countable.filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; });
+    // ⚠️ INGET contract_type-filter. Det var redan rättat i mira-foretag-lista.html
+    // 2026-08-24: filtret på 'Subscription' uteslöt HYBRID, som per definition HAR
+    // en fast månadsdel — Sambla visade "0 kr/mån" i rubriken medan raden under sa
+    // 124 560 kr. Backend räknar utan typfilter (companies_api: `if (isActive) mrr
+    // += månadskostnad`); den här raden speglar samma regel. RateCard har normalt
+    // 0 kr och faller bort av sig själv.
+    var totMonthly = countable
+      .filter(function (c) { return c.status === 'aktiv' || c.status === 'utgar_snart'; })
       .reduce(function (sum, c) { return sum + Number(c.monthly_cost || 0); }, 0);
     $('sum-count').textContent = aktiva.length + ' st';
     $('sum-cost').textContent = fmtKr(totMonthly);
@@ -1893,6 +2029,7 @@
         (svc.options || []).forEach(function (opt) {
           CATALOG.push({
             id: opt.id,
+            slug: svc.slug || null,
             label: (svc.name || svc.slug) + ' — ' + (opt.name || ''),
             category: svc.category || null,
             price: opt.price,
@@ -2012,6 +2149,11 @@
 
   function resetForm() {
     setActiveTypecard('Subscription');
+    // Nolla raduppdelningen så den inte läcker från en import till nästa
+    // create/edit — panelen är bara meningsfull i import-läge.
+    SPLIT_STATE = { lines: [], reconciliation: null, on: false };
+    var splitPanel = root.querySelector('[data-ab="split-panel"]');
+    if (splitPanel) { splitPanel.style.display = 'none'; splitPanel.innerHTML = ''; }
     setVal('f-offer', '');
     setVal('f-office', '');
     setVal('f-monthly', '');
@@ -2136,11 +2278,40 @@
         body: JSON.stringify(payload)
       });
       var data = await r.json();
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
       if (!data.ok) {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
         alert('Fel: ' + (data.error || ('HTTP ' + r.status)));
         return;
       }
+
+      // Import + raduppdelning: avtalet är skapat, dela upp det i delavtal.
+      // ⚠️ Görs EFTER commit, aldrig i stället för — misslyckas splitten ska
+      // avtalet fortfarande finnas, och kunna delas upp manuellt efteråt.
+      if (MODAL_MODE === 'import' && SPLIT_STATE.on && data.contract_id) {
+        if (saveBtn) saveBtn.textContent = 'Delar upp...';
+        var splitLines = splitPayloadLines();
+        if (splitLines.length > 1) {
+          try {
+            var sr = await fetch(HOST + '/admin/contracts/' + encodeURIComponent(data.contract_id) + '/split', {
+              method: 'POST',
+              headers: { 'x-admin-token': TOKEN, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lines: splitLines })
+            });
+            var sd = await sr.json();
+            if (!sd.ok) {
+              alert('Avtalet skapades, men uppdelningen misslyckades:\n' +
+                    (sd.hint || sd.error || ('HTTP ' + sr.status)) +
+                    '\n\nAvtalet ligger kvar som ett enda avtal och kan delas upp i efterhand.');
+            } else {
+              console.log('[ab] split:', sd.children.length, 'delavtal av', splitLines.length, 'rader');
+            }
+          } catch (e) {
+            alert('Avtalet skapades, men uppdelningen kunde inte nå servern: ' + (e && e.message ? e.message : e));
+          }
+        }
+      }
+
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = original; }
       var mask = $('create-mask');
       if (mask) mask.classList.remove('on');
       await loadLive();
@@ -2344,7 +2515,12 @@
       IMPORT_STATE.file_doc_id = d.file && d.file.doc_id;
       IMPORT_STATE.file_url    = d.file && d.file.file_url;
       IMPORT_STATE.parsed_confidence = (d.parsed && d.parsed.confidence) || null;
-      console.log('[ab] import parsed:', d.parsed, 'tokens:', d.tokens);
+      // Raduppdelning: förvald PÅ bara när avstämningen går ihop. Går den inte
+      // ihop saknas en rad, och då ska ingen dela upp på autopilot.
+      SPLIT_STATE.lines = (d.parsed && d.parsed.lines) || [];
+      SPLIT_STATE.reconciliation = d.reconciliation || null;
+      SPLIT_STATE.on = !!(d.reconciliation && d.reconciliation.ok && SPLIT_STATE.lines.length > 1);
+      console.log('[ab] import parsed:', d.parsed, 'avstämning:', d.reconciliation, 'tokens:', d.tokens);
       openModalForImport(d.parsed || {}, d.file);
     } catch (e) {
       if (importBtn) { importBtn.disabled = false; importBtn.textContent = orig; }
@@ -2394,8 +2570,128 @@
         'confidence:', conf);
     }
 
+    renderSplitPanel();
+
     var mask = $('create-mask');
     if (mask) mask.classList.add('on');
+  }
+
+  // ── Raduppdelning i granskningsmodalen (import) ─────────────────────────
+  // LLM:en levererar prisbilagans rader + ett föreslaget Erbjudande per rad.
+  // Erbjudandevalet är det enda modellen inte kan avgöra pålitligt, så det
+  // förblir ett mänskligt val — men förvalt, inte tomt.
+  var SPLIT_STATE = { lines: [], reconciliation: null, on: false };
+
+  function splitOfferOptions(selected) {
+    var html = '<option value="">— hoppa över raden —</option>';
+    for (var i = 0; i < CATALOG.length; i++) {
+      var o = CATALOG[i];
+      html += '<option value="' + esc(o.id) + '"' + (o.id === selected ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+    }
+    return html;
+  }
+
+  // Hur många DELAVTAL raderna blir: ett per unikt erbjudande. Räknas om vid
+  // varje dropdown-ändring — det är så operatören ser att Entrémattor slås
+  // ihop med Lokalvård i stället för att bli en egen tile.
+  function splitChildCount() {
+    var seen = {}, n = 0;
+    var sels = root.querySelectorAll('[data-split-offer]');
+    for (var i = 0; i < sels.length; i++) {
+      var v = sels[i].value;
+      if (!v || seen[v]) continue;
+      seen[v] = true; n++;
+    }
+    return n;
+  }
+
+  function renderSplitFoot() {
+    var rec = SPLIT_STATE.reconciliation || {};
+    var el = root.querySelector('[data-ab="split-foot"]');
+    if (!el) return;
+    var bad = !rec.ok;
+    el.innerHTML =
+      '<span class="ab-split-sum' + (bad ? ' ab-split-bad' : '') + '">Fasta rader: <b>' + fmtKr(rec.lines_sum || 0) +
+        '</b> av ' + fmtKr(rec.monthly_cost || 0) +
+        (bad ? ' · differens ' + fmtKr(rec.diff || 0) : ' ✓') + '</span>' +
+      '<span class="ab-split-out">→ ' + splitChildCount() + ' delavtal</span>';
+  }
+
+  function renderSplitPanel() {
+    var panel = root.querySelector('[data-ab="split-panel"]');
+    if (!panel) return;
+    var L = SPLIT_STATE.lines || [];
+    if (MODAL_MODE !== 'import' || L.length < 2) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+    var rec = SPLIT_STATE.reconciliation || {};
+
+    var rows = L.map(function (l, i) {
+      var unmapped = !l.suggested_offer_id;
+      return '<div class="ab-split-row' + (unmapped ? ' ab-split-unmapped' : '') + '">' +
+        '<div class="ab-split-lbl">' + esc(l.label) + '</div>' +
+        '<div class="ab-split-amt">' + fmtKr(l.amount) +
+          '<small>' + esc(l.unit === 'per månad' ? '/mån' : l.unit) + '</small></div>' +
+        '<select data-split-offer data-i="' + i + '">' + splitOfferOptions(l.suggested_offer_id) + '</select>' +
+      '</div>';
+    }).join('');
+
+    panel.style.display = '';
+    panel.innerHTML =
+      '<div class="ab-split-h">' +
+        '<div class="ab-split-t">Avtalet innehåller ' + L.length + ' prissatta rader</div>' +
+        '<label class="ab-split-tog"><input type="checkbox" data-ab="split-on"' +
+          (SPLIT_STATE.on ? ' checked' : '') + '> Dela upp i separata avtal per tjänst</label>' +
+      '</div>' +
+      '<div class="ab-split-sub">Varje rad blir en tile på kundens dashboard. Rader som pekar på samma ' +
+        'erbjudande slås ihop till ett delavtal — så hamnar t.ex. tillsyn och entrémattor under Housekeeping. ' +
+        'Det signerade avtalet blir huvudavtal och delraderna hamnar under det.</div>' +
+      rows +
+      '<div class="ab-split-foot" data-ab="split-foot"></div>' +
+      (rec.ok ? '' :
+        '<div class="ab-split-sub" style="margin:10px 0 0;color:var(--warn)">⚠ Raderna summerar inte till ' +
+        'månadskostnaden. Rätta beloppen ovan innan du delar upp — annars stämmer inte kundens siffror.</div>') +
+      ((rec.unmapped && rec.unmapped.length) ?
+        '<div class="ab-split-sub" style="margin:8px 0 0">Kunde inte gissa erbjudande för: ' +
+        esc(rec.unmapped.join(', ')) + ' — välj manuellt.</div>' : '');
+    renderSplitFoot();
+  }
+
+  function bindSplitPanel() {
+    // Event-delegation på modalen: panelen renderas om vid varje import.
+    var mask = $('create-mask');
+    if (!mask) return;
+    mask.addEventListener('change', function (ev) {
+      var t = ev.target;
+      if (!t) return;
+      if (t.getAttribute && t.getAttribute('data-split-offer') !== null) { renderSplitFoot(); return; }
+      if (t.getAttribute && t.getAttribute('data-ab') === 'split-on') { SPLIT_STATE.on = !!t.checked; }
+    });
+  }
+
+  // Bygger split-anropets lines[] ur panelens nuvarande val.
+  function splitPayloadLines() {
+    var out = [];
+    var sels = root.querySelectorAll('[data-split-offer]');
+    for (var i = 0; i < sels.length; i++) {
+      var idx = Number(sels[i].getAttribute('data-i'));
+      var l = SPLIT_STATE.lines[idx];
+      if (!l || !sels[i].value) continue;
+      var fixed = l.included_in_monthly_total;
+      var engang = l.unit === 'engång';
+      out.push({
+        label: l.label,
+        offer_id: sels[i].value,
+        monthly_cost: fixed ? l.amount : 0,
+        unit: fixed ? 'per månad' : l.unit,
+        // ⚠️ En engångspost får INTE också skickas som unit_price — då lägger
+        // _splitChildRateCard in beloppet två gånger (en gång som rörligt pris,
+        // en gång som uppstart).
+        unit_price: (fixed || engang) ? null : l.amount,
+        setup_cost: engang ? l.amount : null
+        // Ingen category: backend härleder den ur erbjudandet, så växter inte
+        // ärver Housekeeping bara för att huvudavtalet är ett HK-avtal.
+      });
+    }
+    return out;
   }
 
   function bindImportInput() {
@@ -2414,6 +2710,7 @@
   bindModal();
   bindFileInput();
   bindImportInput();
+  bindSplitPanel();
   renderAll();
   loadLive();
   loadCatalog();
