@@ -16146,7 +16146,14 @@ const KUND_KPI = {
 
   // Kundansvarig-kortet (ersatte "Investering" 2026-08-27)
   ANSVARIG_FIELD:      "Kundansvarig",              // ClientCompany → ref User
-  COWORKER_TYPE:       "Coworker"                   // bär profilbilden (User saknar bildfält)
+  COWORKER_TYPE:       "Coworker",                  // bär profilbilden (User saknar bildfält)
+
+  // ⚠️ TVÅ bildfält på Coworker, och de är INTE utbytbara:
+  //   "Prodilbild" (ja, felstavat i Bubble) = där de befintliga bilderna ligger.
+  //                 Fanns inte på ett enda ställe i koden före 2026-08-27.
+  //   "Foto"      = det fält /admin/companies/coworker/:id/photo skriver till.
+  // Läs båda, Prodilbild först — annars visas initialer trots att bilden finns.
+  COWORKER_PHOTO_FIELDS: ["Prodilbild", "Foto"]
 };
 
 // ---- små utils ------------------------------------------------------------
@@ -16173,8 +16180,8 @@ function _kDedupByDoc(arr) {
 // ---- KUNDANSVARIG: Carotte-kontakten på kundens dashboard ----------------
 // ClientCompany.Kundansvarig → User. Kortet ersatte "Investering" 2026-08-27.
 //
-// ⚠️ User HAR INGET BILDFÄLT. Profilbilden bor bara på Coworker.Foto, och
-//    User↔Coworker joinas på E-POST (samma nyckel som Personer-flikens has_user).
+// ⚠️ User HAR INGET BILDFÄLT. Profilbilden bor på Coworker (se COWORKER_PHOTO_FIELDS),
+//    och User↔Coworker joinas på E-POST (samma nyckel som Personer-flikens has_user).
 //    Utan Coworker-raden finns ingen bild — då faller kortet tillbaka på initialer.
 // ⚠️ Coworker.Telefon är ett NUMBER-fält → inledande 0 är redan borta i Bubble
 //    (samma fälla som Org_Number). User.Phone_user är TEXT och behåller nollan,
@@ -16201,6 +16208,16 @@ function _kPhoneFromCoworker(v) {
   return d;
 }
 
+// Bubble image-fält bär en URL-sträng, ofta protokoll-relativ ("//s3...").
+// Första ifyllda fältet vinner; tomma/whitespace-fält hoppas över.
+function _kPhotoUrl(co) {
+  for (const f of KUND_KPI.COWORKER_PHOTO_FIELDS) {
+    const v = String(co?.[f] ?? co?.[f.toLowerCase()] ?? "").trim();
+    if (v) return v.replace(/^\/\//, "https://");
+  }
+  return "";
+}
+
 async function _kKundansvarig(ccRow) {
   const userId = _kRef(ccRow?.[KUND_KPI.ANSVARIG_FIELD]);
   if (!userId) return null;
@@ -16225,7 +16242,7 @@ async function _kKundansvarig(ccRow) {
       });
       const co = (Array.isArray(cos) ? cos : [])[0];
       if (co) {
-        photo = String(co.Foto || co.foto || "").trim().replace(/^\/\//, "https://");
+        photo = _kPhotoUrl(co);
         if (!first) first = String(co["Förnamn"] || "").trim();
         if (!last)  last  = String(co["Efternamn"] || "").trim();
         if (!title) title = String(co.Titel || co.Befattning || "").trim();
