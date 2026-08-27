@@ -5,6 +5,36 @@
 > Minne: `reference-avtal-signering-flode` · `reference-scanned-pdf-vision-ocr`
 
 ---
+### Import föreslår uppdelningen själv (A+B) — BYGGT 2026-08-27, EJ DEPLOYAT
+
+Splitten fanns men krävde curl med handplockade Bubble-id:n. Nu gör importen jobbet.
+
+**A — `lines[]` i `CONTRACT_EXTRACT_TOOL`.** Haiku bryter ut prisbilagans rader: `{label, amount, unit, service_hint, included_in_monthly_total}`. `monthly_cost` är fortfarande totalen. Prompten säger explicit att raderna ska läsas ur **PRISSEKTIONEN, aldrig ur omfattningslistans kryssrutor** (de syns inte i texten — se §-rutan ovan) och att modellen ska **kontrollräkna mot `monthly_cost` innan den svarar**.
+
+- **Katalogens riktiga slugar injiceras i systemprompten** via `_importCatalogHints()` → `_contractExtractSystem(hints)`. Hårdkodade slugar hade blivit inaktuella så fort någon lägger till en tjänst. Tom katalog → oförändrad prompt (en import ska inte stupa på att ServiceCatalog är otillgänglig).
+- **⚠️ Hintarna hämtas UTAN `sort_field`.** `bubbleFindAll` med `sort_field` utelämnar rader som saknar värde i fältet — en katalogpost utan `display_order` hade tyst försvunnit och dess tjänst aldrig kunnat föreslås. (`_buildServicesDashboard` sorterar fortfarande — befintligt beteende, inte rört.)
+- **`IMPORT_SLUG_KEYWORDS`** = deterministiskt skyddsnät när `service_hint` saknas eller är påhittad. Här bor Carottes beslut, inte modellens: **tillsyn, entrémattor, fönsterputs och golvvård → `housekeeping`** (Christian 2026-08-27; katalogen har ingen egen slug för mattservice).
+- **⚠️ Enheten vinner över modellens flagga.** En rad märkt `per kg` ingår aldrig i en fast månadsavgift, hur säkert Haiku än sätter `included_in_monthly_total: true`.
+- Parse-svaret får ett `reconciliation`-objekt: `{monthly_cost, lines_sum, diff, ok, fixed_lines, unmapped}`.
+
+**B — raduppdelning i granskningsmodalen.** Panelen (`[data-ab="split-panel"]`) visas bara i import-läge med ≥2 rader. Per rad: etikett, belopp+enhet, och en **förvald** Erbjudande-dropdown. Erbjudandevalet är det enda modellen inte kan avgöra pålitligt, så det förblir mänskligt — men förvalt, inte tomt.
+
+- Foten räknar **live** om antalet delavtal när dropdownen ändras: så ser operatören att entrémattor slås ihop med lokalvård i stället för att bli en egen tile.
+- Toggeln är **förvald PÅ bara när avstämningen går ihop**. Går den inte ihop saknas en rad — då ska ingen dela upp på autopilot.
+- **⚠️ Splitten körs EFTER `/import/commit`, aldrig i stället för.** Misslyckas den finns avtalet kvar som ett enda avtal och kan delas upp i efterhand; felmeddelandet säger det.
+- Panelen nollas i `resetForm()` så den inte läcker till create/edit-läge.
+
+**Två buggar jag själv införde och rättade under bygget** (båda vaktade av tester):
+1. En **engångsrad** som skickade både `unit_price` och `setup_cost` fick beloppet inlagt **två gånger** av `_splitChildRateCard`. Nu: `unit_price` är null för engång.
+2. Alla delavtal ärvde masterns kategori → växtraden blev "Housekeeping" bara för att huvudavtalet är ett HK-avtal. `/split` slår nu upp kategori **per erbjudande** (samma mönster som `/import/commit`), en gång per unikt erbjudande.
+
+**Nytt praktiskt flöde för kollegan:** dra in PDF → Haiku läser §PRISER som rader → modalen visar "Avtalet innehåller 7 prissatta rader", avstämning **47 097 av 47 097 ✓**, och **→ 3 delavtal** → tryck Skapa. Ett huvudavtal med tre delrader, tre tända tiles. Ingen terminal.
+
+**Verifierat:** `avtal_split_smoke.mjs` **110/110**, **43 mutationer, 43 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
+
+**Kvar:** ingen skarp körning mot ett riktigt avtal än — Planhat splittades via curl innan A+B fanns. Nästa importerade paketavtal är testet.
+
+---
 ### Paketavtal → master + delavtal (Contract.master_contract) — BYGGT 2026-08-27, EJ DEPLOYAT
 
 **Utlösare (Planhat, `Signerat Planhat Avtal 2026-05-08.pdf`):** ett HK-avtal innehöll fem tjänster i EN prisbild. Kund-dashboarden tände bara Housekeeping-tile:n, med hela paketets belopp, och Växter fanns inte alls.
@@ -67,7 +97,7 @@ Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en 
 
 **Verifierat:** `avtal_split_smoke.mjs` **68/68** — kör den riktiga route-handlern mot mockad Bubble med Planhats faktiska kronor. **Mutationstestat: 25 mutationer, 25 faller, 0 kraschar.** Bl.a.: borttagen avstämning fäller 1 · master ej överhoppad fäller 1 · borttagen rollback fäller 2 · barn som duplicerar `signed_pdf`+bilagor fäller 2 · descendant-selektorn tillbaka fäller 1 · Hybrid ur totalen fäller 1 · borttaget `nestPackages`-anrop fäller 4 · borttagen gruppering (ett barn per rad igen) fäller 4. De fyra svaga strängassertions som först ÖVERLEVDE gjordes om till beteendetester (funktionerna extraheras och körs). Regression: samtliga övriga sviter gröna (`komm_blocks_smoke` 114/4 är **pre-existerande** — faller identiskt mot HEAD:s `index.js`, `emailer.js` slicas utan `MAIL_PAL_DARK`).
 
-**⚠️ Separat bugg, EJ rättad:** importens `contract_title` ärver promptens EXEMPELNAMN — Planhats avtal fick titeln `"housekeeping ox2 ab"`. `CONTRACT_EXTRACT_TOOL.contract_title` säger *"t.ex. 'Housekeeping OX2 AB'"* och Haiku kopierar exemplet i stället för kundnamnet. `split` kan döpa om mastern via `master_title`, men prompten bör härdas.
+**Falskt alarm (utrett 2026-08-27):** "housekeeping ox2 ab" i avtalsmodalens Avtalstitel-fält såg ut som en LLM-hallucination men är ett `placeholder`-attribut i `mira-abonnemang-kund.html` rad 807. `contract_title` är tomt på Planhat-avtalet — verifierat via `/admin/contracts/by-company`. Importen hade inget fel. (Kosmetiskt: placeholdern namnger en riktig kund.)
 
 **KVAR:**
 1. **Split-UI:t** — idag bara curl. Operatören behöver en modal som listar raderna och låter hen välja `Erbjudande` per rad (det är den biten en LLM gissar fel på). `dry_run:true` är byggt för att driva previewen.

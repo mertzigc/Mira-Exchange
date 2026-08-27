@@ -384,6 +384,20 @@ const run = async () => {
     ok("sectionHtml anropar faktiskt nästlingen",
        /var rows = nestPackages\(contracts\)\.map\(function \(n\) \{ return rowHtml\(n\.ct, n\.kids\); \}\)/.test(KUND));
     ok("masterraden får en 'N tjänster'-pill", /ab-pill t-pkg/.test(KUND));
+    // Masterraden namnges av AVTALET, inte av tjänsten — annars står
+    // "Housekeeping" både som paket och som delrad och avtalstiteln syns aldrig.
+    ok("masterraden namnges av contract_title, inte service_name",
+       /headName = ct\.contract_title \|\| ct\.service_name/.test(KUND));
+    ok("masterns underrubrik listar delradernas tjänster",
+       /headSub  = kids\.map\(function \(k\) \{ return k\.service_name/.test(KUND));
+    ok("delrader namnges fortfarande av tjänsten",
+       /var headName = ct\.service_name, headSub = ct\.variant;/.test(KUND));
+    ok("rubriken renderas från headName\/headSub, inte direkt från ct",
+       /esc\(headName\)/.test(KUND) && /esc\(headSub\)/.test(KUND));
+    // Gement lagrad titel versaliseras bara på första tecknet — capitalize
+    // hade gett "Serviceavtal Planhat Ab".
+    ok("gement contract_title versaliseras på första tecknet vid visning",
+       /\.ab-svcname-pkg::first-letter \{ text-transform:uppercase; \}/.test(KUND));
     ok("panelen visar delradernas summa mot avtalets total", /ab-kids-sum/.test(KUND) && /ab-kids-diff/.test(KUND));
     // ⚠️ Descendant-selektorn hade fällt ut ALLA barns paneler när mastern öppnas.
     ok("expand-selektorn är barn-kombinator (annars öppnas barnens paneler med masterns)",
@@ -407,6 +421,141 @@ const run = async () => {
     const byc = slice(SRC, 'app.get("/admin/contracts/by-company"', "\n});", "by-company");
     ok("by-company flaggar is_master/is_child/child_count",
        /e\.is_master   = e\.child_count > 0;/.test(byc) && /e\.is_child    = !!e\.master_contract_id;/.test(byc));
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Import A — lines[] ur prisbilagan + katalog-hintar");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("import-lines", () => {
+    const tool = slice(SRC, "const CONTRACT_EXTRACT_TOOL", "\n};", "CONTRACT_EXTRACT_TOOL");
+    ok("verktyget har ett lines-fält", /lines: \{\s*\n\s*type: "array"/.test(tool));
+    ok("varje rad har enhet med engång som giltigt värde",
+       /enum: \["per månad", "per kg", "per timme", "per tillfälle", "engång"\]/.test(tool));
+    ok("raden bär service_hint för slug-gissningen", /service_hint:/.test(tool));
+    ok("prompten säger att raderna ska summera till monthly_cost",
+       /MÅSTE summera till monthly_cost/.test(tool));
+    const sys = slice(SRC, "const CONTRACT_EXTRACT_SYSTEM", "§-paragrafer.`;", "CONTRACT_EXTRACT_SYSTEM");
+    // ⚠️ §3:s kryssrutor finns inte i textlagret — läser modellen dem gissar den.
+    ok("systemprompten pekar på PRISSEKTIONEN, inte omfattningslistan",
+       /aldrig ur omfattningslistans kryssrutor/.test(sys));
+    ok("systemprompten ber om kontrollräkning innan svar", /Kontrollräkna innan du svarar/.test(sys));
+
+    // ⚠️ sort_field skulle tyst utelämna katalogposter utan display_order.
+    const hints = slice(SRC, "async function _importCatalogHints()", "\n}", "_importCatalogHints");
+    ok("katalog-hintarna hämtas UTAN sort_field (annars tappas poster tyst)",
+       /bubbleFindAll\(SERVICES\.CATALOG_TYPE, \{\}\)/.test(hints) && !/sort_field/.test(hints));
+
+    const sysFn = new Function("CONTRACT_EXTRACT_SYSTEM",
+      slice(SRC, "function _contractExtractSystem(hints)", "\n}", "_contractExtractSystem")
+      + "\nreturn _contractExtractSystem;")("BAS");
+    ok("katalogens slugar injiceras i prompten",
+       /- vaxter \(Växter\)/.test(sysFn([{ slug: "vaxter", name: "Växter" }])));
+    ok("tom katalog → oförändrad prompt (import stupar inte på otillgänglig katalog)",
+       sysFn([]) === "BAS");
+    ok("prompten säger att tillsyn/entrémattor hör till housekeeping",
+       /Tillsyn, entrémattor.*housekeeping/.test(sysFn([{ slug: "housekeeping", name: "HK" }])));
+  });
+
+  await group("import-enrich", () => {
+    const HINTS = [
+      { slug: "housekeeping", name: "Housekeeping", offer_id: OFFER_HK },
+      { slug: "vaxter",       name: "Växter",       offer_id: OFFER_VAX },
+      { slug: "frukt",        name: "Frukt",        offer_id: OFFER_FRUKT },
+    ];
+    const enrich = new Function(
+      slice(SRC, "const SPLIT_FIXED_UNITS", "\n}\n", "SPLIT_FIXED_UNITS")
+      + slice(SRC, "const IMPORT_SLUG_KEYWORDS", "\n];", "IMPORT_SLUG_KEYWORDS")
+      + slice(SRC, "function _importSlugFor(line, hints)", "\n}", "_importSlugFor")
+      + slice(SRC, "function _importEnrichLines(parsed, hints)", "\n}", "_importEnrichLines")
+      + "\nreturn _importEnrichLines;")();
+
+    // Planhats §5, precis som Haiku förväntas returnera den.
+    const parsed = { monthly_cost: 47097, lines: [
+      { label: "Lokalvård", amount: 25100, unit: "per månad", service_hint: "housekeeping", included_in_monthly_total: true },
+      { label: "Tillsyn 2 h/dag", amount: 13856, unit: "per månad", included_in_monthly_total: true },
+      { label: "Entrèmatta", amount: 450, unit: "per månad", included_in_monthly_total: true },
+      { label: "Växter inkl service av 25 stycken", amount: 7691, unit: "per månad", included_in_monthly_total: true },
+      { label: "Frukt", amount: 45, unit: "per kg", included_in_monthly_total: false },
+      { label: "Uppstartskostnad städmaterial", amount: 10000, unit: "engång", included_in_monthly_total: false },
+      { label: "Leveransavgift växter", amount: 1590, unit: "engång", included_in_monthly_total: false },
+    ] };
+    const out = enrich(parsed, HINTS);
+    const by = (n) => out.lines.find((l) => l.label.startsWith(n));
+
+    ok("avstämningen går ihop mot 47 097", out.reconciliation.ok && out.reconciliation.diff === 0);
+    ok("bara de fasta raderna räknas in", out.reconciliation.fixed_lines === 4 && out.reconciliation.lines_sum === 47097);
+    // Christians beslut, kodat som nyckelordsfallback — inte överlämnat till modellen.
+    ok("Tillsyn mappas till housekeeping utan hint", by("Tillsyn").service_slug === "housekeeping");
+    ok("Entrèmatta mappas till housekeeping utan hint", by("Entrèmatta").service_slug === "housekeeping");
+    ok("Växter mappas till vaxter", by("Växter").service_slug === "vaxter");
+    ok("varje mappad rad får ett föreslaget erbjudande",
+       by("Lokalvård").suggested_offer_id === OFFER_HK && by("Frukt").suggested_offer_id === OFFER_FRUKT);
+    ok("tre HK-rader pekar på SAMMA erbjudande (slås ihop av /split)",
+       [by("Lokalvård"), by("Tillsyn"), by("Entrèmatta")].every((l) => l.suggested_offer_id === OFFER_HK));
+    ok("engångsposter ingår inte i månadstotalen",
+       by("Uppstartskostnad").included_in_monthly_total === false && by("Leveransavgift").included_in_monthly_total === false);
+
+    // ⚠️ Enheten vinner över modellens flagga: en per-kg-rad kan aldrig ingå i
+    // en fast månadsavgift, hur säker Haiku än låter.
+    const lying = enrich({ monthly_cost: 100, lines: [
+      { label: "Frukt", amount: 45, unit: "per kg", included_in_monthly_total: true },
+      { label: "Städ", amount: 100, unit: "per månad", included_in_monthly_total: true }] }, HINTS);
+    ok("rörlig enhet kan inte flaggas in i månadstotalen",
+       lying.reconciliation.lines_sum === 100 && lying.reconciliation.ok);
+
+    const missing = enrich({ monthly_cost: 47097, lines: parsed.lines.filter((l) => !/Växter/.test(l.label)) }, HINTS);
+    ok("tappad rad → avstämningen faller med rätt differens",
+       !missing.reconciliation.ok && missing.reconciliation.diff === -7691);
+    ok("okänd rad listas som omappad så operatören måste välja",
+       enrich({ monthly_cost: 0, lines: [{ label: "Skoputsmaskin", amount: 300, unit: "per månad" }] }, HINTS)
+         .reconciliation.unmapped.join() === "Skoputsmaskin");
+    // ⚠️ Måste testas med monthly_cost 0 — annars faller diff-kontrollen ändå
+    // och testet bevisar inget om längdvillkoret. (Ett RateCard-avtal har
+    // just 0 kr och inga rader, och skulle annars rapportera "avstämt".)
+    ok("inga rader → avstämningen är inte 'ok' (tomt är aldrig ett svar)",
+       enrich({ monthly_cost: 0, lines: [] }, HINTS).reconciliation.ok === false);
+    ok("okänd service_hint faller tillbaka på nyckelorden",
+       enrich({ monthly_cost: 0, lines: [{ label: "Lokalvård", amount: 1, unit: "per månad", service_hint: "hittepå" }] }, HINTS)
+         .lines[0].service_slug === "housekeeping");
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Import B — raduppdelning i granskningsmodalen");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("import-panel", () => {
+    ok("parse-svaret bär avstämningen till frontend", /reconciliation,\n      method,/.test(SRC));
+    ok("panelen renderas bara i import-läge med minst två rader",
+       /if \(MODAL_MODE !== 'import' \|\| L\.length < 2\)/.test(KUND));
+    ok("uppdelningen är förvald PÅ bara när avstämningen går ihop",
+       /SPLIT_STATE\.on = !!\(d\.reconciliation && d\.reconciliation\.ok && SPLIT_STATE\.lines\.length > 1\)/.test(KUND));
+    ok("varje rad får en erbjudande-dropdown förvald på förslaget",
+       /splitOfferOptions\(l\.suggested_offer_id\)/.test(KUND));
+    ok("antalet delavtal räknas om live vid dropdown-ändring",
+       /function splitChildCount/.test(KUND) && /renderSplitFoot\(\); return;/.test(KUND));
+    ok("panelen nollas i resetForm (läcker inte till create/edit)",
+       /SPLIT_STATE = \{ lines: \[\], reconciliation: null, on: false \};\n    var splitPanel/.test(KUND));
+    // ⚠️ Splitten körs EFTER commit — misslyckas den ska avtalet finnas kvar.
+    ok("splitten körs efter commit, inte i stället för",
+       /if \(MODAL_MODE === 'import' && SPLIT_STATE\.on && data\.contract_id\)/.test(KUND));
+    ok("misslyckad split lämnar avtalet kvar och säger det",
+       /Avtalet ligger kvar som ett enda avtal/.test(KUND));
+
+    const payloadFn = fnFrom(KUND, "  function splitPayloadLines() {", "\n  }", "splitPayloadLines");
+    ok("splitPayloadLines finns", !!payloadFn);
+    // Buggen: en engångsrad som ÄVEN skickar unit_price får beloppet inlagt
+    // två gånger av _splitChildRateCard (en gång rörligt, en gång som uppstart).
+    ok("engångsrad skickar setup_cost men INTE unit_price (annars dubblas beloppet)",
+       /unit_price: \(fixed \|\| engang\) \? null : l\.amount,/.test(KUND)
+       && /setup_cost: engang \? l\.amount : null/.test(KUND));
+    ok("raden skickar ingen kategori — backend härleder ur erbjudandet",
+       !/category: readSelectedCategory\(\) \|\| IMPORT_STATE\.category/.test(KUND));
+
+    // Backend: växtraden ska INTE ärva huvudavtalets Housekeeping.
+    const sp = slice(SRC, 'app.post("/admin/contracts/:id/split", async (req, res) => {', "\n});", "split");
+    ok("split slår upp kategori per erbjudande", /const catByOffer = new Map\(\);/.test(sp));
+    ok("uppslaget hoppas över när anroparen skickat en giltig kategori",
+       /if \(lines\.some\(\(l\) => String\(l\.offer_id\) === oid && VALID_CATEGORIES\.includes\(l\.category\)\)\) continue;/.test(sp));
+    ok("härledd kategori går före masterns", /catByOffer\.get\(String\(l\.offer_id \|\| ""\)\.trim\(\)\) \|\| masterCat/.test(sp));
   });
 
   console.log(`\n${fail === 0 ? "✅" : "❌"}  ${pass} pass · ${fail} fail`);

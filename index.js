@@ -22968,12 +22968,24 @@ app.post("/admin/contracts/:id/split", async (req, res) => {
     };
     const masterOffice = _ffIdOf(master[SERVICES.CT_OFFICE]) || null;
     const masterCat    = master[SERVICES.CT_KATEGORI] || null;
+
     const VALID_CATEGORIES = ["Food & Event", "Housekeeping", "Service & People", "Other facility services"];
+
+    // Kategori per rad härleds ur ERBJUDANDET när anroparen inte skickat en
+    // giltig — annars ärver växt- och fruktraderna huvudavtalets Housekeeping.
+    // Samma mönster som /import/commit. Slås upp en gång per unikt erbjudande.
+    const catByOffer = new Map();
+    for (const oid of new Set(lines.map((l) => String(l.offer_id || "").trim()).filter(Boolean))) {
+      if (lines.some((l) => String(l.offer_id) === oid && VALID_CATEGORIES.includes(l.category))) continue;
+      const offer = await bubbleGet(FORFRAGAN.OFFER_TYPE, oid).catch(() => null);
+      if (offer && VALID_CATEGORIES.includes(offer.Category)) catByOffer.set(oid, offer.Category);
+    }
 
     const plan = lines.map((l) => {
       const fixed   = _splitLineIsFixed(l);
       const monthly = fixed ? Math.round(Number(l.monthly_cost || 0)) : 0;
-      const cat     = VALID_CATEGORIES.includes(l.category) ? l.category : masterCat;
+      const cat     = VALID_CATEGORIES.includes(l.category) ? l.category
+                    : (catByOffer.get(String(l.offer_id || "").trim()) || masterCat);
       // En rad utan fast månadskostnad är per definition en prislisterad →
       // RateCard. Anroparen kan överstyra (t.ex. Hybrid för bas + tillägg).
       const type = [SERVICES.TYPE_SUBSCRIPTION, SERVICES.TYPE_RATECARD, SERVICES.TYPE_HYBRID].includes(l.contract_type)
@@ -24310,6 +24322,31 @@ const CONTRACT_EXTRACT_TOOL = {
         type: "object",
         description: "Strukturerad volym, t.ex. {kvm: 12600, housekeepers: 7, hours_mf: 25, hours_sun: 4} för HK."
       },
+      lines: {
+        type: "array",
+        description: "Prisbilagans RADER, en per prissatt tjänst. Läs dem ur §PRISER/prisbilagan, INTE ur omfattningslistans kryssrutor. De rader som ingår i den fasta månadsavgiften MÅSTE summera till monthly_cost — stämmer det inte har du missat en rad, läs om. Exempel: 'Lokalvård 25100 kr/mån · Tillsyn 13856 kr/mån · Växter 7691 kr/mån · Entrèmatta 450 kr/mån' (= 47097 fast) plus 'Frukt 45 kr/kg' (rörlig) och 'uppstartskostnad 10000 kr' (engång).",
+        items: {
+          type: "object",
+          properties: {
+            label: { type: "string", description: "Radens namn precis som det står i avtalet." },
+            amount: { type: "number", description: "Beloppet i SEK exkl. moms." },
+            unit: {
+              type: "string",
+              enum: ["per månad", "per kg", "per timme", "per tillfälle", "engång"],
+              description: "Debiteringsenhet. 'per månad' = ingår i den fasta månadsavgiften."
+            },
+            service_hint: {
+              type: "string",
+              description: "Vilken av Carottes tjänster raden hör till — använd EXAKT en av slugarna i systemprompten. Osäker → lämna tomt."
+            },
+            included_in_monthly_total: {
+              type: "boolean",
+              description: "true om raden ingår i den fasta månadsavgiften (monthly_cost). Rörliga och engångsposter: false."
+            }
+          },
+          required: ["label", "amount", "unit"]
+        }
+      },
       contract_title: {
         type: "string",
         description: "Kort beskrivande titel på avtalet, gemener, format 'Kategori Kundnamn' (t.ex. 'Housekeeping OX2 AB', 'Bemanning Klarna Bank AB'). Härled från avtalets kategori + kundens namn."
@@ -24346,6 +24383,16 @@ Avtalstyper:
 
 Engångskostnader (t.ex. uppstartskostnad för inköp av utrustning) → setup_cost, ej rate_card.
 
+RADUPPDELNING (fältet "lines") — viktigast av allt:
+Ett Carotte-avtal innehåller ofta FLERA tjänster i en och samma prisbild. Bryt ut varje
+prissatt rad ur §PRISER / prisbilagan. Fältet monthly_cost är fortfarande TOTALEN.
+
+⚠️ Läs raderna ur PRISSEKTIONEN, aldrig ur omfattningslistans kryssrutor. Kryssen syns
+inte i den text du får — en tjänst som saknar pris ska INTE bli en rad.
+
+⚠️ Kontrollräkna innan du svarar: summan av raderna med included_in_monthly_total = true
+MÅSTE bli exakt monthly_cost. Går det inte ihop har du missat eller dubblerat en rad.
+
 Datum ska vara YYYY-MM-DD. Saknat fält → lämna tomt. Var konservativ: sätt lågt confidence (<0.5) om du är osäker.
 
 Extrahera ALDRIG fält från headerns "Background"-text eller boilerplate. Endast aktiva bestämmelser i avtalets §-paragrafer.`;
@@ -24368,13 +24415,23 @@ function _isDegenerateContractParse(p) {
   return !hasName && !hasMoney && !hasRate && !hasType;
 }
 
-async function _runContractTextExtraction(text) {
+// Systemprompt + katalogens FAKTISKA slugar. Hårdkodade slugar hade blivit
+// inaktuella så fort någon lägger till en tjänst i ServiceCatalog.
+function _contractExtractSystem(hints) {
+  if (!hints || !hints.length) return CONTRACT_EXTRACT_SYSTEM;
+  const list = hints.map((h) => `- ${h.slug} (${h.name})`).join("\n");
+  return CONTRACT_EXTRACT_SYSTEM
+    + "\n\nGiltiga service_hint-slugar (använd EXAKT dessa, annars lämna tomt):\n" + list
+    + "\n\nTillsyn, entrémattor, fönsterputs och golvvård hör till housekeeping — det finns ingen egen slug för dem.";
+}
+
+async function _runContractTextExtraction(text, hints) {
   const msg = await anthropic.messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 4096,
     tools: [CONTRACT_EXTRACT_TOOL],
     tool_choice: { type: "tool", name: "extract_contract_fields" },
-    system: CONTRACT_EXTRACT_SYSTEM,
+    system: _contractExtractSystem(hints),
     messages: [{
       role: "user",
       content: `Extrahera fält ur följande Carotte-avtal. Returnera bara via tool-anropet.\n\n---\n\n${text}`,
@@ -24384,7 +24441,7 @@ async function _runContractTextExtraction(text) {
   return { parsed: toolUse?.input || null, usage: msg.usage };
 }
 
-async function _runContractVisionExtraction(buffer, mimetype, filename) {
+async function _runContractVisionExtraction(buffer, mimetype, filename, hints) {
   const b64 = buffer.toString("base64");
   const isPdf = /pdf/i.test(mimetype || "") || /\.pdf$/i.test(filename || "");
   const mediaBlock = isPdf
@@ -24396,7 +24453,7 @@ async function _runContractVisionExtraction(buffer, mimetype, filename) {
     max_tokens: 4096,
     tools: [CONTRACT_EXTRACT_TOOL],
     tool_choice: { type: "tool", name: "extract_contract_fields" },
-    system: CONTRACT_EXTRACT_SYSTEM,
+    system: _contractExtractSystem(hints),
     messages: [{
       role: "user",
       content: [
@@ -24408,6 +24465,96 @@ async function _runContractVisionExtraction(buffer, mimetype, filename) {
   const msg = await stream.finalMessage();
   const toolUse = msg.content.find((c) => c.type === "tool_use");
   return { parsed: toolUse?.input || null, usage: msg.usage };
+}
+
+// ── Raduppdelning vid import (2026-08-27) ─────────────────────────────────
+// LLM:en får katalogens RIKTIGA slugar i systemprompten och föreslår en per
+// prisrad. Servern mappar slug → Erbjudande-id så granskningsmodalen kan
+// förvälja rätt i dropdownen — det är den biten som annars kräver att någon
+// slår upp Bubble-id:n för hand.
+
+// ⚠️ INGEN sort_field: bubbleFindAll med sort_field UTELÄMNAR rader som saknar
+// värde i fältet (se memory/reference-bubble-sort-drops-empty). En katalogpost
+// utan display_order skulle tyst försvinna ur hintarna och dess tjänst aldrig
+// kunna föreslås.
+async function _importCatalogHints() {
+  const rows = await bubbleFindAll(SERVICES.CATALOG_TYPE, {}).catch(() => []);
+  const out = [];
+  for (const c of rows) {
+    const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+    if (!slug) continue;
+    out.push({
+      slug,
+      name: c[SERVICES.SC_NAME] || slug,
+      offer_id: _ffIdsOf(c[SERVICES.SC_OFFERS])[0] || null,
+    });
+  }
+  return out;
+}
+
+// Deterministiskt skyddsnät när LLM:en inte satte service_hint (eller satte en
+// slug som inte finns). Besluten här är Carottes, inte modellens:
+// Tillsyn och Entrémattor hör till Housekeeping (Christian 2026-08-27) —
+// katalogen har ingen egen slug för mattservice.
+const IMPORT_SLUG_KEYWORDS = [
+  [/lokalv(å|a)rd|st(ä|a)dn?|tillsyn|entr(é|e)?\s*matt|matt(a|or)\b|golvv(å|a)rd|f(ö|o)nsterputs/i, "housekeeping"],
+  [/v(ä|a)xt/i,                          "vaxter"],
+  [/frukt/i,                             "frukt"],
+  [/kaffe|espresso|bryggare/i,           "kaffe"],
+  [/vatten|vattentorn|vattenautomat/i,   "vatten"],
+  [/reception|concierge|v(ä|a)rd(inna)?/i, "reception"],
+  [/skrivare|kopiator|print/i,           "skrivare"],
+  [/catering|event|frukost|lunch/i,      "catering"],
+];
+function _importSlugFor(line, hints) {
+  const known = new Set(hints.map((h) => h.slug));
+  const hint = String(line?.service_hint || "").trim().toLowerCase();
+  if (hint && known.has(hint)) return hint;
+  const label = String(line?.label || "");
+  for (const [re, slug] of IMPORT_SLUG_KEYWORDS) {
+    if (re.test(label) && known.has(slug)) return slug;
+  }
+  return null;
+}
+
+// Berikar LLM:ens rader med slug + föreslaget Erbjudande, och räknar
+// avstämningen mot monthly_cost. Avstämningen är kvittot i granskningsmodalen:
+// går den inte ihop saknas en rad, och det ska synas INNAN något skrivs.
+function _importEnrichLines(parsed, hints) {
+  const raw = Array.isArray(parsed?.lines) ? parsed.lines : [];
+  const offerBySlug = new Map(hints.map((h) => [h.slug, h.offer_id]));
+  const nameBySlug  = new Map(hints.map((h) => [h.slug, h.name]));
+  const lines = raw.map((l) => {
+    const unit = String(l?.unit || "per månad");
+    // included_in_monthly_total får inte överstyra enheten: en rad märkt
+    // "per kg" ingår aldrig i en fast månadsavgift, vad modellen än påstår.
+    const fixed = _splitLineIsFixed({ unit }) && l?.included_in_monthly_total !== false;
+    const slug  = _importSlugFor(l, hints);
+    return {
+      label:  String(l?.label || "").trim() || "Rad",
+      amount: Number(l?.amount || 0),
+      unit,
+      included_in_monthly_total: fixed,
+      service_slug:       slug,
+      service_name:       slug ? (nameBySlug.get(slug) || slug) : null,
+      suggested_offer_id: slug ? (offerBySlug.get(slug) || null) : null,
+    };
+  });
+  const monthly   = Number(parsed?.monthly_cost || 0);
+  const linesSum  = lines.filter((l) => l.included_in_monthly_total)
+                         .reduce((s, l) => s + Math.round(l.amount), 0);
+  const diff      = linesSum - Math.round(monthly);
+  return {
+    lines,
+    reconciliation: {
+      monthly_cost: Math.round(monthly),
+      lines_sum:    linesSum,
+      diff,
+      ok:           lines.length > 0 && Math.abs(diff) <= 1,
+      fixed_lines:  lines.filter((l) => l.included_in_monthly_total).length,
+      unmapped:     lines.filter((l) => !l.suggested_offer_id).map((l) => l.label),
+    },
+  };
 }
 
 // POST /admin/contracts/import/parse — multipart upload PDF → returnerar parsed
@@ -24456,8 +24603,13 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
     let usage  = { input_tokens: 0, output_tokens: 0 };
     let method = "text";
 
+    // Katalogens slugar hämtas EN gång och används av båda extraktionsvägarna.
+    // Misslyckas hämtningen kör vi vidare utan hintar — en import ska inte
+    // stupa på att ServiceCatalog är otillgänglig.
+    const catalogHints = await _importCatalogHints().catch(() => []);
+
     if (!looksScanned) {
-      const t = await _runContractTextExtraction(text);
+      const t = await _runContractTextExtraction(text, catalogHints);
       parsed = t.parsed;
       usage  = t.usage;
     }
@@ -24471,7 +24623,7 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
           detail: `PDF har ${numPages} sidor; vision-OCR stödjer max 100.`, pages: numPages,
         });
       }
-      const v = await _runContractVisionExtraction(file.buffer, file.mimetype, file.originalname);
+      const v = await _runContractVisionExtraction(file.buffer, file.mimetype, file.originalname, catalogHints);
       parsed = v.parsed;
       usage  = v.usage;
       method = "vision";
@@ -24494,11 +24646,15 @@ app.post("/admin/contracts/import/parse", _approvalUpload.single("file"), async 
       latest_update: new Date().toISOString(),
     });
 
-    console.log(`[contracts/import/parse] PDF ${file.originalname} (${numPages}s, ${fullText.length} chars, method=${method}) → doc ${docId} · ${usage.input_tokens}+${usage.output_tokens} tokens`);
+    const { lines, reconciliation } = _importEnrichLines(parsed, catalogHints);
+    parsed.lines = lines;
+
+    console.log(`[contracts/import/parse] PDF ${file.originalname} (${numPages}s, ${fullText.length} chars, method=${method}) → doc ${docId} · ${lines.length} rader, avstämning ${reconciliation.ok ? "OK" : "DIFF " + reconciliation.diff} · ${usage.input_tokens}+${usage.output_tokens} tokens`);
 
     return res.json({
       ok: true,
       parsed,
+      reconciliation,
       method, // "text" | "vision" — hur avtalet lästes
       pdf: {
         pages: numPages || null,
