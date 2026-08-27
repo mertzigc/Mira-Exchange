@@ -148,6 +148,7 @@
 <!-- VIKTIGT: kpi_json läggs som INNEHÅLL i textarean, INTE i ett value="".
      JSON innehåller " som bryter ett attribut. Lägg Bubble-uttrycket
      "Current User's Company's kpi_json" mellan <textarea>-taggarna. -->
+<div id="mira-kpi-block">
 <textarea id="mira_data" style="display:none" aria-hidden="true"></textarea>
 <input type="hidden" id="mira_company_id" value="">
 <input type="hidden" id="mira_api_host"   value="https://mira-exchange.onrender.com">
@@ -195,6 +196,7 @@
     <button class="mc-refresh-btn" id="mc-refresh-btn">&#8635; Uppdatera</button>
   </div>
 </div>
+</div>
 
 <script>
 (function () {
@@ -218,7 +220,12 @@
     { key:"avvikelser",label:"Avvikelser",color:"#f87171" }
   ];
 
-  function el(id){ return document.getElementById(id); }
+  // ⚠️ SCOPAT UPPSLAG (2026-08-27). Kundens dashboard bär TVÅ HTML-block, och
+  // tjanster-blocket definierar OCKSÅ #mira_company_id och #mira_api_host.
+  // document.getElementById är globalt och tar det FÖRSTA i DOM:en — dvs det
+  // andra blockets fält. Sök bara i vår egen rot.
+  var ROOT = document.getElementById('mira-kpi-block') || document;
+  function el(id){ return ROOT.querySelector('#' + id); }
   function val(id){ var e=el(id); if(!e) return ''; var v=(e.value!=null?e.value:e.textContent)||''; return v.trim(); }
   function num(v){ return (v===null||v===undefined||isNaN(v))?0:Number(v); }
 
@@ -411,7 +418,20 @@
     else { triggerRefresh(true); }
   }
 
+  // ⚠️ RACE (2026-08-27). Scriptet kör vid parse, men Bubble matar in kpi_json och
+  // company_id FÖRST när sidans data laddats. Sågs skarpt: samma URL visade skarp
+  // data ena gången och DEMO_DATA den andra. Den gamla koden läste tomt, renderade
+  // demo och skrev ALDRIG över — dvs den tystaste sortens fel: den ser rätt ut.
+  // Vänta på att något av fälten fylls; först vid timeout körs demo/refresh-vägen.
+  var WAIT_MS = 6000, TICK = 100, waited = 0;
+  function boot(){
+    if (val('mira_data') || val('mira_company_id') || waited >= WAIT_MS) { load(); return; }
+    waited += TICK;
+    setTimeout(boot, TICK);
+  }
+
   var btn=el('mc-refresh-btn'); if(btn) btn.addEventListener('click',function(){ triggerRefresh(false); });
-  load();
+  setStatus('loading','Hämtar data…');
+  boot();
 })();
 </script>
