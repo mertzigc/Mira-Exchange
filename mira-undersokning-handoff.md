@@ -316,8 +316,29 @@ undersökning får `"Påminnelse: "` framför titeln. Ett uttryckligt
 
 Röktestet vaktar att sändvägen aldrig lägger en sådan kolumn på kön.
 
-**Röktest:** `node invite_mall_smoke.mjs` (170 gröna). Mutationstestad mot HEAD:
-9 av 171 faller, ingen krasch. Kör mutationstestet på en KOPIA
+### Bubble dynamic data i admin-blocket — EN bindning
+
+`mira-kommunikation-admin.html` har **exakt en** dynamisk bindning:
+`#ck_current_user_email` = Current User's e-post. Den driver förvalet
+"— dina kunder" i kundansvarig-väljaren (`fillOwners`). Utan den fungerar
+väljaren, bara utan förval.
+
+⚠️ **Bind till `data-val`, ALDRIG till `value`.** Bubble strippar `value` på
+hidden inputs — attributet överlever, värdet gör det inte. Bindningen låg tidigare
+i `value`, alltså har förvalet med all sannolikhet varit dött sedan Bubbles
+policyändring ~2026-07-14. Läses nu via `ckMyEmail()` (data-val först, value som
+fallback). Se [[reference-bubble-hidden-input-strip]].
+
+Blocket ligger på huvudsidan och parsas innan Bubble hunnit injicera — en kort,
+nätverksfri DOM-poll (250 ms, ger upp efter ~15 s) ritar om väljaren när e-posten
+dyker upp. Inga API-anrop, ingen WU.
+
+`#ea_api_key` är ingen bindning: nyckeln är hårdkodad i filen och har egen
+JS-fallback (`_EA_KEY`) sedan samma stripping-incident. Den följer med vid
+inklistring — rör den inte.
+
+**Röktest:** `node invite_mall_smoke.mjs` (176 gröna). Mutationstestad mot HEAD:
+14 av 177 faller, ingen krasch. Kör mutationstestet på en KOPIA
 (`git show HEAD:fil > kopia`), aldrig med `git checkout` i arbetsträdet.
 
 ---

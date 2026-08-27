@@ -314,9 +314,12 @@
 </style>
 
 <!-- En delad nyckel för hela Kommunikation-blocket -->
-<!-- Bind till Current User's e-post i Bubble → kundansvarig-väljaren förvaljer
-     "mina kunder". Lämnas den tom fungerar väljaren ändå, bara utan förval. -->
-<input type="hidden" id="ck_current_user_email" data-mira="current_user_email" value="">
+<!-- ⚠️ ENDA Bubble-bindningen i det här blocket.
+     Bind Current User's e-post till **data-val**, ALDRIG till value:
+     Bubble strippar `value` på hidden inputs (även med data-*-attribut kvar).
+     Attributet överlever, värdet gör det inte. Läses via ckMyEmail().
+     Lämnas den tom fungerar väljaren ändå, bara utan förval på "mina kunder". -->
+<input type="hidden" id="ck_current_user_email" data-mira="current_user_email" data-val="" value="">
 <input type="hidden" id="ea_api_key" value="392fb02fb27c004d2faa5211303aa84cd1e3f1141f879b5f973f966bce7907ba">
 
 <div class="ea-wrap" style="position:relative;height:880px">
@@ -1165,6 +1168,13 @@
     return v || _EA_KEY;
   }
   function H()   { return {'x-api-key':key(),'Content-Type':'application/json'}; }
+  // Inloggad användares e-post från Bubble. data-val först — `value` strippas av
+  // Bubble på hidden inputs, så en bindning dit ger alltid tom sträng.
+  function ckMyEmail(){
+    var el = document.getElementById('ck_current_user_email');
+    if (!el) return '';
+    return String(el.getAttribute('data-val') || el.value || '').trim().toLowerCase();
+  }
   function g(id) { return document.getElementById(id); }
   function api(p){ return HOST + p; }
   function sh(id){ var e=g(id);if(e)e.style.display=''; }
@@ -3435,7 +3445,7 @@
     function fillOwners(){
       var sel = g(P+'-own-sel'); if(!sel) return;
       if(!(OWNERS||[]).length){ sel.innerHTML='<option value="">'+(OWNERS_ERR?'— Kunde inte hämta —':'— Inga kundansvariga hittades —')+'</option>'; return; }
-      var mine = String((g('ck_current_user_email')||{}).value||'').trim().toLowerCase();
+      var mine = ckMyEmail();
       sel.innerHTML = '<option value="">— Välj kundansvarig —</option>' + OWNERS.map(function(o){
         return '<option value="'+esc(o.id)+'">'+esc(o.name)+' ('+o.companies+' bolag)'+(o.email&&o.email===mine?' — dina kunder':'')+'</option>';
       }).join('');
@@ -3444,6 +3454,17 @@
       g(P+'-own-btn').disabled = !sel.value;
     }
     _audToolRefreshers.push(fillOwners);
+    // Blocket ligger på HUVUDSIDAN och parsas innan Bubble hunnit injicera sin
+    // dynamiska data. Kommer e-posten efter att väljaren ritats får man inget
+    // förval — därför en kort, nätverksfri DOM-poll som ritar om när den dyker
+    // upp. Ger upp efter ~15 s; väljaren fungerar ändå, bara utan förval.
+    if(!ckMyEmail() && !window._ckEmailPoll){
+      window._ckEmailPoll = true;
+      var _et = 0, _ei = setInterval(function(){
+        if(ckMyEmail()){ clearInterval(_ei); _audToolRefreshers.forEach(function(f){ try{f();}catch(_){ } }); }
+        else if(++_et > 60) clearInterval(_ei);
+      }, 250);
+    }
     if((OWNERS||[]).length) fillOwners();
     else if(!OWNERS_LOADING){
       OWNERS_LOADING = true;

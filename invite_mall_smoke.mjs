@@ -350,6 +350,21 @@ ok("sändvägen skriver INGEN subject_override-kolumn på EmailQueue",
 ok("flaggan ligger i extra_data, som redan är ett fungerande fält",
    /extra_data: JSON\.stringify\(extra\)/.test(sendSrc));
 
+// ── Bubble-bindningen i admin-blocket ─────────────────────────────────────
+// Bubble strippar `value` på hidden inputs — attributet överlever, värdet inte.
+// En bindning till value ger därför alltid tom sträng och förvalet dör tyst.
+sec("Bubble dynamic data (admin)");
+ok("e-postfältet bär värdet i data-val", /id="ck_current_user_email"[^>]*data-val=""/.test(ADMIN));
+ok("kommentaren säger uttryckligen data-val, inte value", /ALDRIG till value/.test(ADMIN));
+ok("läsningen tar data-val först, value som fallback",
+   /getAttribute\('data-val'\) \|\| el\.value/.test(ADMIN));
+ok("ingen kodväg läser .value direkt från e-postfältet",
+   !/g\('ck_current_user_email'\)\|\|\{\}\)\.value/.test(ADMIN));
+ok("sen injicering fångas av en nätverksfri poll som ger upp",
+   /window\._ckEmailPoll/.test(ADMIN) && /\+\+_et > 60/.test(ADMIN));
+// API-nyckeln har egen fallback sedan stripping-incidenten 2026-07-14.
+ok("API-nyckeln har kvar sin JS-fallback", /return v \|\| _EA_KEY;/.test(ADMIN));
+
 ok("admin varnar synligt när bg_color droppats av Bubble",
    /function bgWarnIfMissing\(p, j\)/.test(ADMIN) && /bgWarnIfMissing\('iv', j\);/.test(ADMIN)
    && /bg_color" saknas på datatypen Invitation/.test(ADMIN));
