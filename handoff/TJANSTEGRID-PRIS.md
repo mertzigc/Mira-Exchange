@@ -5,6 +5,36 @@
 > Minne: `project-tjanstegrid-prishjarna`
 
 ---
+## Paketkorten visar RABATTSATS, inga kronor — 2026-08-27
+
+**Utlösare (Christian):** *"de 3 paketerbjudandena är jäkligt svåra att få vettiga… det strular om man plötsligt ska få kaffet gratis + rabatt om man råkar ha alla tjänsterna."*
+
+**Vad som var fel:** korten räknade paketpriset i KLIENTEN — summa styckpriser × (1 − rabatt) — och visade struket pris + paketpris + "Spara X kr/mån". Två sätt att spricka:
+1. En kund som redan hade hela paketet fick ändå en prislapp, som om paketet kunde köpas igen.
+2. Med bara EN tjänst kvar blev rabatten (räknad på HELA paketets styckpris) större än den kvarvarande tjänstens pris. Planhat hade 3 av 4 → kortet såg ut att lova kaffet gratis PLUS avdrag.
+
+**Beslut:** inga kronor alls på paketkorten. Kortet kommunicerar **rabattsatsen**; kronorna sätts i offert/avtal där de hör hemma.
+
+| Paket | Rabatt |
+|---|---|
+| Kontoret Runt | **7 %** |
+| Trivselpaket | **5 %** |
+| Fräscht & grönt | **5 %** |
+
+**Tre lägen, verifierade visuellt:**
+- **Delvis aktivt** → `−7 %` + "på hela paketet", och statusraden *"Ni har 3 av 4 — lägg till Kaffe"* (ersätter prisraden: säger var kunden står utan att lova kronor). Beställningsknapp kvar.
+- **Inget aktivt** → rabattsats + *"Allt i ett — vi räknar fram priset för era ytor."*
+- **Har hela paketet** → varken rabattsats eller knapp, bara "Ni har hela paketet ✓". ⚠️ En rabatt kunden inte kan hämta ut ska inte lockas med.
+
+**Kod:** `packageCompute()` räknar inte längre några priser alls — buggen bodde där, så den togs bort vid roten (returnerar `parts`/`newParts`/`have`/`total`). `SERVICE_PACKAGES` i `index.js` bär satserna; demo-fallbacken i blocket speglar dem och vaktas av ett test så de inte glider isär. `rabatt_pct` är nu ren kommunikation — `/services/request-activation` prissätter per tjänst och är opåverkad.
+
+**Layoutfix på vägen:** rabattblocket hoppade ned under texten så fort beskrivningen var lite längre (Kontoret Runt vs Trivselpaket blev olika). `.mt-pkg-top > div:first-child { flex:1 1 180px; min-width:0 }`.
+
+**Verifierat:** `avtal_split_smoke.mjs` **200/200**, **69 mutationer, 69 faller, 0 kraschar** — bl.a. återinförd prismatematik fäller 4, rabatt visad för kund som har allt fäller 2, borttagen statusrad fäller 2, gamla satsen i konfigen fäller 1, demo-fallback ur synk fäller 1. Renderat och ögongranskat i alla tre lägen.
+
+**Deploy:** `index.js` (Render) + klistra om `mira-kund-dashboard-tjanster.html`.
+
+---
 ## 0i. Tjänste-grid PRISHJÄRNA (Fas 0–5) + order→lead→pris — LIVE & VERIFIERAT 2026-08-12
 
 Session-mål: göra kund-dashboardens tjänste-grid smart/anpassad med **EN prissanning**, förenkla erbjudande-adminen, paketera för merförsäljning, och låta "Beställ" bli lead→avtal. Hela kedjan LIVE + verifierad på testkund CMIAB (Frukt/Växter beställda → Comission i planering + mail + Lead med pris). Detaljplan i minnet `project-tjanstegrid-prishjarna.md`.

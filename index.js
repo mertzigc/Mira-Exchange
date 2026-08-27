@@ -21504,16 +21504,25 @@ function _servicesIncludes(productText) {
 // Fas 3: kurerade paket för merförsäljning. Config-drivet (inget Bubble-typ än) —
 // priset räknas live i frontend per valt kontor (summa av ingående tjänster − rabatt).
 // include = ServiceCatalog-slugs; saknad slug hoppas tyst över.
+// ⚠️ INGA KRONOR PÅ PAKETKORTEN (2026-08-27). Korten räknade tidigare ut ett
+// paketpris i klienten (summa styckpriser − rabatt). Det gav två problem:
+//   • Kunder som redan hade hela paketet fick ändå en prislapp — som om de
+//     kunde köpa det igen.
+//   • Med bara EN tjänst kvar blev "rabatten" större än den tjänstens pris,
+//     så kortet såg ut att lova t.ex. kaffet gratis PLUS avdrag.
+// Klienten visar nu bara rabattSATSEN; kronorna sätts i offert/avtal där de
+// hör hemma. `rabatt_pct` är därför ren kommunikation — backend prissätter
+// aktiveringen per tjänst i /services/request-activation, opåverkat av detta.
 const SERVICE_PACKAGES = [
   { slug: "kontoret_runt", name: "Kontoret Runt", hero: true,
     desc: "Hela kontoret omhändertaget — städ, kaffe, frukt och grönska i ett.",
-    include: ["housekeeping", "kaffe", "frukt", "vaxter"], rabatt_pct: 12 },
+    include: ["housekeeping", "kaffe", "frukt", "vaxter"], rabatt_pct: 7 },
   { slug: "trivsel", name: "Trivselpaket", hero: false,
     desc: "Frukt och grönska som märks i vardagen.",
-    include: ["frukt", "vaxter"], rabatt_pct: 10 },
+    include: ["frukt", "vaxter"], rabatt_pct: 5 },
   { slug: "frascht", name: "Fräscht & grönt", hero: false,
     desc: "Daglig städning plus levande växter.",
-    include: ["housekeeping", "vaxter"], rabatt_pct: 8 },
+    include: ["housekeeping", "vaxter"], rabatt_pct: 5 },
 ];
 
 async function _buildServicesDashboard(companyId) {

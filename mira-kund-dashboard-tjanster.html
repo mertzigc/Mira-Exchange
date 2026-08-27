@@ -71,11 +71,11 @@
   .mt-pkg-badge { font-size:10px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:#db6923; background:rgba(219,105,35,0.16); padding:2px 8px; border-radius:999px; }
   .mt-pkg-desc { font-size:12.5px; color:rgba(255,255,255,0.60); margin-top:3px; max-width:46ch; }
   .mt-pkg-inc { font-size:11.5px; color:rgba(255,255,255,0.42); margin-top:7px; }
-  .mt-pkg-price { text-align:right; white-space:nowrap; }
-  .mt-pkg-strike { font-size:12px; color:rgba(255,255,255,0.38); text-decoration:line-through; }
-  .mt-pkg-big { font-size:24px; font-weight:800; color:#db6923; letter-spacing:-0.02em; }
-  .mt-pkg-big small { font-size:12px; font-weight:600; color:rgba(255,255,255,0.45); margin-left:2px; }
-  .mt-pkg-save { font-size:11.5px; font-weight:700; color:#10b981; margin-top:2px; }
+  .mt-pkg-top > div:first-child { flex:1 1 180px; min-width:0; }
+  .mt-pkg-rabatt { text-align:right; white-space:nowrap; flex:0 0 auto; }
+  .mt-pkg-rabatt-v { font-size:26px; font-weight:800; color:#db6923; letter-spacing:-0.02em; line-height:1.05; }
+  .mt-pkg-rabatt-l { font-size:11.5px; color:rgba(255,255,255,0.50); margin-top:1px; }
+  .mt-pkg-status { font-size:12px; color:rgba(255,255,255,0.55); margin-top:12px; }
   .mt-pkg-foot { margin-top:14px; display:flex; justify-content:flex-end; }
   .mt-pkg-cta { flex:none; padding:9px 20px; }
   .mt-pkg-have { font-size:12.5px; font-weight:600; color:#10b981; }
@@ -549,16 +549,16 @@
     if (!item || !item.options || !item.options.length) return null;
     return { item:item, opt:item.options[0] };
   }
+  // ⚠️ INGEN prismatematik här. Korten räknade tidigare summa styckpriser minus
+  // rabatt, vilket sprack på två sätt: kunder som redan hade hela paketet fick
+  // ändå en prislapp, och med bara EN tjänst kvar blev rabatten större än den
+  // tjänstens pris — kortet såg ut att lova tjänsten gratis PLUS avdrag.
+  // Kronorna hör hemma i offert/avtal. Kortet kommunicerar rabattSATSEN.
   function packageCompute(pkg){
     var parts = (pkg.include||[]).map(pkgPart).filter(Boolean);
     if (parts.length < 2) return null;
-    var styck = 0, newParts = [];
-    parts.forEach(function(p){
-      styck += adaptedUnitPrice(p.opt);
-      if (!ACTIVE[p.item.slug]) newParts.push(p);
-    });
-    var paket = Math.round(styck * (1 - num(pkg.rabatt_pct)/100));
-    return { parts:parts, newParts:newParts, styck:Math.round(styck), paket:paket, saving:Math.round(styck)-paket };
+    var newParts = parts.filter(function(p){ return !ACTIVE[p.item.slug]; });
+    return { parts:parts, newParts:newParts, have:parts.length-newParts.length, total:parts.length };
   }
   function renderPackages(){
     var box = el('mt-packages'); if (!box) return;
@@ -567,20 +567,31 @@
       var c = packageCompute(pkg); if (!c) return '';
       var names = c.parts.map(function(p){return esc(p.item.name);}).join(' · ');
       var allActive = c.newParts.length===0;
+      var pct = num(pkg.rabatt_pct);
       var cta = allActive
         ? '<span class="mt-pkg-have">Ni har hela paketet ✓</span>'
         : '<button class="mt-btn primary mt-pkg-cta" data-act="order-package" data-slug="'+esc(pkg.slug)+'">Beställ paketet →</button>';
+      // Rabattsatsen visas bara när det finns något kvar att lägga till — en
+      // kund som redan har hela paketet ska inte lockas med en rabatt hen inte
+      // kan hämta ut.
+      var rabatt = (!allActive && pct > 0)
+        ? '<div class="mt-pkg-rabatt"><div class="mt-pkg-rabatt-v">−'+pct+'&nbsp;%</div>'+
+          '<div class="mt-pkg-rabatt-l">på hela paketet</div></div>'
+        : '';
+      // Ersätter den gamla prisraden: säger var kunden står utan att lova kronor.
+      var status = allActive ? ''
+        : (c.have > 0
+            ? '<div class="mt-pkg-status">Ni har '+c.have+' av '+c.total+' — lägg till '+
+              esc(c.newParts.map(function(p){return p.item.name;}).join(' och '))+'</div>'
+            : '<div class="mt-pkg-status">Allt i ett — vi räknar fram priset för era ytor.</div>');
       return '<div class="mt-pkg'+(pkg.hero?' hero':'')+'">'+
         '<div class="mt-pkg-top">'+
           '<div><div class="mt-pkg-name">'+esc(pkg.name)+(pkg.hero?'<span class="mt-pkg-badge">Populärast</span>':'')+'</div>'+
             '<div class="mt-pkg-desc">'+esc(pkg.desc||'')+'</div>'+
             '<div class="mt-pkg-inc">'+names+'</div></div>'+
-          '<div class="mt-pkg-price">'+
-            (c.saving>0?'<div class="mt-pkg-strike">'+fmtKr(c.styck)+'</div>':'')+
-            '<div class="mt-pkg-big">'+fmtKr(c.paket)+'<small>/mån</small></div>'+
-            (c.saving>0?'<div class="mt-pkg-save">Spara '+fmtKr(c.saving)+'/mån</div>':'')+
-          '</div>'+
+          rabatt+
         '</div>'+
+        status+
         '<div class="mt-pkg-foot">'+cta+'</div>'+
       '</div>';
     }).join('');
@@ -955,9 +966,10 @@
     var companyId = txt('mira_company_id');
     if (!companyId) {
       CATALOG = DEMO_CATALOG.slice();
+      // Demo-fallback speglar SERVICE_PACKAGES i index.js (7 / 5 / 5).
       PACKAGES = [
-        { slug:'kontoret_runt', name:'Kontoret Runt', hero:true, desc:'Hela kontoret omhändertaget — städ, kaffe, frukt och grönska.', include:['housekeeping','kaffe','frukt','vaxter'], rabatt_pct:12 },
-        { slug:'trivsel', name:'Trivselpaket', hero:false, desc:'Frukt och grönska som märks i vardagen.', include:['frukt','vaxter'], rabatt_pct:10 }
+        { slug:'kontoret_runt', name:'Kontoret Runt', hero:true, desc:'Hela kontoret omhändertaget — städ, kaffe, frukt och grönska.', include:['housekeeping','kaffe','frukt','vaxter'], rabatt_pct:7 },
+        { slug:'trivsel', name:'Trivselpaket', hero:false, desc:'Frukt och grönska som märks i vardagen.', include:['frukt','vaxter'], rabatt_pct:5 }
       ];
       OFFICES = DEMO_OFFICES.slice();
       ACTIVE_ACCOUNT = JSON.parse(JSON.stringify(DEMO_ACTIVE_ACCOUNT));

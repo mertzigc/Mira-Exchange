@@ -773,6 +773,68 @@ const run = async () => {
        && (AFFAR.match(/bubbleCount\("Contract", [^)]*CT_MASTERS_ONLY[^)]*\)/g) || []).length === 4);
   });
 
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Paketkorten — rabattsats, inga kronor");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("paketkort", () => {
+    // ⚠️ Kronorna räknades i KLIENTEN (summa styckpriser − rabatt) och sprack
+    // på två sätt: en kund som redan hade hela paketet fick ändå en prislapp,
+    // och med bara EN tjänst kvar blev rabatten större än den tjänstens pris —
+    // kortet såg ut att lova tjänsten gratis PLUS avdrag.
+    const pkgFns = "function esc(x){return String(x==null?'':x);}\nfunction num(v){return (v===null||v===undefined||isNaN(v))?0:Number(v);}\n"
+      + slice(GRID, "  function pkgPart(slug){", "\n  }", "pkgPart")
+      + slice(GRID, "  // ⚠️ INGEN prismatematik här.", "\n  }", "packageCompute")
+      + slice(GRID, "  function renderPackages(){", "\n  }", "renderPackages");
+    const CAT = ["housekeeping", "kaffe", "frukt", "vaxter"].map((sl) => ({
+      slug: sl, name: sl, options: [{ id: "o_" + sl, price: 1000 }] }));
+    const PKG = [
+      { slug: "kontoret_runt", name: "Kontoret Runt", hero: true, desc: "d",
+        include: ["housekeeping", "kaffe", "frukt", "vaxter"], rabatt_pct: 7 },
+      { slug: "trivsel", name: "Trivselpaket", hero: false, desc: "d",
+        include: ["frukt", "vaxter"], rabatt_pct: 5 },
+    ];
+    const render = (ACTIVE) => new Function("CATALOG", "PACKAGES", "ACTIVE", "el",
+      "adaptedUnitPrice", "fmtKr",
+      pkgFns + "\nvar out='';el=function(){return {set innerHTML(v){out=v;}};};renderPackages();return out;")
+      (CAT, PKG, ACTIVE, null, (o) => Number(o && o.price) || 0, (v) => Math.round(v) + " kr");
+
+    const planhat = render({ housekeeping: {}, vaxter: {}, frukt: {} });   // kaffe saknas
+    const nykund  = render({});
+    const harAllt = render({ housekeeping: {}, kaffe: {}, frukt: {}, vaxter: {} });
+
+    // Inga kronor någonstans, i något läge.
+    for (const [name, html] of [["Planhat", planhat], ["ny kund", nykund], ["har allt", harAllt]]) {
+      ok("inga kronor på paketkorten (" + name + ")", !/\bkr\b/.test(html));
+    }
+    ok("rabattsatsen visas i stället", /−7&nbsp;%/.test(planhat) && /på hela paketet/.test(planhat));
+    ok("Trivselpaket har 5 %", /−5&nbsp;%/.test(nykund));
+
+    // ⚠️ En kund som redan har hela paketet ska inte lockas med en rabatt hen
+    // inte kan hämta ut — och inte heller se en beställningsknapp.
+    ok("paket kunden redan har visar ingen rabattsats", !/%/.test(harAllt));
+    ok("paket kunden redan har visar 'Ni har hela paketet'", /Ni har hela paketet/.test(harAllt));
+    ok("paket kunden redan har har ingen beställningsknapp", !/order-package/.test(harAllt));
+
+    // Statusraden ersätter prisraden: säger var kunden står utan att lova kronor.
+    ok("delvis aktivt paket säger hur långt kunden kommit",
+       /Ni har 3 av 4 — lägg till kaffe/.test(planhat));
+    ok("tomt paket säger att priset räknas fram", /vi räknar fram priset för era ytor/.test(nykund));
+    ok("delvis aktivt paket kan fortfarande beställas", /order-package/.test(planhat));
+
+    // packageCompute får inte räkna pengar alls — det är där buggen bodde.
+    const compute = slice(GRID, "  function packageCompute(pkg){", "\n  }", "packageCompute-kropp");
+    ok("packageCompute räknar inga priser längre",
+       !/adaptedUnitPrice/.test(compute) && !/rabatt_pct/.test(compute));
+
+    // Backend-konfigen är sanningen; demo-fallbacken får inte glida isär.
+    const cfg = slice(SRC, "const SERVICE_PACKAGES = [", "\n];", "SERVICE_PACKAGES");
+    ok("kontoret_runt = 7 %", /include: \["housekeeping", "kaffe", "frukt", "vaxter"\], rabatt_pct: 7/.test(cfg));
+    ok("trivsel = 5 %",       /include: \["frukt", "vaxter"\], rabatt_pct: 5/.test(cfg));
+    ok("frascht = 5 %",       /include: \["housekeeping", "vaxter"\], rabatt_pct: 5/.test(cfg));
+    ok("demo-fallbacken speglar backend-satserna",
+       /rabatt_pct:7 \}/.test(GRID) && /rabatt_pct:5 \}/.test(GRID) && !/rabatt_pct:1[02] \}/.test(GRID));
+  });
+
   console.log(`\n${fail === 0 ? "✅" : "❌"}  ${pass} pass · ${fail} fail`);
   process.exit(fail === 0 ? 0 : 1);
 };
