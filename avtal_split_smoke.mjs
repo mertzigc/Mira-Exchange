@@ -42,19 +42,17 @@ function fnFrom(src, start, end, label, argNames = [], args = []) {
 }
 
 const SRC  = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
-// ⚠️ TVÅ block bär samma panel och måste ändras ihop:
-//   mira-foretag-lista.html   — LIVE kundkort + avtal (native kortet dött 2026-08-27)
-//                               OCH portens KÄLLA. Panelen är INPORTAD där
-//                               (.ab-wrap-markup + egen modul), inte monterad.
-//   mira-abonnemang-deal.html — namnrymdsklon i affärs-popupen (.ad-wrap).
-// Klonen kan INTE regenereras ur källan: den har egen logik (DEAL_LIVE,
-// miraAvtalModal, AS_MODAL_D, keepDeal). Den måste portas riktat — därför
-// vaktas båda mot samma kravlista här.
-// (mira-abonnemang-kund.html raderad 2026-08-27 — var en strikt delmängd.)
-const DEAL = fs.readFileSync(new URL("./mira-abonnemang-deal.html", import.meta.url), "utf8");
+// ⚠️ TVÅ block bär avtalsfunktionen och måste ändras ihop (2026-08-27):
+//   mira-foretag-lista.html    — företagsvyn: lista + kundkort + avtalsflik.
+//   mira-abonnemang-admin.html — stora avtalsvyn: global tabell över alla kunder.
+// Affärsvyn har ingen panel — dess "avtalsflik" är flödet filtrerat på Avtal
+// (affar_api.js). Raderade samma dag som överflödiga: mira-abonnemang-kund.html,
+// mira-abonnemang-deal.html, mira-approval-create.html — alla strikta delmängder.
+const ADMIN = fs.readFileSync(new URL("./mira-abonnemang-admin.html", import.meta.url), "utf8");
 const GRID = fs.readFileSync(new URL("./mira-kund-dashboard-tjanster.html", import.meta.url), "utf8");
 const FORETAG = fs.readFileSync(new URL("./mira-foretag-lista.html", import.meta.url), "utf8");
 const COMPAPI = fs.readFileSync(new URL("./companies_api.js", import.meta.url), "utf8");
+const AFFAR   = fs.readFileSync(new URL("./affar_api.js", import.meta.url), "utf8");
 
 // Fältnamnen läses ur källan — testet ska inte ha en egen sanning om Bubble-
 // slugar (fel namn = tysta nollresultat, inte röda tester).
@@ -445,8 +443,11 @@ const run = async () => {
        !/contract_type === 'Subscription' && \(c\.status === 'aktiv'/.test(FORETAG));
     // ⚠️ Det raderade kund-blocket får inte återuppstå tyst: två filer är redan
     // en för många, tre var det som gjorde att affärsvyn hann släpa efter.
-    ok("mira-abonnemang-kund.html är borta (en källa, en klon)",
-       !fs.existsSync(new URL("./mira-abonnemang-kund.html", import.meta.url)));
+    // ⚠️ De raderade blocken får inte återuppstå tyst — varje extra kopia är
+    // en vy som hinner släpa efter innan någon märker det.
+    for (const gone of ["mira-abonnemang-kund.html", "mira-abonnemang-deal.html", "mira-approval-create.html"]) {
+      ok(gone + " är borta", !fs.existsSync(new URL("./" + gone, import.meta.url)));
+    }
     const varRate = fnFrom(FORETAG, "  function variableRateOf(ct) {", "\n  }", "variableRateOf");
     ok("variableRateOf finns i panelen", !!varRate);
     ok("rörlig delrad visar styckpris i stället för 0 kr/mån",
@@ -455,9 +456,17 @@ const run = async () => {
        !!varRate && varRate({ rate_card_json: JSON.stringify([{ role: "Uppstart", price_per_h: 10000, unit: "engång" }]) }) === null);
     ok("rowHtml anropar faktiskt styckprisuppslaget", /var vr = variableRateOf\(ct\);/.test(FORETAG));
     // Backend måste flagga master/child, annars har frontend inget att nästla på.
-    const byc = slice(SRC, 'app.get("/admin/contracts/by-company"', "\n});", "by-company");
-    ok("by-company flaggar is_master/is_child/child_count",
-       /e\.is_master   = e\.child_count > 0;/.test(byc) && /e\.is_child    = !!e\.master_contract_id;/.test(byc));
+    // Körs, av samma skäl som /all: en nollad child_count lämnar is_master-raden
+    // på plats och hade passerat en strängkontroll.
+    const bycFlag = new Function("enriched",
+      slice(SRC, "    const childCount = new Map();", "      e.is_child    = !!e.master_contract_id;\n    }", "by-company-flaggning")
+      + "\nreturn enriched;");
+    const bycOut = bycFlag([{ id: "m1" }, { id: "c1", master_contract_id: "m1" }, { id: "fri" }]);
+    ok("by-company flaggar mastern med rätt antal barn",
+       bycOut[0].is_master === true && bycOut[0].child_count === 1);
+    ok("by-company flaggar barnet som barn", bycOut[1].is_child === true && bycOut[1].is_master === false);
+    ok("by-company lämnar fristående avtal oflaggade",
+       bycOut[2].is_master === false && bycOut[2].is_child === false);
   });
 
   // ════════════════════════════════════════════════════════════════════════
@@ -596,51 +605,6 @@ const run = async () => {
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  sec("Deal-klonen — affärsvyn får inte släpa efter kundkortet");
-  // ════════════════════════════════════════════════════════════════════════
-  await group("deal-klon", () => {
-    // Affärs-popupen kör en egen klon av panelen. Glöms den bort visar
-    // affärsvyn paketavtal platt, dubbelräknar totalen och saknar
-    // raduppdelningen vid import — utan att något test blir rött.
-    const both = PANEL_FEATURES;
-    const _unused = [
-      ["nästlar paketavtal",            /function nestPackages\(contracts\) \{/],
-      ["styckpris på rörlig delrad",    /function variableRateOf\(ct\) \{/],
-      ["masterrad namngiven av avtalet", /headName = ct\.contract_title \|\| ct\.service_name/],
-      ["paket-pill",                    /ab-pill t-pkg/],
-      ["delradernas summa mot totalen", /ab-kids-sum/],
-      ["raduppdelning vid import",      /function renderSplitPanel\(\)/],
-      ["split kedjad efter commit",     /SPLIT_STATE\.on && data\.contract_id/],
-      ["panelen nollas i resetForm",    /SPLIT_STATE = \{ lines: \[\], reconciliation: null, on: false \};\n    var splitPanel/],
-      ["bilagor bara på mastern",       /ct\.is_child \? '' :/],
-      ["totalen hoppar över barnen",    /allCt\.filter\(function \(c\) \{ return !c\.master_contract_id; \}\)/],
-      ["Hybrid i månadstotalen",        /c\.contract_type !== 'RateCard'/],
-      ["expand-selektor är barn-komb.", /\.ab-row\.open > \.ab-rowbody \{ display:block; \}/],
-      ["chevron-selektor scopad",       /\.ab-row\.open > \.ab-rowhead \.ab-chev/],
-      ["CATALOG bär slug",              /slug: svc\.slug \|\| null,/],
-    ];
-    for (const [what, re] of both) {
-      ok("deal-klonen har " + what, typeof re === "function" ? re(DEAL) : re.test(DEAL));
-    }
-
-    // CSS får inte dubbleras av en slarvig port (två .ab-split-block = drift).
-    const once = PANEL_CSS_ONCE;
-    for (const c of once) {
-      ok("deal-klonen har '" + c + "' exakt en gång", DEAL.split(c).length - 1 === 1);
-    }
-
-    // ⚠️ Namnrymden ÄR isoleringen (gotcha 11: två block på samma sida krockar
-    // via delade ID:n/window-fn). Läcker den är felet osynligt tills båda
-    // blocken råkar ligga på samma Bubble-sida.
-    ok("deal-klonen använder inte kund-blockets wrapper", !/class="ab-wrap/.test(DEAL));
-    ok("deal-klonen har inga _k-suffixade globaler", !/window\.\w+_k\b/.test(DEAL));
-    ok("källblocket har inga _d-suffixade globaler", !/window\.\w+_d\b/.test(FORETAG));
-    ok("deal-klonens egen logik är orörd av porten",
-       /var DEAL_LIVE = WIZ_DEAL_ID;/.test(DEAL) && /window\.miraAvtalModal = \{/.test(DEAL)
-       && /function keepDeal\(c\)/.test(DEAL));
-  });
-
-  // ════════════════════════════════════════════════════════════════════════
   sec("Företagskortets KPI — backend får inte dubbelräkna paketavtal");
   // ════════════════════════════════════════════════════════════════════════
   await group("kort-kpi", () => {
@@ -715,6 +679,98 @@ const run = async () => {
     ok("is_signed-kryssrutan överlevde porten",
        /var signedBox = \$\('f-is-signed'\);/.test(FORETAG) && /if \(signedBox\) signedBox\.checked = true;/.test(FORETAG));
     ok("mountPanes flyttar fortfarande in panelen", /mount\.appendChild\(pane\);/.test(FORETAG));
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Stora avtalsvyn — paritet med företagsvyns avtalsfunktion");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("admin-paritet", () => {
+    // ⚠️ Admin är en TABELL, inte kort-panelen — samma funktion, annan form.
+    // Delraderna hör i masterns expand-panel; renderas de på toppnivån står
+    // Planhat fyra gånger i "Alla avtal".
+    ok("delrader plockas ur toppnivån", /var rows = SAMPLE\.filter\(function\(r\)\{ return !\(r\.master_contract_id && KM\.byId\[r\.master_contract_id\]\); \}\)/.test(ADMIN));
+    ok("delrad vars master saknas visas fristående", /if \(!r\.master_contract_id \|\| !byId\[r\.master_contract_id\]\) continue;/.test(ADMIN));
+    ok("masterraden får en 'N tjänster'-pill", /aa-pill t-pkg/.test(ADMIN));
+    ok("masterraden namnges av avtalet", /headName = r\.contract_title \|\| r\.service_name/.test(ADMIN));
+    ok("masterns underrubrik listar delradernas tjänster", /headSub  = kids\.map\(function\(k\)\{ return k\.service_name/.test(ADMIN));
+    ok("delradernas summa visas mot masterns total", /aa-kids-sum/.test(ADMIN) && /aa-kids-diff/.test(ADMIN));
+    ok("rörlig delrad visar styckpris, inte 0 kr/mån", /function variableRateOf\(r\)\{/.test(ADMIN));
+    ok("rowHtml anropar faktiskt styckprisuppslaget", /var vr = variableRateOf\(r\);/.test(ADMIN));
+
+    // KPI-raden: exakt samma två buggar som redan rättats i företagsvyn.
+    ok("KPI hoppar över delraderna", /var countable = SAMPLE\.filter\(function\(r\)\{ return !r\.master_contract_id; \}\)/.test(ADMIN));
+    ok("KPI-summan filtrerar inte på avtalstyp",
+       !/contract_type==='Subscription' && \(r\.status==='aktiv'/.test(ADMIN));
+    ok("'utgår <30 d' räknar också bara mastrar", /var utgar = countable\.filter/.test(ADMIN));
+
+    // PDF-import + raduppdelning
+    ok("importknapp finns", /data-aa="import-btn"/.test(ADMIN) && /data-aa="import-file"/.test(ADMIN));
+    ok("importen anropar parse-endpointen", /\/admin\/contracts\/import\/parse/.test(ADMIN));
+    ok("commit går mot import/commit, inte create", /\/admin\/contracts\/import\/commit/.test(ADMIN));
+    ok("is_signed-frågan finns och skickas med", /data-aa="cm-is-signed"/.test(ADMIN) && /body\.is_signed = signedBox/.test(ADMIN));
+    ok("raduppdelningen renderas bara i import-läge med minst två rader",
+       /if \(CM_MODE !== 'import' \|\| L\.length < 2\)/.test(ADMIN));
+    ok("uppdelningen förvald PÅ bara när avstämningen går ihop",
+       /SPLIT_STATE\.on = !!\(d\.reconciliation && d\.reconciliation\.ok && SPLIT_STATE\.lines\.length > 1\)/.test(ADMIN));
+    ok("dropdownen förvälje på LLM:ens förslag", /splitOfferOptions\(l\.suggested_offer_id\)/.test(ADMIN));
+    ok("antal delavtal räknas om live", /function splitChildCount\(\)/.test(ADMIN));
+    ok("splitten körs EFTER commit, inte i stället för", /splitContractAction\(result\.contract_id, lines\)/.test(ADMIN));
+    ok("misslyckad split lämnar avtalet kvar och säger det", /Avtalet ligger kvar som ett enda avtal/.test(ADMIN));
+    ok("engångsrad skickar setup_cost men INTE unit_price",
+       /unit_price: \(fixed \|\| engang\) \? null : l\.amount,/.test(ADMIN));
+
+    // ⚠️ Admin har ingen förvald kund — utan auto-match måste operatören leta
+    // upp kunden för hand vid varje import.
+    ok("kunden auto-matchas från avtalets customer_name", /if \(parsed\.customer_name\) \{/.test(ADMIN)
+       && /CM_CREATE_COMPANY = \{ id: hit\.id, name: hit\.name \}/.test(ADMIN));
+    ok("erbjudandelistan hämtas kundoberoende", /\/admin\/service-catalog/.test(ADMIN));
+
+    // ⚠️ openContractCreate() nollar SPLIT_STATE — importen fyller den FÖRE
+    // anropet, så den måste sparas över. Utan detta blir panelen alltid tom.
+    ok("raduppdelningen överlever openContractCreate", /var keep = SPLIT_STATE;/.test(ADMIN)
+       && /SPLIT_STATE = keep;/.test(ADMIN));
+    ok("import-artefakter nollas i create-läge", /CM_MODE = 'create';\n    SPLIT_STATE = \{ lines: \[\]/.test(ADMIN));
+    ok("import-artefakter nollas i edit-läge", /CM_MODE = 'edit';\n    SPLIT_STATE = \{ lines: \[\]/.test(ADMIN));
+
+    // Backend
+    // ⚠️ Körs, inte regex:as — en mutation som nollar child_count lämnar
+    // is_master-raden på plats och hade passerat en strängkontroll.
+    const flagFn = new Function("items",
+      slice(SRC, "    const childCountAll = new Map();", "      e.is_child    = !!e.master_contract_id;\n    }", "all-flaggning")
+      + "\nreturn items;");
+    const flagged = flagFn([
+      { id: "m1" }, { id: "c1", master_contract_id: "m1" }, { id: "c2", master_contract_id: "m1" }, { id: "fri" },
+    ]);
+    ok("/admin/contracts/all flaggar mastern med rätt antal barn",
+       flagged[0].is_master === true && flagged[0].child_count === 2);
+    ok("/admin/contracts/all flaggar barnen som barn",
+       flagged[1].is_child === true && flagged[1].is_master === false);
+    ok("fristående avtal flaggas varken som master eller barn",
+       flagged[3].is_master === false && flagged[3].is_child === false && flagged[3].child_count === 0);
+    const cat = slice(SRC, 'app.get("/admin/service-catalog"', "\n});", "service-catalog");
+    ok("service-catalog hämtas UTAN sort_field (tappar annars poster tyst)",
+       /bubbleFindAll\(SERVICES\.CATALOG_TYPE, \{\}\)/.test(cat));
+    ok("service-catalog är öppen för x-admin-token", /"\/admin\/service-catalog",/.test(SRC));
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Affärsvyn — flödet visar dokument, inte delrader");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("affar-flodet", () => {
+    // ⚠️ Affärskedjan visar DOKUMENT. Planhat gav annars "frukt planhat",
+    // "växtservice planhat" och "housekeeping planhat" som tre affärshändelser.
+    ok("delrader filtreras ur flödet", /avtals\.filter\(\(r\) => !isChildContract\(r\)\)/.test(AFFAR));
+    ok("affärskedjan /deal/:id filtrerar också", /avtalRows \|\| \[\]\)\.filter\(\(r\) => !isChildContract\(r\)\)/.test(AFFAR));
+    ok("listvyn filtrerar också", /recs\.filter\(\(r\) => !isChildContract\(r\)\)\.map\(\(r\) => nAvtal/.test(AFFAR));
+    ok("sökningen filtrerar också", /recs\.filter\(\(r\) => !isChildContract\(r\)\)\.map\(\(r\) => nAvtal\(r, m\)\)\.forEach/.test(AFFAR));
+    // Räknaren sa 211 fast det fanns 208 avtal.
+    // ⚠️ TRE räknarställen (flöde, sidtotal, grand_total). Kräv alla — en
+    // punktmutation på ett av dem hade annars passerat.
+    ok("räknarna exkluderar delrader serverside — på ALLA tre ställen",
+       /const CT_MASTERS_ONLY = \[\{ key: "master_contract", constraint_type: "is_empty" \}\]/.test(AFFAR)
+       // Fyra anrop: flödets KPI, sidtotalen (filtrerad + ofiltrerad) och grand_total.
+       && (AFFAR.match(/bubbleCount\("Contract"\)/g) || []).length === 0
+       && (AFFAR.match(/bubbleCount\("Contract", [^)]*CT_MASTERS_ONLY[^)]*\)/g) || []).length === 4);
   });
 
   console.log(`\n${fail === 0 ? "✅" : "❌"}  ${pass} pass · ${fail} fail`);

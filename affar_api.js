@@ -161,6 +161,19 @@ export function registerAffarRoutes(app, deps) {
   function nOrderM(r, m) { const [lbl, cls] = pick(ORDER_STATUS, _str(r.orderstatus), ["Bekräftad", "open"]); return { type: "Order", source: "mira", company: cname(m, r.kundforetag), number: _str(r.ordernr), amount: _num(r.total) || null, date: _day(r.orderdatum || r["Created Date"]), status: lbl, status_cls: cls, klar_for_leverans: (r.klar_for_leverans === true), levererad: (_str(r.orderstatus) === "Levererad"), deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   // Avtal (Contract) i affärskedjan. Status härleds enkelt (affar_api saknar _deriveContractStatus):
   // status_override först, annars slutdatum-passerat → Avslutad, annars Aktiv. Belopp = månadskostnad.
+  // ⚠️ Paketavtal (2026-08-27): ett splittat avtal är EN master + N delrader
+  // (Contract.master_contract). Affärskedjan visar DOKUMENT — ett påskrivet
+  // avtal ska vara EN rad, inte fyra. Planhat gav annars "frukt planhat",
+  // "växtservice planhat" och "housekeeping planhat" som separata affärshändelser
+  // och blåste upp AVTAL-räknaren. Samma regel som kortets KPI och HTML-blockens
+  // `countable`: pengar och antal hör till dokumentet.
+  // (Kund-dashboardens tiles gör TVÄRTOM — se _buildServicesDashboard.)
+  const isChildContract = (r) => !!_ref(r && r.master_contract);
+  // Samma regel serverside, så RÄKNARNA inte säger 211 när det finns 208 avtal.
+  // (`is_empty` på ref-fält — samma constraint-typ som används mot tomma
+  // datumfält på andra håll.)
+  const CT_MASTERS_ONLY = [{ key: "master_contract", constraint_type: "is_empty" }];
+
   function nAvtal(r, m) {
     var ov = _str(r.status_override);
     var slutTs = _ts(r.slutdatum);
@@ -347,7 +360,7 @@ export function registerAffarRoutes(app, deps) {
         bubbleCount("Lead"), bubbleCount("activitet_crm"), bubbleCount("deal"),
         bubbleCount("Offert", feMira), bubbleCount("FortnoxOffer"),
         bubbleCount("MiraOrder"), bubbleCount("FortnoxOrder"),
-        bubbleCount("FortnoxInvoice"), bubbleCount("Contract"),
+        bubbleCount("FortnoxInvoice"), bubbleCount("Contract", CT_MASTERS_ONLY),
         companyMap(),
         recent("Lead", limit), recent("activitet_crm", limit), recent("deal", limit),
         recent("Offert", limit, feMira), recent("FortnoxOffer", limit),
@@ -362,7 +375,7 @@ export function registerAffarRoutes(app, deps) {
         ...deals.map((r) => nDeal(r, m)),
         ...applyOrderStatus(offMs.map((r) => nOffertM(r, m)), offMapFeed),
         ...offFs.map(nOffertF),
-        ...avtals.map((r) => nAvtal(r, m)),
+        ...avtals.filter((r) => !isChildContract(r)).map((r) => nAvtal(r, m)),
         ...ordMs.map((r) => nOrderM(r, m)),
         ...ordFs.map(nOrderF),   // HK ingår (connection=TENGELLA) — ingen exkludering
         ...invs.map(nInvoice),
@@ -449,7 +462,8 @@ export function registerAffarRoutes(app, deps) {
         ...offRows.map((r) => tag(nOffertM(r, m), !offListIds.has(bubbleId(r)))),
         ...offFRows.map((r) => tag(nOffertF(r), true)),   // FortnoxOffer når kortet bara via reverse
       ], offOmap);
-      const avtalItems = (avtalRows || []).map((r) => tag(nAvtal(r, m), true));  // Contract: bara reverse
+      const avtalItems = (avtalRows || []).filter((r) => !isChildContract(r))
+        .map((r) => tag(nAvtal(r, m), true));  // Contract: bara reverse; delrader hör till mastern
       const ordItems = [
         // HK ingår nu — samma tabell, connSource skiljer dem åt i display.
         ...fortOrders.map(nOrderF).map((x) => tag(x, !ordListIds.has(x.id))),
@@ -620,9 +634,9 @@ export function registerAffarRoutes(app, deps) {
           const sets = [[...extra, { key: "contract_title", constraint_type: "text contains", value: q }]];
           if (ccIds.length) sets.push([...extra, { key: "kundföretag", constraint_type: "in", value: ccIds }]);
           recs = (await searchUnion("Contract", sets)).sort(byCreated); total = recs.length; recs = recs.slice(cursor, cursor + limit);
-        } else { recs = await pageOf("Contract", extra); total = filtersActive ? await bubbleCount("Contract", [...dateBase, ...extra]) : await bubbleCount("Contract"); }
-        grand_total = await bubbleCount("Contract");
-        rows = recs.map((r) => nAvtal(r, m));
+        } else { recs = await pageOf("Contract", extra); total = filtersActive ? await bubbleCount("Contract", [...dateBase, ...extra, ...CT_MASTERS_ONLY]) : await bubbleCount("Contract", CT_MASTERS_ONLY); }
+        grand_total = await bubbleCount("Contract", CT_MASTERS_ONLY);
+        rows = recs.filter((r) => !isChildContract(r)).map((r) => nAvtal(r, m));
       }
       else if (type === "affar") {
         const m = await companyMap();
@@ -1375,7 +1389,7 @@ export function registerAffarRoutes(app, deps) {
         const sets = [[{ key: "contract_title", constraint_type: "text contains", value: q }]];
         if (ccIds.length) sets.push([{ key: "kundföretag", constraint_type: "in", value: ccIds }]);
         const recs = await searchUnionAll("Contract", sets);
-        recs.map((r) => nAvtal(r, m)).forEach((x) => push(x, true));
+        recs.filter((r) => !isChildContract(r)).map((r) => nAvtal(r, m)).forEach((x) => push(x, true));
       } else if (type === "lead") {
         const sets = [
           [{ key: "Name", constraint_type: "text contains", value: q }],

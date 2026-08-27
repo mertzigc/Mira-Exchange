@@ -30,7 +30,7 @@ Splitten fanns men krävde curl med handplockade Bubble-id:n. Nu gör importen j
 
 **Nytt praktiskt flöde för kollegan:** dra in PDF → Haiku läser §PRISER som rader → modalen visar "Avtalet innehåller 7 prissatta rader", avstämning **47 097 av 47 097 ✓**, och **→ 3 delavtal** → tryck Skapa. Ett huvudavtal med tre delrader, tre tända tiles. Ingen terminal.
 
-**Verifierat:** `avtal_split_smoke.mjs` **166/166**, **56 mutationer, 56 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
+**Verifierat:** `avtal_split_smoke.mjs` **184/184**, **63 mutationer, 63 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
 
 **Kvar:** ingen skarp körning mot ett riktigt avtal än — Planhat splittades via curl innan A+B fanns. Nästa importerade paketavtal är testet.
 
@@ -95,7 +95,7 @@ Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en 
 - Kundkortets månadstotal filtrerade på `contract_type === 'Subscription'` → en **Hybrid** som Planhat räknades som 0 kr. Nu `!== 'RateCard'` (RateCard har ingen fast månad).
 - Totalen dubbelräknade master + barn. Nu räknas mastern, barnen hoppas över.
 
-**Verifierat:** `avtal_split_smoke.mjs` **166/166** — kör den riktiga route-handlern mot mockad Bubble med Planhats faktiska kronor. **Mutationstestat: 56 mutationer, 56 faller, 0 kraschar.** Bl.a.: borttagen avstämning fäller 1 · master ej överhoppad fäller 1 · borttagen rollback fäller 2 · barn som duplicerar `signed_pdf`+bilagor fäller 2 · descendant-selektorn tillbaka fäller 1 · Hybrid ur totalen fäller 1 · borttaget `nestPackages`-anrop fäller 4 · borttagen gruppering (ett barn per rad igen) fäller 4. De fyra svaga strängassertions som först ÖVERLEVDE gjordes om till beteendetester (funktionerna extraheras och körs). Regression: samtliga övriga sviter gröna (`komm_blocks_smoke` 114/4 är **pre-existerande** — faller identiskt mot HEAD:s `index.js`, `emailer.js` slicas utan `MAIL_PAL_DARK`).
+**Verifierat:** `avtal_split_smoke.mjs` **184/184** — kör den riktiga route-handlern mot mockad Bubble med Planhats faktiska kronor. **Mutationstestat: 63 mutationer, 63 faller, 0 kraschar.** Bl.a.: borttagen avstämning fäller 1 · master ej överhoppad fäller 1 · borttagen rollback fäller 2 · barn som duplicerar `signed_pdf`+bilagor fäller 2 · descendant-selektorn tillbaka fäller 1 · Hybrid ur totalen fäller 1 · borttaget `nestPackages`-anrop fäller 4 · borttagen gruppering (ett barn per rad igen) fäller 4. De fyra svaga strängassertions som först ÖVERLEVDE gjordes om till beteendetester (funktionerna extraheras och körs). Regression: samtliga övriga sviter gröna (`komm_blocks_smoke` 114/4 är **pre-existerande** — faller identiskt mot HEAD:s `index.js`, `emailer.js` slicas utan `MAIL_PAL_DARK`).
 
 **Falskt alarm (utrett 2026-08-27):** "housekeeping ox2 ab" i avtalsmodalens Avtalstitel-fält såg ut som en LLM-hallucination men är ett `placeholder`-attribut i avtalsmodalen (`placeholder="housekeeping ox2 ab"`). `contract_title` är tomt på Planhat-avtalet — verifierat via `/admin/contracts/by-company`. Importen hade inget fel. (Kosmetiskt: placeholdern namnger en riktig kund.)
 
@@ -103,6 +103,39 @@ Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en 
 1. **Split-UI:t** — idag bara curl. Operatören behöver en modal som listar raderna och låter hen välja `Erbjudande` per rad (det är den biten en LLM gissar fel på). `dry_run:true` är byggt för att driva previewen.
 2. **`lines[]` i `CONTRACT_EXTRACT_TOOL`** — låt importen föreslå uppdelningen direkt (beslut 2026-08-27: tas efter att splitten validerats på Planhat).
 3. **Beslut: egen `entrematta`-slug eller inte?** Idag rider Entrémattor med på Housekeeping-raden.
+
+### ⚠️ AVTAL FINNS I EXAKT TRE VYER (2026-08-27)
+
+Övergången bort från Bubbles native-popuper är klar. Avtal figurerar **bara** här:
+
+| Vy | Fil | Vad |
+|---|---|---|
+| **Företagsvyn** | `mira-foretag-lista.html` | lista + kundkort + avtalsflik (abonnemang & signeringar) |
+| **Affärsvyn** | `mira-affar-samlad.html` | ingen panel — "avtalsfliken" är **flödet filtrerat på Avtal** (`affar_api.js`) |
+| **Stora avtalsvyn** | `mira-abonnemang-admin.html` | global tabell över alla kunder |
+
+**Raderade samma dag** (alla verifierade som strikta delmängder — noll unika funktioner/fält):
+`mira-abonnemang-kund.html` · `mira-abonnemang-deal.html` · `mira-approval-create.html`.
+Återställs med `git checkout <commit före 2026-08-27> -- <fil>`.
+
+⚠️ **Rör INTE dessa** trots att de innehåller "avtal": `prototypes/avtal-wizard.html` + `prototypes/avtal-oversikt.html` serveras av **live-routes** (`/prototyp/*`, index.js ~25400) för kollegor utan Bubble-inlogg. `mira-approval-archive.html` är signeringsarkivet och delar `.aa-`-namnrymden med stora avtalsvyn (admin har explicit kod för samexistensen).
+
+**Stora avtalsvyn fick paritet 2026-08-27** — den hade släpat sedan Fas 2:
+- **Två KPI-buggar, samma som redan rättats två gånger på andra håll:** `contract_type === 'Subscription'` (Hybrid blev 0 kr) och ingen master-exkludering (Planhat räknades som 4 avtal / 94 194 kr).
+- **Paketavtal:** delrader plockas ur toppnivån och renderas i masterns expand-panel med summa-mot-total; masterraden namnges av avtalet och får `N tjänster`-pill; rörlig delrad visar styckpris i stället för "0 kr/mån".
+- **PDF-import + raduppdelning** (fanns inte alls): `+ Importera avtal` → `/import/parse` → granskningsmodal med `is_signed`-kryssruta och split-panel → `/import/commit` → `/split`.
+- ⚠️ **Admin har ingen förvald kund** — LLM:ens `customer_name` auto-matchas mot företagslistan (exakt träff först, sedan prefix), men valet lämnas synligt och ändringsbart. Namn i avtal ≠ alltid namn i Bubble.
+- ⚠️ **Ny endpoint `GET /admin/service-catalog`** — erbjudandelistan till split-dropdownen. Admin är global och kan inte använda `/services/dashboard`, som kräver `company_id` för prisanpassning. Hämtas UTAN `sort_field`.
+
+**Affärsvyns flöde fixat samtidigt:** `affar_api.js` visade delraderna som egna affärshändelser — Planhat gav "frukt planhat", "växtservice planhat" och "housekeeping planhat" som tre rader, och räknaren sa 211 där det fanns 208 avtal. Alla fyra `nAvtal`-anropsställen (flöde, `/deal/:id`, listvy, sök) filtrerar nu barn, och de fyra `bubbleCount("Contract")` använder `CT_MASTERS_ONLY` (`is_empty` på `master_contract`).
+
+**Bugg jag själv införde och rättade:** `openContractCreate()` nollar `SPLIT_STATE` så importen inte läcker till nästa create — men `openModalForImport` anropade den EFTER att parsen fyllt raderna, så panelen blev alltid tom. Sparas nu över anropet. Vaktad av test.
+
+**Verifierat:** `avtal_split_smoke.mjs` **184/184**, **63 mutationer, 63 faller, 0 kraschar.**
+
+**Deploy:** `index.js` + `companies_api.js` + `affar_api.js` (Render) + klistra om `mira-foretag-lista.html` och `mira-abonnemang-admin.html`.
+
+---
 
 ### ⚠️ NATIVE KUNDKORTET ÄR PENSIONERAT (2026-08-27)
 

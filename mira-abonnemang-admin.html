@@ -162,6 +162,46 @@
   .aa-table tbody tr { border-bottom:0.5px solid var(--line); transition:background 0.1s; }
   .aa-table tbody tr:hover { background:rgba(255,255,255,0.025); cursor:pointer; }
   .aa-table tbody tr.open { background:rgba(219,105,35,0.05); }
+
+  /* Raduppdelning i granskningsmodalen (import) */
+  .aa-split { border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin:14px 0 0;
+    background:rgba(56,189,248,0.05); }
+  .aa-split-h { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin:0 0 4px; }
+  .aa-split-t { font-size:13px; font-weight:600; color:var(--t1); }
+  .aa-split-sub { font-size:11.5px; color:var(--t3); margin:0 0 12px; max-width:70ch; }
+  .aa-split-tog { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--t2); cursor:pointer; }
+  .aa-split-row { display:grid; grid-template-columns:1.4fr 0.9fr 1.6fr; gap:10px; align-items:center;
+    padding:7px 0; border-bottom:0.5px solid var(--line); }
+  @media (max-width:640px){ .aa-split-row { grid-template-columns:1fr; gap:5px; } }
+  .aa-split-lbl { font-size:12.5px; color:var(--t1); }
+  .aa-split-amt { font-size:12.5px; color:var(--t2); text-align:right; white-space:nowrap; }
+  .aa-split-amt small { color:var(--t3); margin-left:3px; }
+  .aa-split-row select { width:100%; font-size:12px; padding:5px 7px; }
+  .aa-split-row.aa-split-unmapped select { border-color:rgba(250,204,21,0.55); }
+  .aa-split-foot { display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin-top:11px; font-size:12px; }
+  .aa-split-sum { color:var(--t2); }
+  .aa-split-sum b { color:var(--ok); }
+  .aa-split-sum.aa-split-bad b { color:var(--warn); }
+  .aa-split-out { color:var(--t3); }
+
+  /* Paketavtal: delraderna i masterns expand-panel */
+  .aa-pill.t-pkg { background:rgba(56,189,248,0.16); color:#7dd3fc; border:0.5px solid rgba(56,189,248,0.38); }
+  .aa-c-svc-pkg::first-letter { text-transform:uppercase; }
+  .aa-kids { margin:0 0 16px; padding:0 0 14px; border-bottom:0.5px solid var(--line); }
+  .aa-kids-h { display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+    font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--t3); margin:0 0 8px; }
+  .aa-kids-sum { text-transform:none; letter-spacing:0; font-weight:500; }
+  .aa-kids-sum.aa-kids-diff { color:var(--warn); }
+  .aa-kid { display:grid; grid-template-columns:1.5fr 1fr auto auto; gap:12px; align-items:center;
+    padding:7px 0; border-bottom:0.5px solid var(--line); font-size:12px; }
+  .aa-kid:last-child { border-bottom:none; }
+  .aa-kid-n { color:var(--t1); font-weight:600; }
+  .aa-kid-c { color:var(--t3); font-size:11px; }
+  .aa-kid-a { color:var(--t1); font-weight:700; text-align:right; white-space:nowrap; }
+  .aa-kid-a small { font-size:10px; font-weight:500; color:var(--t3); margin-left:2px; }
   .aa-table tbody td { padding:13px 14px; font-size:12px; vertical-align:middle; }
   .aa-table tbody td.right { text-align:right; }
 
@@ -855,6 +895,16 @@
           <label>Volym (JSON — {"kvm":210})</label>
           <textarea rows="2" placeholder='{"kvm": 210}' data-aa="cm-volume"></textarea>
         </div>
+
+        <!-- Frågan hör bara till importen. Default ikryssad = oförändrat beteende. -->
+        <div class="aa-cm-row" data-aa="cm-signed-row" style="display:none;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;">
+            <input type="checkbox" data-aa="cm-is-signed" checked> Avtalet är redan signerat
+          </label>
+        </div>
+
+        <!-- Raduppdelning: syns bara i import-läge när LLM:en hittat flera prisrader -->
+        <div class="aa-split" data-aa="split-panel" style="display:none;"></div>
       </div>
       <div class="aa-cm-foot">
         <button class="aa-btn ghost" data-aa="cm-cancel">Avbryt</button>
@@ -890,9 +940,11 @@
         </div>
       </div>
       <div style="display:flex;gap:8px">
+        <button class="aa-btn ghost" data-aa="import-btn">+ Importera avtal</button>
         <button class="aa-btn ghost" data-aa="wiz-btn">+ Avtal från mall</button>
         <button class="aa-btn primary" data-aa="create-btn">+ Nytt avtal</button>
       </div>
+      <input type="file" accept="application/pdf,image/*" data-aa="import-file" style="display:none;">
     </div>
   </div>
 
@@ -1645,8 +1697,26 @@
                 { email:'anette@carotte.se', reviewed_at:'2026-07-17T10:05:00Z' }] }
   ];
 
+  // Paketavtal: ett splittat avtal är EN master + N delrader. Delraderna hör
+  // hemma i masterns expand-panel, inte som fristående rader i tabellen — annars
+  // står Planhat fyra gånger i "Alla avtal" och KPI-raden dubbelräknas.
+  // En delrad vars master filtrerats bort (eller ligger utanför sidan) visas
+  // fristående, så den aldrig försvinner tyst.
+  function kidsMap(){
+    var byId = {}, kids = {};
+    for (var i = 0; i < SAMPLE.length; i++) byId[SAMPLE[i].id] = SAMPLE[i];
+    for (var j = 0; j < SAMPLE.length; j++) {
+      var r = SAMPLE[j];
+      if (!r.master_contract_id || !byId[r.master_contract_id]) continue;
+      (kids[r.master_contract_id] = kids[r.master_contract_id] || []).push(r);
+    }
+    return { byId: byId, kids: kids };
+  }
+
   function applyFilters(){
-    var rows = SAMPLE.slice();
+    var KM = kidsMap();
+    var rows = SAMPLE.filter(function(r){ return !(r.master_contract_id && KM.byId[r.master_contract_id]); });
+    STATE._kids = KM.kids;
     rows = rows.filter(function(r){
       if (STATE.filter_status.indexOf(r.status) < 0) return false;
       if (STATE.filter_type.indexOf(r.contract_type) < 0) return false;
@@ -1685,7 +1755,25 @@
     return rows;
   }
 
+  // Första rörliga raden i ett rate_card ("Frukt 45 kr/kg") — delrader utan fast
+  // månadskostnad ska visa styckpriset, inte "0 kr/mån".
+  function variableRateOf(r){
+    if (!r.rate_card_json) return null;
+    try {
+      var arr = JSON.parse(r.rate_card_json);
+      if (!Array.isArray(arr)) return null;
+      for (var i = 0; i < arr.length; i++) {
+        var x = arr[i];
+        if (x && x.unit && String(x.unit).toLowerCase() !== 'engång') {
+          return { price: Number(x.price_per_h) || 0, unit: String(x.unit) };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function rowHtml(r){
+    var kids = (STATE._kids && STATE._kids[r.id]) || [];
     var typeCls = r.contract_type === 'Subscription' ? 't-sub' : r.contract_type === 'RateCard' ? 't-rate' : 't-hyb';
     var stLabel = r.status === 'aktiv' ? 'Aktiv'
       : r.status === 'utgar_snart' ? 'Utgår snart'
@@ -1695,9 +1783,15 @@
       : r.status === 'tvistig' ? 'Tvistig'
       : r.status === 'okand' ? 'Okänd' : r.status;
 
-    var costCell = r.contract_type === 'RateCard'
-      ? '<div class="aa-c-cost rate">Per uppdrag</div>'
-      : '<div class="aa-c-cost">'+fmtKr(r.monthly_cost)+'<small>/mån</small></div>';
+    var vr = variableRateOf(r);
+    var costCell;
+    if (r.contract_type === 'RateCard' && vr && Number(r.monthly_cost || 0) === 0) {
+      costCell = '<div class="aa-c-cost">'+fmtKr(vr.price)+'<small>'+esc(vr.unit)+'</small></div>';
+    } else if (r.contract_type === 'RateCard') {
+      costCell = '<div class="aa-c-cost rate">Per uppdrag</div>';
+    } else {
+      costCell = '<div class="aa-c-cost">'+fmtKr(r.monthly_cost)+'<small>/mån</small></div>';
+    }
 
     var endDays = daysUntil(r.slutdatum);
     var endSubCls = (endDays != null && endDays <= 30 && endDays >= 0) ? 'aa-c-end-sub aa-warn' : 'aa-c-end-sub';
@@ -1711,12 +1805,22 @@
 
     var openCls = STATE.open_id === r.id ? 'open' : '';
 
+    // Masterraden namnges av AVTALET, delraden av tjänsten — annars står
+    // "Housekeeping" både som paket och som delrad och avtalstiteln syns aldrig.
+    var headName = r.service_name, headSub = r.service_variant;
+    if (kids.length) {
+      headName = r.contract_title || r.service_name || 'Avtal';
+      headSub  = kids.map(function(k){ return k.service_name || k.contract_title || 'Tjänst'; }).join(' · ');
+    }
+
     var main = ''
       + '<tr class="aa-mainrow '+openCls+'" data-id="'+esc(r.id)+'">'
       +   '<td><div class="aa-c-cust">'+esc(r.customer)+'</div></td>'
       +   '<td><div class="aa-c-office">'+officeCell+'</div></td>'
-      +   '<td><div class="aa-c-svc">'+esc(r.service_name)+'</div><div class="aa-c-svc-sub">'+esc(r.service_variant)+'</div></td>'
-      +   '<td><span class="aa-pill '+typeCls+'">'+esc(typeLabel(r.contract_type))+'</span><div class="aa-c-svc-sub" style="margin-top:4px;">'+r.category+'</div></td>'
+      +   '<td><div class="aa-c-svc'+(kids.length?' aa-c-svc-pkg':'')+'">'+esc(headName)+'</div><div class="aa-c-svc-sub">'+esc(headSub)+'</div></td>'
+      +   '<td><span class="aa-pill '+typeCls+'">'+esc(typeLabel(r.contract_type))+'</span>'
+      +     (kids.length ? '<span class="aa-pill t-pkg" style="margin-left:5px;">'+kids.length+' tjänster</span>' : '')
+      +     '<div class="aa-c-svc-sub" style="margin-top:4px;">'+r.category+'</div></td>'
       +   '<td><span class="aa-st s-'+esc(r.status)+'">'+esc(stLabel)+'</span></td>'
       +   '<td class="right">'+costCell+'</td>'
       +   '<td class="right">'
@@ -1727,11 +1831,41 @@
 
     if (STATE.open_id !== r.id) return main;
 
+    // Delraderna: summan av de fasta ska matcha masterns månadskostnad. Visas
+    // explicit — går den isär är splitten fel och det ska synas här, inte
+    // upptäckas via kundens dashboard.
+    var kidsHtml = '';
+    if (kids.length) {
+      var kidSum = 0;
+      for (var ki = 0; ki < kids.length; ki++) kidSum += Number(kids[ki].monthly_cost || 0);
+      var kidDiff = kidSum - Number(r.monthly_cost || 0);
+      kidsHtml = '<div class="aa-kids">'
+        + '<div class="aa-kids-h"><span>Tjänster i avtalet ('+kids.length+')</span>'
+        +   '<span class="aa-kids-sum'+(Math.abs(kidDiff) > 1 ? ' aa-kids-diff' : '')+'">'
+        +     fmtKr(kidSum)+'/mån av '+fmtKr(r.monthly_cost)+'/mån'
+        +     (Math.abs(kidDiff) > 1 ? ' · diff '+fmtKr(kidDiff) : '')
+        +   '</span></div>'
+        + kids.map(function(k){
+            var kvr = variableRateOf(k);
+            var amt = (Number(k.monthly_cost || 0) === 0 && kvr)
+              ? fmtKr(kvr.price)+'<small>'+esc(kvr.unit)+'</small>'
+              : fmtKr(k.monthly_cost)+'<small>/mån</small>';
+            return '<div class="aa-kid">'
+              + '<span class="aa-kid-n">'+esc(k.service_name || k.contract_title || 'Tjänst')+'</span>'
+              + '<span class="aa-kid-c">'+esc(k.category || '')+'</span>'
+              + '<span class="aa-kid-a">'+amt+'</span>'
+              + '<button class="aa-btn ghost tiny" data-act="edit" data-id="'+esc(k.id)+'">Redigera</button>'
+              + '</div>';
+          }).join('')
+        + '</div>';
+    }
+
     // Expand-rad
     var expand = ''
       + '<tr class="aa-expand-tr on">'
       +   '<td class="aa-expand-cell" colspan="7">'
       +     '<div class="aa-expand-inner">'
+      +       kidsHtml
       +       '<div class="aa-expand-grid">'
       +         '<div><div class="aa-fld-l">Startdatum</div><div class="aa-fld-v">'+fmtDate(r.startdatum)+'</div></div>'
       +         '<div><div class="aa-fld-l">Slutdatum</div><div class="aa-fld-v">'+fmtDate(r.slutdatum)+'</div></div>'
@@ -2027,11 +2161,19 @@
     $('total-count').textContent = SAMPLE.length;
 
     // KPIs på FULL data (inte filtrerad)
-    var aktiva = SAMPLE.filter(function(r){ return r.status==='aktiv' || r.status==='utgar_snart'; });
-    var totMonthly = SAMPLE
-      .filter(function(r){ return r.contract_type==='Subscription' && (r.status==='aktiv' || r.status==='utgar_snart'); })
+    // ⚠️ Paketavtal: mastern OCH dess delrader bär samma pengar. Räkna mastern,
+    // hoppa över barnen — samma regel som kortets KPI (companies_api) och
+    // företagsvyns panel. Utan det visade Planhat 4 avtal och 94 194 kr.
+    var countable = SAMPLE.filter(function(r){ return !r.master_contract_id; });
+    var aktiva = countable.filter(function(r){ return r.status==='aktiv' || r.status==='utgar_snart'; });
+    // ⚠️ INGET contract_type-filter. 'Subscription' uteslöt HYBRID — som per
+    // definition HAR en fast månadsdel — och gav 0 kr i rubriken mot rätt belopp
+    // i raden under. Backend räknar utan typfilter; RateCard har normalt 0 kr och
+    // faller bort själv. (Rättat i företagsvyn 2026-08-24, hit 2026-08-27.)
+    var totMonthly = countable
+      .filter(function(r){ return r.status==='aktiv' || r.status==='utgar_snart'; })
       .reduce(function(sum, r){ return sum + Number(r.monthly_cost || 0); }, 0);
-    var utgar = SAMPLE.filter(function(r){
+    var utgar = countable.filter(function(r){
       var d = daysUntil(r.slutdatum);
       return r.status === 'utgar_snart' || (d != null && d >= 0 && d <= 30);
     });
@@ -2320,6 +2462,13 @@
     if (!r) { alert('Hittade inte avtalet i listan.'); return; }
     CM_EDIT_ID = id;
     CM_CREATE_COMPANY = null;
+    // Redigering är varken create eller import — nolla importens artefakter så
+    // is_signed-frågan och raduppdelningen inte hänger kvar från förra gången.
+    CM_MODE = 'edit';
+    SPLIT_STATE = { lines: [], reconciliation: null, on: false };
+    var _sp = root.querySelector('[data-aa="split-panel"]');
+    if (_sp) { _sp.style.display = 'none'; _sp.innerHTML = ''; }
+    var _sr = $('cm-signed-row'); if (_sr) _sr.style.display = 'none';
     var _cr = $('cm-company-row'); if (_cr) _cr.style.display = 'none';   // ingen kundbyte i edit
     var _ch = $('cm-h'); if (_ch) _ch.textContent = 'Redigera avtal';
     var _cs = $('cm-save'); if (_cs) _cs.textContent = 'Spara ändringar';
@@ -2360,6 +2509,13 @@
     cmEnsureCompanies();
     var h = $('cm-h'); if (h) h.textContent = 'Nytt avtal';
     var save = $('cm-save'); if (save) save.textContent = 'Skapa avtal';
+    // Import-artefakter nollas så de inte läcker från en import till nästa
+    // create/edit — is_signed-frågan och raduppdelningen hör bara till importen.
+    CM_MODE = 'create';
+    SPLIT_STATE = { lines: [], reconciliation: null, on: false };
+    var sp = root.querySelector('[data-aa="split-panel"]');
+    if (sp) { sp.style.display = 'none'; sp.innerHTML = ''; }
+    var sr = $('cm-signed-row'); if (sr) sr.style.display = 'none';
     var mask = $('cm-mask'); if (mask) mask.classList.add('on');
   }
   function closeContractEdit(){ var m = $('cm-mask'); if (m) m.classList.remove('on'); CM_EDIT_ID = null; CM_CREATE_COMPANY = null; }
@@ -2393,6 +2549,35 @@
         if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Spara ändringar'; }
         if (result && result.ok) { closeContractEdit(); loadLive(); }
       });
+    } else if (CM_MODE === 'import') {
+      // Importerat avtal → /import/commit, sedan ev. raduppdelning.
+      if (!CM_CREATE_COMPANY || !CM_CREATE_COMPANY.id) { alert('Välj en kund (företag) först.'); return; }
+      body.company_id        = CM_CREATE_COMPANY.id;
+      body.file_doc_id       = IMPORT_STATE.file_doc_id;
+      body.file_url          = IMPORT_STATE.file_url;
+      body.parsed_confidence = IMPORT_STATE.parsed_confidence;
+      if (!body.category && IMPORT_STATE.category) body.category = IMPORT_STATE.category;
+      var signedBox = $('cm-is-signed');
+      body.is_signed = signedBox ? !!signedBox.checked : true;
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Skapar...'; }
+      commitImportAction(body).then(function(result){
+        if (!result || !result.ok) {
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Skapa avtal från import'; }
+          return;
+        }
+        // ⚠️ Splitten körs EFTER commit, aldrig i stället för. Misslyckas den
+        // ligger avtalet kvar som ett enda avtal och kan delas upp i efterhand.
+        var lines = (SPLIT_STATE.on && result.contract_id) ? splitPayloadLines() : [];
+        if (lines.length < 2) {
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Skapa avtal från import'; }
+          closeContractEdit(); loadLive(); return;
+        }
+        if (saveBtn) saveBtn.textContent = 'Delar upp...';
+        splitContractAction(result.contract_id, lines).then(function(){
+          if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Skapa avtal från import'; }
+          closeContractEdit(); loadLive();
+        });
+      });
     } else {
       // Skapa → POST (kräver vald kund; admin har ingen förvald)
       if (!CM_CREATE_COMPANY || !CM_CREATE_COMPANY.id) { alert('Välj en kund (företag) först.'); return; }
@@ -2403,6 +2588,236 @@
         if (result && result.ok) { closeContractEdit(); loadLive(); }
       });
     }
+  }
+
+  function commitImportAction(body){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    return fetch(apiHost + '/admin/contracts/import/commit', {
+      method: 'POST',
+      headers: { 'x-admin-token': cfg('planning_token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (!d || !d.ok) { alert('Fel vid import: ' + ((d && (d.hint || d.error)) || 'okänt fel')); return null; }
+      return d;
+    }).catch(function(e){ alert('Anropet misslyckades: ' + (e && e.message ? e.message : e)); return null; });
+  }
+  function splitContractAction(contractId, lines){
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    return fetch(apiHost + '/admin/contracts/' + encodeURIComponent(contractId) + '/split', {
+      method: 'POST',
+      headers: { 'x-admin-token': cfg('planning_token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines: lines })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (!d || !d.ok) {
+        alert('Avtalet skapades, men uppdelningen misslyckades:\n' + ((d && (d.hint || d.error)) || 'okänt fel') +
+              '\n\nAvtalet ligger kvar som ett enda avtal och kan delas upp i efterhand.');
+      }
+      return d;
+    }).catch(function(e){
+      alert('Avtalet skapades, men uppdelningen kunde inte nå servern: ' + (e && e.message ? e.message : e));
+      return null;
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PDF-IMPORT + RADUPPDELNING (portat från företagsvyn 2026-08-27)
+  // Admin skiljer sig på en punkt: ingen förvald kund. LLM:en ger customer_name
+  // ur avtalet, så vi auto-matchar mot företagslistan och låter operatören
+  // korrigera i den befintliga kund-väljaren.
+  // ══════════════════════════════════════════════════════════════════════════
+  // Erbjudandelistan för raduppdelningens dropdown. Admin är global → egen
+  // kundoberoende endpoint (/services/dashboard kräver ett company_id).
+  var CATALOG_A = [];
+  function loadCatalogAdmin(){
+    var token = cfg('planning_token'); if (!token) return;
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    fetch(apiHost + '/admin/service-catalog', { headers: { 'x-admin-token': token } })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if (!d || !d.ok) return;
+        CATALOG_A = [];
+        (d.services || []).forEach(function(svc){
+          (svc.offers || []).forEach(function(o){
+            CATALOG_A.push({ id: o.id, slug: svc.slug, label: (svc.name || svc.slug) + ' — ' + (o.title || '') });
+          });
+        });
+      })
+      .catch(function(e){ console.warn('[aa] service-catalog fail', e && e.message); });
+  }
+
+  var IMPORT_STATE = { file_doc_id: null, file_url: null, parsed_confidence: null, category: null };
+  var SPLIT_STATE  = { lines: [], reconciliation: null, on: false };
+  var CM_MODE = 'edit';   // 'edit' | 'create' | 'import'
+
+  function splitOfferOptions(selected){
+    var html = '<option value="">— hoppa över raden —</option>';
+    for (var i = 0; i < CATALOG_A.length; i++) {
+      var o = CATALOG_A[i];
+      html += '<option value="'+esc(o.id)+'"'+(o.id === selected ? ' selected' : '')+'>'+esc(o.label)+'</option>';
+    }
+    return html;
+  }
+  // Antal DELAVTAL = antal unika erbjudanden. Räknas om live så operatören ser
+  // att t.ex. entrémattor slås ihop med lokalvård i stället för att bli egen tile.
+  function splitChildCount(){
+    var seen = {}, n = 0, sels = root.querySelectorAll('[data-split-offer]');
+    for (var i = 0; i < sels.length; i++) {
+      var v = sels[i].value;
+      if (!v || seen[v]) continue;
+      seen[v] = true; n++;
+    }
+    return n;
+  }
+  function renderSplitFoot(){
+    var rec = SPLIT_STATE.reconciliation || {}, el = root.querySelector('[data-aa="split-foot"]');
+    if (!el) return;
+    var bad = !rec.ok;
+    el.innerHTML =
+      '<span class="aa-split-sum'+(bad ? ' aa-split-bad' : '')+'">Fasta rader: <b>'+fmtKr(rec.lines_sum || 0)+
+        '</b> av '+fmtKr(rec.monthly_cost || 0)+(bad ? ' · differens '+fmtKr(rec.diff || 0) : ' ✓')+'</span>'+
+      '<span class="aa-split-out">→ '+splitChildCount()+' delavtal</span>';
+  }
+  function renderSplitPanel(){
+    var panel = root.querySelector('[data-aa="split-panel"]');
+    if (!panel) return;
+    var L = SPLIT_STATE.lines || [];
+    if (CM_MODE !== 'import' || L.length < 2) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+    var rec = SPLIT_STATE.reconciliation || {};
+    var rows = L.map(function(l, i){
+      return '<div class="aa-split-row'+(l.suggested_offer_id ? '' : ' aa-split-unmapped')+'">'+
+        '<div class="aa-split-lbl">'+esc(l.label)+'</div>'+
+        '<div class="aa-split-amt">'+fmtKr(l.amount)+'<small>'+esc(l.unit === 'per månad' ? '/mån' : l.unit)+'</small></div>'+
+        '<select data-split-offer data-i="'+i+'">'+splitOfferOptions(l.suggested_offer_id)+'</select>'+
+      '</div>';
+    }).join('');
+    panel.style.display = '';
+    panel.innerHTML =
+      '<div class="aa-split-h"><div class="aa-split-t">Avtalet innehåller '+L.length+' prissatta rader</div>'+
+        '<label class="aa-split-tog"><input type="checkbox" data-aa="split-on"'+(SPLIT_STATE.on ? ' checked' : '')+
+        '> Dela upp i separata avtal per tjänst</label></div>'+
+      '<div class="aa-split-sub">Varje rad blir en tile på kundens dashboard. Rader som pekar på samma '+
+        'erbjudande slås ihop till ett delavtal. Det signerade avtalet blir huvudavtal och delraderna hamnar under det.</div>'+
+      rows +
+      '<div class="aa-split-foot" data-aa="split-foot"></div>'+
+      (rec.ok ? '' : '<div class="aa-split-sub" style="margin:10px 0 0;color:var(--warn)">⚠ Raderna summerar inte till '+
+        'månadskostnaden. Rätta beloppen innan du delar upp — annars stämmer inte kundens siffror.</div>')+
+      ((rec.unmapped && rec.unmapped.length) ? '<div class="aa-split-sub" style="margin:8px 0 0">Kunde inte gissa '+
+        'erbjudande för: '+esc(rec.unmapped.join(', '))+' — välj manuellt.</div>' : '');
+    renderSplitFoot();
+  }
+  function splitPayloadLines(){
+    var out = [], sels = root.querySelectorAll('[data-split-offer]');
+    for (var i = 0; i < sels.length; i++) {
+      var l = SPLIT_STATE.lines[Number(sels[i].getAttribute('data-i'))];
+      if (!l || !sels[i].value) continue;
+      var fixed = l.included_in_monthly_total, engang = l.unit === 'engång';
+      out.push({
+        label: l.label, offer_id: sels[i].value,
+        monthly_cost: fixed ? l.amount : 0,
+        unit: fixed ? 'per månad' : l.unit,
+        // ⚠️ Engångsrad får INTE också skicka unit_price — då lägger
+        // _splitChildRateCard in beloppet två gånger.
+        unit_price: (fixed || engang) ? null : l.amount,
+        setup_cost: engang ? l.amount : null
+        // Ingen category: backend härleder ur erbjudandet.
+      });
+    }
+    return out;
+  }
+
+  function triggerImport(){
+    if (!cfg('planning_token')) { alert('Demo-läge: import kräver planning_token.'); return; }
+    var fe = $('import-file'); if (!fe) return;
+    fe.value = ''; fe.click();
+  }
+  function parseImportFile(file){
+    var btn = $('import-btn'), orig = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Parsar avtal...'; }
+    var apiHost = cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com';
+    var fd = new FormData(); fd.append('file', file, file.name);
+    fetch(apiHost + '/admin/contracts/import/parse', {
+      method: 'POST', headers: { 'x-admin-token': cfg('planning_token') }, body: fd
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+      if (!d || !d.ok) { alert('LLM-parsning misslyckades: ' + ((d && d.error) || 'okänt fel')); return; }
+      IMPORT_STATE.file_doc_id = d.file && d.file.doc_id;
+      IMPORT_STATE.file_url    = d.file && d.file.file_url;
+      IMPORT_STATE.parsed_confidence = (d.parsed && d.parsed.confidence) || null;
+      // Förvald PÅ bara när avstämningen går ihop — går den inte ihop saknas en
+      // rad, och då ska ingen dela upp på autopilot.
+      SPLIT_STATE.lines = (d.parsed && d.parsed.lines) || [];
+      SPLIT_STATE.reconciliation = d.reconciliation || null;
+      SPLIT_STATE.on = !!(d.reconciliation && d.reconciliation.ok && SPLIT_STATE.lines.length > 1);
+      openModalForImport(d.parsed || {}, d.file);
+    }).catch(function(e){
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+      alert('Anropet misslyckades: ' + (e && e.message ? e.message : e));
+    });
+  }
+  function openModalForImport(parsed, fileInfo){
+    CM_EDIT_ID = null; CM_CREATE_COMPANY = null;
+    // ⚠️ openContractCreate() nollar SPLIT_STATE (så importens raduppdelning inte
+    // läcker till nästa create). Parsen har redan fyllt den → spara över anropet.
+    var keep = SPLIT_STATE;
+    openContractCreate();                       // nollar fälten + tänder kund-väljaren
+    SPLIT_STATE = keep;
+    CM_MODE = 'import';                         // openContractCreate sätter 'create'
+    var h = $('cm-h');
+    if (h) h.textContent = 'Granska importerat avtal' + (fileInfo && fileInfo.filename ? ' — ' + fileInfo.filename : '');
+    var save = $('cm-save'); if (save) save.textContent = 'Skapa avtal från import';
+
+    if (parsed.contract_type) cmSet('type', parsed.contract_type);
+    if (parsed.contract_title) cmSet('title', parsed.contract_title);
+    IMPORT_STATE.category = parsed.category || null;
+    if (parsed.category) { cmSet('category', parsed.category); setSupplierForCategoryAdmin(); }
+    if (parsed.monthly_cost != null) cmSet('monthly', parsed.monthly_cost);
+    if (parsed.qty != null) cmSet('qty', parsed.qty);
+    if (parsed.startdatum) cmSet('start', String(parsed.startdatum).slice(0, 10));
+    if (parsed.slutdatum)  cmSet('end',   String(parsed.slutdatum).slice(0, 10));
+    if (parsed.binding_months != null)    cmSet('binding', parsed.binding_months);
+    if (parsed.notice_months != null)     cmSet('notice', parsed.notice_months);
+    if (parsed.auto_renew_months != null) cmSet('autorenew', parsed.auto_renew_months);
+    if (parsed.price_regulation_type)     cmSet('pricereg', parsed.price_regulation_type);
+    if (parsed.rate_card && parsed.rate_card.length) cmSet('ratecard', JSON.stringify(parsed.rate_card));
+    if (parsed.volume) cmSet('volume', JSON.stringify(parsed.volume));
+
+    // ⚠️ Admin har ingen förvald kund. LLM:en läser kundnamnet ur avtalets §1 —
+    // matcha mot företagslistan så operatören slipper leta, men lämna valet
+    // synligt och ändringsbart (namn i avtal ≠ alltid namn i Bubble).
+    var srch = $('cm-company-search');
+    if (parsed.customer_name) {
+      if (srch) srch.value = parsed.customer_name;
+      cmEnsureCompanies().then(function(list){
+        var want = String(parsed.customer_name).toLowerCase();
+        var hit = null;
+        for (var i = 0; i < (list || []).length; i++) {
+          var nm = String(list[i].name || '').toLowerCase();
+          if (nm === want) { hit = list[i]; break; }
+          if (!hit && nm.indexOf(want) === 0) hit = list[i];
+        }
+        if (hit) { CM_CREATE_COMPANY = { id: hit.id, name: hit.name }; if (srch) srch.value = hit.name; }
+        else if (srch) cmRenderCompanyResults(srch.value);
+      });
+    }
+
+    var sr = $('cm-signed-row'); if (sr) sr.style.display = '';
+    var sb = $('cm-is-signed');  if (sb) sb.checked = true;
+    renderSplitPanel();
+  }
+
+  function bindImportAdmin(){
+    var b = $('import-btn'); if (b) b.addEventListener('click', triggerImport);
+    var fe = $('import-file');
+    if (fe) fe.addEventListener('change', function(ev){
+      var fl = ev.target.files; if (fl && fl[0]) parseImportFile(fl[0]);
+    });
+    // Event-delegation på modalen: panelen renderas om vid varje import.
+    var mask = $('cm-mask');
+    if (mask) mask.addEventListener('change', function(ev){
+      var t = ev.target; if (!t || !t.getAttribute) return;
+      if (t.getAttribute('data-split-offer') !== null) { renderSplitFoot(); return; }
+      if (t.getAttribute('data-aa') === 'split-on') { SPLIT_STATE.on = !!t.checked; }
+    });
   }
 
   function bindContractModal(){
@@ -2504,6 +2919,8 @@
   loadPending();
   bindContractModal();
   loadSuppliersAdmin();
+  loadCatalogAdmin();
+  bindImportAdmin();
 })();
 </script>
 <!-- Wizard-JS + öppna/stäng-koppling (Fas 5) -->

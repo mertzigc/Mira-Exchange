@@ -456,6 +456,7 @@ function requireApiKey(req, res, next) {
     "/admin/clientcompany/",       // ClientCompany-autocomplete + /all för Carotte-UI
     "/admin/contracts/",           // Contract admin-modul (Fas 2, 0g), x-admin-token-grindad
     "/admin/suppliers",            // Leverantör - Supplier-lista för avtalsformulär (Fas 5b), x-admin-token-grindad
+    "/admin/service-catalog",      // ServiceCatalog × Erbjudande för stora avtalsvyns raduppdelning, x-admin-token-grindad
     "/admin/contract-templates",   // ContractTemplate CRUD (Fas 5, Steg 4a), x-admin-token-grindad
     "/admin/dokument/",            // Fristående Dokument-upload för wizardens bilagor (Fas 5b spår 2), x-admin-token-grindad
     "/admin/offert",               // F&E offert-modul (Fas 2), x-admin-token-grindad (offert_api.js)
@@ -22425,6 +22426,23 @@ app.get("/admin/contracts/all", async (req, res) => {
       return _enrichContract(ct, ctx);
     });
 
+    // Paketavtal: markera master/child så stora avtalsvyn kan nästla delraderna
+    // i stället för att lista dem som fristående avtal (och dubbelräkna dem i
+    // KPI-raden). Räknas ur den redan hämtade listan — ingen extra fråga.
+    // ⚠️ Räknas över `items` (den limit:ade sidan). En master vars barn hamnat
+    // utanför sidan får child_count 0 och renderas som en vanlig rad — den visar
+    // fortfarande rätt belopp, så det degraderar tyst men korrekt.
+    const childCountAll = new Map();
+    for (const e of items) {
+      if (!e.master_contract_id) continue;
+      childCountAll.set(e.master_contract_id, (childCountAll.get(e.master_contract_id) || 0) + 1);
+    }
+    for (const e of items) {
+      e.child_count = childCountAll.get(e.id) || 0;
+      e.is_master   = e.child_count > 0;
+      e.is_child    = !!e.master_contract_id;
+    }
+
     return res.json({
       ok: true,
       count: items.length,
@@ -22436,6 +22454,50 @@ app.get("/admin/contracts/all", async (req, res) => {
     return res.status(e?.status || 500).json({
       ok: false, error: e?.message || String(e), detail: e?.detail || null,
     });
+  }
+});
+
+// ── GET /admin/service-catalog — ServiceCatalog × Erbjudande, kundoberoende ──
+// Stora avtalsvyn (mira-abonnemang-admin.html) är global och kan inte använda
+// /services/dashboard, som kräver ett company_id för att kunna anpassa priser.
+// Raduppdelningen vid import behöver bara id + namn per erbjudande.
+// ⚠️ INGEN sort_field: bubbleFindAll med sort_field utelämnar rader som saknar
+// värde i fältet (memory/reference-bubble-sort-drops-empty) → en katalogpost
+// utan display_order hade tyst försvunnit ur dropdownen.
+app.options("/admin/service-catalog", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+app.get("/admin/service-catalog", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  try {
+    const rows = await bubbleFindAll(SERVICES.CATALOG_TYPE, {}).catch(() => []);
+    const offerIds = new Set();
+    for (const c of rows) for (const oid of _ffIdsOf(c[SERVICES.SC_OFFERS])) offerIds.add(oid);
+    const offerById = new Map();
+    for (const oid of offerIds) {
+      const o = await bubbleGet(FORFRAGAN.OFFER_TYPE, oid).catch(() => null);
+      if (o) offerById.set(oid, o);
+    }
+    const services = rows.map((c) => {
+      const slug = c[SERVICES.SC_SLUG] || c.Slug || "";
+      if (!slug) return null;
+      return {
+        slug,
+        name: c[SERVICES.SC_NAME] || slug,
+        category: c[SERVICES.SC_CATEGORY] || "facility",
+        offers: _ffIdsOf(c[SERVICES.SC_OFFERS])
+          .map((oid) => offerById.get(oid))
+          .filter(Boolean)
+          .map((o) => ({ id: bubbleId(o), title: o.Title || "", category: o.Category || null })),
+      };
+    }).filter(Boolean);
+    return res.json({ ok: true, services, count: services.length });
+  } catch (e) {
+    console.error("[/admin/service-catalog] failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
   }
 });
 
