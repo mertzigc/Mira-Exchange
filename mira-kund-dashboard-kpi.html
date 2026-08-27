@@ -395,9 +395,14 @@
     .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
     .then(function(j){
       if(!j||!j.ok){ setStatus('error','Kunde inte uppdatera'); if(btn) btn.disabled=false; return; }
-      // Ladda om så Bubble matar in färska kpi_json. Sätt ?kpiinit för att undvika loop vid tom data.
+      // Ladda om så Bubble matar in färska kpi_json. ?kpiinit är ett LOOP-SKYDD för
+      // auto-triggern: utan den hade tom data gett refresh → reload → refresh i evighet.
+      // ⚠️ Vid MANUELL uppdatering måste den bort igen (2026-08-27). Låg den kvar
+      // hamnade omladdningen direkt i tomt-läget och knappen såg helt död ut —
+      // sidan laddade om, texten stod kvar.
       var url=new URL(location.href);
       if(isInit) url.searchParams.set('kpiinit','1');
+      else       url.searchParams.delete('kpiinit');
       location.replace(url.toString());
     })
     .catch(function(){ setStatus('error','Nätverksfel'); if(btn) btn.disabled=false; });
@@ -414,7 +419,16 @@
     }
     if(!companyId){ renderAll(DEMO_DATA); setStatus('', 'Demo'); return; }   // preview / ej kopplat
     // Kopplat men ingen data än → trigga EN gång, annars visa tomt (loop-skydd via ?kpiinit)
-    if(hasParam('kpiinit')){ renderAll({bookings:{total:0,monthly:{}},matters:{},ratings:{},economy:{by_supplier:[]}}); setStatus('', 'Ingen data ännu – klicka Uppdatera'); }
+    if(hasParam('kpiinit')){
+      // Vi HAR ett company_id och refreshen svarade ok — ändå är textarean tom.
+      // Då ligger felet i Bubble-bindningen, inte i datan. Säg det i konsolen:
+      // kundens vy ska inte skylta med det, men den som felsöker ska slippa gissa.
+      console.warn('[kpi] company_id=' + companyId + ' men #mira_data är tom efter refresh. ' +
+        'Kontrollera att Bubble-uttrycket "Current User\'s Company\'s kpi_json" ligger MELLAN ' +
+        '<textarea id="mira_data">-taggarna (inte i value="").');
+      renderAll({bookings:{total:0,monthly:{}},matters:{},ratings:{},economy:{by_supplier:[]}});
+      setStatus('', 'Ingen data ännu – klicka Uppdatera');
+    }
     else { triggerRefresh(true); }
   }
 
