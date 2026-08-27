@@ -21030,7 +21030,6 @@ registerAffarRoutes(app, {
 registerVisitorRoutes(app, {
   bubbleFindAll, bubbleGet, bubbleId, bubbleCreate, bubblePatch,
   visitorAuth: _visitorAuth,
-  mypageAuth: _mypageAuth,                     // kundens Min sida — EGEN gate, ej planningAuthed
   sms: _sms,
   sendMail: sendViaSendGrid,
   planningCors: _planningCors,
@@ -21071,7 +21070,11 @@ registerSaljRoutes(app, {
 // Företagslista (render-baserad ersättning för Bubble-native företagsvyn) — routes i companies_api.js.
 const _companiesApi = registerCompaniesRoutes(app, {
   bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCount, bubbleDelete,
-  bubbleUploadFile,                            // profilfoto-upload (Coworker.Foto)
+  // ⚠️ Kundens Min sida (/mypage/me) — EGEN gate, ALDRIG planningAuthed. Utan den här
+  //    raden registrerar _mpRegister bara admin-ingången och /mypage/me svarar 404.
+  //    (Låg först i registerVisitorRoutes deps 2026-08-27 → routen fanns aldrig.)
+  mypageAuth: _mypageAuth,
+  bubbleUploadFile,                            // profilbild-upload (Coworker.Prodilbild)
   photoUpload: _approvalUpload,                // multer (memory, 25MB) för foto-multipart
   companyFullMap: sharedCompanyFullMap,        // delad förvärmd CC-cache (list-projektion)
   companyRevenueMap: sharedCompanyRevenueMap,  // delad förvärmd faktura-omsättning per år (blockerande)

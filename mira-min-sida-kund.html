@@ -132,9 +132,23 @@
   var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("mypage_token").trim();
   var TERMS_URL=cfg("terms_url").trim();
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
-  function api(path){ return fetch(HOST+path,{headers:{"x-mypage-token":TOKEN}}).then(function(r){ return r.json(); }); }
-  function post(path,bodyObj){ return fetch(HOST+path,{method:"POST",headers:{"x-mypage-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(function(r){ return r.json(); }); }
-  function patch(path,bodyObj){ return fetch(HOST+path,{method:"PATCH",headers:{"x-mypage-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(function(r){ return r.json(); }); }
+  // ⚠️ r.json() KASTAR när svaret inte är JSON — och den kraschen fångas av samma
+  //    .catch() som ett verkligt nätverksfel. 2026-08-27 svarade servern 404 med en
+  //    HTML-sida (routen var inte registrerad) och blocket sa "Nätverksfel vid
+  //    laddning" i en timme. Läs texten först och säg vad som FAKTISKT hände.
+  function parse(r){
+    return r.text().then(function(t){
+      try { return JSON.parse(t); }
+      catch(e){
+        return { ok:false, error:"bad_response", status:r.status,
+          hint: r.status===404 ? "Endpointen saknas på servern — är backend deployad?"
+              : (r.status===401 ? "Sessionen avvisades." : "Servern svarade inte JSON (HTTP "+r.status+").") };
+      }
+    });
+  }
+  function api(path){ return fetch(HOST+path,{headers:{"x-mypage-token":TOKEN}}).then(parse); }
+  function post(path,bodyObj){ return fetch(HOST+path,{method:"POST",headers:{"x-mypage-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(parse); }
+  function patch(path,bodyObj){ return fetch(HOST+path,{method:"PATCH",headers:{"x-mypage-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(bodyObj)}).then(parse); }
 
   var STATE={ tab:"profil", loading:true, err:"", data:null, agree:false };
 
@@ -310,6 +324,7 @@
       // 401 = tokenen har gått ut (TTL 8h) eller är ogiltig. "unauthorized" säger
       // ingenting för en kund — säg vad hen ska GÖRA i stället.
       else if(j&&j.error==="unauthorized"){ STATE.err="Sessionen har gått ut. Ladda om sidan så loggas du in igen."; }
+      else if(j&&j.error==="bad_response"){ STATE.err=j.hint||"Servern svarade oväntat."; console.error("[min sida] "+j.hint+" URL: "+HOST+"/mypage/me"); }
       else { STATE.err=(j&&j.error)||"Kunde inte ladda profilen."; }
       render();
     }).catch(function(){ STATE.loading=false; STATE.err="Nätverksfel vid laddning."; render(); });

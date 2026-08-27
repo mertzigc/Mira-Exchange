@@ -1694,6 +1694,21 @@ const run = async () => {
   ok("onboarding: med user_company hittas samma person som i Vår personal",
      stQ.done === true && stQ.count >= 1);
 
+  // ── WIRING: nås mypageAuth verkligen fram i index.js? (2026-08-27) ──────────
+  // ⚠️ Sviten nedan injicerar mypageAuth själv och var därför GRÖN medan
+  //    /mypage/me svarade 404 skarpt — depen låg i registerVisitorRoutes deps
+  //    i stället för registerCompaniesRoutes. Modulen testad, kopplingen inte.
+  //    Statisk kontroll, men den fångar exakt den klassen av fel.
+  {
+    const src = readFileSync(new URL("./index.js", import.meta.url), "utf8");
+    const i = src.indexOf("registerCompaniesRoutes(app, {");
+    const block = i > -1 ? src.slice(i, src.indexOf("});", i)) : "";
+    ok("index.js skickar mypageAuth till registerCompaniesRoutes", /\bmypageAuth\s*:/.test(block));
+    const v = src.indexOf("registerVisitorRoutes(app, {");
+    const vblock = v > -1 ? src.slice(v, src.indexOf("});", v)) : "";
+    ok("mypageAuth ligger INTE i registerVisitorRoutes deps", !/\bmypageAuth\s*:/.test(vblock));
+  }
+
   // ── MIN SIDA VIA KUNDINGÅNGEN /mypage/me (2026-08-27) ───────────────────────
   // ⚠️ HELA POÄNGEN: kundvägen får uid ur den SIGNERADE TOKENEN, aldrig ur URL:en.
   //    Sviten ska falla om någon någonsin lägger tillbaka ett :userId där.
