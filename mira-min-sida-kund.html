@@ -307,6 +307,9 @@
     api("/mypage/me").then(function(j){
       STATE.loading=false;
       if(j&&j.ok){ STATE.data=j; STATE.agree=false; }
+      // 401 = tokenen har gått ut (TTL 8h) eller är ogiltig. "unauthorized" säger
+      // ingenting för en kund — säg vad hen ska GÖRA i stället.
+      else if(j&&j.error==="unauthorized"){ STATE.err="Sessionen har gått ut. Ladda om sidan så loggas du in igen."; }
       else { STATE.err=(j&&j.error)||"Kunde inte ladda profilen."; }
       render();
     }).catch(function(){ STATE.loading=false; STATE.err="Nätverksfel vid laddning."; render(); });
@@ -400,6 +403,17 @@
     if(k==="agree"){ STATE.agree=!!t.checked; var b=$("consent-save"); if(b) b.disabled=!STATE.agree; return; }
   });
 
-  load();
+  // ⚠️ RACE (2026-08-27) — samma fälla som KPI-blocket gick i. Scriptet kör vid parse,
+  // men Bubble matar in mypage_token FÖRST när sidans data laddats. Läste vi bara en
+  // gång fastnade blocket på "Ingen session" trots att tokenen kom en halv sekund
+  // senare — och felet ser ut som en trasig bindning, inte som en timing-bugg.
+  // TOKEN läses om varje tick; fetch-hjälparna slår upp variabeln vid anropet.
+  var WAIT_MS=6000, TICK=100, waited=0;
+  function boot(){
+    TOKEN=cfg("mypage_token").trim();
+    if(TOKEN || waited>=WAIT_MS){ load(); return; }
+    waited+=TICK; setTimeout(boot,TICK);
+  }
+  boot();
 })();
 </script>
