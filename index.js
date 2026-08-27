@@ -14249,6 +14249,12 @@ app.post("/admin/invite/:id/send", async (req, res) => {
       event_start: inv.start_date || "", event_end: inv.end_date || "", rsvp_deadline: inv.rsvp_deadline || "",
       description: inv.description || "", company_name: brand.company_name, accent_color: brand.accent_color,
       bg_color: brand.bg_color,
+      // Ämnesraden ska säga att det är en knuff, inte se ut som en dubblett av
+      // originalet. Flaggan går via extra_data (ett fält som bevisligen finns och
+      // fungerar) — INTE via en subject_override-KOLUMN på EmailQueue. Se §not i
+      // handoffen: den kolumnen skrivs aldrig av någon kodväg idag, och ett okänt
+      // fält i _bulkCreate rapporteras som lyckat fast inget skapas.
+      is_reminder: isReminder,
       logo_url: brand.logo_url, image_url: inv.image_url || "", host_name: inv.host_name || brand.company_name,
       // Avsändarnamn i inkorgen: använd ifyllt "Avsändarnamn i mail" (host_name) om satt,
       // annars ClientCompanyns namn, annars Carotte. Tomt fält läcker aldrig.

@@ -281,8 +281,43 @@ raden *"Dina uppgifter är redan ifyllda – du svarar som **Namn** · mejl"*
 ⚠️ Öppna länken gör **ingen dedupe på mejladress** — varje inskickat svar skapar en
 ny gästrad. Vidarebefordrat `?t=`-mejl kan alltså ge dubbletter.
 
-**Röktest:** `node invite_mall_smoke.mjs` (154 gröna). Mutationstestad mot HEAD:
-7 av 155 faller, ingen krasch. Kör mutationstestet på en KOPIA
+### Påminnelse på inbjudan (2026-08-27)
+
+`/admin/invite/:id/send` med `reminder:true` har **alltid** stött alla kinds —
+urvalet byter till `invite_sent === true && notAnswered(g)`. Bara UI:t saknades på
+inbjudningsfliken; nu finns `iv-g-remind` bredvid `iv-g-send`, byggd som
+undersökningens `sv-remind`.
+
+⚠️ **Frontendens antal måste matcha backendens urval.** Knappen säger
+"Påminn (12)" men servern väljer mottagarna. För invite gäller
+`invite_sent && email && rsvp_status === 'pending'` — samma villkor i
+`ivAwaitingList()` och i `notAnswered()`. Röktestet vaktar båda sidorna, så att
+ändra den ena ensam fäller sviten.
+
+Påminnelsen ommarkerar INTE `invite_sent` (den är redan `true`), och opt-outade
+adresser filtreras bort av backend — det köade antalet kan därför bli lägre än
+knappens siffra. Progressraden visar det faktiska antalet.
+
+**Ämnesrad vid påminnelse:** utskicket sätter `is_reminder` i **`extra_data`**, och
+mallarna byter prefix — inbjudan `"Inbjudan: X"` → `"Påminnelse: X"`, nyhet och
+undersökning får `"Påminnelse: "` framför titeln. Ett uttryckligt
+`subject_override` vinner fortfarande.
+
+⚠️ **Varför INTE en `subject_override`-kolumn på EmailQueue:**
+1. Ingen kodväg skriver den kolumnen idag. De tre ställen i index.js som sätter
+   `subject_override` lägger den i `extra_data`-objektet, men `buildEmail()` läser
+   `item.subject_override` från **kö-raden** — så de tre överstyrningarna
+   (`Uppdaterad bokning – X` m.fl.) får aldrig effekt. Fältet finns alltså
+   sannolikt inte på datatypen.
+2. `_bulkCreate` returnerar `created: ok || rows.length`. Faller **alla** rader på
+   ett okänt fält blir `ok = 0` → `0 || rows.length` → hela utskicket rapporteras
+   som lyckat fast **inget** skapades. Ett nytt fält i bulk-raden är därför en
+   tyst-total-fel-risk, inte en kosmetisk ändring.
+
+Röktestet vaktar att sändvägen aldrig lägger en sådan kolumn på kön.
+
+**Röktest:** `node invite_mall_smoke.mjs` (170 gröna). Mutationstestad mot HEAD:
+9 av 171 faller, ingen krasch. Kör mutationstestet på en KOPIA
 (`git show HEAD:fil > kopia`), aldrig med `git checkout` i arbetsträdet.
 
 ---

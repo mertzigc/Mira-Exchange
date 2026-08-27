@@ -301,6 +301,55 @@ ok("hex-fältet är sanningen vid sparning (tomt = standard)", /bg_color:g\('iv-
 ok("värdet laddas tillbaka vid redigering", /g\('iv-bg-hex'\)\.value=inv\.bg_color\|\|''/.test(ADMIN));
 ok("Rensa-knappen nollar fältet", /iv-bg-clear'\)\.addEventListener\('click'/.test(ADMIN));
 ok("accentfältet är orört", /id="iv-accent-hex"/.test(ADMIN) && /accent_color:g\('iv-accent'\)\.value/.test(ADMIN));
+// ── Påminnelse på inbjudan ────────────────────────────────────────────────
+// Knappen lovar ett antal; backend väljer mottagare. Går villkoren isär säger
+// UI:t "Påminn (12)" och servern köar något annat.
+sec("Påminnelse (inbjudan)");
+ok("påminn-knappen finns i deltagarpanelen", /id="iv-g-remind"/.test(ADMIN));
+ok("antalet räknas i en egen funktion", /function ivAwaitingList\(\)/.test(ADMIN));
+ok("frontendens villkor: fått mejl + har adress + obesvarad",
+   /x\.invite_sent && x\.email && \(x\.rsvp_status\|\|'pending'\)==='pending'/.test(ADMIN));
+// Motsvarande rader i backend. Ändras någon av dem ensam faller det här testet.
+ok("backendens påminnelseurval: invite_sent === true && notAnswered",
+   /\? \(g\.invite_sent === true && notAnswered\(g\)\)/.test(INDEX));
+ok("backendens notAnswered för inbjudan: rsvp_status === 'pending'",
+   /return String\(g\.rsvp_status \|\| "pending"\)\.toLowerCase\(\) === "pending";/.test(INDEX));
+ok("backend hoppar över mottagare utan e-postadress",
+   /\.filter\(g => String\(g\.email \|\| ""\)\.trim\(\)\)/.test(INDEX));
+// Två träffar krävs: undersökningens gamla knapp OCH inbjudans nya. Ett ensamt
+// träffat anrop var undersökningens — testet hade grönat sig utan inbjudan.
+ok("reminder:true skickas från BÅDA flikarna (undersökning + inbjudan)",
+   (ADMIN.match(/body:JSON\.stringify\(\{offset:offset,limit:40,reminder:true\}\)/g) || []).length === 2);
+ok("påminnelse ommarkerar INTE invite_sent (skulle dölja vem som fått vad)",
+   /if \(!isReminder\) \{[\s\S]{0,220}invite_sent: true/.test(INDEX));
+ok("knappen nollas när deltagarpanelen töms",
+   /iv-g-remind'\)\.textContent='🔔 Skicka påminnelse'/.test(ADMIN));
+ok("undersökningens påminnelse är orörd", /id="sv-remind"/.test(ADMIN) && /SV_SEND_BUSY \|\| !awaiting/.test(ADMIN));
+
+// ── Påminnelsens ämnesrad ─────────────────────────────────────────────────
+// Utan eget prefix trådar mejlklienten ihop påminnelsen med originalet och den
+// läser som en dubblett. Flaggan går via extra_data — se nästa test för varför.
+sec("Ämnesrad vid påminnelse");
+ok("utskicket flaggar påminnelse i extra_data", /is_reminder: isReminder,/.test(INDEX));
+ok("inbjudan byter prefix Inbjudan: → Påminnelse:",
+   /\(x\.is_reminder \? "P\\u00e5minnelse: " : "Inbjudan: "\) \+ title/.test(EMAILER));
+ok("nyhet och undersökning får prefix",
+   (EMAILER.match(/x\.is_reminder \? "P\\u00e5minnelse: " \+ title : title/g) || []).length === 2);
+ok("ett uttryckligt subject_override vinner fortfarande i alla tre",
+   (EMAILER.match(/const subject\s*=\s*item\.subject_override \|\| \(\(?x\.is_reminder/g) || []).length === 3);
+
+// ⚠️ subject_override som KOLUMN på EmailQueue skrivs inte av någon kodväg idag,
+// så fältet finns sannolikt inte i Bubble. Ett okänt fält i _bulkCreate ger
+// `created: ok || rows.length` → hela utskicket rapporteras lyckat fast INGET
+// skapades. Därför får sändvägen aldrig lägga en sådan kolumn på kön.
+const sendSrc = slice(INDEX, 'app.post("/admin/invite/:id/send"', "\n});", "send-route");
+// Kommentarrader räknas inte — det är KODEN som inte får skriva kolumnen.
+const sendCode = sendSrc.split("\n").filter(l => !l.trim().startsWith("//")).join("\n");
+ok("sändvägen skriver INGEN subject_override-kolumn på EmailQueue",
+   sendSrc !== "" && !/subject_override/.test(sendCode));
+ok("flaggan ligger i extra_data, som redan är ett fungerande fält",
+   /extra_data: JSON\.stringify\(extra\)/.test(sendSrc));
+
 ok("admin varnar synligt när bg_color droppats av Bubble",
    /function bgWarnIfMissing\(p, j\)/.test(ADMIN) && /bgWarnIfMissing\('iv', j\);/.test(ADMIN)
    && /bg_color" saknas på datatypen Invitation/.test(ADMIN));

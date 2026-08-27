@@ -484,6 +484,7 @@
 
             <div class="iv-g-actions">
               <button class="ck-btn-lg" id="iv-g-send" disabled>Skicka inbjudningar</button>
+              <button class="ck-btn-gh" id="iv-g-remind" disabled>🔔 Skicka påminnelse</button>
               <span class="ck-mut" id="iv-g-send-info"></span>
             </div>
             <div id="iv-g-send-prog" style="display:none;margin-bottom:12px">
@@ -1389,6 +1390,7 @@
     g('iv-ok').classList.remove('show'); g('iv-err').classList.remove('show');
     g('iv-link-card').style.display='none'; g('iv-guests-card').style.display='none';
     IVG=[]; IVG_INVITE_ID=null; IVG_TOKEN='';
+    if(g('iv-g-remind')){ g('iv-g-remind').disabled=true; g('iv-g-remind').textContent='🔔 Skicka påminnelse'; }
   }
   g('iv-reset').addEventListener('click', resetInviteForm);
   function openInviteForEdit(id){
@@ -1964,6 +1966,14 @@
       .catch(function(e){ g('iv-g-tbody').innerHTML='<tr><td colspan="7" class="iv-g-empty">Kunde inte ladda: '+esc(e.message||'')+'</td></tr>'; });
   }
 
+  // Fått inbjudan men inte svarat → kan påminnas. Samma villkor som backendens
+  // notAnswered() för invite i index.js; skiljer de sig lovar knappen fel antal.
+  function ivAwaitingList(){
+    return IVG.filter(function(x){
+      return x.invite_sent && x.email && (x.rsvp_status||'pending')==='pending';
+    });
+  }
+
   function renderGuestStats(){
     var total=IVG.length, yes=0, no=0, pending=0, arrived=0, sent=0, sendable=0;
     IVG.forEach(function(x){
@@ -1973,6 +1983,7 @@
       if(x.invite_sent) sent++;
       if(!x.invite_sent && s==='pending' && x.email) sendable++;
     });
+    var awaiting = ivAwaitingList().length;
     g('iv-g-count').textContent='('+total+')';
     g('iv-g-stats').innerHTML =
       '<div class="ck-stat"><div class="n">'+total+'</div><div class="l">Totalt</div></div>'+
@@ -1981,6 +1992,9 @@
       '<div class="ck-stat wait"><div class="n">'+pending+'</div><div class="l">Väntar</div></div>'+
       '<div class="ck-stat"><div class="n">'+arrived+'</div><div class="l">Anlänt</div></div>';
     g('iv-g-send').disabled = IVG_SEND_BUSY || !sendable;
+    g('iv-g-remind').disabled = IVG_SEND_BUSY || !awaiting;
+    g('iv-g-remind').textContent = awaiting ? ('🔔 Påminn ('+awaiting+')') : '🔔 Skicka påminnelse';
+    g('iv-g-remind').title = awaiting ? (awaiting+' har fått inbjudan men inte svarat') : 'Ingen som fått inbjudan väntar på svar';
     g('iv-g-send-info').textContent = sendable ? (sendable+' obesvarade utan skickat mejl') : (sent>0?'Alla obesvarade har redan fått inbjudan.':(total?'Inga att skicka till.':''));
   }
 
@@ -2243,6 +2257,33 @@
   });
 
   g('iv-g-refresh').addEventListener('click', function(){ if(IVG_INVITE_ID) loadGuests(IVG_INVITE_ID); });
+
+  // ── Skicka påminnelse (till de som fått inbjudan men inte svarat) ──
+  // Samma endpoint som ordinarie utskick; reminder:true byter urval i backend.
+  g('iv-g-remind').addEventListener('click', function(){
+    if(!IVG_INVITE_ID || IVG_SEND_BUSY) return;
+    var awaiting = ivAwaitingList().length;
+    if(!awaiting) return;
+    if(!confirm('Skicka påminnelse till '+awaiting+' som fått inbjudan men inte svarat?\n\nDe köas direkt och skickas av e-postmotorn. Detta går inte att ångra.')) return;
+    IVG_SEND_BUSY=true; g('iv-g-remind').disabled=true; g('iv-g-send').disabled=true;
+    g('iv-g-send-prog').style.display='block'; g('iv-g-send-bar').style.width='0%'; g('iv-g-send-text').textContent='Startar påminnelse…';
+    var queued=0;
+    function step(offset){
+      fetch(api('/admin/invite/'+encodeURIComponent(IVG_INVITE_ID)+'/send'),{method:'POST',headers:H(),body:JSON.stringify({offset:offset,limit:40,reminder:true})})
+        .then(function(r){return r.json();})
+        .then(function(j){
+          if(!j.ok) throw new Error(j.error||'fel');
+          queued+=j.queued||0;
+          var pct=j.total?Math.round(j.processed/j.total*100):100;
+          g('iv-g-send-bar').style.width=pct+'%';
+          g('iv-g-send-text').textContent='Köar påminnelse '+j.processed+'/'+j.total+' · '+queued+' köade';
+          if(!j.done && j.next_offset!=null){ step(j.next_offset); }
+          else { IVG_SEND_BUSY=false; g('iv-g-send-text').textContent='Klart — '+queued+' påminnelser köade. Pollern skickar dem inom ~2 min.'; loadGuests(IVG_INVITE_ID); }
+        })
+        .catch(function(e){ g('iv-g-send-text').textContent='Fel: '+(e.message||''); IVG_SEND_BUSY=false; g('iv-g-remind').disabled=false; g('iv-g-send').disabled=false; });
+    }
+    step(0);
+  });
 
   // Skicka från deltagare-panelen (samma endpoint som Målgrupp)
   g('iv-g-send').addEventListener('click', function(){

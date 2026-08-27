@@ -1247,7 +1247,9 @@ async function tmplInviteInvitation(e, extra, toName, ctaLabel, item) {
   // fmtDateTime(...).split(" ")[0] bort allt efter dagsiffran → mailet visade "10".
   const deadline = x.rsvp_deadline ? fmtDate(x.rsvp_deadline) : "";
 
-  const subject  = item.subject_override || ("Inbjudan: " + title);
+  // Påminnelse byter prefix i stället för att lägga till ett — "Påminnelse:
+  // Inbjudan: X" läser illa. Ett uttryckligt subject_override vinner fortfarande.
+  const subject  = item.subject_override || ((x.is_reminder ? "P\u00e5minnelse: " : "Inbjudan: ") + title);
   const intro    = x.description
     ? esc(x.description).replace(/\n/g, "<br>")
     : "Du \u00e4r varmt v\u00e4lkommen! H\u00e4r \u00e4r detaljerna:";
@@ -1288,7 +1290,7 @@ async function tmplNewsAnnouncement(e, extra, toName, ctaLabel, item) {
   const title      = x.event_title || "Nyhet";
 
   const pal     = mailPalette(x.bg_color);
-  const subject = item.subject_override || title;
+  const subject = item.subject_override || (x.is_reminder ? "P\u00e5minnelse: " + title : title);
   const body    = x.description
     ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:" + pal.body + ";line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
     : "";
@@ -1334,7 +1336,7 @@ async function tmplSurveyInvitation(e, extra, toName, ctaLabel, item) {
   const title      = x.event_title || "Undersökning";
 
   const pal     = mailPalette(x.bg_color);
-  const subject = item.subject_override || title;
+  const subject = item.subject_override || (x.is_reminder ? "P\u00e5minnelse: " + title : title);
   const body    = x.description
     ? esc(x.description).replace(/\n\n+/g, "</p><p style=\"font-size:14px;color:" + pal.body + ";line-height:1.65;margin:0 0 14px;\">").replace(/\n/g, "<br>")
     : "Vi skulle uppskatta om du kan ta några minuter att besvara vår undersökning.";
