@@ -265,6 +265,34 @@ sin User. Hela kedjan Bubble → Render → Bubble fungerar.
 Blocket måste vänta in fältet (Bubble uppdaterar det reaktivt, ~1 s) och visa ett
 "startar session"-läge under tiden. Det är inte ett fel.
 
+### 7.5.3c ⚠️ TOKENEN ÄR EN ÖGONBLICKSBILD — scope-ändringar slår inte igenom direkt
+
+**Symptom (skarpt 2026-08-28):** en fastighet lades till i `receptionist_fastigheter`,
+men dök inte upp i husväljaren trots omladdning och "Uppdatera".
+
+**Orsak — inte en bugg i listan, utan i sessionens livscykel.** `/visitor/context` läser
+fastigheterna ur **tokenens payload** (`p.fast`), inte färskt ur User. Tokenen mintades
+innan fastigheten lades till, och page-load-villkoret (`visitor_token is empty or
+visitor_token_exp < now`) mintar ingen ny så länge den gamla är giltig — upp till **12 h**.
+
+Att läsa `p.fast` är rätt: **tokenen är sanningen om scope**, annars kunde en klient
+påstå sig ha fler hus. Problemet är att inget invaliderar den när tilldelningen ändras.
+
+**Tillfälligt:** töm `Visitor_token` på användaren i App data → ny session vid nästa laddning.
+
+**⚠️ MÅSTE BYGGAS INNAN SKARP DRIFT — Bubble database trigger:**
+```
+When User's receptionist_fastigheter changes
+  → Make changes to User: visitor_token = "" (tom)
+```
+Nästa sidladdning mintar då en ny token med rätt scope. WU-snålt (bara vid ändring).
+Samma trigger bör gälla om `User_role` ändras — en avaktiverad receptionist ska tappa
+sin session direkt, inte om 12 timmar. **Det är säkerhetsrelevant, inte kosmetiskt.**
+
+**➡️ Fixen ingår i Staff-modulens uppdrag** ([STAFF-MODULEN.md](STAFF-MODULEN.md) §3):
+tilldelnings-endpointen där ska dessutom nolla `visitor_token` direkt vid skrivning, så det
+fungerar även om Bubble-triggern skulle saknas. Står också i HANDOFF "KVAR I BUBBLE".
+
 ### 7.5.4 FELSÖKNINGSGUIDE — sessionen startar inte (skarpa fynd 2026-08-26)
 
 Fyra timmars felsökning destillerad. Läs den HÄR innan du gissar nästa gång.
@@ -332,6 +360,37 @@ identiteten eftersom workflowen kör server-side som Current User.
 - **En modul i taget.** Besök först. Ärenden och bokning släpps in först när scopet är
   bevisat skarpt — varje ny modul måste göras scope-medveten (drift-listan får inte visa
   alla kunders ärenden, bokningen inte alla kunders rum).
+
+## 7.6 STAFF-MODULEN (dashboard_crm) — skiss 2026-08-28
+**➡️ EGEN DOMÄNFIL MED FÄRDIG PROMPT: [STAFF-MODULEN.md](STAFF-MODULEN.md)**
+
+Adminytan där besökshanteringen, receptionisterna och Carotte Academy styrs.
+**Mockup:** https://claude.ai/code/artifact/1777300d-a9f6-43eb-8c7a-8873c91fee8f
+Källa: `prototypes/staff-mockup.html`.
+
+**Bärande designidé: en åtgärdslista, inte en katalog.** Modulen öppnar med avvikelser
+(hyresgäst utan kontaktlista, värd som inte går att nå, receptionist utan hus, lobbyskärm
+nere) — inte med en lista på allt som finns. Varje rad har ett verb och en konsekvens
+("14 besök gick utan notis"), inte bara en siffra.
+
+**Fem flikar:** Översikt · Receptionister · Besöksuppsättningar · Bemanning · Carotte Academy.
+
+**Mognad per lager:**
+- **Kan byggas nu (befintlig data):** åtgärdslistan, receptionister med sessionsstatus,
+  besöksuppsättningar per hus, snittid till värd, tilldelning av fastigheter.
+- **Kräver ny datamodell + beslut:** Academy (moduler/avsnitt/genomförande), certifikat med
+  utgångsdatum, lobbyskärmens hälsa (kräver att skärmen hör av sig).
+- **⚠️ BLOCKERAT AV KÄLLAN — bemanning:** Intelliplan har **dagskornighet, inte klockslag**.
+  53 rapportmallar genomsökta gav en enda tid-träff, och den var en timlön
+  ([[reference-intelliplan-api]], INTELLIPLAN.md). Vyn kan visa *"Anna, Hötorget 3, 28 aug,
+  7,5 h"* men **inte** *"07:00–15:30"*. Vill vi ha pass med start/sluttid krävs en annan
+  källa eller egen schemaläggning i Mira. **Beslut behövs innan vyn planeras in** — rita
+  aldrig ett tidsschema mot en källa som saknar tid.
+
+**Kopplingar till besöksmodulen:** `receptionist_fastigheter` sätts här (och kräver
+trigger-fixen i §7.5.3c). Sessionsstatus visar samma felkoder som backend
+(`no_fastigheter_assigned`) så ingen behöver läsa loggar. Certifieringsstatus delas mellan
+Receptionister- och Academy-fliken — ett ställe att underhålla.
 
 ## 8. Nästa steg — bygget
 
