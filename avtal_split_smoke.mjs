@@ -778,7 +778,8 @@ const run = async () => {
   // ════════════════════════════════════════════════════════════════════════
   sec("Stora avtalsvyn — paritet med företagsvyns avtalsfunktion");
   // ════════════════════════════════════════════════════════════════════════
-  await group("admin-paritet", () => {
+  const SIGN_WRAP = { innerHTML: "", querySelector: () => null };
+  await group("admin-paritet", async () => {
     // ⚠️ Admin är en TABELL, inte kort-panelen — samma funktion, annan form.
     // Delraderna hör i masterns expand-panel; renderas de på toppnivån står
     // Planhat fyra gånger i "Alla avtal".
@@ -827,6 +828,62 @@ const run = async () => {
     ok("import-artefakter nollas i edit-läge", /CM_MODE = 'edit';\n    SPLIT_STATE = \{ lines: \[\]/.test(ADMIN));
 
     // Backend
+    // ── Signering + bilagor: sista paritetsluckan mot företagsvyn ─────────
+    // ⚠️ Avsändaren LÄSTES men fälten fanns inte i blocket → fallbacken slog
+    // till och VARJE utskick gick ut med en personlig adress, oavsett vem som
+    // klickade. Kunden svarade till fel person.
+    ok("sender-fälten finns att binda i Bubble",
+       /<input type="hidden" data-mira="sender_email"/.test(ADMIN)
+       && /<input type="hidden" data-mira="sender_name"/.test(ADMIN));
+    ok("avsändaren skickas med i signeringsutskicket", /sender_email: cfg\('sender_email'\)/.test(ADMIN));
+    for (const [what, src] of [["stora avtalsvyn", ADMIN], ["företagsvyn", FORETAG]]) {
+      ok(what + " har ingen personlig adress som fallback", !/christian@carotte\.se/.test(src));
+      ok(what + " faller tillbaka på en obemannad brevlåda", /info@carotte\.se/.test(src));
+    }
+    ok("'Skicka för signering' erbjuds bara på osignerat avtal utan pågående signering",
+       /\(!r\.is_signed && !r\.awaiting_signature\)/.test(ADMIN));
+    ok("'Signering pågår'-rutan visas när utskick gjorts", /r\.awaiting_signature/.test(ADMIN)
+       && /<h4>Signering pågår<\/h4>/.test(ADMIN));
+    ok("signeringsformulärets fäste finns", /data-signwrap=/.test(ADMIN));
+    ok("formuläret postar mot send-for-signing", /\/send-for-signing/.test(ADMIN));
+    // ⚠️ Dokument-id:n finns bara i endpointen; raden bär bara ett antal.
+    // KÖRS med stubbad fetch — en strängkontroll ser inte att svaret kastas bort.
+    const signFn = fnFrom(ADMIN, "  function openSignForm(ctId){", "\n  }", "openSignForm",
+      ["root", "esc", "apiBase", "adminHeaders", "signContactsFor", "findRowById", "bindActions", "fetch"],
+      [ { querySelector: () => SIGN_WRAP },
+        (x) => String(x == null ? "" : x),
+        () => "https://h", () => ({}),
+        () => Promise.resolve([{ email: "a@b.se", name: "Anna" }]),
+        () => ({ contract_title: "avtal" }),
+        () => {},
+        () => Promise.resolve({ json: () => Promise.resolve({ items: [
+          { id: "dok1", titel: "Signerat avtal.pdf" }, { id: "dok2", titel: "Bilaga 2.pdf" } ] }) }) ]);
+    ok("openSignForm finns", !!signFn);
+    if (signFn) {
+      SIGN_WRAP.innerHTML = "";
+      await signFn("ct1");
+      await new Promise((r) => setTimeout(r, 0));
+      ok("signeringsformuläret listar avtalets RIKTIGA Dokument-id:n",
+         /data-sign-doc="dok1"/.test(SIGN_WRAP.innerHTML) && /data-sign-doc="dok2"/.test(SIGN_WRAP.innerHTML));
+      ok("formuläret listar kundens kontaktpersoner",
+         /data-sign-rcp="a@b\.se"/.test(SIGN_WRAP.innerHTML));
+    }
+    ok("utskick kräver både dokument och mottagare",
+       /Välj minst ett dokument att signera/.test(ADMIN) && /Välj minst en mottagare/.test(ADMIN));
+    // Admin är global → kontaktpersoner per avtalets kund, inte per block.
+    ok("kontaktpersoner hämtas per avtalets kund", /function signContactsFor\(companyId\)/.test(ADMIN)
+       && /signContactsFor\(r && r\.customer_id\)/.test(ADMIN));
+
+    // ⚠️ Bilagorna var MOCKADE: hårdkodad storlek, gissat filnamn, döda knappar.
+    // Kommentarraden som FÖRKLARAR den gamla mocken får förstås nämna den —
+    // testet ska bara fälla om strängarna faktiskt renderas.
+    const adminCode = ADMIN.split("\n").filter((l) => !/^\s*(\/\/|\+\s*\/\/)/.test(l)).join("\n");
+    ok("den påhittade bilage-metadatan är borta",
+       !/344 KB/.test(adminCode) && !/Huvudavtal\.pdf/.test(adminCode));
+    ok("bilagor hämtas lazy när raden öppnas", /if \(STATE\.open_id === id\) loadAttachmentsAdmin\(id\);/.test(ADMIN));
+    ok("bilagor kan laddas upp och tas bort",
+       /function uploadAttachment\(file\)/.test(ADMIN) && /function deleteAttachment\(ctId, docId\)/.test(ADMIN));
+
     // ⚠️ Körs, inte regex:as — en mutation som nollar child_count lämnar
     // is_master-raden på plats och hade passerat en strängkontroll.
     const flagFn = new Function("items",

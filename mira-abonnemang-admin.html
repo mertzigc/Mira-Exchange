@@ -280,7 +280,21 @@
     padding-top:14px; border-top:0.5px solid var(--line); }
   .aa-expand-meta { font-size:11px; color:var(--t3); }
   .aa-expand-meta b { color:var(--t2); font-weight:600; }
-  .aa-expand-actions { display:flex; gap:8px; }
+  .aa-expand-actions { display:flex; gap:8px; flex-wrap:wrap; }
+
+  /* Signeringsformulär (portat från företagsvyn 2026-08-28) */
+  .aa-sign { margin-top:14px; padding:14px 16px; border:1px solid var(--line);
+    border-radius:10px; background:rgba(255,255,255,0.02); }
+  .aa-sign h4 { margin:0 0 10px; font-size:12.5px; font-weight:600; color:var(--t1); }
+  .aa-sign .rowlbl { display:block; font-size:11.5px; color:var(--t3); margin:0 0 4px; }
+  .aa-sign input[type=text], .aa-sign textarea { width:100%; background:var(--bg);
+    border:1px solid var(--line); border-radius:7px; color:var(--t1); padding:8px 10px;
+    font-size:12.5px; font-family:inherit; }
+  .aa-sign .rcp { display:flex; align-items:center; gap:8px; font-size:12.5px;
+    color:var(--t2); padding:4px 0; cursor:pointer; }
+  .aa-sign .fld { margin-bottom:10px; }
+  .aa-sign .note { font-size:11.5px; color:var(--t3); line-height:1.5; margin-top:8px; }
+  .aa-sign .acts { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
 
   /* Pagination + empty */
   .aa-pag { padding:14px 16px; border-top:0.5px solid var(--line);
@@ -919,6 +933,13 @@
        bootstrap till .value i script #1. Sätt data-val="" via dynamic data. -->
   <input type="hidden" data-mira="api_host"       data-val="https://mira-exchange.onrender.com">
   <input type="hidden" data-mira="planning_token" data-val="">
+  <!-- Avsändare för signeringsutskick. Bind till Current User i Bubble.
+       ⚠️ Utan dessa gick VARJE utskick från den här vyn ut med en hårdkodad
+       personlig adress, oavsett vem som klickade — kunden svarade till fel person. -->
+  <input type="hidden" data-mira="sender_email"   data-val=""><!-- Current User's e-post -->
+  <input type="hidden" data-mira="sender_name"    data-val=""><!-- Current User's namn -->
+  <!-- Delas av alla rader; ATT_UPLOAD_FOR håller vilket avtal som gäller. -->
+  <input type="file" data-aa="att-file" style="display:none;">
 
   <div class="aa-head">
     <div>
@@ -1880,19 +1901,23 @@
                   ? '<div style="grid-column:span 2;"><div class="aa-fld-l">Interngranskat före utskick</div><div class="aa-fld-v">'+esc(internalReviewText(r.internal_review_json))+'</div></div>'
                   : '')
       +       '</div>'
-      +       '<div class="aa-att">'
+      // ⚠️ Bilagorna var MOCKADE här: filnamnet gissades ur signed_pdf, storleken
+      // var hårdkodad "344 KB" och knapparna gjorde ingenting. Påhittad metadata
+      // är värre än ingen — nu hämtas riktiga Dokument-rader lazy vid expand.
+      +       '<div class="aa-att" data-att-wrap data-ct-id="'+esc(r.id)+'">'
       +         '<div class="aa-att-h">'
-      +           '<div class="aa-att-t">Bilagor ('+r.attachments_count+')</div>'
-      +           '<button class="aa-btn ghost tiny">+ Ladda upp</button>'
+      +           '<div class="aa-att-t">Bilagor (<span data-att-count>'+r.attachments_count+'</span>)</div>'
+      +           '<button class="aa-btn ghost tiny" data-act="att-upload" data-id="'+esc(r.id)+'">+ Ladda upp</button>'
       +         '</div>'
-      +         (r.attachments_count === 0
-                  ? '<div class="aa-att-empty">Inga bilagor ännu. Floor Plan, Price List, KPI/SLA, Onboarding…</div>'
-                  : '<div class="aa-att-list">'
-                    + '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">'+esc(r.signed_pdf||'Huvudavtal.pdf')+'</div><div class="aa-att-sub">Huvuddok · 344 KB · uppladdad '+fmtDate(r.signed_at)+'</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Visa</button></div></div>'
-                    + (r.attachments_count > 1 ? '<div class="aa-att-row"><div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx"><div class="aa-att-name">Övriga ('+(r.attachments_count-1)+') bilagor</div><div class="aa-att-sub">Klicka för full lista</div></div></div><div class="aa-att-act"><button class="aa-btn ghost tiny">Öppna lista</button></div></div>' : '')
-                    + '</div>'
-                )
+      +         '<div class="aa-att-list" data-att-list><div class="aa-att-empty">Hämtar bilagor…</div></div>'
       +       '</div>'
+      // Signeringsformulärets fäste + "pågår"-rutan, samma som företagsvyn.
+      +       (r.awaiting_signature
+                ? '<div class="aa-sign"><h4>Signering pågår</h4><div class="note">Avtalet är skickat för '
+                  + 'signering. När alla skrivit på stämplas det automatiskt som signerat och '
+                  + 'signeringsbeviset landar på avtalet.</div></div>'
+                : '')
+      +       '<div data-signwrap="'+esc(r.id)+'"></div>'
       +       '<div class="aa-expand-foot">'
       +         '<div class="aa-expand-meta">Contract <b>'+esc(r.id)+'</b>'
       +           (r.offer_approval_id ? ' · OfferApproval <b><a href="#" style="color:var(--acc);">'+esc(r.offer_approval_id)+'</a></b>' : '')
@@ -1900,6 +1925,10 @@
       +         '<div class="aa-expand-actions">'
       +           '<button class="aa-btn ghost tiny" data-act="open-customer" data-id="'+esc(r.customer_id||'')+'">Öppna kundkort</button>'
       +           '<button class="aa-btn ghost tiny" data-act="edit" data-id="'+esc(r.id)+'">Redigera</button>'
+      // Erbjuds så länge avtalet inte är signerat OCH ingen signering pågår.
+      +           ((!r.is_signed && !r.awaiting_signature)
+                    ? '<button class="aa-btn ghost tiny" data-act="sign-open" data-id="'+esc(r.id)+'">Skicka för signering</button>'
+                    : '')
       +           (r.status === 'pausat'
                     ? '<button class="aa-btn ghost tiny" data-act="resume" data-id="'+esc(r.id)+'">Återuppta</button>'
                     : '<button class="aa-btn ghost tiny" data-act="pause" data-id="'+esc(r.id)+'">Pausa</button>')
@@ -2190,6 +2219,9 @@
           var id = tr.getAttribute('data-id');
           STATE.open_id = STATE.open_id === id ? null : id;
           renderTable();
+          // Bilagorna hämtas lazy när raden öppnas — en fråga per avtal, bara
+          // för det avtal någon faktiskt tittar på.
+          if (STATE.open_id === id) loadAttachmentsAdmin(id);
         });
       })(mainrows[i]);
     }
@@ -2852,6 +2884,185 @@
     });
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // BILAGOR + SIGNERING (portat från företagsvyn 2026-08-28)
+  // ⚠️ Admin är GLOBAL: kontaktpersoner måste hämtas per avtalets kund, inte
+  // från ett förvalt clientcompany. Cachas per kund så en expand-runda inte
+  // gör om samma anrop.
+  // ══════════════════════════════════════════════════════════════════════════
+  var SIGN_CONTACTS_BY_CO = {};
+  function apiBase(){ return cfg('api_host').replace(/\/+$/, '') || 'https://mira-exchange.onrender.com'; }
+  function adminHeaders(){ return { 'x-admin-token': cfg('planning_token') }; }
+
+  function signContactsFor(companyId){
+    if (!companyId || !cfg('planning_token')) return Promise.resolve([]);
+    if (SIGN_CONTACTS_BY_CO[companyId]) return Promise.resolve(SIGN_CONTACTS_BY_CO[companyId]);
+    return fetch(apiBase() + '/admin/companies/' + encodeURIComponent(companyId) + '/coworkers',
+      { headers: adminHeaders() })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        SIGN_CONTACTS_BY_CO[companyId] = ((j && j.rows) || []).filter(function(c){ return c.email; });
+        return SIGN_CONTACTS_BY_CO[companyId];
+      })
+      .catch(function(){ SIGN_CONTACTS_BY_CO[companyId] = []; return []; });
+  }
+
+  function attRowHtml(a, ctId){
+    return '<div class="aa-att-row">'
+      + '<div class="aa-att-meta"><div class="aa-att-ic">PDF</div><div class="aa-att-tx">'
+      +   '<div class="aa-att-name">'+esc(a.titel || 'Dokument')+'</div>'
+      +   '<div class="aa-att-sub">'+esc(a.beskrivning || 'Bilaga')
+      +     (a.uploaded ? ' · uppladdad '+fmtDate(a.uploaded) : '')+'</div>'
+      + '</div></div>'
+      + '<div class="aa-att-act">'
+      +   (a.file_url ? '<button class="aa-btn ghost tiny" data-act="att-view" data-id="'+esc(ctId)+'" data-url="'+esc(a.file_url)+'">Visa</button>' : '')
+      +   '<button class="aa-btn danger tiny" data-act="att-del" data-id="'+esc(ctId)+'" data-doc="'+esc(a.id || '')+'">Ta bort</button>'
+      + '</div></div>';
+  }
+  function loadAttachmentsAdmin(ctId){
+    var wrap = root.querySelector('[data-att-wrap][data-ct-id="'+ctId+'"]');
+    if (!wrap || wrap.getAttribute('data-att-loaded') === '1') return;
+    wrap.setAttribute('data-att-loaded', '1');
+    var list = wrap.querySelector('[data-att-list]');
+    fetch(apiBase() + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachments', { headers: adminHeaders() })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var items = (j && j.items) || [];
+        var cnt = wrap.querySelector('[data-att-count]'); if (cnt) cnt.textContent = items.length;
+        if (!list) return;
+        list.innerHTML = items.length
+          ? items.map(function(a){ return attRowHtml(a, ctId); }).join('')
+          : '<div class="aa-att-empty">Inga bilagor ännu. Ladda upp avtals-PDF:en, Floor Plan, KPI/SLA…</div>';
+        bindActions();
+      })
+      .catch(function(){
+        if (list) list.innerHTML = '<div class="aa-att-empty">Kunde inte hämta bilagorna.</div>';
+      });
+  }
+
+  var ATT_UPLOAD_FOR = null;
+  function triggerAttUpload(ctId){
+    ATT_UPLOAD_FOR = ctId;
+    var fe = $('att-file'); if (!fe) return;
+    fe.value = ''; fe.click();
+  }
+  function uploadAttachment(file){
+    var ctId = ATT_UPLOAD_FOR; if (!ctId) return;
+    var wrap = root.querySelector('[data-att-wrap][data-ct-id="'+ctId+'"]');
+    var list = wrap && wrap.querySelector('[data-att-list]');
+    if (list) list.innerHTML = '<div class="aa-att-empty">Laddar upp…</div>';
+    var fd = new FormData(); fd.append('file', file, file.name);
+    fetch(apiBase() + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachment',
+      { method: 'POST', headers: adminHeaders(), body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j || !j.ok) { alert('Uppladdning misslyckades: ' + ((j && (j.hint || j.error)) || 'okänt fel')); }
+        if (wrap) wrap.removeAttribute('data-att-loaded');
+        loadAttachmentsAdmin(ctId);
+      })
+      .catch(function(e){ alert('Uppladdning misslyckades: ' + (e && e.message ? e.message : e)); });
+  }
+  function deleteAttachment(ctId, docId){
+    if (!confirm('Ta bort bilagan från avtalet?')) return;
+    fetch(apiBase() + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachment/' + encodeURIComponent(docId),
+      { method: 'DELETE', headers: adminHeaders() })
+      .then(function(r){ return r.json(); })
+      .then(function(){
+        var wrap = root.querySelector('[data-att-wrap][data-ct-id="'+ctId+'"]');
+        if (wrap) wrap.removeAttribute('data-att-loaded');
+        loadAttachmentsAdmin(ctId);
+      })
+      .catch(function(e){ alert('Kunde inte ta bort: ' + (e && e.message ? e.message : e)); });
+  }
+
+  function openSignForm(ctId){
+    var wrap = root.querySelector('[data-signwrap="'+ctId+'"]');
+    if (!wrap) return;
+    if (wrap.innerHTML) { wrap.innerHTML = ''; return; }   // andra klicket stänger
+    var r = findRowById(ctId);
+    wrap.innerHTML = '<div class="aa-sign"><div class="note">Hämtar bilagor och kontaktpersoner…</div></div>';
+    // ⚠️ Bilagorna hämtas från ENDPOINTEN, inte från raden: listan bär bara ett
+    // antal, inga Dokument-id:n. Utan riktiga id:n går inget att signera.
+    Promise.all([
+      fetch(apiBase() + '/admin/contracts/' + encodeURIComponent(ctId) + '/attachments', { headers: adminHeaders() })
+        .then(function(x){ return x.json(); }).catch(function(){ return {}; }),
+      signContactsFor(r && r.customer_id)
+    ]).then(function(res){
+      var atts = (res[0] && res[0].items) || [], contacts = res[1] || [];
+      var attHtml = atts.length
+        ? atts.map(function(a){
+            return '<label class="rcp"><input type="checkbox" data-sign-doc="'+esc(a.id || '')+'" checked> '
+              + esc(a.titel || 'Dokument')+'</label>';
+          }).join('')
+        : '<div class="note">Avtalet har inga bilagor. Ladda upp avtals-PDF:en ovan först — det är den som skickas för signering.</div>';
+      var rcpHtml = contacts.length
+        ? contacts.map(function(c){
+            return '<label class="rcp"><input type="checkbox" data-sign-rcp="'+esc(c.email)+'" data-sign-name="'+esc(c.name || '')+'"> '
+              + esc(c.name || c.email)+' <span style="color:var(--t3)">'+esc(c.email)+'</span></label>';
+          }).join('')
+        : '<div class="note">Inga kontaktpersoner med e-post på kunden — ange en adress nedan.</div>';
+      wrap.innerHTML = '<div class="aa-sign">'
+        + '<h4>Skicka för signering</h4>'
+        + '<div class="fld"><span class="rowlbl">Rubrik</span><input type="text" data-sign-rubrik value="'
+        +   esc((r && (r.contract_title || r.service_name)) || 'Avtal för signering')+'"></div>'
+        + '<div class="fld"><span class="rowlbl">Meddelande till mottagaren (valfritt)</span><textarea rows="2" data-sign-msg></textarea></div>'
+        + '<div class="fld"><span class="rowlbl">Detta signeras</span>'+attHtml+'</div>'
+        + '<div class="fld"><span class="rowlbl">Mottagare</span>'+rcpHtml
+        +   '<input type="text" data-sign-other placeholder="Annan e-post (valfritt)" style="margin-top:6px"></div>'
+        + '<div class="note">Alla mottagare får signera (BankID-fri OTP via e-post). Avtalet stämplas som signerat först när samtliga skrivit på.</div>'
+        + '<div class="aa-sign-err" style="display:none; color:var(--err); font-size:12px; margin-top:8px"></div>'
+        + '<div class="acts"><button class="aa-btn ghost tiny" data-act="sign-cancel" data-id="'+esc(ctId)+'">Avbryt</button>'
+        +   '<button class="aa-btn primary tiny" data-act="sign-submit" data-id="'+esc(ctId)+'">Skicka</button></div>'
+        + '</div>';
+      bindActions();
+    });
+  }
+
+  function submitSignForm(ctId, btn){
+    var wrap = root.querySelector('[data-signwrap="'+ctId+'"]');
+    if (!wrap) return;
+    var errEl = wrap.querySelector('.aa-sign-err');
+    var setErr = function(m){ if (errEl) { errEl.textContent = m; errEl.style.display = m ? '' : 'none'; } };
+    setErr('');
+    var docs = [].slice.call(wrap.querySelectorAll('[data-sign-doc]'))
+      .filter(function(b){ return b.checked; })
+      .map(function(b){ return b.getAttribute('data-sign-doc'); }).filter(Boolean);
+    var rcps = [].slice.call(wrap.querySelectorAll('[data-sign-rcp]'))
+      .filter(function(b){ return b.checked; })
+      .map(function(b){ return { email: b.getAttribute('data-sign-rcp'), name: b.getAttribute('data-sign-name') || '', role: 'Signer' }; });
+    var other = (wrap.querySelector('[data-sign-other]') || {}).value || '';
+    if (other.trim()) rcps.push({ email: other.trim(), name: '', role: 'Signer' });
+    if (!docs.length) return setErr('Välj minst ett dokument att signera.');
+    if (!rcps.length) return setErr('Välj minst en mottagare.');
+
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Skickar…';
+    fetch(apiBase() + '/admin/contracts/' + encodeURIComponent(ctId) + '/send-for-signing', {
+      method: 'POST',
+      headers: { 'x-admin-token': cfg('planning_token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rubrik: (wrap.querySelector('[data-sign-rubrik]') || {}).value || '',
+        meddelande: (wrap.querySelector('[data-sign-msg]') || {}).value || '',
+        recipients: rcps,
+        dokument_ids: docs,
+        // Avsändaren är den inloggade — bunden via data-mira i Bubble.
+        sender_email: cfg('sender_email') || '',
+        sender_name:  cfg('sender_name') || 'Carotte'
+      })
+    }).then(function(rr){ return rr.json().then(function(j){ return { r: rr, j: j }; }); })
+      .then(function(res){
+        if (!res.r.ok || !res.j.ok) {
+          setErr(res.j.hint || res.j.error || ('HTTP ' + res.r.status));
+          btn.disabled = false; btn.textContent = orig; return;
+        }
+        wrap.innerHTML = '<div class="aa-sign"><h4>Skickat</h4><div class="note">'
+          + res.j.recipients_count + ' mottagare har fått signeringslänken. Avtalet stämplas som '
+          + 'signerat när alla skrivit på.</div></div>';
+        loadLive();   // statuspillen blir "Väntar på signering"
+      })
+      .catch(function(e){ setErr('Nätverksfel: ' + (e && e.message ? e.message : e)); btn.disabled = false; btn.textContent = orig; });
+  }
+
   function bindActions(){
     var actBtns = root.querySelectorAll('[data-act]');
     for (var i = 0; i < actBtns.length; i++) {
@@ -2861,6 +3072,18 @@
           var act = btn.getAttribute('data-act');
           var id  = btn.getAttribute('data-id');
           if (!id) return;
+
+          if (act === 'sign-open')   { openSignForm(id); return; }
+          if (act === 'sign-cancel') { var w = root.querySelector('[data-signwrap="'+id+'"]'); if (w) w.innerHTML=''; return; }
+          if (act === 'sign-submit') { submitSignForm(id, btn); return; }
+          if (act === 'att-upload')  { triggerAttUpload(id); return; }
+          if (act === 'att-del')     { deleteAttachment(id, btn.getAttribute('data-doc')); return; }
+          if (act === 'att-view')    {
+            var u = btn.getAttribute('data-url');
+            // Öppnas i ny flik; Bubble-sidan ligger kvar med expanden öppen.
+            if (u) window.open(u.indexOf('//') === 0 ? 'https:' + u : u, '_blank', 'noopener');
+            return;
+          }
 
           if (act === 'open-customer') {
             // Placeholder — Bubble-routing till kundkort-fliken byggs separat
@@ -2935,6 +3158,12 @@
   loadSuppliersAdmin();
   loadCatalogAdmin();
   bindImportAdmin();
+  (function(){
+    var fe = $('att-file');
+    if (fe) fe.addEventListener('change', function(ev){
+      var fl = ev.target.files; if (fl && fl[0]) uploadAttachment(fl[0]);
+    });
+  })();
 })();
 </script>
 <!-- Wizard-JS + öppna/stäng-koppling (Fas 5) -->
@@ -3694,7 +3923,7 @@ const state = {
       const meddelande = messageEl ? messageEl.value.trim() : '';
 
       const senderEmail = ((BROOT||document).querySelector('[data-mira="sender_email"]') || {}).value
-                       || 'christian@carotte.se';
+                       || 'info@carotte.se';   // glömd bindning → obemannad brevlåda, aldrig en personlig
       const senderName  = ((BROOT||document).querySelector('[data-mira="sender_name"]') || {}).value
                        || 'Carotte';
 

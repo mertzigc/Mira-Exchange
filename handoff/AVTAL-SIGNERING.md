@@ -30,7 +30,7 @@ Splitten fanns men krävde curl med handplockade Bubble-id:n. Nu gör importen j
 
 **Nytt praktiskt flöde för kollegan:** dra in PDF → Haiku läser §PRISER som rader → modalen visar "Avtalet innehåller 7 prissatta rader", avstämning **47 097 av 47 097 ✓**, och **→ 3 delavtal** → tryck Skapa. Ett huvudavtal med tre delrader, tre tända tiles. Ingen terminal.
 
-**Verifierat:** `avtal_split_smoke.mjs` **184/184**, **63 mutationer, 63 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
+**Verifierat:** `avtal_split_smoke.mjs` **245/245**, **88 mutationer, 88 faller, 0 kraschar.** Bl.a.: borttagen nyckelordsfallback fäller 2 · `sort_field` på hintarna fäller 1 · modellens flagga över enheten fäller 1 · engångsradens dubblering fäller 1 · kategori ej härledd fäller 1 · toggeln förvald PÅ vid trasig avstämning fäller 1 · panelen visad för en enda rad fäller 1.
 
 **Kvar:** ingen skarp körning mot ett riktigt avtal än — Planhat splittades via curl innan A+B fanns. Nästa importerade paketavtal är testet.
 
@@ -144,7 +144,7 @@ Timkostnad 320 kr/h · OB 45/50/80 kr/h · Fönsterputs 1500/4000 kr/gång
 
 **Frontend (båda vyerna):** `splitPayloadLines()` skickar `monthly_amount`, inte `amount` — annars hade 19 640 kr/år blivit 19 640 kr/mån, tolv gånger för mycket, och felet syns först som kundens månadskostnad. Årsrader visar dessutom "= X/mån" under beloppet, annars står raderna i kr/år medan foten summerar kr/mån.
 
-**Verifierat:** `avtal_split_smoke.mjs` **227/227**, **77 mutationer, 77 faller, 0 kraschar** — mot Castellums verkliga siffror.
+**Verifierat:** `avtal_split_smoke.mjs` **245/245**, **88 mutationer, 88 faller, 0 kraschar** — mot Castellums verkliga siffror.
 
 **⚠️ EJ KÖRT SKARPT.** Testerna kör mot siffror jag läst ur PDF:en för hand, inte mot Haikus faktiska svar. Nästa steg är en riktig `/import/parse` mot Castellum-PDF:en.
 
@@ -168,18 +168,24 @@ Timkostnad 320 kr/h · OB 45/50/80 kr/h · Fönsterputs 1500/4000 kr/gång
 
 ⚠️ **Rör INTE dessa** trots att de innehåller "avtal": `prototypes/avtal-wizard.html` + `prototypes/avtal-oversikt.html` serveras av **live-routes** (`/prototyp/*`, index.js ~25400) för kollegor utan Bubble-inlogg. `mira-approval-archive.html` är signeringsarkivet och delar `.aa-`-namnrymden med stora avtalsvyn (admin har explicit kod för samexistensen).
 
-**Stora avtalsvyn fick paritet 2026-08-27** — den hade släpat sedan Fas 2:
+**⚠️ AVSÄNDAREN VAR HÅRDKODAD (rättat 2026-08-28).** Stora avtalsvyn *läste* `sender_email`/`sender_name` men `<input data-mira="…">`-elementen fanns inte i blocket — bara `api_host` och `planning_token`. `querySelector` returnerade null och fallbacken slog till: **varje avtal som skickades för signering därifrån gick ut med en personlig adress som avsändare, oavsett vem som klickade.** Kunden svarade till fel person. Fälten är nu utlagda (bind till Current User i Bubble, `data-val` inte `value` — Bubble strippar `value` på hidden inputs), och fallbacken är `info@carotte.se` i BÅDA vyerna: en obemannad brevlåda är bättre än fel persons inkorg om bindningen glöms.
+
+**Varför admin bara har två config-fält och det mestadels är rätt:** `planning_token` är en *behörighet*, inte en identitet. Endpointen kollar token och agerar med masternyckeln; vyn är global med flit och `Contract` har inget ägarfält. Bubbles page privacy avgör vem som får öppna sidan. Current user behövs alltså bara där något *skickas i någons namn* — dvs. signeringsutskicket.
+
+**Stora avtalsvyn fick paritet 2026-08-27/28** — den hade släpat sedan Fas 2:
 - **Två KPI-buggar, samma som redan rättats två gånger på andra håll:** `contract_type === 'Subscription'` (Hybrid blev 0 kr) och ingen master-exkludering (Planhat räknades som 4 avtal / 94 194 kr).
 - **Paketavtal:** delrader plockas ur toppnivån och renderas i masterns expand-panel med summa-mot-total; masterraden namnges av avtalet och får `N tjänster`-pill; rörlig delrad visar styckpris i stället för "0 kr/mån".
 - **PDF-import + raduppdelning** (fanns inte alls): `+ Importera avtal` → `/import/parse` → granskningsmodal med `is_signed`-kryssruta och split-panel → `/import/commit` → `/split`.
 - ⚠️ **Admin har ingen förvald kund** — LLM:ens `customer_name` auto-matchas mot företagslistan (exakt träff först, sedan prefix), men valet lämnas synligt och ändringsbart. Namn i avtal ≠ alltid namn i Bubble.
+- **Signering (2026-08-28):** "Skicka för signering"-knappen (bara på osignerat avtal utan pågående signering), inline-formuläret med dokument-kryssrutor och mottagare, samt "Signering pågår"-rutan. ⚠️ Bilagorna till signeringen hämtas från `/attachments`-endpointen, INTE från raden — listan bär bara ett antal, inga Dokument-id:n. Admin är global, så kontaktpersonerna hämtas **per avtalets kund** (`signContactsFor(customer_id)`, cachat per kund), inte från ett förvalt clientcompany.
+- **⚠️ Bilagorna var MOCKADE (rättat 2026-08-28):** filnamnet gissades ur `signed_pdf`, storleken var hårdkodad "344 KB" och knapparna gjorde ingenting. Påhittad metadata är värre än ingen. Nu hämtas riktiga Dokument-rader lazy när raden öppnas, med fungerande visa/ladda upp/ta bort.
 - ⚠️ **Ny endpoint `GET /admin/service-catalog`** — erbjudandelistan till split-dropdownen. Admin är global och kan inte använda `/services/dashboard`, som kräver `company_id` för prisanpassning. Hämtas UTAN `sort_field`.
 
 **Affärsvyns flöde fixat samtidigt:** `affar_api.js` visade delraderna som egna affärshändelser — Planhat gav "frukt planhat", "växtservice planhat" och "housekeeping planhat" som tre rader, och räknaren sa 211 där det fanns 208 avtal. Alla fyra `nAvtal`-anropsställen (flöde, `/deal/:id`, listvy, sök) filtrerar nu barn, och de fyra `bubbleCount("Contract")` använder `CT_MASTERS_ONLY` (`is_empty` på `master_contract`).
 
 **Bugg jag själv införde och rättade:** `openContractCreate()` nollar `SPLIT_STATE` så importen inte läcker till nästa create — men `openModalForImport` anropade den EFTER att parsen fyllt raderna, så panelen blev alltid tom. Sparas nu över anropet. Vaktad av test.
 
-**Verifierat:** `avtal_split_smoke.mjs` **184/184**, **63 mutationer, 63 faller, 0 kraschar.**
+**Verifierat:** `avtal_split_smoke.mjs` **245/245**, **88 mutationer, 88 faller, 0 kraschar.**
 
 **Deploy:** `index.js` + `companies_api.js` + `affar_api.js` (Render) + klistra om `mira-foretag-lista.html` och `mira-abonnemang-admin.html`.
 
