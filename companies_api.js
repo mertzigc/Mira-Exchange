@@ -117,10 +117,22 @@ export function registerCompaniesRoutes(app, deps) {
   ).trim().toLowerCase();
   // Option-set-värden läses som display-strängar; vissa Bubble-svar ger objekt.
   const _osVal = (v) => (v == null ? "" : (typeof v === "string" ? v : _str(v.display || v.Display || v)));
+  // Refs på User: `receptionist_fastigheter` är en List of Fastighet. Samma
+  // normalisering som /visitor/session (index.js ~21324) gör — ett Bubble-svar kan ge
+  // sträng, objekt eller enkelvärde i stället för lista.
+  const _refList = (v) => (Array.isArray(v) ? v : (v == null || v === "" ? [] : [v]))
+    .map((x) => (x == null ? null : (typeof x === "string" ? x : (x._id || x.id || null))))
+    .filter(Boolean);
   async function _users() {
     if (_uCache.map && (Date.now() - _uCache.ts) < AUX_TTL) return _uCache;
-    const all = await bubbleFindAll("User", {}).catch(() => []);
-    const map = new Map(), byEmail = new Map(), list = [], roleSet = new Set();
+    // ⚠️ `.catch(() => [])` gör ett trasigt Bubble-svar till "inga användare".
+    // Vi behåller beteendet för de befintliga läsarna (namnresolvning tål en tom karta),
+    // men SPARAR INTE ett misslyckat svep i cachen och markerar `ok:false` — annars
+    // hade Staff-modulen visat "0 receptionister" i en timme när Bubble hickade.
+    let all = null, sweepOk = true;
+    try { all = await bubbleFindAll("User", {}); }
+    catch (e) { sweepOk = false; all = []; console.error("[_users] User-svepet misslyckades", e && e.message, JSON.stringify(e && e.detail || null)); }
+    const map = new Map(), byEmail = new Map(), list = [], roleSet = new Set(), receptionists = [];
     for (const u of all) {
       // User_role härleds UR DATAN (som _matterStatuses) i st.f. att hårdkodas —
       // vi gissar aldrig option-set-värden (jfr Avslutad→Avslutat, Internal_room).
@@ -130,17 +142,38 @@ export function registerCompaniesRoutes(app, deps) {
       const first = _str(u["First Name"] || u["Förnamn"]);
       const last  = _str(u["Last Name"]  || u["Efternamn"] || u["Surname"]);
       const nm = (first + " " + last).trim() || _str(u.email || u.Email);
-      if (!nm) continue;
       const em = _userEmail(u);
+      // ⚠️ Receptionisterna plockas ut FÖRE namnfiltret nedan. En receptionist utan
+      // namn och utan e-post ska synas i Staff-modulen som "(namnlös användare)" —
+      // tyst bortfall är precis hur "[object Object]"-buggen kunde leva vidare.
+      // ⚠️ visitor_token bärs ALDRIG med (den är en giltig sessionsnyckel) — bara OM den
+      // finns och när den går ut. Fältnamnets versalisering varierar i dokumentationen
+      // → läs båda formerna. Se handoff/BESOKSHANTERING.md §7.5.3.
+      if (role === "Receptionist") {
+        const tok = _str(u.visitor_token || u.Visitor_token);
+        const exp = u.visitor_token_exp || u.Visitor_token_exp || null;
+        receptionists.push({
+          id, name: nm || em || "(namnlös användare)", email: em, role,
+          fastigheter: _refList(u.receptionist_fastigheter),
+          has_token: !!tok,
+          token_exp: exp ? _str(exp) : "",
+        });
+      }
+      if (!nm) continue;
       // company_id bärs med så kundansvarig-listan kan filtreras till VÅRA egna.
-      map.set(id, nm); list.push({ id, name: nm, email: em, company_id: _ref(u.Company) || null });
+      // role bärs med för Staff-modulens kandidatlista ("vem kan bli receptionist?")
+      // — gratis ur samma svep, och den som byter roll ska se vad hen skriver över.
+      map.set(id, nm); list.push({ id, name: nm, email: em, company_id: _ref(u.Company) || null, role });
       if (em) byEmail.set(em, id);
     }
     list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    receptionists.sort((a, b) => a.name.localeCompare(b.name, "sv"));
     const roles = Array.from(roleSet).sort((a, b) => a.localeCompare(b, "sv"));
-    _uCache = { list, map, byEmail, roles, ts: Date.now() };
-    return _uCache;
+    const built = { list, map, byEmail, roles, receptionists, ok: sweepOk, ts: Date.now() };
+    if (sweepOk) _uCache = built;      // ett misslyckat svep får ALDRIG cachas i 60 min
+    return built;
   }
+  function _usersForget() { _uCache = { list: null, map: null, ts: 0 }; }
 
   let _gCache = { list: null, map: null, ts: 0 };
   async function _groups() {
@@ -3075,6 +3108,61 @@ export function registerCompaniesRoutes(app, deps) {
     async userDirectory() {
       const uc = await _users();
       return (uc.list || []).map((u) => ({ id: u.id, name: u.name, email: u.email || "" }));
+    },
+    // ── Delas med staff_api.js (Staff-modulen) ────────────────────────────────
+    // ⚠️ De tre nedan finns HÄR och inte i staff_api för att User- och
+    // Coworker-svepen redan görs och cachas här. Ett eget svep i Staff hade varit
+    // två helsvep av flera tusen rader per TTL — precis det [[reference-bubble-wu-full-sweeps]]
+    // beskriver. Projektionerna är smala med flit: ingen sessionsnyckel, inga
+    // fält Staff inte behöver.
+    //
+    // Kastar hellre än att svara tomt: "0 receptionister" och "svepet failade" får
+    // aldrig se likadana ut i en åtgärdslista vars hela poäng är att visa avvikelser.
+    async receptionistDirectory() {
+      const uc = await _users();
+      if (!uc.ok) { const e = new Error("user_sweep_failed"); e.status = 502; throw e; }
+      return (uc.receptionists || []).map((u) => ({
+        id: u.id, name: u.name, email: u.email, role: u.role,
+        fastigheter: (u.fastigheter || []).slice(),
+        has_token: u.has_token, token_exp: u.token_exp,
+      }));
+    },
+    usersForget: _usersForget,
+    // Alla users + de roller som FAKTISKT förekommer i datan. Staff-modulen bygger
+    // sin kandidatlista ur detta (filtrerad på company i staff_api, aldrig här).
+    // ⚠️ Namnlösa users saknas — de kommer inte med i `list` och går ändå inte att
+    // visa i en väljare. Receptionister plockas däremot ut FÖRE det filtret, se _users().
+    async userRoleDirectory() {
+      const uc = await _users();
+      if (!uc.ok) { const e = new Error("user_sweep_failed"); e.status = 502; throw e; }
+      return {
+        users: (uc.list || []).map((u) => ({ id: u.id, name: u.name, email: u.email || "", company_id: u.company_id, role: u.role || "" })),
+        roles: (uc.roles || []).slice(),
+      };
+    },
+    // Kontaktvägar per person. has_sms/has_mail speglar /visitor/hosts exakt
+    // (Telefon → SMS, Email → mail) så Staff och receptionistens vy aldrig kan
+    // säga olika saker om samma värd.
+    async coworkerDirectory() {
+      const all = await _coworkersAll();
+      return (all || []).map((co) => {
+        const id = bubbleId(co); if (!id) return null;
+        const first = _str(co["Förnamn"] || co["First Name"]);
+        const last  = _str(co["Efternamn"] || co["Last Name"]);
+        const mail  = _str(co.Email || co.email);
+        return {
+          id, company_id: _ref(co["Kundföretag"]) || null,
+          name: (first + " " + last).trim() || mail,
+          has_sms: !!_str(co.Telefon || co.telefon),
+          has_mail: !!mail,
+        };
+      }).filter(Boolean);
+    },
+    // Fastighetsnamn ur samma cache som företagslistans filter → Titel-först-regeln
+    // och geo-objekt-skyddet gäller automatiskt. Se [[reference-bubble-fastighet-titel]].
+    async fastighetDirectory() {
+      const fc = await _fastigheter();
+      return (fc.list || []).map((f) => ({ id: f.id, name: f.name }));
     },
   };
 }

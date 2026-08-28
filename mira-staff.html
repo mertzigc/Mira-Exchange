@@ -1,0 +1,587 @@
+<!--
+  mira-staff.html — Staff-modulen (Service & People). Klistras in i `dashboard_crm`.
+
+  Backend: /admin/staff/oversikt · /admin/staff/receptionister
+           POST /admin/staff/receptionister/:id/fastigheter · .../:id/roll
+           /admin/staff/hus · /admin/staff/notiser · /admin/staff/kluster
+  data-mira: api_host + planning_token + user_company.
+  Design: samma manér som mira-affar-samlad.html (palett, DM Serif-rubrik, chips, grid).
+  Konventioner: INGEN ?./??, IIFE, BROOT-claim, .st-namnrymd, raka quotes.
+
+  ⚠️ ALLT är namnrymdat under .st. Affärsvyn skriver bara `.grid`/`.pill`/`.bar` —
+     det fungerar där, men två sådana block på samma sida krockar.
+     Se [[reference-bubble-multiblock-collision]].
+
+  ⚠️ Blocket bär PLANNING_ADMIN_TOKEN. Det är en CRM-yta för Carotte-personal och får
+     ALDRIG klistras in på /visitor — där syns tokenen i sidkällan för receptionisten.
+
+  ⚠️ user_company MÅSTE bindas till Current User's Company's unique id. Utan den
+     (och utan CAROTTE_COMPANY_ID i env) vägrar backend sätta rollen — en roll som
+     öppnar besökssystemet får inte delas ut utan att vi vet vems bolag det gäller.
+
+  ⚠️ INGEN setInterval. Modulen läser aldrig om sig själv i bakgrunden; "Uppdatera"
+     är ett klick. Ett bakgrundssvep hade kostat WU dygnet runt även när ingen tittar.
+
+  ⚠️ Fyra flikar, inte fem. Bemanning (Intelliplan saknar klockslag), Carotte Academy
+     (ny datamodell) och lobbyskärmens hälsa (skärmen hör inte av sig) är MEDVETET
+     inte byggda. Se handoff/STAFF-MODULEN.md §4-5.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  .st, .st *{box-sizing:border-box;margin:0;padding:0}
+  .st{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--amber:#E0A060;--blue:#5B8DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);
+    font-size:13px;line-height:1.5;display:block;padding:22px 26px 40px;border-radius:14px}
+  /* ⚠️ Bubble ärver word-break:break-all till inklistrade block → text bryts mitt i ord.
+     Neutraliseras här. Och `overflow-wrap` MÅSTE vara break-word, inte anywhere:
+     `anywhere` påverkar min-content-bredden, så en smal tabellkolumn krymper till ett
+     tecken och "Sergelhuset" blir "Sergelhus/et". break-word bryter bara ord som
+     ändå inte får plats. */
+  .st, .st *{word-break:normal;overflow-wrap:break-word}
+  /* Långa obrutna strängar (felkroppar, id:n) får däremot brytas var som helst. */
+  .st .st-err,.st .st-imsg{overflow-wrap:anywhere}
+  .st input[type=hidden]{display:none}
+  .st h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px;font-weight:400}
+  .st h1 span{color:var(--orange)}
+  .st .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 20px}
+
+  /* KPI-rad — samma form som affärsvyns processtratt, utan pilarna. */
+  .st-kpis{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}
+  /* min-width lågt nog att fem kort ryms på en rad i en smal panel — annars bryts
+     den femte ut och ser ut att höra till något annat. */
+  .st-kpi{flex:1 1 118px;min-width:118px;background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:13px 15px}
+  .st-kpi .l{font-size:10.5px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
+  .st-kpi .v{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
+  .st-kpi .v.warn{color:var(--amber)} .st-kpi .v.bad{color:var(--red)}
+  .st-kpi .s{font-size:11px;color:var(--w40);margin-top:1px}
+
+  .st-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .st-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
+  .st-chip{background:var(--input);border:1px solid var(--border);border-radius:20px;padding:7px 13px;
+           font-size:12px;color:var(--w70);cursor:pointer;user-select:none}
+  .st-chip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .st-sel{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 12px;
+          color:var(--white);font-family:var(--fb);font-size:12.5px}
+  .st-sel:focus{outline:none;border-color:var(--orange)}
+
+  /* ⚠️ !important — Bubble-sidor har en global button:hover med !important som annars
+     gör knappen helorange med osynlig text. [[reference-bubble-button-hover-important]] */
+  .st-btn{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 14px;
+          font-size:12px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb)}
+  .st-btn:hover,.st-btn:focus{background:var(--input)!important;border-color:var(--orange);color:var(--orange)!important;outline:none}
+  .st-btn:disabled,.st-btn:disabled:hover{opacity:.45;cursor:default;background:var(--input)!important;color:var(--w70)!important;border-color:var(--border)}
+  .st-btn.pri{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:800}
+  .st-btn.pri:hover,.st-btn.pri:focus{background:var(--orange)!important;color:#1c1206!important;filter:brightness(1.07)}
+  .st-btn.sm{padding:5px 11px;font-size:11px}
+
+  /* Åtgärdslista */
+  .st-todo{display:flex;flex-direction:column;gap:7px}
+  .st-item{display:flex;gap:13px;align-items:flex-start;background:var(--panel);border:1px solid var(--border);
+           border-left-width:3px;border-radius:11px;padding:13px 15px}
+  .st-item.bad{border-left-color:var(--red)} .st-item.warn{border-left-color:var(--amber)}
+  .st-item .t{flex:1;min-width:0}
+  .st-item b{display:block;font-size:13px;font-weight:700}
+  .st-item p{font-size:12px;color:var(--w70);margin-top:2px}
+  .st-item .act{font-size:11px;font-weight:700;color:var(--orange);white-space:nowrap;padding-top:2px;cursor:pointer}
+
+  .st-tw{width:100%;overflow-x:auto}
+  .st-grid{width:100%;border-collapse:collapse}
+  .st-grid th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);
+              padding:8px 12px;border-bottom:1.5px solid var(--w10);white-space:nowrap;font-weight:700}
+  .st-grid td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .st-grid tr:last-child td{border-bottom:none}
+  .st-grid tr:hover td{background:var(--card)}
+  .st-nm{font-weight:700}
+  .st-s{display:block;font-size:11px;color:var(--w40);margin-top:2px}
+  .st-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .st-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;
+           padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+  .st-pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40)}
+  .st-pill.ok{background:rgba(76,175,125,.13);color:var(--green)} .st-pill.ok .d{background:var(--green)}
+  .st-pill.warn{background:var(--orange-dim);color:var(--amber)} .st-pill.warn .d{background:var(--amber)}
+  .st-pill.bad{background:rgba(224,90,90,.13);color:var(--red)} .st-pill.bad .d{background:var(--red)}
+  .st-pill.off{background:var(--w10);color:var(--w70)}
+  .st-tag{display:inline-block;font-size:10.5px;color:var(--w70);background:var(--w10);border-radius:5px;
+          padding:3px 8px;margin:1px 3px 1px 0;white-space:nowrap}
+  .st-tag.bad{color:var(--red);background:rgba(224,90,90,.13)}
+  .st-muted{color:var(--w40)}
+  .st-msg{padding:26px;text-align:center;color:var(--w40)}
+  .st-msg b{display:block;color:var(--white);font-size:14px;margin-bottom:4px}
+  .st-err{background:rgba(224,90,90,.10);border:1px solid rgba(224,90,90,.4);border-radius:11px;
+          padding:13px 15px;color:#f08a76;font-size:12.5px;margin-bottom:14px}
+  .st-err b{display:block;margin-bottom:3px}
+  .st-note{background:var(--orange-dim);border:1px solid rgba(244,123,48,.3);border-radius:11px;
+           padding:12px 14px;font-size:12px;color:var(--w70);margin-bottom:14px}
+  .st-note b{color:var(--orange);display:block;margin-bottom:3px}
+  .st-foot{margin-top:16px;font-size:11px;color:var(--w40)}
+
+  /* Panel (tilldelning + rollsättning) */
+  .st-panel{background:var(--deep);border:1px solid var(--orange);border-radius:11px;padding:14px 15px;margin-top:10px}
+  .st-panel .h{font-size:12.5px;font-weight:700;margin-bottom:9px}
+  .st-panel .hr{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  .st-fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:5px 14px;margin-bottom:11px}
+  .st-cb{display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:pointer;padding:3px 0}
+  .st-cb input{accent-color:var(--orange);width:15px;height:15px;flex:none;cursor:pointer}
+  .st-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .st-lbl{font-size:11px;color:var(--w40)}
+  .st-imsg{font-size:11.5px;color:var(--w40)}
+  .st-imsg.err{color:var(--red)} .st-imsg.ok{color:var(--green)}
+  @media(max-width:720px){ .st{padding:16px 14px 30px} .st-fgrid{grid-template-columns:1fr} }
+</style>
+
+<div class="st">
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="planning_token" value="SÄTT_SAMMA_SOM_PLANNING_ADMIN_TOKEN">
+  <input type="hidden" data-mira="user_company"   value=""><!-- bind till Current User's Company's unique id -->
+  <div data-st="root"><div class="st-msg">Laddar…</div></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".st"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-st-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-st-claimed","1");
+  var $=function(k){ return root.querySelector('[data-st="'+k+'"]'); };
+  var cfg=function(k){ var el=root.querySelector('[data-mira="'+k+'"]'); return (el&&el.value)||""; };
+  var HOST=cfg("api_host").replace(/\/+$/,""), TOKEN=cfg("planning_token"), UCOMP=cfg("user_company");
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function nf(n){ return (n==null||isNaN(n))?"—":Number(n).toLocaleString("sv-SE"); }
+  // ⚠️ null betyder "går inte att räkna" (noll försök) — aldrig 0 % och aldrig 100 %.
+  function pf(p){ return p==null?"—":(String(p).replace(".",",")+" %"); }
+  // Bolaget följer med som query på GET (kandidatlistan) och i kroppen på POST.
+  function uq(){ return UCOMP?("&user_company="+encodeURIComponent(UCOMP)):""; }
+  function api(path,opts){
+    var o=opts||{}, h={"x-admin-token":TOKEN};
+    if(o.body) h["Content-Type"]="application/json";
+    return fetch(HOST+path,{method:o.method||"GET",headers:h,body:o.body?JSON.stringify(o.body):undefined})
+      .then(function(r){ return r.json().then(function(j){ j._code=r.status; return j; }); });
+  }
+
+  var TABS=[{k:"oversikt",l:"Översikt"},{k:"receptionister",l:"Receptionister"},
+            {k:"hus",l:"Besöksuppsättningar"},{k:"notiser",l:"Notiser"}];
+  var STATE={ tab:"oversikt", dagar:7, data:{}, laddar:false, fel:null,
+              // Tilldelning: öppen rad + valda hus. Valet ligger i STATE, inte i DOM:en.
+              oppen:null, valda:[], sparar:false, imsg:null, kluster:null,
+              // Rollsättning: "ny receptionist"-panelen + vald kandidat.
+              nyOppen:false, nyVald:"", nyRoll:"" };
+
+  function has(arr,v){ return arr.indexOf(v)>-1; }
+  function toggle(arr,v){ var i=arr.indexOf(v); if(i>-1) arr.splice(i,1); else arr.push(v); }
+
+  function hamta(force){
+    var t=STATE.tab, q="?dagar="+STATE.dagar+(force?"&fresh=1":"")+uq();
+    var path = t==="oversikt" ? "/admin/staff/oversikt"+q
+             : t==="receptionister" ? "/admin/staff/receptionister"+q
+             : t==="hus" ? "/admin/staff/hus"+q
+             : "/admin/staff/notiser"+q;
+    STATE.laddar=true; STATE.fel=null; rita();
+    // Ingen .catch som sväljer felet till en tom vy — ett trasigt svar SKA synas.
+    return api(path).then(function(j){
+      STATE.laddar=false;
+      if(!j||j.ok!==true){ STATE.fel=j||{error:"tomt svar"}; }
+      else STATE.data[t]=j;
+      rita();
+    }).catch(function(e){ STATE.laddar=false; STATE.fel={error:String(e&&e.message||e)}; rita(); });
+  }
+  function hamtaKluster(){
+    if(STATE.kluster!==null) return Promise.resolve();
+    return api("/admin/staff/kluster").then(function(j){
+      // Kluster är en genväg, inte data vyn behöver. Faller den bort ska
+      // tilldelningen fortfarande gå att göra — hus för hus.
+      STATE.kluster=(j&&j.ok&&j.kluster)?j.kluster:[];
+    }).catch(function(){ STATE.kluster=[]; });
+  }
+  function laddaOm(){
+    STATE.data={}; hamta(false);
+  }
+
+  // ── Delar ─────────────────────────────────────────────────────────────────
+  function tabsHtml(){
+    var h=""; for(var i=0;i<TABS.length;i++){ var t=TABS[i];
+      h+='<span class="st-chip'+(STATE.tab===t.k?" on":"")+'" data-st="tab" data-t="'+t.k+'">'+esc(t.l)+'</span>'; }
+    return '<div class="st-chips">'+h+'</div>';
+  }
+  function barHtml(){
+    var opts="",D=[1,7,14,30,90];
+    for(var i=0;i<D.length;i++) opts+='<option value="'+D[i]+'"'+(STATE.dagar===D[i]?" selected":"")+'>Senaste '+D[i]+(D[i]===1?" dygnet":" dagarna")+'</option>';
+    return '<div class="st-bar"><select class="st-sel" data-st="dagar">'+opts+'</select>'+
+      '<button class="st-btn" data-st="uppdatera">Uppdatera</button>'+
+      (STATE.laddar?'<span class="st-imsg">Hämtar…</span>':'')+
+      // ⚠️ Kvittot ligger HÄR och ingen annanstans. Låg det i panelen försvann det när
+      // panelen stängdes — eller ritades aldrig när raden inte kom tillbaka i listan.
+      // Baren ritas alltid; en skrivning får aldrig sluta i tystnad.
+      (STATE.imsg?'<span class="st-imsg '+esc(STATE.imsg.k)+'">'+esc(STATE.imsg.t)+'</span>':'')+
+      '</div>';
+  }
+  function felHtml(){
+    if(!STATE.fel) return "";
+    var f=STATE.fel;
+    return '<div class="st-err"><b>Kunde inte hämta data'+(f._code?" ("+f._code+")":"")+'</b>'+
+      esc(f.error||"okänt fel")+(f.detail?'<br><span class="st-imsg">'+esc(JSON.stringify(f.detail).slice(0,300))+'</span>':'')+'</div>';
+  }
+  function metaHtml(m){
+    if(!m) return "";
+    var v=[];
+    // ⚠️ Ett tak som nåtts SÄGS. En tyst avhuggning läser man som "så här ser det ut".
+    if(m.trunkerade) v.push(m.trunkerade+" hus har fler besök i perioden än hämtningen tar — siffrorna för dem är ofullständiga. Korta perioden.");
+    if(m.datumfilter_fallback) v.push(m.datumfilter_fallback+" hus hämtades utan datumfilter i Bubble (filtrerat i efterhand i stället). Siffrorna stämmer, men hämtningen är dyrare än den behöver vara.");
+    if(!v.length) return "";
+    return '<div class="st-note"><b>Att känna till</b>'+esc(v.join(" "))+'</div>';
+  }
+  function fotHtml(d){
+    return '<div class="st-foot">Byggd '+esc(String((d&&d.byggd)||"").replace("T"," ").slice(0,16))+
+      ' · siffrorna cachas i 5 minuter. Bemanning, Carotte Academy och lobbyskärmens hälsa saknas med flit — '+
+      'källorna finns inte (Intelliplan saknar klockslag, Academy kräver ny datamodell, skärmen hör inte av sig).</div>';
+  }
+
+  // ── Översikt ──────────────────────────────────────────────────────────────
+  function oversiktHtml(){
+    var d=STATE.data.oversikt; if(!d) return '<div class="st-msg">Laddar…</div>';
+    var k=d.kpi;
+    var kpis=[
+      {l:"Besök i perioden",v:nf(k.besok),s:k.hus+" hus"},
+      {l:"Via lobbyskärm",v:pf(k.via_lobby_andel),s:"resten via reception"},
+      {l:"Notiser som inte gick fram",v:nf(k.notis_fel),c:k.notis_fel?"bad":"",s:pf(k.notis_fel_andel)+" av försökta"},
+      {l:"Hyresgäster utan kontaktväg",v:nf(k.kunder_utan_kontaktvag),c:k.kunder_utan_kontaktvag?"warn":"",s:"av "+nf(k.kunder_totalt)+" anslutna"},
+      {l:"Kan inte jobba",v:nf(k.receptionister_kan_ej_jobba),c:k.receptionister_kan_ej_jobba?"bad":"",s:"av "+nf(k.receptionister_totalt)+" receptionister"}
+    ];
+    var h='<div class="st-kpis">';
+    for(var i=0;i<kpis.length;i++){ var x=kpis[i];
+      h+='<div class="st-kpi"><div class="l">'+esc(x.l)+'</div><div class="v '+(x.c||"")+'">'+x.v+'</div><div class="s">'+esc(x.s)+'</div></div>'; }
+    h+='</div>'+metaHtml(d.meta);
+    var a=d.atgarder||[];
+    if(!a.length){
+      h+='<div class="st-msg"><b>Inget att åtgärda</b>'+
+         'Alla hyresgäster har en nåbar värd, alla receptionister har hus och alla notiser gick fram i perioden.</div>';
+    } else {
+      h+='<div class="st-todo">';
+      for(var j=0;j<a.length;j++){ var r=a[j];
+        h+='<div class="st-item '+esc(r.niv)+'"><div class="t"><b>'+esc(r.rubrik)+'</b><p>'+esc(r.text)+'</p></div>'+
+           '<div class="act" data-st="gotab" data-t="'+esc(r.flik||"oversikt")+'">'+esc(r.verb)+' →</div></div>';
+      }
+      h+='</div>';
+    }
+    return h+fotHtml(d);
+  }
+
+  // ── Receptionister ────────────────────────────────────────────────────────
+  function sessPill(s){
+    if(s.status==="aktiv") return '<span class="st-pill ok"><span class="d"></span>Aktiv</span>'+
+      (s.exp?'<span class="st-s">till '+esc(String(s.exp).replace("T"," ").slice(0,16))+'</span>':'');
+    if(s.status==="nekas") return '<span class="st-pill bad"><span class="d"></span>Nekas</span><span class="st-s">'+esc(s.kod)+'</span>';
+    return '<span class="st-pill off"><span class="d"></span>Utloggad</span>'+(s.kod?'<span class="st-s">'+esc(s.kod)+'</span>':'');
+  }
+  function sparaText(){ return "Spara "+STATE.valda.length+" hus"; }
+  // ⚠️ Kryssrutorna uppdateras IN PLACE, aldrig via en omritning av panelen.
+  // Regeln i STAFF-MODULEN.md §8: rendera aldrig om ett ÖPPET formulär.
+  function malaVal(){
+    var rutor=root.querySelectorAll('[data-st="valj"]');
+    for(var i=0;i<rutor.length;i++) rutor[i].checked = has(STATE.valda, rutor[i].getAttribute("data-f"));
+    var knapp=root.querySelector('[data-st="spara"]');
+    if(knapp && !STATE.sparar) knapp.textContent = sparaText();
+  }
+  function nyPanelHtml(d){
+    var kand=d.kandidater||[];
+    var opts='<option value="">Välj person…</option>';
+    for(var i=0;i<kand.length;i++){ var k=kand[i];
+      opts+='<option value="'+esc(k.id)+'"'+(STATE.nyVald===k.id?" selected":"")+'>'+esc(k.namn)+
+            (k.roll?" — "+esc(k.roll):" — ingen roll")+'</option>'; }
+    var vald=null; for(var j=0;j<kand.length;j++) if(kand[j].id===STATE.nyVald) vald=kand[j];
+    var h='<div class="st-panel"><div class="h">Gör en befintlig användare till receptionist</div>';
+    if(d.kandidater_ofiltrerade){
+      // ⚠️ Tyst ofiltrerat vore värre: listan innehåller då även KUNDERNAS inloggningar.
+      h+='<div class="st-note"><b>Bolaget är okänt</b>Listan är ofiltrerad och kan innehålla kundernas egna '+
+         'inloggningar. Bind <b style="display:inline">data-mira="user_company"</b> till Current User\'s Company, '+
+         'eller sätt CAROTTE_COMPANY_ID på Render. Backend vägrar skriva rollen så länge bolaget är okänt.</div>';
+    }
+    if(!kand.length){
+      h+='<div class="st-imsg">Inga kandidater — alla användare i bolaget är redan receptionister.</div>';
+    } else {
+      h+='<div class="st-row"><select class="st-sel" data-st="nyvalj">'+opts+'</select>'+
+         '<button class="st-btn pri" data-st="nyspara"'+((!STATE.nyVald||STATE.sparar)?" disabled":"")+'>'+
+         (STATE.sparar?"Sparar…":"Gör till receptionist")+'</button>'+
+         '<button class="st-btn" data-st="nyavbryt">Avbryt</button></div>';
+      // ⚠️ dashboard_crm har en page-load-guard: Receptionist skickas till /visitor.
+      // Byter man roll på någon som jobbar i CRM:et tappar hen tillgången. Säg det.
+      if(vald&&vald.roll){
+        h+='<div class="st-note" style="margin:11px 0 0"><b>'+esc(vald.namn)+' har rollen '+esc(vald.roll)+'</b>'+
+           'Byter du till Receptionist skickas hen till /visitor vid nästa sidladdning och kommer inte längre '+
+           'in i CRM:et. Sessionen nollas direkt.</div>';
+      }
+    }
+    return h+'</div>';
+  }
+  function rollBytHtml(rad,d){
+    var roller=d.roller||[];
+    var opts='<option value="">Byt roll till…</option>';
+    for(var i=0;i<roller.length;i++){ if(roller[i]==="Receptionist") continue;
+      opts+='<option value="'+esc(roller[i])+'"'+(STATE.nyRoll===roller[i]?" selected":"")+'>'+esc(roller[i])+'</option>'; }
+    return '<div class="hr"><div class="st-lbl" style="margin-bottom:6px">'+esc(rad.namn)+
+      ' ska inte längre vara receptionist</div><div class="st-row">'+
+      '<select class="st-sel" data-st="rollvalj">'+opts+'</select>'+
+      '<button class="st-btn" data-st="rollspara"'+((!STATE.nyRoll||STATE.sparar)?" disabled":"")+'>Byt roll</button>'+
+      '<span class="st-imsg">Sessionen stängs samma sekund — inte om 12 timmar.</span></div></div>';
+  }
+  function assignHtml(rad,d){
+    var fastigheter=d.fastigheter||[];
+    var h='<div class="st-panel"><div class="h">Tilldela fastigheter till '+esc(rad.namn)+'</div>';
+    var kl=STATE.kluster||[];
+    if(kl.length){
+      h+='<div class="st-row" style="margin-bottom:9px"><span class="st-lbl">Genväg:</span>';
+      for(var i=0;i<kl.length;i++) h+='<button class="st-btn sm" data-st="kluster" data-k="'+esc(kl[i].id)+'">+ '+esc(kl[i].namn)+'</button>';
+      h+='</div>';
+    }
+    h+='<div class="st-fgrid">';
+    for(var j=0;j<fastigheter.length;j++){ var f=fastigheter[j];
+      h+='<label class="st-cb"><input type="checkbox" data-st="valj" data-f="'+esc(f.id)+'"'+
+         (has(STATE.valda,f.id)?" checked":"")+'>'+esc(f.name)+'</label>';
+    }
+    h+='</div><div class="st-row"><button class="st-btn pri" data-st="spara"'+(STATE.sparar?" disabled":"")+'>'+
+       (STATE.sparar?"Sparar…":sparaText())+'</button>'+
+       '<button class="st-btn" data-st="avbryt">Avbryt</button>'+
+       '</div><div class="st-imsg" style="margin-top:8px">Sparar du nollas receptionistens session direkt, '+
+       'så det nya scopet gäller vid nästa sidladdning i stället för om upp till 12 timmar.</div>';
+    h+=rollBytHtml(rad,d);
+    return h+'</div>';
+  }
+  function recHtml(){
+    var d=STATE.data.receptionister; if(!d) return '<div class="st-msg">Laddar…</div>';
+    var rader=d.rader||[];
+    var h='<div class="st-bar" style="margin-bottom:12px">'+
+      '<button class="st-btn'+(STATE.nyOppen?"":" pri")+'" data-st="ny">'+
+      (STATE.nyOppen?"Stäng":"+ Lägg till receptionist")+'</button>'+
+      '<span class="st-imsg">'+nf(rader.length)+' receptionister · '+nf((d.kandidater||[]).length)+' möjliga kandidater i bolaget</span></div>';
+    if(STATE.nyOppen) h+=nyPanelHtml(d);
+    if(!rader.length){
+      return h+'<div class="st-msg"><b>Inga receptionister ännu</b>'+
+        'Ingen användare har User_role = Receptionist. Använd knappen ovan för att sätta rollen på en befintlig användare.</div>'+fotHtml(d);
+    }
+    var oppenFanns=false;
+    h+='<div class="st-tw"><table class="st-grid"><thead><tr>'+
+      '<th>Receptionist</th><th>Hus</th><th>Session</th><th>Besök</th><th></th></tr></thead><tbody>';
+    for(var i=0;i<rader.length;i++){ var r=rader[i];
+      var hus="";
+      if(!r.fastigheter.length) hus='<span class="st-tag bad">inget hus</span>';
+      else for(var j=0;j<r.fastigheter.length;j++){
+        var f=r.fastigheter[j];
+        hus+='<span class="st-tag'+(f.saknas?" bad":"")+'">'+esc(f.saknas?"raderad fastighet":f.namn)+'</span>';
+      }
+      h+='<tr><td><span class="st-nm">'+esc(r.namn)+'</span><span class="st-s">'+esc(r.email||"—")+'</span></td>'+
+         '<td>'+hus+'</td><td>'+sessPill(r.session)+'</td>'+
+         '<td class="st-num">'+nf(r.besok)+'</td>'+
+         '<td><button class="st-btn sm" data-st="tilldela" data-u="'+esc(r.id)+'">'+
+           (r.fastigheter.length?"Ändra":"Tilldela hus")+'</button></td></tr>';
+      if(STATE.oppen===r.id){ oppenFanns=true; h+='<tr><td colspan="5" style="padding-top:0">'+assignHtml(r,d)+'</td></tr>'; }
+    }
+    h+='</tbody></table></div>';
+    // ⚠️ Panelen ritas inne i raden. Finns raden inte (cachen släpar, personen bytte
+    // namn) skulle ingenting hända — och användaren hade inte vetat varför.
+    if(STATE.oppen&&!oppenFanns) h+='<div class="st-note" style="margin-top:12px"><b>Personen syns inte i listan än</b>'+
+      'Rollen är satt men raden har inte kommit tillbaka. Tryck Uppdatera — och hör av dig om den uteblir.</div>';
+    return h+fotHtml(d);
+  }
+
+  // ── Besöksuppsättningar ───────────────────────────────────────────────────
+  function husHtml(){
+    var d=STATE.data.hus; if(!d) return '<div class="st-msg">Laddar…</div>';
+    var rader=d.rader||[];
+    if(!rader.length) return metaHtml(d.meta)+'<div class="st-msg"><b>Inga hus</b>'+
+      'Urvalet är de fastigheter som är tilldelade en receptionist. Ingen är tilldelad ännu.</div>';
+    var h=metaHtml(d.meta)+'<div class="st-tw"><table class="st-grid"><thead><tr>'+
+      '<th>Hus</th><th>Hyresgäster</th><th>Kontaktlistor</th><th>Besök</th><th>Notiser fram</th><th>Via lobbyn</th></tr></thead><tbody>';
+    for(var i=0;i<rader.length;i++){ var r=rader[i];
+      var rec=r.receptionister.map(function(x){ return x.namn; }).join(", ");
+      var kl = r.hyresgaster===0 ? '<span class="st-pill off">—</span>'
+             : (r.utan_kontaktlista===0 ? '<span class="st-pill ok"><span class="d"></span>'+r.kontaktlistor+' av '+r.hyresgaster+'</span>'
+                                        : '<span class="st-pill warn"><span class="d"></span>'+r.kontaktlistor+' av '+r.hyresgaster+'</span>');
+      var namn = r.saknas ? '<span class="st-nm" style="color:#f08a76">Raderad fastighet</span>' : '<span class="st-nm">'+esc(r.namn)+'</span>';
+      var sub = r.saknas ? "ligger kvar i en tilldelning — rensa den" : (rec||"ingen receptionist");
+      h+='<tr><td>'+namn+'<span class="st-s">'+esc(sub)+'</span>'+
+         (r.trunkerad?'<span class="st-s" style="color:#f0c08a">ofullständig hämtning</span>':'')+'</td>'+
+         '<td class="st-num">'+nf(r.hyresgaster)+'</td><td>'+kl;
+      if(r.utan_kontaktvag&&r.utan_kontaktvag.length){
+        h+='<span class="st-s">';
+        for(var j=0;j<r.utan_kontaktvag.length;j++){ var u=r.utan_kontaktvag[j];
+          h+=esc(u.kund)+(u.besok?" ("+u.besok+" besök)":"")+(j<r.utan_kontaktvag.length-1?", ":""); }
+        h+='</span>';
+      }
+      h+='</td><td class="st-num">'+nf(r.besok)+'</td>'+
+         '<td class="st-num">'+pf(r.notis_fram_andel)+(r.notis_fel?'<span class="st-s" style="color:#f08a76">'+r.notis_fel+' fel</span>':'')+'</td>'+
+         '<td class="st-num">'+pf(r.lobby_andel)+'</td></tr>';
+    }
+    h+='</tbody></table></div>';
+    h+='<div class="st-note" style="margin:14px 0 0"><b>Lobbyskärmens hälsa saknas med flit</b>Andelen via lobbyn är den hälsomätare vi '+
+       'faktiskt har. En "Online/Svarar inte"-kolumn kräver att skärmen hör av sig till Mira — det gör den inte i dag.</div>';
+    return h+fotHtml(d);
+  }
+
+  // ── Notiser ───────────────────────────────────────────────────────────────
+  function notisHtml(){
+    var d=STATE.data.notiser; if(!d) return '<div class="st-msg">Laddar…</div>';
+    var s=d.summa;
+    var h='<div class="st-kpis">'+
+      '<div class="st-kpi"><div class="l">Gick fram</div><div class="v">'+nf(s.skickad)+'</div><div class="s">'+pf(s.fram_andel)+' av försökta</div></div>'+
+      '<div class="st-kpi"><div class="l">Gick inte fram</div><div class="v '+(s.fel?"bad":"")+'">'+nf(s.fel)+'</div><div class="s">fel vid utskick</div></div>'+
+      '<div class="st-kpi"><div class="l">Aldrig försökta</div><div class="v '+(s.vantar?"warn":"")+'">'+nf(s.vantar)+'</div><div class="s">besök utan notisförsök</div></div>'+
+      '</div>'+metaHtml(d.meta);
+    var o=d.orsaker||[];
+    if(o.length){
+      h+='<div class="st-tw" style="margin-bottom:14px"><table class="st-grid"><thead><tr>'+
+         '<th>Felorsak</th><th>Antal</th></tr></thead><tbody>';
+      for(var i=0;i<o.length;i++) h+='<tr><td>'+esc(o[i].orsak)+'</td><td class="st-num">'+nf(o[i].antal)+'</td></tr>';
+      h+='</tbody></table></div>';
+    }
+    var k=d.kunder||[];
+    if(k.length){
+      h+='<div class="st-tw"><table class="st-grid"><thead><tr>'+
+         '<th>Hyresgäst</th><th>Hus</th><th>Fel</th><th>Orsaker</th></tr></thead><tbody>';
+      for(var j=0;j<k.length;j++){ var r=k[j];
+        var ors=""; for(var m=0;m<r.orsaker.length;m++) ors+='<span class="st-tag">'+esc(r.orsaker[m].orsak)+' × '+r.orsaker[m].antal+'</span>';
+        h+='<tr><td><span class="st-nm">'+esc(r.kund)+'</span></td><td>'+esc(r.hus)+'</td>'+
+           '<td class="st-num">'+nf(r.fel)+'</td><td>'+ors+'</td></tr>';
+      }
+      h+='</tbody></table></div>';
+    } else {
+      h+='<div class="st-msg"><b>Inga misslyckade notiser i perioden</b>'+
+         'Alla värdar som skulle aviseras kunde nås.</div>';
+    }
+    // ⚠️ Måttet finns inte och ska inte påstås finnas.
+    h+='<div class="st-note" style="margin:14px 0 0"><b>Vi mäter när notisen gick, inte när värden kom ned</b>'+
+       '"Snittid till värd" hade krävt ett extra klick i receptionen och ett nytt fält. Tills det finns '+
+       'mäter vi det vi faktiskt registrerar.</div>';
+    return h+fotHtml(d);
+  }
+
+  // ── Rita ──────────────────────────────────────────────────────────────────
+  function rita(){
+    var el=$("root"); if(!el) return;
+    var kropp = STATE.fel ? felHtml()
+      : (STATE.tab==="oversikt" ? oversiktHtml()
+      : STATE.tab==="receptionister" ? recHtml()
+      : STATE.tab==="hus" ? husHtml() : notisHtml());
+    el.innerHTML='<h1>Staff <span>·</span> Service &amp; People</h1>'+
+      '<div class="sub">Besökshantering · receptionister · avvikelser</div>'+
+      tabsHtml()+barHtml()+kropp;
+  }
+
+  // ── Skrivningar ───────────────────────────────────────────────────────────
+  function felText(j){
+    if(!j) return "okänt fel";
+    if(j.error==="unknown_fastighet") return "Okänd fastighet: "+(j.okanda||[]).join(", ");
+    if(j.error==="not_receptionist") return "Personen har rollen "+(j.role||"—")+", inte Receptionist. Sätt rollen först.";
+    if(j.error==="not_our_user") return "Användaren tillhör inte vårt bolag — rollen sätts inte.";
+    if(j.error==="unknown_roll") return "Okänt rollvärde. Tillåtna: "+(j.tillatna||[]).join(", ");
+    if(j.error==="carotte_company_id_missing") return "Bolaget är okänt. Bind user_company i blocket eller sätt CAROTTE_COMPANY_ID på Render.";
+    if(j.error==="fastigheter_ej_skrivna") return "Bubble sparade inte listan. "+(j.hint||"");
+    if(j.error==="roll_ej_skriven") return "Bubble sparade inte rollen. "+(j.hint||"");
+    return j.error||"okänt fel";
+  }
+  function skriv(path,body,klart){
+    STATE.sparar=true; STATE.imsg=null; rita();
+    api(path,{method:"POST",body:body}).then(function(j){
+      STATE.sparar=false;
+      if(!j||j.ok!==true){ STATE.imsg={k:"err",t:felText(j)}; rita(); return; }
+      klart(j);
+      laddaOm();
+    }).catch(function(e){ STATE.sparar=false; STATE.imsg={k:"err",t:String((e&&e.message)||e)}; rita(); });
+  }
+
+  // ── Händelser (delegerade — vyn ritas om, så inga bundna lyssnare) ────────
+  root.addEventListener("click",function(e){
+    var t=e.target.closest?e.target.closest("[data-st]"):null; if(!t) return;
+    var k=t.getAttribute("data-st");
+    if(k==="tab"||k==="gotab"){
+      var ny=t.getAttribute("data-t");
+      if(ny&&ny!==STATE.tab){ STATE.tab=ny; STATE.oppen=null; STATE.nyOppen=false; STATE.imsg=null;
+        if(STATE.data[ny]) rita(); else hamta(false); }
+      return;
+    }
+    if(k==="uppdatera"){ STATE.oppen=null; STATE.nyOppen=false; STATE.imsg=null; hamta(true); return; }
+    if(k==="ny"){ STATE.nyOppen=!STATE.nyOppen; STATE.oppen=null; STATE.nyVald=""; STATE.imsg=null; rita(); return; }
+    if(k==="nyavbryt"){ STATE.nyOppen=false; STATE.nyVald=""; STATE.imsg=null; rita(); return; }
+    if(k==="nyspara"){
+      if(STATE.sparar||!STATE.nyVald) return;
+      var uid0=STATE.nyVald;
+      skriv("/admin/staff/receptionister/"+encodeURIComponent(uid0)+"/roll",
+        {roll:"Receptionist",user_company:UCOMP},
+        function(j){
+          STATE.nyOppen=false; STATE.nyVald="";
+          // Nästa steg är alltid hus — utan dem nekas sessionen. Öppna panelen direkt
+          // i stället för att låta åtgärdslistan påminna om det efteråt.
+          STATE.oppen=uid0; STATE.valda=[];
+          STATE.imsg = j.varning ? {k:"err",t:j.varning} : {k:"ok",t:"Rollen satt. Tilldela hus nedan — utan hus nekas sessionen."};
+          hamtaKluster();
+        });
+      return;
+    }
+    if(k==="rollspara"){
+      if(STATE.sparar||!STATE.nyRoll||!STATE.oppen) return;
+      var uid1=STATE.oppen, roll=STATE.nyRoll;
+      skriv("/admin/staff/receptionister/"+encodeURIComponent(uid1)+"/roll",
+        {roll:roll,user_company:UCOMP},
+        function(j){
+          STATE.oppen=null; STATE.nyRoll="";
+          STATE.imsg = j.varning ? {k:"err",t:j.varning} : {k:"ok",t:"Rollen är nu "+roll+". Sessionen stängd."};
+        });
+      return;
+    }
+    if(k==="tilldela"){
+      var uid=t.getAttribute("data-u");
+      if(STATE.oppen===uid){ STATE.oppen=null; rita(); return; }
+      var d=STATE.data.receptionister, rad=null;
+      for(var i=0;i<d.rader.length;i++) if(d.rader[i].id===uid) rad=d.rader[i];
+      if(!rad) return;
+      STATE.oppen=uid; STATE.nyOppen=false; STATE.imsg=null; STATE.nyRoll="";
+      // Raderade fastigheter tas INTE med i förvalet — sparar man om raden ska
+      // den döda referensen försvinna, inte skrivas tillbaka.
+      STATE.valda=rad.fastigheter.filter(function(f){ return !f.saknas; }).map(function(f){ return f.id; });
+      hamtaKluster().then(function(){ rita(); malaVal(); });
+      return;
+    }
+    if(k==="avbryt"){ STATE.oppen=null; STATE.imsg=null; rita(); return; }
+    if(k==="kluster"){
+      var kid=t.getAttribute("data-k"), kl=STATE.kluster||[];
+      for(var j2=0;j2<kl.length;j2++) if(kl[j2].id===kid){
+        // ⚠️ Klustret RULLAS UT till fastigheter. Vi lagrar aldrig klustret — då hade
+        // en ny fastighet i det tyst gett åtkomst. Se BESOKSHANTERING.md §7.5.2.
+        for(var m2=0;m2<kl[j2].fastigheter.length;m2++) if(!has(STATE.valda,kl[j2].fastigheter[m2])) STATE.valda.push(kl[j2].fastigheter[m2]);
+      }
+      malaVal(); return;
+    }
+    if(k==="spara"){
+      if(STATE.sparar||!STATE.oppen) return;
+      skriv("/admin/staff/receptionister/"+encodeURIComponent(STATE.oppen)+"/fastigheter",
+        {fastigheter:STATE.valda},
+        function(j){
+          // ⚠️ Nollades inte sessionen ska det stå, inte döljas — gamla scopet gäller
+          // då i upp till 12 timmar.
+          if(j.varning){ STATE.imsg={k:"err",t:j.varning}; }
+          else { STATE.imsg={k:"ok",t:"Sparat. Sessionen nollad."}; STATE.oppen=null; }
+        });
+      return;
+    }
+  });
+  root.addEventListener("change",function(e){
+    var t=e.target; if(!t||!t.getAttribute) return;
+    var k=t.getAttribute("data-st");
+    if(k==="valj"){ toggle(STATE.valda,t.getAttribute("data-f")); malaVal(); return; }
+    if(k==="nyvalj"){ STATE.nyVald=t.value; rita(); return; }
+    if(k==="rollvalj"){ STATE.nyRoll=t.value; rita(); malaVal(); return; }
+    if(k==="dagar"){ STATE.dagar=Number(t.value)||7; STATE.data={}; STATE.oppen=null; STATE.nyOppen=false; hamta(false); return; }
+  });
+
+  if(!TOKEN||TOKEN.indexOf("SÄTT_")===0){
+    $("root").innerHTML='<div class="st-err"><b>Ingen admin-token</b>'+
+      'Fyll i <b style="display:inline">data-mira="planning_token"</b> med samma värde som PLANNING_ADMIN_TOKEN på Render.</div>';
+    return;
+  }
+  hamta(false);
+})();
+</script>

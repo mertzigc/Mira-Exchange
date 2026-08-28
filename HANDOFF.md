@@ -47,7 +47,7 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/OFFERAPPROVAL.md](handoff/OFFERAPPROVAL.md) | Offertsignering med OTP + PDF-bevis | 🟢 LIVE |
 | [handoff/SYNC-KARNAN.md](handoff/SYNC-KARNAN.md) | NIR-kärnan, §4 connection-ID:n, §8 fallgropar | 🟢 LIVE |
 | [handoff/BESOKSHANTERING.md](handoff/BESOKSHANTERING.md) | Vasakronan-besökssystem: bemannad + självincheckning, SMS/mail, kundens kontaktlista | 🟠 UNDER BYGGE · auth/session LIVE |
-| [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, Academy | 🟡 SPECAD · prompt klar |
+| [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, notiser | 🟠 BYGGD + testad · **ej deployad** |
 | [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
 
 **Egna handoff-filer utanför `handoff/`:**
@@ -79,12 +79,13 @@ och hur många kunder som kan visa pass.
 | Drift Fas 2/3 | Se FORETAG-KUNDKORT-DRIFT.md | — |
 | Caspeco F&E | Migrering startar Q1-27 → ta bort `tackning`-luckan då | — |
 | **Besökshantering (Vasakronan)** | ✅ GO. Auth/session LIVE 2026-08-26. Nästa: besöksloggen (steg B). Se BESOKSHANTERING.md §8 | Christian |
-| **Staff-modulen** | ✅ SPECAD → **EGEN SESSION**. Prompt ligger överst i handoff/STAFF-MODULEN.md — kopiera den rakt av | Christian |
+| **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |
 | **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
 - ~~**`create_user_account`:** parametern `role` + "Set User_role = role"~~ — ✅ **KLART**, bekräftat av Christian 2026-08-26. Kedjan Render→Bubble är hel.
-- **Besök: database trigger på User** — `receptionist_fastigheter` eller `User_role` ändras → sätt `visitor_token = ""`. Utan den släpar receptionistens scope upp till 12 h (BESOKSHANTERING.md §7.5.3c). Säkerhetsrelevant.
+- **Besök: database trigger på User** — `receptionist_fastigheter` eller `User_role` ändras → sätt `visitor_token = ""`. Utan den släpar receptionistens scope upp till 12 h (BESOKSHANTERING.md §7.5.3c). Säkerhetsrelevant. ⚠️ **Fortfarande nödvändig** även efter Staff-modulen: dess tilldelnings-endpoint nollar tokenen, men bara för ändringar som görs DÄR — en rollsändring i Bubble-editorn fångas bara av triggern.
+- **Klistra in `mira-staff.html`** i `dashboard_crm` + fyll i `planning_token` + bind `data-mira="user_company"` till `Current User's Company's unique id`. ⚠️ ALDRIG på `/visitor` — blocket bär admin-token. Utan `user_company` (och utan `CAROTTE_COMPANY_ID` i env) vägrar backend sätta receptionist-rollen, och kandidatlistan visar även kundernas inloggningar.
 - **`taggade_personer`** (List of Coworker) på `activitet_crm` — Aktivitet-fliken på person-detaljvyn är tom tills fältet finns och aktiviteter taggas.
 - Sätt `User_role` manuellt på Sofias befintliga User.
 

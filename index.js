@@ -21,6 +21,7 @@ import { makeKitchenAuth } from "./kitchen_auth.js";
 import { makeVisitorAuth } from "./visitor_auth.js";
 import { makeMypageAuth } from "./mypage_auth.js";
 import { registerVisitorRoutes } from "./visitor_api.js";
+import { registerStaffRoutes } from "./staff_api.js";
 import { makeSms } from "./sms.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -466,6 +467,9 @@ function requireApiKey(req, res, next) {
     "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad
     "/admin/drift",                // Drift stå-alone (ärenden+kvalitetskontroller aggregerat), x-admin-token-grindad
     "/admin/persons",              // Personer stå-alone (global personlista), x-admin-token-grindad (companies_api.js)
+    "/admin/staff",                // Staff-modulen (Service & People): åtgärdslista, receptionister,
+                                   // besöksuppsättningar, notisstatistik. x-admin-token-grindad
+                                   // (staff_api.js). ⚠️ INTE visitor-token — det är en CRM-yta.
     "/mypage",                     // Kundens Min sida. INTE x-api-key: /mypage/session grindas av
                                    // x-mypage-secret (Bubble-wf, server-side), /mypage/me/* av
                                    // x-mypage-token som bär user-scopet. Se mypage_auth.js.
@@ -21272,6 +21276,33 @@ const _companiesApi = registerCompaniesRoutes(app, {
   // att skilja våra egna users från kundens. Utan env-varen svarar checken ok:false
   // (aldrig tyst noll) — se /admin/companies/:id/onboarding i companies_api.js.
   CAROTTE_COMPANY_ID: process.env.CAROTTE_COMPANY_ID || "",
+});
+
+// ── Staff-modulen (/admin/staff). Se handoff/STAFF-MODULEN.md. ──
+// ⚠️ Gate: _planningAuthed (x-admin-token). ALDRIG _visitorAuth — Staff är en
+//    CRM-yta för Carotte-personal, och en visitor-token får aldrig nå någon annan
+//    modul (samma princip som _kitchenAuth, som bara injiceras i produktion).
+// ⚠️ receptionist-/coworker-/fastighetslistorna LÅNAS ur companies_api:s redan
+//    förvärmda cachar. Egna helsvep här hade varit två helsvep av flera tusen rader
+//    per TTL — se [[reference-bubble-wu-full-sweeps]].
+registerStaffRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch,
+  receptionistDirectory: () => _companiesApi.receptionistDirectory(),
+  coworkerDirectory:     () => _companiesApi.coworkerDirectory(),
+  fastighetDirectory:    () => _companiesApi.fastighetDirectory(),
+  // Kandidatlistan ("vem kan bli receptionist?") + de roller som finns i datan.
+  userRoleDirectory:     () => _companiesApi.userRoleDirectory(),
+  // Tilldelning och rollbyte skriver på User → User-svepet måste vräkas, annars
+  // visar listan gamla hus/roller i upp till en timme.
+  usersForget:           () => _companiesApi.usersForget(),
+  // ⚠️ Vilket bolag som är VÅRT. Utan detta (och utan ?user_company= från blocket)
+  // vägrar roll-endpointen skriva — en roll som öppnar besökssystemet får inte
+  // sättas på måfå. Samma env som companies_api:s onboarding-check använder.
+  CAROTTE_COMPANY_ID: process.env.CAROTTE_COMPANY_ID || "",
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
 });
 
 // ── POST /admin/produktion/login {code} — köks-iPad: delad kod → 12h scoped kitchen-token. ──
