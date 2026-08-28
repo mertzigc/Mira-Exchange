@@ -476,15 +476,15 @@ const run = async () => {
     const tool = slice(SRC, "const CONTRACT_EXTRACT_TOOL", "\n};", "CONTRACT_EXTRACT_TOOL");
     ok("verktyget har ett lines-fält", /lines: \{\s*\n\s*type: "array"/.test(tool));
     ok("varje rad har enhet med engång som giltigt värde",
-       /enum: \["per månad", "per kg", "per timme", "per tillfälle", "engång"\]/.test(tool));
+       /enum: \["per månad", "per år", "per kg", "per timme", "per tillfälle", "engång"\]/.test(tool));
     ok("raden bär service_hint för slug-gissningen", /service_hint:/.test(tool));
     ok("prompten säger att raderna ska summera till monthly_cost",
        /MÅSTE summera till monthly_cost/.test(tool));
     const sys = slice(SRC, "const CONTRACT_EXTRACT_SYSTEM", "§-paragrafer.`;", "CONTRACT_EXTRACT_SYSTEM");
     // ⚠️ §3:s kryssrutor finns inte i textlagret — läser modellen dem gissar den.
     ok("systemprompten pekar på PRISSEKTIONEN, inte omfattningslistan",
-       /aldrig ur omfattningslistans kryssrutor/.test(sys));
-    ok("systemprompten ber om kontrollräkning innan svar", /Kontrollräkna innan du svarar/.test(sys));
+       /de kryssen syns INTE i texten du\s+får/.test(sys) && /Läs bara prissektionen/.test(sys));
+    ok("systemprompten ber om kontrollräkning innan svar", /Kontrollräkna INNAN du svarar/.test(sys));
 
     // ⚠️ sort_field skulle tyst utelämna katalogposter utan display_order.
     const hints = slice(SRC, "async function _importCatalogHints()", "\n}", "_importCatalogHints");
@@ -510,6 +510,7 @@ const run = async () => {
     ];
     const enrich = new Function(
       slice(SRC, "const SPLIT_FIXED_UNITS", "\n}\n", "SPLIT_FIXED_UNITS")
+      + slice(SRC, "function _splitMonthlyAmount(line) {", "\n}", "_splitMonthlyAmount")
       + slice(SRC, "const IMPORT_SLUG_KEYWORDS", "\n];", "IMPORT_SLUG_KEYWORDS")
       + slice(SRC, "function _importSlugFor(line, hints)", "\n}", "_importSlugFor")
       + slice(SRC, "function _importEnrichLines(parsed, hints)", "\n}", "_importEnrichLines")
@@ -547,7 +548,8 @@ const run = async () => {
       { label: "Frukt", amount: 45, unit: "per kg", included_in_monthly_total: true },
       { label: "Städ", amount: 100, unit: "per månad", included_in_monthly_total: true }] }, HINTS);
     ok("rörlig enhet kan inte flaggas in i månadstotalen",
-       lying.reconciliation.lines_sum === 100 && lying.reconciliation.ok);
+       lying.lines[0].included_in_monthly_total === false
+       && lying.reconciliation.lines_sum === 100 && lying.reconciliation.ok);
 
     const missing = enrich({ monthly_cost: 47097, lines: parsed.lines.filter((l) => !/Växter/.test(l.label)) }, HINTS);
     ok("tappad rad → avstämningen faller med rätt differens",
@@ -563,6 +565,98 @@ const run = async () => {
     ok("okänd service_hint faller tillbaka på nyckelorden",
        enrich({ monthly_cost: 0, lines: [{ label: "Lokalvård", amount: 1, unit: "per månad", service_hint: "hittepå" }] }, HINTS)
          .lines[0].service_slug === "housekeeping");
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  sec("Castellum — kundens Aff/ABFF-upphandling (andra avtalsfamiljen)");
+  // ════════════════════════════════════════════════════════════════════════
+  await group("aff-abff", () => {
+    // ⚠️ Carottes egen mall och kundens upphandlingsavtal ser helt olika ut.
+    // Castellum/Werket (2022-10-01, K-numrering, ABFF 15) sprack på tre saker:
+    //   1. ersättningen står PER OBJEKT OCH ÅR — enheten "per år" fanns inte
+    //   2. kontraktet anger INGEN total (den ligger i anbudet, separat dokument)
+    //   3. "Pris per trapphus" är ett styckpris utan antal — går inte att summera
+    const HINTS = [{ slug: "housekeeping", name: "Housekeeping", offer_id: OFFER_HK }];
+    const enrich = new Function(
+      slice(SRC, "const SPLIT_FIXED_UNITS", "\n}\n", "SPLIT_FIXED_UNITS")
+      + slice(SRC, "function _splitMonthlyAmount(line) {", "\n}", "_splitMonthlyAmount")
+      + slice(SRC, "const IMPORT_SLUG_KEYWORDS", "\n];", "IMPORT_SLUG_KEYWORDS")
+      + slice(SRC, "function _importSlugFor(line, hints)", "\n}", "_importSlugFor")
+      + slice(SRC, "function _importEnrichLines(parsed, hints)", "\n}", "_importEnrichLines")
+      + "\nreturn _importEnrichLines;")();
+
+    // K6.1.1, ordagrant ur kontraktet.
+    const castellum = { lines: [
+      { label: "Konferensavdelning", amount: 122240, unit: "per år", included_in_monthly_total: true },
+      { label: "Huvudentré/lobby",   amount: 65920,  unit: "per år", included_in_monthly_total: true },
+      { label: "Omklädningsrum",     amount: 19200,  unit: "per år", included_in_monthly_total: true },
+      { label: "Källare",            amount: 11520,  unit: "per år", included_in_monthly_total: true },
+      // K6.2.1 à-prislista
+      { label: "Timkostnad",         amount: 320,  unit: "per timme",     included_in_monthly_total: false },
+      { label: "Fönsterputs lobby",  amount: 4000, unit: "per tillfälle", included_in_monthly_total: false },
+    ] };
+    const out = enrich(castellum, HINTS);
+    const by = (n) => out.lines.find((l) => l.label.startsWith(n));
+
+    ok("årspris räknas om till månad av SERVERN, inte av modellen",
+       by("Konferensavdelning").monthly_amount === Math.round(122240 / 12));
+    ok("'per år' räknas som fast ersättning", by("Källare").included_in_monthly_total === true);
+    ok("rörliga à-priser räknas inte in", by("Timkostnad").included_in_monthly_total === false
+       && by("Fönsterputs").included_in_monthly_total === false);
+    // 122 240 + 65 920 + 19 200 + 11 520 = 218 880 kr/år
+    ok("de fyra objektsraderna ger rätt månadssumma",
+       out.reconciliation.lines_sum === Math.round(122240/12) + Math.round(65920/12)
+                                     + Math.round(19200/12) + Math.round(11520/12));
+    // ⚠️ Kontraktet anger ingen total → raderna ÄR totalen. Utan det här blev
+    // svaret "reconciliation_failed" mot en total som aldrig fanns.
+    ok("saknad total härleds ur raderna i stället för att felrapporteras",
+       out.reconciliation.derived === true && out.reconciliation.diff === 0);
+    ok("härledd total = radernas summa",
+       out.reconciliation.monthly_cost === out.reconciliation.lines_sum);
+    ok("avstämningen är ok när alla antal är kända", out.reconciliation.ok === true);
+
+    // "Pris per trapphus: 19 640 kr/år" — dokumentet säger inte hur många.
+    const medStyckpris = enrich({ lines: castellum.lines.concat(
+      [{ label: "Pris per trapphus", amount: 19640, unit: "per år", included_in_monthly_total: true }]) }, HINTS);
+    ok("styckpris utan antal flaggas", medStyckpris.reconciliation.unknown_qty.join() === "Pris per trapphus");
+    ok("okänt antal gör avstämningen INTE ok (summan är opålitlig)",
+       medStyckpris.reconciliation.ok === false);
+    // Med antalet ifyllt ska den gå igenom och räknas rätt.
+    const medAntal = enrich({ lines: castellum.lines.concat(
+      [{ label: "Pris per trapphus", amount: 19640, qty: 3, unit: "per år", included_in_monthly_total: true }]) }, HINTS);
+    ok("angivet antal multipliceras in", medAntal.lines.find((l) => l.qty === 3).monthly_amount === Math.round(19640*3/12));
+    ok("med antal ifyllt är avstämningen ok igen", medAntal.reconciliation.ok === true
+       && medAntal.reconciliation.unknown_qty.length === 0);
+    // En vanlig månadsrad får inte råka flaggas.
+    ok("'per månad' flaggas aldrig som okänt antal",
+       enrich({ monthly_cost: 100, lines: [{ label: "Lokalvård per månad", amount: 100, unit: "per månad" }] }, HINTS)
+         .reconciliation.unknown_qty.length === 0);
+
+    // Prompten måste kunna FAMILJEN, inte bara Carottes mall.
+    const sys = slice(SRC, "const CONTRACT_EXTRACT_SYSTEM", "§-paragrafer.`;", "CONTRACT_EXTRACT_SYSTEM");
+    ok("prompten känner igen Aff/ABFF-familjen",
+       /B\) KUNDENS UPPHANDLINGSAVTAL \(Aff \/ ABFF 15\)/.test(sys) && /K-numrering/.test(sys));
+    ok("prompten vet att B = kunden och L = Carotte", /B = Beställaren = KUNDEN/.test(sys));
+    // ⚠️ Fakturaadressen är ett skanningcenter i Östersund, inte kundens adress.
+    ok("prompten varnar för fakturaadressen", /skanningcenter, INTE kundens adress/.test(sys));
+    ok("prompten säger att totalen får saknas", /Hitta ALDRIG på en total/.test(sys));
+    ok("prompten förbjuder egen omräkning till månad", /Räkna aldrig om själv/.test(sys));
+    const tool = slice(SRC, "const CONTRACT_EXTRACT_TOOL", "\n};", "CONTRACT_EXTRACT_TOOL");
+    ok("verktyget har 'per år' som enhet", /"per månad", "per år", "per kg"/.test(tool));
+    ok("verktyget kan bära ett antal per rad", /qty: \{\s*\n\s*type: "integer"/.test(tool));
+
+    // ⚠️ Båda vyerna måste skicka monthly_amount till /split. Skickas `amount`
+    // blir Castellums 19 640 kr/ÅR till 19 640 kr/MÅN — tolv gånger för mycket,
+    // och felet syns först som kundens månadskostnad.
+    for (const [what, src] of [["företagsvyn", FORETAG], ["stora avtalsvyn", ADMIN]]) {
+      ok(what + " skickar månadsbeloppet till /split, inte avtalets råa belopp",
+         /monthly_cost: fixed \? \(l\.monthly_amount != null \? l\.monthly_amount : l\.amount\) : 0,/.test(src));
+      ok(what + " visar månadsmotsvarigheten på årsrader",
+         /l\.monthly_amount && l\.monthly_amount !== l\.amount/.test(src));
+      ok(what + " säger till när totalen är härledd ur raderna",
+       /Avtalet anger ingen total — raderna ger/.test(src));
+      ok(what + " varnar för styckpris utan antal", /Styckpris utan angivet antal/.test(src));
+    }
   });
 
   // ════════════════════════════════════════════════════════════════════════

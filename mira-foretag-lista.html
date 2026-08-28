@@ -480,6 +480,7 @@
   .ab-split-sum b { color:var(--ok); }
   .ab-split-sum.ab-split-bad b { color:var(--warn); }
   .ab-split-out { color:var(--t3); }
+  .ab-split-eq { font-size:10.5px; color:var(--t3); margin-top:1px; }
   .ab-pill.t-pkg { background:rgba(56,189,248,0.16); color:#7dd3fc; border:0.5px solid rgba(56,189,248,0.38); }
 
   /* Paketavtal: delraderna nästlade i masterns panel */
@@ -5595,11 +5596,14 @@
     var el = root.querySelector('[data-ab="split-foot"]');
     if (!el) return;
     var bad = !rec.ok;
-    el.innerHTML =
-      '<span class="ab-split-sum' + (bad ? ' ab-split-bad' : '') + '">Fasta rader: <b>' + fmtKr(rec.lines_sum || 0) +
+    // Avtal utan egen totalsumma (Aff/ABFF) stäms inte av mot något — raderna
+    // ÄR totalen. Säg det, i stället för att visa en differens mot noll.
+    var sum = rec.derived
+      ? '<span class="ab-split-sum">Avtalet anger ingen total — raderna ger <b>' + fmtKr(rec.lines_sum || 0) + '/mån</b></span>'
+      : '<span class="ab-split-sum' + (bad ? ' ab-split-bad' : '') + '">Fasta rader: <b>' + fmtKr(rec.lines_sum || 0) +
         '</b> av ' + fmtKr(rec.monthly_cost || 0) +
-        (bad ? ' · differens ' + fmtKr(rec.diff || 0) : ' ✓') + '</span>' +
-      '<span class="ab-split-out">→ ' + splitChildCount() + ' delavtal</span>';
+        (bad ? ' · differens ' + fmtKr(rec.diff || 0) : ' ✓') + '</span>';
+    el.innerHTML = sum + '<span class="ab-split-out">→ ' + splitChildCount() + ' delavtal</span>';
   }
 
   function renderSplitPanel() {
@@ -5614,7 +5618,12 @@
       return '<div class="ab-split-row' + (unmapped ? ' ab-split-unmapped' : '') + '">' +
         '<div class="ab-split-lbl">' + esc(l.label) + '</div>' +
         '<div class="ab-split-amt">' + fmtKr(l.amount) +
-          '<small>' + esc(l.unit === 'per månad' ? '/mån' : l.unit) + '</small></div>' +
+          '<small>' + esc(l.unit === 'per månad' ? '/mån' : l.unit) + '</small>' +
+          // Årspris: visa månadsmotsvarigheten, annars står raderna i
+          // kr/år medan foten summerar kr/mån och siffrorna ser fel ut.
+          ((l.monthly_amount && l.monthly_amount !== l.amount)
+            ? '<div class="ab-split-eq">= ' + fmtKr(l.monthly_amount) + '/mån</div>' : '') +
+        '</div>' +
         '<select data-split-offer data-i="' + i + '">' + splitOfferOptions(l.suggested_offer_id) + '</select>' +
       '</div>';
     }).join('');
@@ -5634,6 +5643,9 @@
       (rec.ok ? '' :
         '<div class="ab-split-sub" style="margin:10px 0 0;color:var(--warn)">⚠ Raderna summerar inte till ' +
         'månadskostnaden. Rätta beloppen ovan innan du delar upp — annars stämmer inte kundens siffror.</div>') +
+      ((rec.unknown_qty && rec.unknown_qty.length) ?
+        '<div class="ab-split-sub" style="margin:10px 0 0;color:var(--warn)">⚠ Styckpris utan angivet antal: ' +
+        esc(rec.unknown_qty.join(', ')) + '. Avtalet säger inte hur många — komplettera beloppet manuellt innan uppdelning.</div>' : '') +
       ((rec.unmapped && rec.unmapped.length) ?
         '<div class="ab-split-sub" style="margin:8px 0 0">Kunde inte gissa erbjudande för: ' +
         esc(rec.unmapped.join(', ')) + ' — välj manuellt.</div>' : '');
@@ -5665,7 +5677,9 @@
       out.push({
         label: l.label,
         offer_id: sels[i].value,
-        monthly_cost: fixed ? l.amount : 0,
+        // ⚠️ monthly_amount, INTE amount: en "per år"-rad bär årsbeloppet.
+        // Castellums 19 640 kr/år hade annars blivit 19 640 kr/mån.
+        monthly_cost: fixed ? (l.monthly_amount != null ? l.monthly_amount : l.amount) : 0,
         unit: fixed ? 'per månad' : l.unit,
         // ⚠️ En engångspost får INTE också skickas som unit_price — då lägger
         // _splitChildRateCard in beloppet två gånger (en gång som rörligt pris,

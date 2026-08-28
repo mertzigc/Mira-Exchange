@@ -104,6 +104,54 @@ Kollisionen upptäcktes först mot LIVE-katalogen 2026-08-27 — sviten hade en 
 2. **`lines[]` i `CONTRACT_EXTRACT_TOOL`** — låt importen föreslå uppdelningen direkt (beslut 2026-08-27: tas efter att splitten validerats på Planhat).
 3. **Beslut: egen `entrematta`-slug eller inte?** Idag rider Entrémattor med på Housekeeping-raden.
 
+### ⚠️ TVÅ AVTALSFAMILJER — Aff/ABFF sprack i importen (2026-08-28)
+
+**Utlösare:** Christian: *"detta avtal från Castellum har jag svårt att få rätt när jag parsar."* Dokument: `01 Kontrakt_Castellum_Avtal werket carotte 220829 signerat.pdf` (Werket, Jönköping).
+
+Importen var byggd för **Carottes egen mall**. Castellum är kundens **upphandlingsavtal** — en annan familj:
+
+| | Carottes mall | Kundens Aff/ABFF-avtal |
+|---|---|---|
+| Struktur | numrerade §-paragrafer | K-numrering (K0, K1, K6.1…), *"med ändring av ABFF 15 föreskrivs"* |
+| Parter | "Leverantören" / "Kunden" | **B = Beställaren = KUNDEN**, **L = Leverantören = Carotte** |
+| Pengar | §PRISER, fast månadsavgift + underrader | K6.1.1 **per objekt och ÅR**, K6.2.1 à-prislista |
+| Datum | §2 AVTALSTID | K4.1 KONTRAKTSTID |
+| Total | står i avtalet | **finns inte** — ligger i anbudet, separat dokument |
+| Index | Cleaning Index | "Städindex" (SCB/SSEF) → samma `index_cleaning` |
+
+**Castellums faktiska prisbild (K6.1.1 + K6.2.1):**
+```
+Pris per trapphus:     19 640 kr/år   <- styckpris, ANTAL SAKNAS I DOKUMENTET
+Konferensavdelning:   122 240 kr/år
+Huvudentré/lobby:      65 920 kr/år
+Omklädningsrum:        19 200 kr/år
+Källare:               11 520 kr/år
+Atriumgård:            á-pris per timme
+Timkostnad 320 kr/h · OB 45/50/80 kr/h · Fönsterputs 1500/4000 kr/gång
+```
+
+**Tre saker gjorde det omöjligt att få rätt — alla rättade:**
+
+1. **Enheten "per år" fanns inte.** `unit`-enumet hade bara månad/kg/timme/tillfälle/engång. Modellen tvingades antingen räkna om själv (tyst och opålitligt) eller slänga raden. Nu finns `per år`, och **servern** delar med 12 i `_splitMonthlyAmount()` — division är precis den sortens räknefel man inte vill upptäcka som fel månadskostnad hos kunden. Prompten säger uttryckligen *"Räkna aldrig om själv"*.
+
+2. **Avtalet anger ingen total.** Avstämningen jämförde radernas summa mot `monthly_cost` = 0 → `reconciliation_failed` mot en total som aldrig funnits. Nu **härleds** totalen ur raderna när avtalet saknar den (`reconciliation.derived: true`), och UI:t säger *"Avtalet anger ingen total — raderna ger X/mån"* i stället för att visa en differens. `monthly_cost`-beskrivningen säger nu *"Hitta ALDRIG på en total"*.
+
+3. **"Pris per trapphus" är ett styckpris utan antal.** Dokumentet säger inte hur många — det står i objektbeskrivningen (handling 06.1). Summan är därför opålitlig. Nytt `qty`-fält per rad (modellen fyller det bara när avtalet anger antalet), och `qty_unknown` flaggar raden → avstämningen blir **inte** ok, hur bra den än råkar gå ihop, och panelen säger vilken rad som behöver kompletteras.
+
+**Prompten kan nu båda familjerna** — var pengarna bor, att B är kunden och L är Carotte, att datumen står under K4 TIDER.
+
+**⚠️ Fakturaadressen är en fälla.** K6.5 anger *"Castellum City Förvaltning AB, INX9036-068, 831 90 Östersund"* — ett skanningcenter, inte kundens adress. Kunden sitter på Slottsgatan 14 i Jönköping (K0, Parter). Prompten varnar explicit.
+
+**Frontend (båda vyerna):** `splitPayloadLines()` skickar `monthly_amount`, inte `amount` — annars hade 19 640 kr/år blivit 19 640 kr/mån, tolv gånger för mycket, och felet syns först som kundens månadskostnad. Årsrader visar dessutom "= X/mån" under beloppet, annars står raderna i kr/år medan foten summerar kr/mån.
+
+**Verifierat:** `avtal_split_smoke.mjs` **227/227**, **77 mutationer, 77 faller, 0 kraschar** — mot Castellums verkliga siffror.
+
+**⚠️ EJ KÖRT SKARPT.** Testerna kör mot siffror jag läst ur PDF:en för hand, inte mot Haikus faktiska svar. Nästa steg är en riktig `/import/parse` mot Castellum-PDF:en.
+
+**Deploy:** `index.js` (Render) + klistra om `mira-foretag-lista.html` och `mira-abonnemang-admin.html`.
+
+---
+
 ### ⚠️ AVTAL FINNS I EXAKT TRE VYER (2026-08-27)
 
 Övergången bort från Bubbles native-popuper är klar. Avtal figurerar **bara** här:

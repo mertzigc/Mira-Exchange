@@ -22917,10 +22917,25 @@ app.post("/admin/contracts/:id/send-for-signing", async (req, res) => {
 // Rader som räknas in i den fasta månadstotalen. Rörliga enheter (per kg / per
 // timme / per tillfälle) och engångsposter gör det INTE — de har ingen
 // månadskostnad att stämma av mot.
-const SPLIT_FIXED_UNITS = ["per månad", "per manad", "månad", "manad", ""];
+// ⚠️ "per år" räknas som FAST (2026-08-28, Castellum). Aff/ABFF-upphandlingar
+// prissätter per objekt och år — "Pris per trapphus: 19 640 kr/år" — inte som en
+// månadsavgift. Utan den enheten fanns ingen plats för raden alls, och modellen
+// tvingades antingen räkna om själv (tyst och opålitligt) eller slänga den.
+const SPLIT_FIXED_UNITS = ["per månad", "per manad", "månad", "manad", "per år", "per ar", "år", "ar", ""];
+const SPLIT_YEARLY_UNITS = ["per år", "per ar", "år", "ar"];
 function _splitLineIsFixed(line) {
   const u = String(line?.unit || "").trim().toLowerCase();
   return SPLIT_FIXED_UNITS.includes(u);
+}
+// Månadsbeloppet för en fast rad. Årspriser delas med 12, antal multipliceras in.
+// Normaliseringen sker HÄR, inte i modellen — division är precis den sortens
+// tysta räknefel man inte vill upptäcka som fel månadskostnad hos kunden.
+function _splitMonthlyAmount(line) {
+  const u = String(line?.unit || "").trim().toLowerCase();
+  const qty = Number(line?.qty) > 0 ? Number(line.qty) : 1;
+  const amt = Number(line?.amount || 0) * qty;
+  if (!_splitLineIsFixed(line)) return 0;
+  return SPLIT_YEARLY_UNITS.includes(u) ? Math.round(amt / 12) : Math.round(amt);
 }
 
 // Bygger rate_card_json för en child: den rörliga raden + ev. engångskostnad.
@@ -24352,7 +24367,7 @@ const CONTRACT_EXTRACT_TOOL = {
       },
       monthly_cost: {
         type: "number",
-        description: "Fast månadskostnad i SEK exkl. moms. 0 om RateCard. För Hybrid: basmånadsavgiften (rörliga tilläggstjänster hamnar i rate_card)."
+        description: "Fast månadskostnad i SEK exkl. moms, ENDAST om avtalet självt anger en total. 0 om RateCard. För Hybrid: basmånadsavgiften. ⚠️ Lämna tomt om avtalet listar ersättning per objekt utan totalsumma (vanligt i Aff/ABFF) — servern summerar raderna i stället. Hitta ALDRIG på en total."
       },
       setup_cost: {
         type: "number",
@@ -24403,8 +24418,12 @@ const CONTRACT_EXTRACT_TOOL = {
             amount: { type: "number", description: "Beloppet i SEK exkl. moms." },
             unit: {
               type: "string",
-              enum: ["per månad", "per kg", "per timme", "per tillfälle", "engång"],
-              description: "Debiteringsenhet. 'per månad' = ingår i den fasta månadsavgiften."
+              enum: ["per månad", "per år", "per kg", "per timme", "per tillfälle", "engång"],
+              description: "Debiteringsenhet EXAKT som avtalet anger den. Räkna ALDRIG om själv — står det kr/år, svara 'per år'. 'per månad' och 'per år' är fasta ersättningar; övriga är rörliga."
+            },
+            qty: {
+              type: "integer",
+              description: "Antal enheter raden avser NÄR avtalet anger det (t.ex. '3 trapphus'). Står bara ett styckpris utan antal: lämna tomt — gissa inte."
             },
             service_hint: {
               type: "string",
@@ -24454,15 +24473,39 @@ Avtalstyper:
 
 Engångskostnader (t.ex. uppstartskostnad för inköp av utrustning) → setup_cost, ej rate_card.
 
-RADUPPDELNING (fältet "lines") — viktigast av allt:
-Ett Carotte-avtal innehåller ofta FLERA tjänster i en och samma prisbild. Bryt ut varje
-prissatt rad ur §PRISER / prisbilagan. Fältet monthly_cost är fortfarande TOTALEN.
+TVÅ AVTALSFAMILJER — läs rätt ställe:
 
-⚠️ Läs raderna ur PRISSEKTIONEN, aldrig ur omfattningslistans kryssrutor. Kryssen syns
-inte i den text du får — en tjänst som saknar pris ska INTE bli en rad.
+A) CAROTTES EGEN MALL. Numrerade §-paragrafer. Parterna heter "Leverantören"/"Carotte"
+   och "Kunden". Pengarna står under §PRISER, oftast som en fast månadsavgift med
+   underrader. Omfattningen listas med kryssrutor — de kryssen syns INTE i texten du
+   får, så en tjänst utan pris ska ALDRIG bli en rad. Läs bara prissektionen.
 
-⚠️ Kontrollräkna innan du svarar: summan av raderna med included_in_monthly_total = true
-MÅSTE bli exakt monthly_cost. Går det inte ihop har du missat eller dubblerat en rad.
+B) KUNDENS UPPHANDLINGSAVTAL (Aff / ABFF 15). K-numrering (K0, K1, K6.1…), texten
+   "med ändring av ABFF 15 föreskrivs". Förkortningar: B = Beställaren = KUNDEN,
+   L = Leverantören = Carotte. Här gäller:
+   • customer_name = B/Beställaren (t.ex. "Castellum City Förvaltning AB").
+     ⚠️ Fakturaadressen under FAKTURERING är ett skanningcenter, INTE kundens adress —
+     använd den aldrig som org.nr/adress-källa.
+   • Datum står under K4 TIDER: startdag för entreprenaden = startdatum,
+     "t.o.m. <datum>" = slutdatum, uppsägningstid och förlängning i samma stycke.
+   • Fast ersättning står under K6.1.1, ofta PER OBJEKT OCH ÅR
+     ("Pris per trapphus: 19 640 kr/år"). Sätt unit "per år" och räkna INTE om till
+     månad — servern gör det.
+   • À-prislista (K6.2.1) = rörliga rader: timkostnad, OB-tillägg, fönsterputs per gång.
+   • Indexregleras mot "Städindex" (SCB/SSEF) → price_regulation_type index_cleaning.
+   • Ofta finns INGEN totalsumma i kontraktet — den ligger i anbudet, ett separat
+     dokument. Lämna då monthly_cost tomt och låt raderna tala. Hitta ALDRIG på en total.
+
+RADUPPDELNING (fältet "lines"):
+Bryt ut varje prissatt rad. Ange enheten EXAKT som avtalet skriver den — kr/år blir
+"per år", kr/h blir "per timme". Räkna aldrig om själv.
+
+Anger avtalet ett antal ("3 trapphus") → sätt qty. Står bara ett styckpris utan antal
+→ lämna qty tomt. Gissa inte; servern flaggar raden för manuell komplettering.
+
+⚠️ Kontrollräkna INNAN du svarar, men bara när avtalet självt anger en total:
+raderna med included_in_monthly_total = true ska gå ihop med monthly_cost. Går det inte
+ihop har du missat eller dubblerat en rad. Saknar avtalet total — lämna monthly_cost tomt.
 
 Datum ska vara YYYY-MM-DD. Saknat fält → lämna tomt. Var konservativ: sätt lågt confidence (<0.5) om du är osäker.
 
@@ -24597,6 +24640,7 @@ function _importEnrichLines(parsed, hints) {
   const nameBySlug  = new Map(hints.map((h) => [h.slug, h.name]));
   const lines = raw.map((l) => {
     const unit = String(l?.unit || "per månad");
+    const qty  = Number(l?.qty) > 0 ? Number(l.qty) : null;
     // included_in_monthly_total får inte överstyra enheten: en rad märkt
     // "per kg" ingår aldrig i en fast månadsavgift, vad modellen än påstår.
     const fixed = _splitLineIsFixed({ unit }) && l?.included_in_monthly_total !== false;
@@ -24605,25 +24649,47 @@ function _importEnrichLines(parsed, hints) {
       label:  String(l?.label || "").trim() || "Rad",
       amount: Number(l?.amount || 0),
       unit,
+      qty,
+      // Månadsbeloppet är det som faktiskt jämförs och summeras. Årspriser
+      // delas med 12 här, inte av modellen.
+      monthly_amount: fixed ? _splitMonthlyAmount({ unit, amount: l?.amount, qty }) : 0,
+      // ⚠️ Ett styckpris utan angivet antal ("Pris per trapphus: 19 640 kr/år")
+      // går inte att summera — dokumentet säger inte hur många trapphus. Flaggas
+      // så operatören fyller i det i stället för att vi gissar.
+      qty_unknown: fixed && !qty && /\bper\s+(?!månad|år|timme|kg|tillfälle)\w/i.test(String(l?.label || "")),
       included_in_monthly_total: fixed,
       service_slug:       slug,
       service_name:       slug ? (nameBySlug.get(slug) || slug) : null,
       suggested_offer_id: slug ? (offerBySlug.get(slug) || null) : null,
     };
   });
-  const monthly   = Number(parsed?.monthly_cost || 0);
-  const linesSum  = lines.filter((l) => l.included_in_monthly_total)
-                         .reduce((s, l) => s + Math.round(l.amount), 0);
-  const diff      = linesSum - Math.round(monthly);
+  const fixedLines = lines.filter((l) => l.included_in_monthly_total);
+  const linesSum   = fixedLines.reduce((s, l) => s + l.monthly_amount, 0);
+  const stated     = Math.round(Number(parsed?.monthly_cost || 0));
+
+  // ⚠️ MÅNGA AVTAL ANGER INGEN TOTAL (2026-08-28, Castellum). Aff/ABFF-kontrakt
+  // listar ersättning per objekt och hänvisar totalen till anbudet — ett separat
+  // dokument. Då är radernas summa totalen; att kalla det "reconciliation_failed"
+  // vore att rapportera ett fel som inte finns. Avstämningen görs bara när avtalet
+  // FAKTISKT påstår en total att stämma av mot.
+  const derived  = stated <= 0 && fixedLines.length > 0;
+  const monthly  = derived ? linesSum : stated;
+  const diff     = linesSum - monthly;
+  const unknownQty = lines.filter((l) => l.qty_unknown).map((l) => l.label);
+
   return {
     lines,
     reconciliation: {
-      monthly_cost: Math.round(monthly),
+      monthly_cost: monthly,
       lines_sum:    linesSum,
       diff,
-      ok:           lines.length > 0 && Math.abs(diff) <= 1,
-      fixed_lines:  lines.filter((l) => l.included_in_monthly_total).length,
+      derived,                       // true = totalen kommer FRÅN raderna
+      // Ett styckpris utan antal gör summan opålitlig — då är den inte "ok",
+      // hur bra den än råkar gå ihop.
+      ok:           lines.length > 0 && Math.abs(diff) <= 1 && unknownQty.length === 0,
+      fixed_lines:  fixedLines.length,
       unmapped:     lines.filter((l) => !l.suggested_offer_id).map((l) => l.label),
+      unknown_qty:  unknownQty,
     },
   };
 }
