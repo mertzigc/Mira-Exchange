@@ -5,6 +5,43 @@
 > Minne: `project-tjanstegrid-prishjarna`
 
 ---
+## Ny regeltyp `tiered_qty` — stegad tidsåtgång (EA/Dice eventstäd) — 2026-08-28
+
+**Utlösare:** EA/Dice har ett **kundunikt** housekeeping-erbjudande där antalet gäster styr både tidsåtgången OCH rabatten. Det låg hårdkodat i gamla kundportalen.
+
+**Kundens lathund (avstämd med kund — procenttalen ska INTE avrundas snyggare):**
+
+| Gäster | Tid | Multiplikator | = rabattsats |
+|---|---|---|---|
+| <100 | 3,5 h | ×0,9873 | 1,27 % |
+| <200 | 5 h | ×0,97 | 3,00 % |
+| <300 | 6 h | ×0,9634 | 3,66 % |
+| <400 | 7,5 h | ×0,9563 | 4,37 % |
+| 400+ | 8,5 h | ×0,9533 | 4,67 % |
+
+**Vad som redan fanns:** `tiered_discount` klarade multiplikatorerna exakt (verifierat mot lathunden, avvikelse ≤1 kr av öresavrundning). `Erbjudande.Kundföretag` (list) gör erbjudandet kundunikt — **tom = allmän, ifylld = unik**.
+
+**Vad som saknades:** ingen regel kunde **härleda** en kvantitet. `_qty()` läser bara ett kundsvar, så timmarna måste kunden fylla i själv — och lathunden blev en rekommendation i stället för en uträkning.
+
+**Ny regeltyp `tiered_qty`** i `pricing_engine.js`: drivaren (antal gäster) väljer nivå, nivån ger kvantiteten (timmar), beloppet blir `qty × price`. Samma nivålogik som `_tierRate` — högsta nivå vars `min` drivaren når upp till.
+
+⚠️ **Faller tillbaka på LÄGSTA nivån** när drivaren är under alla `min`. Annars hade "0 gäster" gett 0 timmar och priset tyst blivit noll i stället för grundnivån.
+
+**Ny pris-typ i erbjudande-adminen: "Stegad efter antal".** Genererar två regler ur EN drivare — `tiered_qty` för timmarna och `tiered_discount` för rabatten, båda på `antal`. Trappan redigeras rad för rad (från / timmar / rabatt-%), förifylld med EA/Dice-lathunden.
+
+⚠️ **Enda pris-typen med TVÅ regler.** `ofDetectPt()` returnerade `null` för allt med `OF_RULES.length !== 1` → erbjudandet hade alltid öppnats i Avancerat läge. Tvåregels-kontrollen ligger nu FÖRE enregels-kontrollen, och ett test vaktar ordningen.
+
+⚠️ **Procent lagras som sats** (4,67 % → `rate: 0.0467`). Motorn drar av satsen; lagras procenttalet rått blir rabatten 467 %.
+
+⚠️ **Förhandsvisningen säger "kr/tillfälle"** för den här typen. Eventstäd prissätts per tillfälle — "kr/mån" på ett engångsuppdrag är direkt missvisande för den som lägger upp erbjudandet.
+
+**Så lägger du upp EA/Dice-erbjudandet:** nytt erbjudande → pris-typ "Stegad efter antal" → timpris + frågetext → trappan är förifylld → sätt EA/Dice i `Kundföretag` så det bara syns för dem.
+
+**Verifierat:** `pris_tiered_smoke.mjs` **47/47**, **13 mutationer, 13 faller, 0 kraschar.** Testar BÅDA sidor av varje nivågräns (1/99/100/199/200/299/300/399/400/5000) mot lathundens kronor — en off-by-one i nivåvalet syns bara där.
+
+**Deploy:** `pricing_engine.js` (Render, serveras som statisk fil till blocken) + klistra om `mira-kommunikation-admin.html`.
+
+---
 ## Paketkorten visar RABATTSATS, inga kronor — 2026-08-27
 
 **Utlösare (Christian):** *"de 3 paketerbjudandena är jäkligt svåra att få vettiga… det strular om man plötsligt ska få kaffet gratis + rabatt om man råkar ha alla tjänsterna."*

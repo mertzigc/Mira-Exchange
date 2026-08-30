@@ -22,6 +22,10 @@
 //   per_hour        { qty_from, price }
 //   fixed           { price }
 //   piecewise       { qty_from, tiers:[{max, price}] }   // staffat per enhet
+//   tiered_qty      { qty_from, price, tiers:[{min, qty}] }
+//                   Kvantiteten SLÅS UPP ur tabellen i stället för att kunden
+//                   anger den: drivaren (t.ex. antal gäster) väljer nivå, nivån
+//                   ger kvantiteten (t.ex. timmar). Belopp = uppslagen qty × price.
 //   addon_per_unit  { qty_from, price }
 //   tiered_discount { qty_from?, applies_to?, tiers:[{min, rate}] }
 //   volume_discount { qty_from, applies_to?, tiers:[{qty, rate}] }   // linjär
@@ -58,6 +62,19 @@ function _tierRate(tiers, qty) {
   let rate = 0;
   for (const t of sorted) if (qty >= _num(t.min, 0)) rate = _num(t.rate, 0);
   return rate;
+}
+
+// Slår upp en KVANTITET ur nivåtabellen (inte en rabattsats). Samma
+// nivålogik som _tierRate: högsta nivå vars min drivaren når upp till.
+// ⚠️ Faller tillbaka på LÄGSTA nivån när drivaren är under alla min — annars
+// hade "0 gäster" gett 0 timmar och priset tyst blivit noll i stället för
+// grundnivån. En tabell som börjar på min 0 påverkas inte.
+function _tierQty(tiers, driver) {
+  if (!Array.isArray(tiers) || !tiers.length) return 0;
+  const sorted = tiers.slice().sort((a, b) => _num(a.min, 0) - _num(b.min, 0));
+  let picked = null;
+  for (const t of sorted) if (driver >= _num(t.min, 0)) picked = t;
+  return _num((picked || sorted[0]).qty, 0);
 }
 
 function _volumeRate(tiers, qty) {
@@ -204,6 +221,22 @@ export function evalPricing(formula, answers, opts) {
         subtotal += amount;
         break;
       }
+      case "tiered_qty": {
+        // Drivaren (gäster) väljer nivå → nivån ger kvantiteten (timmar).
+        const driver = _qty(rule, answers, warnings);
+        qty = _tierQty(rule.tiers, driver);
+        price = _num(rule.price, 0);
+        amount = _round(qty * price);
+        lineAmounts[rule.id || ("r" + breakdown.length)] = amount;
+        breakdown.push({
+          id: rule.id || null, type: t,
+          label: rule.label || "Uppslagen mängd",
+          qty, unit_price: price, amount,
+          driver, unit: rule.unit || null,
+        });
+        subtotal += amount;
+        break;
+      }
       case "min_charge":
         minCharge = _num(rule.amount, 0);
         break;
@@ -274,7 +307,7 @@ export function validateFormula(formula) {
   }
   const KNOWN = ["per_person","per_kvm","per_hour","fixed","piecewise",
                  "addon_per_unit","tiered_discount","volume_discount","min_charge",
-                 "housekeeping"];
+                 "housekeeping","tiered_qty"];
   parsed.rules.forEach((r, i) => {
     const prefix = "rules[" + i + "]";
     if (!r || typeof r !== "object") {
@@ -303,6 +336,16 @@ export function validateFormula(formula) {
       }
       if (t === "volume_discount" && !r.qty_from) {
         errors.push(prefix + " (volume_discount): saknar qty_from");
+      }
+    }
+    if (t === "tiered_qty") {
+      if (!r.qty_from) errors.push(prefix + " (tiered_qty): saknar qty_from (drivaren)");
+      if (r.price == null) errors.push(prefix + " (tiered_qty): saknar price");
+      if (!Array.isArray(r.tiers) || !r.tiers.length) {
+        errors.push(prefix + " (tiered_qty): saknar tiers");
+      } else if (r.tiers.some((x) => x == null || x.qty == null)) {
+        // En nivå utan qty ger tyst 0 timmar → priset blir noll utan felmeddelande.
+        errors.push(prefix + " (tiered_qty): varje tier behöver qty");
       }
     }
     if (t === "min_charge" && r.amount == null) {

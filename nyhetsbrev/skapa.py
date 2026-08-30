@@ -61,7 +61,14 @@ def call(path, payload, method="POST"):
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")
-        raise SystemExit("HTTP %s pa %s\n%s" % (e.code, path, body[:800]))
+        tips = ""
+        if e.code == 401:
+            tips = ("\n\nTIPS: x-api-key jamfors mot MIRA_RENDER_API_KEY pa Render. Ditt $KEY matchar inte.\n"
+                    "     Prova: HOST=$HOST KEY=$MIRA_RENDER_API_KEY BUBBLE_API_KEY=$BUBBLE_API_KEY python3 nyhetsbrev/skapa.py\n"
+                    "     Redan uppladdade bilder aterbrukas ur cachen - inget laddas upp igen.")
+        if e.code == 413:
+            tips = "\n\nTIPS: express.json() i index.js har 100 kb-tak. Se README.md."
+        raise SystemExit("HTTP %s pa %s\n%s%s" % (e.code, path, body[:800], tips))
 
 
 def _httpsUrl(u):
@@ -116,7 +123,7 @@ def bubble_media_asset(url, filename):
         with urllib.request.urlopen(req, timeout=60):
             return True
     except Exception as e:
-        print("  (kunde inte skapa MediaAsset-rad: %s - bilden fungerar anda)" % e)
+        print("  (ingen MediaAsset-rad: %s - vantat om typen inte ar exponerad i Bubbles Data API.\n   Bilden ligger uppe och fungerar; den syns bara inte i Arkiv-valjaren.)" % e)
         return False
 
 
@@ -130,6 +137,17 @@ if not dry:
 blocks = json.load(open(os.path.join(ROOT, "blocks.json"), encoding="utf-8"))
 meta = json.load(open(os.path.join(ROOT, "utskick.json"), encoding="utf-8"))
 
+# Redan uppladdade bilder cachas sa en omkorning inte dubbletterar filer i Bubble
+# (uppladdning gar inte att angra). Nyckeln bar filstorleken - byter du ut en bild
+# laddas den upp igen automatiskt. --ladda-om tvingar upp allt pa nytt.
+CACHE = os.path.join(ROOT, "bilder", "uppladdade.json")
+cache = {}
+if os.path.exists(CACHE) and "--ladda-om" not in sys.argv:
+    try:
+        cache = json.load(open(CACHE, encoding="utf-8"))
+    except Exception:
+        cache = {}
+
 # 1. Bilder
 urls = {}
 for token, fname in BILDER:
@@ -138,6 +156,11 @@ for token, fname in BILDER:
     if dry:
         urls[token] = "https://exempel.invalid/" + fname
         print("[dry] %-12s %s (%d kB)" % (token, fname, len(raw) // 1024))
+        continue
+    traff = cache.get(token)
+    if traff and traff.get("bytes") == len(raw) and traff.get("url"):
+        urls[token] = traff["url"]
+        print("cachad     %-12s (%3d kB) -> %s" % (token, len(raw) // 1024, traff["url"]))
         continue
     if via_render:
         res = call("/admin/media/upload", {
@@ -152,6 +175,8 @@ for token, fname in BILDER:
         url = bubble_upload(fname, raw)
         bubble_media_asset(url, fname)
     urls[token] = url
+    cache[token] = {"fil": fname, "bytes": len(raw), "url": url}
+    json.dump(cache, open(CACHE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     print("uppladdad  %-12s (%3d kB) -> %s" % (token, len(raw) // 1024, url))
 
 # 2. Substituera

@@ -4174,8 +4174,30 @@
     { key:'addon_per_unit', label:'Per enhet', desc:'Kunden väljer antal.',
       fields:[{k:'price', label:'Pris (kr / st / mån)', type:'number'},{k:'unit', label:'Enhetens namn', type:'text', def:'st'}] },
     { key:'housekeeping',   label:'Städning', desc:'Carottes städkalkyl.',
-      fields:[{k:'hourly', label:'Timpris (kr)', type:'number', def:322},{k:'uplift', label:'Påslag (%)', type:'number', def:15}], auto:'Yta + frekvens kommer från kunden.' }
+      fields:[{k:'hourly', label:'Timpris (kr)', type:'number', def:322},{k:'uplift', label:'Påslag (%)', type:'number', def:15}], auto:'Yta + frekvens kommer från kunden.' },
+    // Stegad efter en drivare (t.ex. antal gäster): nivån bestämmer BÅDE
+    // tidsåtgången och rabatten. Kunden svarar på EN fråga.
+    { key:'tiered_hours',   label:'Stegad efter antal', desc:'Antal gäster ger både timmar och rabatt.',
+      fields:[{k:'hourly', label:'Timpris (kr)', type:'number', def:495},
+              {k:'driver', label:'Frågan till kunden', type:'text', def:'Antal gäster på eventet'}],
+      tiers:true, auto:'Timmar och rabatt slås upp ur trappan nedan.' }
   ];
+
+  // Trappan för 'tiered_hours'. Default = EA/Dice eventstäd (avstämd med kund
+  // 2026-08-28); redigerbar per erbjudande.
+  var PT_TIER_DEFAULT = [
+    { min:0,   qty:3.5, pct:1.27 },
+    { min:100, qty:5,   pct:3.00 },
+    { min:200, qty:6,   pct:3.66 },
+    { min:300, qty:7.5, pct:4.37 },
+    { min:400, qty:8.5, pct:4.67 }
+  ];
+  function ptTiers(){
+    if (!Array.isArray(OF_PT_VALS.tiers) || !OF_PT_VALS.tiers.length) {
+      OF_PT_VALS.tiers = PT_TIER_DEFAULT.map(function(t){ return { min:t.min, qty:t.qty, pct:t.pct }; });
+    }
+    return OF_PT_VALS.tiers;
+  }
   function ptDef(key){ return PT_DEFS.filter(function(d){return d.key===key;})[0] || null; }
 
   // Bygg OF_QUESTIONS + OF_RULES från vald typ + värden
@@ -4189,6 +4211,19 @@
     if (key==='addon_per_unit'){ var u=(v.unit||'st').trim()||'st';
                             return { q:[{ id:'antal', type:'number', label:'Antal '+u, unit:'st', required:true, min:1 }],
                                      r:[{ id:'pris', type:'addon_per_unit', qty_from:'antal', price:ofPnum(v.price), label:title, unit:u }] }; }
+    if (key==='tiered_hours'){
+      var ts = ptTiers();
+      var drv = (v.driver||'Antal gäster på eventet').trim() || 'Antal gäster på eventet';
+      return {
+        q:[{ id:'antal', type:'number', label:drv, unit:'st', required:true, min:1 }],
+        // Två regler, EN drivare: trappan ger timmarna, rabattrappan ger satsen.
+        r:[{ id:'tid', type:'tiered_qty', qty_from:'antal', price:ofPnum(v.hourly), unit:'h', label:title,
+             tiers: ts.map(function(t){ return { min:ofPnum(t.min), qty:ofPnum(t.qty) }; }) },
+           { id:'rabatt', type:'tiered_discount', qty_from:'antal', applies_to:'tid', label:'Volymrabatt',
+             // Procenttalen lagras som satser (4,67 % → 0.0467) — motorn drar av dem.
+             tiers: ts.map(function(t){ return { min:ofPnum(t.min), rate:ofPnum(t.pct)/100 }; }) }]
+      };
+    }
     if (key==='housekeeping') return {
       q:[{ id:'yta', type:'kvm', label:'Kontorsyta', unit:'kvm', required:true },
          { id:'dagar', type:'select', label:'Städfrekvens', options:['5 dagar/vecka','4 dagar/vecka','3 dagar/vecka','2 dagar/vecka'], required:true }],
@@ -4202,6 +4237,12 @@
     if (key==='per_kvm')        return ofPnum(v.price)*ref.kvm;
     if (key==='per_person')     return ofPnum(v.price)*ref.emp;
     if (key==='addon_per_unit') return ofPnum(v.price)*ref.qty;
+    if (key==='tiered_hours'){
+      var ts = ptTiers().slice().sort(function(a,b){ return ofPnum(a.min)-ofPnum(b.min); });
+      var n = ref.antal||0, pick = ts[0];
+      for (var i=0;i<ts.length;i++) if (n >= ofPnum(ts[i].min)) pick = ts[i];
+      return ofPnum(pick.qty) * ofPnum(v.hourly) * (1 - ofPnum(pick.pct)/100);
+    }
     if (key==='housekeeping'){ var dm={5:21,4:16.8,3:12.6,2:8.4}; var d=dm[ref.days]||21; var avv=ref.kvm<=500?200:220;
       return ((ref.kvm/avv)*d*ofPnum(v.hourly) + 1000 + (37*ref.kvm/12)) * (1+ofPnum(v.uplift)/100); }
     return 0;
@@ -4209,6 +4250,22 @@
 
   // Läs av vald typ + värden ur befintliga OF_RULES (vid inläsning)
   function ofDetectPt(){
+    // ⚠️ tiered_hours är den enda typen med TVÅ regler — testas före
+    // enregels-kontrollen nedan, annars öppnas den alltid i Avancerat läge.
+    if (OF_RULES && OF_RULES.length === 2) {
+      var a = OF_RULES[0], b = OF_RULES[1];
+      if (a.type === 'tiered_qty' && b.type === 'tiered_discount' && Array.isArray(a.tiers)) {
+        var rateByMin = {};
+        (b.tiers||[]).forEach(function(t){ rateByMin[String(t.min)] = t.rate; });
+        return { key:'tiered_hours', vals:{
+          hourly: a.price,
+          driver: (OF_QUESTIONS && OF_QUESTIONS[0] && OF_QUESTIONS[0].label) || 'Antal gäster på eventet',
+          tiers: a.tiers.map(function(t){
+            return { min:t.min, qty:t.qty, pct: Math.round((rateByMin[String(t.min)]||0)*10000)/100 };
+          })
+        } };
+      }
+    }
     if (!OF_RULES || OF_RULES.length !== 1) return null;
     var r = OF_RULES[0], t = r.type;
     if (t==='fixed')                                return { key:'fixed', vals:{ price:r.price } };
@@ -4242,6 +4299,24 @@
       return '<div class="ea-fg" style="margin:0"><label class="ea-fl">'+esc(f.label)+'</label>'+
         '<input class="ea-fi of-ptf" data-k="'+f.k+'" type="'+(f.type||'text')+'"'+(f.type==='number'?' step="0.01"':'')+' value="'+esc(String(v))+'"></div>';
     }).join('') + '</div>';
+    // Trappan: en rad per nivå. "Från" är nedre gränsen — nivån gäller upp
+    // till nästa "från". Rabatten anges i procent och lagras som sats.
+    if (d.tiers) {
+      var ts = ptTiers();
+      fh += '<div style="margin-top:14px;border:1px solid var(--bd,#e5e5e5);border-radius:10px;overflow:hidden">'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;padding:8px 12px;background:rgba(0,0,0,.03);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#666">'+
+          '<div>Från (antal)</div><div>Tidsåtgång (h)</div><div>Rabatt (%)</div><div></div></div>'+
+        ts.map(function(t, i){
+          return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;padding:7px 12px;align-items:center;border-top:1px solid var(--bd,#eee)">'+
+            '<input class="ea-fi of-tier" data-i="'+i+'" data-f="min" type="number" step="1" value="'+esc(String(t.min))+'">'+
+            '<input class="ea-fi of-tier" data-i="'+i+'" data-f="qty" type="number" step="0.5" value="'+esc(String(t.qty))+'">'+
+            '<input class="ea-fi of-tier" data-i="'+i+'" data-f="pct" type="number" step="0.01" value="'+esc(String(t.pct))+'">'+
+            '<button type="button" class="of-tier-del" data-i="'+i+'" style="border:none;background:none;cursor:pointer;color:#b3261e;font-size:16px;line-height:1">×</button>'+
+          '</div>';
+        }).join('')+
+        '<div style="padding:8px 12px;border-top:1px solid var(--bd,#eee)"><button type="button" id="of-tier-add" style="border:1px dashed var(--bd,#ccc);background:none;border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer">+ Lägg till nivå</button></div>'+
+      '</div>';
+    }
     if (d.auto) fh += '<div style="margin-top:8px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#2e7d55;background:rgba(46,125,85,.10);padding:3px 9px;border-radius:999px">⛽ '+esc(d.auto)+'</span></div>';
     // förhandsvisning
     fh += '<div style="margin-top:14px;padding:12px 14px;border:1px solid var(--bd,#e5e5e5);border-radius:10px;background:rgba(223,111,57,.04)">'+
@@ -4251,12 +4326,36 @@
         '<div class="ea-fg" style="margin:0;flex:1;min-width:90px"><label class="ea-fl">Arbetsplatser</label><input class="ea-fi of-pv" id="of-pv-emp" type="number" value="25"></div>'+
         (OF_PT==='housekeeping' ? '<div class="ea-fg" style="margin:0;flex:1;min-width:110px"><label class="ea-fl">Frekvens</label><select class="ea-fsel of-pv" id="of-pv-days"><option value="5">5 dgr/v</option><option value="4">4 dgr/v</option><option value="3">3 dgr/v</option><option value="2">2 dgr/v</option></select></div>' : '')+
         (OF_PT==='addon_per_unit' ? '<div class="ea-fg" style="margin:0;flex:1;min-width:90px"><label class="ea-fl">Antal</label><input class="ea-fi of-pv" id="of-pv-qty" type="number" value="1"></div>' : '')+
+        (OF_PT==='tiered_hours' ? '<div class="ea-fg" style="margin:0;flex:1;min-width:110px"><label class="ea-fl">Antal gäster</label><input class="ea-fi of-pv" id="of-pv-antal" type="number" value="250"></div>' : '')+
       '</div>'+
       '<div style="display:flex;justify-content:space-between;align-items:baseline"><span class="ck-mut" style="font-size:12px">Pris för kunden</span>'+
         '<span id="of-pv-price" style="font-size:24px;font-weight:800;color:'+OF_ACCENT+'">—</span></div></div>';
     box.innerHTML = fh;
     box.querySelectorAll('.of-ptf').forEach(function(el){
       el.addEventListener('input', function(){ OF_PT_VALS[el.getAttribute('data-k')] = el.value; ofRebuildFromPt(); ofRenderPtPreview(); });
+    });
+    box.querySelectorAll('.of-tier').forEach(function(el){
+      el.addEventListener('input', function(){
+        var i = Number(el.getAttribute('data-i')), fld = el.getAttribute('data-f');
+        var ts = ptTiers(); if (!ts[i]) return;
+        ts[i][fld] = el.value;
+        ofRebuildFromPt(); ofRenderPtPreview();
+      });
+    });
+    box.querySelectorAll('.of-tier-del').forEach(function(el){
+      el.addEventListener('click', function(){
+        var ts = ptTiers();
+        // En trappa utan nivåer ger tyst 0 kr — behåll alltid minst en.
+        if (ts.length <= 1) return;
+        ts.splice(Number(el.getAttribute('data-i')), 1);
+        ofRebuildFromPt(); ofRenderPtFields();
+      });
+    });
+    var addBtn = box.querySelector('#of-tier-add');
+    if (addBtn) addBtn.addEventListener('click', function(){
+      var ts = ptTiers(), last = ts[ts.length-1] || { min:0, qty:1, pct:0 };
+      ts.push({ min: ofPnum(last.min)+100, qty: ofPnum(last.qty), pct: ofPnum(last.pct) });
+      ofRebuildFromPt(); ofRenderPtFields();
     });
     box.querySelectorAll('.of-pv').forEach(function(el){ el.addEventListener('input', ofRenderPtPreview); });
     ofRenderPtPreview();
@@ -4268,10 +4367,14 @@
       kvm: ofPnum((g('of-pv-kvm')||{}).value) || 0,
       emp: ofPnum((g('of-pv-emp')||{}).value) || 0,
       days: g('of-pv-days') ? ofPnum(g('of-pv-days').value) : 5,
-      qty: g('of-pv-qty') ? ofPnum(g('of-pv-qty').value) : 1
+      qty: g('of-pv-qty') ? ofPnum(g('of-pv-qty').value) : 1,
+      antal: g('of-pv-antal') ? ofPnum(g('of-pv-antal').value) : 0
     };
     var total = ofCalcPt(OF_PT, OF_PT_VALS, ref);
-    priceEl.textContent = Math.round(total).toLocaleString('sv-SE') + ' kr/mån';
+    // ⚠️ Eventstäd prissätts PER TILLFÄLLE, inte per månad — "kr/mån" på ett
+    // engångsuppdrag är direkt missvisande för den som lägger upp erbjudandet.
+    var suffix = OF_PT === 'tiered_hours' ? ' kr/tillfälle' : ' kr/mån';
+    priceEl.textContent = Math.round(total).toLocaleString('sv-SE') + suffix;
   }
 
   // Regenerera OF_QUESTIONS/OF_RULES från valet och spegla i avancerat läge

@@ -70,6 +70,10 @@ Höjer du taket någon gång (`express.json({ limit: "8mb", type: [...] })`) fun
 `--via-render` i stället. Det är en enradsändring men den påverkar *alla* endpoints, så den
 hör hemma i en egen deploy — inte mitt i ett utskick.
 
+Uppladdade bilder cachas i `bilder/uppladdade.json` — kör du om skriptet laddas de **inte**
+upp igen (uppladdning till Bubble går inte att ångra). Byter du ut en bildfil laddas just den
+upp på nytt automatiskt, eftersom cachen är nycklad på filstorlek. `--ladda-om` tvingar upp allt.
+
 Sista raden ska säga `KLART. Utskicks-id: …`. Säger den i stället
 `VARNING: content_blocks landade INTE` — då saknas fältet på `Invitation` i Bubble och
 utskicket skulle gå ut som en naken textmassa. Fixa fältet först.
@@ -121,6 +125,22 @@ men du behöver inte sitta kvar.
 
 Fastnade rader hittar du i Bubble: sök `emailqueue` på `email_sent = false AND error_message
 is not empty`.
+
+---
+
+## Om något strular
+
+**`401 Unauthorized (bad x-api-key)`** — `x-api-key` jämförs mot `MIRA_RENDER_API_KEY` på
+Render, och ditt `$KEY` matchar inte. Kör med `KEY=$MIRA_RENDER_API_KEY` i stället. Gäller
+båda skripten.
+
+**`413 Payload Too Large` på `/admin/media/upload`** — se avsnittet om `express.json` ovan.
+Standardvägen (direkt mot Bubble) drabbas inte.
+
+**`ingen MediaAsset-rad: HTTP Error 404`** — typen `MediaAsset` är inte exponerad i Bubbles
+Data API. Bilderna ligger uppe och fungerar i mejlet; de syns bara inte i Arkiv-väljaren.
+Samma sak händer tyst i `/admin/media/upload` (`catch (_) {}` sväljer felet), så mediaarkivet
+har troligen aldrig fyllts på. Exponera typen i Bubble om du vill ha den funktionen.
 
 ---
 
