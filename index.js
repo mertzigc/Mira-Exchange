@@ -22556,6 +22556,52 @@ app.get("/admin/service-catalog", async (req, res) => {
   }
 });
 
+// ── PATCH /admin/service-catalog/:id — från-pris per tjänst ─────────────────
+// ⚠️ Tile-priset räknas ur Erbjudandets `pricing_formula_json` NÄR den finns,
+// annars faller det tillbaka på ServiceCatalogs `from_price` (se
+// _servicesPriceOf). Tjänster vars pris inte skalar med yta eller arbetsplatser
+// — växter (per växt), frukt (per förbrukning) — ska INTE ha en formel: den
+// skalar linjärt utan tak och gav 42 000 kr/mån för växter på 3 000 kvm.
+// De ska ha ett från-pris, precis som kaffe och skrivare.
+app.options("/admin/service-catalog/:id", (req, res) => { _approvalCors(req, res); res.sendStatus(204); });
+app.patch("/admin/service-catalog/:id", async (req, res) => {
+  _approvalCors(req, res);
+  if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN_missing" });
+  const token = req.headers["x-admin-token"];
+  if (!token || String(token) !== String(PLANNING_ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id_krävs" });
+    const b = req.body || {};
+    const patch = {};
+    if (b.from_price != null) {
+      const n = Number(b.from_price);
+      if (!Number.isFinite(n) || n < 0) return res.status(400).json({ ok: false, error: "from_price_ogiltigt" });
+      patch[SERVICES.SC_FROM_PRICE] = Math.round(n);
+    }
+    if (b.from_unit != null) patch[SERVICES.SC_FROM_UNIT] = String(b.from_unit);
+    if (!Object.keys(patch).length) {
+      return res.status(400).json({ ok: false, error: "inget_att_uppdatera", hint: "Skicka from_price och/eller from_unit." });
+    }
+    await bubblePatch(SERVICES.CATALOG_TYPE, id, patch);
+    // ⚠️ Läs tillbaka raden: bubblePatch avvisar HELA patchen vid okänt fält,
+    // och ett tyst "ok" utan verifiering är hur fel siffror blir kvar.
+    const fresh = await bubbleGet(SERVICES.CATALOG_TYPE, id).catch(() => null);
+    return res.json({
+      ok: true, id,
+      patched: Object.keys(patch),
+      slug:       fresh ? (fresh[SERVICES.SC_SLUG] || null) : null,
+      from_price: fresh ? (fresh[SERVICES.SC_FROM_PRICE] ?? null) : null,
+      from_unit:  fresh ? (fresh[SERVICES.SC_FROM_UNIT] ?? null) : null,
+    });
+  } catch (e) {
+    console.error("[/admin/service-catalog/:id] PATCH failed", e?.message, e?.detail);
+    return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
 // ── GET /admin/suppliers — lista Leverantör - Supplier-bolag för dropdown ────
 // Returnerar [{id, name}] + kategori→default-id-mappen, så formulären kan
 // förvälja leverantör från kategori och tillåta override.
