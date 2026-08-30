@@ -1,0 +1,15 @@
+{
+  "kind": "news",
+  "active": true,
+  "title": "Nya Mira är här — hela kontoret på ett ställe",
+  "description": "Vi har byggt om er vy i Mira från grunden.\n\nAllt ni gör tillsammans med Carotte — tjänster, bokningar, planering, ärenden, kvalitet och fakturor — ligger nu på samma ställe och följer samma logik: ni gör det digitalt, vi levererar fysiskt, och kvaliteten mäts på vägen.\n\nHär är hela nyheten, funktion för funktion. Ta två minuter — allt går att prova direkt när ni loggar in.",
+  "tags": "nyhetsbrev, produktnytt, kunddashboard, 2026",
+  "accent_color": "#df6f39",
+  "host_name": "Carotte",
+  "cta_label": "Logga in på Mira",
+  "cta_url": "https://mira-fm.com",
+  "linkedin_url": "https://www.linkedin.com/company/571864/",
+  "form_schema": "[]",
+  "allow_plus_ones": false,
+  "max_plus_ones": 0
+}

@@ -1,0 +1,177 @@
+[
+  {
+    "id": "b01",
+    "type": "heading",
+    "heading": "1 · Era tjänster — på och av från en yta"
+  },
+  {
+    "id": "b02",
+    "type": "image",
+    "image": "__IMG_01__",
+    "alt": "Tjänste-gridden i Mira med aktiva tjänster och paketerbjudanden",
+    "caption": "Era tjänster per kontor. Grön = aktiv, grå = förslag. Priset i rutan är ert avtalspris.",
+    "link_url": "https://mira-fm.com"
+  },
+  {
+    "id": "b03",
+    "type": "text",
+    "body": "Varje tjänst ni har hos Carotte ligger nu som en egen ruta. Aktiva tjänster visar avtalspriset per månad för det kontor ni valt i väljaren högst upp. Tjänster ni inte har visas som förslag — klicka, läs vad som ingår och beställ direkt.\n\nBeställningen blir en riktig förfrågan i Mira, med rätt bolag och rätt leverantör kopplad, och landar hos er kontaktperson på Carotte samma sekund. Ni behöver inte mejla någon."
+  },
+  {
+    "id": "b04",
+    "type": "list",
+    "heading": "Det här kan ni göra härifrån",
+    "items": [
+      "Se exakt vilka tjänster som är aktiva — per kontor, inte per bolag",
+      "Beställa till en tjänst med ett klick och få preliminärt pris räknat på era ytor och arbetsplatser",
+      "Ta ett helt paket: Kontoret Runt (−7 %), Trivselpaket (−5 %) och Fräscht & grönt (−5 %)",
+      "Se vad ni redan har av ett paket — och exakt vad som saknas"
+    ]
+  },
+  {
+    "id": "b05",
+    "type": "divider"
+  },
+  {
+    "id": "b06",
+    "type": "heading",
+    "heading": "2 · Översikten — läget just nu"
+  },
+  {
+    "id": "b07",
+    "type": "image",
+    "image": "__IMG_02__",
+    "alt": "Översiktsvyn i Mira med bokningar, ärenden, kvalitet och kontaktperson",
+    "caption": "Bokningar, ärenden, kvalitetsbetyg och tjänstefördelning — uppdaterat i realtid.",
+    "link_url": "https://mira-fm.com"
+  },
+  {
+    "id": "b08",
+    "type": "text",
+    "body": "Startsidan svarar på fyra frågor utan att ni behöver leta: hur mycket är bokat, vad är öppet, hur bra levererar vi, och vem ringer ni.\n\nKvalitet & betyg visar snittbetyget på både ärenden och kvalitetskontroller. Tjänstefördelningen visar hur volymen ligger mellan Carotte Housekeeping, Food & Event och Staff. Och er kundansvarig ligger med namn, mejl och telefon — inte i en supportkö."
+  },
+  {
+    "id": "b09",
+    "type": "divider"
+  },
+  {
+    "id": "b10",
+    "type": "heading",
+    "heading": "3 · Planering — hela året i en vy"
+  },
+  {
+    "id": "b11",
+    "type": "image",
+    "image": "__IMG_03__",
+    "alt": "Planeringsvyn i Mira i månadsläge",
+    "caption": "Månadsvy. Färgen visar kategori, ikonen visar typ.",
+    "link_url": "https://mira-fm.com"
+  },
+  {
+    "id": "b12",
+    "type": "text",
+    "body": "Den nya kalendern samlar allt som händer hos er på ett ställe: bokningar, städpass, receptionspass, ärenden och todos. Zooma från år till kvartal, månad, vecka och dag — och filtrera på typ eller status när ni bara vill se en sak.\n\nKlicka på ett objekt så öppnas detaljerna med status och kommentarstråd. Kommenterar ni där ser vi det direkt."
+  },
+  {
+    "id": "b13",
+    "type": "image",
+    "image": "__IMG_04__",
+    "alt": "Planeringsvyn i Mira i årsläge",
+    "caption": "Årsvyn: ett helt år på en skärm, uppdelat per typ.",
+    "link_url": "https://mira-fm.com"
+  },
+  {
+    "id": "b14",
+    "type": "divider"
+  },
+  {
+    "id": "b15",
+    "type": "heading",
+    "heading": "4 · Ny bokningswizard — fyra steg, noll mejl"
+  },
+  {
+    "id": "b16",
+    "type": "image",
+    "image": "__IMG_05__",
+    "alt": "Bokningswizarden i Mira, steg 1",
+    "caption": "Välj ett färdigt erbjudande — eller bygg förfrågan fritt. Priset räknas fram medan ni fyller i.",
+    "link_url": "https://mira-fm.com"
+  },
+  {
+    "id": "b17",
+    "type": "text",
+    "body": "Skapa förfrågan går nu i fyra steg: välj väg, eventdata, detaljer, granska och skicka.\n\nVälj ett erbjudande så förifylls det mesta — pris per person, vad som ingår, villkor och kapacitet. Vissa erbjudanden är era egna, framtagna utifrån ert avtal; andra är allmänna. Bygg fritt om ni hellre beskriver behovet själva, så sätter ni kategori, leverantör och budget.\n\nSpecialkost, antal gäster, kontor eller extern lokal, beställare och återkommande serier — allt ligger i flödet. Sammanställningen till höger visar preliminär kostnad hela vägen."
+  },
+  {
+    "id": "b18",
+    "type": "divider"
+  },
+  {
+    "id": "b19",
+    "type": "heading",
+    "heading": "5 · Fakturaportalen — svar på fakturafrågan direkt"
+  },
+  {
+    "id": "b20",
+    "type": "image",
+    "image": "__IMG_06__",
+    "alt": "Fakturaportalen i Mira med årets fakturor",
+    "caption": "Årets fakturor med status, belopp ex och inkl moms samt PDF.",
+    "link_url": "https://mira-fm.com"
+  },
+  {
+    "id": "b21",
+    "type": "text",
+    "body": "Alla fakturor från Carotte för innevarande år, med fyra summor högst upp: fakturerat i år, betalt, att betala och förfallet.\n\nFiltrera på Betald, Obetald eller Förfallen, sök på fakturanummer eller text, och öppna PDF:en direkt i vyn. Beloppen visas både exklusive och inklusive moms — så ekonomiavdelningen slipper räkna om."
+  },
+  {
+    "id": "b22",
+    "type": "divider"
+  },
+  {
+    "id": "b23",
+    "type": "heading",
+    "heading": "6 · Ärenden, kvalitetskontroll och todos"
+  },
+  {
+    "id": "b24",
+    "type": "text",
+    "body": "Ärendehanteringen fungerar som ni är vana vid — den har bara fått en tydligare plats. Anmäl fel, bifoga bild, följ statusen och se vilket team som är på det. Avvikelser räknas separat så de inte försvinner i mängden.\n\nKvalitetskontrollerna görs yta för yta med betyg, bild och kommentar. Ni ser resultatet, snittbetyget och er egen återkoppling — samma underlag som vi själva jobbar utifrån.\n\nTodos är nytt: en enkel lista för er och ert team, med start, slut, status och påminnelse. Perfekt för det som ska göras kring kontoret men inte är ett ärende."
+  },
+  {
+    "id": "b25",
+    "type": "list",
+    "heading": "Kort om ärenden och kvalitet",
+    "items": [
+      "Felanmälan med bild — hamnar direkt hos rätt team",
+      "Status och tråd på varje ärende, med tidsstämpel",
+      "Avvikelser räknas och följs upp separat",
+      "Kvalitetskontroll per yta med betyg, bild och kommentar",
+      "Todos för er och ert team, med påminnelse"
+    ]
+  },
+  {
+    "id": "b26",
+    "type": "divider"
+  },
+  {
+    "id": "b27",
+    "type": "heading",
+    "heading": "7 · Medarbetarportal (beta) och beställning utan inloggning"
+  },
+  {
+    "id": "b28",
+    "type": "text",
+    "body": "Under Mitt konto hittar ni Medarbetarportalen i beta — er egen yta för sidinställningar, erbjudanden och menyer mot de egna medarbetarna. Hör av er om ni vill vara med och forma den.\n\nOch för alla på kontoret som inte har inloggning: beställning och felanmälan går att göra via en länk utan konto. Vi vet redan vilket företag och kontor länken tillhör — beställningen tas emot och bekräftas av internservice."
+  },
+  {
+    "id": "b29",
+    "type": "divider"
+  },
+  {
+    "id": "b30",
+    "type": "text",
+    "heading": "Kom igång",
+    "body": "Logga in på mira-fm.com med er vanliga inloggning. Saknar någon på kontoret konto — hör av er till er kundansvarig, så lägger vi upp det.\n\nHar ni synpunkter på den nya vyn vill vi gärna höra dem. Det är den återkopplingen som styr vad vi bygger härnäst."
+  }
+]
