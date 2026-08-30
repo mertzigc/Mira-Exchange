@@ -10292,7 +10292,7 @@ app.get("/caspeco/admin/bookings", async (req, res) => {
   if (!CASPECO_ADMIN_TOKEN) {
     return res.status(503).json({ ok: false, error: "CASPECO_ADMIN_TOKEN ej konfigurerad på servern" });
   }
-  if (_publicRateLimited(_clientIp(req), 120)) {
+  if (_publicRateLimited(_clientIp(req), 120, undefined, "caspeco_bookings")) {
     return res.status(429).json({ ok: false, error: "rate_limited" });
   }
   if (!_caspecoAdminAuthed(req)) {
@@ -15110,7 +15110,7 @@ app.post("/public/request/create", async (req, res) => {
     if (safeText(d.hp || d.company_website || "", 100)) {
       return res.json({ ok: true, id: null, skipped: "honeypot" });
     }
-    if (_publicRateLimited(ip)) {
+    if (_publicRateLimited(ip, 30, undefined, "public_request")) {
       return res.status(429).json({ ok: false, error: "rate_limited" });
     }
 
@@ -16527,7 +16527,7 @@ app.post("/kpi/company/refresh", async (req, res) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   const ip = _clientIp(req);
-  if (_publicRateLimited(ip)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(ip, 120, undefined, "kpi_refresh")) return res.status(429).json({ ok: false, error: "rate_limited" });
 
   const companyId = String(req.body?.company_id || req.query.company_id || "").trim();
   if (!companyId) return res.status(400).json({ ok: false, error: "company_id krävs" });
@@ -17954,7 +17954,7 @@ app.options("/approval/request-otp/:id", (req, res) => { _approvalCors(req, res)
 app.post("/approval/request-otp/:id", async (req, res) => {
   _approvalCors(req, res);
   const ip = _clientIp(req);
-  if (_publicRateLimited(ip, 30)) {
+  if (_publicRateLimited(ip, 30, undefined, "approval_otp")) {
     return res.status(429).json({ ok: false, error: "rate_limited" });
   }
 
@@ -18044,7 +18044,7 @@ app.options("/approval/confirm/:id", (req, res) => { _approvalCors(req, res); re
 app.post("/approval/confirm/:id", async (req, res) => {
   _approvalCors(req, res);
   const ip = _clientIp(req);
-  if (_publicRateLimited(ip, 20)) {
+  if (_publicRateLimited(ip, 20, undefined, "approval_confirm")) {
     return res.status(429).json({ ok: false, error: "rate_limited" });
   }
 
@@ -18166,7 +18166,7 @@ app.options("/approval/review/:id", (req, res) => { _approvalCors(req, res); res
 app.post("/approval/review/:id", async (req, res) => {
   _approvalCors(req, res);
   const ip = _clientIp(req);
-  if (_publicRateLimited(ip, 30)) {
+  if (_publicRateLimited(ip, 30, undefined, "approval_review")) {
     return res.status(429).json({ ok: false, error: "rate_limited" });
   }
 
@@ -19234,7 +19234,7 @@ app.options("/admin/planning/companies", (req, res) => { _planningCors(req, res)
 app.get("/admin/planning/companies", async (req, res) => {
   _planningCors(req, res);
   if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
-  if (_publicRateLimited(_clientIp(req), 120)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(_clientIp(req), 120, undefined, "planning_companies")) return res.status(429).json({ ok: false, error: "rate_limited" });
   if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
   try {
     // WU: läser den DELADE CC-cachen i st.f. ett eget 55-sidorssvep per anrop
@@ -19264,7 +19264,7 @@ const TODO_AT = ACTIVITY_CONFIG.AT_TODO;   // "Kom ihåg"
 app.get("/admin/planning/activities", async (req, res) => {
   _planningCors(req, res);
   if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
-  if (_publicRateLimited(_clientIp(req), 240)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(_clientIp(req), 240, undefined, "planning_activities")) return res.status(429).json({ ok: false, error: "rate_limited" });
   if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
   try {
     const y = new Date().getFullYear();
@@ -19315,7 +19315,7 @@ app.get("/admin/planning/activities", async (req, res) => {
 app.post("/admin/planning/activity/action", async (req, res) => {
   _planningCors(req, res);
   if (!PLANNING_ADMIN_TOKEN) return res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" });
-  if (_publicRateLimited(_clientIp(req), 120)) return res.status(429).json({ ok: false, error: "rate_limited" });
+  if (_publicRateLimited(_clientIp(req), 120, undefined, "planning_action")) return res.status(429).json({ ok: false, error: "rate_limited" });
   if (!_planningAuthed(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
   try {
     const { activity_id, source_id, activity_type, action, value } = req.body || {};
@@ -20017,7 +20017,7 @@ app.options(/^\/admin\/forfragan\/.*/, (req, res) => { _planningCors(req, res); 
 function _ffGuard(req, res) {
   _planningCors(req, res);
   if (!PLANNING_ADMIN_TOKEN) { res.status(503).json({ ok: false, error: "PLANNING_ADMIN_TOKEN/CASPECO_ADMIN_TOKEN ej konfigurerad" }); return false; }
-  if (_publicRateLimited(_clientIp(req), 240)) { res.status(429).json({ ok: false, error: "rate_limited" }); return false; }
+  if (_publicRateLimited(_clientIp(req), 240, undefined, "forfragan")) { res.status(429).json({ ok: false, error: "rate_limited" }); return false; }
   if (!_planningAuthed(req)) { res.status(401).json({ ok: false, error: "unauthorized" }); return false; }
   return true;
 }

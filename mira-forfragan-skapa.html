@@ -291,6 +291,12 @@
 
   // Plocka erbjudandets parsa custom_form_json + pricing_formula_json (en gång per render).
   function offerForm(o){ if (!o) return []; try { var v = o.custom_form_json; if (!v) return []; if (typeof v === 'string') v = JSON.parse(v); return Array.isArray(v) ? v : []; } catch(e){ return []; } }
+  // Sant när erbjudandets prisformel läser standardfältet `antal`.
+  function offerDrivesOnAntal(o){
+    var f = offerFormula(o);
+    if (!f || !Array.isArray(f.rules)) return false;
+    return f.rules.some(function(r){ return r && r.qty_from === 'antal'; });
+  }
   function offerFormula(o){ if (!o) return null; try { var v = o.pricing_formula_json; if (!v) return null; if (typeof v === 'string') v = JSON.parse(v); return (v && typeof v === 'object' && Array.isArray(v.rules)) ? v : null; } catch(e){ return null; } }
 
   // Bygg fullt answers-objekt = custom-svar + automatiska "antal" magic key.
@@ -502,7 +508,16 @@
     var o=curOffer(), h='<h2>Eventdata</h2><div class="hint">När, var och hur många. Sammanställningen till höger uppdateras live.</div>';
     if(o) h+=offerHero(o);
     h+='<div class="row2">'+fInput('datum','Leveransdatum','date')+fInput('tid','Tid','time')+'</div>';
-    h+='<div class="row2">'+fInput('slutdatum','Ev. slutdatum','date')+fInput('antal','Antal deltagare','number')+'</div>';
+    // ⚠️ Standardfältet "Antal deltagare" matas in som `antal` till prismotorn
+    // (se fullAnswers()). Driver erbjudandets formel på just `antal` ska kunden
+    // FÖRSTÅ att siffran styr priset — annars ser fältet valfritt ut och
+    // sammanställningen visar lägsta nivån utan att någon vet varför.
+    // ⚠️ Erbjudandet ska då INTE ha en egen fråga med id `antal`: den skuggar
+    // standardfältet (fullAnswers sätter bara antal när svaret saknas) och
+    // kunden får två rutor för samma siffra.
+    var antalDriver = offerDrivesOnAntal(o);
+    h+='<div class="row2">'+fInput('slutdatum','Ev. slutdatum','date')+
+       fInput('antal', antalDriver ? 'Antal deltagare — styr priset' : 'Antal deltagare', 'number')+'</div>';
     // Plats: extern lokal begränsar valet om erbjudandet har lokaler
     if(o && o.extern_lokal && o.extern_lokal.length){
       var opts='<option value="">Välj lokal…</option>'+o.extern_lokal.map(function(l){ var lab=l.label||l.name||l.id||l; return '<option '+(st.plats===lab?'selected':'')+'>'+esc(lab)+'</option>'; }).join('');

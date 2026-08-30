@@ -15,6 +15,17 @@ import fs from "node:fs";
 import { evalPricing, validateFormula } from "./pricing_engine.js";
 
 let pass = 0, fail = 0;
+// Klipper ut en funktion och gör den körbar. Saknas den (mot äldre kod) blir
+// det null → ett rent fall, inte en krasch som tar med sig resten av gruppen.
+function fnFromLine(src, start, end, argNames = [], args = []) {
+  const i = src.indexOf(start);
+  if (i < 0) return null;
+  const j = src.indexOf(end, i);
+  if (j < 0) return null;
+  const name = /function\s+([A-Za-z0-9_$]+)/.exec(start)?.[1];
+  try { return new Function(...argNames, src.slice(i, j + end.length) + "\nreturn " + name + ";")(...args); }
+  catch (_) { return null; }
+}
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
 const sec = (t) => console.log("\n── " + t + " " + "─".repeat(Math.max(0, 56 - t.length)));
 const KOMM = fs.readFileSync(new URL("./mira-kommunikation-admin.html", import.meta.url), "utf8");
@@ -149,6 +160,47 @@ ok("Fortnox-createarna hanterar strängfallet (inte samma bugg)",
 // failed" utan att veta vilket fält.
 ok("upsert exponerar detail vid fel",
    /\[\/admin\/offers\/upsert\]"[\s\S]{0,200}detail: e\?\.detail \|\| null/.test(SRC));
+
+sec("Förfrågan-wizarden — en fråga, inte två");
+const WIZ = fs.readFileSync(new URL("./mira-forfragan-skapa.html", import.meta.url), "utf8");
+{
+  // ⚠️ Wizarden matar in standardfältet som `antal` — men BARA när erbjudandet
+  // inte redan svarat på det id:t. Ett erbjudande med en egen fråga `antal`
+  // skuggar alltså standardfältet, och kunden får två rutor för samma siffra.
+  // Klipps ut på RADEN (fullAnswers är en enradare) och körs — en regex över
+  // klammerpar sprack på de nästlade funktionerna.
+  const faLine = (WIZ.split("\n").find((l) => l.includes("function fullAnswers()")) || "").trim();
+  let fa = null;
+  try { fa = new Function(faLine + "\nreturn fullAnswers;")(); } catch (_) {}
+  ok("fullAnswers går att köra", !!fa);
+  if (fa) {
+    // Testet behöver `st` i scope — kör med en global stubbe.
+    const run = (state) => { globalThis.st = state; return fa(); };
+    ok("standardfältet blir prisdrivaren när erbjudandet saknar egen fråga",
+       run({ answers: {}, antal: 250 }).antal === 250);
+    ok("en egen fråga med id 'antal' SKUGGAR standardfältet (därav dubbletten)",
+       run({ answers: { antal: 50 }, antal: 250 }).antal === 50);
+    delete globalThis.st;
+  }
+}
+{
+  const drives = fnFromLine(WIZ, "function offerDrivesOnAntal(o){", "\n  }",
+    ["offerFormula"], [(o) => o && o.f]);
+  ok("offerDrivesOnAntal går att köra", !!drives);
+  if (drives) {
+    ok("erbjudande vars formel läser 'antal' flaggas som prisdrivet",
+       drives({ f: { rules: [{ qty_from: "antal" }] } }) === true);
+    // ⚠️ Måste vara just `antal` — det är standardfältets nyckel i fullAnswers().
+    ok("annan drivare flaggas INTE (t.ex. 'gaster' eller 'yta')",
+       drives({ f: { rules: [{ qty_from: "gaster" }] } }) === false
+       && drives({ f: { rules: [{ qty_from: "yta" }] } }) === false);
+    ok("erbjudande utan formel flaggas inte", drives(null) === false);
+  }
+}
+ok("fältet säger att det styr priset när formeln läser det",
+   /antalDriver \? 'Antal deltagare — styr priset' : 'Antal deltagare'/.test(WIZ));
+ok("etiketten är oförändrad för erbjudanden som inte drivs av antal",
+   /: 'Antal deltagare', 'number'/.test(WIZ));
 
 console.log(`\n${fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);

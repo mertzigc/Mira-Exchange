@@ -394,7 +394,15 @@
     })
     .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
     .then(function(j){
-      if(!j||!j.ok){ setStatus('error','Kunde inte uppdatera'); if(btn) btn.disabled=false; return; }
+      if(!j||!j.ok){
+        // ⚠️ Ett generiskt "Kunde inte uppdatera" dolde en 429 i veckor —
+        // kortet såg ut att sakna data när det i själva verket var strypt.
+        var why = (j && j.error) === 'rate_limited' ? 'För många försök — vänta en stund'
+                : (j && j.error) === 'patch_failed' ? 'Kunde inte spara i Bubble'
+                : (j && j.error) ? ('Kunde inte uppdatera: ' + j.error)
+                : 'Kunde inte uppdatera';
+        setStatus('error', why); if(btn) btn.disabled=false; return;
+      }
       // Ladda om så Bubble matar in färska kpi_json. ?kpiinit är ett LOOP-SKYDD för
       // auto-triggern: utan den hade tom data gett refresh → reload → refresh i evighet.
       // ⚠️ Vid MANUELL uppdatering måste den bort igen (2026-08-27). Låg den kvar
