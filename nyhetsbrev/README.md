@@ -5,8 +5,7 @@ fakturaportal, ärenden + kvalitetskontroll, todos och medarbetarportal (beta).
 
 **Inget behöver återskapas i Bubble-editorn.** Innehållet ligger som `content_blocks`-JSON
 och skapas med ett anrop mot `/admin/invite/create`. Kommunikationsmodulen (Nyheter-fliken)
-plockar sedan upp utskicket som vilket annat som helst — bygg mottagarlista och skicka där,
-eller med curl längre ned.
+plockar sedan upp utskicket som vilket annat som helst. `skicka.py` tar det hela vägen ut.
 
 ---
 
@@ -18,6 +17,7 @@ eller med curl längre ned.
 | `blocks.json` | 30 designblock — rubriker, bilder, text, listor, avdelare. `__IMG_0N__` = platshållare |
 | `bilder/*.jpg` | 6 skärmbilder, 1240 px breda, renderade ur de riktiga HTML-blocken med demo-data |
 | `skapa.py` | Laddar upp bilderna, byter ut platshållarna, skapar utskicket |
+| `skicka.py` | Status, testutskick, bygg målgrupp, skicka — sköter pagineringen |
 | `forhandsgranska.mjs` | Renderar mejlet lokalt till `preview.html` |
 | `preview.html` | Förhandsgranskning (bilder inbakade, öppnas utan server) |
 
@@ -42,19 +42,33 @@ Vill du ändra text: redigera `blocks.json` / `utskick.json` och kör om kommand
 ## 2. Skapa utskicket
 
 ```bash
-HOST=$HOST KEY=$KEY python3 nyhetsbrev/skapa.py --dry-run
+HOST=$HOST KEY=$KEY BUBBLE_API_KEY=$BUBBLE_API_KEY python3 nyhetsbrev/skapa.py --dry-run
 ```
 
 ```bash
-HOST=$HOST KEY=$KEY python3 nyhetsbrev/skapa.py
+HOST=$HOST KEY=$KEY BUBBLE_API_KEY=$BUBBLE_API_KEY python3 nyhetsbrev/skapa.py
 ```
 
 Env-varsen måste mappas in på raden — de är interaktiva och ej exporterade, så ett naket
 `python3 skapa.py` ser dem inte.
 
-Skriptet laddar upp de sex bilderna via `/admin/media/upload` (de hamnar i mediaarkivet),
-byter ut `__IMG_0N__` mot Bubble-URL:erna och skapar en `Invitation` med `kind=news`.
-Det **skickar ingenting**.
+Skriptet laddar upp de sex bilderna, byter ut `__IMG_0N__` mot Bubble-URL:erna och skapar en
+`Invitation` med `kind=news`. Det **skickar ingenting**.
+
+### ⚠️ Varför bilderna INTE går via `/admin/media/upload`
+
+`express.json()` i `index.js` (rad 48) sätter ingen `limit` → Express default är **100 kb**.
+`/admin/media/upload` tar emot bilden som base64 i JSON-bodyn, så allt över ~74 kb råfil
+svarar **413 Payload Too Large** långt innan endpointens egen `_MEDIA_MAX_BYTES`-koll på 6 MB
+ens körs. Den kollen är i praktiken död kod idag. Arkiv-uppladdningen i
+`mira-kommunikation-admin.html` funkar bara för att klienten komprimerar till 512 px först.
+
+Skriptet går därför **direkt mot Bubbles `/fileupload`** (multipart, `BUBBLE_API_KEY`) och
+skapar `MediaAsset`-raden separat — så bilderna hamnar i Arkiv-väljaren precis som vanligt.
+
+Höjer du taket någon gång (`express.json({ limit: "8mb", type: [...] })`) fungerar
+`--via-render` i stället. Det är en enradsändring men den påverkar *alla* endpoints, så den
+hör hemma i en egen deploy — inte mitt i ett utskick.
 
 Sista raden ska säga `KLART. Utskicks-id: …`. Säger den i stället
 `VARNING: content_blocks landade INTE` — då saknas fältet på `Invitation` i Bubble och
@@ -63,50 +77,50 @@ utskicket skulle gå ut som en naken textmassa. Fixa fältet först.
 Behöver du ändra efter att det skapats:
 
 ```bash
-HOST=$HOST KEY=$KEY python3 nyhetsbrev/skapa.py --update <utskicks-id>
+HOST=$HOST KEY=$KEY BUBBLE_API_KEY=$BUBBLE_API_KEY python3 nyhetsbrev/skapa.py --update <utskicks-id>
 ```
 
-## 3. Bygg mottagarlistan
+## 3-5. Testa, bygg lista, skicka
 
-Kolla först hur många det blir (skapar ingenting):
+`skicka.py` sköter pagineringen. Kör kommandona i den här ordningen — alla utom `test`
+frågar innan de gör något.
 
 ```bash
-curl -sS -X POST "$HOST/admin/audience/preview" -H "x-api-key: $KEY" -H "Content-Type: application/json" -d '{}' | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['company_count'],'företag ·',d['user_count'],'mottagare ·',d['no_email'],'utan mejl')"
+HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py status <utskicks-id>
 ```
 
-Tomt filter = alla kontaktpersoner (`Coworker`) på alla kundföretag som har en mejladress.
-Det är den bredaste målgruppen som finns — den innehåller även personer som ännu inte har
-inloggning på Mira. Brevet är skrivet för det (sista stycket säger var man skaffar konto).
-Vill du hellre bara ha en region eller en ägare, skicka `{"regions":["Stockholm"]}` resp.
-`{"owners":["<user-id>"]}` — eller bygg urvalet i Målgrupp-fliken.
-
-Bygg sedan listan (kör om med `offset` tills `done: true` — sidan är 100 åt gången):
+Visar rubrik, antal designblock (ska vara 30) och gäststatus. Säger den `0 block` — stopp,
+brevet skulle gå ut tomt.
 
 ```bash
-curl -sS -X POST "$HOST/admin/invite/<utskicks-id>/guests/build" -H "x-api-key: $KEY" -H "Content-Type: application/json" -d '{"offset":0,"limit":100}'
+HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py test <utskicks-id> christian@carotte.se
 ```
 
-Avregistrerade (`EmailOptout`) filtreras bort automatiskt vid utskick, inte här.
-
-## 4. Testa på dig själv innan
-
-Lägg till din egen adress som ensam gäst på ett **kopierat** utskick (duplicera i
-Nyheter-fliken), skicka den, läs mejlet i Outlook och på mobilen. Först därefter kör du
-skarpt. Skickade gäster markeras `invite_sent=true` — samma utskick går inte ut två gånger
-till samma adress.
-
-## 5. Skicka
-
-Enklast i Kommunikation → Nyheter → utskicket → skicka. Eller:
+Lägger till din adress som ensam mottagare och köar brevet dit. Pollern tömmer kön var 2:a
+minut, så det ligger i inkorgen inom ~3 min. Läs det i Outlook **och** på mobilen.
 
 ```bash
-curl -sS -X POST "$HOST/admin/invite/<utskicks-id>/send" -H "x-api-key: $KEY" -H "Content-Type: application/json" -d '{"offset":0,"limit":40}'
+HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py malgrupp <utskicks-id>
 ```
 
-Kör om med `next_offset` ur svaret tills `done: true`. Raderna hamnar i `emailqueue` och
-pollern skickar dem via SendGrid. Designblocken skickas **inte** per mottagare — mallen
-hämtar dem en gång via `invitation_id`, och `blocks_count` är kontrakt: stämmer det inte
-failar raden högljutt i stället för att skicka ut ett urholkat brev.
+Visar hur många mottagare det blir, frågar, och bygger sedan listan. Tomt filter = alla
+kontaktpersoner (`Coworker`) med mejladress på alla kundföretag — den bredaste målgruppen
+som finns, inklusive personer som ännu inte har inloggning. Brevet är skrivet för det.
+Vill du ha en smalare målgrupp: bygg urvalet i Målgrupp-fliken i stället och hoppa över
+det här steget.
+
+Din testadress hoppas över automatiskt (dedup på mejl), och den får inte brevet igen.
+
+```bash
+HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py skicka <utskicks-id>
+```
+
+Köar brevet till alla som inte redan fått det. Avregistrerade (`EmailOptout`) filtreras bort.
+Pollern skickar ~20 mejl varannan minut, alltså ~600/timme — ett stort utskick tar sin tid,
+men du behöver inte sitta kvar.
+
+Fastnade rader hittar du i Bubble: sök `emailqueue` på `email_sent = false AND error_message
+is not empty`.
 
 ---
 
