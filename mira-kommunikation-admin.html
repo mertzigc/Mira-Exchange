@@ -4449,7 +4449,11 @@
     function close(){ box.style.display='none'; }
     function loadCCs(){
       return fetch(api('/admin/cc/list'), { headers: H() }).then(function(r){return r.json();}).then(function(j){
-        OF_CCS = (j && j.items) || (j && j.ccs) || j || [];
+        // ⚠️ /admin/cc/list svarar {ok, companies:[…]} — inte items/ccs.
+        // Fallbacken `|| j` gjorde OF_CCS till hela svarsOBJEKTET, och
+        // .filter() på ett objekt kastar → sökrutan gav aldrig träffar.
+        // Samma endpoint läses korrekt på rad ~1253 i det här blocket.
+        OF_CCS = (j && Array.isArray(j.companies)) ? j.companies : [];
         return OF_CCS;
       }).catch(function(){ return []; });
     }
@@ -4469,10 +4473,13 @@
     }
     function search(q){
       q = q.toLowerCase();
-      var hit = OF_CCS.filter(function(c){ return String(c.name||c.Name_company||'').toLowerCase().indexOf(q) >= 0; });
+      // Array-vakt: en oväntad svarsform ska ge "Inga träffar", inte en TypeError
+      // som tystar hela sökrutan utan att någon ser varför.
+      var src = Array.isArray(OF_CCS) ? OF_CCS : [];
+      var hit = src.filter(function(c){ return String(c.name||c.Name_company||'').toLowerCase().indexOf(q) >= 0; });
       render(hit);
     }
-    inp.addEventListener('input', function(){ var v=inp.value.trim(); if (!v) { close(); return; } if (!OF_CCS.length) loadCCs().then(function(){ search(v); }); else search(v); });
+    inp.addEventListener('input', function(){ var v=inp.value.trim(); if (!v) { close(); return; } if (!(OF_CCS && OF_CCS.length)) loadCCs().then(function(){ search(v); }); else search(v); });
     document.addEventListener('click', function(e){ if (e.target !== inp && !box.contains(e.target)) close(); });
     window._ofLoadCCs = loadCCs;
   })();

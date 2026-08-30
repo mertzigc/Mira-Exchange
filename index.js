@@ -20584,14 +20584,16 @@ app.post("/admin/offers/upsert", async (req, res) => {
     if (id) {
       await bubblePatch(FORFRAGAN.OFFER_TYPE, id, patch);
     } else {
-      const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch);
-      id = created?.id || created?._id || null;
+      // ⚠️ bubbleCreate returnerar id:t som en STRÄNG, inte ett objekt.
+      // `created?.id` gav därför alltid null → svaret sa {ok:true, id:null,
+      // offer:null} fast erbjudandet skapades. Ser ut som ett fel, är det inte.
+      id = await bubbleCreate(FORFRAGAN.OFFER_TYPE, patch);
     }
     const fresh = id ? await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null) : null;
     return res.json({ ok: true, id, offer: fresh ? _offerAdminOut(fresh) : null });
   } catch (e) {
     console.error("[/admin/offers/upsert]", e?.message, e?.detail);
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });
 
@@ -20641,8 +20643,8 @@ app.post("/admin/offers/clone", async (req, res) => {
       [FORFRAGAN.OFFER_PRICING_JSON]: src[FORFRAGAN.OFFER_PRICING_JSON] || "",
     };
     if (targetCompanyId) copy[FORFRAGAN.OFFER_COMPANY] = [targetCompanyId];
-    const created = await bubbleCreate(FORFRAGAN.OFFER_TYPE, copy);
-    const id = created?.id || created?._id || null;
+    // ⚠️ Samma fälla som i /upsert: bubbleCreate ger en STRÄNG, inte ett objekt.
+    const id = await bubbleCreate(FORFRAGAN.OFFER_TYPE, copy);
     const fresh = id ? await bubbleGet(FORFRAGAN.OFFER_TYPE, id).catch(() => null) : null;
     return res.json({ ok: true, id, offer: fresh ? _offerAdminOut(fresh) : null });
   } catch (e) {

@@ -114,5 +114,41 @@ ok("förhandsvisningen har en gäst-drivare", /id="of-pv-antal"/.test(KOMM));
 // ⚠️ Eventstäd är per tillfälle — "kr/mån" hade varit missvisande.
 ok("förhandsvisningen säger kr/tillfälle, inte kr/mån", /' kr\/tillfälle' : ' kr\/mån'/.test(KOMM));
 
+sec("Kund-väljaren + upsert-svaret");
+const SRC = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
+
+// ⚠️ /admin/cc/list svarar {ok, companies:[…]}. Väljaren läste items/ccs med
+// `|| j` som fallback → OF_CCS blev hela svarsOBJEKTET och .filter() kastade.
+// Sökrutan gav aldrig träffar, utan felmeddelande.
+ok("kund-väljaren läser rätt svarsnyckel",
+   /OF_CCS = \(j && Array\.isArray\(j\.companies\)\) \? j\.companies : \[\];/.test(KOMM));
+ok("ingen `|| j`-fallback kvar som gör OF_CCS till ett objekt",
+   !/OF_CCS = \(j && j\.items\)/.test(KOMM));
+ok("sökningen kastar inte på oväntad svarsform",
+   /var src = Array\.isArray\(OF_CCS\) \? OF_CCS : \[\];/.test(KOMM));
+// Samma endpoint läses på två ställen i blocket — de får inte glida isär igen.
+ok("båda läsarna av /admin/cc/list använder .companies",
+   (KOMM.match(/fetch\(api\('\/admin\/cc\/list'\)/g) || []).length === 2
+   && (KOMM.match(/j\.companies/g) || []).length >= 2);
+ok("endpointen svarar faktiskt med companies",
+   /res\.json\(\{ ok: true, companies: out \}\)/.test(SRC));
+
+// ⚠️ bubbleCreate returnerar id:t som STRÄNG. `created?.id` gav alltid null →
+// {ok:true, id:null, offer:null} fast erbjudandet skapades.
+ok("upsert returnerar id:t från bubbleCreate",
+   /id = await bubbleCreate\(FORFRAGAN\.OFFER_TYPE, patch\);/.test(SRC));
+ok("klona-till-kund returnerar också id:t direkt",
+   /\/\/ ⚠️ Samma fälla som i \/upsert[\s\S]{0,120}const id = await bubbleCreate\(FORFRAGAN\.OFFER_TYPE, copy\);/.test(SRC));
+ok("ingen objekt-avläsning kvar på erbjudande-createn",
+   !/created\?\.id \|\| created\?\._id \|\| null/.test(SRC));
+// Fortnox-vägarna läser samma helper men hanterar strängfallet FÖRST — de är
+// alltså inte samma bugg och ska lämnas i fred.
+ok("Fortnox-createarna hanterar strängfallet (inte samma bugg)",
+   (SRC.match(/\(typeof created === "string" && created\)/g) || []).length >= 2);
+// Bubbles faktiska klagomål loggades men returnerades inte — "bubbleCreate
+// failed" utan att veta vilket fält.
+ok("upsert exponerar detail vid fel",
+   /\[\/admin\/offers\/upsert\]"[\s\S]{0,200}detail: e\?\.detail \|\| null/.test(SRC));
+
 console.log(`\n${fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
