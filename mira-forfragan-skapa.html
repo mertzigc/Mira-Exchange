@@ -305,7 +305,29 @@
   // Mini renderQuestion-mönster — speglar mira-undersokning.html men anpassat för
   // wizardens tema. Hanterar text/textarea/email/number/date/select/multiselect/
   // slider/kvm/hours/yesno + section.
+  // ⚠️ Ett erbjudande vars fråga har SAMMA id som ett standardfält skuggar det:
+  // fullAnswers() matar bara in st.antal när svaret saknas. Kunden fick då två
+  // rutor för samma siffra — en obligatorisk och tom, en ifylld som styr priset.
+  // Sådana frågor filtreras bort här i stället för att lita på att varje
+  // erbjudande är rätt uppsatt. Standardfältet är redan drivaren.
+  var WIZ_STANDARD_IDS = ['datum','tid','slutdatum','plats','kontor','antal',
+                          'titel','kategori','subcategory','beskrivning','budget','po'];
+  function dropShadowingQuestions(formArr){
+    var kept = [], dropped = [];
+    (formArr || []).forEach(function(q){
+      var id = q && q.id;
+      if (id && WIZ_STANDARD_IDS.indexOf(String(id)) >= 0) { dropped.push(id); return; }
+      kept.push(q);
+    });
+    if (dropped.length) {
+      console.warn('[forfragan] erbjudandefråga(or) skuggade standardfält och doldes: ' +
+                   dropped.join(', ') + ' — standardfältet driver priset.');
+    }
+    return kept;
+  }
+
   function renderOfferQuestions(formArr){
+    formArr = dropShadowingQuestions(formArr);
     if (!formArr.length) return '';
     var h = '<div class="oqs">';
     formArr.forEach(function(q, i){
@@ -530,7 +552,11 @@
     h+='<div class="row2"><div class="field"><label>Upprepa</label>'+recurrenceSelect()+'</div>'+
        (st.recRule?fInput('recUntil','Upprepa till','date'):'<div></div>')+'</div>';
     // Erbjudandets dynamiska frågor (custom_form_json) — rendras under standardfälten.
-    if(o){ var fArr = offerForm(o); if(fArr.length){ h+='<div class="oqsection"><h3>Information för det här erbjudandet</h3>'+renderOfferQuestions(fArr)+'</div>'; } }
+    // ⚠️ Räkna på de KVARVARANDE frågorna — annars renderas rubriken
+    // "Information för det här erbjudandet" över en tom sektion när alla
+    // frågor filtrerats bort som skuggande.
+    if(o){ var fArr = dropShadowingQuestions(offerForm(o));
+           if(fArr.length){ h+='<div class="oqsection"><h3>Information för det här erbjudandet</h3>'+renderOfferQuestions(fArr)+'</div>'; } }
     // Budget (fritt)
     if(st.path==='fritt'){
       var bv=+st.budget||0;

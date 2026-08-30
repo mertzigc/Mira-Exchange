@@ -17,14 +17,16 @@ import { evalPricing, validateFormula } from "./pricing_engine.js";
 let pass = 0, fail = 0;
 // Klipper ut en funktion och gör den körbar. Saknas den (mot äldre kod) blir
 // det null → ett rent fall, inte en krasch som tar med sig resten av gruppen.
-function fnFromLine(src, start, end, argNames = [], args = []) {
+function fnFromLine(src, start, end, argNames = [], args = [], prefix = "") {
   const i = src.indexOf(start);
   if (i < 0) return null;
   const j = src.indexOf(end, i);
   if (j < 0) return null;
   const name = /function\s+([A-Za-z0-9_$]+)/.exec(start)?.[1];
-  try { return new Function(...argNames, src.slice(i, j + end.length) + "\nreturn " + name + ";")(...args); }
-  catch (_) { return null; }
+  try {
+    return new Function(...argNames,
+      prefix + "\n" + src.slice(i, j + end.length) + "\nreturn " + name + ";")(...args);
+  } catch (_) { return null; }
 }
 const ok = (l, c) => { if (c) { pass++; console.log("  ✓ " + l); } else { fail++; console.log("  ✗ " + l); } };
 const sec = (t) => console.log("\n── " + t + " " + "─".repeat(Math.max(0, 56 - t.length)));
@@ -201,6 +203,37 @@ ok("fältet säger att det styr priset när formeln läser det",
    /antalDriver \? 'Antal deltagare — styr priset' : 'Antal deltagare'/.test(WIZ));
 ok("etiketten är oförändrad för erbjudanden som inte drivs av antal",
    /: 'Antal deltagare', 'number'/.test(WIZ));
+
+// ⚠️ Spärren: ett erbjudande vars fråga har SAMMA id som ett standardfält
+// skuggar det (fullAnswers matar bara in st.antal när svaret saknas). Kunden
+// fick två rutor för samma siffra — en obligatorisk och tom, en som styr
+// priset. Det ska inte kunna se ut så oavsett hur erbjudandet är uppsatt.
+{
+  // ⚠️ Listan klipps ut ur BLOCKET, inte hårdkodad här — annars testar vi vår
+  // egen kopia och en borttagen 'antal' ur den riktiga listan passerar.
+  const idsSrc = (WIZ.match(/var WIZ_STANDARD_IDS = \[[\s\S]*?\];/) || [""])[0];
+  ok("WIZ_STANDARD_IDS går att klippa ut", !!idsSrc);
+  const drop = fnFromLine(WIZ, "  function dropShadowingQuestions(formArr){", "\n  }",
+    ["console"], [{ warn(){} }], idsSrc);
+  ok("dropShadowingQuestions går att köra", !!drop);
+  if (drop) {
+    const kept = drop([
+      { id: "antal", label: "Ungefär hur många gäster?" },   // ← skuggar standardfältet
+      { id: "onskemal", label: "Särskilda önskemål" },
+    ]);
+    ok("skuggande fråga filtreras bort", kept.length === 1 && kept[0].id === "onskemal");
+    ok("erbjudandets egna frågor behålls", drop([{ id: "onskemal" }]).length === 1);
+    ok("alla standardfältens id:n skuggar",
+       drop([{ id: "datum" }, { id: "plats" }, { id: "kontor" }, { id: "titel" }]).length === 0);
+    ok("fråga utan id släpps igenom (får eget q-index)", drop([{ label: "Fritext" }]).length === 1);
+    ok("tom lista kraschar inte", drop([]).length === 0 && drop(null).length === 0);
+  }
+}
+// Rubriken får inte renderas över en tom sektion.
+ok("sektionsrubriken räknar på de KVARVARANDE frågorna",
+   /var fArr = dropShadowingQuestions\(offerForm\(o\)\);/.test(WIZ));
+ok("renderOfferQuestions filtrerar också själv (dubbelt skydd)",
+   /formArr = dropShadowingQuestions\(formArr\);/.test(WIZ));
 
 console.log(`\n${fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
