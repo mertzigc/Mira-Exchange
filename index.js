@@ -16254,6 +16254,9 @@ const KUND_KPI = {
   // Matter.status (verifierat: "Pågående"/"Avslutat"). Allt som inte är
   // avslutat/avvikelse räknas som pågående (även poster som saknar status).
   MATTER_AVSLUTADE:       ["Avslutat", "Avslutad", "Stängd", "Klar"],
+  // ⚠️ Måste spegla /admin/drift/list, som filtrerar strikt på "Pågående".
+  // Allt annat (Utkast, tom) hör varken hemma i öppet eller avslutat.
+  MATTER_PAGAENDE:        ["Pågående", "Pagaende"],
   MATTER_AVVIKELSE_FIELD: "Avvikelse",  // yes/no på Matter – true = avvikelse (prioriteras före status)
 
   // Kom ihåg.Status (option set status_reminder) – vilka räknas som "pågående"
@@ -16411,14 +16414,24 @@ async function buildKundKpi(companyId) {
   const matters = await bubbleFindAll(KUND_KPI.MATTER_TYPE, {
     constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }]
   }).catch(() => []);
-  let pagaende = 0, avslutade = 0, avvikelser = 0;
+  // ⚠️ RÄTTAT 2026-08-30. Stod tidigare: allt som inte var avslutat/avvikelse
+  // räknades som PÅGÅENDE — även Utkast och tom status. KPI:n sa då "1 pågående"
+  // medan Drift-listan kunden klickar in i var tom, eftersom den filtrerar
+  // strikt på status = "Pågående" (companies_api.js /admin/drift/list).
+  // Två definitioner av samma ord i samma vy; KPI:n var den som ljög.
+  // Option set "Status Ärende": Pågående / Avslutat / Utkast.
+  // Utkast hör varken hemma i öppet eller avslutat — precis som i listan.
+  let pagaende = 0, avslutade = 0, avvikelser = 0, ovrigt = 0;
   for (const m of matters) {
     if (m[KUND_KPI.MATTER_AVVIKELSE_FIELD] === true) { avvikelser++; continue; }
     const st = String(m.status ?? "").trim();
     if (KUND_KPI.MATTER_AVSLUTADE.includes(st)) avslutade++;
-    else pagaende++;
+    else if (KUND_KPI.MATTER_PAGAENDE.includes(st)) pagaende++;
+    else ovrigt++;                       // Utkast / tom / okänt — visas inte
   }
-  const mattersOut = { pagaende, avslutade, avvikelser };
+  // `ovrigt` renderas INTE, men följer med i JSON:en så en framtida diskrepans
+  // går att se direkt i datat i stället för att gissa.
+  const mattersOut = { pagaende, avslutade, avvikelser, ovrigt };
 
   // 3) BETYG – samma logik som /api/kpi/grades (Värde=float, ärende/kvalitetskontroll)
   const grades = await fetchGradesForCompanies([companyId]).catch(() => []);

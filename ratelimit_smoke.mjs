@@ -60,5 +60,40 @@ ok("429 särskiljs från andra fel", /'För många försök — vänta en stund'
 ok("patch-fel särskiljs", /'Kunde inte spara i Bubble'/.test(KPI));
 ok("okänt fel visar serverns text", /'Kunde inte uppdatera: ' \+ j\.error/.test(KPI));
 
+sec("Ärenderäkningen speglar Drift-listan");
+{
+  // ⚠️ KPI:n räknade allt som inte var avslutat/avvikelse som PÅGÅENDE — även
+  // Utkast och tom status. Drift-listan filtrerar strikt på "Pågående".
+  // Resultat: kortet sa "1 pågående", listan kunden klickar in i var tom.
+  const CAPI = fs.readFileSync(new URL("./companies_api.js", import.meta.url), "utf8");
+  ok("Drift-listan filtrerar strikt på 'Pågående'",
+     /scope === "open"\) constraints\.push\(\{ key: "status", constraint_type: "equals", value: "Pågående" \}\)/.test(CAPI));
+
+  const i = SRC.indexOf("  let pagaende = 0, avslutade = 0, avvikelser = 0, ovrigt = 0;");
+  const j = SRC.indexOf("const mattersOut", i);
+  ok("KPI-loopen går att klippa ut", i > 0 && j > i);
+  if (i > 0 && j > i) {
+    const count = new Function("KUND_KPI", "matters",
+      SRC.slice(i, j) + "\nreturn { pagaende, avslutade, avvikelser, ovrigt };");
+    const K = { MATTER_AVVIKELSE_FIELD: "Avvikelse",
+                MATTER_AVSLUTADE: ["Avslutat", "Avslutad", "Stängd", "Klar"],
+                MATTER_PAGAENDE: ["Pågående", "Pagaende"] };
+    const r = count(K, [
+      { status: "Pågående" },
+      { status: "Avslutat" }, { status: "Avslutat" },
+      { status: "Utkast" },                    // ← räknades tidigare som pågående
+      { status: "" },                          // ← likaså
+      { status: "Pågående", Avvikelse: true }, // avvikelse går före status
+    ]);
+    ok("bara status 'Pågående' räknas som pågående", r.pagaende === 1);
+    ok("Utkast och tom status hamnar i varken öppet eller avslutat", r.ovrigt === 2);
+    ok("avslutade räknas som förr", r.avslutade === 2);
+    ok("avvikelse går före status", r.avvikelser === 1);
+    // Inget får försvinna tyst — summan ska vara alla rader.
+    ok("varje ärende hamnar i exakt en hink",
+       r.pagaende + r.avslutade + r.avvikelser + r.ovrigt === 6);
+  }
+}
+
 console.log(`\n${fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
