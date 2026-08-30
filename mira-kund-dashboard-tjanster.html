@@ -755,13 +755,14 @@
         (qtyHtml ? '<div class="mt-disabled">'+qtyHtml+'</div>' : '')+
         '<div style="margin-top:auto"><button class="mt-btn ghost" data-act="close" style="width:100%">Stäng</button></div>';
     } else {
-      var _a = officeAssume();
-      var assumeHtml = (unitPrice>0 && (_a.yta||_a.arbetsplatser))
-        ? '<div style="font-size:10px;color:rgba(255,255,255,0.42);margin:-4px 0 8px">Beräknat för '+num(_a.yta).toLocaleString('sv-SE')+' kvm · '+num(_a.arbetsplatser)+' arbetsplatser</div>'
-        : '';
+      // ⚠️ "Beräknat för X kvm · X arbetsplatser" borttagen 2026-08-30.
+      // Tjänsterna kör från-priser nu (frukt/växter fick det när kvm- och
+      // arbetsplats-formlerna gav orimliga belopp — 42 000 kr/mån för växter på
+      // 3 000 kvm). Att påstå att ett från-pris är "beräknat för er yta" är
+      // helt enkelt inte sant längre. Mer avancerad kalkyl tas i nästa fas.
       var priceHtml = (unitPrice>0
         ? '<div class="mt-mprice-r">Från<b>'+fmtKr(unitPrice)+'<small>'+(unit==='/mån'?' / mån':' '+esc(unit))+'</small></b></div>'
-        : '') + assumeHtml;
+        : '');
       actionsCol =
         priceHtml +
         '<div class="mt-section-h">Välj nivå</div>'+

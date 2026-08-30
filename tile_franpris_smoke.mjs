@@ -80,5 +80,27 @@ ok("raden läses tillbaka och returneras", /const fresh = await bubbleGet\(SERVI
    && /from_price: fresh/.test(ep));
 ok("endpointen är öppen för x-admin-token", /"\/admin\/service-catalog",/.test(SRC));
 
+sec("Kundens tjänste-grid påstår inget om beräkningen");
+{
+  const GRID = fs.readFileSync(new URL("./mira-kund-dashboard-tjanster.html", import.meta.url), "utf8");
+  // ⚠️ "Beräknat för X kvm · X arbetsplatser" stod under Från-priset. När
+  // frukt/växter gick över till från-pris blev påståendet osant — priset är
+  // inte längre räknat på kundens yta.
+  // Kommentaren som FÖRKLARAR borttagningen får nämna texten — testet ska bara
+  // fälla om strängen faktiskt renderas.
+  const gridCode = GRID.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  ok("antagande-texten är borta", !/Beräknat för/.test(gridCode));
+
+  // Markupen ensam räcker inte — beloppet måste faktiskt renderas i den.
+  ok("Från-priset visas fortfarande med sitt belopp",
+     /'<div class="mt-mprice-r">Från<b>'\+fmtKr\(unitPrice\)/.test(gridCode));
+  // officeAssume behövs KVAR: tjänster som faktiskt skalar (housekeeping) räknas
+  // per valt kontor via adaptedUnitPrice.
+  ok("kontorets siffror används fortfarande av prismotorn",
+     /function officeAssume\(\)/.test(GRID) && /var a = officeAssume\(\);/.test(GRID));
+  ok("ingen annan formulering påstår att priset är beräknat på ytan",
+     !/beräknat för/i.test(gridCode));
+}
+
 console.log(`\n${fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
