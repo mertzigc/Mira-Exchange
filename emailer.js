@@ -573,9 +573,21 @@ async function tmplQcNew(e, extra, toName, ctaLabel, item) {
   // ref_name=Kontrollant, betyg=Betyg_lev, meddelande=Meddelande, office=Kontor's Office_title
   const inspector  = extra.ref_name   || extra.inspector_name || "";
   const message    = extra.meddelande || e.Meddelande         || e.message   || "";
-  const betyg      = extra.betyg      || e.Betyg_lev          || e.betyg     || "";
+  const betygRaw   = extra.betyg      || e.Betyg_lev          || e.betyg     || "";
   const office     = extra.office     || e.office_title        || "";
   const qcDate     = fmtDateTime(e.kontrolldatum || e.QCDate   || extra.qc_date);
+
+  // Betyg: Bubble-workflowet skickar `betyg` i extra_data, men värdet är inte
+  // alltid ett tal (se parseBetyg). Går det inte att tolka — eller är det 0,
+  // vilket i Bubble oftast betyder "tomt numeriskt fält" — hämtar vi samma
+  // sanning som kundkortet: medel av Grade.Värde för kontrollen.
+  let betygNum = parseBetyg(betygRaw);
+  if (betygNum == null || betygNum === 0) {
+    betygNum = await qcGradeAverage(item.entity_id || e._id || e.id);
+  }
+  const betygCell = betygNum != null
+    ? starRating(betygNum)
+    : (String(betygRaw).trim() ? esc(String(betygRaw).trim()) : "");
 
   // Avtal: e.Avtal är ett Bubble-ID (relation) → hämta titeln via bubbleGet
   let contract = extra.contract_title || e.contract_title || "";
@@ -600,7 +612,7 @@ async function tmplQcNew(e, extra, toName, ctaLabel, item) {
       contract    && ["Avtal",       contract],
       inspector   && ["Kontrollant", inspector],
       qcDate      && ["Datum",       qcDate],
-      betyg       && ["Betyg",       starRating(betyg)]
+      betygCell   && ["Betyg",       betygCell]
     ]),
     ctaLabel: null,
     ctaUrl:   null,
@@ -1067,12 +1079,74 @@ function statusBadge(s) {
 }
 
 // Betyg (1–5) → stjärnor
+// Betyget når oss i flera former beroende på väg: tal (Betyg_lev), sträng med
+// decimalkomma ("4,5"), "4/5", "4 av 5" — eller ett Grade-REFERENS-ID.
+// Gamla starRating gjorde `Number(v) || 0`, vilket gav NaN→0 på allt utom rena
+// tal, och mejlet påstod då "0/5" för en kontroll som hade fullt betyg.
+//
+// ⚠️ Ett Bubble-id (`1760448796514x199282234734132770`) MÅSTE avvisas explicit.
+//    Plockar man "första talet" ur det får man 1760448796514 → klampat till 5 →
+//    mejlet påstår full pott. Fel åt andra hållet är värre än fel åt det första.
+//
+// Returnerar null när värdet inte ÄR ett betyg. Anroparen får då hämta
+// sanningen från Grade-raderna i stället för att gissa.
+function parseBetyg(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return (Number.isFinite(v) && v >= 0 && v <= 5) ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d{6,}x\d+$/.test(s)) return null;              // Bubble-referens, inte ett betyg
+  let n;
+  const frac = s.match(/^(\d+(?:[.,]\d+)?)\s*(?:\/|av|of)\s*(\d+)$/i);
+  if (frac) {
+    const num = Number(frac[1].replace(",", "."));
+    const den = Number(frac[2]);
+    if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return null;
+    n = den === 5 ? num : (num / den) * 5;               // normalisera till 5-skala
+  } else {
+    if (!/^-?\d+(?:[.,]\d+)?$/.test(s)) return null;     // ren text ("Nivå 3") är inget betyg
+    n = Number(s.replace(",", "."));
+  }
+  if (!Number.isFinite(n) || n < 0 || n > 5) return null;
+  return n;
+}
+
+// Medel av Grade.Värde för kontrollen — SAMMA sanning som kundkortet visar
+// (companies_api.js: snitt = medel av Grade.Värde där kvalitetskontroll == QC).
+// Betyg_lev är bara fallback där, och ska vara det här också.
+// ⚠️ constraint-nyckeln är slug ("kvalitetskontroll"), läsnyckeln display-namn
+//    ("Värde"). De skiljer sig i Bubbles Data API.
+async function qcGradeAverage(qcId) {
+  const id = String(qcId || "").trim();
+  if (!id || !_bubbleFind) return null;
+  try {
+    const rows = await _bubbleFind("Grade", {
+      constraints: [{ key: "kvalitetskontroll", constraint_type: "equals", value: id }],
+      limit: 100
+    });
+    const vals = (rows || []).map(r => parseBetyg(r["Värde"])).filter(v => v != null && v > 0);
+    if (!vals.length) return null;
+    return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
+  } catch (e) {
+    console.warn("[email] qcGradeAverage misslyckades:", e?.message);
+    return null;
+  }
+}
+
 function starRating(v) {
-  const n = Math.round(Number(v) || 0);
+  const n = typeof v === "number" ? v : parseBetyg(v);
+  if (n == null) {
+    // Hellre råtexten än falska stjärnor — ett tyst "0/5" är en felaktig påstående
+    // om kundens leverans, inte ett tomt fält.
+    const s = esc(String(v == null ? "" : v).trim());
+    return s ? `<span style="font-size:13px;color:#c0c4d6;">${s}</span>` : "";
+  }
+  const full = Math.round(n);
   const stars = Array.from({ length: 5 }, (_, i) =>
-    `<span style="color:${i < n ? "#f59e0b" : "#2a2f40"};font-size:16px;">★</span>`
+    `<span style="color:${i < full ? "#f59e0b" : "#2a2f40"};font-size:16px;">★</span>`
   ).join("");
-  return `${stars} <span style="font-size:12px;color:#8892aa;margin-left:4px;">${n}/5</span>`;
+  const label = n.toLocaleString("sv-SE", { maximumFractionDigits: 1 });
+  return `${stars} <span style="font-size:12px;color:#8892aa;margin-left:4px;">${label}/5</span>`;
 }
 
 // Bubbles "list of texts" kan komma som array eller kommaseparerad sträng
