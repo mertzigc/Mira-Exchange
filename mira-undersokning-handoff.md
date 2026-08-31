@@ -55,6 +55,11 @@ Tredje fliken i kommunikationsmodulen, byggd genom återanvändning: `kind="surv
   - **filter** (regions/fastigheter/company) → `/guests/build` (dynamiskt mot Coworkers).
   - **lista** (statisk ögonblicksbild av namn+mejl) → körs genom `/guests/import`. Dropdownen visar antal, t.ex. "Sthlm-lista (486)".
 - **Excel/CSV-import** direkt i panelen via `/guests/import` (kolumner: `namn`, `epost`, valfritt `foretag`/`region`; dubbletter hoppas över).
+  - **Kolumnmappningen sitter i `mapRows()`** i `mira-kommunikation-admin.html` — EN funktion som används av båda importvägarna (fristående panelen + `attachAudienceTools`). Ändra bara där.
+  - **Uppdaterad 2026-08-31:** `mapRows` bygger nu `namn` av **`Förnamn` + `Efternamn`** när ett sammanslaget namn saknas, och normaliserar rubriknycklarna (trim + hårt blanksteg) före jämförelsen. Bakgrund: en lista med `Förnamn`/`Efternamn`/`mail`/`company` importerades med **rätt mejl men tomma namn** — servern faller då tillbaka på `name = email` (`index.js` `/guests/import`), och mejlet hälsar "Hej alexandra@exempel.se,". Inget felmeddelande; panelen sa "14 rader med e-post inlästa" och såg grön ut.
+  - Rubriknormaliseringen fixar också att **XLSX-vägen** skickar rubrikerna råa — ett efterföljande blanksteg i `mail ` gjorde tidigare att hela kolumnen tappades tyst. CSV-vägen trimmade redan.
+  - Panelen visar nu **"⚠ N saknar namn"** efter inläsning, innan man trycker Importera.
+  - ⚠️ Lämna **"Hoppa över kontakter som redan finns" AV** vid kampanjutskick till egna medarbetare — de ligger oftast redan som Coworker och filtreras då bort nästan helt.
 - **💾 Spara nuvarande lista som målgrupp** — sparar den laddade mottagarlistans namn+mejl som ett **list-segment** (`POST /admin/audience/segments` med `members`). Hämtas via `GET /admin/audience/segments/:id`. Skyddat mot tyst fel: saknas `members`-fältet i Bubble returneras `members_field_missing` istället för en tom "sparad" målgrupp.
 Segment kan fortfarande skapas under Målgrupp-fliken; dropdownen speglar dem.
 
@@ -171,6 +176,41 @@ Fritt komponerat innehåll i utskicken: kollegan staplar block i stället för a
 > ⚠️ **Alla nya datatyper måste vara API-modify-bara** (datatypens inställning "modifierbar via API"). Detta var grundorsaken till buggarna i `SurveyResponse` (`bubbleCreate failed`) och `EmailOptout` (`Type not found`). Se kritisk konvention i §1.
 
 ---
+
+## 3o. Adminytans design följer affärsvyn (2026-08-31)
+
+`mira-kommunikation-admin.html` är omstylad så den matchar
+`mira-affar-samlad.html` (`.af`) i färg och typografi. Ren CSS — ingen
+funktionell logik ändrad.
+
+- **Palett:** `#1e2235` botten, `#23283f` panel, `#F47B30` accent,
+  vit text i tre opacitetssteg (100/70/40 %), grön `#4CAF7D`, röd `#E05A5A`,
+  blå `#5B8DEF`. Ersätter den gamla `#0d1117`/`#db6923`-paletten.
+- **Typografi:** Arial som brödtext (13 px) + **DM Serif Display** i rubriken,
+  med versal, spärrad underrad — samma header-mönster som affärsvyns `h1` + `.sub`.
+- **Tokens är scopade till `.ea-wrap`, inte `:root`.** Ett Bubble-block som
+  definierar `:root` läcker sina variabler till alla andra block på sidan, och
+  `--bg`/`--ac` är generiska nog att krocka. Affärsvyn scopar likadant.
+  Se `reference-bubble-multiblock-collision`.
+- **Hover-gard:** `.ea-btn`/`.ck-tab`/`.ea-tab` har nu `!important` på sina
+  hover-regler. Bubbles globala `button:hover` bär `!important` och gör annars
+  knapparna helorange med osynlig text.
+- Primärknappen har **mörk text på orange** (som affärsvyns `.chip.on`) —
+  vit text på `#F47B30` var för svag.
+
+### ⚠️ Vad som medvetet INTE stylades om
+
+Mejlets egna färger är **innehåll, inte chrome**, och följer aldrig med en
+omstyling av adminytan:
+
+| Rörs ej | Var |
+|---|---|
+| `#df6f39` (32 st) | `accent_color`-defaults i iv-/nv-/sv-panelerna + `.ck-bprev` |
+| `#0f1b2d` (5 st) | `bg_color`-defaults |
+| `--mb-*` (4 st) | mejlförhandsgranskningens egna tokens |
+
+Räkna dem efter varje designändring — ändras siffrorna har man råkat styla om
+det mottagaren ser. Se även §3n: accent och bakgrund är två oberoende reglage.
 
 ## 3n. Utseende: accent + fri bakgrundsfärg (2026-08-26)
 

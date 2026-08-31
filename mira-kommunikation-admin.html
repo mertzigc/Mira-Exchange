@@ -1,34 +1,48 @@
 <style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
 * { box-sizing: border-box; }
-:root {
-  --bg:#0d1117;--sf:#161c2d;--sf2:#1e2437;--bd:#262b42;--bd2:#1a1f2e;
-  --tx:#e8eaf0;--mu:#8892aa;--fa:#4a5068;
-  --ac:#db6923;--acb:rgba(219,105,35,.1);--acbr:rgba(219,105,35,.25);
-  --gr:#22c55e;--grb:rgba(34,197,94,.1);
-  --rd:#f87171;--rdb:rgba(248,113,113,.1);
-  --bl:#60a5fa;--blb:rgba(96,165,250,.1);--yw:#fbbf24;
-  --r:10px;--f:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+/* ── DESIGNTOKENS — speglar affärsvyn (mira-affar-samlad.html, .af) ────────
+   Scopade till .ea-wrap, INTE :root. Ett Bubble-HTML-block som definierar
+   :root läcker sina variabler till varje annat block på samma sida — och
+   --bg/--ac är generiska nog att krocka. Affärsvyn scopar likadant (.af).
+   Se reference-bubble-multiblock-collision.
+
+   ⚠️ Detta är adminytans färger. Mejlets egen accentfärg (#df6f39) och
+   bakgrund (#0f1b2d) är INNEHÅLL, inte chrome — de sitter i accent_color/
+   bg_color och i .ck-bprev, och ska aldrig följa med en omstyling här. */
+.ea-wrap {
+  --bg:#1e2235;--sf:#23283f;--sf2:#2e3350;--card:var(--bd);--deep:#2c314e;
+  --bd:rgba(255,255,255,.07);--bd2:rgba(255,255,255,.04);
+  --tx:#ffffff;--mu:rgba(255,255,255,.70);--fa:rgba(255,255,255,.40);
+  --ac:#F47B30;--ach:#d9631f;--acb:rgba(244,123,48,.13);--acbr:rgba(244,123,48,.35);
+  --gr:#4CAF7D;--grb:rgba(76,175,125,.13);
+  --rd:#E05A5A;--rdb:rgba(224,90,90,.13);
+  --bl:#5B8DEF;--blb:rgba(91,141,239,.14);--pu:#9B7DEF;--yw:#E8B45A;
+  --r:11px;
+  --f:Arial,Helvetica,sans-serif;
+  --fs:'DM Serif Display',Georgia,serif;
 }
-.ea-wrap { font-family:var(--f);font-size:14px;color:var(--tx);background:var(--bg);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;height:100%;box-sizing:border-box; }
-.ea-top { display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:48px;background:var(--sf);border-bottom:1px solid var(--bd); }
-.ea-top-l { display:flex;align-items:center;gap:10px; }
-.ea-logo { width:26px;height:26px;background:var(--ac);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
-.ea-logo svg { width:14px;height:14px; }
-.ea-title { font-size:13px;font-weight:600;letter-spacing:-.2px; }
-.ea-sub { font-size:11px;color:var(--fa);margin-left:2px; }
+.ea-wrap { font-family:var(--f);font-size:13px;line-height:1.5;color:var(--tx);background:var(--bg);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;height:100%;box-sizing:border-box; }
+.ea-top { display:flex;align-items:center;justify-content:space-between;padding:14px 22px 13px;background:var(--sf);border-bottom:1px solid var(--bd); }
+.ea-top-l { display:flex;align-items:center;gap:12px;min-width:0; }
+.ea-logo { width:34px;height:34px;background:var(--ac);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+.ea-logo svg { width:17px;height:17px; }
+.ea-title { font-family:var(--fs);font-size:23px;font-weight:400;letter-spacing:0;line-height:1.15; }
+.ea-title span { color:var(--ac); }
+.ea-sub { font-size:10.5px;color:var(--fa);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;display:block; }
 .ea-top-r { display:flex;align-items:center;gap:8px; }
 .ea-sync { font-size:11px;color:var(--fa); }
-.ea-btn { font-family:var(--f);font-size:11px;font-weight:500;padding:5px 12px;border-radius:5px;border:none;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px; }
+.ea-btn { font-family:var(--f);font-size:11.5px;font-weight:600;padding:6px 13px;border-radius:8px;border:none;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px; }
 .ea-bg { background:var(--sf2);color:var(--mu);border:1px solid var(--bd); }
-.ea-bg:hover { background:var(--bd);color:var(--tx); }
-.ea-bp { background:var(--ac);color:#fff; }
-.ea-bp:hover { background:#c55e1e; }
+.ea-bg:hover { background:var(--deep) !important;color:var(--tx) !important; }
+.ea-bp { background:var(--ac);color:#1c1206;font-weight:700; }
+.ea-bp:hover { background:var(--ach) !important;color:#1c1206 !important; }
 .ea-btn:disabled { opacity:.4;cursor:not-allowed; }
 
 /* ── TOPPNIVÅ-flikar (ck-) — samma stil som dina ea-tabs ── */
 .ck-tabs { display:flex;padding:0 20px;border-bottom:1px solid var(--bd);background:var(--bg);flex-wrap:wrap; }
 .ck-tab { font-family:var(--f);font-size:12.5px;font-weight:600;color:var(--fa);padding:11px 16px;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:6px; }
-.ck-tab:hover { color:var(--mu); }
+.ck-tab:hover { color:var(--mu) !important;background:none !important; }
 .ck-tab.active { color:var(--ac);border-bottom-color:var(--ac); }
 .ck-cnt { padding:20px;overflow-y:auto;flex:1; }
 .ck-panel { display:none; }
@@ -37,7 +51,7 @@
 /* ── e-postens egna underflikar (ea-) ── */
 .ea-tabs { display:flex;border-bottom:1px solid var(--bd);background:var(--bg);margin-bottom:18px; }
 .ea-tab { font-family:var(--f);font-size:12px;font-weight:500;color:var(--fa);padding:9px 14px;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:6px; }
-.ea-tab:hover { color:var(--mu); }
+.ea-tab:hover { color:var(--mu) !important;background:none !important; }
 .ea-tab.active { color:var(--ac);border-bottom-color:var(--ac); }
 .ea-badge { font-size:10px;font-weight:600;padding:1px 5px;border-radius:8px;background:var(--sf2);color:var(--fa); }
 .ea-tab.active .ea-badge { background:var(--acb);color:var(--ac); }
@@ -73,7 +87,7 @@
 .ea-tslug { font-size:10px;color:var(--fa);font-family:monospace; }
 .ea-tm { display:flex;align-items:center;gap:8px;flex-shrink:0; }
 .ea-bdg { font-size:10px;font-weight:600;padding:2px 7px;border-radius:8px;text-transform:uppercase;letter-spacing:.04em; }
-.bm{background:rgba(219,105,35,.1);color:var(--ac)}.bb{background:rgba(96,165,250,.1);color:var(--bl)}.bq{background:rgba(251,191,36,.1);color:var(--yw)}.bi{background:rgba(34,197,94,.1);color:var(--gr)}.bg2{background:var(--sf2);color:var(--mu)}
+.bm{background:var(--acb);color:var(--ac)}.bb{background:var(--blb);color:var(--bl)}.bq{background:rgba(232,180,90,.13);color:var(--yw)}.bi{background:var(--grb);color:var(--gr)}.bg2{background:var(--sf2);color:var(--mu)}
 .ea-tog { position:relative;width:34px;height:18px;cursor:pointer;flex-shrink:0;display:inline-block; }
 .ea-tog input { opacity:0;width:0;height:0; }
 .ea-togt { position:absolute;inset:0;background:var(--sf2);border-radius:18px;border:1px solid var(--bd);transition:.2s; }
@@ -86,7 +100,7 @@
 .ea-tbl th { text-align:left;font-size:10px;font-weight:600;color:var(--fa);text-transform:uppercase;letter-spacing:.07em;padding:9px 12px;border-bottom:1px solid var(--bd); }
 .ea-tbl td { padding:9px 12px;border-bottom:1px solid var(--bd2);font-size:11px;color:var(--mu);vertical-align:middle; }
 .ea-tbl tr:last-child td { border-bottom:none; }
-.ea-tbl tr:hover td { background:rgba(255,255,255,.015); }
+.ea-tbl tr:hover td { background:rgba(255,255,255,.03); }
 .ea-tbl td:first-child { color:var(--tx);font-weight:500; }
 .ea-pill { display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:500;padding:2px 7px;border-radius:8px; }
 .p-s{background:var(--grb);color:var(--gr)}.p-p{background:var(--acb);color:var(--ac)}.p-e{background:var(--rdb);color:var(--rd)}
@@ -137,7 +151,7 @@
 .ck-sep { border:none;border-top:1px solid var(--bd);margin:16px 0; }
 .ck-row-actions { display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px; }
 .ck-btn-lg { font-family:var(--f);font-size:13px;font-weight:600;padding:10px 18px;border-radius:7px;border:none;cursor:pointer;background:var(--ac);color:#fff;transition:all .15s; }
-.ck-btn-lg:hover { background:#c55e1e; }
+.ck-btn-lg:hover { background:var(--ach); }
 .ck-btn-lg:disabled { opacity:.45;cursor:not-allowed; }
 .ck-btn-gh { background:var(--sf2);color:var(--mu);border:1px solid var(--bd);font-size:12px;padding:8px 13px;border-radius:6px;cursor:pointer;font-family:var(--f);font-weight:500; }
 .ck-btn-gh:hover { background:var(--bd);color:var(--tx); }
@@ -145,8 +159,8 @@
 .ck-hint { font-size:11px;color:var(--fa);line-height:1.55;margin-top:6px; }
 .ck-banner { border-radius:7px;padding:11px 14px;font-size:12.5px;margin-top:12px;display:none;line-height:1.5; }
 .ck-banner.show { display:block; }
-.ck-banner.ok { background:var(--grb);border:1px solid rgba(34,197,94,.35);color:#bfe6cf; }
-.ck-banner.err { background:var(--rdb);border:1px solid rgba(248,113,113,.35);color:#f3c0bb; }
+.ck-banner.ok { background:var(--grb);border:1px solid rgba(76,175,125,.35);color:var(--gr); }
+.ck-banner.err { background:var(--rdb);border:1px solid rgba(224,90,90,.35);color:var(--rd); }
 .ck-banner code { background:rgba(255,255,255,.08);padding:2px 6px;border-radius:5px;font-size:11.5px;word-break:break-all; }
 .ck-qrow { display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:10px 12px;margin-bottom:8px; }
 .ck-mono { background:var(--bg);border:1px solid var(--bd);border-radius:7px;padding:11px;font-family:ui-monospace,monospace;font-size:11px;color:var(--mu);white-space:pre-wrap;max-height:170px;overflow:auto;margin-top:10px; }
@@ -158,7 +172,7 @@
 .ck-dup { background:transparent;border:1px solid var(--bd);color:var(--mu);font-size:12px;line-height:1;
   padding:5px 8px;border-radius:6px;cursor:pointer;font-family:var(--f); }
 .ck-dup:hover { background:var(--sf2);color:var(--tx); }
-.ck-tag { display:inline-block;font-size:10px;color:var(--fa);background:rgba(223,111,57,.12);border:1px solid rgba(223,111,57,.3);border-radius:6px;padding:1px 6px;margin:2px 3px 0 0;white-space:nowrap; }
+.ck-tag { display:inline-block;font-size:10px;color:var(--fa);background:var(--acb);border:1px solid var(--acbr);border-radius:6px;padding:1px 6px;margin:2px 3px 0 0;white-space:nowrap; }
 .ck-tagbar { display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px; }
 .ck-tagf { font-size:11px;color:var(--fa);background:transparent;border:1px solid var(--bd,#1c2230);border-radius:999px;padding:3px 11px;cursor:pointer;user-select:none; }
 .ck-tagf.on { color:#fff;background:#df6f39;border-color:#df6f39; }
@@ -188,7 +202,7 @@
 .ck-stat { flex:1;min-width:84px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:10px 12px; }
 .ck-stat .n { font-size:22px;font-weight:700;color:var(--tx);line-height:1.1; }
 .ck-stat .l { font-size:11px;color:var(--fa);text-transform:uppercase;letter-spacing:.04em;margin-top:3px; }
-.ck-stat.yes .n { color:#3fb950; } .ck-stat.no .n { color:#f0883e; } .ck-stat.wait .n { color:var(--mu); }
+.ck-stat.yes .n { color:var(--gr); } .ck-stat.no .n { color:var(--rd); } .ck-stat.wait .n { color:var(--mu); }
 .ck-item-clk { cursor:pointer;transition:background .12s; }
 .ck-item-clk:hover { background:var(--acb); }
 
@@ -220,8 +234,8 @@
 .iv-g-tbl .gn { color:var(--tx);font-weight:500; }
 .iv-g-tbl .ge { font-size:11px;color:var(--fa);margin-top:1px; }
 .iv-pl { display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:8px;white-space:nowrap; }
-.iv-pl-y { background:rgba(34,197,94,.15);color:#3fb950; }
-.iv-pl-n { background:rgba(248,113,113,.15);color:var(--rd); }
+.iv-pl-y { background:var(--grb);color:var(--gr); }
+.iv-pl-n { background:var(--rdb);color:var(--rd); }
 .iv-pl-w { background:var(--sf2);color:var(--mu); }
 .iv-arr { width:18px;height:18px;cursor:pointer;accent-color:var(--ac);margin:0; }
 .iv-g-del { background:none;border:1px solid var(--bd);border-radius:5px;color:var(--mu);width:26px;height:26px;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center;transition:.15s;padding:0; }
@@ -240,25 +254,25 @@
 .ci-cbox { flex:1;min-width:72px;text-align:center;background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:8px 4px; }
 .ci-cbox .n { font-size:22px;font-weight:800;color:var(--tx);line-height:1; }
 .ci-cbox .l { font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--fa);margin-top:3px; }
-.ci-cbox.ok .n { color:#3fb950; }
+.ci-cbox.ok .n { color:var(--gr); }
 .ci-search { width:100%;box-sizing:border-box;font-size:16px;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;outline:none; }
 .ci-toggle { display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--mu);cursor:pointer; }
 .ci-toggle input { width:18px;height:18px; }
 .ci-list { flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 12px 40px; }
 .ci-row { display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:8px;cursor:pointer;min-height:64px;box-sizing:border-box;transition:background .12s,border-color .12s; }
 .ci-row:active { background:var(--sf2); }
-.ci-row.on { background:rgba(63,185,80,.10);border-color:rgba(63,185,80,.45); }
+.ci-row.on { background:var(--grb);border-color:rgba(76,175,125,.45); }
 .ci-row.busy { opacity:.5;pointer-events:none; }
 .ci-info { flex:1 1 auto;min-width:0; }
 .ci-name { font-size:15px;font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .ci-sub { font-size:12px;color:var(--fa);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
 .ci-row.on .ci-name { text-decoration:line-through;text-decoration-color:var(--fa); }
 .ci-rsvp { flex:0 0 auto;font-size:10px;font-weight:700;text-transform:uppercase;padding:2px 7px;border-radius:6px; }
-.ci-rsvp.y { color:#3fb950;background:rgba(63,185,80,.12); }
-.ci-rsvp.n { color:#f0883e;background:rgba(240,136,62,.12); }
+.ci-rsvp.y { color:var(--gr);background:var(--grb); }
+.ci-rsvp.n { color:var(--rd);background:var(--rdb); }
 .ci-rsvp.w { color:var(--mu);background:var(--bg); }
 .ci-mark { flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:2px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:18px;color:transparent; }
-.ci-row.on .ci-mark { border-color:#3fb950;background:#3fb950;color:#fff; }
+.ci-row.on .ci-mark { border-color:var(--gr);background:var(--gr);color:#fff; }
 .ci-empty { text-align:center;color:var(--fa);font-size:13px;padding:40px 16px; }
 
 /* ── Dela avprickningslänk (admin) ── */
@@ -276,12 +290,12 @@
 .ck-bb-num { font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--mu); }
 .ck-bb-t { font-size:12.5px;font-weight:600;color:var(--tx); }
 .ck-bb-btn { padding:4px 8px;font-size:11px;line-height:1; }
-.ck-bb-btn.ck-bb-del { color:#c33; }
+.ck-bb-btn.ck-bb-del { color:var(--rd); }
 .ck-bb-empty { padding:16px;text-align:center;border:1px dashed var(--bd);border-radius:10px;font-size:12.5px;color:var(--mu); }
 .ck-bb-imgrow { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;align-items:end; }
-.ck-bprev { margin-top:14px;border:1px solid var(--bd);border-radius:12px;padding:20px 22px;background:#0d1117;
+.ck-bprev { margin-top:14px;border:1px solid var(--bd);border-radius:12px;padding:20px 22px;background:var(--bg);
             --accent:#df6f39;--mb-head:#e8eaf0;--mb-text:#c0c4d6;--mb-mut:#8892aa;--mb-bd:#262b42; }
-.ck-bprev-h { font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8892aa;margin:0 0 14px; }
+.ck-bprev-h { font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mu);margin:0 0 14px; }
 
 /* ── Mediaarkiv ── */
 .ck-media-row { display:flex;gap:8px;align-items:center; }
@@ -330,7 +344,7 @@
   <div class="ea-top">
     <div class="ea-top-l">
       <div class="ea-logo"><svg viewBox="0 0 16 16" fill="none"><path d="M3 12V5.5L8 3L13 5.5V12" stroke="white" stroke-width="1.5" stroke-linecap="round"/><path d="M6 12V9H10V12" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg></div>
-      <span class="ea-title">Kommunikation</span><span class="ea-sub" id="ck-bc">/ Inbjudningar</span>
+      <div style="min-width:0"><div class="ea-title">Kommunikation</div><span class="ea-sub" id="ck-bc">Inbjudningar</span></div>
     </div>
     <div class="ea-top-r">
       <span class="ea-sync" id="ea-sync"></span>
@@ -1213,12 +1227,12 @@
 
   // ════════ TOPPMENY ════════
   var loaded = { invites:false, email:false, news:false, survey:false };
-  var BCNAMES = { invites:'Inbjudningar', audience:'Målgrupp', news:'Nyheter', survey:'Undersökningar', email:'E-post' };
+  var BCNAMES = { invites:'Inbjudningar', audience:'Målgrupp', news:'Nyheter', survey:'Undersökningar', offers:'Erbjudanden', email:'E-post' };
 
   window.ckShow = function(name, btn) {
     document.querySelectorAll('.ck-tab').forEach(function(b){ b.classList.toggle('active', b===btn || (!btn && b.dataset.t===name)); });
     document.querySelectorAll('.ck-panel').forEach(function(p){ p.classList.toggle('active', p.id==='ck-'+name); });
-    g('ck-bc').textContent = '/ ' + (BCNAMES[name]||'');
+    g('ck-bc').textContent = BCNAMES[name]||'';
     if(name==='invites' && !loaded.invites){ loaded.invites=true; loadCCs(); loadInvites(); }
     if(name==='audience' && !loaded.audience){ loaded.audience=true; loadCCs(); loadFastigheter(); loadSegments(); }
     if(name==='news' && !loaded.news){ loaded.news=true; loadCCs(); loadNewsList(); }
@@ -1768,14 +1782,41 @@
     var headers=splitLine(lines[0]).map(function(h){return h.trim().toLowerCase();});
     return lines.slice(1).map(function(l){ var c=splitLine(l); var o={}; headers.forEach(function(h,i){o[h]=(c[i]||'').trim();}); return o; });
   }
+  // Kolumnmappning för Excel/CSV-import. Används av BÅDA importvägarna
+  // (fristående panelen + attachAudienceTools). Ändra bara här.
+  //
+  // Rubriknycklarna normaliseras (trim + hårt blanksteg + lowercase) INNAN
+  // jämförelsen. XLSX-vägen skickar in rubrikerna precis som de står i arket,
+  // så en osynlig blanksteg i "mail " gjorde tidigare att kolumnen tappades tyst.
+  //
+  // Saknas ett sammanslaget "namn" byggs det av Förnamn + Efternamn. Utan det
+  // faller servern tillbaka på mejladressen som namn (index.js /guests/import),
+  // och mejlet hälsar "Hej alexandra@exempel.se," utan att något fel visas.
   function mapRows(raw){
-    function pick(o,keys){ for(var i=0;i<keys.length;i++){ for(var k in o){ if(k.toLowerCase()===keys[i]) return o[k]; } } return ''; }
+    function norm(s){ return String(s===null||s===undefined?'':s).replace(/\u00a0/g,' ').trim(); }
+    function pick(o,keys){ for(var i=0;i<keys.length;i++){ for(var k in o){ if(norm(k).toLowerCase()===keys[i]) return norm(o[k]); } } return ''; }
     return raw.map(function(o){
-      return { name: pick(o,['namn','name','fullname','full name']),
-               email: pick(o,['epost','e-post','email','mejl','mail','e-mail']),
-               company: pick(o,['foretag','företag','company','kund','kundföretag']),
+      var namn = pick(o,['namn','name','fullname','full name','fullständigt namn','fullstandigt namn']);
+      if(!namn){
+        var fn = pick(o,['förnamn','fornamn','first name','firstname','first_name','tilltalsnamn']);
+        var en = pick(o,['efternamn','last name','lastname','last_name','surname']);
+        namn = (fn+' '+en).replace(/\s+/g,' ').trim();
+      }
+      return { name: namn,
+               email: pick(o,['epost','e-post','email','mejl','mail','e-mail','e-postadress','mejladress']).toLowerCase(),
+               company: pick(o,['foretag','företag','company','kund','kundföretag','kundforetag','bolag']),
                region: pick(o,['region']) };
     }).filter(function(r){ return r.email; });
+  }
+  // Delad statusrad efter inläsning. Namnlösa rader är inte ett fel — men de blir
+  // "Hej <mejladress>," i utskicket, så de ska synas innan man trycker Importera.
+  function impStatus(rows){
+    if(!rows.length) return 'Inga rader med e-post hittades — kontrollera kolumnen "epost".';
+    var noName=0;
+    for(var i=0;i<rows.length;i++){ if(!rows[i].name) noName++; }
+    var s=rows.length+' rader med e-post inlästa.';
+    if(noName) s+=' ⚠ '+noName+' saknar namn — de hälsas med sin mejladress i utskicket. Lägg till en kolumn "namn" (eller "Förnamn"+"Efternamn").';
+    return s;
   }
   g('impFile').addEventListener('change', function(e){
     var file=e.target.files[0]; if(!file) return;
@@ -1789,14 +1830,14 @@
           var wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
           var ws=wb.Sheets[wb.SheetNames[0]];
           IMP_ROWS=mapRows(XLSX.utils.sheet_to_json(ws,{defval:''})); afterParse();
-        }).catch(function(){ g('impInfo').innerHTML='<span style="color:#f0883e">Kunde inte ladda Excel-tolken (CSP). Spara som CSV och försök igen.</span>'; }); }
-      }catch(err){ g('impInfo').innerHTML='<span style="color:#f0883e">Kunde inte läsa filen.</span>'; }
+        }).catch(function(){ g('impInfo').innerHTML='<span style="color:var(--rd)">Kunde inte ladda Excel-tolken (CSP). Spara som CSV och försök igen.</span>'; }); }
+      }catch(err){ g('impInfo').innerHTML='<span style="color:var(--rd)">Kunde inte läsa filen.</span>'; }
     };
     if(isCsv) reader.readAsText(file,'utf-8'); else reader.readAsArrayBuffer(file);
   });
   function afterParse(){
     var withEmail=IMP_ROWS.length;
-    g('impInfo').textContent = withEmail ? (withEmail+' rader med e-post inlästa.') : 'Inga rader med e-post hittades — kontrollera kolumnen "epost".';
+    g('impInfo').textContent = impStatus(IMP_ROWS);
     g('impBtn').disabled = !withEmail || !g('dlInvite').value || IMP_BUSY;
   }
   g('dlInvite').addEventListener('change', function(){ g('impBtn').disabled = !IMP_ROWS.length || !this.value || IMP_BUSY; });
@@ -1828,7 +1869,7 @@
   });
 
   // ════════ E-POST (din befintliga admin – oförändrad logik) ════════
-  var CO={matter:'#db6923',booking:'#60a5fa',qualitycontrol:'#fbbf24',invite:'#22c55e',general:'#8892aa'};
+  var CO={matter:'var(--ac)',booking:'var(--bl)',qualitycontrol:'var(--yw)',invite:'var(--gr)',general:'var(--mu)'};
   var BA={matter:'bm',booking:'bb',qualitycontrol:'bq',invite:'bi',general:'bg2'};
   function pill(q){ return q.email_sent?'<span class="ea-pill p-s"><span class="ea-pdot"></span>Skickad</span>':q.error_message?'<span class="ea-pill p-e"><span class="ea-pdot"></span>Fel</span>':'<span class="ea-pill p-p"><span class="ea-pdot"></span>Väntar</span>'; }
   function slugFor(q){ var t=T.find(function(t){return t._id===q.template_id;}); return t?t.slug:(q.template_id||'–').slice(0,12)+'…'; }
@@ -1888,7 +1929,7 @@
     sh('ea-tmlist'); hd('ea-tme');
     g('ea-tmlist').innerHTML=T.map(function(t){
       return '<div class="ea-tmpl '+(t.is_active?'':'off')+'">'+
-        '<div class="ea-dot" style="background:'+(CO[t.entity_type]||'#8892aa')+'"></div>'+
+        '<div class="ea-dot" style="background:'+(CO[t.entity_type]||'var(--mu)')+'"></div>'+
         '<div class="ea-ti"><div class="ea-tn">'+esc(t.name||'Namnlös')+'</div><div class="ea-tslug">'+esc(t.slug||'–')+'</div></div>'+
         '<div class="ea-tm">'+
           '<span class="ea-bdg '+(BA[t.entity_type]||'bg2')+'">'+esc(t.entity_type||'–')+'</span>'+
@@ -2071,7 +2112,7 @@
       var pl = x.rsvp_status==='yes' ? '<span class="iv-pl iv-pl-y">Ja</span>'
              : x.rsvp_status==='no'  ? '<span class="iv-pl iv-pl-n">Nej</span>'
              : '<span class="iv-pl iv-pl-w">Väntar</span>';
-      var sentMark = x.invite_sent ? '<span title="Skickat '+esc(fd(x.invited_at))+'" style="color:#3fb950">✓</span>' : '<span style="color:var(--fa);opacity:.5">–</span>';
+      var sentMark = x.invite_sent ? '<span title="Skickat '+esc(fd(x.invited_at))+'" style="color:var(--gr)">✓</span>' : '<span style="color:var(--fa);opacity:.5">–</span>';
       var pLink = x.guest_token ? ' <a href="'+esc(PUBLIC_INVITE_URL)+'?g='+esc(x.guest_token)+'" target="_blank" rel="noopener" title="Öppna personlig länk" style="color:var(--fa);text-decoration:none;font-size:11px">↗</a>' : '';
       return '<tr'+(x.arrived?' class="iv-arrived-row"':'')+' data-gid="'+esc(x.id)+'">'+
         '<td><div class="gn">'+esc(x.name||'(inget namn)')+pLink+'</div><div class="ge">'+esc(x.email||'')+(x.phone?' · '+esc(x.phone):'')+'</div></td>'+
@@ -2297,17 +2338,17 @@
   g('iv-g-a-btn').addEventListener('click', function(){
     if(!IVG_INVITE_ID) return;
     var name=g('iv-g-a-name').value.trim(), email=g('iv-g-a-email').value.trim(), phone=g('iv-g-a-phone').value.trim(), msg=g('iv-g-a-msg');
-    if(!email){ msg.innerHTML='<span style="color:#f0883e">E-post krävs.</span>'; return; }
+    if(!email){ msg.innerHTML='<span style="color:var(--rd)">E-post krävs.</span>'; return; }
     var btn=g('iv-g-a-btn'); btn.disabled=true; msg.textContent='Lägger till…';
     fetch(api('/admin/invite/'+encodeURIComponent(IVG_INVITE_ID)+'/guests/import'),{method:'POST',headers:H(),body:JSON.stringify({rows:[{name:name,email:email,phone:phone}], first:false})})
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j.ok) throw new Error(j.error||'fel');
-        if(j.created){ msg.innerHTML='<span style="color:#3fb950">Tillagd.</span>'; g('iv-g-a-name').value=''; g('iv-g-a-email').value=''; g('iv-g-a-phone').value=''; loadGuests(IVG_INVITE_ID); }
-        else if(j.skipped){ msg.innerHTML='<span style="color:#f0883e">E-posten finns redan i listan.</span>'; }
-        else if(j.invalid){ msg.innerHTML='<span style="color:#f0883e">Ogiltig e-postadress.</span>'; }
+        if(j.created){ msg.innerHTML='<span style="color:var(--gr)">Tillagd.</span>'; g('iv-g-a-name').value=''; g('iv-g-a-email').value=''; g('iv-g-a-phone').value=''; loadGuests(IVG_INVITE_ID); }
+        else if(j.skipped){ msg.innerHTML='<span style="color:var(--rd)">E-posten finns redan i listan.</span>'; }
+        else if(j.invalid){ msg.innerHTML='<span style="color:var(--rd)">Ogiltig e-postadress.</span>'; }
       })
-      .catch(function(e){ msg.innerHTML='<span style="color:#f0883e">Fel: '+esc(e.message||'')+'</span>'; })
+      .catch(function(e){ msg.innerHTML='<span style="color:var(--rd)">Fel: '+esc(e.message||'')+'</span>'; })
       .finally(function(){ btn.disabled=false; setTimeout(function(){ if(msg.textContent.indexOf('Tillagd')<0) msg.textContent=''; },3500); });
   });
 
@@ -2450,13 +2491,13 @@
   function saveSegment(){
     var name = g('segName').value.trim();
     var info = g('segSaveInfo');
-    if(!name){ info.innerHTML='<span style="color:#f0883e">Ange ett namn.</span>'; return; }
+    if(!name){ info.innerHTML='<span style="color:var(--rd)">Ange ett namn.</span>'; return; }
     var regions = [].slice.call(document.querySelectorAll('#regionChips .ck-chip[aria-pressed="true"]')).map(function(c){return c.dataset.r;});
     var fastigheter = AUD_FAST.map(function(f){return f.id;});
     var company = g('audCo').value || null;
     var owners = AUD_OWN.map(function(o){return o.id;});
     if(!regions.length && !fastigheter.length && !company && !owners.length){
-      info.innerHTML='<span style="color:#f0883e">Inget filter satt — välj region, kundansvarig, fastighet eller företag först.</span>';
+      info.innerHTML='<span style="color:var(--rd)">Inget filter satt — välj region, kundansvarig, fastighet eller företag först.</span>';
       return;
     }
     var btn=g('segSaveBtn'); btn.disabled=true; info.textContent='Sparar…';
@@ -2467,11 +2508,11 @@
           if(j.error==='owners_field_missing') throw new Error('Urvalet sparades inte: textfältet "owners" saknas på datatypen AudienceSegment i Bubble.');
           throw new Error(j.error||'fel');
         }
-        info.innerHTML='<span style="color:#3fb950">Sparat.</span>';
+        info.innerHTML='<span style="color:var(--gr)">Sparat.</span>';
         g('segName').value='';
         loadSegments();
       })
-      .catch(function(e){ info.innerHTML='<span style="color:#f0883e">Fel: '+esc(e.message||'')+'</span>'; })
+      .catch(function(e){ info.innerHTML='<span style="color:var(--rd)">Fel: '+esc(e.message||'')+'</span>'; })
       .finally(function(){ btn.disabled=false; setTimeout(function(){ if(info.textContent.indexOf('Sparat')<0) info.textContent=''; },3500); });
   }
 
@@ -2683,7 +2724,7 @@
       return;
     }
     g('nv-r-tbody').innerHTML=rows.map(function(x){
-      var sentMark = x.invite_sent ? '<span title="Skickat '+esc(fd(x.invited_at))+'" style="color:#3fb950">✓ skickat</span>' : '<span style="color:var(--fa)">— ej skickat</span>';
+      var sentMark = x.invite_sent ? '<span title="Skickat '+esc(fd(x.invited_at))+'" style="color:var(--gr)">✓ skickat</span>' : '<span style="color:var(--fa)">— ej skickat</span>';
       return '<tr data-gid="'+esc(x.id)+'">'+
         '<td><div class="gn">'+esc(x.name||'(inget namn)')+'</div><div class="ge">'+esc(x.email||'')+(x.phone?' · '+esc(x.phone):'')+'</div></td>'+
         '<td>'+esc(x.company_name||'')+(x.region?' <span style="color:var(--fa);font-size:10px">'+esc(x.region)+'</span>':'')+'</td>'+
@@ -2715,17 +2756,17 @@
   g('nv-r-a-btn').addEventListener('click', function(){
     if(!NVR_INVITE_ID) return;
     var name=g('nv-r-a-name').value.trim(), email=g('nv-r-a-email').value.trim(), phone=g('nv-r-a-phone').value.trim(), msg=g('nv-r-a-msg');
-    if(!email){ msg.innerHTML='<span style="color:#f0883e">E-post krävs.</span>'; return; }
+    if(!email){ msg.innerHTML='<span style="color:var(--rd)">E-post krävs.</span>'; return; }
     var btn=g('nv-r-a-btn'); btn.disabled=true; msg.textContent='Lägger till…';
     fetch(api('/admin/invite/'+encodeURIComponent(NVR_INVITE_ID)+'/guests/import'),{method:'POST',headers:H(),body:JSON.stringify({rows:[{name:name,email:email,phone:phone}], first:false})})
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j.ok) throw new Error(j.error||'fel');
-        if(j.created){ msg.innerHTML='<span style="color:#3fb950">Tillagd.</span>'; g('nv-r-a-name').value=''; g('nv-r-a-email').value=''; g('nv-r-a-phone').value=''; loadNvRecipients(NVR_INVITE_ID); }
-        else if(j.skipped){ msg.innerHTML='<span style="color:#f0883e">E-posten finns redan i listan.</span>'; }
-        else if(j.invalid){ msg.innerHTML='<span style="color:#f0883e">Ogiltig e-postadress.</span>'; }
+        if(j.created){ msg.innerHTML='<span style="color:var(--gr)">Tillagd.</span>'; g('nv-r-a-name').value=''; g('nv-r-a-email').value=''; g('nv-r-a-phone').value=''; loadNvRecipients(NVR_INVITE_ID); }
+        else if(j.skipped){ msg.innerHTML='<span style="color:var(--rd)">E-posten finns redan i listan.</span>'; }
+        else if(j.invalid){ msg.innerHTML='<span style="color:var(--rd)">Ogiltig e-postadress.</span>'; }
       })
-      .catch(function(e){ msg.innerHTML='<span style="color:#f0883e">Fel: '+esc(e.message||'')+'</span>'; })
+      .catch(function(e){ msg.innerHTML='<span style="color:var(--rd)">Fel: '+esc(e.message||'')+'</span>'; })
       .finally(function(){ btn.disabled=false; setTimeout(function(){ if(msg.textContent.indexOf('Tillagd')<0) msg.textContent=''; },3500); });
   });
 
@@ -2802,13 +2843,13 @@
       var needsOpts = (q.type==='select' || q.type==='multiselect');
       var needsMax = (q.type==='rating' || q.type==='nps' || q.type==='scale');
       var typeOpts = SV_TYPES.map(function(t){ return '<option value="'+t.v+'"'+(t.v===q.type?' selected':'')+'>'+esc(t.l)+'</option>'; }).join('');
-      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:'+(isSection?'rgba(223,111,57,.06)':'rgba(0,0,0,.02)')+'" data-q-idx="'+i+'">';
+      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:'+(isSection?'rgba(244,123,48,.07)':'rgba(255,255,255,.02)')+'" data-q-idx="'+i+'">';
       html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">';
       html += '<span style="font-weight:600;font-size:12px;color:var(--mu)">'+(isSection?'Rubrik':'Fråga')+' '+(i+1)+'</span>';
       html += '<div style="flex:1"></div>';
       html += '<button class="ck-btn-gh" data-q-up="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===0?' disabled':'')+' title="Flytta upp">↑</button>';
       html += '<button class="ck-btn-gh" data-q-dn="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===SV_QUESTIONS.length-1?' disabled':'')+' title="Flytta ner">↓</button>';
-      html += '<button class="ck-btn-gh" data-q-del="'+i+'" style="padding:4px 8px;font-size:11px;color:#c33" title="Ta bort">✕</button>';
+      html += '<button class="ck-btn-gh" data-q-del="'+i+'" style="padding:4px 8px;font-size:11px;color:var(--rd)" title="Ta bort">✕</button>';
       html += '</div>';
       if(isSection){
         // Sektion = enbart rubriktext (delar upp undersökningen i kategorier)
@@ -3127,8 +3168,8 @@
     }
     g('sv-r-tbody').innerHTML = rows.map(function(x){
       var hasResp = hasRespOf(x);
-      var sentMark = x.invite_sent ? '<span title="Skickat '+esc(fd(x.invited_at))+'" style="color:#3fb950">✓ skickat</span>' : '<span style="color:var(--fa)">— ej skickat</span>';
-      var ansMark = hasResp ? '<span title="Svarat '+esc(fd(x.rsvp_at))+'" style="color:#3fb950">✓ svarat</span>' : '<span style="color:var(--fa)">—</span>';
+      var sentMark = x.invite_sent ? '<span title="Skickat '+esc(fd(x.invited_at))+'" style="color:var(--gr)">✓ skickat</span>' : '<span style="color:var(--fa)">— ej skickat</span>';
+      var ansMark = hasResp ? '<span title="Svarat '+esc(fd(x.rsvp_at))+'" style="color:var(--gr)">✓ svarat</span>' : '<span style="color:var(--fa)">—</span>';
       return '<tr data-gid="'+esc(x.id)+'">'+
         '<td><div class="gn">'+esc(x.name||'(inget namn)')+'</div><div class="ge">'+esc(x.email||'')+(x.phone?' · '+esc(x.phone):'')+'</div></td>'+
         '<td>'+esc(x.company_name||'')+(x.region?' <span style="color:var(--fa);font-size:10px">'+esc(x.region)+'</span>':'')+'</td>'+
@@ -3163,17 +3204,17 @@
   g('sv-r-a-btn').addEventListener('click', function(){
     if(!SVR_INVITE_ID) return;
     var name=g('sv-r-a-name').value.trim(), email=g('sv-r-a-email').value.trim(), phone=g('sv-r-a-phone').value.trim(), msg=g('sv-r-a-msg');
-    if(!email){ msg.innerHTML='<span style="color:#f0883e">E-post krävs.</span>'; return; }
+    if(!email){ msg.innerHTML='<span style="color:var(--rd)">E-post krävs.</span>'; return; }
     var btn=g('sv-r-a-btn'); btn.disabled=true; msg.textContent='Lägger till…';
     fetch(api('/admin/invite/'+encodeURIComponent(SVR_INVITE_ID)+'/guests/import'),{method:'POST',headers:H(),body:JSON.stringify({rows:[{name:name,email:email,phone:phone}], first:false})})
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j.ok) throw new Error(j.error||'fel');
-        if(j.created){ msg.innerHTML='<span style="color:#3fb950">Tillagd.</span>'; g('sv-r-a-name').value=''; g('sv-r-a-email').value=''; g('sv-r-a-phone').value=''; loadSvRecipients(SVR_INVITE_ID); }
-        else if(j.skipped){ msg.innerHTML='<span style="color:#f0883e">E-posten finns redan i listan.</span>'; }
-        else if(j.invalid){ msg.innerHTML='<span style="color:#f0883e">Ogiltig e-postadress.</span>'; }
+        if(j.created){ msg.innerHTML='<span style="color:var(--gr)">Tillagd.</span>'; g('sv-r-a-name').value=''; g('sv-r-a-email').value=''; g('sv-r-a-phone').value=''; loadSvRecipients(SVR_INVITE_ID); }
+        else if(j.skipped){ msg.innerHTML='<span style="color:var(--rd)">E-posten finns redan i listan.</span>'; }
+        else if(j.invalid){ msg.innerHTML='<span style="color:var(--rd)">Ogiltig e-postadress.</span>'; }
       })
-      .catch(function(e){ msg.innerHTML='<span style="color:#f0883e">Fel: '+esc(e.message||'')+'</span>'; })
+      .catch(function(e){ msg.innerHTML='<span style="color:var(--rd)">Fel: '+esc(e.message||'')+'</span>'; })
       .finally(function(){ btn.disabled=false; setTimeout(function(){ if(msg.textContent.indexOf('Tillagd')<0) msg.textContent=''; },3500); });
   });
 
@@ -3309,7 +3350,7 @@
             var pass = nums.filter(function(n){return n>=7 && n<=8;}).length;
             var detr = nums.filter(function(n){return n<=6;}).length;
             var nps = Math.round((prom/nums.length - detr/nums.length)*100);
-            html += '<div style="margin-top:6px;display:flex;gap:14px;font-size:12px"><span style="color:#16a34a">Promoters: '+prom+'</span><span style="color:#666">Passives: '+pass+'</span><span style="color:#dc2626">Detractors: '+detr+'</span><span><b>NPS: '+(nps>=0?'+':'')+nps+'</b></span></div>';
+            html += '<div style="margin-top:6px;display:flex;gap:14px;font-size:12px"><span style="color:var(--gr)">Promoters: '+prom+'</span><span style="color:var(--mu)">Passives: '+pass+'</span><span style="color:var(--rd)">Detractors: '+detr+'</span><span><b>NPS: '+(nps>=0?'+':'')+nps+'</b></span></div>';
           }
         }
       } else if((t==='select' || t==='yesno') && values.length){
@@ -3322,7 +3363,7 @@
           var label = (t==='yesno') ? (k==='yes'?'Ja':'Nej') : k;
           html += '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px">';
           html += '<div style="min-width:120px">'+esc(label)+'</div>';
-          html += '<div style="flex:1;background:rgba(0,0,0,.08);border-radius:3px;height:14px;position:relative;overflow:hidden"><div style="background:var(--ac,#df6f39);height:100%;width:'+pct+'%"></div></div>';
+          html += '<div style="flex:1;background:rgba(255,255,255,.10);border-radius:3px;height:14px;position:relative;overflow:hidden"><div style="background:var(--ac,#df6f39);height:100%;width:'+pct+'%"></div></div>';
           html += '<div style="min-width:80px;text-align:right">'+counts[k]+' ('+pct+'%)</div>';
           html += '</div>';
         });
@@ -3336,14 +3377,14 @@
         html += '<div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">';
         sorted2.forEach(function(k){
           var pct = Math.round(counts2[k]/values.length*100);
-          html += '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px"><div style="min-width:120px">'+esc(k)+'</div><div style="flex:1;background:rgba(0,0,0,.08);border-radius:3px;height:14px;overflow:hidden"><div style="background:var(--ac,#df6f39);height:100%;width:'+pct+'%"></div></div><div style="min-width:80px;text-align:right">'+counts2[k]+' ('+pct+'%)</div></div>';
+          html += '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px"><div style="min-width:120px">'+esc(k)+'</div><div style="flex:1;background:rgba(255,255,255,.10);border-radius:3px;height:14px;overflow:hidden"><div style="background:var(--ac,#df6f39);height:100%;width:'+pct+'%"></div></div><div style="min-width:80px;text-align:right">'+counts2[k]+' ('+pct+'%)</div></div>';
         });
         html += '</div>';
       } else if(values.length) {
         // Text/textarea/email/date — listan av svar
         html += '<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;max-height:180px;overflow-y:auto;font-size:12.5px;color:var(--mu)">';
         values.slice(0,30).forEach(function(v){
-          html += '<div style="padding:4px 8px;background:rgba(0,0,0,.04);border-radius:4px">'+esc(String(v))+'</div>';
+          html += '<div style="padding:4px 8px;background:rgba(255,255,255,.05);border-radius:4px">'+esc(String(v))+'</div>';
         });
         if(values.length>30) html += '<div class="ck-mut" style="font-size:11px;text-align:center">… och '+(values.length-30)+' till. Se råtabellen nedan.</div>';
         html += '</div>';
@@ -3639,13 +3680,13 @@
             var wb=XLSX.read(new Uint8Array(ev.target.result),{type:'array'});
             var ws=wb.Sheets[wb.SheetNames[0]];
             impRows=mapRows(XLSX.utils.sheet_to_json(ws,{defval:''})); afterImpParse();
-          }).catch(function(){ g(P+'-imp-info').innerHTML='<span style="color:#f0883e">Kunde inte ladda Excel-tolken (CSP). Spara som CSV och försök igen.</span>'; }); }
-        }catch(err){ g(P+'-imp-info').innerHTML='<span style="color:#f0883e">Kunde inte läsa filen.</span>'; }
+          }).catch(function(){ g(P+'-imp-info').innerHTML='<span style="color:var(--rd)">Kunde inte ladda Excel-tolken (CSP). Spara som CSV och försök igen.</span>'; }); }
+        }catch(err){ g(P+'-imp-info').innerHTML='<span style="color:var(--rd)">Kunde inte läsa filen.</span>'; }
       };
       if(isCsv) reader.readAsText(file,'utf-8'); else reader.readAsArrayBuffer(file);
     });
     function afterImpParse(){
-      g(P+'-imp-info').textContent = impRows.length ? (impRows.length+' rader med e-post inlästa.') : 'Inga rader med e-post hittades — kontrollera kolumnen "epost".';
+      g(P+'-imp-info').textContent = impStatus(impRows);
       g(P+'-imp-btn').disabled = !impRows.length || !cfg.getInvId();
     }
     g(P+'-imp-btn').addEventListener('click', function(){
@@ -3843,7 +3884,7 @@
         var accent=(g(p+'-accent') && g(p+'-accent').value) || '#df6f39';
         wrap.style.setProperty('--accent', accent);
         wrap.innerHTML='<p class="ck-bprev-h">Förhandsgranskning · så här ser blocken ut</p>'+
-          (j.html || '<p style="color:#8892aa;font-size:13px;margin:0">Inget att visa än.</p>');
+          (j.html || '<p style="color:var(--mu);font-size:13px;margin:0">Inget att visa än.</p>');
         var msg=g(p+'-b-msg');
         // Skillnad = block som servern kastat (t.ex. bild utan URL, knapp utan länk).
         if(msg) msg.textContent = (j.count < (BB[p]||[]).length)
@@ -3966,14 +4007,14 @@
       var needsMax  = (q.type==='rating' || q.type==='nps' || q.type==='scale' || q.type==='slider');
       var isDriver  = (q.type==='number' || q.type==='slider' || q.type==='kvm' || q.type==='hours');
       var typeOpts = OF_QTYPES.map(function(t){ return '<option value="'+t.v+'"'+(t.v===q.type?' selected':'')+'>'+esc(t.l)+'</option>'; }).join('');
-      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:'+(isSection?'rgba(223,111,57,.06)':'rgba(0,0,0,.02)')+'" data-of-q-idx="'+i+'">';
+      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:'+(isSection?'rgba(244,123,48,.07)':'rgba(255,255,255,.02)')+'" data-of-q-idx="'+i+'">';
       html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">';
       html += '<span style="font-weight:600;font-size:12px;color:var(--mu)">'+(isSection?'Rubrik':'Fråga')+' '+(i+1)+'</span>';
-      html += '<code style="font-size:11px;color:var(--mu);background:rgba(0,0,0,.04);padding:2px 6px;border-radius:4px">'+esc(q.id||'(saknar id)')+'</code>';
+      html += '<code style="font-size:11px;color:var(--mu);background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px">'+esc(q.id||'(saknar id)')+'</code>';
       html += '<div style="flex:1"></div>';
       html += '<button class="ck-btn-gh" data-ofq-up="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===0?' disabled':'')+'>↑</button>';
       html += '<button class="ck-btn-gh" data-ofq-dn="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===OF_QUESTIONS.length-1?' disabled':'')+'>↓</button>';
-      html += '<button class="ck-btn-gh" data-ofq-del="'+i+'" style="padding:4px 8px;font-size:11px;color:#c33">✕</button>';
+      html += '<button class="ck-btn-gh" data-ofq-del="'+i+'" style="padding:4px 8px;font-size:11px;color:var(--rd)">✕</button>';
       html += '</div>';
       if (isSection) {
         html += '<div class="ea-fg" style="margin:0 0 6px"><label class="ea-fl">Frågetyp</label><select class="ea-fsel" data-ofq-field="type" data-ofq-i="'+i+'">'+typeOpts+'</select></div>';
@@ -4068,14 +4109,14 @@
       var hasApply = ['tiered_discount','volume_discount'].indexOf(t) >= 0;
       var tOpts = OF_RTYPES.map(function(o){ return '<option value="'+o.v+'"'+(o.v===t?' selected':'')+'>'+esc(o.l)+'</option>'; }).join('');
 
-      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:rgba(0,0,0,.02)" data-of-r-idx="'+i+'">';
+      html += '<div class="ck-card" style="padding:12px 14px;border:1px solid var(--bd,#e5e5e5);background:rgba(255,255,255,.02)" data-of-r-idx="'+i+'">';
       html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">';
       html += '<span style="font-weight:600;font-size:12px;color:var(--mu)">Regel '+(i+1)+'</span>';
-      html += '<code style="font-size:11px;color:var(--mu);background:rgba(0,0,0,.04);padding:2px 6px;border-radius:4px">'+esc(r.id||'')+'</code>';
+      html += '<code style="font-size:11px;color:var(--mu);background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px">'+esc(r.id||'')+'</code>';
       html += '<div style="flex:1"></div>';
       html += '<button class="ck-btn-gh" data-ofr-up="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===0?' disabled':'')+'>↑</button>';
       html += '<button class="ck-btn-gh" data-ofr-dn="'+i+'" style="padding:4px 8px;font-size:11px"'+(i===OF_RULES.length-1?' disabled':'')+'>↓</button>';
-      html += '<button class="ck-btn-gh" data-ofr-del="'+i+'" style="padding:4px 8px;font-size:11px;color:#c33">✕</button>';
+      html += '<button class="ck-btn-gh" data-ofr-del="'+i+'" style="padding:4px 8px;font-size:11px;color:var(--rd)">✕</button>';
       html += '</div>';
       html += '<div class="ea-2col" style="margin-bottom:6px">';
       html += '<div class="ea-fg" style="margin:0"><label class="ea-fl">Regeltyp</label><select class="ea-fsel" data-ofr-field="type" data-ofr-i="'+i+'">'+tOpts+'</select></div>';
@@ -4161,7 +4202,7 @@
   // regler) speglar samma OF_QUESTIONS/OF_RULES för kraftanvändare.
   var OF_PT = null;                 // vald pris-typ-nyckel
   var OF_PT_VALS = {};              // { fältnyckel: värde }
-  var OF_ACCENT = '#df6f39';
+  var OF_ACCENT = 'var(--ac)';   // adminytans accent, inte mejlets accent_color
   function ofPnum(x){ var n = parseFloat(String(x==null?'':x).replace(',','.')); return isFinite(n) ? n : 0; }
 
   var PT_DEFS = [
@@ -4280,7 +4321,7 @@
     var box = g('of-ptgrid'); if (!box) return;
     box.innerHTML = PT_DEFS.map(function(d){
       var on = d.key===OF_PT;
-      return '<div class="of-pt" data-pt="'+d.key+'" style="border:1.5px solid '+(on?OF_ACCENT:'var(--bd,#e5e5e5)')+';background:'+(on?'rgba(223,111,57,.10)':'transparent')+';border-radius:10px;padding:10px 12px;cursor:pointer">'+
+      return '<div class="of-pt" data-pt="'+d.key+'" style="border:1.5px solid '+(on?OF_ACCENT:'var(--bd,#e5e5e5)')+';background:'+(on?'var(--acb)':'transparent')+';border-radius:10px;padding:10px 12px;cursor:pointer">'+
         '<div style="font-weight:600;font-size:13px;color:'+(on?OF_ACCENT:'inherit')+'">'+esc(d.label)+'</div>'+
         '<div class="ck-mut" style="font-size:11.5px;margin-top:2px">'+esc(d.desc)+'</div></div>';
     }).join('');
@@ -4304,22 +4345,22 @@
     if (d.tiers) {
       var ts = ptTiers();
       fh += '<div style="margin-top:14px;border:1px solid var(--bd,#e5e5e5);border-radius:10px;overflow:hidden">'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;padding:8px 12px;background:rgba(0,0,0,.03);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#666">'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;padding:8px 12px;background:rgba(255,255,255,.03);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mu)">'+
           '<div>Från (antal)</div><div>Tidsåtgång (h)</div><div>Rabatt (%)</div><div></div></div>'+
         ts.map(function(t, i){
           return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;padding:7px 12px;align-items:center;border-top:1px solid var(--bd,#eee)">'+
             '<input class="ea-fi of-tier" data-i="'+i+'" data-f="min" type="number" step="1" value="'+esc(String(t.min))+'">'+
             '<input class="ea-fi of-tier" data-i="'+i+'" data-f="qty" type="number" step="0.5" value="'+esc(String(t.qty))+'">'+
             '<input class="ea-fi of-tier" data-i="'+i+'" data-f="pct" type="number" step="0.01" value="'+esc(String(t.pct))+'">'+
-            '<button type="button" class="of-tier-del" data-i="'+i+'" style="border:none;background:none;cursor:pointer;color:#b3261e;font-size:16px;line-height:1">×</button>'+
+            '<button type="button" class="of-tier-del" data-i="'+i+'" style="border:none;background:none;cursor:pointer;color:var(--rd);font-size:16px;line-height:1">×</button>'+
           '</div>';
         }).join('')+
         '<div style="padding:8px 12px;border-top:1px solid var(--bd,#eee)"><button type="button" id="of-tier-add" style="border:1px dashed var(--bd,#ccc);background:none;border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer">+ Lägg till nivå</button></div>'+
       '</div>';
     }
-    if (d.auto) fh += '<div style="margin-top:8px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#2e7d55;background:rgba(46,125,85,.10);padding:3px 9px;border-radius:999px">⛽ '+esc(d.auto)+'</span></div>';
+    if (d.auto) fh += '<div style="margin-top:8px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--gr);background:var(--grb);padding:3px 9px;border-radius:999px">⛽ '+esc(d.auto)+'</span></div>';
     // förhandsvisning
-    fh += '<div style="margin-top:14px;padding:12px 14px;border:1px solid var(--bd,#e5e5e5);border-radius:10px;background:rgba(223,111,57,.04)">'+
+    fh += '<div style="margin-top:14px;padding:12px 14px;border:1px solid var(--bd,#e5e5e5);border-radius:10px;background:rgba(244,123,48,.05)">'+
       '<div class="ck-mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Förhandsvisning för en kund</div>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">'+
         '<div class="ea-fg" style="margin:0;flex:1;min-width:90px"><label class="ea-fl">Yta (kvm)</label><input class="ea-fi of-pv" id="of-pv-kvm" type="number" value="400"></div>'+
@@ -4437,7 +4478,7 @@
         }).join('');
         res.innerHTML =
           '<table style="width:100%;font-size:12.5px;border-collapse:collapse"><thead><tr style="color:var(--mu)"><th style="text-align:left">Rad</th><th style="text-align:right">Antal</th><th style="text-align:right">À-pris</th><th style="text-align:right">Summa</th></tr></thead><tbody>'+rows+'</tbody></table>' +
-          '<div style="margin-top:8px;padding:10px;background:rgba(0,0,0,.03);border-radius:6px;display:flex;justify-content:space-between"><b>Total</b><b>'+rr.total.toLocaleString('sv-SE')+' '+rr.currency+'</b></div>' +
+          '<div style="margin-top:8px;padding:10px;background:rgba(255,255,255,.03);border-radius:6px;display:flex;justify-content:space-between"><b>Total</b><b>'+rr.total.toLocaleString('sv-SE')+' '+rr.currency+'</b></div>' +
           ((rr.warnings||[]).length ? '<div class="ck-mut" style="margin-top:6px;font-size:11.5px">⚠ '+rr.warnings.map(esc).join(' · ')+'</div>' : '');
       })
       .catch(function(e){ status.textContent=''; res.innerHTML = '<div class="ck-banner err on">'+esc(e.message||e)+'</div>'; });
@@ -4489,7 +4530,7 @@
     box.innerHTML = OF_SEL_CCS.map(function(id){
       var c = OF_CCS.find(function(x){return (x.id||x._id) === id;});
       var name = c ? (c.name||c.Name_company||id) : id;
-      return '<span class="ck-tag" style="display:inline-flex;gap:6px;align-items:center">'+esc(name)+'<span style="cursor:pointer;color:#c33" data-of-cc-rm="'+esc(id)+'">✕</span></span>';
+      return '<span class="ck-tag" style="display:inline-flex;gap:6px;align-items:center">'+esc(name)+'<span style="cursor:pointer;color:var(--rd)" data-of-cc-rm="'+esc(id)+'">✕</span></span>';
     }).join('');
     box.querySelectorAll('[data-of-cc-rm]').forEach(function(el){
       el.addEventListener('click', function(){ var id=el.getAttribute('data-of-cc-rm'); OF_SEL_CCS = OF_SEL_CCS.filter(function(x){return x!==id;}); renderOfCcChips(); });
@@ -4519,7 +4560,7 @@
     });
     if (!items.length) { box.innerHTML = '<div class="ck-mut" style="padding:14px;text-align:center">Inga erbjudanden matchar.</div>'; return; }
     box.innerHTML = items.map(function(o){
-      var scope = o.is_general ? '<span class="ck-tag">Allmän</span>' : '<span class="ck-tag" style="background:rgba(223,111,57,.15);color:#df6f39">Kundunik</span>';
+      var scope = o.is_general ? '<span class="ck-tag">Allmän</span>' : '<span class="ck-tag" style="background:var(--acb);color:#df6f39">Kundunik</span>';
       var stTag = o.status ? '<span class="ck-tag">'+esc(o.status)+'</span>' : '';
       return '<div class="ck-card" style="padding:10px 12px;margin-bottom:6px;cursor:pointer" data-of-load="'+esc(o.id)+'"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div style="flex:1"><b>'+esc(o.title||'(utan rubrik)')+'</b><div class="ck-mut" style="font-size:11.5px;margin-top:2px">'+esc(o.category||'')+'</div></div><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">'+scope+stTag+'</div></div></div>';
     }).join('');
@@ -4561,7 +4602,7 @@
         right = '<div style="display:flex;align-items:center;gap:6px">'+
           '<input class="ea-fi of-pl-price" data-id="'+esc(o.id)+'" data-orig="'+(pi.price!=null?pi.price:'')+'" type="number" step="0.01" value="'+(pi.price!=null?pi.price:'')+'" style="width:88px;text-align:right;font-family:ui-monospace,monospace">'+
           '<span class="ck-mut" style="font-size:11px;width:48px">'+esc(pi.unit)+'</span>'+
-          '<span class="of-pl-saved" data-id="'+esc(o.id)+'" style="font-size:11px;color:#2e7d55;opacity:0;transition:opacity .2s;width:50px">Sparat ✓</span></div>';
+          '<span class="of-pl-saved" data-id="'+esc(o.id)+'" style="font-size:11px;color:var(--gr);opacity:0;transition:opacity .2s;width:50px">Sparat ✓</span></div>';
       } else {
         var tag = pi.kind==='formula' ? pi.tag : (pi.kind==='none' ? 'Inget pris' : 'Avancerad');
         right = '<div style="display:flex;align-items:center;gap:8px"><span class="ck-tag" style="font-size:11px">'+esc(tag)+'</span>'+
