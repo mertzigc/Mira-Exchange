@@ -219,3 +219,33 @@ i ett riktigt kontor — vilket är exakt vad rubriken påstår.
 Ordmärket över rubriken, och ett fotocollage till höger: serveringsbilden stor, matbilden
 förskjuten över nedre vänstra hörnet med en canvasfärgad ram. Tjänstelistan ligger kvar i
 vänsterkolumnen så båda spalterna fylls.
+
+
+## Bredderna — mätt mot lovable (2026-08-31)
+
+Sidan kändes smal jämfört med lovable. Jag mätte deras faktiska värden vid 1920 px viewport
+i stället för att gissa:
+
+| | Lovable | Mira (före) | Mira (nu) |
+|---|---|---|---|
+| Yttre container | **1536 px** (192 px marginal) | 1120 px | **1536 px** |
+| Text : bild i tvåkolumn | **1 : 2** (448 / 896) | 1.05 : 0.95 | **1 : 2** |
+| Kolumngap | 80 px | 76 px | 80 px |
+
+Det var proportionen som saknades, inte färgerna. En bild som är dubbelt så bred som texten
+läser som en produktbild; en som är lika bred läser som en illustration bredvid en spalt.
+
+Övrigt som växte: växelverkan-kortet 960 → 1280 px, skärmbildsramen 940 → 1320 px,
+AI-spalten och app-sektionen fick mer gap, sektionshöjden 132 → 140 px, hero-rubriken
+upp till 82 px.
+
+Sidmarginalen är `clamp(24px, 6vw, 96px)` och navigationen använder
+`max(den marginalen, (100vw − 1536px) / 2)` så loggan alltid ligger i linje med innehållet.
+Brytpunkten där kolumnerna staplar flyttades 1000 → 1180 px.
+
+**Rubriker i smal spalt** har en egen skala (`clamp(30px, 2.35vw, 42px)`) — annars blev
+42-teckens rubriker fem rader i en 485 px-spalt. De centrerade rubrikerna skalar fritt
+upp till 56 px.
+
+Fotona är omgenererade i större format nu när de visas bredare: `foto-lokalvard.jpg`
+2000 px (220 kB), `foto-servering.jpg` 1700 px (198 kB), `foto-mat.jpg` 1400 px (315 kB).
