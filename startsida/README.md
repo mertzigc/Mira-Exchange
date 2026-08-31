@@ -249,3 +249,29 @@ upp till 56 px.
 
 Fotona är omgenererade i större format nu när de visas bredare: `foto-lokalvard.jpg`
 2000 px (220 kB), `foto-servering.jpg` 1700 px (198 kB), `foto-mat.jpg` 1400 px (315 kB).
+
+
+## Bildtexter bort + tydligare pilar (2026-08-31)
+
+Borttagna undertexter: hero-noten under actionrutan, "Carottes egen personal.",
+"Skärmbilder ur produkten, med exempeldata.", raden under AI-citatet och
+"Mat, värdskap och lokalvård – av Carottes egna team." CSS-reglerna är borttagna med.
+
+⚠️ Raden under AI-citatet bar även **"Funktionen lanseras vintern 2026"**. Datumet står
+kvar på två ställen — badgen ovanför rubriken och taggen på funktion 05 — och citatrutans
+egen rubrik säger fortfarande "Så här kan en AI-insikt se ut", så exempel-ramningen är
+intakt. Men det är en påminnelse värd att ha: tar ni bort något av de två återstående
+ställena påstår sidan att AI:n finns idag.
+
+**Pilarna** är ritade i stället för tecknade. `→` som glyf var tunn och blek i alla
+figurer. Nu: linje + pilhuvud i SVG, 2 px stroke, orange.
+
+| Var | Förut | Nu |
+|---|---|---|
+| Växelverkan | `→` 17 px | SVG 52 × 16, stroke 2 |
+| Loopens steg | `→` 13 px, opacity .6 | SVG 46 × 16, stroke 2, full opacitet |
+| Returbågen | stroke 1.4 px, ljusbeige | stroke 2 px orange 55 %, tydligare pilhuvud |
+| Tjänstelistan | `→` 14 px i `--ink25` | 19 px i orange, glider längre vid hover |
+
+**Carotte-loggan** ligger nu som en vit pill i nedre högra hörnet på serveringsbilden i
+stället för ovanför rubriken. Den ersätter bildtexten som togs bort.
