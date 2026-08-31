@@ -8,12 +8,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
-/* ═══════════════════════════════════════════════════════════
-   Mira – startsida, LJUS variant.
-   Ytan är lovable-skolan: varm off-white canvas, vita kort,
-   hårfina kanter, inga skuggor, stora radier. Orange och
-   DM Serif Display är kvar från Carotte/affärsvyn.
-   ═══════════════════════════════════════════════════════════ */
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
 html{scroll-behavior:smooth;}
 :root{
@@ -36,7 +30,6 @@ h1,h2,h3{font-family:var(--fh);font-weight:400;letter-spacing:-.012em;line-heigh
 section{padding:140px clamp(24px,6vw,96px);position:relative;}
 .tint{background:var(--surface-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
 h2.sh{font-size:clamp(31px,3.3vw,56px);margin-bottom:22px;}
-/* rubriker i en smal spalt får inte skala som de centrerade */
 .feat-g h2.sh,.car-g h2.sh,.ai-grid h2.sh,.app-g h2.sh{font-size:clamp(30px,2.35vw,42px);}
 h2.sh em{font-style:normal;color:var(--o);}
 .sp{font-size:17px;color:var(--ink70);line-height:1.75;max-width:560px;}
@@ -82,7 +75,6 @@ nav.stuck{border-bottom-color:var(--line);}
 .hero h1 em{font-style:normal;color:var(--o);}
 .hsub{font-size:18px;color:var(--ink70);line-height:1.65;max-width:660px;margin:0 auto 44px;}
 
-/* hero-action: lovable-rutan, fast för kontorsyta */
 .act{max-width:700px;margin:0 auto;background:var(--surface);border:1px solid var(--line-2);
   border-radius:var(--r-lg);padding:9px 9px 9px 26px;display:flex;align-items:center;gap:14px;
   box-shadow:0 2px 3px rgba(28,27,25,.03),0 12px 34px rgba(28,27,25,.05);text-align:left;}
@@ -92,7 +84,7 @@ nav.stuck{border-bottom-color:var(--line);}
 .act input::placeholder{color:var(--ink25);}
 .act .cta{flex-shrink:0;padding:14px 24px;}
 
-/* ── växelverkan: en växling i taget ─────────────────────── */
+/* ── växelverkan ─────────────────────────────────────────── */
 .xw{max-width:1280px;margin:0 auto;background:var(--surface);border:1px solid var(--line);
   border-radius:var(--r-lg);padding:48px 64px 56px;}
 .xhd{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:26px;}
@@ -130,12 +122,12 @@ nav.stuck{border-bottom-color:var(--line);}
 .xarrow{display:flex;align-items:center;justify-content:center;color:var(--o);}
 .xarrow svg{width:52px;height:16px;overflow:visible;}
 
-/* ── Plattformen: lista till vänster, en stor bild till höger ── */
+/* ── plattformen ─────────────────────────────────────────── */
 .feat-g{display:grid;grid-template-columns:minmax(360px,1fr) 2fr;gap:80px;align-items:start;}
 .feat-visual{position:sticky;top:118px;}
 .feat-visual img{display:block;width:100%;height:auto;border-radius:var(--r-lg);border:1px solid var(--line);}
 
-/* ── register: dragspel ──────────────────────────────────── */
+/* ── register ────────────────────────────────────────────── */
 .reg{border-top:1px solid var(--line);margin-top:38px;}
 .regitem{border-bottom:1px solid var(--line);}
 .regbtn{width:100%;display:flex;align-items:center;gap:20px;padding:28px 8px;background:none;
@@ -195,12 +187,9 @@ nav.stuck{border-bottom-color:var(--line);}
 .rtitle{font-family:var(--fh);font-size:19px;color:var(--ink);}
 .rdesc{font-size:13.5px;color:var(--ink70);line-height:1.65;}
 
-/* ── Carotte: ordmärke, tjänstelista, fotocollage ─────────── */
-.cp-main{position:relative;}
-.cp-logo{position:absolute;right:20px;bottom:20px;background:var(--surface);
-  border-radius:999px;padding:11px 20px;display:flex;align-items:center;
-  box-shadow:0 2px 10px rgba(28,27,25,.10);}
-.cp-logo img{display:block;height:22px;width:auto;}
+/* ── carotte ─────────────────────────────────────────────── */
+.car-sign{display:flex;justify-content:flex-end;margin-top:26px;}
+.car-sign img{display:block;height:30px;width:auto;}
 .car-photos{position:relative;padding-bottom:104px;}
 .car-photos img{display:block;border-radius:var(--r-lg);border:1px solid var(--line);}
 .car-photos .cp-1{width:100%;height:auto;}
@@ -342,6 +331,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 @media(max-width:760px){
   .car-photos{padding-bottom:0;}
   .car-photos .cp-2{position:static;width:100%;border:1px solid var(--line);margin-top:14px;}
+  .car-sign{justify-content:flex-start;margin-top:20px;}
 }
 @media(max-width:760px){
   nav{padding:0 20px;height:62px;}
@@ -390,7 +380,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   <div class="ham" id="ham"><span></span><span></span><span></span></div>
 </nav>
 
-<!-- ═══ HERO ═══ -->
 <section class="hero">
   <h1>Digital &amp; fysisk facility services <em>för ditt kontor.</em></h1>
   <p class="hsub">Mira är den enda FM-plattformen byggd kring en riktig tjänsteleverantör. Varje klick i appen utlöser en faktisk Carotte-insats – och varje insats mäts, betygsätts och analyseras automatiskt.</p>
@@ -402,7 +391,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ VÄXELVERKAN ═══ -->
 <section style="padding-top:0">
   <div class="xw sr">
     <div class="xhd">
@@ -479,7 +467,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ PLATTFORMEN ═══ -->
 <section id="features" class="tint">
   <div class="wrap feat-g">
     <div class="sr">
@@ -531,7 +518,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ SE DET I ACTION ═══ -->
 <section id="showcase">
   <div class="wrap">
     <div class="sc-hd sr">
@@ -565,7 +551,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ AI ═══ -->
 <section id="ai" class="tint">
   <div class="wrap ai-grid">
     <div class="sr">
@@ -586,7 +571,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ CAROTTE ═══ -->
 <section id="carotte">
   <div class="wrap car-g">
     <div class="sr">
@@ -602,11 +586,11 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     </div>
     <div class="sr d2">
       <div class="car-photos">
-        <div class="cp-main">
-          <img class="cp-1" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164843773x618512689250146000/foto-servering.jpg" alt="Carotte-personal serverar vid ett event" width="1700" height="1134" loading="lazy">
-          <span class="cp-logo"><img src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788163816154x241333875188991970/carotte-ordmarke.png" alt="Carotte" width="300" height="65"></span>
-        </div>
+        <img class="cp-1" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164843773x618512689250146000/foto-servering.jpg" alt="Carotte-personal serverar vid ett event" width="1700" height="1134" loading="lazy">
         <img class="cp-2" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164842480x990643145164896800/foto-mat.jpg" alt="Uppdukad buffé från Carotte" width="1400" height="1050" loading="lazy">
+      </div>
+      <div class="car-sign">
+        <img src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788163816154x241333875188991970/carotte-ordmarke.png" alt="Carotte" width="300" height="65">
       </div>
     </div>
   </div>
@@ -630,7 +614,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ APP ═══ -->
 <section id="app" class="tint">
   <div class="wrap app-g">
     <div class="phones sr">
@@ -650,7 +633,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<!-- ═══ FINAL CTA ═══ -->
 <div class="fcta">
   <h2 class="sr">Det digitala möter det <em>fysiska.</em> På ditt kontor.</h2>
   <p class="sr d1">Onboarding med Carottes och Miras specialister ingår alltid. Ingen bindningstid.</p>
@@ -670,7 +652,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   <div class="fcopy">© 2026 Carotte Group AB. Alla rättigheter reserverade.</div>
 </footer>
 
-<!-- ═══ WIZARD ═══ -->
 <div class="mask" id="mask" role="dialog" aria-modal="true" aria-labelledby="wzT">
   <div class="wz">
     <div class="wz-hd">
@@ -873,7 +854,6 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     ["housekeeping","coffee","plants","water","reception"].forEach(function(k){
       if (tjanster[k]) body["service_" + k] = "ja";
     });
-    /* food och event saknar egna falt i lead-endpointen -> hamnar i meddelandet */
     var extra = ["food","event"].filter(function(k){ return tjanster[k]; }).map(function(k){ return SVC_LBL[k]; });
     if (extra.length) body.prospect_message = (body.prospect_message ? body.prospect_message + " · " : "") + "Även intresserade av: " + extra.join(", ");
 

@@ -275,3 +275,24 @@ figurer. Nu: linje + pilhuvud i SVG, 2 px stroke, orange.
 
 **Carotte-loggan** ligger nu som en vit pill i nedre högra hörnet på serveringsbilden i
 stället för ovanför rubriken. Den ersätter bildtexten som togs bort.
+
+
+## Loggan fristående + kodstädning (2026-08-31)
+
+**Carotte-loggan** ligger nu som ett eget element under fotogruppen, högerställt
+(`.car-sign`), i stället för som en vit pill ovanpå bilden. Den överlappar inget motiv och
+läser som en avsändarstämpel för hela blocket. På mobil vänsterställs den med bilderna.
+
+**Kommentarer borttagna ur den levererade filen.** Sidan klistras in i ett HTML-element i
+Bubble, så allt i källkoden är läsbart för vem som helst med "visa källa". Bort med:
+
+- CSS-headern som beskrev att ytan är hämtad från lovable
+- `/* hero-action: lovable-rutan, fast för kontorsyta */`
+- kommentaren om att rubriker i smal spalt behöver egen skala
+- kommentaren om att food/event saknar egna fält i lead-endpointen — den pekade ut hur
+  backend är byggd
+- samtliga `<!-- ═══ SEKTION ═══ -->`-markörer
+
+Kvar är neutrala CSS-sektionsrubriker (`/* ── hero ── */` osv.) som bara namnger blocken.
+
+Arbetsanteckningarna finns kvar här i README:n i stället, där de hör hemma.
