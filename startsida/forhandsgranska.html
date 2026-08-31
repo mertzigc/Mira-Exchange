@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mira startsida – förslag med riktiga skärmbilder</title>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --o:#db6923; --og:rgba(219,105,35,0.14); --ob:rgba(219,105,35,0.22);
+  --bg:#080b12; --bg2:#0c1019; --surf:#111720; --surf2:#161d2b;
+  --bdr:rgba(255,255,255,0.06); --bdr2:rgba(255,255,255,0.11);
+  --txt:#e8e6e1; --mut:rgba(232,230,225,0.44); --dim:rgba(232,230,225,0.22);
+  --grn:#22c55e;
+}
+body{background:var(--bg);color:var(--txt);font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;}
+section{padding:70px 52px;}
+.ey{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;color:var(--o);
+  letter-spacing:.14em;text-transform:uppercase;margin-bottom:18px;}
+.ey::before{content:'';display:block;width:16px;height:1px;background:var(--o);}
+h2.sh{font-size:clamp(30px,4vw,52px);font-weight:800;line-height:1.07;letter-spacing:-.03em;color:#fff;margin-bottom:14px;}
+h2.sh em{font-style:normal;color:var(--o);}
+.sp{font-size:16px;color:var(--mut);line-height:1.7;max-width:480px;}
+
+/* jämförelseram (bara för den här förhandsvisningen) */
+.note{max-width:920px;margin:0 auto 34px;padding:14px 18px;border-left:2px solid var(--o);
+  background:rgba(219,105,35,.05);font-size:13px;color:var(--mut);}
+.note b{color:var(--txt);}
+.split{border-top:1px solid var(--bdr);margin:0;}
+
+/* HERO-KORT */
+.herobox{padding:70px 52px;display:flex;justify-content:center;}
+.hui{position:relative;width:390px;}
+.fc{background:var(--surf);border:1px solid var(--bdr2);border-radius:14px;padding:22px 24px;
+  box-shadow:0 24px 64px rgba(0,0,0,.55);position:relative;overflow:hidden;}
+.fc::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--o),transparent);}
+.fc.has-shot{padding:18px 18px 16px;}
+.fch{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+.fct{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);}
+.fcd{width:7px;height:7px;border-radius:50%;background:var(--grn);box-shadow:0 0 8px rgba(34,197,94,.6);}
+.npill{position:absolute;top:-13px;right:22px;background:var(--surf2);border:1px solid var(--bdr2);
+  border-radius:8px;padding:7px 13px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--txt);
+  box-shadow:0 8px 24px rgba(0,0,0,.45);white-space:nowrap;z-index:2;}
+.npdot{width:6px;height:6px;border-radius:50%;background:var(--o);}
+
+/* SHOWCASE */
+.sc-hd{text-align:center;margin-bottom:48px;}
+.sc-tabs{display:flex;justify-content:center;gap:4px;margin-bottom:36px;flex-wrap:wrap;}
+.stab{font-size:12px;font-weight:700;font-family:Arial;color:var(--mut);background:none;
+  border:1px solid var(--bdr);border-radius:4px;padding:8px 18px;cursor:pointer;transition:all .2s;letter-spacing:.03em;}
+.stab.on{color:var(--txt);background:var(--surf2);border-color:var(--bdr2);}
+.stab:hover{color:var(--txt);}
+.usc{display:none;animation:fdi .38s ease;}
+.usc.on{display:block;}
+@keyframes fdi{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.sw{background:var(--surf);border:1px solid var(--bdr2);border-radius:16px;overflow:hidden;
+  box-shadow:0 32px 80px rgba(0,0,0,.55);max-width:920px;margin:0 auto;}
+.stb{background:var(--bg);padding:0 20px;height:42px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bdr);}
+.sdots{display:flex;gap:5px;}
+.sdot{width:10px;height:10px;border-radius:50%;}
+.dr{background:#ff5f57}.dy{background:#febc2e}.dg{background:#28c840}
+.surl{flex:1;max-width:260px;margin:0 auto;background:var(--surf2);border-radius:5px;height:24px;
+  display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim);}
+.ai-badge{display:inline-flex;align-items:center;gap:7px;
+  background:linear-gradient(135deg,rgba(168,85,247,.12),rgba(59,130,246,.08));
+  border:1px solid rgba(168,85,247,.22);border-radius:20px;padding:5px 14px;font-size:11px;
+  font-weight:700;color:#c084fc;letter-spacing:.06em;text-transform:uppercase;}
+.ai-badge::before{content:'✦';color:#c084fc;}
+
+/* det nya */
+.shot-img{display:block;width:100%;height:auto;border:0;}
+.sw .shot-img{border-radius:0 0 16px 16px;}
+.fc .shot-img{border-radius:8px;border:1px solid var(--bdr);}
+
+@media(max-width:900px){
+  section,.herobox{padding:50px 20px;}
+  .hui{width:100%;max-width:390px;}
+}
+</style>
+</head>
+<body>
+
+<section style="padding-bottom:0">
+  <div class="ey">Förslag · startsidan</div>
+  <h2 class="sh" style="max-width:760px">Samma text. Samma komposition.<br><em>Riktiga skärmbilder.</em></h2>
+  <p class="sp">De handbyggda vyerna är utbytta mot skärmbilder ur den faktiska produkten, renderade i demo-läge med påhittad kunddata. Webbläsarramen, flikarna och all copy är oförändrade.</p>
+</section>
+
+<div class="herobox">
+  <div class="hui">
+    <div class="npill"><span>🔔</span><span>Städning klar – Konferensrum A</span><div class="npdot"></div></div>
+    <div class="fc has-shot">
+      <div class="fch"><span class="fct">Kontoret just nu · Live</span><div class="fcd"></div></div>
+      <img class="shot-img" src="bilder/hero-kort.jpg" alt="Överblick i Mira: bokningar, ärenden och kvalitetsbetyg">
+    </div>
+  </div>
+</div>
+
+<hr class="split">
+
+<section id="showcase">
+  <div class="sc-hd">
+    <div class="ey" style="justify-content:center">Se det i action</div>
+    <h2 class="sh" style="text-align:center;max-width:540px;margin:0 auto 10px">Multipla vyer.<br><em>En plattform.</em></h2>
+    <p class="sp" style="text-align:center;margin:0 auto">Ett gränssnitt med en mängd möjligheter – skräddarsytt för kontorschefen.</p>
+  </div>
+
+  <div class="note">
+    <b>Flikarna nedan är klickbara.</b> Varje vy är en riktig rendering av produktens egna HTML-block —
+    tjänste-gridden, KPI-översikten, kvalitetskontrollen och ärendelistan — med mockupdata från
+    en påhittad kund. Ingen verklig kunds uppgifter syns.
+  </div>
+
+  <div class="sc-tabs">
+    <button class="stab on" onclick="sw(0)">Översikt</button>
+    <button class="stab" onclick="sw(1)">Bokningar</button>
+    <button class="stab" onclick="sw(2)">Lokalvård</button>
+    <button class="stab" onclick="sw(3)">Ärenden</button>
+  </div>
+
+  <div class="usc on" id="tab0">
+    <div class="sw">
+      <div class="stb">
+        <div class="sdots"><div class="sdot dr"></div><div class="sdot dy"></div><div class="sdot dg"></div></div>
+        <div class="surl">mira-fm.com / översikt</div>
+        <div style="font-size:11px;color:var(--dim);">Live</div>
+      </div>
+      <img class="shot-img" src="bilder/skarm-oversikt.jpg" alt="Översiktsvyn i Mira med bokningar, ärenden, kvalitet och kundansvarig">
+    </div>
+  </div>
+
+  <div class="usc" id="tab1">
+    <div class="sw">
+      <div class="stb">
+        <div class="sdots"><div class="sdot dr"></div><div class="sdot dy"></div><div class="sdot dg"></div></div>
+        <div class="surl">mira-fm.com / boka-tjänster</div>
+        <div style="font-size:11px;color:var(--dim);">Carotte × Mira</div>
+      </div>
+      <img class="shot-img" src="bilder/skarm-bokningar.jpg" alt="Tjänstevyn i Mira: aktiva tjänster, förslag och paket att beställa">
+    </div>
+  </div>
+
+  <div class="usc" id="tab2">
+    <div class="sw">
+      <div class="stb">
+        <div class="sdots"><div class="sdot dr"></div><div class="sdot dy"></div><div class="sdot dg"></div></div>
+        <div class="surl">mira-fm.com / lokalvård</div>
+        <div class="ai-badge" style="font-size:10px;padding:3px 10px;">✦ AI aktiv</div>
+      </div>
+      <img class="shot-img" src="bilder/skarm-lokalvard.jpg" alt="Kvalitetskontroll i Mira med betyg och kommentar per yta">
+    </div>
+  </div>
+
+  <div class="usc" id="tab3">
+    <div class="sw">
+      <div class="stb">
+        <div class="sdots"><div class="sdot dr"></div><div class="sdot dy"></div><div class="sdot dg"></div></div>
+        <div class="surl">mira-fm.com / ärenden</div>
+        <div style="font-size:11px;color:var(--dim);">6 aktiva</div>
+      </div>
+      <img class="shot-img" src="bilder/skarm-arenden.jpg" alt="Ärendelistan i Mira med prioritet, kontor och status">
+    </div>
+  </div>
+</section>
+
+<script>
+function sw(i){
+  document.querySelectorAll('.stab').forEach((t,j)=>t.classList.toggle('on',i===j));
+  document.querySelectorAll('.usc').forEach((s,j)=>s.classList.toggle('on',i===j));
+}
+</script>
+</body>
+</html>

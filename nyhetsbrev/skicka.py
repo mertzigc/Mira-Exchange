@@ -8,6 +8,7 @@ Koer sa har (env-varsen MASTE mappas in pa raden - de ar interaktiva, ej exporte
 
 Kommandon, i den ordning de ska koras:
 
+  lista                          alla nyhetsutskick med sina id:n
   status   <id>                  vad ar laget: antal gaster, skickade, kvar
   test     <id> <mejladress>     lagg till EN mottagare och skicka bara till den
   malgrupp <id>                  visa hur manga det blir, fraga, bygg sedan listan
@@ -50,6 +51,16 @@ def hamta_utskick(inv_id):
     if not res.get("ok"):
         raise SystemExit("Hittade inget utskick med id %s" % inv_id)
     return res.get("invite") or res
+
+
+def cmd_lista():
+    res = call("/admin/invite/list?kind=news", method="GET")
+    rader = res.get("invitations") or []
+    if not rader:
+        return print("Inga nyhetsutskick hittade. Har du kort skapa.py?")
+    for r in rader:
+        print("%-24s  %s%s" % (r.get("id"), r.get("title"), "" if r.get("active") else "  [inaktivt]"))
+    print("\n%d utskick." % len(rader))
 
 
 def cmd_status(inv_id):
@@ -119,7 +130,7 @@ def cmd_skicka(inv_id):
     print("Folj upp: sok emailqueue i Bubble pa email_sent=false AND error_message is not empty.")
 
 
-KOMMANDON = {"status": (cmd_status, 1), "test": (cmd_test, 2), "malgrupp": (cmd_malgrupp, 1), "skicka": (cmd_skicka, 1)}
+KOMMANDON = {"lista": (cmd_lista, 0), "status": (cmd_status, 1), "test": (cmd_test, 2), "malgrupp": (cmd_malgrupp, 1), "skicka": (cmd_skicka, 1)}
 args = sys.argv[1:]
 if not args or args[0] not in KOMMANDON:
     raise SystemExit(__doc__)

@@ -18,6 +18,7 @@ plockar sedan upp utskicket som vilket annat som helst. `skicka.py` tar det hela
 | `bilder/*.jpg` | 6 skärmbilder, 1240 px breda, renderade ur de riktiga HTML-blocken med demo-data |
 | `skapa.py` | Laddar upp bilderna, byter ut platshållarna, skapar utskicket |
 | `skicka.py` | Status, testutskick, bygg målgrupp, skicka — sköter pagineringen |
+| `mottagare_users.py` | Mottagare ur `User` (de som har konto) i stället för `Coworker` |
 | `forhandsgranska.mjs` | Renderar mejlet lokalt till `preview.html` |
 | `preview.html` | Förhandsgranskning (bilder inbakade, öppnas utan server) |
 
@@ -103,17 +104,32 @@ HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py test <utskicks-id> christian@ca
 Lägger till din adress som ensam mottagare och köar brevet dit. Pollern tömmer kön var 2:a
 minut, så det ligger i inkorgen inom ~3 min. Läs det i Outlook **och** på mobilen.
 
+### Målgrupp: `User` eller `Coworker`? — läs det här innan du bygger listan
+
+Två helt olika storlekar, och det är lätt att ta fel:
+
+| Väg | Bygger på | Vilka |
+|---|---|---|
+| `mottagare_users.py` | `User` | de som **har konto** på Mira — ca 116 st |
+| `skicka.py malgrupp` / Målgrupp-fliken | `Coworker` | **alla kontaktpersoner** på alla kundföretag, oavsett konto — tusentals |
+
+`_resolveAudience` i `index.js` läser `Coworker`, inte `User`. Vill du nå "samtliga users
+på Mira" är det alltså **inte** Målgrupp-vägen.
+
+Räkna först (läser bara, ändrar ingenting):
+
 ```bash
-HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py malgrupp <utskicks-id>
+python3 nyhetsbrev/mottagare_users.py rakna
 ```
 
-Visar hur många mottagare det blir, frågar, och bygger sedan listan. Tomt filter = alla
-kontaktpersoner (`Coworker`) med mejladress på alla kundföretag — den bredaste målgruppen
-som finns, inklusive personer som ännu inte har inloggning. Brevet är skrivet för det.
-Vill du ha en smalare målgrupp: bygg urvalet i Målgrupp-fliken i stället och hoppa över
-det här steget.
+Stämmer siffran mot de 116 du väntar dig — importera dem:
 
-Din testadress hoppas över automatiskt (dedup på mejl), och den får inte brevet igen.
+```bash
+python3 nyhetsbrev/mottagare_users.py importera <utskicks-id>
+```
+
+Vill du i stället ha den breda `Coworker`-listan, kör `skicka.py malgrupp <id>` — den visar
+antalet och frågar innan den bygger något.
 
 ```bash
 HOST=$HOST KEY=$KEY python3 nyhetsbrev/skicka.py skicka <utskicks-id>
