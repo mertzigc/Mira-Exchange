@@ -768,6 +768,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
              plants:"Plants",water:"Water",reception:"Reception",event:"Events"}}
   };
   var LANG = "sv";
+  var LS_KEY = "mira_lang_v2";
   function t(k){ return T[LANG][k]; }
   var ATTRS = ["placeholder","alt","aria-label","title"];
 
@@ -797,7 +798,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
       b.classList.toggle("on", on);
       b.setAttribute("aria-pressed", on ? "true" : "false");
     });
-    try { localStorage.setItem("mira_lang", l); } catch (e) {}
+    try { localStorage.setItem(LS_KEY, l); } catch (e) {}
     if (typeof omritaWizard === "function") omritaWizard();
   }
   $$(".lang-b").forEach(function(b){
@@ -847,10 +848,11 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     srs.forEach(function(r){ obs.observe(r); });
   }
 
+  /* Svenska ar standard. Engelska bara om URL:en sager det, eller om besokaren
+     sjalv klickat EN tidigare. Webblasarens sprak far inte avgora. */
   var start = (location.search.match(/[?&]lang=(sv|en)/) || [])[1]
            || (location.hash.match(/lang=(sv|en)/) || [])[1];
-  if (!start) { try { start = localStorage.getItem("mira_lang"); } catch (e) {} }
-  if (!start && (navigator.language || "sv").slice(0,2).toLowerCase() !== "sv") start = "en";
+  if (!start) { try { start = localStorage.getItem(LS_KEY); } catch (e) {} }
   setLang(start === "en" ? "en" : "sv");
 
   /* ── wizard ── */
