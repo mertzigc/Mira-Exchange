@@ -209,15 +209,28 @@ ur `ClientCompany.group` via en constraintad query. Det är samma flytt som
 [[project-mira-omtag]] föreskriver: när ett fält pensioneras måste ALLA läsare
 flyttas i samma andetag — regeln vi själva bröt mot med TengellaWorkorder.
 
-**Speglingen ignoreras inte.** Fyller någon i `companies` för hand rapporteras
-avvikelsen (`spegling: {companies_falt, bara_i_companies, bara_i_group}`) i både
-lista och detalj. En tyst motsägelse mellan två fält är hur den här klassen av fel
-överlever.
+**Speglingen ignoreras inte — men bara halva den är ett problem.**
+
+| Fall | Betyder | Åtgärd |
+|---|---|---|
+| **`bara_i_companies`** | bolaget ligger i den döda listan men saknar `group` → **OSYNLIGT**, räknas inte, syns inte i filtret | ⚠️ sätt `group` på företaget |
+| `bara_i_group` | `companies`-listan släpar efter en korrekt gruppering | ingen — normalfallet |
+
+⚠️ **Första versionen flaggade på båda** och var därmed en varning som med tiden
+skulle lysa på ALLA grupper (listan underhålls ju inte). Rättat 2026-09-01 samma
+dag den byggdes, efter skarp data: Scandic hade 6 släpande, Strawberry 1 — helt
+ofarliga — medan **Benify** hade det enda verkliga fallet (`Benifex AB` osynligt,
+gruppen visade 0 medlemmar). Samma regel som åtgärdslistan i Staff-modulen:
+*en avvikelse utan handling är bara en notis man vänjer sig vid.*
+
+Hälsomåttet heter därför `grupper_med_osynliga_bolag` + `osynliga_bolag`, inte
+"avvikelse" i största allmänhet. Detaljvyn bär `atgard_kravs` så ingen behöver
+tolka två arrayer rätt.
 
 ### Hälsomått (det som styr om den interna rutinen fungerar)
 `foretag_med_grupp` / `foretag_utan_grupp` / `andel_grupperade` ·
 `grupper_tomma` (skapade men ej fyllda) · `grupper_utan_namn` ·
-`grupper_med_spegelavvikelse` · **`doda_gruppreferenser`** (företag vars `group`
+**`grupper_med_osynliga_bolag`** / `osynliga_bolag` · **`doda_gruppreferenser`** (företag vars `group`
 pekar på en raderad grupp — varje query mot den 400:ar MISSING_DATA) med
 namngivna exempel.
 
@@ -234,11 +247,24 @@ Auto-klustring (beslut 2026-06-08 står). Bulk-tilldelning av grupp, gruppvy i
 företagslistan, gruppfilter i affärsvyn (`affar_api.js` har noll gruppmedvetenhet
 idag) — Fas 2–4.
 
-**Verifierat:** `companies_smoke.mjs` **455 gröna**, egen fixtur så befintliga
-tester inte rubbas. **Mutationstestat (8, alla faller utan att krascha sviten):**
+### 📊 Skarpt utgångsläge 2026-09-01
+5 682 företag · **87 grupperade** i 28 grupper · 0 döda gruppreferenser · 0 namnlösa ·
+**1 osynligt bolag** (Benifex AB). ⚠️ Läs inte 1,5 % som en backlog — gruppering är bara
+meningsfull för kunder med FLERA faktureringsenheter. Måtten som ska vara noll är
+`osynliga_bolag` och `doda_gruppreferenser`, inte andelen.
+
+⚠️ **Öppen nivåfråga:** de 28 blandar koncerner (Vasakronan, Sweco, Fabege) med enskilda
+hotell (Clarion Hotel Stockholm, Grand Hôtel, Hilton Slussen) — och Clarion/Quality är
+Strawberry-varumärken som redan har egen grupp. Samma fråga som ett steg ned mot
+Intelliplan-kontona: vad är koncern och vad är anläggning? Beslut behövs, inte slump.
+
+**Verifierat:** `companies_smoke.mjs` **458 gröna**, egen fixtur så befintliga
+tester inte rubbas. **Mutationstestat (11, alla faller utan att krascha sviten):**
 medlemmar ur `ClientGroup.companies` fäller 7 · okänd omsättning som noll 1 · kall
 cache som 0 kr 1 · tystad spegling 2 · död gruppreferens 1 · namnlös grupp
-bortfiltrerad 3 · trasigt svep som tom lista 1 · fastigheter ej distinkta 1.
+bortfiltrerad 3 · trasigt svep som tom lista 1 · fastigheter ej distinkta 1 ·
+flagga även på släpande lista 2 · slutar flagga osynliga bolag 2 · `atgard_kravs`
+alltid sant 1.
 
 ---
 

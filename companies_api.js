@@ -567,8 +567,18 @@ export function registerCompaniesRoutes(app, deps) {
       const grupper = (g.full || []).map((grp) => {
         const med = per.get(grp.id) || [];
         const sum = _gruppSumma(med, ctx, yearNow, yearPrev);
-        // Speglingen: `companies` underhålls inte av oss. Skiljer den sig från
-        // sanningen ska det SYNAS, annars fattar någon beslut på fel lista.
+        // ⚠️ BARA `bara_i_companies` ÄR ETT PROBLEM — och bara den flaggas.
+        //
+        // Ett bolag som ligger i `ClientGroup.companies` men saknar
+        // `ClientCompany.group` är OSYNLIGT: det räknas inte, syns inte i filtret
+        // och ingår inte i summorna. Det kräver en åtgärd.
+        //
+        // Motsatsen (`bara_i_group`) är det NORMALA och kräver ingenting: den döda
+        // listan underhålls inte, så den släpar per definition varje gång någon
+        // grupperar rätt. Flaggade vi på den skulle till slut ALLA grupper ha en
+        // varning — och en varning som alltid lyser är en varning ingen läser.
+        // (Skarpt 2026-09-01: Scandic hade 6 och Strawberry 1 sådan, helt ofarligt,
+        // medan Benify hade det enda verkliga fallet.)
         const sanning = new Set(med.map((c) => c.id));
         const speglat = new Set(grp.speglade_companies || []);
         const bara_i_companies = [...speglat].filter((id) => !sanning.has(id));
@@ -581,7 +591,7 @@ export function registerCompaniesRoutes(app, deps) {
           medlemmar: med.length,
           oms_now: sum.oms_now, oms_prev: sum.oms_prev, oms_okand: sum.oms_okand,
           fastigheter: sum.fastigheter, bolag: sum.bolag,
-          spegling: (speglat.size && (bara_i_companies.length || bara_i_group.length))
+          spegling: bara_i_companies.length
             ? { companies_falt: speglat.size, bara_i_companies: bara_i_companies.length, bara_i_group: bara_i_group.length }
             : null,
         };
@@ -612,7 +622,10 @@ export function registerCompaniesRoutes(app, deps) {
           grupper_totalt: grupper.length,
           grupper_tomma: grupper.filter((x) => x.medlemmar === 0).length,
           grupper_utan_namn: g.unnamed || 0,
-          grupper_med_spegelavvikelse: grupper.filter((x) => x.spegling).length,
+          // Grupper med bolag som är OSYNLIGA (ligger bara i den döda listan).
+          // Det här är måttet som ska vara noll — inte "avvikelse" i största allmänhet.
+          grupper_med_osynliga_bolag: grupper.filter((x) => x.spegling).length,
+          osynliga_bolag: grupper.reduce((n, x) => n + ((x.spegling && x.spegling.bara_i_companies) || 0), 0),
           doda_gruppreferenser: dodRef,
           doda_gruppreferenser_exempel: dodaRefer,
         },
@@ -661,9 +674,16 @@ export function registerCompaniesRoutes(app, deps) {
         },
         summa: Object.assign({ medlemmar: med.length }, sum),
         medlemmar,
-        // null när fältet är tomt (normalfallet) — bara en ifylld och avvikande
-        // spegling är värd att larma om.
-        spegling: speglat.length ? { companies_falt: speglat.length, bara_i_companies, bara_i_group } : null,
+        // Båda listorna redovisas för den som tittar, men bara `bara_i_companies`
+        // kräver handling — se kommentaren i listendpointen. `atgard_kravs` säger
+        // vilket det är, så ingen behöver tolka två arrayer rätt.
+        spegling: speglat.length
+          ? { companies_falt: speglat.length, bara_i_companies, bara_i_group,
+              atgard_kravs: bara_i_companies.length > 0,
+              note: bara_i_companies.length
+                ? "Dessa bolag är OSYNLIGA — sätt group på företaget i företagsvyn."
+                : "Ingen åtgärd: den döda companies-listan släpar, medlemmarna räknas ändå." }
+          : null,
       });
     } catch (e) {
       console.error("[/admin/companies/groups/:id]", e?.message);

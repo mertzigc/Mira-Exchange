@@ -1850,7 +1850,7 @@ const run = async () => {
       { _id: "gg1", name: "Vasakronan-koncernen", slug: "vasakronan", status: "confirmed",
         primary_company: "gc1", companies: ["gc1", "gcX"], org_numbers: ["556061-4603"], aliases: ["Vasakronan AB"] },
       { _id: "gg2", name: "Tom koncern", slug: "tom", status: "suggested", companies: [] },
-      { _id: "gg4", name: "Halvkänd koncern", slug: "halv", status: "confirmed", companies: [] },
+      { _id: "gg4", name: "Halvkänd koncern", slug: "halv", status: "confirmed", companies: ["gc5"] },
       // Varken name ELLER slug — _groups() faller tillbaka på slug när namnet saknas,
       // så en grupp med slug är INTE namnlös. Det här är det verkliga fallet.
       { _id: "gg3", status: "suggested", companies: [] },
@@ -1893,8 +1893,8 @@ const run = async () => {
     ok("grupper: fastigheter räknas distinkt över koncernen", g1.fastigheter === 3);
     ok("grupper: våra bolag unionas över medlemmarna", (g1.bolag || []).length === 2);
     ok("grupper: primärbolagets namn resolvas", g1.primary_company === "Vasakronan AB");
-    // ⚠️ En tyst motsägelse mellan de två fälten är hur den här klassen av fel överlever.
-    ok("grupper: spegelavvikelse mot ClientGroup.companies RAPPORTERAS",
+    // ⚠️ Ett bolag som BARA står i den döda listan är OSYNLIGT — det ska flaggas.
+    ok("grupper: osynligt bolag (bara i companies-listan) RAPPORTERAS",
       !!g1.spegling && g1.spegling.bara_i_companies === 1 && g1.spegling.bara_i_group === 1);
     const g2 = gById.get("gg2") || {};
     ok("grupper: tom grupp ger 0 medlemmar och 0 kr", g2.medlemmar === 0 && g2.oms_now === 0);
@@ -1906,6 +1906,10 @@ const run = async () => {
     const g4 = gById.get("gg4") || {};
     ok("grupper: medlem utan känd omsättning räknas som OKÄND, inte som noll",
       g4.medlemmar === 2 && g4.oms_now === 50000 && g4.oms_okand === 1);
+    // ⚠️ NORMALFALLET: den döda companies-listan släpar efter en korrekt gruppering.
+    // Flaggar vi på det lyser till slut ALLA grupper, och då läser ingen varningen.
+    // (Skarpt 2026-09-01: Scandic 6 och Strawberry 1 sådana — helt ofarliga.)
+    ok("grupper: släpande companies-lista flaggas INTE — den kräver ingen åtgärd", g4.spegling === null);
 
     const h = L.body.halsa;
     ok("hälsa: företag med/utan grupp", h.foretag_totalt === 6 && h.foretag_med_grupp === 5 && h.foretag_utan_grupp === 1);
@@ -1916,15 +1920,20 @@ const run = async () => {
     ok("hälsa: död gruppreferens upptäcks och namnges",
       h.doda_gruppreferenser === 1 && ((h.doda_gruppreferenser_exempel || [])[0] || {}).namn === "Spöke AB");
     ok("hälsa: andel grupperade räknas", h.andel_grupperade === 83.3);
-    ok("hälsa: spegelavvikelser räknas", h.grupper_med_spegelavvikelse === 1);
+    ok("hälsa: bara grupper med OSYNLIGA bolag räknas", h.grupper_med_osynliga_bolag === 1 && h.osynliga_bolag === 1);
 
     const D = await call(gs2.routes, "get", "/admin/companies/groups/:id", { params: { id: "gg1" }, query: { year: "2026", prev: "2025" } });
     ok("gruppdetalj: svarar med medlemsrader", D.body.ok === true && (D.body.medlemmar || []).length === 2);
     ok("gruppdetalj: sorterad på omsättning", ((D.body.medlemmar || [])[0] || {}).id === "gc1");
     ok("gruppdetalj: summan matchar listan", D.body.summa.oms_now === 1250000 && D.body.summa.medlemmar === 2);
     ok("gruppdetalj: aliases och org_numbers bärs med", (D.body.grupp.org_numbers || [])[0] === "556061-4603");
-    ok("gruppdetalj: spegelavvikelsen namnger bolagen, inte bara antalet",
+    ok("gruppdetalj: avvikelsen namnger bolagen, inte bara antalet",
       !!D.body.spegling && ((D.body.spegling.bara_i_group || [])[0] || {}).namn === "Vasakronan Fastigheter AB");
+    ok("gruppdetalj: säger rakt ut om åtgärd krävs", D.body.spegling.atgard_kravs === true);
+    const D4 = await call(gs2.routes, "get", "/admin/companies/groups/:id", { params: { id: "gg4" } });
+    ok("gruppdetalj: släpande lista redovisas men utan åtgärdskrav",
+      !!D4.body.spegling && D4.body.spegling.atgard_kravs === false &&
+      (D4.body.spegling.note || "").indexOf("Ingen åtgärd") === 0);
     const D404 = await call(gs2.routes, "get", "/admin/companies/groups/:id", { params: { id: "finns-ej" } });
     ok("gruppdetalj: okänd grupp → 404", D404.code === 404);
 
