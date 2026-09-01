@@ -324,12 +324,28 @@ felmeddelanden, tjänstenamn) via en JS-ordlista.
 
 ### Växlaren
 
-Ett litet SV/EN-piller i navigationen, aktivt val i mörk fyllning. Ordningen är:
+Ett litet SV/EN-piller i navigationen, aktivt val i mörk fyllning. **Svenska är standard.**
+Ordningen är:
 
 1. `?lang=en` eller `#lang=en` i URL:en
-2. sparat val i `localStorage`
-3. webbläsarens språk — allt utom svenska ger engelska
-4. annars svenska
+2. besökarens eget tidigare klick, sparat i `localStorage`
+3. annars svenska
+
+Ingen webbläsarsniffning. Första versionen läste `navigator.language` och gav engelska åt
+alla som inte hade svenska som webbläsarspråk — vilket träffade svenska användare med
+engelskspråkig macOS. Borttaget 2026-09-01.
+
+`localStorage`-nyckeln heter `mira_lang_v2`. Bytet av nyckel gör att gamla EN-val från
+testrundan ignoreras, så alla börjar om på svenska utan att behöva rensa något.
+
+Verifierat i fyra lägen med engelskspråkig webbläsare (`--lang=en-US`):
+
+| Läge | Startar på |
+|---|---|
+| ren besökare | svenska |
+| gammalt EN-val under den gamla nyckeln | svenska |
+| eget EN-klick (nya nyckeln) | engelska |
+| `?lang=en` | engelska |
 
 ### Två saker att veta
 
