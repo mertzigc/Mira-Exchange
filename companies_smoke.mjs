@@ -1953,6 +1953,264 @@ const run = async () => {
     ok("trasigt ClientGroup-svep → 502, inte tom lista", B.code === 502 && B.body.error === "clientgroup_sweep_failed");
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FAS 2 — skapa grupp, bulk-tilldelning, koncernlins
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    // Egen värld med räknare, så N+1 går att BEVISA och inte bara antas.
+    const GRP = [{ _id: "k1", name: "Vasakronan", slug: "vasakronan", companies: [] }];
+    const KCC = {
+      a1: { _id: "a1", Name_company: "Vasakronan AB", group: "k1" },
+      a2: { _id: "a2", Name_company: "Vasakronan Fastigheter AB", group: "k1" },
+      a3: { _id: "a3", Name_company: "Fristaende AB", group: null },
+      a4: { _id: "a4", Name_company: "Kandidat AB", group: null },
+    };
+    const KROWS = {
+      FortnoxInvoice: [
+        { _id: "i1", linked_company: "a1", ft_document_number: "1", ft_total: 100, ft_net: 80, ft_invoice_date: "2026-05-01", ft_balance: 0 },
+        { _id: "i2", linked_company: "a2", ft_document_number: "2", ft_total: 200, ft_net: 160, ft_invoice_date: "2026-06-01", ft_balance: 0 },
+        { _id: "i3", linked_company: "a3", ft_document_number: "3", ft_total: 900, ft_net: 720, ft_invoice_date: "2026-06-02", ft_balance: 0 },
+      ],
+      Matter: [
+        { _id: "m1", "Kundföretag": "a1", Rubrik: "Trasig dörr", Datum: "2026-06-01" },
+        { _id: "m2", "Kundföretag": "a2", Rubrik: "Lampa", Datum: "2026-06-02" },
+      ],
+      Coworker: [
+        { _id: "p1", "Kundföretag": "a1", "Förnamn": "Anna", "Efternamn": "Ek" },
+        { _id: "p2", "Kundföretag": "a2", "Förnamn": "Bo", "Efternamn": "Vik" },
+        { _id: "p3", "Kundföretag": "a3", "Förnamn": "Hemlig", "Efternamn": "Person" },
+      ],
+      QualityControl: [], Office: [], Contract: [], activitet_crm: [],
+      deal: [], Lead: [], Offert: [], FortnoxOffer: [], MiraOrder: [], FortnoxOrder: [],
+      OfferApprovalRequest: [], User: [],
+    };
+    const kmatch = (r, cs) => (cs || []).every((c) => {
+      const v = r[c.key];
+      if (c.constraint_type === "in") return (c.value || []).map(String).indexOf(String(v)) > -1;
+      if (c.constraint_type === "contains") { const a = Array.isArray(v) ? v : (v == null ? [] : [v]); return a.map(String).indexOf(String(c.value)) > -1; }
+      return String(v == null ? "" : v) === String(c.value);
+    });
+    const kCalls = [];
+    const kproj = (c) => ({ id: c._id, name: c.Name_company, orgnr: "", kundstatus: "", bransch: "", potential: "",
+      lojalitet: "", region: "", customer_type: "", nki: null, antal_medarbetare: null, omsattning_field: null,
+      ansvarig_id: null, group_id: c.group || null, fastighet_ids: [], modified: null });
+    let KFULL = new Map(Object.values(KCC).map((c) => [c._id, kproj(c)]));
+    const kDeps = Object.assign({}, deps, {
+      bubbleFindAll: async (t, o = {}) => {
+        kCalls.push({ t, constraints: o.constraints || [] });
+        if (t === "ClientGroup") return GRP.slice();
+        if (t === "ClientCompany") return Object.values(KCC).filter((r) => kmatch(r, o.constraints));
+        return (KROWS[t] || []).filter((r) => kmatch(r, o.constraints));
+      },
+      bubbleGet: async (t, id) => (t === "ClientCompany" ? (KCC[id] || null) : (t === "ClientGroup" ? (GRP.find((g) => g._id === id) || null) : null)),
+      bubblePatch: async (t, id, payload) => {
+        // ⚠️ ClientGroup.companies får ALDRIG skrivas — mocken skriker om det händer.
+        if (t === "ClientGroup" && Object.keys(payload || {}).indexOf("companies") > -1) throw new Error("FORBJUDET: skrev till ClientGroup.companies");
+        if (t === "ClientCompany" && KCC[id]) Object.assign(KCC[id], payload);
+        return {};
+      },
+      bubbleCreate: async (t, payload) => {
+        if (t === "ClientGroup") {
+          if (Object.keys(payload || {}).indexOf("companies") > -1) throw new Error("FORBJUDET: skrev till ClientGroup.companies");
+          const id = "kNy" + (GRP.length + 1); GRP.push(Object.assign({ _id: id }, payload)); return id;
+        }
+        return "x";
+      },
+      companyFullMap: async () => KFULL,
+      companyRevenueMap: async () => new Map(), companyRevenueMapWarm: () => new Map(),
+      companyBolagMapWarm: () => new Map(), companyTouchMapWarm: () => new Map(),
+      companyPatchEntry: (id, fresh) => { KFULL.set(id, kproj(fresh)); },
+    });
+    const ks = mk(); registerCompaniesRoutes(ks.app, kDeps);
+
+    // ── SKAPA GRUPP ────────────────────────────────────────────────────────
+    const ny = await call(ks.routes, "post", "/admin/companies/groups", { body: { namn: "Scandic Hotels" } });
+    ok("skapa grupp: ok + slug härledd", ny.body.ok === true && ny.body.slug === "scandic-hotels");
+    ok("skapa grupp: ClientGroup.companies rördes ALDRIG",
+      (GRP.find((g) => g._id === ny.body.id) || {}).companies === undefined);
+    const dubb = await call(ks.routes, "post", "/admin/companies/groups", { body: { namn: "  scandic   hotels " } });
+    // ⚠️ Två "Vasakronan" som skiljer sig på ett mellanslag är två grupper ingen menade skapa.
+    ok("skapa grupp: dubblett på normaliserat namn → 409", dubb.code === 409 && dubb.body.error === "group_exists");
+    const utan = await call(ks.routes, "post", "/admin/companies/groups", { body: {} });
+    ok("skapa grupp: utan namn → 400", utan.code === 400 && utan.body.error === "missing_namn");
+
+    // ── BULK-TILLDELNING ───────────────────────────────────────────────────
+    const add = await call(ks.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "k1" }, body: { companies: ["a3", "a4", "a1"], action: "add" } });
+    ok("bulk: två ändrade, en oförändrad (a1 låg redan i gruppen)",
+      add.body.ok === true && add.body.andrade === 2 && add.body.oforandrade === 1);
+    ok("bulk: skrev ClientCompany.group", KCC.a3.group === "k1" && KCC.a4.group === "k1");
+    ok("bulk: cachen uppdaterad direkt", KFULL.get("a3").group_id === "k1");
+    const rem = await call(ks.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "k1" }, body: { companies: ["a4"], action: "remove" } });
+    ok("bulk: remove tömmer group", rem.body.ok === true && !KCC.a4.group);
+    const okand = await call(ks.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "k1" }, body: { companies: ["a1", "finns-ej"] } });
+    ok("bulk: okänt företag → 400, INGET skrivs", okand.code === 400 && okand.body.error === "unknown_company");
+    const okandG = await call(ks.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "hittepa" }, body: { companies: ["a3"] } });
+    ok("bulk: okänd grupp → 404", okandG.code === 404);
+    const badA = await call(ks.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "k1" }, body: { companies: ["a3"], action: "flytta" } });
+    ok("bulk: okänd action → 400", badA.code === 400 && badA.body.error === "bad_action");
+
+    // ⚠️ Delvis lyckad skrivning får ALDRIG svara 200 ok — samma optimism som
+    // _bulkCreate hade när 3 420 skickade rader blev "created: 3420".
+    const halv = Object.assign({}, kDeps, {
+      bubblePatch: async (t, id, payload) => {
+        if (t === "ClientCompany" && id === "a4") { const e = new Error("bubblePatch failed"); e.detail = { status: 400, body: "boom" }; throw e; }
+        if (t === "ClientCompany" && KCC[id]) Object.assign(KCC[id], payload);
+        return {};
+      },
+    });
+    KCC.a3.group = null; KCC.a4.group = null; KFULL = new Map(Object.values(KCC).map((c) => [c._id, kproj(c)]));
+    const hs = mk(); registerCompaniesRoutes(hs.app, Object.assign({}, halv, { companyFullMap: async () => KFULL }));
+    const delvis = await call(hs.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "k1" }, body: { companies: ["a3", "a4"] } });
+    ok("bulk: delvis misslyckad → 207 och ok:false, aldrig tyst framgång",
+      delvis.code === 207 && delvis.body.ok === false && delvis.body.andrade === 1 &&
+      (delvis.body.misslyckade || []).length === 1 && (delvis.body.misslyckade[0] || {}).namn === "Kandidat AB");
+
+    // ⚠️ TYST FÄLTDROP: Bubble svarar 204 men fältet fastnar inte. En skrivning
+    // utan återläsning hade rapporterat "ändrad" på något som aldrig sparades
+    // ([[reference-bubble-tysta-faltdrop]]).
+    KCC.a3.group = null; KFULL = new Map(Object.values(KCC).map((c) => [c._id, kproj(c)]));
+    const tyst = Object.assign({}, kDeps, {
+      companyFullMap: async () => KFULL,
+      bubblePatch: async (t, id) => { if (t === "ClientCompany" && id === "a3") return {}; return {}; },
+    });
+    const tys = mk(); registerCompaniesRoutes(tys.app, tyst);
+    const drop = await call(tys.routes, "post", "/admin/companies/groups/:id/members", {
+      params: { id: "k1" }, body: { companies: ["a3"] } });
+    ok("bulk: tyst fältdrop upptäcks av återläsningen, aldrig falskt 'ändrad'",
+      drop.code === 502 && drop.body.andrade === 0 &&
+      ((drop.body.misslyckade || [])[0] || {}).orsak === "verifiering_falerade");
+
+    // ── KONCERNLINSEN ──────────────────────────────────────────────────────
+    KCC.a3.group = null; KCC.a4.group = null;
+    KFULL = new Map(Object.values(KCC).map((c) => [c._id, kproj(c)]));
+    const ls = mk(); registerCompaniesRoutes(ls.app, Object.assign({}, kDeps, { companyFullMap: async () => KFULL }));
+
+    const en = await call(ls.routes, "get", "/admin/companies/:id/chain", { params: { id: "a1" }, query: { type: "fakturor" } });
+    ok("lins av: bara bolagets egna rader", en.body.count === 1 && en.body.grupp === undefined);
+    ok("lins av: bolagskolumnen sätts ändå (en väg i frontenden)", (en.body.rows[0] || {}).company === "Vasakronan AB");
+
+    kCalls.length = 0;
+    const kon = await call(ls.routes, "get", "/admin/companies/:id/chain", { params: { id: "a1" }, query: { type: "fakturor", group: "k1" } });
+    ok("lins på: unionen över koncernen", kon.body.count === 2);
+    ok("lins på: främmande bolags rader kommer INTE med", !kon.body.rows.some((r) => r.company_id === "a3"));
+    // ⚠️ Varje rad måste säga vilket bolag den kom från — annars är aggregering en gröt.
+    ok("lins på: varje rad bär bolagsnamn",
+      kon.body.rows.every((r) => r.company === "Vasakronan AB" || r.company === "Vasakronan Fastigheter AB"));
+    ok("lins på: gruppmeta följer med", !!kon.body.grupp && kon.body.grupp.medlemmar === 2 && kon.body.trunkerad === false);
+    // ⚠️ EN query, inte en per medlem. Det här är N+1-vakten.
+    const inv = kCalls.filter((c) => c.t === "FortnoxInvoice");
+    ok("lins på: EN query per flik, inte en per medlem",
+      inv.length === 1 && (inv[0].constraints[0] || {}).constraint_type === "in");
+
+    const ejMed = await call(ls.routes, "get", "/admin/companies/:id/chain", { params: { id: "a3" }, query: { type: "fakturor", group: "k1" } });
+    ok("lins: bolag utanför gruppen → 400", ejMed.code === 400 && ejMed.body.error === "company_not_in_group");
+    const ejGrp = await call(ls.routes, "get", "/admin/companies/:id/chain", { params: { id: "a1" }, query: { type: "fakturor", group: "hittepa" } });
+    ok("lins: okänd grupp → 404", ejGrp.code === 404);
+
+    const pers = await call(ls.routes, "get", "/admin/companies/:id/coworkers", { params: { id: "a1" }, query: { group: "k1" } });
+    ok("lins: personer aggregeras över koncernen", (pers.body.rows || []).length === 2);
+    const drift = await call(ls.routes, "get", "/admin/companies/:id/matters", { params: { id: "a1" }, query: { group: "k1" } });
+    ok("lins: ärenden aggregeras + bär bolag", (drift.body.rows || []).length === 2 &&
+      (drift.body.rows || []).every((r) => !!r.company));
+    const driftEn = await call(ls.routes, "get", "/admin/companies/:id/matters", { params: { id: "a1" } });
+    ok("lins av: ärenden oförändrade", (driftEn.body.rows || []).length === 1);
+  }
+
+  // ── HTML-BLOCKET: koncernlinsen (Fas 2) ────────────────────────────────────
+  {
+    const html = readFileSync(new URL("./mira-foretag-lista.html", import.meta.url), "utf8");
+    const script = (html.match(/<script>([\s\S]*)<\/script>/) || [])[1] || "";
+    // ⚠️ DEN VIKTIGASTE: missas linsen på EN hämtare visar den fliken ett bolags
+    // rader medan resten visar koncernens — och ingen skulle se skillnaden.
+    const hamtare = ["/chain?type=", "/coworkers", "/matters", "/qc"];
+    for (const h of hamtare) {
+      const rad = script.split("\n").find((l) => l.indexOf('cardId)+"' + h) > -1);
+      ok("block: " + h + " bär koncernlinsen", !!rad && rad.indexOf("lensQ(") > -1);
+    }
+    // ⚠️ Flikcacharna innehåller ETT bolags rader. Töms de inte vid linsbyte visas
+    // fel data under rätt rubrik.
+    const bytet = (script.match(/if\(lensBtn\)\{[\s\S]*?fetchTabData\(\); return; \}/) || [])[0] || "";
+    // ⚠️ Lyssnaren grenar på STATE.view INNAN den når listans hanterare. Ligger
+    // lins-branchen i listgrenen körs den aldrig i kortvyn — klicket dör tyst.
+    // (Skarpt 2026-09-01: exakt det hände.)
+    const kortgren = (script.match(/if\(STATE\.view==="card"\)\{[\s\S]*?data-fk="tab"/) || [])[0] || "";
+    ok("block: linsklicket ligger i KORT-grenen, inte i listgrenen",
+      kortgren.indexOf('data-fk="lens"') > -1 && kortgren.indexOf('data-fk="gopen"') > -1);
+    ok("block: linsbytet tömmer ALLA flikcachar",
+      ["STATE.chain={}", "STATE.coworkers=null", "STATE.matters=null", "STATE.qcList=null"].every((x) => bytet.indexOf(x) > -1));
+    // ⚠️ Linsen är per kort — bärs den vidare visar kortet en koncern bolaget
+    // kanske inte tillhör.
+    const opna = (script.match(/function openCard\(id\)\{[\s\S]*?var cached=cacheGet/) || [])[0] || "";
+    ok("block: linsen nollställs när ett nytt kort öppnas", opna.indexOf("STATE.lens=false") > -1);
+    ok("block: växeln visas bara när bolaget har en grupp",
+      /function lensToggle\(\)\{[\s\S]*?if\(!c\|\|!c\.group_id\) return "";/.test(script));
+    // ⚠️ Utan bolagsnamn per rad är aggregering en gröt.
+    ok("block: bolagsbadge bara i koncernläge", /function cBadge\(r\)\{\s*\n?\s*if\(!STATE\.lens/.test(script));
+    // Kryssrutekolumnen ändrar kolumnantalet — colspan måste följa med.
+    ok("block: tomrads-colspan räknar med kryssrutekolumnen", script.indexOf("COLS.length+1") > -1);
+    ok("block: konventionerna hålls (ingen ?. / ??)", !/[^\/]\?\./.test(script) && script.indexOf("??") < 0);
+    // ⚠️ Kall omsättning får aldrig ritas som 0 kr.
+    ok("block: koncernöversikten visar 'beräknar' vid kall cache",
+      /d\.revenue_ready\?krc\(sum\.oms_now\):'<span class="fk-calc">/.test(script));
+    ok("block: koncernöversikten säger att summan kan vara i underkant",
+      script.indexOf("kan vara i underkant") > -1);
+    // ⚠️ En skrivning får aldrig sluta i tystnad: kvittot måste överleva att
+    // urvalet rensas (bulkKlar tömmer STATE.sel vid framgång).
+    // ⚠️ BLANDADE BASER: hjältens nyckeltal, onboarding och flikbadgarna är alla
+    // BOLAGETS siffror. Visas de omärkta bredvid koncernens flikar blir de ett
+    // beslutsunderlag de inte förtjänar att vara.
+    // ⚠️ BUBBLES GLOBALA button:hover HAR !important → helorange knapp med osynlig
+    // text. Specificitet hjälper INTE; enda motmedlet är !important på BÅDE
+    // background och color. Blocket saknade skyddet helt (skarpt 2026-09-01 —
+    // Christian såg det i drift). [[reference-bubble-button-hover-important]]
+    const hoverBas = (html.match(/\.fl button:hover,\.fl button:focus\{[^}]*\}/) || [])[0] || "";
+    ok("block: basregel för button:hover sätter background OCH color med !important",
+      /background:[^;]*!important/.test(hoverBas) && /color:[^;]*!important/.test(hoverBas));
+    // Varje klass som deklarerar om sin hover vinner på specificitet och måste
+    // därför bära !important själv — annars förlorar just den mot Bubbles regel.
+    for (const grupp of ["fl-refresh", "fl-newco", "fk-editbtn", "fk-act.pri", "ab-btn.primary", "fk-roomdel"]) {
+      const re = new RegExp("\\.fl \\." + grupp.replace(".", "\\.") + ":hover");
+      const blocket = (html.split(/\n\n/).find((b) => re.test(b) && b.indexOf("!important") > -1)) || "";
+      ok("block: " + grupp + ":hover kontrar med !important",
+        re.test(html) && /background:[^;]*!important/.test(blocket) && /color:[^;]*!important/.test(blocket));
+    }
+    // ⚠️ Endast <button> träffas av Bubbles regel — men varje knapp i blocket är
+    // ett <button>, så basregeln måste täcka dem alla.
+    ok("block: inga oskyddade hover-regler på knappklasser kvar",
+      !/\n  \.(fl|fk)-(refresh|newco|clear|back|act|cancel|editbtn|key|nsbtn|roomdel|lclose):hover\{(?![^}]*!important)/.test(html));
+
+    // ── Design: samma manér som mira-affar-samlad.html ──────────────────────
+    // ⚠️ De gamla --fl-*-namnen PEKAR på affärsvyns variabler. Byts den mappningen
+    // mot hårdkodade hexar igen driver blocket isär från affärsvyn utan att någon
+    // märker det förrän de står bredvid varandra.
+    ok("block: affärsvyns palett är källan", /--base:#1e2235;--panel:#23283f;--card:#262b42/.test(html));
+    ok("block: fl-variablerna mappar mot paletten, inte mot egna hexar",
+      /--fl-bg:var\(--base\);--fl-card:var\(--panel\)/.test(html) && /--fl-acc:var\(--orange\)/.test(html));
+    ok("block: DM Serif-rubrik som affärsvyn",
+      html.indexOf("DM+Serif+Display") > -1 && /\.fl-head h1\{font-family:'DM Serif Display'/.test(html));
+    ok("block: gamla navypaletten helt borta",
+      !/#0f1830|#16223d|#1c2b4d|#243456|#e7ecf6|#8ea0c2|#df6f39/.test(html));
+    // ⚠️ Båda knapparna hade `margin-left:auto` och sköt isär varandra — Uppdatera
+    // hamnade mitt i raden i stället för bredvid Nytt företag.
+    ok("block: Uppdatera och Nytt företag sitter ihop till höger",
+      /<span class="fl-headact">\s*<button class="fl-refresh" data-fl="refresh">[\s\S]*?data-fl="newco"[\s\S]*?<\/span>/.test(html) &&
+      /\.fl-headact\{margin-left:auto/.test(html));
+    ok("block: hjältens nyckeltal märks som bolagets i koncernläge",
+      script.indexOf("Nyckeltalen ovan avser") > -1);
+    ok("block: onboarding-strippen döljs i koncernläge",
+      /var onb=\(STATE\.cardTab==="hem" && !STATE\.lens\)/.test(script));
+    ok("block: flikbadgarna döljs i koncernläge (bolagets antal)",
+      /cv!==undefined && !STATE\.lens\) badge=/.test(script));
+    ok("block: bulk-kvittot renderas även när urvalet är tomt",
+      /function bulkBar\(\)\{[\s\S]*?if\(!STATE\.sel\.length\)\{[\s\S]*?if\(!STATE\.bulkMsg\) return "";/.test(script));
+  }
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

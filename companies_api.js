@@ -691,6 +691,154 @@ export function registerCompaniesRoutes(app, deps) {
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // KONCERNLINSEN — `?group=<id>` på kortets flikar
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Koncernen är en LINS, inte en plats: samma kort, samma flikar, bredare filter.
+  // Därför ligger den som query-parameter på de BEFINTLIGA endpointerna i stället
+  // för i parallella gruppendpoints — en kodväg att underhålla.
+  //
+  // ⚠️ EN query per flik, aldrig en per medlem. Vasakronan har 20 bolag; en loop
+  // hade blivit 20 anrop per flik (N+1). Bubble klarar `in` med en id-lista, och
+  // medlems-id:na är gratis — de ligger i den förvärmda CC-cachen.
+  //
+  // ⚠️ Linsen är alltid DET HÄR bolagets koncern. Ett bolag som inte ingår i den
+  // begärda gruppen ger 400 — annars visar kortets rubrik ett bolag som inte finns
+  // i datan under den.
+  const GROUP_MAX = 100;
+  async function _scope(req, id) {
+    const gid = _str(req.query.group).trim();
+    if (!gid) return { ids: [id], grupp: null, trunkerad: false };
+    const g = await _groups();
+    if (!g.ok) { const e = new Error("clientgroup_sweep_failed"); e.status = 502; throw e; }
+    const grp = (g.full || []).find((x) => x.id === gid);
+    if (!grp) { const e = new Error("group_not_found"); e.status = 404; throw e; }
+    const full = await companyFullMap();
+    const alla = [...full.values()].filter((c) => c.group_id === gid).map((c) => c.id);
+    if (alla.indexOf(id) < 0) { const e = new Error("company_not_in_group"); e.status = 400; throw e; }
+    // ⚠️ Tak med LOUD rapportering. En tyst avhuggning läses som "så här ser det ut"
+    // — samma regel som passynkens sidtak.
+    const ids = alla.slice(0, GROUP_MAX);
+    return {
+      ids, trunkerad: alla.length > ids.length,
+      grupp: { id: gid, namn: grp.name || "(namnlös grupp)", medlemmar: alla.length, visade: ids.length },
+    };
+  }
+  // Constraint för ett ELLER flera id. `in` med ett id fungerar också, men `equals`
+  // är billigare och håller enbolagsvägen exakt som förut.
+  const _scopeC = (field, ids) => (ids.length === 1
+    ? { key: field, constraint_type: "equals", value: ids[0] }
+    : { key: field, constraint_type: "in", value: ids });
+  const _scopeMeta = (sc) => (sc.grupp ? { grupp: sc.grupp, trunkerad: sc.trunkerad } : {});
+  // Bolagskolumnen. Sätts på VARJE rad, även i enbolagsläge, så frontenden har en väg.
+  const _bolagFalt = (ref, full) => {
+    const cid = _ref(ref);
+    return { company_id: cid, company: _str((full.get(cid) || {}).name) };
+  };
+
+  // ── POST /admin/companies/groups — skapa kundgrupp ────────────────────────
+  // Bara ett namn krävs. `slug` härleds.
+  // ⚠️ `companies` skrivs ALDRIG. Frestelsen att "hålla båda i synk" är precis så
+  // det här problemet uppstod (SYNC-KARNAN §6b).
+  const _slugify = (v) => _str(v).toLowerCase().trim()
+    .replace(/[åä]/g, "a").replace(/ö/g, "o").replace(/[éè]/g, "e")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+
+  app.options("/admin/companies/groups", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/groups", async (req, res) => {
+    if (!guard(req, res)) return;
+    const namn = _str((req.body || {}).namn || (req.body || {}).name).trim();
+    if (!namn) return res.status(400).json({ ok: false, error: "missing_namn" });
+    try {
+      const g = await _groups();
+      if (!g.ok) return res.status(502).json({ ok: false, error: "clientgroup_sweep_failed" });
+      // Dubblettskydd på normaliserat namn — två "Vasakronan" som skiljer sig på ett
+      // mellanslag är två grupper ingen menade att skapa.
+      const slug = _slugify(namn);
+      const dubbel = (g.full || []).find((x) => _slugify(x.name) === slug || (x.slug && x.slug === slug));
+      if (dubbel) return res.status(409).json({ ok: false, error: "group_exists", id: dubbel.id, namn: dubbel.name });
+
+      const id = await bubbleCreate("ClientGroup", { name: namn, slug });
+      if (!id) return res.status(502).json({ ok: false, error: "create_failed" });
+      // ⚠️ Läs tillbaka. Bubble droppar okända fält tyst — "skapad" utan verifiering
+      // är en gissning ([[reference-bubble-tysta-faltdrop]]).
+      const fresh = await bubbleGet("ClientGroup", id).catch(() => null);
+      if (!fresh || !_str(fresh.name)) {
+        return res.status(502).json({ ok: false, error: "namn_ej_skrivet", id,
+          hint: "Fältet heter `name` på ClientGroup — verifiera stavning i Bubble." });
+      }
+      _groupsForget();
+      return res.json({ ok: true, id, namn: _str(fresh.name), slug: _str(fresh.slug) });
+    } catch (e) {
+      console.error("[POST /admin/companies/groups]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
+  // ── POST /admin/companies/groups/:id/members — bulk-tilldelning ───────────
+  // { companies: [id], action: "add" | "remove" }.  SKRIVER `ClientCompany.group`.
+  // ⚠️ Varje rad läses tillbaka och räknas. En partiellt misslyckad skrivning får
+  // ALDRIG se ut som full framgång — det är exakt `_bulkCreate`-optimismen som
+  // gjorde 3 420 skickade rader till "created: 3420" utan att veta.
+  app.options("/admin/companies/groups/:id/members", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.post("/admin/companies/groups/:id/members", async (req, res) => {
+    if (!guard(req, res)) return;
+    const gid = _str(req.params.id).trim();
+    const b = req.body || {};
+    const action = _str(b.action).trim() || "add";
+    if (!gid) return res.status(400).json({ ok: false, error: "missing_id" });
+    if (action !== "add" && action !== "remove") return res.status(400).json({ ok: false, error: "bad_action", tillatna: ["add", "remove"] });
+    if (!Array.isArray(b.companies)) return res.status(400).json({ ok: false, error: "companies_must_be_array" });
+    const onskade = Array.from(new Set(b.companies.map((v) => _str(v).trim()).filter(Boolean)));
+    if (!onskade.length) return res.status(400).json({ ok: false, error: "companies_empty" });
+    if (onskade.length > 200) return res.status(400).json({ ok: false, error: "for_manga", max: 200, antal: onskade.length });
+    try {
+      const g = await _groups();
+      if (!g.ok) return res.status(502).json({ ok: false, error: "clientgroup_sweep_failed" });
+      if (action === "add" && !(g.full || []).some((x) => x.id === gid)) {
+        return res.status(404).json({ ok: false, error: "group_not_found", id: gid });
+      }
+      const full = await companyFullMap();
+      // Okända företag skrivs inte — ett id som inte finns blir en död referens.
+      const okanda = onskade.filter((cid) => !full.has(cid));
+      if (okanda.length) return res.status(400).json({ ok: false, error: "unknown_company", okanda: okanda.slice(0, 20) });
+
+      const varde = action === "add" ? gid : "";
+      const klara = [], misslyckade = [], oforandrade = [];
+      // Sekventiellt: en bulk-tilldelning är en manuell handling, och parallella
+      // patchar mot samma typ ger ingen vinst värd risken.
+      for (const cid of onskade) {
+        const nu = (full.get(cid) || {}).group_id || "";
+        if (action === "add" && nu === gid) { oforandrade.push(cid); continue; }
+        if (action === "remove" && !nu) { oforandrade.push(cid); continue; }
+        try {
+          await bubblePatch("ClientCompany", cid, { group: varde });
+          const fresh = await bubbleGet("ClientCompany", cid);
+          const skriven = _ref(fresh && fresh.group) || "";
+          if ((action === "add" && skriven !== gid) || (action === "remove" && skriven)) {
+            misslyckade.push({ id: cid, namn: (full.get(cid) || {}).name || "", skrivet: skriven || null, orsak: "verifiering_falerade" });
+            continue;
+          }
+          if (fresh && companyPatchEntry) companyPatchEntry(cid, fresh);
+          klara.push(cid);
+        } catch (e) {
+          misslyckade.push({ id: cid, namn: (full.get(cid) || {}).name || "",
+            orsak: (e && e.message) || "okant", detail: (e && e.detail) || null });
+        }
+      }
+      // 207 när det gick delvis: ett halvt lyckat svep får inte svara 200 ok.
+      const kod = misslyckade.length ? (klara.length ? 207 : 502) : 200;
+      return res.status(kod).json({
+        ok: misslyckade.length === 0, action, group_id: gid,
+        andrade: klara.length, oforandrade: oforandrade.length, misslyckade,
+        note: "Medlemskapet ligger på ClientCompany.group. ClientGroup.companies skrivs aldrig.",
+      });
+    } catch (e) {
+      console.error("[POST /admin/companies/groups/:id/members]", e?.message, e?.detail);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+    }
+  });
+
   // ── GET /admin/companies/list ──────────────────────────────────────
   // ?q= &ansvarig= &kundstatus= &potential= &lojalitet= &region= &bransch=
   //   &customer_type= &group= &fastighet= &bolag= &unassigned=1
@@ -957,37 +1105,48 @@ export function registerCompaniesRoutes(app, deps) {
     const id = _str(req.params.id).trim();
     const type = _str(req.query.type).trim();
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
-    const eq = (field) => ({ constraints: [{ key: field, constraint_type: "equals", value: id }] });
-    const find = (t, field) => bubbleFindAll(t, eq(field)).catch(() => []);
     try {
+      const sc = await _scope(req, id);
+      const full = await companyFullMap();
+      const cName = (cid) => _str((full.get(cid) || {}).name);
+      // ⚠️ Varje rad MÅSTE bära vilket bolag den kom från. En fakturarad utan
+      // bolagsnamn är oläslig i koncernläge — då blir aggregering en gröt. Fältet
+      // sätts alltid, även i enbolagsläge, så frontenden slipper två vägar.
+      const find = (t, field) => bubbleFindAll(t, { constraints: [_scopeC(field, sc.ids)] })
+        .catch(() => []).then((rr) => (rr || []).map((r) => ({ _r: r, _cid: _ref(r[field]) })));
+      const mapp = (arr, n) => arr.map((x) => Object.assign(n(x._r), { company_id: x._cid, company: cName(x._cid) }));
       let rows = [];
       if (type === "deals") {
-        rows = (await find("deal", "kundföretag")).map(nDeal);
+        rows = mapp(await find("deal", "kundföretag"), nDeal);
       } else if (type === "leads") {
-        rows = (await find("Lead", "client_company")).map(nLead);
+        rows = mapp(await find("Lead", "client_company"), nLead);
       } else if (type === "offerter") {
         const [a, b] = await Promise.all([find("Offert", "kundforetag"), find("FortnoxOffer", "linked_company")]);
-        rows = a.map(nOffM).concat(b.map(nOffF));
+        rows = mapp(a, nOffM).concat(mapp(b, nOffF));
       } else if (type === "ordrar") {
         const [a, b] = await Promise.all([find("MiraOrder", "kundforetag"), find("FortnoxOrder", "linked_company")]);
-        rows = a.map(nOrdM).concat(b.map(nOrdF));
+        rows = mapp(a, nOrdM).concat(mapp(b, nOrdF));
       } else if (type === "fakturor") {
-        rows = (await find("FortnoxInvoice", "linked_company")).map(nInv);
+        rows = mapp(await find("FortnoxInvoice", "linked_company"), nInv);
       } else if (type === "avtal") {
-        rows = (await find("Contract", "kundföretag")).map(nContract);
+        rows = mapp(await find("Contract", "kundföretag"), nContract);
       } else if (type === "signeringar") {
-        rows = (await find("OfferApprovalRequest", "clientcompany")).map(nApproval);
+        rows = mapp(await find("OfferApprovalRequest", "clientcompany"), nApproval);
       } else if (type === "historik") {
-        const [raw, uc] = await Promise.all([_companyActivityRows(id), _users().catch(() => null)]);   // union company+clientcompany
-        rows = raw.map((r) => nActivity(r, uc && uc.map));
+        const [raw, uc] = await Promise.all([_companyActivityRows(sc.ids), _users().catch(() => null)]);
+        rows = raw.map((r) => Object.assign(nActivity(r, uc && uc.map),
+          { company_id: _ref(r.company), company: cName(_ref(r.company)) }));
       } else {
         return res.status(400).json({ ok: false, error: "bad_type" });
       }
       rows.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
-      return res.json({ ok: true, type, count: rows.length, rows });
+      return res.json(Object.assign({ ok: true, type, count: rows.length, rows }, _scopeMeta(sc)));
     } catch (e) {
       console.error("[/admin/companies/:id/chain]", e?.message);
-      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+      // ⚠️ `e.status` måste med — koncernlinsen kastar 400 company_not_in_group
+      // och 404 group_not_found. Hårdkodad 500 hade gjort ett begripligt
+      // felmeddelande till "något gick fel".
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 
@@ -1003,10 +1162,12 @@ export function registerCompaniesRoutes(app, deps) {
     const id = _str(req.params.id).trim();
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
     try {
+      const sc = await _scope(req, id);
+      const fullCC = await companyFullMap();
       const [cos, users, offs] = await Promise.all([
-        bubbleFindAll("Coworker", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
-        bubbleFindAll("User", { constraints: [{ key: "Company", constraint_type: "equals", value: id }] }).catch(() => []),
-        bubbleFindAll("Office", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
+        bubbleFindAll("Coworker", { constraints: [_scopeC("Kundföretag", sc.ids)] }).catch(() => []),
+        bubbleFindAll("User", { constraints: [_scopeC("Company", sc.ids)] }).catch(() => []),
+        bubbleFindAll("Office", { constraints: [_scopeC("Kundföretag", sc.ids)] }).catch(() => []),
       ]);
       // e-post → user-id (login-konto)
       const userByEmail = new Map();
@@ -1046,7 +1207,10 @@ export function registerCompaniesRoutes(app, deps) {
       return res.json({ ok: true, count: rows.length, rows, offices, departments: DEPARTMENTS, roles: (uc0 && uc0.roles) || [] });
     } catch (e) {
       console.error("[/admin/companies/:id/coworkers]", e?.message);
-      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+      // ⚠️ `e.status` måste med — koncernlinsen kastar 400 company_not_in_group
+      // och 404 group_not_found. Hårdkodad 500 hade gjort ett begripligt
+      // felmeddelande till "något gick fel".
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 
@@ -1487,8 +1651,12 @@ export function registerCompaniesRoutes(app, deps) {
     return out.sort((a, b) => key(a) - key(b));
   }
 
-  async function _companyActivityRows(id) {
-    return bubbleFindAll("activitet_crm", { constraints: [{ key: "company", constraint_type: "equals", value: id }] }).catch(() => []);
+  // Tar ETT id eller en LISTA (koncernlinsen). En lista blir EN `in`-query, aldrig
+  // en query per medlem.
+  async function _companyActivityRows(idOrIds) {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    if (!ids.length) return [];
+    return bubbleFindAll("activitet_crm", { constraints: [_scopeC("company", ids)] }).catch(() => []);
   }
 
   // um (valfri Map id→namn) resolvar skapare (writer||Created By) → ansvarig. Rå edit-prefill-fält
@@ -2356,12 +2524,18 @@ export function registerCompaniesRoutes(app, deps) {
     } catch (_) { return ""; }
   }
   const _imgs = (v) => (Array.isArray(v) ? v : (v ? [v] : [])).map(_httpsUrl).filter(Boolean);
-  async function _officeNameMap(companyId) {
-    const offs = await bubbleFindAll("Office", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: companyId }] }).catch(() => []);
+  // ⚠️ Båda tar ETT id eller en LISTA (koncernlinsen). En lista blir EN `in`-query —
+  // en loop per medlem hade gjort namnupplösningen till N+1 ovanpå fliken själv.
+  async function _officeNameMap(idOrIds) {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    if (!ids.length) return new Map();
+    const offs = await bubbleFindAll("Office", { constraints: [_scopeC("Kundföretag", ids)] }).catch(() => []);
     const m = new Map(); for (const o of (offs || [])) { const id = bubbleId(o); if (id) m.set(id, _str(o.Office_title || o.name || o.Name)); } return m;
   }
-  async function _contractNameMap(companyId) {
-    const cs = await bubbleFindAll("Contract", { constraints: [{ key: "kundföretag", constraint_type: "equals", value: companyId }] }).catch(() => []);
+  async function _contractNameMap(idOrIds) {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    if (!ids.length) return new Map();
+    const cs = await bubbleFindAll("Contract", { constraints: [_scopeC("kundföretag", ids)] }).catch(() => []);
     const m = new Map(); for (const c of (cs || [])) { const id = bubbleId(c); if (id) m.set(id, _str(c.contract_title || c["kategori"] || c.title)); } return m;
   }
   async function _supplierNameMap() {
@@ -2432,16 +2606,23 @@ export function registerCompaniesRoutes(app, deps) {
     const id = _str(req.params.id).trim();
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
     try {
+      const sc = await _scope(req, id);
+      const fullCC = await companyFullMap();
       const [raw, uc, om] = await Promise.all([
-        bubbleFindAll("Matter", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
+        bubbleFindAll("Matter", { constraints: [_scopeC("Kundföretag", sc.ids)] }).catch(() => []),
         _users().catch(() => null),
-        _officeNameMap(id),
+        _officeNameMap(sc.ids),
       ]);
-      const rows = (raw || []).map((r) => nMatter(r, uc && uc.map, om)).sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
-      return res.json({ ok: true, count: rows.length, rows });
+      const rows = (raw || []).map((r) => Object.assign(nMatter(r, uc && uc.map, om),
+          _bolagFalt(r["Kundföretag"], fullCC)))
+        .sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
+      return res.json(Object.assign({ ok: true, count: rows.length, rows }, _scopeMeta(sc)));
     } catch (e) {
       console.error("[/admin/companies/:id/matters]", e?.message);
-      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+      // ⚠️ `e.status` måste med — koncernlinsen kastar 400 company_not_in_group
+      // och 404 group_not_found. Hårdkodad 500 hade gjort ett begripligt
+      // felmeddelande till "något gick fel".
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 
@@ -2529,15 +2710,22 @@ export function registerCompaniesRoutes(app, deps) {
     const id = _str(req.params.id).trim();
     if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
     try {
+      const sc = await _scope(req, id);
+      const fullCC = await companyFullMap();
       const [raw, uc, om, cm, sm] = await Promise.all([
-        bubbleFindAll("QualityControl", { constraints: [{ key: "Kundföretag", constraint_type: "equals", value: id }] }).catch(() => []),
-        _users().catch(() => null), _officeNameMap(id), _contractNameMap(id), _supplierNameMap(),
+        bubbleFindAll("QualityControl", { constraints: [_scopeC("Kundföretag", sc.ids)] }).catch(() => []),
+        _users().catch(() => null), _officeNameMap(sc.ids), _contractNameMap(sc.ids), _supplierNameMap(),
       ]);
-      const rows = (raw || []).map((r) => nQC(r, uc && uc.map, om, cm, sm)).sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
-      return res.json({ ok: true, count: rows.length, rows });
+      const rows = (raw || []).map((r) => Object.assign(nQC(r, uc && uc.map, om, cm, sm),
+          _bolagFalt(r["Kundföretag"], fullCC)))
+        .sort((a, b) => (Date.parse(b.datum) || 0) - (Date.parse(a.datum) || 0));
+      return res.json(Object.assign({ ok: true, count: rows.length, rows }, _scopeMeta(sc)));
     } catch (e) {
       console.error("[/admin/companies/:id/qc]", e?.message);
-      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+      // ⚠️ `e.status` måste med — koncernlinsen kastar 400 company_not_in_group
+      // och 404 group_not_found. Hårdkodad 500 hade gjort ett begripligt
+      // felmeddelande till "något gick fel".
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 

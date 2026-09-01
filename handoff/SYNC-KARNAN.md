@@ -243,9 +243,124 @@ namngivna exempel.
   **1 778 olösta** (§8c.1). Redovisa det i vyn, göm det inte.
 
 ### Vad som INTE ingår
-Auto-klustring (beslut 2026-06-08 står). Bulk-tilldelning av grupp, gruppvy i
-företagslistan, gruppfilter i affärsvyn (`affar_api.js` har noll gruppmedvetenhet
-idag) — Fas 2–4.
+Auto-klustring (beslut 2026-06-08 står). Gruppfilter i affärsvyn (`affar_api.js`
+har noll gruppmedvetenhet idag) — Fas 3.
+
+---
+
+## 6c. KUNDGRUPPER — Fas 2: skapa, bulk-tilldela, koncernlins (2026-09-01)
+
+**Skrivningar (companies_api):**
+`POST /admin/companies/groups {namn}` — skapar. `slug` härleds, dubblett på
+normaliserat namn ger **409** (två "Vasakronan" som skiljer sig på ett mellanslag
+är två grupper ingen menade skapa). Namnet läses tillbaka.
+`POST /admin/companies/groups/:id/members {companies[], action:add|remove}` —
+skriver `ClientCompany.group`. Varje rad läses tillbaka och räknas; **207** vid
+delvis lyckat, **502** när allt föll. ⚠️ `ClientGroup.companies` skrivs ALDRIG —
+mocken kastar om koden försöker.
+
+**Koncernlinsen — `?group=<id>` på de BEFINTLIGA kortendpointerna**
+(`/chain`, `/coworkers`, `/matters`, `/qc`). Ingen parallell gruppendpoint: en kodväg.
+- ⚠️ **EN query per flik**, aldrig en per medlem. `_scopeC` ger `equals` för ett id
+  och `in` för flera. En loop över 20 bolag hade blivit N+1 ovanpå varje flik.
+  Medlems-id:na är gratis — de ligger i den förvärmda CC-cachen.
+- ⚠️ Linsen är alltid DET HÄR bolagets koncern → `400 company_not_in_group` annars.
+- ⚠️ Tak `GROUP_MAX = 100` med `trunkerad` i svaret.
+- ⚠️ `_officeNameMap`/`_contractNameMap`/`_companyActivityRows` tar nu lista.
+- ⚠️ **Flik-catcharna måste bära `e.status`** — hårdkodad 500 gjorde
+  `company_not_in_group` till "något gick fel". Rättat i alla fyra.
+
+**Frontend (`mira-foretag-lista.html`):** kryssrutekolumn + bulkbar i listan
+(markera → välj grupp eller `+ Ny grupp` → tilldela/ta bort), linsväxel i kortets
+hjälte (visas bara när bolaget har en grupp), bolagsbadge på varje rad i
+koncernläge, och Hem-fliken byts mot en **koncernöversikt** (medlemmar med
+omsättning per bolag, distinkta fastigheter, kundansvariga).
+
+### 🔴 Fyra fel som bara renderingen hittade
+1. **Linsklicket låg i LIST-grenen.** Klick-lyssnaren grenar på `STATE.view==="card"`
+   innan den når listans hanterare → klicket dog tyst. Flyttat till kortgrenen.
+2. **Bulk-kvittot försvann** när urvalet rensades vid framgång — baren renderas nu
+   även med tomt urval så länge det finns ett meddelande. Samma fel som i
+   Staff-blocket; en skrivning får aldrig sluta i tystnad.
+3. **Tre blandade baser i koncernläge:** hjältens nyckeltal, onboarding-strippen
+   och flikbadgarna är alla BOLAGETS siffror. Nyckeltalen märks nu
+   ("Nyckeltalen ovan avser X"), strippen och badgarna döljs. Inget tal är bättre
+   än ett fel tal.
+4. **Onboarding aggregerar inte** — "12 av 20 klara" vore rätt form men datan finns
+   inte, så strippen döljs hellre än att se ut att gälla koncernen.
+
+**Verifierat:** `companies_smoke.mjs` **513 gröna**. **Mutationstestat (20 till):**
+N+1 i st.f. `in` 4 · tappad bolagskolumn 2 · lins släpper främmande bolag 1 · ingen
+återläsning i bulk 1 · tyst fältdrop 1 · 200 vid delvis fel 1 · borttaget
+dubblettskydd 1 · okända företag skrivs 1 · cachen ej uppdaterad 2 · gruppmeta
+utelämnad 1 · lins glömd per hämtare 1 vardera · flikcachar ej tömda 1 · linsen
+bärs vidare 1 · badge alltid synlig 1 · kall oms som 0 kr 1 · colspan 1 · linsklick
+i fel gren 1 · de tre blandade baserna 1 vardera.
+
+**Renderat och klickat på riktigt** (lokal harness, stubbad fetch): bulkflödet,
+linsväxeln, bolagsbadgarna, koncernöversikten med alla tre varningarna. Inga
+konsolfel, ingen sidledes scroll.
+
+### 🎨 Designen lyft till affärsvyns manér (2026-09-01)
+`mira-foretag-lista.html` bar en egen navypalett (`#0f1830`/`#16223d`/`#df6f39`) och
+en sans-rubrik. Nu samma manér som `mira-affar-samlad.html`: DM Serif-rubrik med
+orange accent, versal underrubrik, `--base:#1e2235`-paletten, affärsvyns
+tabellmått (th 9,5 px versalt `--w40`, td 12 px, `1.5px` underkant) och
+blockformen `padding:22px 26px 40px;border-radius:14px`.
+
+**⭐ Gjort via VARIABELMAPPNING, inte via tusen regeländringar.** De gamla
+`--fl-*`-namnen finns kvar men pekar nu på affärsvyns variabler
+(`--fl-bg:var(--base)` osv). Varje befintlig regel — både `.fl-` och `.fk-` — bytte
+utseende utan att röras. De portade avtals-/abonnemangspanelernas egna variabelblock
+(`--acc:#db6923`) justerades på samma sätt, bara värden.
+
+⚠️ **`--fl-mut` är `rgba(255,255,255,.58)`, inte affärsvyns `--w40`.** Listan använder
+den även till brödtext i celler, och `.40` blir oläsligt i den storleken.
+Tabellrubrikerna sätts explicit till `--w40`, där affärsvyns värde hör hemma.
+
+**Uppdatera-knappen flyttad** intill "+ Nytt företag" i övre högra hörnet. Båda hade
+`margin-left:auto` och sköt isär varandra — nu ligger de i en `.fl-headact`-grupp.
+
+**Verifierat:** 5 designtester + 4 mutationer (gamla paletten tillbaka · DM Serif
+borttagen · knapparna separerade · fl-variablerna hårdkodade) — alla faller.
+
+### 🔴 button:hover-skyddet saknades HELT i blocket (skarpt 2026-09-01)
+Christian såg knapparna bli **helorange med osynlig text** vid hover. Det var inte
+testvyn — `dashboard_crm` har en global `button:hover{background:#F47B30
+!important;color:#F47B30 !important}` som varje `<button>` i ett inklistrat block
+ärver. **Specificitet hjälper inte**; enda motmedlet är `!important` på BÅDE
+`background` och `color`. Se [[reference-bubble-button-hover-important]].
+
+Blocket hade **noll** sådana regler — det är äldre än minnet (upptäckt 2026-08-26 i
+`mira-personer.html`). Fixen är en basregel för alla `<button>` i `.fl` plus
+explicita grupper som vinner på specificitet och därför måste bära `!important`
+själva: accent-outline · ifyllda (primära) · destruktiva.
+
+⚠️ **Åtta gamla hover-regler togs bort** — de satte bara `border-color` och var
+redundanta efter den nya blocken. Två regler för samma sak inbjuder någon att
+"fixa" hovern på fel ställe.
+
+⚠️ **`--fl-err` användes på tre ställen men var ALDRIG definierad** → CSS:en
+droppade deklarationen tyst, och felmeddelanden i foto-/logo-uppladdningen
+renderades grå i stället för röda. Nu definierad.
+
+**Verifierat empiriskt** med minnets egen metod: den fientliga regeln injicerad i
+harnessen och riktig hovring → `background rgb(46,51,80)` mot `color rgb(244,123,48)`
+på både `Uppdatera`, `+ Nytt företag` och `✎ Redigera`. Utan fixen är båda orange.
+9 statiska tester + 5 mutationer (basregel utan `!important` · bara background
+skyddad · primär/destruktiv/accent-grupp utan `!important`) — alla faller.
+
+### ⚠️ NITTON ANDRA BLOCK SAKNAR SAMMA SKYDD
+Genomsökning 2026-09-01: bara `mira-foretag-lista`, `mira-personer`,
+`mira-kommunikation-admin`, `mira-staff` och `mira-visitor` har skyddet. Utan det:
+`mira-affar-samlad` (50 knappar) · `mira-abonnemang-admin` (67) · `mira-offert-admin`
+(17) · `mira-produktion-ipad` (12) · `mira-motesbokning` (10) ·
+`mira-approval-archive` (10) · `mira-kalender` (8) · `mira-kund-dashboard-tjanster`
+(8) · m.fl.
+
+De syns bara på sidor som HAR den globala regeln — därför är felet osynligt tills
+ett block flyttas eller en sidas CSS ändras. **Eget spår**, inte en fix i förbifarten:
+varje block har egna knappklasser och måste testas per sida.
 
 ### 📊 Skarpt utgångsläge 2026-09-01
 5 682 företag · **87 grupperade** i 28 grupper · 0 döda gruppreferenser · 0 namnlösa ·

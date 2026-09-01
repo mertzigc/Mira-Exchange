@@ -9,28 +9,117 @@
   yes/no→"ja". Inline-edit + kort-redigering via PATCH. SWR (fl:-prefix).
 -->
 <style>
-  .fl{--fl-bg:#0f1830;--fl-card:#16223d;--fl-card2:#1b2947;--fl-line:#243456;--fl-txt:#e7ecf6;--fl-mut:#8ea0c2;--fl-acc:#df6f39;--fl-ok:#2ecc71;--fl-chip:#1c2b4d;
-      color:var(--fl-txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.4;}
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+  /* Koncern (Fas 2) */
+  .fl-selth,.fl-seltd{width:34px;text-align:center;padding-left:10px!important;padding-right:0!important}
+  .fl-selth input,.fl-seltd input{accent-color:var(--orange);width:15px;height:15px;cursor:pointer}
+  .fl-bulk{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:var(--orange-dim);border:1px solid var(--orange);
+           border-radius:11px;padding:11px 14px;margin:0 0 12px}
+  .fl-bulk b{font-size:13px}
+  .fl-bulk select,.fl-bulk input[type=text]{background:var(--input);color:var(--white);border:1px solid var(--border);
+           border-radius:9px;padding:7px 10px;font-size:12.5px;min-width:170px;font-family:var(--fb)}
+  .fl-bulk .msg{font-size:11.5px;color:var(--w70)}
+  .fl-bulk .msg.err{color:var(--red)} .fl-bulk .msg.ok{color:var(--green)}
+  .fk-lens{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:20px;overflow:hidden;margin-left:10px;vertical-align:middle}
+  .fk-lens span{padding:5px 13px;font-size:11.5px;font-weight:700;cursor:pointer;color:var(--w70);background:var(--input);white-space:nowrap}
+  .fk-lens span.on{background:var(--orange);color:#1c1206}
+  .fk-lensnote{font-size:11.5px;color:var(--w70);margin:8px 0 0}
+  .fk-cbadge{display:inline-block;font-size:10.5px;color:var(--w70);background:var(--w10);border-radius:5px;
+             padding:2px 7px;margin-top:3px;white-space:nowrap}
+  /* ── PALETT: samma som mira-affar-samlad.html ────────────────────────────
+     De gamla --fl-*-namnen är kvar men PEKAR på affärsvyns variabler. Då byter
+     varenda befintlig regel i blocket (både .fl- och .fk-) utseende utan att
+     röras — en ändring i stället för tusen. */
+  .fl{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--red:#E05A5A;--blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;
+    --fl-bg:var(--base);--fl-card:var(--panel);--fl-card2:var(--card);--fl-line:var(--border);
+    --fl-txt:var(--white);
+    /* ⚠️ .58 och inte affärsvyns --w40: företagslistan använder --fl-mut även till
+       brödtext (undertitlar i celler), och .40 blir oläsligt i den storleken.
+       Tabellrubrikerna sätts explicit till --w40 nedan, där affärsvyns värde hör hemma. */
+    --fl-mut:rgba(255,255,255,.58);
+    --fl-acc:var(--orange);--fl-ok:var(--green);--fl-chip:var(--input);
+    /* ⚠️ --fl-err användes på tre ställen men var ALDRIG definierad → CSS:en
+       droppade deklarationen tyst, och felmeddelanden i foto-/logo-uppladdningen
+       renderades grå i stället för röda. */
+    --fl-err:var(--red);
+    background:var(--base);color:var(--white);font-family:var(--fb);
+    font-size:13px;line-height:1.5;display:block;padding:22px 26px 40px;border-radius:14px;}
   .fl *{box-sizing:border-box;}
-  .fl-head{display:flex;align-items:center;gap:10px;margin:0 0 12px;}
-  .fl-head h1{font-size:20px;font-weight:700;margin:0;}
+
+  /* ═══ BUBBLES GLOBALA button:hover HAR !important ═══════════════════════════
+     dashboard_crm (och fler Bubble-sidor) har en global
+       button:hover{background:#F47B30 !important;color:#F47B30 !important}
+     som varje <button> i ett inklistrat block ärver → knappen blir HELORANGE med
+     osynlig text. **Specificitet hjälper inte** — !important slår alltid över
+     icke-!important, hur specifik selektorn än är. Enda motmedlet är att sätta
+     BÅDE background OCH color med !important. Se [[reference-bubble-button-hover-important]].
+
+     ⚠️ Endast <button>-element träffas. <div>/<span> som används som knappar
+     (flik-chips, subtabs, sorteringsknappar i span-form) är säkra.
+
+     Basen nedan ger alla knappar i blocket den neutrala sekundär-ytan. Knappar som
+     ska se annorlunda ut vid hover deklarerar om sig med klass-selektor och vinner
+     på specificitet — därför MÅSTE de också bära !important. Skarpt 2026-09-01. */
+  .fl button:hover,.fl button:focus{background:var(--fl-chip)!important;color:var(--fl-txt)!important;outline:none;}
+  .fl button:disabled:hover,.fl button:disabled:focus{background:var(--fl-chip)!important;color:var(--fl-txt)!important;}
+
+  /* Accent-outline: behåller ytan, orange text + ram. */
+  .fl .fl-refresh:hover,.fl .fl-refresh:focus,
+  .fl .fl-clear:hover,.fl .fl-clear:focus,
+  .fl .fl-newco:hover,.fl .fl-newco:focus,
+  .fl .fl-lclose:hover,.fl .fl-lclose:focus,
+  .fl .fk-back:hover,.fl .fk-back:focus,
+  .fl .fk-act:hover,.fl .fk-act:focus,
+  .fl .fk-cancel:hover,.fl .fk-cancel:focus,
+  .fl .fk-nsbtn:hover,.fl .fk-nsbtn:focus,
+  .fl .fk-editbtn:hover,.fl .fk-editbtn:focus,
+  .fl .fk-key:hover,.fl .fk-key:focus,
+  .fl .ab-rc-add:hover,.fl .ab-rc-add:focus{
+    background:var(--fl-chip)!important;color:var(--fl-acc)!important;border-color:var(--fl-acc);}
+
+  /* Ifyllda (primära) — orange yta, mörk text. Utan detta hade de blivit
+     orange-på-orange precis som alla andra. */
+  .fl .fk-act.pri:hover,.fl .fk-act.pri:focus,
+  .fl .fk-formbtns .save:hover,.fl .fk-formbtns .save:focus,
+  .fl .ab-btn.primary:hover,.fl .ab-btn.primary:focus,
+  .fl .btn-primary:hover,.fl .btn-primary:focus{
+    background:var(--fl-acc)!important;color:#1c1206!important;filter:brightness(1.07);}
+
+  /* Destruktiva — röd text/ram, aldrig orange. */
+  .fl .fk-roomdel:hover,.fl .fk-roomdel:focus,
+  .fl .ab-rc-rm:hover,.fl .ab-rc-rm:focus,
+  .fl .ab-btn.danger:hover,.fl .ab-btn.danger:focus,
+  .fl .fl-chiprm:hover,.fl .fl-chiprm:focus{
+    background:rgba(224,90,90,.14)!important;color:var(--red)!important;border-color:var(--red);}
+  .fl input[type=hidden]{display:none}
+  .fl-head{display:flex;align-items:baseline;gap:10px;margin:0 0 2px;flex-wrap:wrap;}
+  .fl-head h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px;font-weight:400;margin:0;}
+  .fl-head h1 span{color:var(--orange);}
   .fl-head .fl-count{color:var(--fl-mut);font-size:12px;font-weight:500;}
-  .fl-head .fl-refresh{margin-left:auto;background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12px;}
-  .fl-head .fl-refresh:hover{border-color:var(--fl-acc);}
+  /* Knapparna sitter ihop till höger. Tidigare hade BÅDA `margin-left:auto`, så de
+     sköt isär varandra och Uppdatera hamnade mitt i raden. */
+  .fl-headact{margin-left:auto;display:flex;gap:8px;align-items:center;}
+  .fl-sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 20px;}
+  .fl-refresh{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:9px;padding:7px 13px;cursor:pointer;font-size:12px;font-family:var(--fb);}
   .fl-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center;}
   .fl-filters .fl-search{flex:1;min-width:180px;background:var(--fl-card);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:8px 12px;font-size:13px;}
   .fl-filters .fl-sel{background:var(--fl-card);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:7px 10px;font-size:12px;max-width:190px;}
-  .fl-filters .fl-sel option{background:#16223d;color:#e7ecf6;}
+  .fl-filters .fl-sel option{background:var(--input);color:var(--white);}
   .fl-filters .fl-clear{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:12px;}
   .fl-filters .fl-clear:hover{color:var(--fl-txt);border-color:var(--fl-acc);}
   .fl-wrap{overflow-x:auto;border:1px solid var(--fl-line);border-radius:12px;background:var(--fl-card);}
   .fl-tbl{width:100%;border-collapse:collapse;min-width:1290px;}
-  .fl-tbl th{text-align:left;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;padding:11px 12px;border-bottom:1px solid var(--fl-line);white-space:nowrap;position:sticky;top:0;background:var(--fl-card);}
+  .fl-tbl th{text-align:left;font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--w40);font-weight:600;padding:8px 12px;border-bottom:1.5px solid var(--w10);white-space:nowrap;position:sticky;top:0;background:var(--fl-card);}
   .fl-tbl th.fl-sortable{cursor:pointer;user-select:none;}
   .fl-tbl th.fl-sortable:hover{color:var(--fl-txt);}
   .fl-tbl th .fl-arr{color:var(--fl-acc);margin-left:3px;}
   .fl-tbl th.fl-num,.fl-tbl td.fl-num{text-align:right;}
-  .fl-tbl td{padding:9px 12px;border-bottom:1px solid rgba(36,52,86,.5);vertical-align:middle;white-space:nowrap;}
+  .fl-tbl td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;}
   .fl-tbl tr:last-child td{border-bottom:none;}
   .fl-tbl tr:hover td{background:rgba(28,43,77,.4);}
   .fl-name{font-weight:600;color:var(--fl-txt);}
@@ -42,32 +131,31 @@
   .fl-tbl td.fl-ecell{cursor:pointer;}
   .fl-tbl td.fl-ecell:hover{background:rgba(223,111,57,.10);box-shadow:inset 0 0 0 1px var(--fl-line);}
   .fl-pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;}
-  .fl-pill.fl-active{background:rgba(46,204,113,.16);color:#5fe0a0;}
-  .fl-pill.fl-prospect{background:rgba(223,111,57,.16);color:#f0a070;}
+  .fl-pill.fl-active{background:rgba(76,175,125,.16);color:var(--green);}
+  .fl-pill.fl-prospect{background:var(--orange-dim);color:var(--orange);}
   .fl-pill.fl-plain{background:var(--fl-chip);color:var(--fl-mut);}
   .fl-star{color:var(--fl-acc);}
   .fl-ec{background:var(--fl-bg);border:1px solid var(--fl-acc);color:var(--fl-txt);border-radius:6px;padding:4px 6px;font-size:12px;max-width:180px;}
-  .fl-ec option{background:#16223d;color:#e7ecf6;}
+  .fl-ec option{background:var(--input);color:var(--white);}
   /* Listfält (Fastighet): chips + lagg-till-dropdown. OBS ingen display:inline-block
      pa sjalva <td> (bryter tabell-layouten) - allt ligger i en wrapper-div. */
   .fl-lst{display:flex;flex-wrap:wrap;gap:5px;align-items:center;max-width:340px;white-space:normal;}
   .fl-chip{display:inline-flex;align-items:center;gap:5px;background:var(--fl-chip);border:1px solid var(--fl-line);border-radius:20px;padding:2px 4px 2px 9px;font-size:11px;color:var(--fl-txt);}
   .fl-chip.ro{padding:2px 9px;}
   .fl-chiprm{cursor:pointer;color:var(--fl-mut);font-size:13px;line-height:1;padding:0 4px;border-radius:20px;}
-  .fl-chiprm:hover{color:#ff6b6b;background:rgba(255,107,107,.14);}
+  .fl-chiprm:hover{color:var(--red);background:rgba(224,90,90,.14);}
   .fl-lclose{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:11px;}
-  .fl-lclose:hover{color:var(--fl-txt);border-color:var(--fl-acc);}
   .fl-save{color:var(--fl-mut);font-size:10px;margin-left:6px;}
   .fl-save.fl-okc{color:var(--fl-ok);}
-  .fl-save.fl-errc{color:#ff6b6b;}
+  .fl-save.fl-errc{color:var(--red);}
   .fl-more{text-align:center;padding:14px;}
   .fl-more button{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:8px 20px;cursor:pointer;font-size:12px;}
   .fl-more button:hover{border-color:var(--fl-acc);}
   .fl-msg{padding:22px 6px;color:var(--fl-mut);text-align:center;}
-  .fl-err{padding:16px;color:#ff8080;}
+  .fl-err{padding:16px;color:var(--red);}
   .fl-loading{max-width:460px;margin:60px auto;text-align:center;}
   .fl-lbar{height:8px;border-radius:6px;background:var(--fl-line);overflow:hidden;}
-  .fl-lfill{height:100%;background:linear-gradient(90deg,var(--fl-acc),#f0a070);border-radius:6px;width:0;transition:width .5s cubic-bezier(.2,.8,.2,1);}
+  .fl-lfill{height:100%;background:linear-gradient(90deg,var(--fl-acc),var(--orange));border-radius:6px;width:0;transition:width .5s cubic-bezier(.2,.8,.2,1);}
   .fl-lpct{margin-top:10px;font-size:24px;font-weight:700;color:var(--fl-txt);font-variant-numeric:tabular-nums;}
   .fl-lmsg{margin-top:2px;font-size:13px;color:var(--fl-txt);}
   .fl-lsub{margin-top:8px;font-size:11.5px;color:var(--fl-mut);line-height:1.5;}
@@ -88,17 +176,16 @@
 
   /* ── KORT (kundkort-vy i samma block) ── */
   .fk-back{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:9px;padding:8px 15px;cursor:pointer;font-size:12.5px;font-weight:600;margin-bottom:14px;}
-  .fk-back:hover{border-color:var(--fl-acc);}
   .fk-card{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:16px;overflow:hidden;}
   .fk-hero{padding:20px 24px 0;}
   .fk-herotop{display:flex;align-items:flex-start;gap:16px;}
   .fk-hident{min-width:0;}
   .fk-herotop .fk-logo,.fk-herotop .fk-herologo{margin-left:auto;}
-  .fk-logo{width:56px;height:56px;border-radius:12px;background:var(--fl-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;flex-shrink:0;overflow:hidden;}
+  .fk-logo{width:56px;height:56px;border-radius:12px;background:var(--fl-acc);color:#1c1206;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;flex-shrink:0;overflow:hidden;}
   /* Riktig logga: bred pill med fast höjd + auto bredd → rektangulära wordmarks syns i full bredd */
   .fk-herologo{height:56px;max-width:300px;background:#fff;border-radius:12px;padding:8px 14px;box-sizing:border-box;display:flex;align-items:center;flex-shrink:0;}
   .fk-herologo img{height:100%;width:auto;max-width:100%;object-fit:contain;display:block;}
-  .fk-avatar{width:52px;height:52px;border-radius:50%;background:var(--fl-acc);color:#0f1830;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;flex-shrink:0;overflow:hidden;}
+  .fk-avatar{width:52px;height:52px;border-radius:50%;background:var(--fl-acc);color:#1c1206;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;flex-shrink:0;overflow:hidden;}
   .fk-avatar img{width:100%;height:100%;object-fit:cover;}
   .fk-photorow{display:flex;align-items:center;gap:14px;margin:2px 0 4px;}
   .fk-photorow .fk-avatar{width:64px;height:64px;font-size:22px;}
@@ -139,13 +226,12 @@
   .fk-roomname{flex:1;min-width:0;font-size:12.5px;color:var(--fl-txt);}
   .fk-roomsub{color:var(--fl-mut);font-size:11px;}
   .fk-roomdel{background:none;border:1px solid var(--fl-line);color:var(--fl-mut);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:600;flex-shrink:0;}
-  .fk-roomdel:hover{border-color:var(--fl-err);color:var(--fl-err);}
   .fk-roomempty{font-size:12px;color:var(--fl-mut);padding:4px 2px;}
   .fk-roomadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
   .fk-roomadd input,.fk-roomadd select{flex:1;min-width:120px;background:var(--fl-bg);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:8px 11px;font-size:12.5px;font-family:inherit;}
   .fk-roomadd input:focus,.fk-roomadd select:focus{outline:none;border-color:var(--fl-acc);}
   .fk-roomadd input::placeholder{color:var(--fl-mut);}
-  .fk-roomadd select option{background:#16223d;}
+  .fk-roomadd select option{background:var(--input);}
   .fk-drow{cursor:pointer;}
   .fk-drow:hover td{background:var(--fl-chip);}
   .fk-dimg{max-width:280px;max-height:200px;border-radius:10px;margin-top:12px;display:block;object-fit:cover;}
@@ -173,20 +259,19 @@
   .fk-chk{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fl-txt);padding-top:7px;cursor:pointer;}
   .fk-chk input{width:auto;}
   .fk-cancel{background:var(--fl-chip);color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12.5px;font-weight:600;margin-left:8px;}
-  .fk-cancel:hover{border-color:var(--fl-acc);}
   .fk-hname{font-size:24px;font-weight:700;line-height:1.1;}
   .fk-hmeta{color:var(--fl-mut);font-size:12px;margin-top:4px;display:flex;gap:14px;flex-wrap:wrap;}
   .fk-hmeta b{color:var(--fl-txt);font-weight:600;}
   .fk-pill{display:inline-block;padding:3px 11px;border-radius:20px;font-size:11px;font-weight:700;vertical-align:middle;margin-left:10px;}
-  .fk-pill.ok{background:rgba(46,204,113,.16);color:#5fe0a0;}
-  .fk-pill.prospect{background:rgba(223,111,57,.16);color:#f0a070;}
+  .fk-pill.ok{background:rgba(76,175,125,.16);color:var(--green);}
+  .fk-pill.prospect{background:var(--orange-dim);color:var(--orange);}
   .fk-pill.plain{background:var(--fl-chip);color:var(--fl-mut);}
   /* Vara bolag som fakturerar kunden. Aktiv = fylld, tidigare = nedtonad kontur. */
   .fk-bolag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;
      vertical-align:middle;margin-left:8px;white-space:nowrap;border:1px solid transparent;}
   .fk-bolag.b-staff{background:rgba(90,160,255,.18);color:#8fbcff;}
-  .fk-bolag.b-fe{background:rgba(223,111,57,.18);color:#f0a070;}
-  .fk-bolag.b-hk{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fk-bolag.b-fe{background:rgba(244,123,48,.18);color:var(--orange);}
+  .fk-bolag.b-hk{background:rgba(76,175,125,.16);color:var(--green);}
   .fk-bolag.b-group{background:rgba(170,130,255,.18);color:#c0a6ff;}
   .fk-bolag.b-other{background:var(--fl-chip);color:var(--fl-mut);}
   .fk-bolag.past{background:transparent;border-color:var(--fl-line);color:var(--fl-mut);font-weight:600;}
@@ -198,19 +283,18 @@
   .fk-ns > label{display:block;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--fl-mut);font-weight:600;margin:0 0 8px;}
   .fk-nsbtns{display:flex;flex-wrap:wrap;gap:8px;}
   .fk-nsbtn{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:7px 13px;cursor:pointer;font-size:12px;}
-  .fk-nsbtn:hover{border-color:var(--fl-acc);}
   .fk-nsbtn.on{background:var(--fl-acc);border-color:var(--fl-acc);color:#fff;font-weight:600;}
   .fk-nsbody{margin-top:12px;}
   .fk-nshint{color:var(--fl-mut);font-size:11.5px;margin-top:8px;}
-  .fk-nshint.err{color:#ff8080;}
+  .fk-nshint.err{color:var(--red);}
   .fk-live{display:flex;flex-direction:column;gap:8px;}
   .fk-liveitem{display:flex;align-items:center;gap:9px;background:var(--fl-card2);border:1px solid var(--fl-line);border-radius:9px;padding:9px 11px;font-size:12px;}
   .fk-liveitem .ic{font-size:13px;}
   .fk-liveitem .t{flex:1;min-width:0;color:var(--fl-txt);}
   .fk-liveitem .d{color:var(--fl-mut);font-size:11px;white-space:nowrap;}
   .fk-livenone{border:1px dashed var(--fl-line);border-radius:9px;padding:12px;color:var(--fl-mut);font-size:12px;text-align:center;}
-  .fk-livenone b{display:block;color:#f0a070;font-weight:700;margin-bottom:3px;}
-  .fk-liveerr{border:1px solid rgba(255,107,107,.4);border-radius:9px;padding:11px;color:#ff8080;font-size:11.5px;}
+  .fk-livenone b{display:block;color:var(--orange);font-weight:700;margin-bottom:3px;}
+  .fk-liveerr{border:1px solid rgba(224,90,90,.4);border-radius:9px;padding:11px;color:var(--red);font-size:11.5px;}
   .fl-newco{border-color:var(--fl-acc)!important;color:var(--fl-acc)!important;}
   .fl-nc{border:1px solid var(--fl-line);border-radius:11px;padding:14px 16px;margin:10px 0 0;background:var(--fl-card2);}
   .fl-nc h4{font-size:13px;font-weight:800;color:var(--fl-acc);margin:0 0 10px;}
@@ -220,9 +304,9 @@
   .fl-ncgrid input,.fl-ncgrid select{width:100%;background:rgba(0,0,0,.22);border:1px solid var(--fl-line);border-radius:7px;padding:8px 10px;color:var(--fl-txt);font-size:12.5px;font-family:inherit;}
   .fl-ncbtns{display:flex;align-items:center;gap:10px;margin-top:12px;}
   .fl-ncmsg{font-size:11.5px;color:var(--fl-mut);}
-  .fl-ncmsg.err{color:#ff8080;}
+  .fl-ncmsg.err{color:var(--red);}
   .fl-ncdup{border:1px solid rgba(240,160,112,.45);background:rgba(240,160,112,.08);border-radius:9px;padding:11px 12px;margin-top:11px;font-size:12px;}
-  .fl-ncdup b{display:block;color:#f0a070;margin-bottom:5px;}
+  .fl-ncdup b{display:block;color:var(--orange);margin-bottom:5px;}
   .fl-ncdup .fl-ncbtns{margin-top:9px;}
   /* "5 skal till bom" - stjarngradering som harleder affarens sannolikhet. */
   .fk-bom{grid-column:1 / -1;border:1px solid var(--fl-line);border-radius:10px;padding:12px 14px;margin:4px 0 2px;background:rgba(28,43,77,.35);}
@@ -237,7 +321,7 @@
   .fk-bomstar.on{color:var(--fl-acc);}
   .fk-bomstar:hover{color:var(--fl-acc);opacity:.85;}
   .fk-bommsg{display:block;margin-top:8px;font-size:11.5px;color:var(--fl-mut);}
-  .fk-bommsg.err{color:#ff8080;}
+  .fk-bommsg.err{color:var(--red);}
   .fk-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0 4px;}
   .fk-stat{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:12px;padding:12px 14px;}
   .fk-stat .l{color:var(--fl-mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:600;}
@@ -249,7 +333,7 @@
   .fk-tab:hover{color:var(--fl-txt);}
   .fk-tab.on{color:var(--fl-txt);background:var(--fl-card);border-color:var(--fl-line);}
   .fk-tab .cnt{background:var(--fl-chip);color:var(--fl-mut);border-radius:20px;font-size:10px;padding:1px 7px;font-weight:700;}
-  .fk-tab.on .cnt{background:var(--fl-acc);color:#0f1830;}
+  .fk-tab.on .cnt{background:var(--fl-acc);color:#1c1206;}
   .fk-body{padding:20px 24px 24px;}
   .fk-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;}
   .fk-panel{background:var(--fl-card);border:1px solid var(--fl-line);border-radius:14px;padding:16px 18px;}
@@ -265,14 +349,14 @@
   .fk-fld label{font-size:11px;color:var(--fl-mut);font-weight:600;}
   .fk-fld input,.fk-fld select,.fk-fld textarea{background:var(--fl-bg);border:1px solid var(--fl-line);color:var(--fl-txt);border-radius:8px;padding:7px 9px;font-size:12.5px;font-family:inherit;width:100%;}
   .fk-fld input:focus,.fk-fld select:focus,.fk-fld textarea:focus{outline:none;border-color:var(--fl-acc);}
-  .fk-fld select option{background:#16223d;}
+  .fk-fld select option{background:var(--input);}
   .fk-fld textarea{min-height:60px;resize:vertical;}
   .fk-fld .ro{color:var(--fl-mut);font-size:12.5px;padding:7px 0;}
   .fk-formbtns{grid-column:1 / -1;display:flex;gap:9px;margin-top:4px;align-items:center;}
-  .fk-formbtns .save{background:var(--fl-acc);color:#0f1830;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12.5px;font-weight:700;}
+  .fk-formbtns .save{background:var(--fl-acc);color:#1c1206;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;font-size:12.5px;font-weight:700;}
   .fk-formbtns .cancel{background:transparent;color:var(--fl-mut);border:1px solid var(--fl-line);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:12.5px;}
   .fk-formbtns .msg{font-size:12px;color:var(--fl-mut);}
-  .fk-formbtns .msg.err{color:#ff8080;}
+  .fk-formbtns .msg.err{color:var(--red);}
   /* Skapa affär av lead/aktivitet (2026-08-18) */
   .fk-cd{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:10px;padding:13px 15px;margin:6px 0;}
   .fk-cdhead{font-size:12px;font-weight:700;color:var(--fl-txt);margin-bottom:10px;word-break:normal;}
@@ -300,8 +384,7 @@
   .fk-rrow .rv{text-align:right;font-weight:700;}
   .fk-actions{display:flex;gap:9px;flex-wrap:wrap;}
   .fk-act{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:9px;padding:9px 15px;cursor:pointer;font-size:12px;font-weight:600;}
-  .fk-act.pri{background:var(--fl-acc);color:#0f1830;border-color:var(--fl-acc);}
-  .fk-act:hover{border-color:var(--fl-acc);}
+  .fk-act.pri{background:var(--fl-acc);color:#1c1206;border-color:var(--fl-acc);}
   .fk-sech{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--fl-mut);font-weight:700;margin:2px 0 10px;}
   .fk-placeholder{padding:44px;text-align:center;color:var(--fl-mut);background:var(--fl-card);border:1px dashed var(--fl-line);border-radius:14px;}
   .fk-placeholder b{color:var(--fl-txt);display:block;font-size:15px;margin-bottom:6px;}
@@ -313,24 +396,23 @@
   .fk-ltbl .num{text-align:right;white-space:nowrap;}
   .fk-src{font-size:10px;color:var(--fl-mut);margin-top:1px;}
   .fk-lpill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:600;}
-  .fk-lpill.ok{background:rgba(46,204,113,.16);color:#5fe0a0;}
-  .fk-lpill.open{background:rgba(223,111,57,.16);color:#f0a070;}
+  .fk-lpill.ok{background:rgba(76,175,125,.16);color:var(--green);}
+  .fk-lpill.open{background:var(--orange-dim);color:var(--orange);}
   .fk-lpill.wait{background:var(--fl-chip);color:var(--fl-mut);}
   .fk-lpill.red{background:rgba(226,75,74,.16);color:#f09595;}
   .fk-llink{color:var(--fl-acc);text-decoration:none;margin-left:8px;font-size:11px;}
   .fk-ubadge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10.5px;font-weight:600;white-space:nowrap;}
-  .fk-ubadge.on{background:rgba(46,204,113,.16);color:#5fe0a0;}
+  .fk-ubadge.on{background:rgba(76,175,125,.16);color:var(--green);}
   .fk-ubadge.off{background:var(--fl-chip);color:var(--fl-mut);}
   .fk-key{background:var(--fl-chip);color:var(--fl-txt);border:1px solid var(--fl-line);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:11.5px;white-space:nowrap;}
-  .fk-key:hover{border-color:var(--fl-acc);}
   .fk-key[disabled]{opacity:.45;cursor:default;}
   .fk-kmsg{font-size:11px;color:var(--fl-mut);margin-left:8px;}
   .fk-kmsg.ok{color:var(--fl-ok);}
-  .fk-kmsg.err{color:#ff8080;}
+  .fk-kmsg.err{color:var(--red);}
   .fk-subtabs{display:flex;gap:6px;margin-bottom:14px;}
   .fk-subtab{padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;color:var(--fl-mut);border:1px solid var(--fl-line);font-weight:600;}
   .fk-subtab:hover{color:var(--fl-txt);}
-  .fk-subtab.on{color:#0f1830;background:var(--fl-acc);border-color:var(--fl-acc);}
+  .fk-subtab.on{color:#1c1206;background:var(--fl-acc);border-color:var(--fl-acc);}
   @media(max-width:820px){.fk-grid{grid-template-columns:1fr;}.fk-strip{grid-template-columns:repeat(2,1fr);}.fk-form{grid-template-columns:1fr;}}
   /* ── Onboarding-strip (kundresans status: sign → leveransklar) ── */
   .fk-onb{margin:14px 0 4px;background:var(--fl-panel);border:1px solid var(--fl-line);border-radius:12px;padding:14px 16px;}
@@ -372,9 +454,9 @@
     width: 100%;
     --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
     --line:rgba(255,255,255,0.07); --line-strong:rgba(255,255,255,0.14);
-    --acc:#db6923; --acc-soft:rgba(219,105,35,0.15);
+    --acc:#F47B30; --acc-soft:rgba(244,123,48,0.15);
     --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55); --t3:rgba(255,255,255,0.35); --t4:rgba(255,255,255,0.20);
-    --ok:#10b981; --warn:#facc15; --err:#f87171; --info:#6366f1;
+    --ok:#4CAF7D; --warn:#E0A060; --err:#E05A5A; --info:#5B8DEF;
     color: var(--t1);
     background: var(--bg-deep);
     padding: 22px 24px;
@@ -396,7 +478,7 @@
   .ab-btn { padding:9px 15px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
     font-family:inherit; transition:all 0.15s; border:none; line-height:1; }
   .ab-btn.primary { background:var(--acc); color:#1c1206; font-weight:700; }
-  .ab-btn.primary:hover { background:#ff8c45; }
+  .ab-btn.primary:hover { background:#ff9459; }
   .ab-btn.ghost { background:transparent; border:0.5px solid var(--line-strong); color:var(--t1); }
   .ab-btn.ghost:hover { border-color:var(--t2); }
   .ab-btn.danger { background:rgba(248,113,113,0.10); border:0.5px solid rgba(248,113,113,0.35); color:var(--err); }
@@ -628,7 +710,7 @@
   .ab-rc-hint { font-size:11px; color:var(--t3); margin-bottom:8px; line-height:1.4; }
 </style>
 <style>
-  :root{--acc-strong:#ff8c45;--ok-soft:rgba(16,185,129,0.15);--info-soft:rgba(99,102,241,0.15);}
+  :root{--acc-strong:#ff9459;--ok-soft:rgba(76,175,125,0.15);--info-soft:rgba(91,141,239,0.15);}
   .aa-wiz-mask {
     display: none; position: fixed; inset: 0;
     background: rgba(10,12,22,0.82); z-index: 2147483000; padding: 20px;
@@ -671,12 +753,12 @@
     padding: 0 20px;
     --bg:#262b42; --bg-deep:#1e2235; --bg-row:#2d3251;
     --line:rgba(255,255,255,0.07); --line-strong:rgba(255,255,255,0.14);
-    --acc:#db6923; --acc-soft:rgba(219,105,35,0.15); --acc-strong:#ff8c45;
+    --acc:#F47B30; --acc-soft:rgba(244,123,48,0.15); --acc-strong:#ff9459;
     --t1:rgba(255,255,255,0.85); --t2:rgba(255,255,255,0.55);
     --t3:rgba(255,255,255,0.35); --t4:rgba(255,255,255,0.20);
-    --ok:#10b981; --ok-soft:rgba(16,185,129,0.15);
-    --warn:#facc15; --warn-soft:rgba(250,204,21,0.15);
-    --err:#f87171; --info:#6366f1; --info-soft:rgba(99,102,241,0.15);
+    --ok:#4CAF7D; --ok-soft:rgba(76,175,125,0.15);
+    --warn:#E0A060; --warn-soft:rgba(224,160,96,0.15);
+    --err:#E05A5A; --info:#5B8DEF; --info-soft:rgba(91,141,239,0.15);
     color: var(--t1);
   }
   .wt-wrap input, .wt-wrap button, .wt-wrap select, .wt-wrap textarea {
@@ -1272,11 +1354,14 @@
 
   <div data-fl="listview">
     <div class="fl-head">
-      <h1>Företag</h1>
+      <h1>Företag<span>.</span></h1>
       <span class="fl-count" data-fl="count"></span>
-      <button class="fl-refresh" data-fl="refresh">↻ Uppdatera</button>
-      <button class="fl-refresh fl-newco" data-fl="newco">+ Nytt företag</button>
+      <span class="fl-headact">
+        <button class="fl-refresh" data-fl="refresh">↻ Uppdatera</button>
+        <button class="fl-refresh fl-newco" data-fl="newco">+ Nytt företag</button>
+      </span>
     </div>
+    <div class="fl-sub">Kunder · koncerner · kundkort</div>
     <div data-fl="newcopanel"></div>
     <div class="fl-filters" data-fl="filters"></div>
     <div data-fl="body"><div class="fl-msg">Laddar…</div></div>
@@ -2029,6 +2114,10 @@
               revenue_ready:true, bolag_ready:true, revTries:0, listDirty:false, newCo:false,
               touch_ready:true, touchTries:0,
               f:{ansvarig:"", kundstatus:"", lojalitet:"", potential:"", bransch:"", region:"", fastighet:"", bolag:""},
+              // Koncern: `sel` = markerade rader för bulk-tilldelning, `lens` = kortets
+              // koncernläge. Linsen är en LINS, inte en plats — samma kort, bredare filter.
+              sel:[], bulkGroup:"", bulkNy:false, bulkMsg:null, bulkBusy:false,
+              lens:false, gruppData:null,
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, todoNew:false, nastaDirty:false, nsWarn:"", cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null,
@@ -2289,11 +2378,88 @@
     return '<td class="'+cls.trim()+'"'+attrs+'>'+inner+'</td>';
   }
   function rowInner(r){ var h=""; for(var i=0;i<COLS.length;i++) h+=tdOf(COLS[i], r); return h; }
+  // ── Bulk-tilldelning av kundgrupp ───────────────────────────────────────
+  // Listan är där man SER mönstret ("de här fem är alla Scandic"); kortet är där
+  // man fixar ett enskilt bolag. Därför ligger massverktyget här.
+  function bulkBar(){
+    // ⚠️ Kvittot måste överleva att urvalet rensas. Renderade vi baren bara när
+    // något är markerat försvann "5 ändrade" i samma andetag som den lyckades —
+    // en skrivning får aldrig sluta i tystnad.
+    if(!STATE.sel.length){
+      if(!STATE.bulkMsg) return "";
+      return '<div class="fl-bulk"><span class="msg '+esc(STATE.bulkMsg.k)+'">'+esc(STATE.bulkMsg.t)+'</span>'+
+             '<button data-fl="bulkclear">Stäng</button></div>';
+    }
+    var gs=(STATE.meta&&STATE.meta.groups)||[];
+    var opts='<option value="">Välj kundgrupp…</option>';
+    for(var i=0;i<gs.length;i++) opts+='<option value="'+esc(gs[i].id)+'"'+(STATE.bulkGroup===gs[i].id?" selected":"")+'>'+esc(gs[i].name)+'</option>';
+    var h='<div class="fl-bulk"><b>'+STATE.sel.length+' valda</b>';
+    if(STATE.bulkNy){
+      h+='<input type="text" data-fl="bulknamn" placeholder="Namn på ny kundgrupp…">'+
+         '<button data-fl="bulkskapa"'+(STATE.bulkBusy?" disabled":"")+'>'+(STATE.bulkBusy?"Skapar…":"Skapa och tilldela")+'</button>'+
+         '<button data-fl="bulkavbryt">Avbryt</button>';
+    } else {
+      h+='<select data-fl="bulkgroup">'+opts+'</select>'+
+         '<button data-fl="bulkadd"'+((!STATE.bulkGroup||STATE.bulkBusy)?" disabled":"")+'>'+(STATE.bulkBusy?"Sparar…":"Lägg till i grupp")+'</button>'+
+         '<button data-fl="bulkny">+ Ny grupp</button>'+
+         '<button data-fl="bulkremove"'+(STATE.bulkBusy?" disabled":"")+'>Ta bort ur grupp</button>';
+    }
+    h+='<button data-fl="bulkclear">Rensa val</button>';
+    if(STATE.bulkMsg) h+='<span class="msg '+esc(STATE.bulkMsg.k)+'">'+esc(STATE.bulkMsg.t)+'</span>';
+    return h+'</div>';
+  }
+  function bulkKlar(j, fallback){
+    // ⚠️ 207 = delvis lyckat. Det får aldrig läsas som framgång — svaret namnger
+    // vilka rader som föll och varför.
+    if(!j) { STATE.bulkMsg={k:"err",t:fallback||"Nätverksfel."}; return; }
+    if(j.ok===true){ STATE.bulkMsg={k:"ok",t:j.andrade+" ändrade"+(j.oforandrade?", "+j.oforandrade+" oförändrade":"")+"."}; STATE.sel=[]; }
+    else if(j.misslyckade && j.misslyckade.length){
+      var namn=j.misslyckade.map(function(x){ return x.namn||x.id; }).slice(0,3).join(", ");
+      STATE.bulkMsg={k:"err",t:(j.andrade||0)+" ändrade, "+j.misslyckade.length+" misslyckades: "+namn};
+    }
+    else STATE.bulkMsg={k:"err",t:felText(j)};
+  }
+  // Hämtar om det den öppna fliken behöver efter ett linsbyte.
+  function fetchTabData(){
+    var tab=STATE.cardTab;
+    if(tab==="hem" && STATE.lens){ fetchGrupp(); return; }
+    if(tab==="personer"){ fetchCoworkers(); return; }
+    if(tab==="drift"){ fetchMatters(); return; }
+    if(CHAIN_TABS[tab] || tab==="historik"){ fetchChain(tab); return; }
+    if(tab==="avtal"){ fetchChain(STATE.avtalSub||"avtal"); return; }
+  }
+  function fetchGrupp(){
+    var gid=STATE.card&&STATE.card.company?STATE.card.company.group_id:"";
+    if(!gid || STATE.gruppData==="loading" || STATE.gruppData) return;
+    STATE.gruppData="loading";
+    api("/admin/companies/groups/"+encodeURIComponent(gid)).then(function(j){
+      STATE.gruppData=(j&&j.ok)?j:{_fel:(j&&j.error)||"okänt fel"};
+      if(STATE.view==="card"&&STATE.cardTab==="hem") renderCard();
+    }).catch(function(){ STATE.gruppData={_fel:"Nätverksfel."}; if(STATE.view==="card"&&STATE.cardTab==="hem") renderCard(); });
+  }
+  function bulkSkriv(gid, action){
+    STATE.bulkBusy=true; STATE.bulkMsg=null; renderTable();
+    apiPost("/admin/companies/groups/"+encodeURIComponent(gid)+"/members",{companies:STATE.sel.slice(),action:action})
+      .then(function(j){ STATE.bulkBusy=false; bulkKlar(j); reload(); })
+      .catch(function(){ STATE.bulkBusy=false; STATE.bulkMsg={k:"err",t:"Nätverksfel."}; renderTable(); });
+  }
+  function felText(j){
+    if(!j) return "okänt fel";
+    if(j.error==="unknown_company") return "Okänt företag i urvalet.";
+    if(j.error==="group_exists") return "Gruppen finns redan: "+(j.namn||"");
+    if(j.error==="group_not_found") return "Kundgruppen finns inte längre.";
+    if(j.error==="namn_ej_skrivet") return "Bubble sparade inte namnet. "+(j.hint||"");
+    return j.error||"okänt fel";
+  }
   function renderTable(){
     syncSortBar();
-    var head=""; for(var i=0;i<COLS.length;i++) head+=th(COLS[i]);
+    var allaValda=STATE.rows.length>0 && STATE.rows.every(function(r){ return STATE.sel.indexOf(r.id)>-1; });
+    var head='<th class="fl-selth"><input type="checkbox" data-fl="selall"'+(allaValda?" checked":"")+'></th>';
+    for(var i=0;i<COLS.length;i++) head+=th(COLS[i]);
     var body="";
-    for(var j=0;j<STATE.rows.length;j++){ var r=STATE.rows[j]; body+='<tr data-id="'+esc(r.id)+'">'+rowInner(r)+'</tr>'; }
+    for(var j=0;j<STATE.rows.length;j++){ var r=STATE.rows[j];
+      body+='<tr data-id="'+esc(r.id)+'"><td class="fl-seltd"><input type="checkbox" data-fl="sel" data-id="'+esc(r.id)+'"'+
+            (STATE.sel.indexOf(r.id)>-1?" checked":"")+'></td>'+rowInner(r)+'</tr>'; }
     var more="";
     if(STATE.rows.length<STATE.total) more='<div class="fl-more"><button data-fl="more">Visa fler ('+STATE.rows.length+'/'+STATE.total+')</button></div>';
     var banner=STATE.revenue_ready?"":'<div class="fl-revbanner"><span class="fl-dot"></span>Beräknar omsättning ur fakturahistoriken — kolumnerna fylls i om en stund.</div>';
@@ -2304,8 +2470,8 @@
     var emptyMsg=(STATE.f.bolag && !STATE.bolag_ready)
       ? 'Beräknar vilka bolag som fakturerar — filtret svarar när fakturascanningen är klar.'
       : 'Inga företag matchar.';
-    var html='<div class="fl-wrap"><table class="fl-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+
-             (body||'<tr><td colspan="'+COLS.length+'"><div class="fl-msg">'+esc(emptyMsg)+'</div></td></tr>')+
+    var html=bulkBar()+'<div class="fl-wrap"><table class="fl-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+
+             (body||'<tr><td colspan="'+(COLS.length+1)+'"><div class="fl-msg">'+esc(emptyMsg)+'</div></td></tr>')+
              '</tbody></table></div>'+banner+more;
     $("body").innerHTML=html;
     $("count").textContent=STATE.total+" företag";
@@ -2536,6 +2702,16 @@
     return h;
   }
 
+  // ── Koncernlinsen ────────────────────────────────────────────────────────
+  // Visas bara när bolaget FAKTISKT ingår i en koncern. Ett bolag utan grupp ska
+  // inte ha en växel som inte gör något.
+  function lensToggle(){
+    var c=STATE.card&&STATE.card.company; if(!c||!c.group_id) return "";
+    return '<span class="fk-lens">'+
+      '<span class="'+(STATE.lens?"":"on")+'" data-fk="lens" data-on="0">Bolaget</span>'+
+      '<span class="'+(STATE.lens?"on":"")+'" data-fk="lens" data-on="1">Koncernen'+
+        (c.group?" · "+esc(c.group):"")+'</span></span>';
+  }
   function cardHero(){
     var c=STATE.card.company, k=STATE.card.kpi, ready=STATE.card.revenue_ready;
     var logo=c.logotyp
@@ -2549,7 +2725,7 @@
     if(c.potential) meta.push('Potential <b>'+esc(c.potential)+'</b>');
     var omsNow=ready?numc(k.omsattning_now):'<span class="fk-calc">beräknar…</span>';
     return '<div class="fk-hero"><div class="fk-herotop">'+
-      '<div class="fk-hident"><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+'</div>'+
+      '<div class="fk-hident"><div class="fk-hname">'+esc(c.name||"—")+(c.kundstatus?' <span class="fk-pill '+statusCls(c.kundstatus)+'">'+esc(c.kundstatus)+'</span>':'')+lensToggle()+'</div>'+
       '<div class="fk-bolagrow"><span class="l">Faktureras av</span>'+bolagBadges(c, ready)+'</div>'+
       '<div class="fk-hmeta">'+meta.map(function(m){return '<span>'+m+'</span>';}).join("")+'</div></div>'+
       logo+'</div>'+
@@ -2559,12 +2735,19 @@
         '<div class="fk-stat"><div class="l">Öppna ärenden</div><div class="v">'+(STATE.card.counts.drift==null?"—":numc(STATE.card.counts.drift))+'</div></div>'+
         '<div class="fk-stat"><div class="l">Omsättning '+k.year+'</div><div class="v">'+omsNow+'</div></div>'+
         '<div class="fk-stat"><div class="l">NKI</div><div class="v">'+(k.nki==null?"—":numc(k.nki))+'</div></div>'+
-      '</div></div>';
+      '</div>'+
+      // ⚠️ BLANDADE BASER. Nyckeltalen i strippen är BOLAGETS; i koncernläge visar
+      // flikarna nedanför koncernens. Två tal av olika sort utan etikett är hur en
+      // siffra blir ett beslutsunderlag den inte förtjänar att vara.
+      (STATE.lens?'<div class="fk-lensnote">Nyckeltalen ovan avser '+esc(c.name)+' — flikarna nedan visar hela koncernen.</div>':'')+
+      '</div>';
   }
   function cardTabs(){
     var cn=STATE.card.counts, h='<div class="fk-tabs">';
     for(var i=0;i<TABS.length;i++){ var t=TABS[i], badge="", cv=cn[t.k];
-      if(cv!=null && cv!==undefined) badge=' <span class="cnt">'+numc(cv)+'</span>';
+      // ⚠️ Räknarna kommer från kortets bolag. I koncernläge hade "86" stått bredvid
+      // en flik som visar koncernens fakturor — inget tal är bättre än ett fel tal.
+      if(cv!=null && cv!==undefined && !STATE.lens) badge=' <span class="cnt">'+numc(cv)+'</span>';
       h+='<div class="fk-tab'+(STATE.cardTab===t.k?" on":"")+'" data-fk="tab" data-t="'+t.k+'">'+esc(t.lbl)+badge+'</div>';
     }
     return h+'</div>';
@@ -2858,8 +3041,14 @@
     for(var i=0;i<arr.length;i++){ if(arr[i].id===sourceId){ arr[i].deal_id=dealId||"1"; break; } }
   }
 
+  // ⚠️ I koncernläge MÅSTE varje rad säga vilket bolag den kom från — annars är
+  // aggregeringen en gröt. Visas bara när linsen är på; i enbolagsläge är det brus.
+  function cBadge(r){
+    if(!STATE.lens || !r || !r.company) return "";
+    return '<div class="fk-cbadge">'+esc(r.company)+'</div>';
+  }
   function chainBody(tab, rows){
-    if(!rows.length) return '<div class="fk-body"><div class="fk-placeholder"><b>Inga '+esc(tabLbl(tab).toLowerCase())+'</b>Inget kopplat till detta företag ännu.</div></div>';
+    if(!rows.length) return '<div class="fk-body"><div class="fk-placeholder"><b>Inga '+esc(tabLbl(tab).toLowerCase())+'</b>Inget kopplat till '+(STATE.lens?"någon av koncernens bolag":"detta företag")+' ännu.</div></div>';
     var isLead=(tab==="leads");   // bara leads får affärs-kolumnen
     var cols=isLead?5:4;
     var body="";
@@ -2872,7 +3061,7 @@
           : '<td><button class="fk-editbtn" data-fk="cdopen" data-cdtype="lead" data-cdid="'+esc(r.id)+'" data-cdtitel="'+esc(r.title||"")+'" data-cdbelopp="'+esc(r.amount==null?"":r.amount)+'">+ Skapa affär</button></td>';
       }
       body+='<tr><td>'+esc(r.date||"—")+'</td>'+
-        '<td>'+esc(r.title||"—")+'<div class="fk-src">'+esc(SRC_ETIKETT[r.source]||r.source||"Mira")+'</div></td>'+
+        '<td>'+esc(r.title||"—")+'<div class="fk-src">'+esc(SRC_ETIKETT[r.source]||r.source||"Mira")+'</div>'+cBadge(r)+'</td>'+
         '<td class="num">'+(r.amount==null?"—":krc(r.amount))+'</td>'+
         '<td><span class="fk-lpill '+esc(r.status_cls||"wait")+'">'+esc(r.status||"—")+'</span>'+pdf+'</td>'+act+'</tr>';
       if(isLead && STATE.dealFor && STATE.dealFor.type==="lead" && STATE.dealFor.id===r.id){
@@ -3033,10 +3222,17 @@
   }
   // Visas denna chain-typ just nu? (direkt flik ELLER Avtal-underflik)
   function chainVisible(tab){ return STATE.view==="card" && (STATE.cardTab===tab || (STATE.cardTab==="avtal" && (STATE.avtalSub||"avtal")===tab)); }
+  // ⚠️ Koncernlinsen läggs på ALLA flikhämtningar. Missas en visar den fliken ett
+  // bolags rader medan resten visar koncernens — och ingen skulle se skillnaden.
+  function lensQ(sep){
+    if(!STATE.lens) return "";
+    var gid=STATE.card&&STATE.card.company?STATE.card.company.group_id:"";
+    return gid?((sep||"?")+"group="+encodeURIComponent(gid)):"";
+  }
   function fetchChain(tab){
     if(STATE.chain[tab]==="loading" || (STATE.chain[tab] && STATE.chain[tab].length!==undefined)) return;
     STATE.chain[tab]="loading";
-    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/chain?type="+encodeURIComponent(tab)).then(function(j){
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/chain?type="+encodeURIComponent(tab)+lensQ("&")).then(function(j){
       STATE.chain[tab]=(j&&j.ok&&j.rows)?j.rows:[];
       if(chainVisible(tab)) renderCard();
     }).catch(function(){ STATE.chain[tab]=[]; if(chainVisible(tab)) renderCard(); });
@@ -3045,7 +3241,7 @@
   function fetchCoworkers(){
     if(STATE.coworkers==="loading" || (STATE.coworkers && STATE.coworkers.length!==undefined)) return;
     STATE.coworkers="loading";
-    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/coworkers").then(function(j){
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/coworkers"+lensQ("?")).then(function(j){
       STATE.coworkers=(j&&j.ok&&j.rows)?j.rows:[];
       STATE.coworkerOffices=(j&&j.offices)||[]; STATE.coworkerDepartments=(j&&j.departments)||[]; STATE.coworkerRoles=(j&&j.roles)||[];
       if(STATE.view==="card"&&STATE.cardTab==="personer") renderCard();
@@ -3493,8 +3689,52 @@
       else { var e=(j&&j.error)==="not_configured"?"ej konfigurerat än":((j&&(j.hint||j.error))||"fel"); if(msg){ msg.textContent="✗ "+e; msg.className="fk-kmsg err"; } }
     }).catch(function(){ btn.disabled=false; if(msg){ msg.textContent="✗ nätverksfel"; msg.className="fk-kmsg err"; } });
   }
+  // ── Koncernöversikten (Hem-fliken i koncernläge) ─────────────────────────
+  // ⚠️ Hem AGGREGERAR INTE. Orgnr, adress och NKI finns inte på koncernnivå — en
+  // summerad Hem-flik hade antingen varit tom eller ljugit. I stället visas
+  // medlemmarna, och skillnader mellan dem (olika kundansvariga) lyfts fram: det
+  // är ett samordningsproblem som ingen ser idag.
+  function gruppHem(){
+    var d=STATE.gruppData;
+    if(d===null||d==="loading"){ fetchGrupp(); return '<div class="fk-body"><div class="fl-msg">Laddar koncernen…</div></div>'; }
+    if(d._fel) return '<div class="fk-body"><div class="fl-err">Kunde inte läsa koncernen: '+esc(d._fel)+'</div></div>';
+    var g=d.grupp, sum=d.summa, med=d.medlemmar||[];
+    // ⚠️ Kall faktura-cache ger null, aldrig 0 kr.
+    var oms=d.revenue_ready?krc(sum.oms_now):'<span class="fk-calc">beräknar…</span>';
+    var omsP=d.revenue_ready?krc(sum.oms_prev):'—';
+    var ansv={}, nAnsv=0;
+    for(var i=0;i<med.length;i++){ var a=med[i].ansvarig||"(ingen)"; if(!ansv[a]){ ansv[a]=0; nAnsv++; } ansv[a]++; }
+    var rows="";
+    for(var j=0;j<med.length;j++){ var m=med[j];
+      rows+='<tr><td>'+esc(m.name||"—")+(m.orgnr?'<div class="fk-src">'+esc(m.orgnr)+'</div>':'')+'</td>'+
+        '<td>'+esc(m.ansvarig||"—")+'</td>'+
+        '<td class="num">'+(d.revenue_ready?(m.oms_now==null?"—":krc(m.oms_now)):"…")+'</td>'+
+        '<td class="num">'+(d.revenue_ready?(m.oms_prev==null?"—":krc(m.oms_prev)):"…")+'</td>'+
+        '<td><button class="fk-editbtn" data-fk="gopen" data-id="'+esc(m.id)+'">Öppna</button></td></tr>';
+    }
+    var varningar="";
+    // ⚠️ Summorna bygger på linked_company, som är ofullständigt. Underskattning
+    // ska stå i vyn — annars blir talet något någon fattar beslut på.
+    if(sum.oms_okand) varningar+='<div class="fk-lensnote">⚠️ '+sum.oms_okand+' av '+med.length+
+      ' bolag saknar känd omsättning och räknas INTE in i summan.</div>';
+    varningar+='<div class="fk-lensnote">Summorna bygger på fakturornas kundkoppling, som ännu är ofullständig — talet kan vara i underkant.</div>';
+    if(nAnsv>1) varningar+='<div class="fk-lensnote">⚠️ '+nAnsv+' olika kundansvariga i koncernen.</div>';
+    if(d.spegling && d.spegling.atgard_kravs) varningar+='<div class="fk-lensnote">⚠️ '+
+      d.spegling.bara_i_companies.length+' bolag ligger bara i Bubbles companies-lista och är OSYNLIGA här. Sätt Kundgrupp på dem i företagslistan.</div>';
+    return '<div class="fk-body">'+
+      '<div class="fk-strip" style="margin-bottom:14px">'+
+        '<div class="fk-stat acc"><div class="l">Bolag i koncernen</div><div class="v">'+numc(sum.medlemmar)+'</div></div>'+
+        '<div class="fk-stat"><div class="l">Omsättning '+d.ar.now+'</div><div class="v">'+oms+'</div></div>'+
+        '<div class="fk-stat"><div class="l">Omsättning '+d.ar.prev+'</div><div class="v">'+omsP+'</div></div>'+
+        '<div class="fk-stat"><div class="l">Fastigheter</div><div class="v">'+numc(sum.fastigheter)+'</div></div>'+
+      '</div>'+
+      '<div class="fk-panel" style="padding:4px 12px 8px"><table class="fk-ltbl">'+
+      '<thead><tr><th>Bolag</th><th>Kundansvarig</th><th class="num">Oms '+d.ar.now+'</th><th class="num">Oms '+d.ar.prev+'</th><th></th></tr></thead>'+
+      '<tbody>'+rows+'</tbody></table></div>'+varningar+'</div>';
+  }
   function cardBody(){
     if(STATE.cardTab==="hem"){
+      if(STATE.lens) return gruppHem();
       var left=STATE.cardEditing?cardKunddataEdit():cardKunddataRead();
       return '<div class="fk-body"><div class="fk-grid">'+left+cardHemRight()+'</div></div>';
     }
@@ -3625,7 +3865,7 @@
   function fetchMatters(){
     if(STATE.matters==="loading"||(STATE.matters&&STATE.matters.length!==undefined)) return;
     STATE.matters="loading";
-    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/matters").then(function(j){
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/matters"+lensQ("?")).then(function(j){
       STATE.matters=(j&&j.ok&&j.rows)?j.rows:[];
       if(STATE.view==="card"&&STATE.cardTab==="drift"&&!STATE.matterOpen&&STATE.driftSub!=="kvalitet") renderCard();
     }).catch(function(){ STATE.matters=[]; if(STATE.cardTab==="drift") renderCard(); });
@@ -3633,7 +3873,7 @@
   function fetchQC(){
     if(STATE.qcList==="loading"||(STATE.qcList&&STATE.qcList.length!==undefined)) return;
     STATE.qcList="loading";
-    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/qc").then(function(j){
+    api("/admin/companies/"+encodeURIComponent(STATE.cardId)+"/qc"+lensQ("?")).then(function(j){
       STATE.qcList=(j&&j.ok&&j.rows)?j.rows:[];
       if(STATE.view==="card"&&STATE.cardTab==="drift"&&!STATE.qcOpen&&STATE.driftSub==="kvalitet") renderCard();
     }).catch(function(){ STATE.qcList=[]; if(STATE.cardTab==="drift") renderCard(); });
@@ -3940,7 +4180,10 @@
   function renderCard(){
     stashPanes();
     if(!STATE.card){ $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-msg">Laddar kundkort…</div>'; return; }
-    var onb=(STATE.cardTab==="hem")?onbStrip():"";   // strippen bara på Hem-fliken (info är redundant på övriga)
+    // ⚠️ Onboarding är PER BOLAG och aggregerar inte ("12 av 20 klara" vore rätt
+    // form, men den datan finns inte). Hellre ingen strip än en som ser ut att
+    // gälla koncernen.
+    var onb=(STATE.cardTab==="hem" && !STATE.lens)?onbStrip():"";
     $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button>'+
       '<div class="fk-card">'+cardHero()+onb+cardTabs()+cardBody()+'</div>';
     mountPanes();   // PORTAT 2026-08-17
@@ -3958,6 +4201,9 @@
     STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardFast=null; STATE.todoNew=false; STATE.nastaDirty=false; STATE.nsWarn=""; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     STATE.onboarding=null;
+    // ⚠️ Linsen är per kort. Bär man den vidare till nästa bolag visar kortet en
+    // koncern som det bolaget kanske inte ens tillhör.
+    STATE.lens=false; STATE.gruppData=null;
     var cached=cacheGet(cardKey(id)); STATE.card=cached||null;
     $("listview").style.display="none"; $("cardview").style.display="";
     renderCard();
@@ -4009,6 +4255,22 @@
     // KORT-vy
     if(STATE.view==="card"){
       if(t.closest && t.closest('[data-fk="back"]')){ closeCard(); return; }
+      // ── Koncernlinsen ──
+      // ⚠️ MÅSTE ligga i KORT-grenen. Lyssnaren grenar på STATE.view innan den når
+      // listans hanterare, så en lins-branch där nere hade aldrig körts.
+      var gop=t.closest?t.closest('[data-fk="gopen"]'):null;
+      if(gop){ STATE.lens=false; openCard(gop.getAttribute("data-id")); return; }
+      var lensBtn=t.closest?t.closest('[data-fk="lens"]'):null;
+      if(lensBtn){
+        var pa=lensBtn.getAttribute("data-on")==="1";
+        if(pa===STATE.lens) return;
+        STATE.lens=pa;
+        // ⚠️ ALLA flikcachar måste tömmas — de innehåller ETT bolags rader och
+        // skulle annars visas som koncernens (eller tvärtom).
+        STATE.chain={}; STATE.coworkers=null; STATE.matters=null; STATE.qcList=null;
+        STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
+        STATE.personDetail=null; STATE.gruppData=null;
+        renderCard(); fetchTabData(); return; }
       var ctab=t.closest?t.closest('[data-fk="tab"]'):null;
       if(ctab){ STATE.cardTab=ctab.getAttribute("data-t"); STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }
       // Onboarding-strippens klick: chip → hoppa till rätt flik/subtab; steg-kort → samma.
@@ -4134,6 +4396,37 @@
     var soRt=t.closest?t.closest("th[data-sort]"):null;
     if(soRt){ var s=soRt.getAttribute("data-sort"); if(STATE.sort===s) STATE.dir=(STATE.dir==="asc"?"desc":"asc"); else { STATE.sort=s; STATE.dir=(s==="modified"?"desc":"asc"); } reload(); return; }
     if(t.closest && t.closest('[data-fl="more"]')){ STATE.page++; load(true); return; }
+    // ── Bulk-tilldelning ──
+    var selBox=t.closest?t.closest('[data-fl="sel"]'):null;
+    if(selBox){ var sid=selBox.getAttribute("data-id"); var ix=STATE.sel.indexOf(sid);
+      if(ix>-1) STATE.sel.splice(ix,1); else STATE.sel.push(sid);
+      STATE.bulkMsg=null; renderTable(); return; }
+    if(t.closest && t.closest('[data-fl="selall"]')){
+      var alla=STATE.rows.every(function(r){ return STATE.sel.indexOf(r.id)>-1; });
+      STATE.sel = alla ? [] : STATE.rows.map(function(r){ return r.id; });
+      STATE.bulkMsg=null; renderTable(); return; }
+    if(t.closest && t.closest('[data-fl="bulkclear"]')){ STATE.sel=[]; STATE.bulkNy=false; STATE.bulkMsg=null; renderTable(); return; }
+    if(t.closest && t.closest('[data-fl="bulkny"]')){ STATE.bulkNy=true; STATE.bulkMsg=null; renderTable(); return; }
+    if(t.closest && t.closest('[data-fl="bulkavbryt"]')){ STATE.bulkNy=false; STATE.bulkMsg=null; renderTable(); return; }
+    if(t.closest && t.closest('[data-fl="bulkadd"]')){ if(STATE.bulkGroup) bulkSkriv(STATE.bulkGroup,"add"); return; }
+    if(t.closest && t.closest('[data-fl="bulkremove"]')){
+      // Ta bort ur grupp behöver ingen gruppvald — fältet nollas på företaget.
+      bulkSkriv(STATE.bulkGroup||"-","remove"); return; }
+    if(t.closest && t.closest('[data-fl="bulkskapa"]')){
+      var inp=root.querySelector('[data-fl="bulknamn"]'); var namn=inp?inp.value.trim():"";
+      if(!namn){ STATE.bulkMsg={k:"err",t:"Ge gruppen ett namn."}; renderTable(); return; }
+      STATE.bulkBusy=true; STATE.bulkMsg=null; renderTable();
+      apiPost("/admin/companies/groups",{namn:namn}).then(function(j){
+        if(!j||j.ok!==true){ STATE.bulkBusy=false; STATE.bulkMsg={k:"err",t:felText(j)}; renderTable(); return; }
+        // Ny grupp saknas i meta tills listan hämtas om — lägg in den direkt så
+        // väljaren inte är tom nästa gång.
+        if(STATE.meta&&STATE.meta.groups) STATE.meta.groups.push({id:j.id,name:j.namn});
+        STATE.bulkNy=false; STATE.bulkGroup=j.id;
+        apiPost("/admin/companies/groups/"+encodeURIComponent(j.id)+"/members",{companies:STATE.sel.slice(),action:"add"})
+          .then(function(m){ STATE.bulkBusy=false; bulkKlar(m); reload(); })
+          .catch(function(){ STATE.bulkBusy=false; STATE.bulkMsg={k:"err",t:"Gruppen skapades men tilldelningen föll."}; renderTable(); });
+      }).catch(function(){ STATE.bulkBusy=false; STATE.bulkMsg={k:"err",t:"Nätverksfel."}; renderTable(); });
+      return; }
     if(t.closest && t.closest('[data-fl="refresh"]')){ cacheClearAll(); reload(); return; }
     if(t.closest && t.closest('[data-fl="newco"]')){ STATE.newCo=!STATE.newCo; renderNewCo(); return; }
     if(t.closest && t.closest('[data-fl="newco-cancel"]')){ STATE.newCo=false; renderNewCo(); return; }
@@ -4165,6 +4458,8 @@
     if(t.getAttribute && t.getAttribute("data-fl")==="q"){ STATE.q=t.value; if(_deb) clearTimeout(_deb); _deb=setTimeout(reload, 350); }
   });
   root.addEventListener("change", function(e){
+    var bg=e.target&&e.target.getAttribute?e.target.getAttribute("data-fl"):null;
+    if(bg==="bulkgroup"){ STATE.bulkGroup=e.target.value; STATE.bulkMsg=null; renderTable(); return; }
     var t=e.target;
     if(t.getAttribute && t.getAttribute("data-fk")==="photofile"){ onPhotoPick(t); return; }
     if(t.getAttribute && t.getAttribute("data-fk")==="logofile"){ onLogoPick(t); return; }
