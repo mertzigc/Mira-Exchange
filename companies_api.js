@@ -20,6 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import crypto from "crypto";
+import { orgDigits, orgCore, formatOrgNo, isOrgNo, sameOrgNo } from "./orgnr.js";
 
 export function registerCompaniesRoutes(app, deps) {
   const {
@@ -853,6 +854,9 @@ export function registerCompaniesRoutes(app, deps) {
       const yearPrev = Number(req.query.prev) || (yearNow - 1);
 
       const q = _low(req.query.q).trim();
+      // Sifferformen av söksträngen — så "556000 1111", "556000-1111" och
+      // "5560001111" alla hittar samma rad oavsett hur numret är lagrat.
+      const qDigits = orgDigits(q);
       const fEq = {
         ansvarig_id:   _str(req.query.ansvarig).trim() || null,
         group_id:      _str(req.query.group).trim() || null,
@@ -881,8 +885,12 @@ export function registerCompaniesRoutes(app, deps) {
         if (unassigned        && c.ansvarig_id)                        continue;
         if (fastighetId       && !(c.fastighet_ids || []).includes(fastighetId)) continue;
         if (q) {
-          const hay = (c.name + " " + c.orgnr).toLowerCase();
-          if (!hay.includes(q)) continue;
+          // ⚠️ Orgnr söks på BÅDA skrivsätten. Cachen bär den kanoniska formen
+          // (556000-1111); söker någon "5560001111" ska den träffa ändå — och
+          // tvärtom. Utan siffervarianten blev sökningen tyst beroende av hur
+          // numret råkade skrivas.
+          const hay = (c.name + " " + c.orgnr + " " + orgDigits(c.orgnr)).toLowerCase();
+          if (!hay.includes(q) && !(qDigits && orgDigits(c.orgnr).includes(qDigits))) continue;
         }
         // ⚠️ Bolagsfiltret kan INTE ligga i continue-kedjan ovan: `bolag` finns inte i
         // cache-projektionen utan härleds ur faktura-kartan + fönstret. Filtrera på den
@@ -3222,12 +3230,15 @@ export function registerCompaniesRoutes(app, deps) {
       const b = req.body || {};
       const namn = _str(b.name).trim();
       if (!namn) return res.status(400).json({ ok: false, error: "namn_krävs" });
-      const org = _orgDigits(b.orgnr);
-      if (!org) return res.status(400).json({ ok: false, error: "orgnr_krävs", hint: "Org.nr krävs för nya företag — det är nyckeln som håller dubbletter borta." });
-      if (org.length !== 10) {
-        return res.status(400).json({ ok: false, error: "orgnr_fel_langd", digits: org.length,
-          hint: "Svenskt org.nr har 10 siffror (med eller utan bindestreck)." });
+      // ⚠️ Läses med ELLER utan bindestreck, och med sekelprefix (16/19/20 + tio).
+      // Lagras och visas kanoniskt som xxxxxx-xxxx. Se orgnr.js.
+      const orgIn = _str(b.orgnr).trim();
+      if (!orgDigits(orgIn)) return res.status(400).json({ ok: false, error: "orgnr_krävs", hint: "Org.nr krävs för nya företag — det är nyckeln som håller dubbletter borta." });
+      if (!isOrgNo(orgIn)) {
+        return res.status(400).json({ ok: false, error: "orgnr_fel_langd", digits: orgCore(orgIn).length,
+          hint: "Svenskt org.nr har 10 siffror — med eller utan bindestreck, med eller utan sekelprefix." });
       }
+      const org = formatOrgNo(orgIn);
 
       const full = await companyFullMap();
       // Exakt org.nr-träff → spärr (om inte force). Namnlikhet → varning, aldrig spärr:
@@ -3235,7 +3246,11 @@ export function registerCompaniesRoutes(app, deps) {
       let dup = null; const nameHits = [];
       const nk = _nameKey(namn);
       for (const c of full.values()) {
-        if (!dup && _orgDigits(c.orgnr) === org) dup = { id: c.id, name: c.name, orgnr: c.orgnr };
+        // ⚠️ `sameOrgNo` och inte `===`: cachen bär redan kanonisk form (projektionen
+        // i index.js), så en strikt jämförelse skulle råka fungera idag. Den håller
+        // dock bara så länge projektionen gör det — och orgnr är dubblettnyckeln för
+        // hela registret. Djupet är billigt; en dubblett är det inte.
+        if (!dup && sameOrgNo(c.orgnr, org)) dup = { id: c.id, name: c.name, orgnr: c.orgnr };
         if (nk && _nameKey(c.name) === nk) nameHits.push({ id: c.id, name: c.name, orgnr: c.orgnr });
       }
       if (dup && b.force !== true) {
@@ -3246,7 +3261,7 @@ export function registerCompaniesRoutes(app, deps) {
       // ⚠️ `Org_Number` är ett TEXT-fält i Bubble (verifierat: index.js ~1291, och
       // EDITABLE.orgnr har type:"text"). Skickas ett tal svarar Bubble
       // `INVALID_DATA: Expected a string, but got a number` och HELA skapandet faller.
-      // Vi normaliserar till siffror för jämförbarhet — men skriver dem som sträng.
+      // Vi skriver den KANONISKA formen (xxxxxx-xxxx) som sträng — samma som visas.
       const payload = { Name_company: namn, Org_Number: org };
       const kundstatus = _str(b.kundstatus).trim();
       if (kundstatus) {
@@ -3453,7 +3468,33 @@ export function registerCompaniesRoutes(app, deps) {
         const val = rawVal;
 
         if (spec.type === "text") {
-          payload[spec.bubbleField] = _str(val);
+          // ⚠️ ORGNR ÄR INTE VILKEN TEXT SOM HELST. Det är dubblettnyckeln för hela
+          // kundregistret, och ska lagras kanoniskt (xxxxxx-xxxx) oavsett hur det
+          // matas in. Utan detta driver inline-editen isär datan igen: den som
+          // skriver "5560001111" får en rad som ser annorlunda ut än grannens.
+          if (key === "orgnr") {
+            const inmatat = _str(val).trim();
+            // Tomt tillåts (rensa) — kravet på orgnr gäller vid SKAPANDE, och en
+            // befintlig rad utan nummer ska gå att lämna som den är.
+            if (inmatat && !isOrgNo(inmatat)) {
+              return res.status(400).json({ ok: false, error: "orgnr_ogiltigt", value: inmatat,
+                digits: orgCore(inmatat).length,
+                hint: "Svenskt org.nr har 10 siffror — med eller utan bindestreck, med eller utan sekelprefix." });
+            }
+            // ⚠️ Dubblett även här. Skapandet spärrar redan, men utan den här
+            // kontrollen kunde man redigera sig till samma nummer i efterhand.
+            if (inmatat) {
+              for (const c of full.values()) {
+                if (c.id !== id && sameOrgNo(c.orgnr, inmatat)) {
+                  return res.status(409).json({ ok: false, error: "orgnr_finns_redan",
+                    existing: { id: c.id, name: c.name, orgnr: c.orgnr } });
+                }
+              }
+            }
+            payload[spec.bubbleField] = inmatat ? formatOrgNo(inmatat) : "";
+          } else {
+            payload[spec.bubbleField] = _str(val);
+          }
         } else if (spec.type === "number") {
           if (val === "" || val == null) payload[spec.bubbleField] = null;
           else { const n = Number(val); if (!Number.isFinite(n)) return res.status(400).json({ ok: false, error: `bad_number:${key}` }); payload[spec.bubbleField] = n; }

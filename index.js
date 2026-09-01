@@ -22,6 +22,7 @@ import { makeVisitorAuth } from "./visitor_auth.js";
 import { makeMypageAuth } from "./mypage_auth.js";
 import { registerVisitorRoutes } from "./visitor_api.js";
 import { registerStaffRoutes } from "./staff_api.js";
+import { formatOrgNo } from "./orgnr.js";
 import { makeSms } from "./sms.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
 import multer from "multer";
@@ -20854,7 +20855,10 @@ function _projectCompany(c) {
   return {
     id: bubbleId(c),
     name: c.Name_company || c.name || "",
-    orgnr: c.Org_Number == null ? "" : String(c.Org_Number),
+    // ⚠️ Kanoniseras HÄR, i den enda projektionen som matar alla vyer (lista, kort,
+    // koncerner). Formatering per vy hade gett fyra ställen att glömma. Lagrat värde
+    // rörs inte — det här är visningsformen. Se orgnr.js.
+    orgnr: formatOrgNo(c.Org_Number),
     kundstatus: c.Kundstatus == null ? "" : String(c.Kundstatus),
     bransch: c.Bransch == null ? "" : String(c.Bransch),
     potential: c.Potential == null ? "" : String(c.Potential),

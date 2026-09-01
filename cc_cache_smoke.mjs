@@ -5,6 +5,11 @@
 // tar WU på (~1,65 WU per 100-radssida). Bryts blocket i index.js så faller testet.
 // index.js är för stor/sidoeffektsfylld för att importeras, därav textextraktionen.
 import fs from "node:fs";
+// ⚠️ Cache-projektionen kanoniserar orgnr via orgnr.js. Extraktionen kör koden i en
+// `new Function` utan modulscope, så beroendet MÅSTE injiceras — precis som
+// bubbleFind/bubbleId. Injiceras den RIKTIGA funktionen testas dessutom
+// formateringen i sin skarpa kontext.
+import { formatOrgNo } from "./orgnr.js";
 
 const SRC = fs.readFileSync(new URL("./index.js", import.meta.url), "utf8");
 
@@ -43,7 +48,7 @@ function bubbleFind(typeName, { constraints = [], limit = 1, cursor = 0 } = {}) 
   return Promise.resolve(rows.slice(cursor, cursor + limit));
 }
 
-const factory = new Function("bubbleFind", "bubbleId", `
+const factory = new Function("bubbleFind", "bubbleId", "formatOrgNo", `
   ${findAllSrc}
   ${ccSrc}
   return {
@@ -78,11 +83,35 @@ const reset = (count) => {
 // ── 1. Kall start = HELSVEP, exakt ceil(N/100)+1 sidhämtningar ────────────────
 // (+1 = den avslutande sidan som returnerar <limit och bryter loopen)
 reset(250);
-let api = factory(bubbleFind, bubbleId);
+let api = factory(bubbleFind, bubbleId, formatOrgNo);
 await api.loadSharedCC();
 eq(pageCalls.length, 3, "kall start: 250 företag = 3 sidhämtningar");
 ok(pageCalls.every((c) => c.constraints.length === 0), "kall start använder helsvep (inga constraints)");
 eq((await api.sharedCompanyFullMap()).size, 250, "cachen innehåller alla 250");
+
+// ── ORGNR: kanoniseras i PROJEKTIONEN, inte per vy ──────────────────────────
+// ⚠️ Det här är den enda projektionen som matar lista, kundkort och koncernvy.
+// Formaterar den inte visas orgnr olika beroende på hur det råkade matas in.
+// Christian 2026-09-01: visas alltid xxxxxx-xxxx, läses med eller utan bindestreck.
+{
+  const orgStore = [
+    { _id: "org1", Name_company: "Siffer AB", Org_Number: "5560001111" },
+    { _id: "org2", Name_company: "Streck AB", Org_Number: "556000-2222" },
+    { _id: "org3", Name_company: "Sekel AB",  Org_Number: "165560003333" },
+    { _id: "org4", Name_company: "Trasig AB", Org_Number: "12345" },
+    { _id: "org5", Name_company: "Tom AB" },
+  ];
+  const spara = STORE; STORE = orgStore;
+  const oApi = factory(bubbleFind, bubbleId, formatOrgNo);
+  const full = await oApi.sharedCompanyFullMap();
+  eq(full.get("org1").orgnr, "556000-1111", "projektionen: siffror → bindestreck");
+  eq(full.get("org2").orgnr, "556000-2222", "projektionen: redan bindestreckat lämnas");
+  eq(full.get("org3").orgnr, "556000-3333", "projektionen: sekelprefix strippas");
+  // ⚠️ Hitta ALDRIG på ett orgnr av ofullständig indata.
+  eq(full.get("org4").orgnr, "12345", "projektionen: ofullständigt formateras INTE");
+  eq(full.get("org5").orgnr, "", "projektionen: saknat orgnr ger tom sträng");
+  STORE = spara;
+}
 eq((await api.sharedCompanyMap()).get("cc7"), "Företag 7", "namn-mappen resolvar");
 eq((await api.sharedCompanyOwnerMap()).get("cc3"), "u0", "ägar-mappen resolvar");
 
@@ -141,7 +170,7 @@ eq(failNextDelta, false, "delta-felet konsumerades");
 
 // ── 8. In-flight-dedup: parallella anrop = ETT svep ───────────────────────────
 reset(250);
-api = factory(bubbleFind, bubbleId);
+api = factory(bubbleFind, bubbleId, formatOrgNo);
 await api.loadSharedCC();                              // joina boot-prewarmen, varm cache
 STORE.push(company(999, at(400)));                     // en ändring att hämta
 api.cache().ts = 0;
@@ -297,7 +326,7 @@ eq(deadRefId({ detail: { status: 400, body: "object with this id does not exist"
 
 // Evictering: dött företag ska försvinna ur ALLA tre kartorna.
 reset(250);
-const fApi = factory(bubbleFind, bubbleId);
+const fApi = factory(bubbleFind, bubbleId, formatOrgNo);
 await fApi.loadSharedCC();
 ok((await fApi.sharedCompanyFullMap()).has("cc7"), "evict: cc7 finns före");
 eq(fApi.forget("cc7"), true, "evict: forget() returnerar true när posten fanns");

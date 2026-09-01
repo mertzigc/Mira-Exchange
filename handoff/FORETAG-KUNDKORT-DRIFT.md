@@ -5,6 +5,60 @@
 > Minne: `project-foretagslista-kundkort`
 
 ---
+
+## 🔢 ORGANISATIONSNUMMER — en kanonisk form ut, alla former in (2026-09-01)
+
+**Regeln (Christian):** org.nr **visas alltid som `xxxxxx-xxxx`**, men **läses både
+med och utan bindestreck**.
+
+**Ny delad modul: `orgnr.js`** — `orgDigits` · `orgCore` · `formatOrgNo` · `isOrgNo`
+· `sameOrgNo` · `orgVariants`. Delad med flit: funktionerna behövs i både `index.js`
+(cache-projektionen) och `companies_api.js` (skapa/redigera/sök). En kopia i vardera
+hade drivit isär, och orgnr är **dubblettnyckeln för hela kundregistret**.
+
+| Var | Vad som händer |
+|---|---|
+| **`index.js` cache-projektionen** (`orgnr: formatOrgNo(...)`) | Kanoniserar EN gång, för alla vyer — lista, kundkort, koncernöversikt |
+| **Sök** (`/admin/companies/list?q=`) | Träffar båda skrivsätten oavsett hur numret är lagrat |
+| **Skapa** (`/create`) | Läser båda formerna, **lagrar kanoniskt** (tidigare: siffror bara) |
+| **Inline-edit** (`PATCH`) | Kanoniserar + validerar + dubblettspärrar |
+
+⚠️ **Sekelprefix hanteras:** `16`+tio (org) och `19`/`20`+tio (personnummer, enskild
+firma) blir samma tio siffror som den korta formen. Utan det matchar inte
+`165560001111` mot `556000-1111` och **en kund blir två**. Andra tolvsiffriga
+strängar lämnas orörda.
+
+⚠️ **Vi hittar ALDRIG på ett orgnr.** Går ett värde inte att kanonisera returneras
+råvärdet oförändrat — ett halvt nummer ska synas som det är, inte formateras till
+något som ser giltigt ut.
+
+⚠️ **Lagrad data mass-skrivs INTE om.** Formateringen sker i projektionen, så
+befintliga rader ser rätt ut direkt; nya skrivningar blir kanoniska och datan
+konvergerar. En migrering är ett eget, opt-in-beslut.
+
+⚠️ **`normalizeOrgNo` i index.js är ORÖRD.** Den används av synkvägarna
+(Fortnox/Tengella-matchning, `findClientCompanyByOrgNo` som redan provar
+raw/digits/hyphen) och är siffror-bara. Att lägga sekelhantering där hade ändrat
+matchningsbeteende i en kedja det här uppdraget inte gäller.
+
+### ⚠️ Fällan som cc_cache_smoke fångade
+Cache-projektionen extraheras som **text** ur `index.js` och körs i en `new Function`
+utan modulscope. Ett nytt cross-modul-anrop där kraschar sviten tills beroendet
+injiceras i fabrikens signatur — precis som `bubbleFind`/`bubbleId`. Injiceras den
+RIKTIGA `formatOrgNo` testas dessutom formateringen i sin skarpa kontext.
+
+**Verifierat:** `companies_smoke.mjs` **543 gröna** · `cc_cache_smoke.mjs` **76**.
+**Mutationstestat (14, alla faller):** påhittat nummer av ofullständig indata ·
+sekelprefix ej strippat · `sameOrgNo("","")` sant · projektionen formaterar inte (2 sviter) ·
+sökningen tappar sifferformen · skapa lagrar siffror · dubblettspärren jämför
+råsträngar · tolvsiffrigt utan känt prefix strippas ändå · editen kanoniserar inte ·
+editens dubblettspärr borta · editen validerar inte · tomt orgnr går inte att rensa.
+
+⚠️ **Ärlig notering:** dubblettspärren i `/create` använder `sameOrgNo` men skulle
+råka fungera med `===` idag, eftersom projektionen garanterar kanonisk form på båda
+sidor. Djupet finns kvar för att det bara håller så länge projektionen gör det.
+
+---
 ## 0k. FÖRETAGSLISTA + KUNDKORT + DRIFT (render-omtag av Bubble-native företagsvyn) — byggt 2026-08-13→18, ALLT LIVE
 
 **Mål:** ersätta Bubbles native företagslista + expanderat kundkort (+ Drift-modul) med render-baserade HTML-block (samma DI-mönster som affär/sälj/produktion). Ingen Bubble-popup/workflow för kortet — allt är vy-växling i samma block. **Deploy-läge (2026-08-18): ALLT I DETTA AVSNITT ÄR DEPLOYAT OCH LIVE.** Christian deployar per feature (git→Render + klistrar om HTML-block). Enskilda sektioner nedan kan stå "(ej deployat)" — det var sant när de skrevs, men gäller inte längre. Senaste commit i sviten: `938a18b fix user`.

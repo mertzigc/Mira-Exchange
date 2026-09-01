@@ -1,6 +1,7 @@
 // Smoke: företagslista (companies_api.js). Mockad Bubble + injicerade delade cachar.
 //   node companies_smoke.mjs
 import { registerCompaniesRoutes } from "./companies_api.js";
+import * as ORG from "./orgnr.js";
 import { readFileSync } from "node:fs";
 
 // ── Rå ClientCompany-DB (för bubbleGet/patch + re-projektion i companyPatchEntry) ──
@@ -1491,14 +1492,19 @@ const run = async () => {
   const nf1 = await nyF({ name: "Nytt Bolag AB", orgnr: "5561234567", kundstatus: "Aktiv kund" });
   ok("skapa: företag skapas + rad returneras",
      nf1.body.ok === true && nf1.body.row && nf1.body.row.name === "Nytt Bolag AB" && nf1.body.verified === true);
+  // ⚠️ KANONISK FORM (Christian 2026-09-01): org.nr LAGRAS och VISAS som
+  // xxxxxx-xxxx, men läses med eller utan bindestreck. Tidigare lagrades siffror
+  // bara — det gjorde listan till en blandning beroende på hur numret matats in.
   ok("skapa: org.nr och kundstatus lagras korrekt",
-     STORE.ClientCompany ? true : (function () {
+     (function () {
        const rec = CC[nf1.body.id];
-       return rec && rec.Org_Number === "5561234567" && rec.Kundstatus === "Aktiv kund";
+       return rec && rec.Org_Number === "556123-4567" && rec.Kundstatus === "Aktiv kund";
      })());
-  // ⚠️ Siffror, men som STRÄNG — Org_Number är ett text-fält i Bubble.
-  ok("skapa: org.nr normaliseras till siffror men skrivs som TEXT",
-     (function () { const r = CC[nf1.body.id]; return r && typeof r.Org_Number === "string" && /^\d{10}$/.test(r.Org_Number); })());
+  // ⚠️ Kanonisk form, men som STRÄNG — Org_Number är ett text-fält i Bubble.
+  // Ett tal ger `INVALID_DATA: Expected a string, but got a number` och HELA
+  // skapandet faller.
+  ok("skapa: org.nr lagras kanoniskt som TEXT",
+     (function () { const r = CC[nf1.body.id]; return r && typeof r.Org_Number === "string" && /^\d{6}-\d{4}$/.test(r.Org_Number); })());
   // ⚠️ Nya raden måste in i den DELADE cachen — annars syns den inte i listan
   // förrän nästa helsvep (upp till 12 h).
   const efter = await call(s.routes, "get", "/admin/companies/list", { query: { q: "Nytt Bolag" } });
@@ -1543,8 +1549,22 @@ const run = async () => {
   const patClr = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { ansvarig: "" } } });
   ok("byte av ansvarig: rensning knyter ingen", patClr.body.ok === true && patClr.body.ansvarig_kopplad === undefined);
   // Patch som inte rör ansvarig alls
-  const patOther = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "5560001111" } } });
+  // ⚠️ Unikt nummer: cc1 har 556000-1111, och editens dubblettspärr fångar numret
+  // oavsett skrivsätt. Testet handlar om ansvarig-kopplingen, inte om dubbletter.
+  const patOther = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "5567770001" } } });
   ok("patch utan ansvarig rör inte kopplingen", patOther.body.ok === true && patOther.body.ansvarig_kopplad === undefined);
+  // ⚠️ Editen kanoniserar också — annars driver datan isär igen så fort någon
+  // redigerar för hand.
+  ok("edit: org.nr kanoniseras vid inline-edit", CC.cc3.Org_Number === "556777-0001");
+  const patDub = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "5560001111" } } });
+  // Skapandet spärrar redan — utan den här kontrollen kunde man redigera sig till
+  // samma nummer i efterhand.
+  ok("edit: dubblett fångas oavsett skrivsätt (cc1 har 556000-1111)",
+     patDub.code === 409 && patDub.body.error === "orgnr_finns_redan" && (patDub.body.existing || {}).id === "cc1");
+  const patBad = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "12345" } } });
+  ok("edit: ogiltigt org.nr → 400, aldrig skrivet", patBad.code === 400 && patBad.body.error === "orgnr_ogiltigt" && CC.cc3.Org_Number === "556777-0001");
+  const patTom = await call(s.routes, "patch", "/admin/companies/:id", { params: { id: "cc3" }, body: { fields: { orgnr: "" } } });
+  ok("edit: tomt org.nr tillåts (rensa en befintlig rad)", patTom.body.ok === true && CC.cc3.Org_Number === "");
   // Redan knuten → ingen onödig skrivning
   // ⚠️ Kopplingen kan LYCKAS utan att personen syns under "Vår personal" — den
   // listan filtrerar på Company === user_company. Utan varning blir det en tyst
@@ -2209,6 +2229,88 @@ const run = async () => {
       /cv!==undefined && !STATE\.lens\) badge=/.test(script));
     ok("block: bulk-kvittot renderas även när urvalet är tomt",
       /function bulkBar\(\)\{[\s\S]*?if\(!STATE\.sel\.length\)\{[\s\S]*?if\(!STATE\.bulkMsg\) return "";/.test(script));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ORGNR — visas alltid xxxxxx-xxxx, läses med ELLER utan bindestreck
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    // ── Den rena modulen ────────────────────────────────────────────────────
+    ok("orgnr: siffror kanoniseras", ORG.formatOrgNo("5560001111") === "556000-1111");
+    ok("orgnr: redan bindestreckat lämnas som det är", ORG.formatOrgNo("556000-1111") === "556000-1111");
+    ok("orgnr: skräptecken och blanksteg tas bort", ORG.formatOrgNo("  556000 - 1111 ") === "556000-1111");
+    // ⚠️ Sekelprefix: "16"+tio är samma nummer. Utan strippningen blir en kund två.
+    ok("orgnr: sekelprefix 16 strippas", ORG.formatOrgNo("165560001111") === "556000-1111");
+    ok("orgnr: personnummer 19/20 strippas (enskild firma)", ORG.formatOrgNo("19850101-1234") === "850101-1234");
+    // ⚠️ ALDRIG hitta på ett orgnr. Går det inte att kanonisera visas råvärdet.
+    ok("orgnr: ofullständigt nummer formateras INTE", ORG.formatOrgNo("12345") === "12345");
+    ok("orgnr: text lämnas orörd", ORG.formatOrgNo("saknas") === "saknas");
+    ok("orgnr: tomt ger tomt", ORG.formatOrgNo("") === "" && ORG.formatOrgNo(null) === "");
+    ok("orgnr: tolvsiffrigt UTAN känt sekelprefix rörs inte", ORG.formatOrgNo("995560001111") === "995560001111");
+    ok("orgnr: isOrgNo accepterar båda skrivsätten",
+      ORG.isOrgNo("5560001111") && ORG.isOrgNo("556000-1111") && ORG.isOrgNo("165560001111") && !ORG.isOrgNo("12345"));
+    ok("orgnr: sameOrgNo ser förbi bindestreck och sekel",
+      ORG.sameOrgNo("5560001111", "556000-1111") && ORG.sameOrgNo("165560001111", "556000-1111"));
+    // ⚠️ Två tomma är INTE samma nummer — annars blir varje orgnr-lös rad en dubblett.
+    ok("orgnr: två tomma är inte samma nummer", !ORG.sameOrgNo("", "") && !ORG.sameOrgNo(null, "556000-1111"));
+    ok("orgnr: orgVariants täcker alla skrivsätt för Bubble-matchning",
+      (function () { const v = ORG.orgVariants("5560001111");
+        return v.indexOf("5560001111") > -1 && v.indexOf("556000-1111") > -1; })());
+
+    // ── Visningen: cachen bär redan kanonisk form (index.js-projektionen), så
+    //    listan testas mot en projektion med bindestreck.
+    const oCC = { o1: { _id: "o1", Name_company: "Streck AB", Org_Number: "556000-1111" },
+                  o2: { _id: "o2", Name_company: "Siffer AB", Org_Number: "5569999999" } };
+    const oproj = (c) => ({ id: c._id, name: c.Name_company, orgnr: ORG.formatOrgNo(c.Org_Number),
+      kundstatus: "", bransch: "", potential: "", lojalitet: "", region: "", customer_type: "",
+      nki: null, antal_medarbetare: null, omsattning_field: null, ansvarig_id: null,
+      group_id: null, fastighet_ids: [], modified: null });
+    let OFULL = new Map(Object.values(oCC).map((c) => [c._id, oproj(c)]));
+    const oDeps = Object.assign({}, deps, {
+      companyFullMap: async () => OFULL,
+      companyRevenueMapWarm: () => new Map(), companyBolagMapWarm: () => new Map(),
+      companyTouchMapWarm: () => new Map(),
+      bubbleGet: async (t, id) => (t === "ClientCompany" ? (oCC[id] || null) : deps.bubbleGet(t, id)),
+      bubbleCreate: async (t, payload) => { if (t !== "ClientCompany") return deps.bubbleCreate(t, payload);
+        const id = "onew"; oCC[id] = Object.assign({ _id: id }, payload); return id; },
+      companyPatchEntry: (id, fresh) => { OFULL.set(id, oproj(fresh)); },
+    });
+    const os = mk(); registerCompaniesRoutes(os.app, oDeps);
+
+    // ⚠️ KÄRNAN I ÖNSKEMÅLET: ett nummer lagrat UTAN bindestreck visas ändå med.
+    const lst = await call(os.routes, "get", "/admin/companies/list", {});
+    const byId = new Map((lst.body.rows || []).map((r) => [r.id, r]));
+    ok("visning: siffer-lagrat nummer visas med bindestreck",
+      (byId.get("o2") || {}).orgnr === "556999-9999");
+    ok("visning: redan bindestreckat visas oförändrat",
+      (byId.get("o1") || {}).orgnr === "556000-1111");
+
+    // ── Sökningen måste träffa BÅDA skrivsätten, oavsett hur numret är lagrat ──
+    const sokKombos = [
+      ["556000-1111", "o1"], ["5560001111", "o1"],
+      ["5569999999", "o2"],  ["556999-9999", "o2"],
+      ["556000", "o1"],
+    ];
+    for (const [fraga, vantad] of sokKombos) {
+      const r = await call(os.routes, "get", "/admin/companies/list", { query: { q: fraga } });
+      const ids = (r.body.rows || []).map((x) => x.id);
+      ok('sök "' + fraga + '" hittar ' + vantad, ids.length === 1 && ids[0] === vantad);
+    }
+
+    // ── Skapa: båda formerna in, kanoniskt ut ────────────────────────────────
+    const nyStreck = await call(os.routes, "post", "/admin/companies/create", { body: { name: "Med Streck AB", orgnr: "556777-8888" } });
+    ok("skapa: bindestreckad inmatning accepteras", nyStreck.body.ok === true);
+    ok("skapa: lagras kanoniskt", (oCC[nyStreck.body.id] || {}).Org_Number === "556777-8888");
+    // ⚠️ DUBBLETTSPÄRREN måste se förbi skrivsättet — annars blir samma bolag två
+    // rader bara för att någon skrev bindestreck och någon annan inte.
+    const dubbSiffra = await call(os.routes, "post", "/admin/companies/create", { body: { name: "Samma Bolag AB", orgnr: "5567778888" } });
+    ok("dubblett: siffror mot lagrat bindestreck fångas", dubbSiffra.code === 409 && dubbSiffra.body.error === "orgnr_finns_redan");
+    const dubbSekel = await call(os.routes, "post", "/admin/companies/create", { body: { name: "Sekel AB", orgnr: "165567778888" } });
+    ok("dubblett: sekelprefix mot lagrat kort nummer fångas", dubbSekel.code === 409);
+    const forKort = await call(os.routes, "post", "/admin/companies/create", { body: { name: "Kort AB", orgnr: "12345" } });
+    ok("skapa: för kort orgnr → 400 med antal siffror", forKort.code === 400 && forKort.body.error === "orgnr_fel_langd" && forKort.body.digits === 5);
+    const utan = await call(os.routes, "post", "/admin/companies/create", { body: { name: "Utan AB" } });
+    ok("skapa: orgnr krävs fortfarande", utan.code === 400 && utan.body.error === "orgnr_krävs");
   }
 
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
