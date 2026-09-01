@@ -342,3 +342,34 @@ i Bubbles SEO-inställningar på båda.
 Fältet finns inte på Bubbles Lead-typ, men hamnar i `calculator_payload_raw` som endpointen
 redan sparar — så inget behöver läggas till. Vill ni filtrera på det i CRM:et krävs ett eget
 fält plus en rad i `/leads/create-from-calculator`.
+
+
+## ⚠️ `index-live.html` genereras — den uppdateras inte av sig själv
+
+Filen skapas av `ladda_upp.py`. Ändrar du `index-ljus.html` händer **ingenting** med
+`index-live.html` förrän du kör skriptet igen. Klistrar du in en gammal `index-live.html`
+ser du därför inga av dina senaste ändringar.
+
+Kolla läget utan att ladda upp något:
+
+```bash
+BUBBLE_API_KEY=$BUBBLE_API_KEY python3 startsida/ladda_upp.py --kolla
+```
+
+Den skriver ut källans och `index-live.html`:s tidsstämplar och säger rakt ut om filen är
+äldre än källan.
+
+Generera om:
+
+```bash
+BUBBLE_API_KEY=$BUBBLE_API_KEY python3 startsida/ladda_upp.py
+```
+
+Skriptet tar numera **`index-ljus.html`** som standardkälla (den aktiva sidan). Vill du ha
+den mörka varianten: ge `startsida/index.html` som argument.
+
+Efter körning skriver den ut hur många tecken filen har och varnar om någon bildsökväg
+fortfarande pekar lokalt.
+
+**Regeln:** klistra alltid in `index-live.html`, aldrig `index-ljus.html` — den senare pekar
+på en `bilder/`-mapp som bara finns på din dator.

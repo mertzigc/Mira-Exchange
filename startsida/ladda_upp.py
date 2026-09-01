@@ -5,8 +5,11 @@ kopia av sidan dar <img src> pekar pa CDN-URL:erna i stallet for bilder/.
 
     BUBBLE_API_KEY=$BUBBLE_API_KEY python3 startsida/ladda_upp.py
 
-Tar startsida/index.html som standard; ge en annan fil som argument om du vill.
+Tar startsida/index-ljus.html som standard (den aktiva sidan); ge en annan fil som
+argument om du vill, t.ex. startsida/index.html for den morka varianten.
 Resultatet hamnar i startsida/index-live.html - det ar DEN du klistrar in.
+
+    ... ladda_upp.py --kolla     sager bara om index-live.html ar aktuell, laddar upp inget
 
 Uppladdade bilder cachas i bilder/uppladdade.json, sa en omkorning laddar inte
 upp samma fil igen (uppladdning till Bubble gar inte att angra). Byter du ut en
@@ -20,7 +23,9 @@ BUBBLE_BASE = os.environ.get("BUBBLE_BASE", "https://mira-fm.com").rstrip("/")
 if not BUBBLE_KEY:
     raise SystemExit("Saknar BUBBLE_API_KEY. Kor `bash kolla_nycklar.sh` forst.")
 
-KALLA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "index.html")
+KOLLA = "--kolla" in sys.argv
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+KALLA = args[0] if args else os.path.join(ROOT, "index-ljus.html")
 UT = os.path.join(ROOT, "index-live.html")
 CACHE = os.path.join(ROOT, "bilder", "uppladdade.json")
 cache = json.load(open(CACHE, encoding="utf-8")) if os.path.exists(CACHE) else {}
@@ -49,7 +54,21 @@ def upp(filename, buf):
     return ("https:" + u) if u.startswith("//") else u
 
 
+import time
+def stamp(f):
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(f)))
+
 html = open(KALLA, encoding="utf-8").read()
+print("kalla     : %s  (%s, %d tecken)" % (os.path.relpath(KALLA), stamp(KALLA), len(html)))
+if os.path.exists(UT):
+    aktuell = os.path.getmtime(UT) >= os.path.getmtime(KALLA)
+    print("index-live: %s  (%s)  %s" % (os.path.relpath(UT), stamp(UT),
+          "AKTUELL" if aktuell else "<-- ALDRE AN KALLAN, maste goras om"))
+else:
+    print("index-live: finns inte an")
+if KOLLA:
+    raise SystemExit(0)
+print()
 filer = sorted(f for f in os.listdir(os.path.join(ROOT, "bilder")) if f.lower().endswith((".jpg", ".png")))
 anvanda = [f for f in filer if ('src="bilder/' + f + '"') in html]
 if not anvanda:
@@ -68,4 +87,9 @@ for f in anvanda:
     html = html.replace('src="bilder/' + f + '"', 'src="' + u + '"')
 
 open(UT, "w", encoding="utf-8").write(html)
-print("\nKLART. %s har CDN-URL:er inbakade - klistra in den filen." % UT)
+print("\nKLART. %s (%d tecken) har CDN-URL:er inbakade." % (os.path.relpath(UT), len(html)))
+kvar = html.count('src="bilder/')
+if kvar:
+    print("VARNING: %d st src=\"bilder/...\" pekar fortfarande lokalt." % kvar)
+else:
+    print("Alla bildsokvagar pekar pa Bubbles CDN. Klistra in DEN HAR filen, inte kallan.")

@@ -52,6 +52,13 @@ nav.stuck{border-bottom-color:var(--line);}
   border:1px solid var(--line-2);border-radius:999px;padding:9px 20px;
   text-decoration:none;transition:all .2s;}
 .btn-g:hover{border-color:var(--ink25);}
+.lang{display:flex;align-items:center;gap:2px;background:var(--surface);
+  border:1px solid var(--line-2);border-radius:999px;padding:3px;}
+.lang-b{font-family:var(--fb);font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  color:var(--ink45);background:none;border:none;border-radius:999px;
+  padding:6px 12px;cursor:pointer;transition:all .18s;}
+.lang-b:hover{color:var(--ink);}
+.lang-b.on{background:var(--ink);color:#fff;}
 .ham{display:none;flex-direction:column;gap:5px;cursor:pointer;padding:6px;}
 .ham span{display:block;width:22px;height:2px;background:var(--ink70);border-radius:2px;}
 
@@ -339,6 +346,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   .nav-links{display:none;position:absolute;top:62px;left:0;right:0;background:var(--canvas);
     padding:20px;flex-direction:column;gap:16px;border-bottom:1px solid var(--line);}
   .nav-links.open{display:flex;}
+  .lang-b{padding:6px 10px;font-size:11px;}
   .ham{display:flex;}
   .hero{padding:120px 20px 70px;}
   section{padding:70px 20px;}
@@ -368,100 +376,104 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
          onerror="this.outerHTML='<span class=&quot;nl-txt&quot;>mira<span>.</span></span>'">
   </a>
   <div class="nav-links" id="nl">
-    <a href="#features">Plattformen</a>
-    <a href="#showcase">Gränssnitt</a>
-    <a href="#ai">AI &amp; Analys</a>
+    <a href="#features" data-en="The platform">Plattformen</a>
+    <a href="#showcase" data-en="Interface">Gränssnitt</a>
+    <a href="#ai" data-en="AI &amp; Analytics">AI &amp; Analys</a>
     <a href="#carotte">Carotte</a>
     <a href="#app">App</a>
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
-    <a href="https://mira-fm.com/login" class="btn-g">Logga in</a>
+    <div class="lang" role="group" aria-label="Språk / Language">
+      <button type="button" class="lang-b on" data-lang="sv" aria-pressed="true">SV</button>
+      <button type="button" class="lang-b" data-lang="en" aria-pressed="false">EN</button>
+    </div>
+    <a href="https://mira-fm.com/login" class="btn-g" data-en="Log in">Logga in</a>
   </div>
   <div class="ham" id="ham"><span></span><span></span><span></span></div>
 </nav>
 
 <section class="hero">
-  <h1>Digital &amp; fysisk facility services <em>för ditt kontor.</em></h1>
-  <p class="hsub">Mira är den enda FM-plattformen byggd kring en riktig tjänsteleverantör. Varje klick i appen utlöser en faktisk Carotte-insats – och varje insats mäts, betygsätts och analyseras automatiskt.</p>
+  <h1 data-en-html="Digital &amp; physical facility services <em>for your office.</em>">Digital &amp; fysisk facility services <em>för ditt kontor.</em></h1>
+  <p class="hsub" data-en="Mira is the only FM platform built around a real service provider. Every tap in the app triggers an actual Carotte job – and every job is measured, rated and analysed automatically.">Mira är den enda FM-plattformen byggd kring en riktig tjänsteleverantör. Varje klick i appen utlöser en faktisk Carotte-insats – och varje insats mäts, betygsätts och analyseras automatiskt.</p>
 
   <div class="act">
-    <label for="heroKvm">Vårt kontor är</label>
-    <input id="heroKvm" type="number" min="1" inputmode="numeric" placeholder="t.ex. 340 kvm">
-    <button class="cta" type="button" data-wz="open">Räkna på vårt kontor <span>→</span></button>
+    <label for="heroKvm" data-en="Our office is">Vårt kontor är</label>
+    <input id="heroKvm" type="number" min="1" inputmode="numeric" placeholder="t.ex. 340 kvm" data-en-placeholder="e.g. 340 m²">
+    <button class="cta" type="button" data-wz="open" data-en-html="Get a proposal <span>→</span>">Räkna på vårt kontor <span>→</span></button>
   </div>
 </section>
 
 <section style="padding-top:0">
   <div class="xw sr">
     <div class="xhd">
-      <div class="xhd-t">Så fungerar integrationen · Mira × Carotte</div>
-      <div class="xlive"><span class="xdot"></span>Live idag</div>
+      <div class="xhd-t" data-en="How the integration works · Mira × Carotte">Så fungerar integrationen · Mira × Carotte</div>
+      <div class="xlive" data-en-html="<span class=&quot;xdot&quot;></span>Live today"><span class="xdot"></span>Live idag</div>
     </div>
     <div class="xsteps" id="xsteps">
-      <button class="xstep on" type="button" data-x="0"><b>Steg 1</b><span>Du bokar frukostbuffé</span></button>
-      <button class="xstep" type="button" data-x="1"><b>Steg 2</b><span>Du betygsätter städningen</span></button>
-      <button class="xstep" type="button" data-x="2"><b>Steg 3</b><span>Du skapar ett driftärende</span></button>
-      <button class="xstep" type="button" data-x="3"><b>Steg 4</b><span>Du bokar AW-paket</span></button>
+      <button class="xstep on" type="button" data-x="0"><b data-en="Step 1">Steg 1</b><span data-en="You book a breakfast buffet">Du bokar frukostbuffé</span></button>
+      <button class="xstep" type="button" data-x="1"><b data-en="Step 2">Steg 2</b><span data-en="You rate the cleaning">Du betygsätter städningen</span></button>
+      <button class="xstep" type="button" data-x="2"><b data-en="Step 3">Steg 3</b><span data-en="You raise a maintenance issue">Du skapar ett driftärende</span></button>
+      <button class="xstep" type="button" data-x="3"><b data-en="Step 4">Steg 4</b><span data-en="You book an after-work package">Du bokar AW-paket</span></button>
     </div>
 
     <div class="xpane on" data-xp="0">
       <div class="xside l">
-        <span class="xcap d">Du gör det digitalt i Mira</span>
-        <div class="xname">Du bokar frukostbuffé</div>
-        <div class="xdesc">Väljer datum, antal, kostpreferenser</div>
-        <span class="xstat s-done">Klar</span>
+        <span class="xcap d" data-en="You do it digitally in Mira">Du gör det digitalt i Mira</span>
+        <div class="xname" data-en="You book a breakfast buffet">Du bokar frukostbuffé</div>
+        <div class="xdesc" data-en="Pick the date, headcount and dietary needs">Väljer datum, antal, kostpreferenser</div>
+        <span class="xstat s-done" data-en="Done">Klar</span>
       </div>
       <div class="xarrow" aria-hidden="true"><svg viewBox="0 0 52 16" fill="none"><path d="M2 8h44" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M40 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="xside r">
-        <span class="xcap f">Carotte agerar fysiskt</span>
-        <div class="xname">Carottes kock lagar mat från grunden</div>
-        <div class="xdesc">Levereras 08:30, temperaturloggad</div>
-        <span class="xstat s-done">Levererat</span>
+        <span class="xcap f" data-en="Carotte acts physically">Carotte agerar fysiskt</span>
+        <div class="xname" data-en="Carotte's chef cooks from scratch">Carottes kock lagar mat från grunden</div>
+        <div class="xdesc" data-en="Delivered 08:30, temperature logged">Levereras 08:30, temperaturloggad</div>
+        <span class="xstat s-done" data-en="Delivered">Levererat</span>
       </div>
     </div>
     <div class="xpane" data-xp="1">
       <div class="xside l">
-        <span class="xcap d">Du gör det digitalt i Mira</span>
-        <div class="xname">Du betygsätter städningen</div>
-        <div class="xdesc">4.2★ – noterar kök som bristfälligt</div>
-        <span class="xstat s-done">Klar</span>
+        <span class="xcap d" data-en="You do it digitally in Mira">Du gör det digitalt i Mira</span>
+        <div class="xname" data-en="You rate the cleaning">Du betygsätter städningen</div>
+        <div class="xdesc" data-en="4.2★ – kitchen flagged as below standard">4.2★ – noterar kök som bristfälligt</div>
+        <span class="xstat s-done" data-en="Done">Klar</span>
       </div>
       <div class="xarrow" aria-hidden="true"><svg viewBox="0 0 52 16" fill="none"><path d="M2 8h44" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M40 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="xside r">
-        <span class="xcap f">Carotte agerar fysiskt</span>
-        <div class="xname">Städteamet åtgärdar köket omedelbart</div>
-        <div class="xdesc">Utlöstes av ditt betyg, kvitterat i appen</div>
-        <span class="xstat s-live">Åtgärdas</span>
+        <span class="xcap f" data-en="Carotte acts physically">Carotte agerar fysiskt</span>
+        <div class="xname" data-en="The cleaning team fixes the kitchen right away">Städteamet åtgärdar köket omedelbart</div>
+        <div class="xdesc" data-en="Triggered by your rating, signed off in the app">Utlöstes av ditt betyg, kvitterat i appen</div>
+        <span class="xstat s-live" data-en="Being fixed">Åtgärdas</span>
       </div>
     </div>
     <div class="xpane" data-xp="2">
       <div class="xside l">
-        <span class="xcap d">Du gör det digitalt i Mira</span>
-        <div class="xname">Du skapar ett driftärende</div>
-        <div class="xdesc">Lampa trasig, konferensrum B, foto bifogat</div>
-        <span class="xstat s-live">Pågår</span>
+        <span class="xcap d" data-en="You do it digitally in Mira">Du gör det digitalt i Mira</span>
+        <div class="xname" data-en="You raise a maintenance issue">Du skapar ett driftärende</div>
+        <div class="xdesc" data-en="Broken light, meeting room B, photo attached">Lampa trasig, konferensrum B, foto bifogat</div>
+        <span class="xstat s-live" data-en="In progress">Pågår</span>
       </div>
       <div class="xarrow" aria-hidden="true"><svg viewBox="0 0 52 16" fill="none"><path d="M2 8h44" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M40 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="xside r">
-        <span class="xcap f">Carotte agerar fysiskt</span>
-        <div class="xname">Tekniker skickas till konf. B</div>
-        <div class="xdesc">Beräknad ankomst 14:30, notis till dig</div>
-        <span class="xstat s-live">På väg</span>
+        <span class="xcap f" data-en="Carotte acts physically">Carotte agerar fysiskt</span>
+        <div class="xname" data-en="A technician is dispatched to room B">Tekniker skickas till konf. B</div>
+        <div class="xdesc" data-en="ETA 14:30, you get a notification">Beräknad ankomst 14:30, notis till dig</div>
+        <span class="xstat s-live" data-en="On the way">På väg</span>
       </div>
     </div>
     <div class="xpane" data-xp="3">
       <div class="xside l">
-        <span class="xcap d">Du gör det digitalt i Mira</span>
-        <div class="xname">Du bokar AW-paket</div>
-        <div class="xdesc">30 pers, fredag 17:00, meny vald</div>
-        <span class="xstat s-plan">Planerad</span>
+        <span class="xcap d" data-en="You do it digitally in Mira">Du gör det digitalt i Mira</span>
+        <div class="xname" data-en="You book an after-work package">Du bokar AW-paket</div>
+        <div class="xdesc" data-en="30 people, Friday 17:00, menu chosen">30 pers, fredag 17:00, meny vald</div>
+        <span class="xstat s-plan" data-en="Planned">Planerad</span>
       </div>
       <div class="xarrow" aria-hidden="true"><svg viewBox="0 0 52 16" fill="none"><path d="M2 8h44" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M40 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="xside r">
-        <span class="xcap f">Carotte agerar fysiskt</span>
-        <div class="xname">Värdar riggar lokalen fredag fm</div>
-        <div class="xdesc">Checklista synkad med din bokning</div>
-        <span class="xstat s-plan">Schemalagd</span>
+        <span class="xcap f" data-en="Carotte acts physically">Carotte agerar fysiskt</span>
+        <div class="xname" data-en="Hosts set up the space Friday morning">Värdar riggar lokalen fredag fm</div>
+        <div class="xdesc" data-en="Checklist synced with your booking">Checklista synkad med din bokning</div>
+        <span class="xstat s-plan" data-en="Scheduled">Schemalagd</span>
       </div>
     </div>
   </div>
@@ -470,50 +482,50 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 <section id="features" class="tint">
   <div class="wrap feat-g">
     <div class="sr">
-      <h2 class="sh">Varje funktion i Mira har Carotte bakom sig. <em>På riktigt.</em></h2>
-      <p class="sp">De flesta FM-system stannar vid mjukvaran. Mira går hela vägen – bakom varje digital åtgärd finns Carottes utbildade personal, certifierade processer och decennier av erfarenhet.</p>
+      <h2 class="sh" data-en-html="Every feature in Mira has Carotte behind it. <em>For real.</em>">Varje funktion i Mira har Carotte bakom sig. <em>På riktigt.</em></h2>
+      <p class="sp" data-en="Most FM systems stop at the software. Mira goes all the way – behind every digital action stands Carotte's trained staff, certified processes and decades of experience.">De flesta FM-system stannar vid mjukvaran. Mira går hela vägen – bakom varje digital åtgärd finns Carottes utbildade personal, certifierade processer och decennier av erfarenhet.</p>
     <div class="reg" id="reg">
       <div class="regitem open">
-        <button class="regbtn" type="button"><span class="regnum">01</span><span class="regtitle">Bokning av tjänster</span><span class="regplus">+</span></button>
+        <button class="regbtn" type="button"><span class="regnum">01</span><span class="regtitle" data-en="Service booking">Bokning av tjänster</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc">Boka frukost, lunch, städning, event och underhåll med ett par klick. Direkt kopplat till Carottes leveransteam – inte en tredjepartsleverantör.</p>
+          <p class="regdesc" data-en="Book breakfast, lunch, cleaning, events and maintenance in a couple of clicks. Wired straight into Carotte's delivery teams – not a third-party supplier.">Boka frukost, lunch, städning, event och underhåll med ett par klick. Direkt kopplat till Carottes leveransteam – inte en tredjepartsleverantör.</p>
         </div></div>
       </div>
       <div class="regitem">
-        <button class="regbtn" type="button"><span class="regnum">02</span><span class="regtitle">Lokalvård &amp; Kvalitetskontroll</span><span class="regplus">+</span></button>
+        <button class="regbtn" type="button"><span class="regnum">02</span><span class="regtitle" data-en="Cleaning &amp; Quality control">Lokalvård &amp; Kvalitetskontroll</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc">Ditt betyg i appen triggar direkt en åtgärd hos Carottes städteam. Egenkontroller, schema och avvikelser hanteras i en sluten loop – digitalt och fysiskt.</p>
+          <p class="regdesc" data-en="Your rating in the app immediately triggers action from Carotte's cleaning team. Self-inspections, schedules and deviations are handled in a closed loop – digital and physical.">Ditt betyg i appen triggar direkt en åtgärd hos Carottes städteam. Egenkontroller, schema och avvikelser hanteras i en sluten loop – digitalt och fysiskt.</p>
         </div></div>
       </div>
       <div class="regitem">
-        <button class="regbtn" type="button"><span class="regnum">03</span><span class="regtitle">Ytanalys &amp; Översikt</span><span class="regplus">+</span></button>
+        <button class="regbtn" type="button"><span class="regnum">03</span><span class="regtitle" data-en="Space analytics &amp; Overview">Ytanalys &amp; Översikt</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc">Visualisera ytkvalitet rum för rum. All data baseras på faktiska Carotte-insatser – inte uppskattningar. Se trender och optimera resurser baserat på verklig leverans.</p>
+          <p class="regdesc" data-en="Visualise space quality room by room. All data comes from actual Carotte work – not estimates. See trends and optimise resources based on real delivery.">Visualisera ytkvalitet rum för rum. All data baseras på faktiska Carotte-insatser – inte uppskattningar. Se trender och optimera resurser baserat på verklig leverans.</p>
         </div></div>
       </div>
       <div class="regitem">
-        <button class="regbtn" type="button"><span class="regnum">04</span><span class="regtitle">Ärendehantering &amp; Drift</span><span class="regplus">+</span></button>
+        <button class="regbtn" type="button"><span class="regnum">04</span><span class="regtitle" data-en="Issue handling &amp; Operations">Ärendehantering &amp; Drift</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc">Skapa ett ärende – Carottes team ser det direkt. Automatisk delegering, foto och notiser i realtid. Ingen mejlkedja, ingen tappade bollar.</p>
+          <p class="regdesc" data-en="Raise an issue – Carotte's team sees it instantly. Automatic assignment, photos and real-time notifications. No email chains, nothing dropped.">Skapa ett ärende – Carottes team ser det direkt. Automatisk delegering, foto och notiser i realtid. Ingen mejlkedja, ingen tappade bollar.</p>
         </div></div>
       </div>
       <div class="regitem">
-        <button class="regbtn" type="button"><span class="regnum">05</span><span class="regtitle">AI-driven optimering</span><span class="regplus">+</span></button>
+        <button class="regbtn" type="button"><span class="regnum">05</span><span class="regtitle" data-en="AI-driven optimisation">AI-driven optimering</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc">Mira analyserar mönster i din drift och Carottes leveranser – och ger konkreta förslag på hur du kan höja kvaliteten och sänka kostnader.</p>
-          <p class="regmeta">Lansering vintern 2026</p>
+          <p class="regdesc" data-en="Mira analyses patterns in your operations and Carotte's delivery – and gives concrete suggestions for raising quality and lowering cost.">Mira analyserar mönster i din drift och Carottes leveranser – och ger konkreta förslag på hur du kan höja kvaliteten och sänka kostnader.</p>
+          <p class="regmeta" data-en="Launching winter 2026">Lansering vintern 2026</p>
         </div></div>
       </div>
       <div class="regitem">
-        <button class="regbtn" type="button"><span class="regnum">06</span><span class="regtitle">Notiser &amp; Kommunikation</span><span class="regplus">+</span></button>
+        <button class="regbtn" type="button"><span class="regnum">06</span><span class="regtitle" data-en="Notifications &amp; Communication">Notiser &amp; Kommunikation</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc">Push-notiser på mobil, webb och Apple Watch när Carotte slutfört en insats, behöver din feedback eller när en leverans är på väg. Alltid i loopen.</p>
+          <p class="regdesc" data-en="Push notifications on mobile, web and Apple Watch when Carotte completes a job, needs your feedback, or a delivery is on its way. Always in the loop.">Push-notiser på mobil, webb och Apple Watch när Carotte slutfört en insats, behöver din feedback eller när en leverans är på väg. Alltid i loopen.</p>
         </div></div>
       </div>
     </div>
     </div>
     <div class="feat-visual sr d1">
-      <img src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164840300x161386164490921120/foto-lokalvard.jpg" alt="Carotte-medarbetare gör i ordning ett mötesrum" width="2000" height="1334" loading="lazy">
+      <img src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164840300x161386164490921120/foto-lokalvard.jpg" alt="Carotte-medarbetare gör i ordning ett mötesrum" data-en-alt="Carotte employee preparing a meeting room" width="2000" height="1334" loading="lazy">
     </div>
   </div>
 </section>
@@ -521,31 +533,31 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 <section id="showcase">
   <div class="wrap">
     <div class="sc-hd sr">
-      <h2 class="sh" style="max-width:760px;margin:0 auto 14px">Multipla vyer. <em>En plattform.</em></h2>
-      <p class="sp" style="margin:0 auto;max-width:620px">Ett gränssnitt med en mängd möjligheter – skräddarsytt för kontorschefen.</p>
+      <h2 class="sh" style="max-width:760px;margin:0 auto 14px" data-en-html="Multiple views. <em>One platform.</em>">Multipla vyer. <em>En plattform.</em></h2>
+      <p class="sp" style="margin:0 auto;max-width:620px" data-en="One interface with a wealth of possibilities – tailored for the office manager.">Ett gränssnitt med en mängd möjligheter – skräddarsytt för kontorschefen.</p>
     </div>
     <div class="sc-tabs sr d1">
-      <button class="stab on" type="button" data-t="0">Översikt</button>
-      <button class="stab" type="button" data-t="1">Bokningar</button>
-      <button class="stab" type="button" data-t="2">Lokalvård</button>
-      <button class="stab" type="button" data-t="3">Ärenden</button>
+      <button class="stab on" type="button" data-t="0" data-en="Overview">Översikt</button>
+      <button class="stab" type="button" data-t="1" data-en="Bookings">Bokningar</button>
+      <button class="stab" type="button" data-t="2" data-en="Cleaning">Lokalvård</button>
+      <button class="stab" type="button" data-t="3" data-en="Issues">Ärenden</button>
     </div>
     <div class="sr d2">
       <div class="usc on" data-tp="0"><div class="sw">
-        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / översikt</div><div class="stb-r">Live</div></div>
-        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162991056x656791340094011100/skarm-oversikt.jpg" alt="Översiktsvyn i Mira med bokningar, ärenden, kvalitetsbetyg och kundansvarig" width="1700" height="690" loading="lazy">
+        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / overview">mira-fm.com / översikt</div><div class="stb-r">Live</div></div>
+        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162991056x656791340094011100/skarm-oversikt.jpg" alt="Översiktsvyn i Mira med bokningar, ärenden, kvalitetsbetyg och kundansvarig" data-en-alt="The overview in Mira with bookings, issues, quality ratings and account manager" width="1700" height="690" loading="lazy">
       </div></div>
       <div class="usc" data-tp="1"><div class="sw">
-        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / tjänster</div><div class="stb-r">Carotte × Mira</div></div>
-        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162989295x880703225331422500/skarm-bokningar.jpg" alt="Tjänstevyn i Mira: aktiva tjänster, förslag och paket att beställa" width="1700" height="906" loading="lazy">
+        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / services">mira-fm.com / tjänster</div><div class="stb-r">Carotte × Mira</div></div>
+        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162989295x880703225331422500/skarm-bokningar.jpg" alt="Tjänstevyn i Mira: aktiva tjänster, förslag och paket att beställa" data-en-alt="The services view in Mira: active services, suggestions and packages to order" width="1700" height="906" loading="lazy">
       </div></div>
       <div class="usc" data-tp="2"><div class="sw">
-        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / lokalvård</div><div class="stb-r">Kvalitetskontroll</div></div>
-        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162990292x483870698489451200/skarm-lokalvard.jpg" alt="Kvalitetskontroll i Mira med betyg och kommentar per yta" width="1700" height="809" loading="lazy">
+        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / cleaning">mira-fm.com / lokalvård</div><div class="stb-r" data-en="Quality control">Kvalitetskontroll</div></div>
+        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162990292x483870698489451200/skarm-lokalvard.jpg" alt="Kvalitetskontroll i Mira med betyg och kommentar per yta" data-en-alt="Quality control in Mira with a rating and comment per area" width="1700" height="809" loading="lazy">
       </div></div>
       <div class="usc" data-tp="3"><div class="sw">
-        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / ärenden</div><div class="stb-r">6 aktiva</div></div>
-        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162987467x626435253723368400/skarm-arenden.jpg" alt="Ärendelistan i Mira med prioritet, kontor och status" width="1700" height="811" loading="lazy">
+        <div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / issues">mira-fm.com / ärenden</div><div class="stb-r" data-en="6 active">6 aktiva</div></div>
+        <img class="shot-img" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788162987467x626435253723368400/skarm-arenden.jpg" alt="Ärendelistan i Mira med prioritet, kontor och status" data-en-alt="The issue list in Mira with priority, office and status" width="1700" height="811" loading="lazy">
       </div></div>
     </div>
   </div>
@@ -554,19 +566,19 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 <section id="ai" class="tint">
   <div class="wrap ai-grid">
     <div class="sr">
-      <div class="ai-badge">Mira AI — lansering vintern 2026</div>
-      <h2 class="sh">Data från verkliga insatser driver <em>smartare beslut.</em></h2>
-      <p class="sp">Mira är unik – AI:n tränas på riktig leveransdata från Carottes insatser, inte generiska mönster. Varje städning, varje betyg, varje åtgärd bygger en modell som gör din drift bättre dag för dag.</p>
+      <div class="ai-badge" data-en="Mira AI — launching winter 2026">Mira AI — lansering vintern 2026</div>
+      <h2 class="sh" data-en-html="Data from real work drives <em>smarter decisions.</em>">Data från verkliga insatser driver <em>smartare beslut.</em></h2>
+      <p class="sp" data-en="Mira is unique – the AI is trained on real delivery data from Carotte's work, not generic patterns. Every clean, every rating, every action builds a model that makes your operations better day by day.">Mira är unik – AI:n tränas på riktig leveransdata från Carottes insatser, inte generiska mönster. Varje städning, varje betyg, varje åtgärd bygger en modell som gör din drift bättre dag för dag.</p>
       <div class="ai-quote">
-        <div class="ai-quote-h">Så här kan en AI-insikt se ut</div>
-        <div class="ai-quote-b">”Kök- och pausytor visar konsekvent lägre betyg på tisdagar och onsdagar. Rekommendation: Lägg till en Carotte-städrunda kl 11:30 dessa dagar. Estimerad förbättring: +0.8★”</div>
+        <div class="ai-quote-h" data-en="What an AI insight can look like">Så här kan en AI-insikt se ut</div>
+        <div class="ai-quote-b" data-en="”Kitchen and break areas consistently score lower on Tuesdays and Wednesdays. Recommendation: add a Carotte cleaning round at 11:30 on those days. Estimated improvement: +0.8★”">”Kök- och pausytor visar konsekvent lägre betyg på tisdagar och onsdagar. Rekommendation: Lägg till en Carotte-städrunda kl 11:30 dessa dagar. Estimerad förbättring: +0.8★”</div>
       </div>
     </div>
     <div class="road sr d2">
-      <div class="rstep"><div class="rhead"><span class="rtitle">Prediktiv städning</span></div><div class="rdesc">AI lär sig nyttjandegraden av dina ytor och föreslår optimala städtider för Carottes team – innan problem uppstår.</div></div>
-      <div class="rstep"><div class="rhead"><span class="rtitle">Kvalitetsprognos</span></div><div class="rdesc">Förutspå ditt betyg imorgon baserat på schemade Carotte-insatser och historiska leveransmönster.</div></div>
-      <div class="rstep"><div class="rhead"><span class="rtitle">Ytoptimering</span></div><div class="rdesc">Identifiera vilka rum som drar ner snittet och åtgärda med riktade Carotte-insatser – inte generella schema.</div></div>
-      <div class="rstep"><div class="rhead"><span class="rtitle">Automatisk eskalering</span></div><div class="rdesc">AI identifierar när ett ärende riskerar att missas och eskalerar automatiskt till rätt person hos Carotte.</div></div>
+      <div class="rstep"><div class="rhead"><span class="rtitle" data-en="Predictive cleaning">Prediktiv städning</span></div><div class="rdesc" data-en="The AI learns how your spaces are used and suggests optimal cleaning times for Carotte's team – before problems appear.">AI lär sig nyttjandegraden av dina ytor och föreslår optimala städtider för Carottes team – innan problem uppstår.</div></div>
+      <div class="rstep"><div class="rhead"><span class="rtitle" data-en="Quality forecast">Kvalitetsprognos</span></div><div class="rdesc" data-en="Predict tomorrow's rating based on scheduled Carotte work and historical delivery patterns.">Förutspå ditt betyg imorgon baserat på schemade Carotte-insatser och historiska leveransmönster.</div></div>
+      <div class="rstep"><div class="rhead"><span class="rtitle" data-en="Space optimisation">Ytoptimering</span></div><div class="rdesc" data-en="Identify which rooms drag the average down and fix them with targeted Carotte work – not blanket schedules.">Identifiera vilka rum som drar ner snittet och åtgärda med riktade Carotte-insatser – inte generella schema.</div></div>
+      <div class="rstep"><div class="rhead"><span class="rtitle" data-en="Automatic escalation">Automatisk eskalering</span></div><div class="rdesc" data-en="The AI spots when an issue risks being missed and escalates automatically to the right person at Carotte.">AI identifierar när ett ärende riskerar att missas och eskalerar automatiskt till rätt person hos Carotte.</div></div>
     </div>
   </div>
 </section>
@@ -574,20 +586,20 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 <section id="carotte">
   <div class="wrap car-g">
     <div class="sr">
-      <h2 class="sh">Inte bara mjukvara. <em>Carotte levererar.</em> På riktigt.</h2>
-      <p class="sp">Andra FM-plattformar kopplar dig till tredjepartsleverantörer med okänd kvalitet. Mira är byggd kring Carottes egna team – utbildad personal, certifierade processer och decennier av facility management-erfarenhet. Du bokar digitalt. De levererar fysiskt. Mira mäter allt däremellan.</p>
+      <h2 class="sh" data-en-html="Not just software. <em>Carotte delivers.</em> For real.">Inte bara mjukvara. <em>Carotte levererar.</em> På riktigt.</h2>
+      <p class="sp" data-en="Other FM platforms connect you to third-party suppliers of unknown quality. Mira is built around Carotte's own teams – trained staff, certified processes and decades of facility management experience. You book digitally. They deliver physically. Mira measures everything in between.">Andra FM-plattformar kopplar dig till tredjepartsleverantörer med okänd kvalitet. Mira är byggd kring Carottes egna team – utbildad personal, certifierade processer och decennier av facility management-erfarenhet. Du bokar digitalt. De levererar fysiskt. Mira mäter allt däremellan.</p>
       <div class="svclist" style="margin-top:40px;">
-        <div class="svcrow"><div style="flex:1"><div class="cstitle">Mat lagad från grunden</div><div class="csdesc">Frukost, lunch &amp; cateringlösningar – Carottes egna kockar</div></div><span class="csa">→</span></div>
-        <div class="svcrow"><div style="flex:1"><div class="cstitle">Certifierad lokalvård</div><div class="csdesc">Utbildad städpersonal med egenkontroll i Mira</div></div><span class="csa">→</span></div>
-        <div class="svcrow"><div style="flex:1"><div class="cstitle">Event &amp; mötesplatser</div><div class="csdesc">Färdiga eventpaket – värdskap av Carottes personal</div></div><span class="csa">→</span></div>
-        <div class="svcrow"><div style="flex:1"><div class="cstitle">Utbildad servicepersonal</div><div class="csdesc">Värdskap &amp; kontorsservice med mätbar kvalitet</div></div><span class="csa">→</span></div>
-        <div class="svcrow"><div style="flex:1"><div class="cstitle">Fika &amp; måltidslösningar</div><div class="csdesc">Daglig service – levereras, betygsätts, förbättras</div></div><span class="csa">→</span></div>
+        <div class="svcrow"><div style="flex:1"><div class="cstitle" data-en="Food cooked from scratch">Mat lagad från grunden</div><div class="csdesc" data-en="Breakfast, lunch &amp; catering – Carotte's own chefs">Frukost, lunch &amp; cateringlösningar – Carottes egna kockar</div></div><span class="csa">→</span></div>
+        <div class="svcrow"><div style="flex:1"><div class="cstitle" data-en="Certified cleaning">Certifierad lokalvård</div><div class="csdesc" data-en="Trained cleaners with self-inspection in Mira">Utbildad städpersonal med egenkontroll i Mira</div></div><span class="csa">→</span></div>
+        <div class="svcrow"><div style="flex:1"><div class="cstitle" data-en="Events &amp; meeting spaces">Event &amp; mötesplatser</div><div class="csdesc" data-en="Ready-made event packages – hosted by Carotte staff">Färdiga eventpaket – värdskap av Carottes personal</div></div><span class="csa">→</span></div>
+        <div class="svcrow"><div style="flex:1"><div class="cstitle" data-en="Trained service staff">Utbildad servicepersonal</div><div class="csdesc" data-en="Hospitality &amp; office service with measurable quality">Värdskap &amp; kontorsservice med mätbar kvalitet</div></div><span class="csa">→</span></div>
+        <div class="svcrow"><div style="flex:1"><div class="cstitle" data-en="Coffee breaks &amp; meals">Fika &amp; måltidslösningar</div><div class="csdesc" data-en="Daily service – delivered, rated, improved">Daglig service – levereras, betygsätts, förbättras</div></div><span class="csa">→</span></div>
       </div>
     </div>
     <div class="sr d2">
       <div class="car-photos">
-        <img class="cp-1" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164843773x618512689250146000/foto-servering.jpg" alt="Carotte-personal serverar vid ett event" width="1700" height="1134" loading="lazy">
-        <img class="cp-2" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164842480x990643145164896800/foto-mat.jpg" alt="Uppdukad buffé från Carotte" width="1400" height="1050" loading="lazy">
+        <img class="cp-1" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164843773x618512689250146000/foto-servering.jpg" alt="Carotte-personal serverar vid ett event" data-en-alt="Carotte staff serving at an event" width="1700" height="1134" loading="lazy">
+        <img class="cp-2" src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788164842480x990643145164896800/foto-mat.jpg" alt="Uppdukad buffé från Carotte" data-en-alt="A buffet laid out by Carotte" width="1400" height="1050" loading="lazy">
       </div>
       <div class="car-sign">
         <img src="https://092c0cdfd3657db3e70506a1731448f3.cdn.bubble.io/f1788163816154x241333875188991970/carotte-ordmarke.png" alt="Carotte" width="300" height="65">
@@ -596,13 +608,13 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 
   <div class="wrap loopwrap sr">
-    <div class="loop-t">Den slutna loopen – hur det fungerar</div>
+    <div class="loop-t" data-en="The closed loop – how it works">Den slutna loopen – hur det fungerar</div>
     <div class="loopflow">
-      <div class="lstep"><div class="lnum">1</div><div class="lx"><strong>Du bokar eller betygsätter i Mira</strong>– en digital signal skickas till Carottes leveranssystem direkt.</div></div>
+      <div class="lstep"><div class="lnum">1</div><div class="lx" data-en-html="<strong>You book or rate in Mira</strong>– a digital signal goes straight to Carotte's delivery system."><strong>Du bokar eller betygsätter i Mira</strong>– en digital signal skickas till Carottes leveranssystem direkt.</div></div>
       <div class="larrow" aria-hidden="true"><svg viewBox="0 0 46 16" fill="none"><path d="M2 8h38" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M34 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div class="lstep"><div class="lnum">2</div><div class="lx"><strong>Carottes team agerar fysiskt</strong>– kocken lagar, städarna städar, teknikern fixar. Allt kvitteras i realtid.</div></div>
+      <div class="lstep"><div class="lnum">2</div><div class="lx" data-en-html="<strong>Carotte's team acts physically</strong>– the chef cooks, the cleaners clean, the technician fixes. All signed off in real time."><strong>Carottes team agerar fysiskt</strong>– kocken lagar, städarna städar, teknikern fixar. Allt kvitteras i realtid.</div></div>
       <div class="larrow" aria-hidden="true"><svg viewBox="0 0 46 16" fill="none"><path d="M2 8h38" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M34 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div class="lstep"><div class="lnum">3</div><div class="lx"><strong>Mira mäter och analyserar</strong>– varje insats genererar data som driver nästa förbättring. Loopen sluts.</div></div>
+      <div class="lstep"><div class="lnum">3</div><div class="lx" data-en-html="<strong>Mira measures and analyses</strong>– every job generates data that drives the next improvement. The loop closes."><strong>Mira mäter och analyserar</strong>– varje insats genererar data som driver nästa förbättring. Loopen sluts.</div></div>
     </div>
     <div class="loopback" aria-hidden="true">
       <svg viewBox="0 0 1000 32" preserveAspectRatio="none">
@@ -610,111 +622,111 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
         <path d="M 93 13 L 100 2 L 107 13" fill="none" stroke="#DB6923" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
-    <div class="loopback-l">Loopen sluts – och börjar om</div>
+    <div class="loopback-l" data-en="The loop closes – and starts over">Loopen sluts – och börjar om</div>
   </div>
 </section>
 
 <section id="app" class="tint">
   <div class="wrap app-g">
     <div class="phones sr">
-      <div class="ph lft"><div class="ph-notch"></div><div class="ph-body"><span class="ph-t" style="font-size:13px">Lokalvård</span><div class="ph-kg"><div class="phk"><div class="phkv">4.8★</div><div class="phkl">Betyg</div></div><div class="phk"><div class="phkv">7/8</div><div class="phkl">Klara</div></div></div></div></div>
-      <div class="ph main"><div class="ph-notch"></div><div class="ph-body"><span class="ph-t">Mira</span><div class="ph-kg"><div class="phk"><div class="phkv">92%</div><div class="phkl">Ytkvalitet</div></div><div class="phk"><div class="phkv">3 bok.</div><div class="phkl">Idag</div></div></div><div class="ph-list"><div class="phi"></div><div class="phi"></div><div class="phi"></div><div class="phi"></div></div></div></div>
-      <div class="ph rgt"><div class="ph-notch"></div><div class="ph-body"><span class="ph-t" style="font-size:13px">Bokningar</span><div class="ph-kg"><div class="phk"><div class="phkv">3</div><div class="phkl">Idag</div></div><div class="phk"><div class="phkv">+2</div><div class="phkl">Imorgon</div></div></div></div></div>
-      <div class="watch-p"><span style="font-size:16px">⌚</span><span>Städning klar – Konf A</span></div>
+      <div class="ph lft"><div class="ph-notch"></div><div class="ph-body"><span class="ph-t" style="font-size:13px" data-en="Cleaning">Lokalvård</span><div class="ph-kg"><div class="phk"><div class="phkv">4.8★</div><div class="phkl" data-en="Rating">Betyg</div></div><div class="phk"><div class="phkv">7/8</div><div class="phkl" data-en="Done">Klara</div></div></div></div></div>
+      <div class="ph main"><div class="ph-notch"></div><div class="ph-body"><span class="ph-t">Mira</span><div class="ph-kg"><div class="phk"><div class="phkv">92%</div><div class="phkl" data-en="Space quality">Ytkvalitet</div></div><div class="phk"><div class="phkv" data-en="3 bkgs">3 bok.</div><div class="phkl" data-en="Today">Idag</div></div></div><div class="ph-list"><div class="phi"></div><div class="phi"></div><div class="phi"></div><div class="phi"></div></div></div></div>
+      <div class="ph rgt"><div class="ph-notch"></div><div class="ph-body"><span class="ph-t" style="font-size:13px" data-en="Bookings">Bokningar</span><div class="ph-kg"><div class="phk"><div class="phkv">3</div><div class="phkl" data-en="Today">Idag</div></div><div class="phk"><div class="phkv">+2</div><div class="phkl" data-en="Tomorrow">Imorgon</div></div></div></div></div>
+      <div class="watch-p"><span style="font-size:16px">⌚</span><span data-en="Cleaning done – Room A">Städning klar – Konf A</span></div>
     </div>
     <div class="sr d2">
-      <h2 class="sh">Hela kontoret <em>i fickan.</em></h2>
-      <p class="sp">Boka Carottes tjänster, se när de levererar, betygsätt resultatet och håll koll på alla ärenden – direkt i appen. Push-notiser på mobil och Apple Watch. Loopen stängs var du än befinner dig.</p>
+      <h2 class="sh" data-en-html="The whole office <em>in your pocket.</em>">Hela kontoret <em>i fickan.</em></h2>
+      <p class="sp" data-en="Book Carotte's services, see when they deliver, rate the result and keep track of every issue – straight from the app. Push notifications on mobile and Apple Watch. The loop closes wherever you are.">Boka Carottes tjänster, se när de levererar, betygsätt resultatet och håll koll på alla ärenden – direkt i appen. Push-notiser på mobil och Apple Watch. Loopen stängs var du än befinner dig.</p>
       <a href="https://apps.apple.com/se/app/mira/id6738118996" target="_blank" rel="noopener" class="asb">
         <div class="asb-logo">&#63743;</div>
-        <div><span class="asb-dl">Ladda ner på</span><span class="asb-store">App Store</span></div>
+        <div><span class="asb-dl" data-en="Download on">Ladda ner på</span><span class="asb-store" data-en="App Store">App Store</span></div>
       </a>
     </div>
   </div>
 </section>
 
 <div class="fcta">
-  <h2 class="sr">Det digitala möter det <em>fysiska.</em> På ditt kontor.</h2>
-  <p class="sr d1">Onboarding med Carottes och Miras specialister ingår alltid. Ingen bindningstid.</p>
+  <h2 class="sr" data-en-html="Digital meets <em>physical.</em> At your office.">Det digitala möter det <em>fysiska.</em> På ditt kontor.</h2>
+  <p class="sr d1" data-en="Onboarding with Carotte's and Mira's specialists is always included. No lock-in.">Onboarding med Carottes och Miras specialister ingår alltid. Ingen bindningstid.</p>
   <div class="cta-row sr d2">
-    <button class="cta" type="button" data-wz="open">Räkna på vårt kontor <span>→</span></button>
-    <a href="mailto:info@carotte.se?subject=V%C3%A4ntelistan%20Mira" class="cta ghost">Gå med på väntelistan</a>
+    <button class="cta" type="button" data-wz="open" data-en-html="Get a proposal <span>→</span>">Räkna på vårt kontor <span>→</span></button>
+    <a href="mailto:info@carotte.se?subject=V%C3%A4ntelistan%20Mira" class="cta ghost" data-en="Join the waitlist">Gå med på väntelistan</a>
   </div>
 </div>
 
 <footer>
-  <div><div class="fl">mira<span>.</span></div><div class="fsub">En del av Carotte Group</div></div>
+  <div><div class="fl">mira<span>.</span></div><div class="fsub" data-en="Part of Carotte Group">En del av Carotte Group</div></div>
   <div class="flinks">
-    <a href="https://mira-fm.com/privacy_policy">Integritetspolicy</a>
-    <a href="https://mira-fm.com/privacy_policy">Legal info</a>
-    <a href="mailto:info@carotte.se">Support</a>
+    <a href="https://mira-fm.com/privacy_policy" data-en="Privacy policy">Integritetspolicy</a>
+    <a href="https://mira-fm.com/privacy_policy" data-en="Legal">Legal info</a>
+    <a href="mailto:info@carotte.se" data-en="Support">Support</a>
   </div>
-  <div class="fcopy">© 2026 Carotte Group AB. Alla rättigheter reserverade.</div>
+  <div class="fcopy" data-en="© 2026 Carotte Group AB. All rights reserved.">© 2026 Carotte Group AB. Alla rättigheter reserverade.</div>
 </footer>
 
 <div class="mask" id="mask" role="dialog" aria-modal="true" aria-labelledby="wzT">
   <div class="wz">
     <div class="wz-hd">
-      <div class="wz-t" id="wzT">Räkna på ert kontor</div>
-      <button class="wz-x" type="button" data-wz="close" aria-label="Stäng">×</button>
+      <div class="wz-t" id="wzT" data-en="Tell us about your office">Räkna på ert kontor</div>
+      <button class="wz-x" type="button" data-wz="close" aria-label="Stäng" data-en-aria-label="Close">×</button>
     </div>
     <div class="wz-bar"><div class="wz-seg on" data-seg="0"></div><div class="wz-seg" data-seg="1"></div><div class="wz-seg" data-seg="2"></div></div>
 
     <div class="wz-p on" data-wp="0">
       <div class="wz-row">
-        <div><label class="wz-lbl" for="wKvm">Kontorsyta (kvm)</label><input class="wz-in" id="wKvm" type="number" min="1" inputmode="numeric" placeholder="340"></div>
-        <div><label class="wz-lbl" for="wAp">Arbetsplatser</label><input class="wz-in" id="wAp" type="number" min="1" inputmode="numeric" placeholder="42"></div>
+        <div><label class="wz-lbl" for="wKvm" data-en="Office area (m²)">Kontorsyta (kvm)</label><input class="wz-in" id="wKvm" type="number" min="1" inputmode="numeric" placeholder="340"></div>
+        <div><label class="wz-lbl" for="wAp" data-en="Workstations">Arbetsplatser</label><input class="wz-in" id="wAp" type="number" min="1" inputmode="numeric" placeholder="42"></div>
       </div>
       <div class="wz-row one">
-        <div><label class="wz-lbl" for="wNar">När är ni igång?</label>
+        <div><label class="wz-lbl" for="wNar" data-en="When do you need us?">När är ni igång?</label>
           <select class="wz-in" id="wNar">
-            <option value="">Välj…</option>
-            <option>Så snart som möjligt</option>
-            <option>Inom 3 månader</option>
-            <option>Inom 6 månader</option>
-            <option>Vi orienterar oss bara</option>
+            <option value="" data-en="Choose…">Välj…</option>
+            <option data-en="As soon as possible">Så snart som möjligt</option>
+            <option data-en="Within 3 months">Inom 3 månader</option>
+            <option data-en="Within 6 months">Inom 6 månader</option>
+            <option data-en="Just exploring">Vi orienterar oss bara</option>
           </select></div>
       </div>
     </div>
 
     <div class="wz-p" data-wp="1">
-      <label class="wz-lbl">Vad vill ni ha hjälp med?</label>
+      <label class="wz-lbl" data-en="What do you need help with?">Vad vill ni ha hjälp med?</label>
       <div class="wz-chips" id="wSvc">
-        <button class="wz-chip" type="button" data-svc="housekeeping">Lokalvård</button>
-        <button class="wz-chip" type="button" data-svc="coffee">Kaffe &amp; fika</button>
-        <button class="wz-chip" type="button" data-svc="food">Mat &amp; catering</button>
-        <button class="wz-chip" type="button" data-svc="plants">Växter</button>
-        <button class="wz-chip" type="button" data-svc="water">Vatten</button>
-        <button class="wz-chip" type="button" data-svc="reception">Reception</button>
-        <button class="wz-chip" type="button" data-svc="event">Event</button>
+        <button class="wz-chip" type="button" data-svc="housekeeping" data-en="Cleaning">Lokalvård</button>
+        <button class="wz-chip" type="button" data-svc="coffee" data-en="Coffee &amp; snacks">Kaffe &amp; fika</button>
+        <button class="wz-chip" type="button" data-svc="food" data-en="Food &amp; catering">Mat &amp; catering</button>
+        <button class="wz-chip" type="button" data-svc="plants" data-en="Plants">Växter</button>
+        <button class="wz-chip" type="button" data-svc="water" data-en="Water">Vatten</button>
+        <button class="wz-chip" type="button" data-svc="reception" data-en="Reception">Reception</button>
+        <button class="wz-chip" type="button" data-svc="event" data-en="Events">Event</button>
       </div>
-      <div style="margin-top:18px"><label class="wz-lbl" for="wMsg">Något vi bör veta? (valfritt)</label>
-        <textarea class="wz-in" id="wMsg" rows="3" placeholder="T.ex. två våningsplan, receptionen bemannad 8–17…"></textarea></div>
+      <div style="margin-top:18px"><label class="wz-lbl" for="wMsg" data-en="Anything we should know? (optional)">Något vi bör veta? (valfritt)</label>
+        <textarea class="wz-in" id="wMsg" rows="3" placeholder="T.ex. två våningsplan, receptionen bemannad 8–17…" data-en-placeholder="E.g. two floors, reception staffed 8–17…"></textarea></div>
     </div>
 
     <div class="wz-p" data-wp="2">
       <div class="wz-sum" id="wSum"></div>
       <div class="wz-row">
-        <div><label class="wz-lbl" for="wName">Namn</label><input class="wz-in" id="wName" type="text" autocomplete="name"></div>
-        <div><label class="wz-lbl" for="wCo">Företag</label><input class="wz-in" id="wCo" type="text" autocomplete="organization"></div>
+        <div><label class="wz-lbl" for="wName" data-en="Name">Namn</label><input class="wz-in" id="wName" type="text" autocomplete="name"></div>
+        <div><label class="wz-lbl" for="wCo" data-en="Company">Företag</label><input class="wz-in" id="wCo" type="text" autocomplete="organization"></div>
       </div>
       <div class="wz-row">
-        <div><label class="wz-lbl" for="wMail">E-post *</label><input class="wz-in" id="wMail" type="email" autocomplete="email"></div>
-        <div><label class="wz-lbl" for="wTel">Telefon</label><input class="wz-in" id="wTel" type="tel" autocomplete="tel"></div>
+        <div><label class="wz-lbl" for="wMail" data-en="Email *">E-post *</label><input class="wz-in" id="wMail" type="email" autocomplete="email"></div>
+        <div><label class="wz-lbl" for="wTel" data-en="Phone">Telefon</label><input class="wz-in" id="wTel" type="tel" autocomplete="tel"></div>
       </div>
-      <p class="wz-fine">Vi hör av oss med ett förslag inom ett dygn. Vi använder uppgifterna bara för att kontakta er om Mira och Carottes tjänster.</p>
+      <p class="wz-fine" data-en="We'll get back to you with a proposal within one working day. We only use your details to contact you about Mira and Carotte's services.">Vi hör av oss med ett förslag inom ett dygn. Vi använder uppgifterna bara för att kontakta er om Mira och Carottes tjänster.</p>
     </div>
 
     <div class="wz-p" data-wp="3">
       <div class="wz-ok">
         <div class="tick">✓</div>
-        <div class="wz-t" style="font-size:22px;margin-bottom:10px">Tack – vi hörs snart!</div>
-        <p class="sp" style="margin:0 auto;font-size:14.5px">Er kundansvarig på Carotte återkommer med ett förslag inom ett dygn. Under tiden får du gärna titta runt på sidan.</p>
+        <div class="wz-t" style="font-size:22px;margin-bottom:10px" data-en="Thank you – we'll be in touch!">Tack – vi hörs snart!</div>
+        <p class="sp" style="margin:0 auto;font-size:14.5px" data-en="Your account manager at Carotte will come back with a proposal within one working day. Feel free to look around in the meantime.">Er kundansvarig på Carotte återkommer med ett förslag inom ett dygn. Under tiden får du gärna titta runt på sidan.</p>
       </div>
     </div>
 
     <div class="wz-foot" id="wzFoot">
-      <button class="cta ghost" type="button" data-wz="prev" style="visibility:hidden">← Tillbaka</button>
+      <button class="cta ghost" type="button" data-wz="prev" data-en="← Back" style="visibility:hidden">← Tillbaka</button>
       <div style="flex:1"><div class="wz-msg" id="wzMsg"></div></div>
       <button class="cta" type="button" data-wz="next">Nästa →</button>
     </div>
@@ -727,6 +739,70 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   var API = (document.body.getAttribute("data-api") || "").replace(/\/+$/, "");
   var $  = function(s,r){ return (r||document).querySelector(s); };
   var $$ = function(s,r){ return [].slice.call((r||document).querySelectorAll(s)); };
+
+  var omritaWizard;
+  var META = {
+    sv:{title:"Mira \u2013 Digital & fysisk facility services f\u00f6r ditt kontor",
+        desc:"Mira \u00e4r FM-plattformen byggd kring en riktig tj\u00e4nsteleverant\u00f6r. Du bokar digitalt, Carotte levererar fysiskt, och varje insats m\u00e4ts och betygs\u00e4tts."},
+    en:{title:"Mira \u2013 Digital & physical facility services for your office",
+        desc:"Mira is the FM platform built around a real service provider. You book digitally, Carotte delivers physically, and every job is measured and rated."}
+  };
+  var T = {
+    sv:{next:"N\u00e4sta \u2192", send:"Skicka f\u00f6rfr\u00e5gan \u2192", sending:"Skickar\u2026",
+        badmail:"Fyll i en giltig e-postadress.",
+        failed:"Kunde inte skicka just nu \u2013 mejla oss p\u00e5 info@carotte.se s\u00e5 l\u00f6ser vi det.",
+        neterr:"N\u00e4tverksfel \u2013 mejla oss p\u00e5 info@carotte.se s\u00e5 l\u00f6ser vi det.",
+        office:"Ert kontor", sqm:"kvm", seats:"arbetsplatser",
+        wants:"\u00d6nskar hj\u00e4lp med:", noneyet:"Vi \u00e5terkommer med f\u00f6rslag p\u00e5 vad som passar er.",
+        plan:"Tidplan:", also:"\u00c4ven intresserade av: ",
+        svc:{housekeeping:"Lokalv\u00e5rd",coffee:"Kaffe & fika",food:"Mat & catering",
+             plants:"V\u00e4xter",water:"Vatten",reception:"Reception",event:"Event"}},
+    en:{next:"Next \u2192", send:"Send request \u2192", sending:"Sending\u2026",
+        badmail:"Please enter a valid email address.",
+        failed:"Could not send right now \u2013 email us at info@carotte.se and we will sort it.",
+        neterr:"Network error \u2013 email us at info@carotte.se and we will sort it.",
+        office:"Your office", sqm:"m\u00b2", seats:"workstations",
+        wants:"Needs help with:", noneyet:"We will come back with a suggestion that fits you.",
+        plan:"Timeline:", also:"Also interested in: ",
+        svc:{housekeeping:"Cleaning",coffee:"Coffee & snacks",food:"Food & catering",
+             plants:"Plants",water:"Water",reception:"Reception",event:"Events"}}
+  };
+  var LANG = "sv";
+  function t(k){ return T[LANG][k]; }
+  var ATTRS = ["placeholder","alt","aria-label","title"];
+
+  function setLang(l){
+    if (l !== "sv" && l !== "en") l = "sv";
+    LANG = l;
+    document.documentElement.lang = l;
+    $$("[data-en]").forEach(function(e){
+      if (!e.hasAttribute("data-sv")) e.setAttribute("data-sv", e.textContent);
+      e.textContent = e.getAttribute(l === "en" ? "data-en" : "data-sv");
+    });
+    $$("[data-en-html]").forEach(function(e){
+      if (!e.hasAttribute("data-sv-html")) e.setAttribute("data-sv-html", e.innerHTML);
+      e.innerHTML = e.getAttribute(l === "en" ? "data-en-html" : "data-sv-html");
+    });
+    ATTRS.forEach(function(a){
+      $$("[data-en-" + a + "]").forEach(function(e){
+        if (!e.hasAttribute("data-sv-" + a)) e.setAttribute("data-sv-" + a, e.getAttribute(a) || "");
+        e.setAttribute(a, e.getAttribute(l === "en" ? "data-en-" + a : "data-sv-" + a));
+      });
+    });
+    document.title = META[l].title;
+    var md = document.querySelector('meta[name="description"]');
+    if (md) md.setAttribute("content", META[l].desc);
+    $$(".lang-b").forEach(function(b){
+      var on = b.getAttribute("data-lang") === l;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    try { localStorage.setItem("mira_lang", l); } catch (e) {}
+    if (typeof omritaWizard === "function") omritaWizard();
+  }
+  $$(".lang-b").forEach(function(b){
+    b.addEventListener("click", function(){ setLang(b.getAttribute("data-lang")); });
+  });
 
   /* nav */
   var nav = $("#nav");
@@ -771,10 +847,16 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     srs.forEach(function(r){ obs.observe(r); });
   }
 
+  var start = (location.search.match(/[?&]lang=(sv|en)/) || [])[1]
+           || (location.hash.match(/lang=(sv|en)/) || [])[1];
+  if (!start) { try { start = localStorage.getItem("mira_lang"); } catch (e) {} }
+  if (!start && (navigator.language || "sv").slice(0,2).toLowerCase() !== "sv") start = "en";
+  setLang(start === "en" ? "en" : "sv");
+
   /* ── wizard ── */
   var mask = $("#mask"), steg = 0, tjanster = {};
-  var SVC_LBL = {housekeeping:"Lokalvård", coffee:"Kaffe & fika", food:"Mat & catering",
-                 plants:"Växter", water:"Vatten", reception:"Reception", event:"Event"};
+  function svcLbl(k){ return T[LANG].svc[k]; }
+  omritaWizard = function(){ if (mask.classList.contains("on")) visa(steg); };
 
   function visa(n){
     steg = n;
@@ -783,21 +865,23 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     $("[data-wz=prev]").style.visibility = (n > 0 && n < 3) ? "visible" : "hidden";
     var next = $("[data-wz=next]");
     next.style.display = n >= 3 ? "none" : "inline-flex";
-    next.innerHTML = n === 2 ? "Skicka förfrågan →" : "Nästa →";
+    next.innerHTML = n === 2 ? t("send") : t("next");
     $("#wzFoot").style.display = n >= 3 ? "none" : "flex";
     $("#wzMsg").textContent = "";
     if (n === 2) sammanfatta();
   }
   function sammanfatta(){
     var kvm = $("#wKvm").value, ap = $("#wAp").value;
-    var valda = Object.keys(tjanster).filter(function(k){ return tjanster[k]; }).map(function(k){ return SVC_LBL[k]; });
+    var valda = Object.keys(tjanster).filter(function(k){ return tjanster[k]; }).map(svcLbl);
     var d = [];
-    if (kvm) d.push("<b>" + kvm + " kvm</b>");
-    if (ap)  d.push("<b>" + ap + " arbetsplatser</b>");
-    var txt = d.length ? d.join(" · ") : "Ert kontor";
-    txt += valda.length ? "<br>Önskar hjälp med: <b>" + valda.join(", ") + "</b>"
-                        : "<br>Vi återkommer med förslag på vad som passar er.";
-    if ($("#wNar").value) txt += "<br>Tidplan: <b>" + $("#wNar").value + "</b>";
+    if (kvm) d.push("<b>" + kvm + " " + t("sqm") + "</b>");
+    if (ap)  d.push("<b>" + ap + " " + t("seats") + "</b>");
+    var txt = d.length ? d.join(" \u00b7 ") : t("office");
+    txt += valda.length ? "<br>" + t("wants") + " <b>" + valda.join(", ") + "</b>"
+                        : "<br>" + t("noneyet");
+    var nar = $("#wNar");
+    var narTxt = nar.selectedIndex > 0 ? nar.options[nar.selectedIndex].textContent : "";
+    if (narTxt) txt += "<br>" + t("plan") + " <b>" + narTxt + "</b>";
     $("#wSum").innerHTML = txt;
   }
   function oppna(){
@@ -834,10 +918,10 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     var msg = $("#wzMsg"), mail = $("#wMail").value.trim();
     msg.className = "wz-msg";
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) {
-      msg.className = "wz-msg err"; msg.textContent = "Fyll i en giltig e-postadress."; return;
+      msg.className = "wz-msg err"; msg.textContent = t("badmail"); return;
     }
     var knapp = $("[data-wz=next]");
-    knapp.disabled = true; msg.textContent = "Skickar…";
+    knapp.disabled = true; msg.textContent = t("sending");
 
     var body = {
       name: $("#wName").value.trim(),
@@ -854,8 +938,9 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     ["housekeeping","coffee","plants","water","reception"].forEach(function(k){
       if (tjanster[k]) body["service_" + k] = "ja";
     });
-    var extra = ["food","event"].filter(function(k){ return tjanster[k]; }).map(function(k){ return SVC_LBL[k]; });
-    if (extra.length) body.prospect_message = (body.prospect_message ? body.prospect_message + " · " : "") + "Även intresserade av: " + extra.join(", ");
+    var extra = ["food","event"].filter(function(k){ return tjanster[k]; }).map(svcLbl);
+    if (extra.length) body.prospect_message = (body.prospect_message ? body.prospect_message + " \u00b7 " : "") + t("also") + extra.join(", ");
+    body.lead_language = LANG;
 
     fetch(API + "/leads/create-from-calculator", {
       method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body)
@@ -863,14 +948,14 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
       knapp.disabled = false;
       if (!j || j.ok === false) {
         msg.className = "wz-msg err";
-        msg.textContent = "Kunde inte skicka just nu – mejla oss på info@carotte.se så löser vi det.";
+        msg.textContent = t("failed");
         return;
       }
       visa(3);
     }).catch(function(){
       knapp.disabled = false;
       msg.className = "wz-msg err";
-      msg.textContent = "Nätverksfel – mejla oss på info@carotte.se så löser vi det.";
+      msg.textContent = t("neterr");
     });
   }
 })();
