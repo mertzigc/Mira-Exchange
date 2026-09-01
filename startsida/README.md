@@ -296,3 +296,49 @@ Bubble, så allt i källkoden är läsbart för vem som helst med "visa källa".
 Kvar är neutrala CSS-sektionsrubriker (`/* ── hero ── */` osv.) som bara namnger blocken.
 
 Arbetsanteckningarna finns kvar här i README:n i stället, där de hör hemma.
+
+
+## Engelsk version + språkväxlare (2026-09-01)
+
+**En fil, två språk** — inte två filer. Sidan klistras in i ett HTML-element i Bubble, så
+två språk hade betytt två Bubble-sidor och två filer att hålla i synk. Nu ligger båda i
+`index-ljus.html` och växlas direkt i webbläsaren.
+
+### Hur det fungerar
+
+Varje översättbar text bär sitt engelska värde som attribut:
+
+| Attribut | För | Exempel |
+|---|---|---|
+| `data-en` | ren text | `<span data-en="Service booking">Bokning av tjänster</span>` |
+| `data-en-html` | element med `<em>`/`<strong>` inuti | rubrikerna |
+| `data-en-placeholder` / `-alt` / `-aria-label` | attribut | fältplatshållare, bild-alt |
+
+`setLang()` sparar den svenska originaltexten i `data-sv…` första gången den körs, så
+växlingen går fram och tillbaka utan att tappa något. Verifierat: efter EN → SV är brödtext,
+platshållare och `<title>` tillbaka i original.
+
+Totalt 144 översatta strängar. Dessutom byts `<html lang>`, `<title>` och
+`<meta name="description">`, och wizardens dynamiska texter (knappetiketter, sammanfattning,
+felmeddelanden, tjänstenamn) via en JS-ordlista.
+
+### Växlaren
+
+Ett litet SV/EN-piller i navigationen, aktivt val i mörk fyllning. Ordningen är:
+
+1. `?lang=en` eller `#lang=en` i URL:en
+2. sparat val i `localStorage`
+3. webbläsarens språk — allt utom svenska ger engelska
+4. annars svenska
+
+### Två saker att veta
+
+**SEO.** Google indexerar bara den svenska versionen eftersom växlingen sker i JS. Vill ni
+ranka på engelska behövs en egen URL. Vägen dit är kort: skapa en Bubble-sida `/en`, klistra
+in samma block, och lägg `?lang=en` i länken — sidan startar då på engelska. Sätt `hreflang`
+i Bubbles SEO-inställningar på båda.
+
+**Leadet vet vilket språk besökaren använde.** Wizarden skickar `lead_language: "sv"|"en"`.
+Fältet finns inte på Bubbles Lead-typ, men hamnar i `calculator_payload_raw` som endpointen
+redan sparar — så inget behöver läggas till. Vill ni filtrera på det i CRM:et krävs ett eget
+fält plus en rad i `/leads/create-from-calculator`.
