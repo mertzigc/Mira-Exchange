@@ -257,23 +257,59 @@ export function createClientGroupEngine(deps) {
   async function rollupGroup(opts = {}) {
     let group = null;
     if (opts.id) {
-      group = await bubbleFindOne("ClientGroup", [{ key: "_id", constraint_type: "equals", value: opts.id }]).catch(() => null);
+      group = await bubbleFindOne("ClientGroup", [{ key: "_id", constraint_type: "equals", value: opts.id }]);
     } else if (opts.slug) {
-      group = await bubbleFindOne("ClientGroup", [{ key: "slug", constraint_type: "equals", value: opts.slug }]).catch(() => null);
+      group = await bubbleFindOne("ClientGroup", [{ key: "slug", constraint_type: "equals", value: opts.slug }]);
     }
     if (!group) throw Object.assign(new Error("ClientGroup hittades inte (ange id eller slug)"), { status: 404 });
+    const groupId = group._id || group.id;
 
-    const members = (Array.isArray(group.companies) ? group.companies : []).filter(Boolean);
+    // ⚠️ MEDLEMMARNA HÄRLEDS UR `ClientCompany.group` — INTE ur `group.companies`.
+    //
+    // Fältet `ClientGroup.companies` skrevs bara av applyClusters, som aldrig kördes
+    // skarpt (0 poster, SYNC-KARNAN §6). Den riktning som FAKTISKT underhålls är
+    // `ClientCompany.group`, som companies_api:s inline-edit skriver. Läste vi
+    // `companies` fick varje manuellt skapad grupp `members: 0` — tyst.
+    //
+    // Detta är samma flytt som lärdomen i [[project-mira-omtag]] föreskriver: när
+    // ett fält pensioneras måste ALLA läsare flyttas i samma andetag. Den här
+    // funktionen var den sista läsaren.
+    //
+    // ⚠️ Föredra `/admin/companies/groups/:id` (companies_api) — den svarar ur de
+    // förvärmda cacharna och kostar noll Bubble-anrop. Den här vägen finns kvar för
+    // sync-secret-anropare och gör egna queries.
+    const memberRows = await bubbleFindAll("ClientCompany", {
+      constraints: [{ key: "group", constraint_type: "equals", value: groupId }],
+    });
+    const members = (memberRows || []).map((c) => c._id || c.id).filter(Boolean);
+
+    // Spegelkontroll: är det pensionerade fältet ifyllt och avviker det, SÄG det.
+    // En tyst motsägelse mellan två fält är hur den här klassen av fel överlever.
+    const speglat = (Array.isArray(group.companies) ? group.companies : (group.companies ? [group.companies] : []))
+      .map((v) => (typeof v === "string" ? v : (v && (v._id || v.id)) || null)).filter(Boolean);
+    const sanning = new Set(members);
+    const spegling = speglat.length ? {
+      companies_falt: speglat.length,
+      bara_i_companies: speglat.filter((id) => !sanning.has(id)).length,
+      bara_i_group: members.filter((id) => speglat.indexOf(id) < 0).length,
+      note: "ClientGroup.companies underhålls inte av koden — sanningen är ClientCompany.group",
+    } : null;
+
     const base = {
-      group: { id: group._id || group.id, name: group.name, slug: group.slug, status: group.status, members: members.length },
+      group: { id: groupId, name: group.name, slug: group.slug, status: group.status, members: members.length },
       revenue_net: 0, invoice_count: 0, cancelled_count: 0, order_count: 0, order_net: 0, by_company: [],
+      spegling,
     };
     if (!members.length) return base;
 
-    // Fakturor: linked_company IN medlemmar (en query, paginerad).
+    // ⚠️ Ingen .catch(() => []) — ett trasigt Bubble-svar ska braka, inte se ut som
+    // "noll omsättning". En nolla man tror på är värre än ett fel man ser.
+    // ⚠️ Summan bygger på `linked_company`, som fortfarande är ofullständigt
+    // (backfill 2026-06-08: 3 245 → 1 778 olösta). Underskattning är alltså möjlig
+    // och redovisas som `linked_company_ofullstandig` av anroparen.
     const invoices = await bubbleFindAll("FortnoxInvoice", {
       constraints: [{ key: "linked_company", constraint_type: "in", value: members }],
-    }).catch(() => []);
+    });
     const perCompany = new Map();
     for (const inv of invoices) {
       const cancelled = inv?.ft_cancelled === true || String(inv?.ft_cancelled || "").toLowerCase() === "ja";
@@ -284,10 +320,9 @@ export function createClientGroupEngine(deps) {
       perCompany.set(cc, (perCompany.get(cc) || 0) + net);
     }
 
-    // Ordrar (F&E + workorder via FortnoxOrder).
     const orders = await bubbleFindAll("FortnoxOrder", {
       constraints: [{ key: "linked_company", constraint_type: "in", value: members }],
-    }).catch(() => []);
+    });
     base.order_count = orders.length;
     base.order_net = orders.reduce((s, o) => s + Number(o?.ft_net || 0), 0);
 

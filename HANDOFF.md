@@ -77,6 +77,7 @@ och hur många kunder som kan visa pass.
 | **Intelliplan pass/schema** | Hitta/bygga rapportmall med tid + konsult + kund | Christian |
 | Bokningslägesvyn (UI) | Datalagret klart — vyn ej byggd | — |
 | Drift Fas 2/3 | Se FORETAG-KUNDKORT-DRIFT.md | — |
+| **Kundgrupper (koncernöverblick)** | ✅ Fas 1 (läslagret) byggt 2026-09-01, SYNC-KARNAN §6b. ⚠️ **`ClientCompany.group` är sanningen, inte `ClientGroup.companies`.** Nästa: bulk-tilldelning + gruppvy i företagslistan, gruppfilter i affärsvyn | Christian |
 | Caspeco F&E | Migrering startar Q1-27 → ta bort `tackning`-luckan då | — |
 | **Besökshantering (Vasakronan)** | ✅ GO. Auth/session LIVE 2026-08-26. Nästa: besöksloggen (steg B). Se BESOKSHANTERING.md §8 | Christian |
 | **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |

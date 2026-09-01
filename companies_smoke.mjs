@@ -1839,6 +1839,111 @@ const run = async () => {
     ok("consent utan agree → 400 agree_required", cNo.code === 400 && (cNo.body || {}).error === "agree_required");
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // KUNDGRUPPER (Fas 1) — egen fixtur så befintliga tester inte rubbas
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    // ⚠️ Medlemskapet ligger på `ClientCompany.group`. `ClientGroup.companies`
+    // fylls MEDVETET fel i fixturen — den riktningen skrivs inte av vår kod och
+    // ett test måste bevisa att vi inte råkar läsa den.
+    const GRUPPER = [
+      { _id: "gg1", name: "Vasakronan-koncernen", slug: "vasakronan", status: "confirmed",
+        primary_company: "gc1", companies: ["gc1", "gcX"], org_numbers: ["556061-4603"], aliases: ["Vasakronan AB"] },
+      { _id: "gg2", name: "Tom koncern", slug: "tom", status: "suggested", companies: [] },
+      { _id: "gg4", name: "Halvkänd koncern", slug: "halv", status: "confirmed", companies: [] },
+      // Varken name ELLER slug — _groups() faller tillbaka på slug när namnet saknas,
+      // så en grupp med slug är INTE namnlös. Det här är det verkliga fallet.
+      { _id: "gg3", status: "suggested", companies: [] },
+    ];
+    const gproj = (id, name, group, fast, orgnr) => ({
+      id, name, orgnr: orgnr || "", kundstatus: "Aktiv kund", bransch: "", potential: "", lojalitet: "",
+      region: "", customer_type: "", nki: null, antal_medarbetare: null, omsattning_field: null,
+      ansvarig_id: null, group_id: group, fastighet_ids: fast || [], modified: "2026-08-01T00:00:00.000Z",
+    });
+    const GFULL = new Map([
+      ["gc1", gproj("gc1", "Vasakronan AB", "gg1", ["f1", "f2"], "556061-4603")],
+      ["gc2", gproj("gc2", "Vasakronan Fastigheter AB", "gg1", ["f2", "f3"], "556061-9999")],
+      ["gc3", gproj("gc3", "Fristaende AB", null, ["f1"], "556000-0001")],
+      ["gc4", gproj("gc4", "Spöke AB", "gDÖD", [], "556000-0002")],
+      ["gc5", gproj("gc5", "Med intäkt AB", "gg4", [], "556000-0003")],
+      ["gc6", gproj("gc6", "Utan intäkt AB", "gg4", [], "556000-0004")],
+    ]);
+    const GREV = new Map([["gc1", { 2026: 1000000, 2025: 900000 }], ["gc2", { 2026: 250000 }], ["gc5", { 2026: 50000 }]]);
+    const GBOLAG = new Map([["gc1", { "Staff": Date.now() }], ["gc2", { "Housekeeping": Date.now() }]]);
+    const gDeps = Object.assign({}, deps, {
+      bubbleFindAll: async (t, o) => (t === "ClientGroup" ? GRUPPER.slice() : deps.bubbleFindAll(t, o)),
+      companyFullMap: async () => GFULL,
+      companyRevenueMap: async () => GREV,
+      companyRevenueMapWarm: () => GREV,
+      companyBolagMapWarm: () => GBOLAG,
+      companyTouchMapWarm: () => new Map(),
+    });
+    const gs2 = mk(); registerCompaniesRoutes(gs2.app, gDeps);
+
+    const L = await call(gs2.routes, "get", "/admin/companies/groups", { query: { year: "2026", prev: "2025" } });
+    ok("grupper: listan svarar", L.body.ok === true && L.body.total === 4);
+    const gById = new Map((L.body.grupper || []).map((x) => [x.id, x]));
+    const g1 = gById.get("gg1") || {};
+    // ⚠️ KÄRNAN: medlemmarna härleds ur ClientCompany.group. Läses ClientGroup.companies
+    // blir gc2 osynlig och spökbolaget gcX räknas i stället.
+    ok("grupper: medlemmar härledda ur ClientCompany.group", g1.medlemmar === 2);
+    ok("grupper: bolag som BARA står i ClientGroup.companies blir aldrig medlem",
+      JSON.stringify(L.body.grupper).indexOf("gcX") < 0);
+    ok("grupper: omsättning summeras över medlemmarna", g1.oms_now === 1250000 && g1.oms_prev === 900000);
+    ok("grupper: fastigheter räknas distinkt över koncernen", g1.fastigheter === 3);
+    ok("grupper: våra bolag unionas över medlemmarna", (g1.bolag || []).length === 2);
+    ok("grupper: primärbolagets namn resolvas", g1.primary_company === "Vasakronan AB");
+    // ⚠️ En tyst motsägelse mellan de två fälten är hur den här klassen av fel överlever.
+    ok("grupper: spegelavvikelse mot ClientGroup.companies RAPPORTERAS",
+      !!g1.spegling && g1.spegling.bara_i_companies === 1 && g1.spegling.bara_i_group === 1);
+    const g2 = gById.get("gg2") || {};
+    ok("grupper: tom grupp ger 0 medlemmar och 0 kr", g2.medlemmar === 0 && g2.oms_now === 0);
+    ok("grupper: tom grupp har ingen spegelvarning", g2.spegling === null);
+    const g3 = gById.get("gg3") || {};
+    ok("grupper: namnlös grupp faller INTE tyst bort", !!g3.id && g3.namnlos === true);
+    // ⚠️ En medlem vars omsättning inte är känd får inte tyst räknas som 0 kr —
+    // då ser en halvt okänd koncern ut som en fattig koncern.
+    const g4 = gById.get("gg4") || {};
+    ok("grupper: medlem utan känd omsättning räknas som OKÄND, inte som noll",
+      g4.medlemmar === 2 && g4.oms_now === 50000 && g4.oms_okand === 1);
+
+    const h = L.body.halsa;
+    ok("hälsa: företag med/utan grupp", h.foretag_totalt === 6 && h.foretag_med_grupp === 5 && h.foretag_utan_grupp === 1);
+    ok("hälsa: tomma grupper räknas", h.grupper_tomma === 2);
+    ok("hälsa: namnlösa grupper räknas", h.grupper_utan_namn === 1);
+    // ⚠️ En raderad grupp som ligger kvar på ett företag får varje query mot den att
+    // 400:a (MISSING_DATA). Den ska synas här, inte upptäckas som ett driftfel.
+    ok("hälsa: död gruppreferens upptäcks och namnges",
+      h.doda_gruppreferenser === 1 && ((h.doda_gruppreferenser_exempel || [])[0] || {}).namn === "Spöke AB");
+    ok("hälsa: andel grupperade räknas", h.andel_grupperade === 83.3);
+    ok("hälsa: spegelavvikelser räknas", h.grupper_med_spegelavvikelse === 1);
+
+    const D = await call(gs2.routes, "get", "/admin/companies/groups/:id", { params: { id: "gg1" }, query: { year: "2026", prev: "2025" } });
+    ok("gruppdetalj: svarar med medlemsrader", D.body.ok === true && (D.body.medlemmar || []).length === 2);
+    ok("gruppdetalj: sorterad på omsättning", ((D.body.medlemmar || [])[0] || {}).id === "gc1");
+    ok("gruppdetalj: summan matchar listan", D.body.summa.oms_now === 1250000 && D.body.summa.medlemmar === 2);
+    ok("gruppdetalj: aliases och org_numbers bärs med", (D.body.grupp.org_numbers || [])[0] === "556061-4603");
+    ok("gruppdetalj: spegelavvikelsen namnger bolagen, inte bara antalet",
+      !!D.body.spegling && ((D.body.spegling.bara_i_group || [])[0] || {}).namn === "Vasakronan Fastigheter AB");
+    const D404 = await call(gs2.routes, "get", "/admin/companies/groups/:id", { params: { id: "finns-ej" } });
+    ok("gruppdetalj: okänd grupp → 404", D404.code === 404);
+
+    // ⚠️ Omsättning som inte hunnit värmas får INTE bli 0 kr.
+    const coldG = Object.assign({}, gDeps, { companyRevenueMapWarm: () => null, companyRevenueMap: async () => null });
+    const cgs = mk(); registerCompaniesRoutes(cgs.app, coldG);
+    const C = await call(cgs.routes, "get", "/admin/companies/groups", {});
+    ok("kall omsättning → null, aldrig 0 kr", C.body.ok === true && C.body.revenue_ready === false &&
+      (C.body.grupper.find((x) => x.id === "gg1") || {}).oms_now === null);
+
+    // ⚠️ Ett trasigt ClientGroup-svep får ALDRIG bli "inga kundgrupper".
+    const brokenG = Object.assign({}, gDeps, {
+      bubbleFindAll: async (t, o) => { if (t === "ClientGroup") { const e = new Error("bubbleFind failed"); e.detail = { status: 500, body: "boom" }; throw e; } return deps.bubbleFindAll(t, o); },
+    });
+    const bgs = mk(); registerCompaniesRoutes(bgs.app, brokenG);
+    const B = await call(bgs.routes, "get", "/admin/companies/groups", {});
+    ok("trasigt ClientGroup-svep → 502, inte tom lista", B.code === 502 && B.body.error === "clientgroup_sweep_failed");
+  }
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };

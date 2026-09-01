@@ -9,7 +9,8 @@
 ## 0. TL;DR — var vi står (2026-06-08)
 - **Fakturaspåret: KLART, validerat krona-för-krona, självgående** (cron live). F&E/Staff/HK 2026 stämmer mot Fortnox/facit.
 - **§9 Order/Offer/Workorder: KLART & LIVE.** Hela omtaget (9a kärn-generalisering med delete-reconciliation → 9b fortnox-order/offer → 9c PDF → 9d tengella-workorder→unified FortnoxOrder → 9e cron-cutover) är kodat, backfillat 2026 (workorder 2025+2026), idempotensbevisat (omkörning = rent noop, 0 dubbletter) och i drift. `SYNC_V2_ORDERS=1` live, nightly grön, PDF-cron drar undan ~2600 flaggade order, weekly safety-net härdad. Gamla order/offer/workorder-cron avstängda. **Inget öppet här.** Detaljer + lärda buggar i §5/§8.
-- **ClientGroup-fasen: ⛔ AVBRUTET 2026-06-08** (Christians beslut — mjuka variabler + smutsig källdata gör auto-klustring opålitlig; manuell metodik finns; rätt lever = ren data vid inmatning). Kod ligger kvar oanvänd, 0 poster skrivna. Se §6.
+- **ClientGroup: ⛔ AUTO-klustring avbruten · ✅ LÄSLAGRET BYGGT 2026-09-01.** Se §6b. `GET /admin/companies/groups[/:id]` (companies_api, x-admin-token). ⚠️ **Medlemmar härleds ur `ClientCompany.group` — ALDRIG ur `ClientGroup.companies`.**
+- **ClientGroup-fasen (auto): ⛔ AVBRUTET 2026-06-08** (Christians beslut — mjuka variabler + smutsig källdata gör auto-klustring opålitlig; manuell metodik finns; rätt lever = ren data vid inmatning). Kod ligger kvar oanvänd, 0 poster skrivna. Se §6.
 - **linked_company-backfill: KODAT 2026-06-08, väntar diff-resultat.** Egen route `POST /sync/v2-linkcompany/:source` (frikopplad från ClientGroup — den vägen aktivt bortvald). Fyller bryggfältet på FortnoxInvoice/Order/Offer (Fortnox + Tengella) som synkens noop-väg aldrig satte. Bubble-intern, diff-default. Se §8c.
 - **Nästa möjliga spår (inget pågår):** (a) datakvalitet-vid-ingest — orgnr-validering/normalisering när kund→ClientCompany skapas (det verkliga ClientGroup-fundamentet); (b) Intelliplan-adapter för Staffs order/offert; (c) both-ways offer-push (Mira→Fortnox); (d) bryt upp index.js (~15,6k rader) i moduler.
 - **§9-DETALJSTATUS (historik, allt KLART):**
@@ -185,6 +186,61 @@ curl -sS -X POST "$HOST/sync/v2/fortnox-invoice" \
 - **TUNGA MÅNADER måste delas vid full-resync:** en enskild månad-request kan timeouta (>25 min). Maj F&E behövde veckofönster (`fromdate`/`todate` per vecka). Cron `full` kör helår i ett svep per source → kan timeouta på tunga konton; överväg månads-/vecko-chunkning i cron `full` om det smäller. Nightly (`modifiedDaysBack`) är litet och opåverkat.
 - **F&E orderволym: ~500–600/månad.** `sinceYM` (utan övre gräns) listar månad→årsslut = O(n²) sidor + långa requests → använd `fromdate`+`todate` (riktiga månadsfönster) vid manuell backfill. Detail-anrop sker per dok även vid noop (Bug 1-design) → backfill är tung men engångs; nightly använder `modifiedDaysBack`.
 - **Order/offer = BARA F&E** (Staff = faktura only; order/offert i Intelliplan → /orders 400 på Staff).
+
+## 6b. KUNDGRUPPER — läslagret (Fas 1, byggt 2026-09-01)
+
+**Vad som byggdes:** `GET /admin/companies/groups` (lista + hälsa) och
+`GET /admin/companies/groups/:id` (detalj med medlemsrader) i `companies_api.js`.
+`x-admin-token`, täcks av `/admin/companies`-prefixet i `openPrefixes`.
+**Noll Bubble-anrop** — allt kommer ur `companyFullMap` + `companyRevenueMap` +
+`_groups`, som redan är förvärmda för företagslistan.
+
+### 🔴 Riktningsregeln (den enda som verkligen betyder något)
+
+| Fält | Skrivs av | Läses av | Status |
+|---|---|---|---|
+| **`ClientCompany.group`** | companies_api inline-edit (`EDITABLE.group`) | listan, filtret, CC-cachens `group_id` | ✅ **SANNINGEN** |
+| `ClientGroup.companies` | bara `applyClusters` — kördes aldrig skarpt (0 poster) | ~~`rollupGroup`~~ (flyttad 2026-09-01) | ⛔ underhålls av ingen |
+
+Exakt samma fälla som `Fastighet.Hyresgäster`. Läser man `companies` får varje
+manuellt skapad grupp `medlemmar: 0` — tyst. **`rollupGroup` i `clientgroup.js`
+gjorde precis det** och var den sista läsaren på det döda fältet; den härleder nu
+ur `ClientCompany.group` via en constraintad query. Det är samma flytt som
+[[project-mira-omtag]] föreskriver: när ett fält pensioneras måste ALLA läsare
+flyttas i samma andetag — regeln vi själva bröt mot med TengellaWorkorder.
+
+**Speglingen ignoreras inte.** Fyller någon i `companies` för hand rapporteras
+avvikelsen (`spegling: {companies_falt, bara_i_companies, bara_i_group}`) i både
+lista och detalj. En tyst motsägelse mellan två fält är hur den här klassen av fel
+överlever.
+
+### Hälsomått (det som styr om den interna rutinen fungerar)
+`foretag_med_grupp` / `foretag_utan_grupp` / `andel_grupperade` ·
+`grupper_tomma` (skapade men ej fyllda) · `grupper_utan_namn` ·
+`grupper_med_spegelavvikelse` · **`doda_gruppreferenser`** (företag vars `group`
+pekar på en raderad grupp — varje query mot den 400:ar MISSING_DATA) med
+namngivna exempel.
+
+### ⚠️ Två saker som INTE får misstolkas
+- **Okänd omsättning ≠ noll.** En medlem vars omsättning inte är känd räknas i
+  `oms_okand`, aldrig som 0 kr — annars ser en halvt okänd koncern ut som en fattig.
+- **Kall faktura-cache ger `null`, inte 0.** `revenue_ready: false` säger att
+  siffrorna inte är klara. Vyn måste visa "beräknar…", inte "0 kr".
+- **Summorna underskattar.** De bygger på `linked_company`, som fortfarande har
+  **1 778 olösta** (§8c.1). Redovisa det i vyn, göm det inte.
+
+### Vad som INTE ingår
+Auto-klustring (beslut 2026-06-08 står). Bulk-tilldelning av grupp, gruppvy i
+företagslistan, gruppfilter i affärsvyn (`affar_api.js` har noll gruppmedvetenhet
+idag) — Fas 2–4.
+
+**Verifierat:** `companies_smoke.mjs` **455 gröna**, egen fixtur så befintliga
+tester inte rubbas. **Mutationstestat (8, alla faller utan att krascha sviten):**
+medlemmar ur `ClientGroup.companies` fäller 7 · okänd omsättning som noll 1 · kall
+cache som 0 kr 1 · tystad spegling 2 · död gruppreferens 1 · namnlös grupp
+bortfiltrerad 3 · trasigt svep som tom lista 1 · fastigheter ej distinkta 1.
+
+---
 
 ## 8c. linked_company-backfill — tillvägagångssätt (2026-06-08)
 

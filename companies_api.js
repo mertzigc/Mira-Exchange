@@ -178,18 +178,42 @@ export function registerCompaniesRoutes(app, deps) {
   let _gCache = { list: null, map: null, ts: 0 };
   async function _groups() {
     if (_gCache.map && (Date.now() - _gCache.ts) < AUX_TTL) return _gCache;
-    const all = await bubbleFindAll("ClientGroup", {}).catch(() => []);
-    const map = new Map(), list = [];
+    // ⚠️ Samma behandling som _users(): ett trasigt svep får inte se ut som
+    // "inga kundgrupper", och det får INTE cachas i en timme. Grupp-endpointen
+    // kastar på `ok:false`; namnresolvningen i listan tål en tom karta som förr.
+    let all = null, sweepOk = true;
+    try { all = await bubbleFindAll("ClientGroup", {}); }
+    catch (e) { sweepOk = false; all = []; console.error("[_groups] ClientGroup-svepet misslyckades", e && e.message, JSON.stringify((e && e.detail) || null)); }
+    const map = new Map(), list = [], full = [];
+    let unnamed = 0;
     for (const g of all) {
       const id = bubbleId(g); if (!id) continue;
       const nm = _str(g.name || g.Name || g.namn || g.slug);
-      if (!nm) continue;
+      // ⚠️ `full` byggs FÖRE namnfiltret — en namnlös grupp ska gå att upptäcka
+      // och åtgärdas, inte försvinna tyst (samma lärdom som receptionisterna).
+      // ⚠️ `companies` läses BARA för speglingskontrollen. Det är den riktning
+      // vår kod ALDRIG skriver — sanningen är `ClientCompany.group`.
+      // Se handoff/SYNC-KARNAN.md §6 och [[reference-bubble-fastighet-titel]]-mönstret.
+      full.push({
+        id, name: nm, slug: _str(g.slug), status: _str(g.status),
+        primary_company_id: _ref(g.primary_company) || null,
+        logo: _httpsUrl(g.logo),
+        aliases: Array.isArray(g.aliases) ? g.aliases.map(_str).filter(Boolean) : [],
+        org_numbers: Array.isArray(g.org_numbers) ? g.org_numbers.map(_str).filter(Boolean) : [],
+        speglade_companies: (Array.isArray(g.companies) ? g.companies : (g.companies ? [g.companies] : []))
+          .map((v) => (typeof v === "string" ? v : (v && (v._id || v.id)) || null)).filter(Boolean),
+      });
+      if (!nm) { unnamed++; continue; }
       map.set(id, nm); list.push({ id, name: nm });
     }
+    if (unnamed) console.log("[groups] " + unnamed + " av " + (all || []).length + " kundgrupper saknar namn — utelämnade ur väljaren");
     list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
-    _gCache = { list, map, ts: Date.now() };
-    return _gCache;
+    full.sort((a, b) => _str(a.name).localeCompare(_str(b.name), "sv"));
+    const built = { list, map, full, unnamed, ok: sweepOk, ts: Date.now() };
+    if (sweepOk) _gCache = built;
+    return built;
   }
+  function _groupsForget() { _gCache = { list: null, map: null, ts: 0 }; }
 
   // ── Fastighetsnamn ────────────────────────────────────────────────────────
   // ⚠️ BUGG 2026-08-21: namnet hämtades med `_str(f.Namn || … || f.Adress || …)`.
@@ -461,6 +485,189 @@ export function registerCompaniesRoutes(app, deps) {
     } catch (e) {
       console.error("[/admin/companies/meta]", e?.message);
       return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // KUNDGRUPPER (koncernöverblick) — Fas 1
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ⚠️ MEDLEMSKAPET LÄSES UR `ClientCompany.group` — ALDRIG ur `ClientGroup.companies`.
+  //
+  // Relationen finns åt två håll i Bubble och bara det ena skrivs av vår kod:
+  //   ClientCompany.group   → skrivs av inline-editen här (EDITABLE.group), läses
+  //                           av listan och bärs i den delade CC-cachen (group_id).
+  //   ClientGroup.companies → skrevs BARA av clientgroup.js applyClusters, som
+  //                           aldrig kördes skarpt (0 poster). Ingen underhåller den.
+  // Exakt samma fälla som `Fastighet.Hyresgäster` (se visitor_api.js). Scopar man
+  // via fel håll blir medlemslistan tyst tom.
+  //
+  // ⚠️ Speglingen kontrolleras ändå: fyller någon i `companies` för hand i Bubble
+  // rapporteras avvikelsen (`spegling`) i stället för att ignoreras. En tyst
+  // motsägelse mellan två fält är hur den här klassen av fel överlever.
+  //
+  // ⚠️ AUTO-KLUSTRING INGÅR INTE. Christians beslut 2026-06-08 (SYNC-KARNAN §6):
+  // mjuka variabler + smutsig källdata gör auto-gruppering opålitlig. Gruppering
+  // görs manuellt. Det här lagret LÄSER bara.
+  //
+  // WU: noll Bubble-anrop. Allt kommer ur companyFullMap + companyRevenueMap +
+  // _groups, som redan är förvärmda för företagslistan.
+
+  // Medlemmar per grupp, härlett ur CC-cachen. Returnerar Map(group_id → [cc]).
+  function _medlemmarPerGrupp(full) {
+    const per = new Map();
+    for (const c of full.values()) {
+      if (!c.group_id) continue;
+      if (!per.has(c.group_id)) per.set(c.group_id, []);
+      per.get(c.group_id).push(c);
+    }
+    return per;
+  }
+  // Summering över medlemmarna. `okand` = medlemmar där omsättningen inte är
+  // känd — den redovisas separat i stället för att räknas som noll.
+  function _gruppSumma(medlemmar, ctx, yearNow, yearPrev) {
+    let now = 0, prev = 0, okand = 0;
+    const fast = new Set(), bolag = new Set();
+    for (const c of medlemmar) {
+      const rev = ctx.rev.get(c.id);
+      if (!rev) okand++;
+      else {
+        if (rev[yearNow] != null) now += Number(rev[yearNow]) || 0;
+        if (rev[yearPrev] != null) prev += Number(rev[yearPrev]) || 0;
+      }
+      for (const f of (c.fastighet_ids || [])) fast.add(f);
+      // ⚠️ _bolagOf ger {name, last, active} — INTE `namn`. Fel nyckel hade gett
+      // en tyst tom lista, inte ett fel.
+      const b = _bolagOf(ctx.bolag.get(c.id), ctx.nowTs);
+      for (const x of (b.all || [])) if (x && x.name) bolag.add(x.name);
+    }
+    return {
+      oms_now: ctx.revenueReady ? Math.round(now) : null,
+      oms_prev: ctx.revenueReady ? Math.round(prev) : null,
+      oms_okand: okand,
+      fastigheter: fast.size,
+      bolag: Array.from(bolag).sort((a, b) => a.localeCompare(b, "sv")),
+    };
+  }
+
+  // ── GET /admin/companies/groups ────────────────────────────────────────────
+  app.options("/admin/companies/groups", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/groups", async (req, res) => {
+    if (!guard(req, res)) return;
+    try {
+      const g = await _groups();
+      // Kastar hellre än svarar tomt: "inga kundgrupper" och "svepet failade" får
+      // aldrig se likadana ut i en vy som ska visa vad som saknas.
+      if (!g.ok) return res.status(502).json({ ok: false, error: "clientgroup_sweep_failed",
+        hint: "Finns datatypen ClientGroup i Bubble och är den API-exponerad?" });
+      const ctx = await _ctx();
+      const yearNow = Number(req.query.year) || new Date().getUTCFullYear();
+      const yearPrev = Number(req.query.prev) || (yearNow - 1);
+      const per = _medlemmarPerGrupp(ctx.full);
+
+      const grupper = (g.full || []).map((grp) => {
+        const med = per.get(grp.id) || [];
+        const sum = _gruppSumma(med, ctx, yearNow, yearPrev);
+        // Speglingen: `companies` underhålls inte av oss. Skiljer den sig från
+        // sanningen ska det SYNAS, annars fattar någon beslut på fel lista.
+        const sanning = new Set(med.map((c) => c.id));
+        const speglat = new Set(grp.speglade_companies || []);
+        const bara_i_companies = [...speglat].filter((id) => !sanning.has(id));
+        const bara_i_group = [...sanning].filter((id) => !speglat.has(id));
+        return {
+          id: grp.id, namn: grp.name || "(namnlös grupp)", namnlos: !grp.name,
+          slug: grp.slug, status: grp.status, logo: grp.logo,
+          primary_company_id: grp.primary_company_id,
+          primary_company: grp.primary_company_id ? _str((ctx.full.get(grp.primary_company_id) || {}).name) : "",
+          medlemmar: med.length,
+          oms_now: sum.oms_now, oms_prev: sum.oms_prev, oms_okand: sum.oms_okand,
+          fastigheter: sum.fastigheter, bolag: sum.bolag,
+          spegling: (speglat.size && (bara_i_companies.length || bara_i_group.length))
+            ? { companies_falt: speglat.size, bara_i_companies: bara_i_companies.length, bara_i_group: bara_i_group.length }
+            : null,
+        };
+      });
+      grupper.sort((a, b) => (b.medlemmar - a.medlemmar) || a.namn.localeCompare(b.namn, "sv"));
+
+      // ── Hälsa: det som styr om rutinen fungerar ──────────────────────────
+      let medGrupp = 0, dodRef = 0;
+      const dodaRefer = [];
+      for (const c of ctx.full.values()) {
+        if (!c.group_id) continue;
+        medGrupp++;
+        // Ett group_id som inte finns bland grupperna = raderad grupp som ligger
+        // kvar på företaget. Varje query mot den 400:ar (MISSING_DATA).
+        if (!g.map.has(c.group_id) && !(g.full || []).some((x) => x.id === c.group_id)) {
+          dodRef++; if (dodaRefer.length < 20) dodaRefer.push({ id: c.id, namn: c.name, group_id: c.group_id });
+        }
+      }
+      const totalt = ctx.full.size;
+      return res.json({
+        ok: true, total: grupper.length, revenue_ready: ctx.revenueReady,
+        ar: { now: yearNow, prev: yearPrev }, grupper,
+        halsa: {
+          foretag_totalt: totalt,
+          foretag_med_grupp: medGrupp,
+          foretag_utan_grupp: totalt - medGrupp,
+          andel_grupperade: totalt ? Math.round((medGrupp / totalt) * 1000) / 10 : null,
+          grupper_totalt: grupper.length,
+          grupper_tomma: grupper.filter((x) => x.medlemmar === 0).length,
+          grupper_utan_namn: g.unnamed || 0,
+          grupper_med_spegelavvikelse: grupper.filter((x) => x.spegling).length,
+          doda_gruppreferenser: dodRef,
+          doda_gruppreferenser_exempel: dodaRefer,
+        },
+      });
+    } catch (e) {
+      console.error("[/admin/companies/groups]", e?.message);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ── GET /admin/companies/groups/:id ───────────────────────────────────────
+  app.options("/admin/companies/groups/:id", (req, res) => { if (planningCors) planningCors(req, res); res.sendStatus(204); });
+  app.get("/admin/companies/groups/:id", async (req, res) => {
+    if (!guard(req, res)) return;
+    const id = _str(req.params.id).trim();
+    if (!id) return res.status(400).json({ ok: false, error: "missing_id" });
+    try {
+      const g = await _groups();
+      if (!g.ok) return res.status(502).json({ ok: false, error: "clientgroup_sweep_failed" });
+      const grp = (g.full || []).find((x) => x.id === id);
+      if (!grp) return res.status(404).json({ ok: false, error: "group_not_found", id });
+      const ctx = await _ctx();
+      const yearNow = Number(req.query.year) || new Date().getUTCFullYear();
+      const yearPrev = Number(req.query.prev) || (yearNow - 1);
+      const med = (_medlemmarPerGrupp(ctx.full).get(id) || []);
+      const sum = _gruppSumma(med, ctx, yearNow, yearPrev);
+
+      const medlemmar = med.map((c) => _rowOf(c, ctx, yearNow, yearPrev))
+        .sort((a, b) => (b.oms_now || 0) - (a.oms_now || 0) || a.name.localeCompare(b.name, "sv"));
+
+      // Speglingen i detalj — namn, inte bara antal, så den går att åtgärda.
+      const sanning = new Set(med.map((c) => c.id));
+      const speglat = (grp.speglade_companies || []);
+      const namnAv = (cid) => _str((ctx.full.get(cid) || {}).name) || "(okänt företag " + cid + ")";
+      const bara_i_companies = speglat.filter((cid) => !sanning.has(cid)).map((cid) => ({ id: cid, namn: namnAv(cid) }));
+      const bara_i_group = [...sanning].filter((cid) => speglat.indexOf(cid) < 0).map((cid) => ({ id: cid, namn: namnAv(cid) }));
+
+      return res.json({
+        ok: true, revenue_ready: ctx.revenueReady, ar: { now: yearNow, prev: yearPrev },
+        grupp: {
+          id: grp.id, namn: grp.name || "(namnlös grupp)", namnlos: !grp.name,
+          slug: grp.slug, status: grp.status, logo: grp.logo,
+          aliases: grp.aliases, org_numbers: grp.org_numbers,
+          primary_company_id: grp.primary_company_id,
+          primary_company: grp.primary_company_id ? namnAv(grp.primary_company_id) : "",
+        },
+        summa: Object.assign({ medlemmar: med.length }, sum),
+        medlemmar,
+        // null när fältet är tomt (normalfallet) — bara en ifylld och avvikande
+        // spegling är värd att larma om.
+        spegling: speglat.length ? { companies_falt: speglat.length, bara_i_companies, bara_i_group } : null,
+      });
+    } catch (e) {
+      console.error("[/admin/companies/groups/:id]", e?.message);
+      return res.status(e?.status || 500).json({ ok: false, error: e?.message || String(e) });
     }
   });
 
