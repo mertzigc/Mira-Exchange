@@ -350,6 +350,24 @@ på både `Uppdatera`, `+ Nytt företag` och `✎ Redigera`. Utan fixen är båd
 9 statiska tester + 5 mutationer (basregel utan `!important` · bara background
 skyddad · primär/destruktiv/accent-grupp utan `!important`) — alla faller.
 
+### 🔴 Bulk-barens knappar saknade KLASS helt (2026-09-02)
+Efter deploy syntes de som webbläsarens default — **vita rutor med svart text** mitt
+i den mörka vyn. Markupen skrevs `<button data-fl="bulkadd">` utan `class`, så varken
+blockets knappstil eller `!important`-skyddet nådde dem; bara den blanka
+basregeln `.fl button:hover` gjorde det.
+
+Rättat: basregel `.fl-bulk button` (så även en oklassad knapp blir rätt),
+`.pri` på de primära åtgärderna (ifylld orange), `.danger` på "Ta bort ur grupp",
+läsbar `:disabled`, och båda nya klasserna inlagda i hover-skyddet.
+
+⚠️ **Lärdomen:** en ny knapp behöver TRE saker — en klass i markupen, en regel i
+CSS:en, och en rad i hover-skyddet. Missas den sista blir just den knappen helorange
+medan resten ser rätt ut. Fem regressionstester vaktar alla tre.
+
+**Verifierat empiriskt** med den fientliga regeln injicerad: primärknappen hovrad ger
+`background rgb(244,123,48)` mot `color rgb(28,18,6)` — behåller sin orange yta med
+läsbar mörk text.
+
 ### ⚠️ NITTON ANDRA BLOCK SAKNAR SAMMA SKYDD
 Genomsökning 2026-09-01: bara `mira-foretag-lista`, `mira-personer`,
 `mira-kommunikation-admin`, `mira-staff` och `mira-visitor` har skyddet. Utan det:

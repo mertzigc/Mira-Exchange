@@ -20,6 +20,15 @@
            border-radius:9px;padding:7px 10px;font-size:12.5px;min-width:170px;font-family:var(--fb)}
   .fl-bulk .msg{font-size:11.5px;color:var(--w70)}
   .fl-bulk .msg.err{color:var(--red)} .fl-bulk .msg.ok{color:var(--green)}
+  /* ⚠️ Knapparna i baren SAKNADE klass och renderades som webbläsarens default —
+     vita rutor med svart text mitt i den mörka vyn. Basregeln här gör även en
+     oklassad knapp rätt; klasserna nedan skiljer primär från sekundär. */
+  .fl-bulk button{background:var(--input);color:var(--white);border:1px solid var(--border);
+    border-radius:9px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--fb);}
+  .fl-bulk button.pri{background:var(--orange);color:#1c1206;border-color:var(--orange);font-weight:800;}
+  .fl-bulk button.danger{color:var(--red);border-color:rgba(224,90,90,.45);}
+  /* ⚠️ Läsbar avstängd knapp. Default-grått på mörk yta blev nästan osynligt. */
+  .fl-bulk button:disabled{opacity:.42;cursor:default;}
   .fk-lens{display:inline-flex;gap:0;border:1px solid var(--border);border-radius:20px;overflow:hidden;margin-left:10px;vertical-align:middle}
   .fk-lens span{padding:5px 13px;font-size:11.5px;font-weight:700;cursor:pointer;color:var(--w70);background:var(--input);white-space:nowrap}
   .fk-lens span.on{background:var(--orange);color:#1c1206}
@@ -84,6 +93,7 @@
 
   /* Ifyllda (primära) — orange yta, mörk text. Utan detta hade de blivit
      orange-på-orange precis som alla andra. */
+  .fl .fl-bulk button.pri:hover,.fl .fl-bulk button.pri:focus,
   .fl .fk-act.pri:hover,.fl .fk-act.pri:focus,
   .fl .fk-formbtns .save:hover,.fl .fk-formbtns .save:focus,
   .fl .ab-btn.primary:hover,.fl .ab-btn.primary:focus,
@@ -91,6 +101,7 @@
     background:var(--fl-acc)!important;color:#1c1206!important;filter:brightness(1.07);}
 
   /* Destruktiva — röd text/ram, aldrig orange. */
+  .fl .fl-bulk button.danger:hover,.fl .fl-bulk button.danger:focus,
   .fl .fk-roomdel:hover,.fl .fk-roomdel:focus,
   .fl .ab-rc-rm:hover,.fl .ab-rc-rm:focus,
   .fl .ab-btn.danger:hover,.fl .ab-btn.danger:focus,
@@ -2396,13 +2407,13 @@
     var h='<div class="fl-bulk"><b>'+STATE.sel.length+' valda</b>';
     if(STATE.bulkNy){
       h+='<input type="text" data-fl="bulknamn" placeholder="Namn på ny kundgrupp…">'+
-         '<button data-fl="bulkskapa"'+(STATE.bulkBusy?" disabled":"")+'>'+(STATE.bulkBusy?"Skapar…":"Skapa och tilldela")+'</button>'+
+         '<button class="pri" data-fl="bulkskapa"'+(STATE.bulkBusy?" disabled":"")+'>'+(STATE.bulkBusy?"Skapar…":"Skapa och tilldela")+'</button>'+
          '<button data-fl="bulkavbryt">Avbryt</button>';
     } else {
       h+='<select data-fl="bulkgroup">'+opts+'</select>'+
-         '<button data-fl="bulkadd"'+((!STATE.bulkGroup||STATE.bulkBusy)?" disabled":"")+'>'+(STATE.bulkBusy?"Sparar…":"Lägg till i grupp")+'</button>'+
+         '<button class="pri" data-fl="bulkadd"'+((!STATE.bulkGroup||STATE.bulkBusy)?" disabled":"")+'>'+(STATE.bulkBusy?"Sparar…":"Lägg till i grupp")+'</button>'+
          '<button data-fl="bulkny">+ Ny grupp</button>'+
-         '<button data-fl="bulkremove"'+(STATE.bulkBusy?" disabled":"")+'>Ta bort ur grupp</button>';
+         '<button class="danger" data-fl="bulkremove"'+(STATE.bulkBusy?" disabled":"")+'>Ta bort ur grupp</button>';
     }
     h+='<button data-fl="bulkclear">Rensa val</button>';
     if(STATE.bulkMsg) h+='<span class="msg '+esc(STATE.bulkMsg.k)+'">'+esc(STATE.bulkMsg.t)+'</span>';

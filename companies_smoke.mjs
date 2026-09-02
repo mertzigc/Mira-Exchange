@@ -2205,6 +2205,23 @@ const run = async () => {
     ok("block: inga oskyddade hover-regler på knappklasser kvar",
       !/\n  \.(fl|fk)-(refresh|newco|clear|back|act|cancel|editbtn|key|nsbtn|roomdel|lclose):hover\{(?![^}]*!important)/.test(html));
 
+    // ⚠️ Bulk-barens knappar saknade klass helt och renderades som webbläsarens
+    // default — vita rutor med svart text i en mörk vy. Skarpt 2026-09-02.
+    ok("block: bulk-baren har en basregel för sina knappar",
+      /\.fl-bulk button\{[^}]*background:var\(--input\)[^}]*\}/.test(html));
+    ok("block: avstängd bulk-knapp är läsbar (inte default-grå)",
+      /\.fl-bulk button:disabled\{[^}]*opacity/.test(html));
+    ok("block: primär bulk-knapp är ifylld orange",
+      /\.fl-bulk button\.pri\{[^}]*background:var\(--orange\)[^}]*color:#1c1206/.test(html));
+    // Primär- och destruktiv-klass måste finnas i MARKUPEN, inte bara i CSS:en.
+    ok("block: primäråtgärderna bär .pri",
+      /<button class="pri" data-fl="bulkadd"/.test(script) && /<button class="pri" data-fl="bulkskapa"/.test(script));
+    ok("block: ta-bort-åtgärden bär .danger", /<button class="danger" data-fl="bulkremove"/.test(script));
+    // ⚠️ Och de nya klasserna måste in i hover-skyddet, annars blir just de
+    // helorange trots att resten är skyddat.
+    ok("block: bulk-barens pri/danger täcks av hover-skyddet",
+      /\.fl \.fl-bulk button\.pri:hover/.test(html) && /\.fl \.fl-bulk button\.danger:hover/.test(html));
+
     // ── Design: samma manér som mira-affar-samlad.html ──────────────────────
     // ⚠️ De gamla --fl-*-namnen PEKAR på affärsvyns variabler. Byts den mappningen
     // mot hårdkodade hexar igen driver blocket isär från affärsvyn utan att någon
