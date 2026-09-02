@@ -1194,6 +1194,36 @@ export function registerAffarRoutes(app, deps) {
   // sannolikheten. ⚠️ `sannolikhet` är med FÖR ATT en typmiss på det fältet annars
   // skulle blockera HELA affärssparningen — graderingen ska kunna sparas ändå.
   const DEAL_SOFT_FIELDS = BOM_FIELDS.map((f) => f.bubble).concat(["sannolikhet"]);
+
+  // ── Auto-berkäna value_netto (Christians beslut 2026-09-02) ────────────────
+  // Netto är HÄRLETT: brutto × sannolikhet, avrundat. Räknas om varje gång
+  // brutto eller sannolikhet ändras (BOM- eller manuell-baserad). Handsatt
+  // value_netto i formulärets input ignoreras — fältet är beräknat.
+  // ⚠️ Om ETT av värdena saknas: rör INTE netto (behåll gammalt). Alternativet
+  // — nollställ vid halv information — skulle radera nettan varje gång man
+  // sparar en affär utan sannolikhet, vilket är fel signal.
+  function _computeNetto(brutto, sann) {
+    if (brutto == null || sann == null) return null;
+    const n = Number(brutto) * Number(sann);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  // Anropas EFTER att p byggts men INNAN write. `curDeal` är rå-recordet ur
+  // Bubble (aktuella värden på fält som INTE ingår i denna patch).
+  function _applyAutoNetto(p, curDeal) {
+    const bruttoTouched = p["value_brutto"] !== undefined;
+    const sannTouched   = p["sannolikhet"]  !== undefined;
+    if (!bruttoTouched && !sannTouched) return { auto: false };
+    // ⚠️ affar_api._num returnerar 0 vid null/undefined — så gammal sannolikhet
+    // som SAKNAS på recordet hade lästs som 0 och skrivit netto=0 (falsk noll).
+    // Läs råvärdet direkt: undefined/null/"" → null (rör inte fältet), tal → tal.
+    const raw = (o, k) => (o && o[k] != null && o[k] !== "" ? Number(o[k]) : null);
+    const brutto = bruttoTouched ? p["value_brutto"] : raw(curDeal, "value_brutto");
+    const sann   = sannTouched   ? p["sannolikhet"]  : raw(curDeal, "sannolikhet");
+    const netto  = _computeNetto(brutto, sann);
+    if (netto == null) return { auto: false };
+    p["value_netto"] = netto;
+    return { auto: true, brutto, sann, netto };
+  }
   // → { bom_fields_missing, sannolikhet_blocked } för svaret.
   function _softReport(dropped) {
     const out = {};
@@ -1233,15 +1263,24 @@ export function registerAffarRoutes(app, deps) {
       if (bomP.given) _bomApply(p, bomP.scores);
       if (b.kategori     !== undefined) p["Kategori"]     = asList(b.kategori);
       if (b.value_brutto !== undefined) p["value_brutto"] = asNum(b.value_brutto);
-      if (b.value_netto  !== undefined) p["value_netto"]  = asNum(b.value_netto);
+      // ⚠️ value_netto ignoreras avsiktligt — netto är HÄRLETT (brutto × sannolikhet)
+      // och skrivs av _applyAutoNetto nedan. Manuellt medskickat värde används inte.
       if (b.kundforetag_id  !== undefined) p["kundföretag"]     = _str(b.kundforetag_id) || null;
       if (b.kontaktpersoner !== undefined) p["kontaktpersoner"] = asList(b.kontaktpersoner);
       if (b.todo            !== undefined) p["todo"]            = asList(b.todo);
+      // Netto-omräkning kräver AKTUELLA värden på fält som inte ingår i patchen —
+      // hämta rå-recordet en gång, INNAN vi kollar "inga_fält" (annars går en
+      // patch med bara sannolikhet miste om netto-uppdateringen).
+      const curDealForNetto = (p["value_brutto"] !== undefined || p["sannolikhet"] !== undefined)
+        ? await bubbleGet("deal", id).catch(() => null)
+        : null;
+      const nettoInfo = _applyAutoNetto(p, curDealForNetto);
       if (!Object.keys(p).length) return res.status(400).json({ ok: false, error: "inga_fält" });
       const wr = await _writeSkippingRejected((q) => bubblePatch("deal", id, q), p, DEAL_SOFT_FIELDS);
       return res.json(Object.assign({ ok: true, id, patched: p,
         sannolikhet: p["sannolikhet"] !== undefined ? p["sannolikhet"] : undefined,
         sannolikhet_source: bomP.given ? "bom" : (b.sannolikhet !== undefined ? "manuell" : undefined),
+        value_netto_auto: nettoInfo.auto ? { brutto: nettoInfo.brutto, sannolikhet: nettoInfo.sann, netto: nettoInfo.netto } : undefined,
       }, _softReport(wr.dropped)));
     } catch (e) {
       console.error("[/admin/affar/deal/:id/patch]", e?.message, e?.detail);
@@ -1275,6 +1314,9 @@ export function registerAffarRoutes(app, deps) {
       const bomErrC = _bomError(bomC);
       if (bomErrC) return res.status(400).json(Object.assign({ ok: false }, bomErrC));
       if (bomC.given) _bomApply(p, bomC.scores);
+      // Netto = brutto × sannolikhet (härlett). Vid create finns inga gamla värden;
+      // räknar bara om båda skickas i denna body. Se _applyAutoNetto ovan.
+      const nettoInfoC = _applyAutoNetto(p, null);
 
       const cw = await _writeSkippingRejected((q) => bubbleCreate("deal", q), p, DEAL_SOFT_FIELDS);
       const dealId = cw.value;
@@ -1298,6 +1340,7 @@ export function registerAffarRoutes(app, deps) {
       }
       return res.json(Object.assign({ ok: true, deal_id: dealId, titel, linked, lead_status_set,
         sannolikhet: p["sannolikhet"] !== undefined ? p["sannolikhet"] : null,
+        value_netto_auto: nettoInfoC.auto ? { brutto: nettoInfoC.brutto, sannolikhet: nettoInfoC.sann, netto: nettoInfoC.netto } : undefined,
       }, _softReport(cw.dropped)));
     } catch (e) {
       console.error("[/admin/affar/deal/create]", e?.message, e?.detail);

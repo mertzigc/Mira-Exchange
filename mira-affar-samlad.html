@@ -171,6 +171,9 @@
   .af .bom-star{cursor:pointer;font-size:17px;line-height:1;color:rgba(255,255,255,.22);background:none;border:0;padding:0 1px}
   .af .bom-star.on{color:var(--orange)}
   .af .bom-star:hover{color:var(--orange);opacity:.8}
+  /* Netto-fältet är HÄRLETT (brutto × sannolikhet) — server äger sanningen. */
+  .af .af-d-nettohint{font-weight:400;color:var(--w40);font-size:10.5px;margin-left:6px;text-transform:none;letter-spacing:0;}
+  .af input.af-d-netto[readonly]{background:rgba(255,255,255,.03);color:var(--w70);cursor:not-allowed;}
   .af .bom-msg{display:block;margin-top:8px;font-size:11.5px;opacity:.65}
   .af .bom-msg.err{color:#ff8080;opacity:1}
   .af .ebtn{background:var(--orange);border:none;border-radius:8px;padding:8px 22px;color:#1c1206;font-weight:800;font-size:12.5px;cursor:pointer;font-family:var(--fb);transition:filter .12s}
@@ -771,6 +774,22 @@
     var el=wrap.querySelector("[data-bompct]");
     if(el){ el.textContent=(pct==null?"ej graderad":("Sannolikhet "+pct+" %")); el.className="p"+(pct==null?" na":""); }
     var m=wrap.querySelector("[data-bommsg]"); if(m) m.className="bom-msg";
+    // ⚠️ Netto = brutto × sannolikhet (spegel av serverberäkningen i affar_api).
+    // Punktuppdatera nettofältet på det omslutande edit-blocket — utan detta
+    // ligger den gamla nettan kvar ända tills användaren sparar, och man ser
+    // inte att stjärnornas gradering påverkar affärsvärdet.
+    var editBox=star.closest(".edit"); if(editBox) refreshDealNetto(editBox);
+  }
+  // Härlett nettofält (server äger sanningen, UI:t speglar). Räknar via samma
+  // bomPct som chippen; brutto ur .af-d-brutto-inputen. Manuellt skrivet netto
+  // skrivs över — fältet är beräknat, inte skrivbart (jfr affar_api._applyAutoNetto).
+  function refreshDealNetto(box){
+    var bruttoEl=box.querySelector(".af-d-brutto"), nettoEl=box.querySelector(".af-d-netto");
+    if(!bruttoEl || !nettoEl) return;
+    var brutto=Number(bruttoEl.value); if(!isFinite(brutto) || bruttoEl.value==="") { nettoEl.value=""; return; }
+    var r=bomRead(box), pct=bomPct(r.scores||{});
+    if(pct==null){ nettoEl.value=""; return; }              // sannolikhet saknas → visa tomt (server rör inte fältet vid halv info)
+    nettoEl.value=Math.round(brutto*(pct/100));
   }
   // Lägger graderingen i en payload. Returnerar felsträng om ofullständig.
   function bomApply(box, payload){
@@ -1241,7 +1260,7 @@
       '</div>'+
       '<div class="erow">'+
         '<div><label class="el">Affärsvärde brutto</label><input type="number" class="ein af-d-brutto" value="'+esc(e.value_brutto==null?"":e.value_brutto)+'"></div>'+
-        '<div><label class="el">Affärsvärde netto</label><input type="number" class="ein af-d-netto" value="'+esc(e.value_netto==null?"":e.value_netto)+'"></div>'+
+        '<div><label class="el">Affärsvärde netto <span class="af-d-nettohint">(beräknat: brutto × sannolikhet)</span></label><input type="number" class="ein af-d-netto" value="'+esc(e.value_netto==null?"":e.value_netto)+'" readonly tabindex="-1"></div>'+
         '<div style="flex:2"><label class="el">Kategori</label><div class="kats">'+katHtml+'</div></div>'+
       '</div>'+
       '<div><label class="el">Beskrivning</label><textarea class="ein af-d-besk" rows="2">'+esc(e.beskrivning)+'</textarea></div>'+
@@ -1901,6 +1920,12 @@
     var akr=t.closest("tr.akt"); if(akr){ toggleEdit(akr,"akt"); return; }
   });
   root.addEventListener("input",function(e){
+    // Brutto ändras → punktuppdatera nettofältet i samma edit-block (samma
+    // formel som servern). ⚠️ Ingen re-render av kortet — den hade raderat
+    // text i övriga formulärfält.
+    if(e.target.classList && e.target.classList.contains("af-d-brutto")){
+      var eb=e.target.closest(".edit"); if(eb) refreshDealNetto(eb);
+    }
     if(e.target.classList && e.target.classList.contains("af-co-search")){ searchCompanies(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-td-search")){ searchTodos(e.target); return; }
     if(e.target.classList && e.target.classList.contains("af-d-co-search")){ searchDealCompanies(e.target); return; }

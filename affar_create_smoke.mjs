@@ -323,6 +323,71 @@ const run = async () => {
   ok("bom: patch utan gradering rör inte sannolikheten",
      pb3.body.ok === true && pb3.body.patched["sannolikhet"] === undefined);
 
+  // ── Auto-beräknat value_netto (Christians beslut 2026-09-02) ──────────────
+  // Netto = brutto × sannolikhet, avrundat. Härlett — aldrig handsatt.
+  // Räknas om vid varje patch där brutto eller sannolikhet ändras.
+
+  // Skapa: både brutto och full BOM (sannolikhet=0.95) → netto = 42300 × 0.95 = 40185
+  const nCreate = await mkDeal(Object.assign({ value_brutto: 42300 }, BOM_ALLA(5)));
+  ok("netto: create räknar netto = brutto × sannolikhet",
+     nCreate.body.ok === true && nCreate.body.value_netto_auto && nCreate.body.value_netto_auto.netto === Math.round(42300 * 0.95));
+  const nCreateRec = created.filter((c) => c.t === "deal").pop();
+  ok("netto: create skriver value_netto till Bubble",
+     nCreateRec.payload["value_netto"] === Math.round(42300 * 0.95));
+
+  // Create utan sannolikhet → inget netto räknas (rör INTE fältet vid halv info)
+  const nCreateNoSann = await mkDeal({ value_brutto: 42300 });
+  ok("netto: create utan sannolikhet → value_netto ej skrivet + ingen value_netto_auto",
+     nCreateNoSann.body.ok === true && nCreateNoSann.body.value_netto_auto === undefined);
+  const nCreateNoSannRec = created.filter((c) => c.t === "deal").pop();
+  ok("netto: create utan sannolikhet → payload utan value_netto",
+     nCreateNoSannRec.payload["value_netto"] === undefined);
+
+  // Manuellt medskickad value_netto IGNORERAS — fältet är beräknat.
+  const nCreateManual = await mkDeal(Object.assign({ value_brutto: 100000, value_netto: 999999 }, BOM_ALLA(3)));
+  const nCreateManualRec = created.filter((c) => c.t === "deal").pop();
+  ok("netto: manuellt medskickad value_netto ignoreras (fältet är härlett)",
+     nCreateManualRec.payload["value_netto"] === Math.round(100000 * 0.48) &&
+     nCreateManualRec.payload["value_netto"] !== 999999);
+
+  // Patch: när brutto ändras och sannolikhet finns i Bubble sedan tidigare → räkna om
+  DB.deal.push({ _id: "dNetto", titel: "Netto-test", value_brutto: 50000, sannolikhet: 0.6, value_netto: 30000 });
+  const pNet1 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dNetto" }, body: { value_brutto: 80000 } });
+  ok("netto: patch bara brutto → använder gammal sannolikhet ur Bubble",
+     pNet1.body.ok === true && pNet1.body.patched["value_netto"] === Math.round(80000 * 0.6) &&
+     pNet1.body.value_netto_auto && pNet1.body.value_netto_auto.sannolikhet === 0.6);
+
+  // Patch: när BOM ändras utan brutto → räkna om med gammalt brutto ur Bubble
+  DB.deal.push({ _id: "dNetto2", titel: "Netto-BOM", value_brutto: 50000, sannolikhet: 0.6, value_netto: 30000 });
+  const pNet2 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dNetto2" }, body: BOM_ALLA(5) });
+  ok("netto: patch bara BOM → använder gammal brutto ur Bubble",
+     pNet2.body.ok === true && pNet2.body.patched["value_netto"] === Math.round(50000 * 0.95));
+
+  // Patch: när VARKEN brutto eller sannolikhet rörs → netto ska inte röras
+  DB.deal.push({ _id: "dNetto3", titel: "Netto-orörd", value_brutto: 50000, sannolikhet: 0.6, value_netto: 30000 });
+  const pNet3 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dNetto3" }, body: { titel: "Bara ny titel" } });
+  ok("netto: patch utan brutto/sannolikhet rör INTE value_netto",
+     pNet3.body.ok === true && pNet3.body.patched["value_netto"] === undefined && pNet3.body.value_netto_auto === undefined);
+
+  // Patch: manuellt medskickad value_netto IGNORERAS även här — härlett fält
+  DB.deal.push({ _id: "dNetto4", titel: "Netto-override", value_brutto: 50000, sannolikhet: 0.6 });
+  const pNet4 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dNetto4" }, body: { value_brutto: 60000, value_netto: 999999 } });
+  ok("netto: patch med manuellt netto → ignoreras, härlett värde vinner",
+     pNet4.body.ok === true && pNet4.body.patched["value_netto"] === Math.round(60000 * 0.6) &&
+     pNet4.body.patched["value_netto"] !== 999999);
+
+  // Patch: när brutto sätts men affären saknar sannolikhet → netto rörs INTE
+  DB.deal.push({ _id: "dNetto5", titel: "Netto-utan-sann", value_brutto: 30000 });
+  const pNet5 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dNetto5" }, body: { value_brutto: 40000 } });
+  ok("netto: patch brutto utan sannolikhet någonstans → value_netto ej skrivet",
+     pNet5.body.ok === true && pNet5.body.patched["value_netto"] === undefined);
+
+  // Patch: brutto + BOM samtidigt → båda nya värden används
+  DB.deal.push({ _id: "dNetto6", titel: "Netto-båda", value_brutto: 10000, sannolikhet: 0.3 });
+  const pNet6 = await call("post", "/admin/affar/deal/:id/patch", { params: { id: "dNetto6" }, body: Object.assign({ value_brutto: 100000 }, BOM_ALLA(4)) });
+  ok("netto: patch brutto + BOM samtidigt → nya värden vinner (100000 × 0.71)",
+     pNet6.body.ok === true && pNet6.body.patched["value_netto"] === Math.round(100000 * 0.71));
+
   // ── Fälten saknas i Bubble: affären måste ändå gå att spara ───────────────
   const routes4 = {}; let missCreated = null;
   registerAffarRoutes({ get: () => {}, post: (p, h) => { routes4[p] = h; }, options: () => {} },
