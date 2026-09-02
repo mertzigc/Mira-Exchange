@@ -136,7 +136,36 @@ export function registerAffarRoutes(app, deps) {
   // ── normalisering per typ → unified row ───────────────────────────
   function nLead(r, m) { return { type: "Lead", source: "mira", company: cname(m, r.Company) || _str(r.Name), number: "", amount: null, date: _day(r["Created Date"]), status: "Ny", status_cls: "wait", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
   function nAkt(r, m)  { const [lbl] = pick({}, _str(r.kundm_te_option_kundm_te), ["Aktivitet", "wait"]); return { type: "Aktivitet", source: "mira", company: cname(m, r.clientcompany), number: "", amount: null, date: _day(r.datum_bokning_date || r["Created Date"]), status: lbl || "Aktivitet", status_cls: "wait", deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
-  function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  // ⚠️ BELOPP-prio (Christians beslut 2026-09-02): netto → brutto → offertvärde.
+  // Netto är den härledda "sannolika" summan (brutto × sannolikhet, se
+  // _applyAutoNetto) och är alltid mer korrekt att prognostisera på än brutto.
+  // Offert-fallbacken kräver en extra Bubble-query och läggs på i post-processing
+  // (se _fillDealOffertAmount nedan) — den kan inte köras här eftersom nDeal är sync.
+  function nDeal(r, m) { const [lbl, cls] = pick(DEAL_STATUS, _str(r.Status), ["—", "wait"]); return { type: "Affär", source: "mira", company: cname(m, r["kundföretag"]), number: _str(r.titel), amount: _num(r.value_netto) || _num(r.value_brutto) || null, date: _day(r["Created Date"]), status: lbl, status_cls: cls, deal_id: _ref(r.deal) || null, id: bubbleId(r) }; }
+  // Post-processing: för affär-rader som saknar amount (varken netto eller brutto
+  // satt), batch:a en offert-lookup via Offert.deal (reverse) och sätt högsta
+  // total-värdet. EN Bubble-query för hela sidan — undvik N+1.
+  // ⚠️ INGEN .catch(() => []) — vi vill se felet i loggen, inte tolka "0 offerter".
+  async function _fillDealOffertAmount(rows) {
+    if (!bubbleFindAll) return rows;
+    const missing = rows.filter((r) => r && r.type === "Affär" && r.amount == null && r.id).map((r) => r.id);
+    if (!missing.length) return rows;
+    const offs = await bubbleFindAll("Offert", { constraints: [{ key: "deal", constraint_type: "in", value: missing }] });
+    const bestByDeal = new Map();
+    for (const o of (offs || [])) {
+      const did = _ref(o.deal); if (!did) continue;
+      const v = _num(o.total); if (!v || v <= 0) continue;
+      const cur = bestByDeal.get(did) || 0;
+      if (v > cur) bestByDeal.set(did, v);
+    }
+    for (const r of rows) {
+      if (r && r.type === "Affär" && r.amount == null) {
+        const v = bestByDeal.get(r.id);
+        if (v) { r.amount = v; r.amount_source = "offert"; }   // flagga för UI:t (informativ, inte load-bearing)
+      }
+    }
+    return rows;
+  }
   // ⚠️ BORTTAGET 2026-08-20: `_woRows` / `nWorkorder` / `_liveWO` läste den
   // PENSIONERADE typen `TengellaWorkorder` (fryst 2026-06-04 av §9-cutovern).
   // Kommentaren här påstod "kanonisk källa … färsk sync" om data som redan då
@@ -381,6 +410,10 @@ export function registerAffarRoutes(app, deps) {
         ...invs.map(nInvoice),
       ].filter((r) => r.id);
       rows.sort((a, b) => (_ts(b.date) - _ts(a.date)));
+      // Fallback: affär-rader utan netto+brutto → högsta offert-total. Kostar
+      // 1 Bubble-query per feed-render — hoppas över om alla deals redan har
+      // amount. Feed:en visar bara `limit` deals så query:t är litet.
+      await _fillDealOffertAmount(rows);
 
       return res.json({
         ok: true,
@@ -671,6 +704,7 @@ export function registerAffarRoutes(app, deps) {
         } else { recs = await pageOf("deal", extra); total = filtersActive ? await bubbleCount("deal", [...dateBase, ...extra]) : await bubbleCount("deal"); }
         grand_total = await bubbleCount("deal");
         rows = recs.map((r) => nDeal(r, m));
+        await _fillDealOffertAmount(rows);   // netto → brutto → offertvärde (batch)
       }
       else if (type === "offert") {
         const m = await companyMap();

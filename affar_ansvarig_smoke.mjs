@@ -213,6 +213,57 @@ const run = async () => {
   ok("counts_detail har ingen order_tengella längre",
      !("order_tengella" in (feed.body.counts_detail || {})));
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // BELOPP-fallback i affärslistan (Christians beslut 2026-09-02)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Prioritet: netto → brutto → offertvärde. En affär utan varken netto eller
+  // brutto ska falla tillbaka på offertens `total` (batchad, en Bubble-query).
+  // ⚠️ Fixturen speglar tre skarpa fall:
+  //   dN  — har netto satt (25000) OCH brutto (50000) → visa NETTO
+  //   dB  — har bara brutto (7000)                    → visa BRUTTO
+  //   dO  — varken netto eller brutto, men OFFERT     → visa offertens total
+  //   dX  — inget alls                                → amount=null (— i UI)
+  DB.deal.push(
+    { _id: "dN", titel: "Netto-deal",  "kundföretag": "cc1", Status: "Offert", value_brutto: 50000, value_netto: 25000, deal_owner: ["u2"], "Created Date": "2026-08-01" },
+    { _id: "dB", titel: "Brutto-deal", "kundföretag": "cc1", Status: "Offert", value_brutto: 7000,                   deal_owner: ["u2"], "Created Date": "2026-08-02" },
+    { _id: "dO", titel: "Offert-deal", "kundföretag": "cc1", Status: "Offert",                                        deal_owner: ["u2"], "Created Date": "2026-08-03" },
+    { _id: "dX", titel: "Tomt-deal",   "kundföretag": "cc1", Status: "Offert",                                        deal_owner: ["u2"], "Created Date": "2026-08-04" },
+  );
+  DB.Offert.push(
+    { _id: "oDo1", source: "mira_fe", offertnr: "FE-9",   kundforetag: "cc1", total: 12000, deal: "dO", "Created Date": "2026-08-03" },
+    // ⚠️ Två offerter på samma affär — HÖGSTA vinner (annars visar vi
+    // "smallest offer" som fake affärsvärde), och 0-belopp räknas inte.
+    { _id: "oDo2", source: "mira_fe", offertnr: "FE-10",  kundforetag: "cc1", total: 34000, deal: "dO", "Created Date": "2026-08-03" },
+    { _id: "oDo3", source: "mira_fe", offertnr: "FE-11",  kundforetag: "cc1", total: 0,     deal: "dO", "Created Date": "2026-08-03" },
+  );
+  const listAll = await call("/admin/affar/list", { query: { type: "affar" } });
+  const byId = (id) => listAll.body.rows.find((r) => r.id === id);
+
+  ok("dN visar NETTO (25000), inte brutto",       (byId("dN") || {}).amount === 25000);
+  ok("dB visar BRUTTO (7000)",                    (byId("dB") || {}).amount === 7000);
+  ok("dO faller tillbaka på HÖGSTA offertvärdet (34000)",
+     (byId("dO") || {}).amount === 34000);
+  ok("dO flaggas amount_source=offert (så UI kan indikera)",
+     (byId("dO") || {}).amount_source === "offert");
+  ok("dX utan varken netto/brutto/offert → amount null (— i UI)",
+     (byId("dX") || {}).amount === null);
+  // Regression: deals MED brutto ska INTE trigga offert-lookup (och inte
+  // heller få amount_source="offert" påklistrat).
+  ok("dB har INTE amount_source=offert (den fick brutto direkt)",
+     (byId("dB") || {}).amount_source === undefined);
+
+  // ⚠️ Batchning: bara EN Offert-query får gå ner för hela sidans fallback,
+  // oavsett hur många deals som saknar amount. Utan batchning blir det
+  // N Bubble-anrop och listan skalar dåligt (samma fälla som drift-N+1 2026-08-17).
+  // ⚠️ lastConstraints är FLAT (concat, inte push) → räkna constraint-objekt
+  // direkt, inte constraint-arrays.
+  lastConstraints = { };
+  await call("/admin/affar/list", { query: { type: "affar" } });
+  const offConstr = lastConstraints["Offert"] || [];
+  const fbConstraints = offConstr.filter((c) => c && c.key === "deal" && c.constraint_type === "in");
+  ok("fallback: exakt EN 'deal in'-constraint (batchad) oavsett antal deals utan amount",
+     fbConstraints.length === 1);
+
   console.log("\n" + (fail === 0 ? "✅ ALLA GRÖNA" : "❌ FEL") + "  pass=" + pass + " fail=" + fail);
   if (fail) process.exit(1);
 };
