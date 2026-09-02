@@ -11,6 +11,7 @@ import { registerAffarRoutes } from "./affar_api.js";
 import { registerProduktionRoutes } from "./produktion_api.js";
 import { registerSaljRoutes } from "./salj_api.js";
 import { registerCompaniesRoutes } from "./companies_api.js";
+import { registerBehovsanalysRoutes } from "./behovsanalys_api.js";
 import { normBlocks as _normBlocks, renderBlocksWeb as _renderBlocksWeb, BLOCK_CSS as _BLOCK_CSS, BLOCK_TYPES as _BLOCK_TYPES } from "./content_blocks.js";
 import { mailPalette, readableAccent } from "./mail_theme.js";
 import { feOverlap, describeEmptySide, bokningslageSummary, kallaFarskhet } from "./bokningslage.js";
@@ -468,6 +469,7 @@ function requireApiKey(req, res, next) {
     "/admin/companies",            // Företagslista — render-omtag av native vyn, x-admin-token-grindad
     "/admin/drift",                // Drift stå-alone (ärenden+kvalitetskontroller aggregerat), x-admin-token-grindad
     "/admin/persons",              // Personer stå-alone (global personlista), x-admin-token-grindad (companies_api.js)
+    "/admin/behovsanalys",         // Behovsanalys (säljstödets snabbchecklista), x-admin-token-grindad (behovsanalys_api.js)
     "/admin/staff",                // Staff-modulen (Service & People): åtgärdslista, receptionister,
                                    // besöksuppsättningar, notisstatistik. x-admin-token-grindad
                                    // (staff_api.js). ⚠️ INTE visitor-token — det är en CRM-yta.
@@ -21295,6 +21297,17 @@ const _companiesApi = registerCompaniesRoutes(app, {
   // att skilja våra egna users från kundens. Utan env-varen svarar checken ok:false
   // (aldrig tyst noll) — se /admin/companies/:id/onboarding i companies_api.js.
   CAROTTE_COMPANY_ID: process.env.CAROTTE_COMPANY_ID || "",
+});
+
+// ── Behovsanalys (/admin/behovsanalys). Snabbchecklistan som ligger till
+//    grund för offert; kan hakas på både Deal (från affärsvyn) och
+//    ClientCompany (från kortet). Se behovsanalys_api.js.
+// ⚠️ Kräver Bubble-typ `BehovsAnalys` (clientcompany, deal, writer, data(text),
+//    updated_at, status). Utan den 400:ar create-endpointen med tydlig hint.
+registerBehovsanalysRoutes(app, {
+  bubbleFind, bubbleFindAll, bubbleGet, bubbleId, bubblePatch, bubbleCreate,
+  planningAuthed: _planningAuthed,
+  planningCors: _planningCors,
 });
 
 // ── Staff-modulen (/admin/staff). Se handoff/STAFF-MODULEN.md. ──

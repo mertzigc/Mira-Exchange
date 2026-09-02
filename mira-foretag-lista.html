@@ -451,6 +451,45 @@
   .fk-onbchip:hover{border-color:var(--fl-acc);color:var(--fl-txt);}
   .fk-onbtip{margin-top:8px;font-size:11px;color:var(--fl-mut);}
   @media(max-width:820px){.fk-onbsteps{grid-template-columns:repeat(2,1fr);}}
+  /* ── Behovsanalys-panel (säljstödets snabbchecklista) ── */
+  .fk-ba{margin:18px 0 4px;background:var(--fl-panel);border:1px solid var(--fl-line);border-radius:12px;padding:14px 16px;}
+  .fk-bah{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;}
+  .fk-bah .t{font-weight:700;font-size:13px;letter-spacing:.02em;}
+  .fk-bah .meta{color:var(--fl-mut);font-size:11.5px;}
+  .fk-bah .meta b{color:var(--fl-txt);font-weight:600;}
+  .fk-bapill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;letter-spacing:.02em;}
+  .fk-bapill.utkast{background:rgba(224,160,96,.14);color:#e0a060;border:1px solid rgba(224,160,96,.35);}
+  .fk-bapill.klar{background:rgba(106,211,154,.14);color:var(--fl-ok);border:1px solid rgba(106,211,154,.35);}
+  .fk-babar{height:6px;background:var(--fl-bg);border-radius:3px;overflow:hidden;margin:6px 0 10px;}
+  .fk-babar>i{display:block;height:100%;background:var(--fl-acc);border-radius:3px;transition:width .2s;}
+  .fk-baactions{display:flex;gap:8px;flex-wrap:wrap;}
+  .fk-baact{background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--fl-txt);cursor:pointer;}
+  .fk-baact.pri{background:var(--fl-acc);border-color:var(--fl-acc);color:#1c1206;}
+  .fk-baact:hover{border-color:var(--fl-acc);}
+  .fk-baempty{color:var(--fl-mut);font-size:12px;font-style:italic;padding:4px 0 6px;}
+  /* Formulär (inline utfällt — samma mönster som deal-formuläret) */
+  .fk-baform{margin-top:14px;background:var(--fl-bg);border:1px solid var(--fl-line);border-radius:10px;padding:14px 16px;}
+  .fk-basec{border-top:1px dashed var(--fl-line);padding-top:12px;margin-top:12px;}
+  .fk-basec:first-of-type{border-top:0;padding-top:0;margin-top:0;}
+  .fk-basech{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-acc);font-weight:700;margin-bottom:8px;}
+  .fk-bagrid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 14px;}
+  .fk-bafld{display:flex;flex-direction:column;gap:4px;}
+  .fk-bafld.wide{grid-column:1 / -1;}
+  .fk-bafld label{font-size:11px;color:var(--fl-mut);font-weight:600;letter-spacing:.02em;}
+  .fk-bafld input,.fk-bafld select,.fk-bafld textarea{background:var(--fl-panel);border:1px solid var(--fl-line);border-radius:6px;padding:7px 9px;color:var(--fl-txt);font-family:inherit;font-size:13px;}
+  .fk-bafld textarea{resize:vertical;min-height:60px;}
+  .fk-bafld input:focus,.fk-bafld select:focus,.fk-bafld textarea:focus{outline:none;border-color:var(--fl-acc);}
+  .fk-bachips{display:flex;flex-wrap:wrap;gap:5px;}
+  .fk-bachip{display:inline-flex;align-items:center;gap:3px;padding:4px 9px;border-radius:16px;background:var(--fl-panel);border:1px solid var(--fl-line);font-size:11.5px;color:var(--fl-mut);cursor:pointer;user-select:none;}
+  .fk-bachip.on{background:var(--fl-acc);color:#1c1206;border-color:var(--fl-acc);font-weight:600;}
+  .fk-bachip:hover:not(.on){border-color:var(--fl-acc);color:var(--fl-txt);}
+  .fk-baformbtns{margin-top:14px;display:flex;gap:8px;align-items:center;padding-top:12px;border-top:1px solid var(--fl-line);}
+  .fk-baformbtns .save{background:var(--fl-acc);border:none;border-radius:8px;padding:7px 16px;font-weight:700;color:#1c1206;cursor:pointer;font-size:12.5px;}
+  .fk-baformbtns .cancel{background:transparent;border:1px solid var(--fl-line);border-radius:8px;padding:7px 14px;color:var(--fl-mut);cursor:pointer;font-size:12.5px;}
+  .fk-baformbtns .msg{color:var(--fl-mut);font-size:11.5px;margin-left:auto;}
+  .fk-baformbtns .msg.err{color:#ff8080;}
+  .fk-baformbtns .msg.ok{color:var(--fl-ok);}
+  @media(max-width:820px){.fk-bagrid{grid-template-columns:1fr;}}
 </style>
 
 <!-- ══ PORTAT 2026-08-17: CSS för Avtal-flikens paneler
@@ -2132,7 +2171,8 @@
               cardId:null, card:null, cardTab:"hem", cardEditing:false, cardFast:null, todoNew:false, nastaDirty:false, nsWarn:"", cardRevTries:0, chain:{}, coworkers:null, avtalSub:"avtal", newPerson:false, personDetail:null, personTab:"profil", personActs:null, coworkerOffices:[], coworkerDepartments:[], coworkerRoles:[], acctFor:null, histOpen:null, histNew:false, dealFor:null,
               setupSub:"kontor", offices:null, officeMeta:{fastigheter:[],coworkers:[]}, officeNew:false, officeEdit:null, officeRooms:null, setupLev:null, setupHv:null,
               driftSub:"arenden", matters:null, qcList:null, matterOpen:null, matterDetail:null, qcOpen:null, qcDetail:null,
-              onboarding:null };   // Kundresans status (avtal→leveransklar) — hämtas per kortöppning, se fetchOnboarding.
+              onboarding:null,   // Kundresans status (avtal→leveransklar) — hämtas per kortöppning, se fetchOnboarding.
+              ba:null, baSchema:null, baOpenId:null, baDraft:null };   // Behovsanalys — se fetchBehovsanalys / baForm nedan.
   var _deb=null, _prog=null, _revTimer=null, _cardRevTimer=null, _touchTimer=null;
 
   function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
@@ -3747,7 +3787,8 @@
     if(STATE.cardTab==="hem"){
       if(STATE.lens) return gruppHem();
       var left=STATE.cardEditing?cardKunddataEdit():cardKunddataRead();
-      return '<div class="fk-body"><div class="fk-grid">'+left+cardHemRight()+'</div></div>';
+      var ba = baSummaryHtml() + (STATE.baOpenId ? baFormHtml() : "");
+      return '<div class="fk-body"><div class="fk-grid">'+left+cardHemRight()+'</div>'+ba+'</div>';
     }
     if(STATE.cardTab==="personer"){
       if(STATE.coworkers===null){ fetchCoworkers(); return '<div class="fk-body"><div class="fl-msg">Laddar…</div></div>'; }
@@ -4188,6 +4229,175 @@
     return '<div class="fk-onb">'+head+'<div class="fk-onbsteps">'+steps+'</div>'+checks+tip+'</div>';
   }
 
+  // ── BEHOVSANALYS (säljstödets snabbchecklista) ────────────────────────────
+  // Hakas på både company (via /for-company) och deal (via /for-deal, i affärsvyn).
+  // Här på kortet: senaste analys för kunden. En kund kan ha FLERA analyser
+  // (t.ex. en per affär) — vi visar bara den nyaste + antalet.
+  // ⚠️ Schemat hämtas EN gång per session (cachat i STATE.baSchema) — det
+  // ändras inte mellan kort-öppningar.
+  function fetchBehovsanalys(id){
+    var schemaP = STATE.baSchema
+      ? Promise.resolve({ ok:true, sections: STATE.baSchema.sections, total_fields: STATE.baSchema.total_fields })
+      : api("/admin/behovsanalys/schema");
+    var listP = api("/admin/behovsanalys/for-company/"+encodeURIComponent(id));
+    Promise.all([schemaP, listP]).then(function(res){
+      if(STATE.cardId!==id) return;                          // bytt kund
+      if(res[0] && res[0].ok) STATE.baSchema=res[0];
+      if(res[1] && res[1].ok) STATE.ba=res[1];
+      if(STATE.view==="card" && STATE.cardTab==="hem" && !STATE.cardEditing) renderCard();
+    }).catch(function(e){ console.error("[behovsanalys]", e && e.message); });
+  }
+  function baPill(status){
+    var s=String(status||"Utkast");
+    return '<span class="fk-bapill '+(s==="Klar"?"klar":"utkast")+'">'+esc(s)+'</span>';
+  }
+  function baSummaryHtml(){
+    var b=STATE.ba;
+    if(!STATE.baSchema) return '<div class="fk-ba"><div class="fk-bah"><span class="t">Behovsanalys</span><span class="meta"><em>laddar…</em></span></div></div>';
+    if(!b || !b.latest){
+      return '<div class="fk-ba">'+
+        '<div class="fk-bah"><span class="t">Behovsanalys</span><span class="meta">säljstödets snabbchecklista · '+numc(STATE.baSchema.total_fields)+' fält</span></div>'+
+        '<div class="fk-baempty">Ingen behovsanalys skapad än — starta så snart som möjligt i säljfasen.</div>'+
+        '<div class="fk-baactions"><button class="fk-baact pri" data-fk="ba-new">+ Skapa behovsanalys</button></div>'+
+      '</div>';
+    }
+    var la=b.latest, c=la.completeness||{filled:0,total:STATE.baSchema.total_fields,pct:0};
+    var users=(STATE.card && STATE.card.meta && STATE.card.meta.users)||[];
+    var writer=(la.writer_id && users.length) ? (users.filter(function(u){return u.id===la.writer_id;})[0]||{}).name : "";
+    var meta='<b>'+numc(c.filled)+'</b> av <b>'+numc(c.total)+'</b> fält ('+c.pct+' %)';
+    if(la.updated_at) meta+=' · uppdaterad '+esc(la.updated_at);
+    if(writer)         meta+=' av '+esc(writer);
+    if(b.count>1)      meta+=' · '+numc(b.count)+' analyser totalt';
+    return '<div class="fk-ba">'+
+      '<div class="fk-bah">'+
+        '<span class="t">Behovsanalys '+baPill(la.status)+'</span>'+
+        '<span class="meta">'+meta+'</span>'+
+      '</div>'+
+      '<div class="fk-babar"><i style="width:'+c.pct+'%"></i></div>'+
+      '<div class="fk-baactions">'+
+        '<button class="fk-baact pri" data-fk="ba-open" data-baid="'+esc(la.id)+'">Öppna &amp; fyll i</button>'+
+        '<button class="fk-baact" data-fk="ba-new">+ Ny analys</button>'+
+      '</div>'+
+    '</div>';
+  }
+  // ── Formulär (inline utfällt, ingen modal) ───────────────────────────────
+  // baDraft = pågående ändringar (bara det som ändrats sedan senaste patch).
+  // Utan draft-lager hade varje tangenttryck krävt en API-round-trip; nu skickar
+  // vi en patch när användaren klickar Spara.
+  function baFieldHtml(f, val){
+    if(f.type==="number") return '<input type="number" data-baf="'+esc(f.id)+'" value="'+esc(val==null?"":val)+'"'+(f.min!=null?' min="'+f.min+'"':'')+(f.max!=null?' max="'+f.max+'"':'')+'>';
+    if(f.type==="date")   return '<input type="date"   data-baf="'+esc(f.id)+'" value="'+esc(val==null?"":val)+'">';
+    if(f.type==="textarea")return '<textarea data-baf="'+esc(f.id)+'" rows="'+(f.rows||3)+'">'+esc(val==null?"":val)+'</textarea>';
+    if(f.type==="select"){
+      var os='<option value="">— välj —</option>';
+      for(var i=0;i<f.options.length;i++){ var o=f.options[i]; os+='<option value="'+esc(o)+'"'+(String(val)===o?" selected":"")+'>'+esc(o)+'</option>'; }
+      return '<select data-baf="'+esc(f.id)+'">'+os+'</select>';
+    }
+    if(f.type==="multi"){
+      var cur=Array.isArray(val)?val.map(String):[];
+      var chips="";
+      for(var j=0;j<f.options.length;j++){ var opt=f.options[j], on=cur.indexOf(opt)>-1;
+        chips+='<span class="fk-bachip'+(on?" on":"")+'" data-bam="'+esc(f.id)+'" data-v="'+esc(opt)+'">'+esc(opt)+'</span>';
+      }
+      return '<div class="fk-bachips">'+chips+'</div>';
+    }
+    return '<input type="text" data-baf="'+esc(f.id)+'" value="'+esc(val==null?"":val)+'">';
+  }
+  function baFormHtml(){
+    if(!STATE.baSchema) return "";
+    var d=STATE.baDraft||{}, secHtml="";
+    for(var i=0;i<STATE.baSchema.sections.length;i++){
+      var sec=STATE.baSchema.sections[i], fldHtml="";
+      for(var j=0;j<sec.fields.length;j++){
+        var f=sec.fields[j], val=(d[f.id]!==undefined)?d[f.id]:undefined;
+        var wide=(f.type==="textarea" || f.type==="multi")?" wide":"";
+        fldHtml+='<div class="fk-bafld'+wide+'"><label>'+esc(f.label)+'</label>'+baFieldHtml(f, val)+'</div>';
+      }
+      secHtml+='<div class="fk-basec"><div class="fk-basech">'+esc(sec.section)+'</div><div class="fk-bagrid">'+fldHtml+'</div></div>';
+    }
+    var isNew=(STATE.baOpenId==="new");
+    return '<div class="fk-baform" data-baopen="'+esc(STATE.baOpenId||"")+'">'+
+      secHtml+
+      '<div class="fk-baformbtns">'+
+        '<button class="save" data-fk="ba-save">'+(isNew?"Skapa analys":"Spara ändringar")+'</button>'+
+        '<button class="cancel" data-fk="ba-cancel">Avbryt</button>'+
+        '<button class="cancel" data-fk="ba-status" data-status="'+(STATE.ba && STATE.ba.latest && STATE.ba.latest.status==="Klar" ? "Utkast" : "Klar")+'">'+
+          (STATE.ba && STATE.ba.latest && STATE.ba.latest.status==="Klar" ? "Markera som Utkast" : "Markera som Klar")+
+        '</button>'+
+        '<span class="msg" data-bamsg></span>'+
+      '</div>'+
+    '</div>';
+  }
+  // Bygg initial-draft från senaste analys (för Öppna) eller tom (för + Ny).
+  function baOpen(baId){
+    STATE.baOpenId = baId || "new";
+    if(baId && STATE.ba && STATE.ba.latest && STATE.ba.latest.id===baId){
+      STATE.baDraft = Object.assign({}, STATE.ba.latest.data || {});
+    } else {
+      STATE.baDraft = {};
+    }
+    renderCard();
+  }
+  function baCancel(){ STATE.baOpenId=null; STATE.baDraft=null; renderCard(); }
+  // Punktuppdatering av draft (INTE renderCard — hade raderat text man just
+  // skrivit i andra fält, samma fälla som deal-formuläret).
+  function baOnInput(el){
+    var k=el.getAttribute("data-baf"); if(!k) return;
+    var v=el.value;
+    // Number-fält: håll som number i draft så backend inte får sträng
+    var t=(el.type==="number") ? Number(v) : v;
+    if(el.type==="number" && (v==="" || !isFinite(t))) t = "";
+    STATE.baDraft = STATE.baDraft || {};
+    if(v==="" || v==null) delete STATE.baDraft[k]; else STATE.baDraft[k]=t;
+  }
+  function baOnChip(chip){
+    var k=chip.getAttribute("data-bam"), v=chip.getAttribute("data-v");
+    STATE.baDraft = STATE.baDraft || {};
+    var cur = Array.isArray(STATE.baDraft[k]) ? STATE.baDraft[k].slice() : [];
+    var i=cur.indexOf(v);
+    if(i>-1) cur.splice(i,1); else cur.push(v);
+    if(cur.length) STATE.baDraft[k]=cur; else delete STATE.baDraft[k];
+    // Punktuppdatera bara denna chip (klass), ingen renderCard.
+    chip.classList.toggle("on");
+  }
+  function baSave(btn){
+    var box=btn.closest(".fk-baform"), msg=box.querySelector("[data-bamsg]");
+    msg.textContent="Sparar…"; msg.className="msg"; btn.disabled=true;
+    var isNew=(STATE.baOpenId==="new");
+    var body = { by_user: cfg("current_user"), data: STATE.baDraft || {} };
+    var endpoint;
+    if(isNew){
+      body.clientcompany_id = STATE.cardId;
+      endpoint = "/admin/behovsanalys/create";
+    } else {
+      endpoint = "/admin/behovsanalys/"+encodeURIComponent(STATE.baOpenId)+"/patch";
+    }
+    apiPost(endpoint, body).then(function(j){
+      btn.disabled=false;
+      if(!j || !j.ok){
+        msg.textContent="✗ "+((j && (j.hint||j.error))||"kunde inte spara");
+        msg.className="msg err"; return;
+      }
+      msg.textContent="✓ Sparad"; msg.className="msg ok";
+      // Ladda om listan så senaste räknas rätt
+      fetchBehovsanalys(STATE.cardId);
+      STATE.baOpenId=null; STATE.baDraft=null;
+      setTimeout(function(){ if(STATE.view==="card") renderCard(); }, 500);
+    }).catch(function(){ btn.disabled=false; msg.textContent="✗ nätverksfel"; msg.className="msg err"; });
+  }
+  function baToggleStatus(btn){
+    if(STATE.baOpenId==="new"){ /* kan inte statusa en ännu icke-skapad analys */ return; }
+    var newStatus=btn.getAttribute("data-status"), msg=btn.closest(".fk-baformbtns").querySelector("[data-bamsg]");
+    msg.textContent="Uppdaterar status…"; msg.className="msg";
+    apiPost("/admin/behovsanalys/"+encodeURIComponent(STATE.baOpenId)+"/patch",
+      { by_user: cfg("current_user"), status: newStatus }).then(function(j){
+      if(!j||!j.ok){ msg.textContent="✗ "+((j && j.error)||"fel"); msg.className="msg err"; return; }
+      msg.textContent="✓ Status uppdaterad"; msg.className="msg ok";
+      fetchBehovsanalys(STATE.cardId);
+      setTimeout(function(){ if(STATE.view==="card") renderCard(); }, 400);
+    });
+  }
+
   function renderCard(){
     stashPanes();
     if(!STATE.card){ $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-msg">Laddar kundkort…</div>'; return; }
@@ -4212,6 +4422,7 @@
     STATE.view="card"; STATE.cardId=id; STATE.cardTab="hem"; STATE.cardEditing=false; STATE.cardFast=null; STATE.todoNew=false; STATE.nastaDirty=false; STATE.nsWarn=""; STATE.cardRevTries=0; STATE.chain={}; STATE.coworkers=null; STATE.newPerson=false; STATE.personDetail=null; STATE.personTab="profil"; STATE.personActs=null; STATE.histOpen=null; STATE.histNew=false; STATE.dealFor=null; STATE.acctFor=null; STATE.setupSub="kontor"; STATE.offices=null; STATE.officeMeta={fastigheter:[],coworkers:[]}; STATE.officeNew=false; STATE.officeEdit=null; STATE.officeRooms=null; STATE.setupLev=null; STATE.setupHv=null;
     STATE.driftSub="arenden"; STATE.matters=null; STATE.qcList=null; STATE.matterOpen=null; STATE.matterDetail=null; STATE.qcOpen=null; STATE.qcDetail=null;
     STATE.onboarding=null;
+    STATE.ba=null; STATE.baOpenId=null; STATE.baDraft=null;   // behovsanalys — se fetchBehovsanalys
     // ⚠️ Linsen är per kort. Bär man den vidare till nästa bolag visar kortet en
     // koncern som det bolaget kanske inte ens tillhör.
     STATE.lens=false; STATE.gruppData=null;
@@ -4225,6 +4436,7 @@
       scheduleCardRev();
     }).catch(function(){ if(!STATE.card) $("cardview").innerHTML='<button class="fk-back" data-fk="back">← Företagslistan</button><div class="fl-err">Nätverksfel.</div>'; });
     fetchOnboarding(id);
+    fetchBehovsanalys(id);
   }
   function closeCard(){
     STATE.view="list"; STATE.cardEditing=false;
@@ -4296,6 +4508,19 @@
         if(sk==="avtal"){ STATE.cardTab="avtal"; renderCard(); return; }
         if(sk==="utbildning"){ STATE.cardTab="historik"; renderCard(); return; }
         return; }
+      // ── Behovsanalys ─────────────────────────────────────────────────────
+      // Multi-chip klick i formuläret hanteras FÖRST (INNE i .fk-baform), sen
+      // knapparna. Chip:et togglar draft-listan utan att röra övriga fält.
+      var bChip=t.closest?t.closest("[data-bam]"):null;
+      if(bChip){ baOnChip(bChip); return; }
+      if(t.closest && t.closest('[data-fk="ba-new"]'))    { baOpen(null); return; }
+      var baOp=t.closest?t.closest('[data-fk="ba-open"]'):null;
+      if(baOp){ baOpen(baOp.getAttribute("data-baid")); return; }
+      if(t.closest && t.closest('[data-fk="ba-cancel"]')) { baCancel(); return; }
+      var baSv=t.closest?t.closest('[data-fk="ba-save"]'):null;
+      if(baSv){ baSave(baSv); return; }
+      var baSt=t.closest?t.closest('[data-fk="ba-status"]'):null;
+      if(baSt){ baToggleStatus(baSt); return; }
       if(t.closest && t.closest('[data-fk="edit"]')){ STATE.cardEditing=true; STATE.cardFast=null; renderCard(); return; }
       // Avbryt måste betyda avbryt — därför kastas den stageade fastighetslistan.
       if(t.closest && t.closest('[data-fk="canceledit"]')){ STATE.cardEditing=false; STATE.cardFast=null; renderCard(); return; }
@@ -4464,11 +4689,16 @@
     if(cell){ if(cell.getAttribute("data-editing")) return; beginEdit(cell); return; }
   });
   root.addEventListener("input", function(e){
+    // Behovsanalys-fält: uppdatera draft utan re-render (samma fälla som deal-formuläret).
+    if(e.target.getAttribute && e.target.getAttribute("data-baf")){ baOnInput(e.target); return; }
     if(STATE.view!=="list") return;
     var t=e.target;
     if(t.getAttribute && t.getAttribute("data-fl")==="q"){ STATE.q=t.value; if(_deb) clearTimeout(_deb); _deb=setTimeout(reload, 350); }
   });
   root.addEventListener("change", function(e){
+    // Behovsanalys select + date: change (input-eventet fyrar också på dessa, men
+    // change är säkrare på date-picker som annars kan committa halvskrivna värden).
+    if(e.target.getAttribute && e.target.getAttribute("data-baf")){ baOnInput(e.target); return; }
     var bg=e.target&&e.target.getAttribute?e.target.getAttribute("data-fl"):null;
     if(bg==="bulkgroup"){ STATE.bulkGroup=e.target.value; STATE.bulkMsg=null; renderTable(); return; }
     var t=e.target;

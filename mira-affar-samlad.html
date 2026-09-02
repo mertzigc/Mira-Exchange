@@ -250,6 +250,45 @@
   .af .af-onbstep.mock .s{font-style:italic;}
   .af .af-onbmockbadge{display:inline-block;background:#5a4a1c;color:#e5c884;padding:1px 6px;border-radius:4px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;}
   @media(max-width:900px){.af .af-onbsteps{grid-template-columns:repeat(2,1fr);}}
+  /* ── Behovsanalys på affärskortet (säljstödets snabbchecklista) ── */
+  .af .af-ba{margin:8px 18px 4px;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+  .af .af-bah{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;}
+  .af .af-bah .t{font-weight:700;color:var(--white);letter-spacing:.06em;text-transform:uppercase;font-size:11px;}
+  .af .af-bah .meta{color:var(--w70);font-size:11.5px;}
+  .af .af-bapill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;letter-spacing:.02em;margin-left:6px;text-transform:none;}
+  .af .af-bapill.utkast{background:rgba(224,160,96,.14);color:#e0a060;border:1px solid rgba(224,160,96,.35);}
+  .af .af-bapill.klar{background:rgba(76,175,125,.14);color:var(--green);border:1px solid rgba(76,175,125,.35);}
+  .af .af-babar{height:5px;background:var(--deep);border-radius:3px;overflow:hidden;margin:6px 0 10px;}
+  .af .af-babar>i{display:block;height:100%;background:var(--orange);border-radius:3px;transition:width .2s;}
+  .af .af-baactions{display:flex;gap:8px;flex-wrap:wrap;}
+  .af .af-baact{background:var(--deep);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--w70);cursor:pointer;font-family:var(--fb);}
+  .af .af-baact.pri{background:var(--orange);border-color:var(--orange);color:#1c1206;}
+  .af .af-baact:hover{border-color:var(--orange);color:var(--orange);}
+  .af .af-baact.pri:hover{filter:brightness(1.07);color:#1c1206;}
+  .af .af-baempty{color:var(--w40);font-size:12px;font-style:italic;padding:4px 0 8px;}
+  /* Formulär */
+  .af .af-baform{margin:8px 18px 8px;background:var(--deep);border:1px solid var(--border);border-radius:10px;padding:14px 16px;}
+  .af .af-basec{border-top:1px dashed var(--border);padding-top:12px;margin-top:12px;}
+  .af .af-basec:first-of-type{border-top:0;padding-top:0;margin-top:0;}
+  .af .af-basech{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--orange);font-weight:700;margin-bottom:8px;}
+  .af .af-bagrid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 14px;}
+  .af .af-bafld{display:flex;flex-direction:column;gap:4px;}
+  .af .af-bafld.wide{grid-column:1 / -1;}
+  .af .af-bafld label{font-size:11px;color:var(--w40);font-weight:600;letter-spacing:.02em;}
+  .af .af-bafld input,.af .af-bafld select,.af .af-bafld textarea{background:var(--input);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--white);font-family:inherit;font-size:13px;}
+  .af .af-bafld textarea{resize:vertical;min-height:60px;}
+  .af .af-bafld input:focus,.af .af-bafld select:focus,.af .af-bafld textarea:focus{outline:none;border-color:var(--orange);}
+  .af .af-bachips{display:flex;flex-wrap:wrap;gap:5px;}
+  .af .af-bachip{display:inline-flex;align-items:center;gap:3px;padding:4px 9px;border-radius:16px;background:var(--input);border:1px solid var(--border);font-size:11.5px;color:var(--w70);cursor:pointer;user-select:none;}
+  .af .af-bachip.on{background:var(--orange);color:#1c1206;border-color:var(--orange);font-weight:600;}
+  .af .af-bachip:hover:not(.on){border-color:var(--orange);color:var(--white);}
+  .af .af-baformbtns{margin-top:14px;display:flex;gap:8px;align-items:center;padding-top:12px;border-top:1px solid var(--border);}
+  .af .af-baformbtns .save{background:var(--orange);border:none;border-radius:8px;padding:7px 16px;font-weight:700;color:#1c1206;cursor:pointer;font-size:12.5px;font-family:var(--fb);}
+  .af .af-baformbtns .cancel{background:transparent;border:1px solid var(--border);border-radius:8px;padding:7px 14px;color:var(--w70);cursor:pointer;font-size:12.5px;font-family:var(--fb);}
+  .af .af-baformbtns .msg{color:var(--w70);font-size:11.5px;margin-left:auto;}
+  .af .af-baformbtns .msg.err{color:#ff8080;}
+  .af .af-baformbtns .msg.ok{color:var(--green);}
+  @media(max-width:900px){.af .af-bagrid{grid-template-columns:1fr;}}
 </style>
 
 <div class="af">
@@ -1163,6 +1202,184 @@
       .catch(function(e){ ONB_INFLIGHT[companyId]=null; console.error("[onboarding] "+companyId+":", e && e.message); });
   }
 
+  // ── BEHOVSANALYS (säljstödets snabbchecklista) ──────────────────────────
+  // Hakas på både deal (via /for-deal) och clientcompany (används vid create).
+  // Formuläret ligger inline utfällt i affärskortet — samma mönster som deal-edit.
+  // ⚠️ Schemat är cachat per session; latest per deal.
+  var BA_SCHEMA=null;                              // hela snabb-schemat, hämtas 1 ggr
+  var BA_LATEST={};                                // dealId → { latest, count }
+  var BA_OPEN={};                                  // dealId → "new" | ba_id | null
+  var BA_DRAFT={};                                 // dealId → data-blob under edit
+  function fetchBaFor(dealId, companyId){
+    var schemaP = BA_SCHEMA ? Promise.resolve(BA_SCHEMA)
+      : fetch(HOST+"/admin/behovsanalys/schema",{headers:{"x-admin-token":TOKEN}}).then(function(r){return r.json();})
+        .then(function(j){ if(j && j.ok) BA_SCHEMA=j; return j; });
+    var listP = fetch(HOST+"/admin/behovsanalys/for-deal/"+encodeURIComponent(dealId),{headers:{"x-admin-token":TOKEN}})
+      .then(function(r){return r.json();});
+    Promise.all([schemaP, listP]).then(function(res){
+      if(res[1] && res[1].ok) BA_LATEST[dealId] = res[1];
+      // Uppdatera bara denna deals strip in-place — samma pattern som onboarding.
+      var host=root.querySelector('[data-affar-id="'+dealId+'"]');
+      var det=host && host.nextElementSibling;
+      var strip=det && det.querySelector && det.querySelector('.af-ba[data-ba-did="'+dealId+'"]');
+      if(strip){ var w=document.createElement("div"); w.innerHTML=baStripHtml(dealId, companyId); strip.replaceWith(w.firstElementChild); }
+    }).catch(function(e){ console.error("[behovsanalys]", e && e.message); });
+  }
+  function baPillHtml(status){
+    var s=String(status||"Utkast");
+    return '<span class="af-bapill '+(s==="Klar"?"klar":"utkast")+'">'+esc(s)+'</span>';
+  }
+  function baStripHtml(dealId, companyId){
+    if(!BA_SCHEMA){
+      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'"><div class="af-bah"><span class="t">Behovsanalys</span><span class="meta"><em>laddar…</em></span></div></div>';
+    }
+    if(!companyId){
+      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'"><div class="af-bah"><span class="t">Behovsanalys</span><span class="meta">— affären saknar företagskoppling</span></div></div>';
+    }
+    var b=BA_LATEST[dealId], la=b && b.latest, meta;
+    if(!la){
+      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'">'+
+        '<div class="af-bah"><span class="t">Behovsanalys</span><span class="meta">säljstödets snabbchecklista · '+BA_SCHEMA.total_fields+' fält</span></div>'+
+        '<div class="af-baempty">Ingen analys på affären ännu — starta här så följer den med i offerten.</div>'+
+        '<div class="af-baactions"><button class="af-baact pri" data-af="ba-new" data-did="'+esc(dealId)+'" data-cid="'+esc(companyId)+'">+ Skapa behovsanalys</button></div>'+
+      '</div>';
+    }
+    var c=la.completeness||{filled:0, total:BA_SCHEMA.total_fields, pct:0};
+    meta='<b>'+c.filled+'</b>/'+c.total+' fält ('+c.pct+' %)';
+    if(la.updated_at) meta+=' · uppdaterad '+esc(la.updated_at);
+    return '<div class="af-ba" data-ba-did="'+esc(dealId)+'">'+
+      '<div class="af-bah"><span class="t">Behovsanalys '+baPillHtml(la.status)+'</span><span class="meta">'+meta+'</span></div>'+
+      '<div class="af-babar"><i style="width:'+c.pct+'%"></i></div>'+
+      '<div class="af-baactions">'+
+        '<button class="af-baact pri" data-af="ba-open" data-did="'+esc(dealId)+'" data-cid="'+esc(companyId)+'" data-baid="'+esc(la.id)+'">Öppna &amp; fyll i</button>'+
+      '</div>'+
+    '</div>';
+  }
+  function baFieldHtmlAff(f, val){
+    if(f.type==="number") return '<input type="number" data-baf="'+esc(f.id)+'" value="'+esc(val==null?"":val)+'">';
+    if(f.type==="date")   return '<input type="date"   data-baf="'+esc(f.id)+'" value="'+esc(val==null?"":val)+'">';
+    if(f.type==="textarea")return '<textarea data-baf="'+esc(f.id)+'" rows="'+(f.rows||3)+'">'+esc(val==null?"":val)+'</textarea>';
+    if(f.type==="select"){
+      var os='<option value="">— välj —</option>';
+      for(var i=0;i<f.options.length;i++){ var o=f.options[i]; os+='<option value="'+esc(o)+'"'+(String(val)===o?" selected":"")+'>'+esc(o)+'</option>'; }
+      return '<select data-baf="'+esc(f.id)+'">'+os+'</select>';
+    }
+    if(f.type==="multi"){
+      var cur=Array.isArray(val)?val.map(String):[];
+      var chips="";
+      for(var j=0;j<f.options.length;j++){ var opt=f.options[j], on=cur.indexOf(opt)>-1;
+        chips+='<span class="af-bachip'+(on?" on":"")+'" data-bam="'+esc(f.id)+'" data-v="'+esc(opt)+'">'+esc(opt)+'</span>';
+      }
+      return '<div class="af-bachips">'+chips+'</div>';
+    }
+    return '<input type="text" data-baf="'+esc(f.id)+'" value="'+esc(val==null?"":val)+'">';
+  }
+  function baFormHtmlAff(dealId, companyId){
+    if(!BA_SCHEMA) return "";
+    var open=BA_OPEN[dealId], isNew=(open==="new");
+    var d=BA_DRAFT[dealId] || {}, secHtml="";
+    for(var i=0;i<BA_SCHEMA.sections.length;i++){
+      var sec=BA_SCHEMA.sections[i], fldHtml="";
+      for(var j=0;j<sec.fields.length;j++){
+        var f=sec.fields[j], val=(d[f.id]!==undefined)?d[f.id]:undefined;
+        var wide=(f.type==="textarea" || f.type==="multi")?" wide":"";
+        fldHtml+='<div class="af-bafld'+wide+'"><label>'+esc(f.label)+'</label>'+baFieldHtmlAff(f, val)+'</div>';
+      }
+      secHtml+='<div class="af-basec"><div class="af-basech">'+esc(sec.section)+'</div><div class="af-bagrid">'+fldHtml+'</div></div>';
+    }
+    var la=(BA_LATEST[dealId] && BA_LATEST[dealId].latest) || null;
+    var statusToggle=!isNew ?
+      '<button class="cancel" data-af="ba-status" data-did="'+esc(dealId)+'" data-status="'+(la && la.status==="Klar"?"Utkast":"Klar")+'">'+(la && la.status==="Klar"?"Markera som Utkast":"Markera som Klar")+'</button>' : "";
+    return '<div class="af-baform" data-ba-form-did="'+esc(dealId)+'" data-ba-cid="'+esc(companyId)+'">'+
+      secHtml+
+      '<div class="af-baformbtns">'+
+        '<button class="save" data-af="ba-save" data-did="'+esc(dealId)+'">'+(isNew?"Skapa analys":"Spara ändringar")+'</button>'+
+        '<button class="cancel" data-af="ba-cancel" data-did="'+esc(dealId)+'">Avbryt</button>'+
+        statusToggle+
+        '<span class="msg" data-bamsg></span>'+
+      '</div>'+
+    '</div>';
+  }
+  function baOpenAff(dealId, companyId, baId){
+    BA_OPEN[dealId] = baId || "new";
+    if(baId && BA_LATEST[dealId] && BA_LATEST[dealId].latest && BA_LATEST[dealId].latest.id===baId){
+      BA_DRAFT[dealId] = Object.assign({}, BA_LATEST[dealId].latest.data || {});
+    } else {
+      BA_DRAFT[dealId] = {};
+    }
+    // Rendera om just den här affären
+    var host=root.querySelector('[data-affar-id="'+dealId+'"]');
+    var det=host && host.nextElementSibling;
+    var cell=det && det.querySelector && det.querySelector(".deal-cell");
+    var j=chainCache[dealId];
+    if(cell && j){ cell.innerHTML=renderChainHtml(j); }
+  }
+  function baCancelAff(dealId){
+    BA_OPEN[dealId] = null; BA_DRAFT[dealId] = null;
+    var host=root.querySelector('[data-affar-id="'+dealId+'"]');
+    var det=host && host.nextElementSibling;
+    var cell=det && det.querySelector && det.querySelector(".deal-cell");
+    var j=chainCache[dealId];
+    if(cell && j){ cell.innerHTML=renderChainHtml(j); }
+  }
+  function baOnInputAff(el, dealId){
+    var k=el.getAttribute("data-baf"); if(!k) return;
+    var v=el.value;
+    var t=(el.type==="number") ? Number(v) : v;
+    if(el.type==="number" && (v==="" || !isFinite(t))) t = "";
+    BA_DRAFT[dealId] = BA_DRAFT[dealId] || {};
+    if(v==="" || v==null) delete BA_DRAFT[dealId][k]; else BA_DRAFT[dealId][k]=t;
+  }
+  function baOnChipAff(chip, dealId){
+    var k=chip.getAttribute("data-bam"), v=chip.getAttribute("data-v");
+    BA_DRAFT[dealId] = BA_DRAFT[dealId] || {};
+    var cur=Array.isArray(BA_DRAFT[dealId][k]) ? BA_DRAFT[dealId][k].slice() : [];
+    var i=cur.indexOf(v); if(i>-1) cur.splice(i,1); else cur.push(v);
+    if(cur.length) BA_DRAFT[dealId][k]=cur; else delete BA_DRAFT[dealId][k];
+    chip.classList.toggle("on");
+  }
+  function baSaveAff(btn){
+    var did=btn.getAttribute("data-did"),
+        form=btn.closest(".af-baform"),
+        cid=form.getAttribute("data-ba-cid"),
+        msg=form.querySelector("[data-bamsg]");
+    msg.textContent="Sparar…"; msg.className="msg"; btn.disabled=true;
+    var isNew=(BA_OPEN[did]==="new");
+    var body={ by_user: cfg("current_user"), data: BA_DRAFT[did] || {} };
+    var url;
+    if(isNew){ body.clientcompany_id=cid; body.deal_id=did; url=HOST+"/admin/behovsanalys/create"; }
+    else     { url=HOST+"/admin/behovsanalys/"+encodeURIComponent(BA_OPEN[did])+"/patch"; }
+    fetch(url,{method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},body:JSON.stringify(body)})
+      .then(function(r){return r.json();}).then(function(j){
+        btn.disabled=false;
+        if(!j||!j.ok){ msg.textContent="✗ "+((j && (j.hint||j.error))||"kunde inte spara"); msg.className="msg err"; return; }
+        msg.textContent="✓ Sparad"; msg.className="msg ok";
+        BA_OPEN[did]=null; BA_DRAFT[did]=null;
+        fetchBaFor(did, cid);
+        setTimeout(function(){
+          var host=root.querySelector('[data-affar-id="'+did+'"]');
+          var det=host && host.nextElementSibling;
+          var cell=det && det.querySelector && det.querySelector(".deal-cell");
+          var jj=chainCache[did]; if(cell && jj){ cell.innerHTML=renderChainHtml(jj); }
+        }, 500);
+      }).catch(function(){ btn.disabled=false; msg.textContent="✗ nätverksfel"; msg.className="msg err"; });
+  }
+  function baToggleStatusAff(btn){
+    var did=btn.getAttribute("data-did"), newStatus=btn.getAttribute("data-status"), baId=BA_OPEN[did];
+    if(!baId || baId==="new") return;
+    var msg=btn.closest(".af-baformbtns").querySelector("[data-bamsg]");
+    msg.textContent="Uppdaterar status…"; msg.className="msg";
+    fetch(HOST+"/admin/behovsanalys/"+encodeURIComponent(baId)+"/patch",
+      {method:"POST",headers:{"x-admin-token":TOKEN,"Content-Type":"application/json"},
+       body:JSON.stringify({ by_user: cfg("current_user"), status: newStatus })})
+      .then(function(r){return r.json();}).then(function(j){
+        if(!j||!j.ok){ msg.textContent="✗ "+((j && j.error)||"fel"); msg.className="msg err"; return; }
+        msg.textContent="✓ Status uppdaterad"; msg.className="msg ok";
+        var cid=btn.closest(".af-baform").getAttribute("data-ba-cid");
+        fetchBaFor(did, cid);
+      });
+  }
+
   function renderChainHtml(j){
     var c=j.chain, D=j.deal, did=D.id;
     chainCache[did]=j;
@@ -1171,6 +1388,7 @@
     // säger det rakt ut ("affären saknar företagskoppling"), aldrig ett tyst 0/5.
     var onbCid=(j.edit && j.edit.kundforetag_id) || D.company_id || "";
     fetchOnboarding(onbCid, did);
+    fetchBaFor(did, onbCid);
     // avtal kan saknas om HTML deployas fore affar_api — guarda med ||-fallback (ej optional chaining)
     var av=c.avtal||{count:0,items:[]};
     var offSum=stepSum(c.offert.items), avSum=stepSum(av.items), ordSum=stepSum(c.order.items), invSum=stepSum(c.faktura.items);
@@ -1201,7 +1419,9 @@
     if(invSum!=null) sumParts.push('Fakturerat '+money0(invSum));
     var sumline=sumParts.length?('<div class="deal-sum">'+sumParts.map(function(p){ return '<span>'+esc(p)+'</span>'; }).join("")+'</div>'):'';
     var head='<div class="deal-h"><div>'+esc(D.company||"")+(D.value?' · est. '+esc(money(D.value)):'')+(D.sannolikhet!=null?' · '+esc(Math.round(D.sannolikhet*100))+'%':'')+'</div><div>'+esc(D.status||"")+'</div></div>';
-    return '<div class="deal">'+head+onbStripHtml(onbCid)+sumline+'<div class="chain">'+steps+'</div>'+
+    var baStrip = baStripHtml(did, onbCid);
+    var baForm  = BA_OPEN[did] ? baFormHtmlAff(did, onbCid) : "";
+    return '<div class="deal">'+head+onbStripHtml(onbCid)+baStrip+baForm+sumline+'<div class="chain">'+steps+'</div>'+
       '<div class="cstep-detail" style="display:none"></div>'+
       cardActionsHtml(did)+
       cardKopplaHtml(did)+
@@ -1864,6 +2084,23 @@
     // grenen före rad-hanterarna bubblar klicket upp och fäller ihop raden.
     var bst=t.closest && t.closest(".bom-star");
     if(bst){ bomSet(bst); return; }
+    // ── Behovsanalys: multi-chip klick FÖRE knappar (samma fälla som BOM-stjärnor
+    //    — annars bubblar klicket upp och fäller ihop affärsraden). ──
+    var baChip=t.closest && t.closest(".af-bachip");
+    if(baChip){
+      var bcForm=baChip.closest(".af-baform"); if(!bcForm) return;
+      baOnChipAff(baChip, bcForm.getAttribute("data-ba-form-did")); return;
+    }
+    var baN=t.closest && t.closest('[data-af="ba-new"]');
+    if(baN){ baOpenAff(baN.getAttribute("data-did"), baN.getAttribute("data-cid"), null); return; }
+    var baO=t.closest && t.closest('[data-af="ba-open"]');
+    if(baO){ baOpenAff(baO.getAttribute("data-did"), baO.getAttribute("data-cid"), baO.getAttribute("data-baid")); return; }
+    var baC=t.closest && t.closest('[data-af="ba-cancel"]');
+    if(baC){ baCancelAff(baC.getAttribute("data-did")); return; }
+    var baS=t.closest && t.closest('[data-af="ba-save"]');
+    if(baS){ baSaveAff(baS); return; }
+    var baSt=t.closest && t.closest('[data-af="ba-status"]');
+    if(baSt){ baToggleStatusAff(baSt); return; }
     var nsb=t.closest && t.closest("[data-ns]");
     if(nsb){ var nsw=nsb.closest("[data-nswrap]"); if(nsw) nsSelect(nsw, nsb.getAttribute("data-ns")); return; }
     var sa=t.closest && t.closest(".af-a-save"); if(sa){ saveAkt(sa); return; }
@@ -1920,6 +2157,11 @@
     var akr=t.closest("tr.akt"); if(akr){ toggleEdit(akr,"akt"); return; }
   });
   root.addEventListener("input",function(e){
+    // Behovsanalys-fält: uppdatera draft utan re-render (samma fälla som BOM).
+    if(e.target.getAttribute && e.target.getAttribute("data-baf")){
+      var bfForm=e.target.closest(".af-baform"); if(bfForm) baOnInputAff(e.target, bfForm.getAttribute("data-ba-form-did"));
+      return;
+    }
     // Brutto ändras → punktuppdatera nettofältet i samma edit-block (samma
     // formel som servern). ⚠️ Ingen re-render av kortet — den hade raderat
     // text i övriga formulärfält.
@@ -1947,6 +2189,11 @@
     else { render(); }
   });
   root.addEventListener("change",function(e){
+    // Behovsanalys select+date (change är säkrare på date-picker än input)
+    if(e.target.getAttribute && e.target.getAttribute("data-baf")){
+      var bfF=e.target.closest(".af-baform"); if(bfF) baOnInputAff(e.target, bfF.getAttribute("data-ba-form-did"));
+      return;
+    }
     var sel=e.target;
     if(sel.getAttribute && sel.getAttribute("data-af")==="from"){ STATE.from=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
     if(sel.getAttribute && sel.getAttribute("data-af")==="to"){ STATE.to=sel.value; STATE.page=0; if(STATE.type) loadList(); return; }
