@@ -456,7 +456,19 @@ export function registerAffarRoutes(app, deps) {
       const invListIds = new Set((invList || []).map(bubbleId).filter(Boolean));
       const tag = (x, isLinked) => { x.linked = !!isLinked; return x; };
 
-      const akItems = aktRows.map((r) => nAkt(r, m)).sort((a, b) => _ts(b.date) - _ts(a.date));
+      // ⚠️ nAkt sätter number:"" (den signaturen används på flera ställen och får
+      // inte ändras). Här — där akItems visas i chain-detaljvyn — behöver number
+      // vara meningsfullt: beskrivningen först, aktivitetstypen som fallback.
+      // Utan detta blir aktivitet-detaljraderna namnlösa när Lead-steget expanderas.
+      const akItems = aktRows.map((r) => { const x = nAkt(r, m); x.number = _str(r.beskrivning).slice(0, 60) || x.status || "Aktivitet"; return x; }).sort((a, b) => _ts(b.date) - _ts(a.date));
+      const leadItems = leadUnion.map((r) => ({
+        id: bubbleId(r), type: "Lead", source: "mira",
+        number: _str(r.Name) || _str(r.titel) || _str(r.name) || "Lead",
+        amount: _num(r.estimated_service_cost_monthly),
+        status: _str(r.status) || "Ny", status_cls: "wait",
+        date: _day(r["Created Date"]),
+        linked: true,   // leaden når kortet via `deal`-fältet eller Deal.lead — alltid manuell koppling
+      }));
       const offOmap = await orderMapForOfferts(offRows);
       const offItems = applyOrderStatus([
         ...offRows.map((r) => tag(nOffertM(r, m), !offListIds.has(bubbleId(r)))),
@@ -505,8 +517,17 @@ export function registerAffarRoutes(app, deps) {
           todo: todos,
         },
         chain: {
-          lead: leadPrimary ? { name: (_str(leadPrimary.Name) || _str(leadPrimary.titel) || cname(m, leadPrimary.Company)), date: _day(leadPrimary["Created Date"]) } : null,
-          aktivitet: { count: akItems.length, latest: akItems.length ? akItems[0].status : null, date: akItems.length ? akItems[0].date : null },
+          // ⚠️ Bakåtkompatibelt: `lead.name`/`lead.date` behålls (renderChainHtml
+          // läser dem för hero-etiketten på lead-steget). NYTT: `items` + `count`
+          // så steget kan expanderas — samma mönster som offert/avtal/order/faktura.
+          // En affär kan ha flera leads (via reverse-lookup på Lead.deal), inte
+          // bara primary — annars försvinner de andra tyst från detaljvyn.
+          lead: leadPrimary ? {
+            name: (_str(leadPrimary.Name) || _str(leadPrimary.titel) || cname(m, leadPrimary.Company)),
+            date: _day(leadPrimary["Created Date"]),
+            count: leadItems.length, items: leadItems,
+          } : null,
+          aktivitet: { count: akItems.length, latest: akItems.length ? akItems[0].status : null, date: akItems.length ? akItems[0].date : null, items: akItems },
           offert: { count: offItems.length, items: offItems },
           avtal: { count: avtalItems.length, items: avtalItems },
           order: { count: ordItems.length, items: ordItems },

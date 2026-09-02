@@ -35,8 +35,16 @@ const DB = {
       offert: ["offM_list"], order: [], invoice: ["invF_list"], historik: [], lead: "lead1", kontaktpersoner: [], todo: [] },
     { _id: "d2", titel: "Beta ramavtal", kundföretag: "cc2", Status: "Avtal", value_brutto: 12000 },
   ],
-  Lead: [{ _id: "lead1", Name: "Kalle Kund", Company: "cc1", "Created Date": "2026-07-01" }],
-  activitet_crm: [{ _id: "akt1", deal: "d1", clientcompany: "cc1", beskrivning: "Ringde Acme", "Created Date": "2026-07-02" }],
+  Lead: [
+    { _id: "lead1", Name: "Kalle Kund", Company: "cc1", estimated_service_cost_monthly: 4500, status: "Kvalificerad", "Created Date": "2026-07-01" },
+    // ⚠️ Andra leaden når via reverse-lookup (deal-fältet) — måste också hamna
+    // i chain.lead.items, annars försvinner sekundärleads tyst från detaljvyn.
+    { _id: "lead2", Name: "Sara Sekundär", Company: "cc1", status: "Ny", "Created Date": "2026-07-05", deal: "d1" },
+  ],
+  activitet_crm: [
+    { _id: "akt1", deal: "d1", clientcompany: "cc1", beskrivning: "Ringde Acme, positivt samtal", "Created Date": "2026-07-02" },
+    { _id: "akt2", deal: "d1", clientcompany: "cc1", beskrivning: "",                              "Created Date": "2026-07-08", kundm_te_option_kundm_te: "Kundmöte" },
+  ],
   // Offert i Deal-listfält (offM_list) + en reverse-kopplad (offM_rev, deal=d1)
   Offert: [
     { _id: "offM_list", source: "mira_fe", status: "Approved", kundforetag: "cc1", offertnr: "FE-2026-0004", total: 20000, offertdatum: "2026-07-03", dokument: [] },
@@ -122,6 +130,29 @@ const run = async () => {
   const r2 = await call("get", "/admin/affar/deal/:id", { params: { id: "d2" } });
   ok("d2 avtal linked=true", r2.body.chain.avtal.items.length === 1 && r2.body.chain.avtal.items[0].linked === true);
   ok("d2 workorder linked=true + belopp 1000", r2.body.chain.order.items.length === 1 && r2.body.chain.order.items[0].linked === true && r2.body.chain.order.items[0].amount === 1000);
+
+  // ── LEAD + AKTIVITET expanderbara (2026-09-02): backend bär items ──
+  const lead = ch.lead || {};
+  ok("chain.lead.name kvar för bakåtkompat", lead.name === "Kalle Kund");
+  ok("chain.lead.items är en array",  Array.isArray(lead.items));
+  ok("chain.lead.count = 2 (direkt + reverse)", lead.count === 2 && lead.items.length === 2);
+  const leadById = (id) => (lead.items || []).find((x) => x.id === id);
+  ok("lead1 (direkt) med belopp + status", leadById("lead1") && leadById("lead1").amount === 4500 && leadById("lead1").status === "Kvalificerad");
+  ok("lead2 (reverse via deal) finns i items", !!leadById("lead2"));
+  ok("lead items har type='Lead' + source='mira' + linked=true", lead.items.every((x) => x.type === "Lead" && x.source === "mira" && x.linked === true));
+
+  const akt = ch.aktivitet || {};
+  const aktItems = akt.items || [];   // ⚠️ Bältet: assertions som rör fält som kan saknas MÅSTE
+                                      // vara defensiva, annars kraschar sviten mot muterad kod
+                                      // (bryter arbetsregeln "testet ska FALLA, inte krascha").
+                                      // Sista gången detta hände dolde en TypeError 20 andra fel.
+  ok("chain.aktivitet.count kvar för bakåtkompat", akt.count === 2);
+  ok("chain.aktivitet.items är en array om length 2", Array.isArray(akt.items) && aktItems.length === 2);
+  const aktByBesk = (t) => aktItems.find((x) => x.number === t);
+  ok("aktivitet number = beskrivning (kapad, 60 tecken)", !!aktByBesk("Ringde Acme, positivt samtal"));
+  ok("aktivitet utan beskrivning faller tillbaka på status", aktItems.some((x) => x.number === "Kundmöte" || x.number === "Aktivitet"));
+  ok("aktivitet type='Aktivitet' + source='mira'", aktItems.length > 0 && aktItems.every((x) => x.type === "Aktivitet" && x.source === "mira"));
+  ok("aktivitet sorterad nyast först", aktItems.length > 0 && aktItems[0].date === "2026-07-08");
 
   // ── /doc-search offert ──
   const ds1 = await call("get", "/admin/affar/doc-search", { query: { type: "offert", q: "Acme" } });

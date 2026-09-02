@@ -1066,6 +1066,11 @@
   function stepMeta(items){ var it=first(items); return it?pillMini(it.status,it.status_cls):""; }
   function chainStepItems(j, key){
     var c=j.chain, av=c.avtal||{count:0,items:[]};
+    // Lead + aktivitet exp:eras samma väg som resten (backend levererar items
+    // sedan 2026-09-02). ||[] är bältet: om backend äldre än frontend deployas
+    // skippas steget tyst i st.f. att krascha på undefined.length.
+    if(key==="lead")     return (c.lead && c.lead.items) || [];
+    if(key==="aktivitet")return (c.aktivitet && c.aktivitet.items) || [];
     if(key==="offert") return c.offert.items||[];
     if(key==="avtal")  return av.items||[];
     if(key==="order")  return c.order.items||[];
@@ -1150,9 +1155,15 @@
     // avtal kan saknas om HTML deployas fore affar_api — guarda med ||-fallback (ej optional chaining)
     var av=c.avtal||{count:0,items:[]};
     var offSum=stepSum(c.offert.items), avSum=stepSum(av.items), ordSum=stepSum(c.order.items), invSum=stepSum(c.faktura.items);
+    // Alla sex steg är expanderbara sedan 2026-09-02. exp = det finns items att
+    // visa (annars är expansion en tom detaljvy och klickytan lyser tomt).
+    // ⚠️ lead.items kan saknas om backend är äldre än frontend — fall back till
+    // has-flaggan så leaden fortfarande MARKERAS på tidslinjen, men klick är dött.
+    var leadItems=(c.lead && c.lead.items)||[];
+    var aktItems=(c.aktivitet && c.aktivitet.items)||[];
     var stages=[
-      { key:"lead", exp:false, has:!!c.lead, label:"Lead", val: c.lead?esc(c.lead.name||"Lead"):'<span class="muted">—</span>', meta: c.lead?esc(c.lead.date||""):"" },
-      { key:"aktivitet", exp:false, has:c.aktivitet.count>0, label:"Aktivitet", val: c.aktivitet.count?(esc(c.aktivitet.count)+" st"):'<span class="muted">—</span>', meta: c.aktivitet.latest?esc(c.aktivitet.latest):"" },
+      { key:"lead", exp:leadItems.length>0, has:!!c.lead, label:"Lead", val: c.lead?esc(c.lead.name||"Lead"):'<span class="muted">—</span>', meta: c.lead?esc(c.lead.date||""):"" },
+      { key:"aktivitet", exp:aktItems.length>0, has:c.aktivitet.count>0, label:"Aktivitet", val: c.aktivitet.count?(esc(c.aktivitet.count)+" st"):'<span class="muted">—</span>', meta: c.aktivitet.latest?esc(c.aktivitet.latest):"" },
       { key:"offert", exp:c.offert.count>0, has:c.offert.count>0, label:"Offert", val: stepVal(c.offert.count, offSum), meta: stepMeta(c.offert.items) },
       { key:"avtal", exp:av.count>0, has:av.count>0, label:"Avtal", val: stepVal(av.count, avSum), meta: stepMeta(av.items) },
       { key:"order", exp:c.order.count>0, has:c.order.count>0, label:"Order", val: stepVal(c.order.count, ordSum), meta: stepMeta(c.order.items) },
