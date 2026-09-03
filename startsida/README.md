@@ -466,6 +466,15 @@ hyresgästvyns kopia.
 - **Mörk hero i ljusa filen.** `.hero.dk` — affärsvyns `#1e2235` med lila/orange orb, vit rubrik,
   orange `em`. "Så fungerar det"-kortet (`.hur-dk .xw`) har `margin-top:-150px` och lägger sig
   över kanten. Bara ljusa filen; den mörka har redan mörk hero.
+- **Hero-illustrationen "det svarta hålet"** (`.hb-art`, båda filerna, femte varvet): ett hus i
+  genomskärning inne i ett mörkt hål med två långsamt roterande ringar. Sex våningar tänds
+  nerifrån och upp (`hbLight`, 0,6 s mellanrum), aktivitetspunkter i spårfärgerna (lila städ,
+  blå mat, grön bemanning, orange ärenden) tonas in och pulserar, en skanningslinje sveper
+  upp genom huset en gång, och streckade linjer flödar (`hbFlow`) in i en liten Mira-panel
+  vars staplar växer fram. Utanför huset i grått: ett avtal och en dörr med pil — det ägaren
+  alltid har kunnat se. Hero:n är tvåkolumn på desktop (text vänster, bild höger), staplad
+  under 1000 px. `prefers-reduced-motion` visar slutläget direkt, utan skanningslinje.
+  Inline-SVG, ~6 kB, ingen uppladdning.
 - **AI-sektionen i lila** (`.aix`, båda filerna): lila gradientbakgrund, lila badge och `em`,
   och en **inline-SVG-illustration** (`.ai-art`: nebulosa, tre omloppsbanor, nodnätverk,
   hjärnform, pulserande kärna, tre orange satelliter, blinkande stjärnor). Inline för att den

@@ -414,6 +414,27 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
 .wz-ok .sp{margin:0 auto;}
 .wz-fine{font-size:11.5px;color:var(--w40);margin-top:14px;line-height:1.55;}
 @media(max-width:640px){ .wz-row{grid-template-columns:1fr;} .wz{padding:24px 20px;} }
+.hb-vis{position:relative;z-index:1;}
+.hb-art{display:block;width:100%;height:auto;max-width:640px;margin:0 auto;}
+.hb-fl{opacity:0;animation:hbLight .9s ease forwards;}
+.hb-fl:nth-child(4){animation-delay:.3s}.hb-fl:nth-child(5){animation-delay:.9s}.hb-fl:nth-child(6){animation-delay:1.5s}
+.hb-fl:nth-child(7){animation-delay:2.1s}.hb-fl:nth-child(8){animation-delay:2.7s}.hb-fl:nth-child(9){animation-delay:3.3s}
+.hb-d{opacity:0;animation:hbLight .6s ease forwards;}
+.hb-d:nth-child(1){animation-delay:.7s}.hb-d:nth-child(2){animation-delay:1.3s}.hb-d:nth-child(3){animation-delay:1.9s}
+.hb-d:nth-child(4){animation-delay:2.5s}.hb-d:nth-child(5){animation-delay:3.1s}.hb-d:nth-child(6){animation-delay:3.7s}
+.hb-d circle{transform-box:fill-box;transform-origin:center;animation:hbPulse 2.4s ease-in-out infinite;}
+.hb-d circle:nth-child(2){animation-delay:.8s}.hb-d circle:nth-child(3){animation-delay:1.6s}
+.hb-scan{animation:hbScan 4s linear .2s 1 forwards;}
+.hb-links path{stroke-dashoffset:0;animation:hbFlow 1.6s linear infinite;opacity:0;animation:hbFlow 1.6s linear infinite,hbLight .8s ease 3.6s forwards;}
+.hb-panel{opacity:0;animation:hbLight .8s ease 3.4s forwards;}
+.hb-bar{transform-origin:left center;transform:scaleX(0);animation:hbGrow 1s ease 3.8s forwards;}
+.hb-rings{transform-origin:320px 250px;animation:aiSpin 120s linear infinite;}
+@keyframes hbLight{to{opacity:1}}
+@keyframes hbPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.45)}}
+@keyframes hbScan{from{transform:translateY(0)}to{transform:translateY(-358px)}}
+@keyframes hbFlow{to{stroke-dashoffset:-18}}
+@keyframes hbGrow{to{transform:scaleX(1)}}
+@media(prefers-reduced-motion:reduce){.hb-fl,.hb-d,.hb-links path,.hb-panel{animation:none;opacity:1}.hb-bar{animation:none;transform:none}.hb-d circle,.hb-scan,.hb-rings{animation:none}.hb-scan{opacity:0}}
 /* Vaxlaren + fem menylankar + Logga in far inte plats under ~1080 px -
    da gar menyn in i hamburgaren och vaxlaren foljer med dit. */
 @media(max-width:1080px){
@@ -832,16 +853,96 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
 
 <section class="hero">
   <div class="orb o1"></div><div class="orb o2"></div>
-  <div class="hero-inner" style="grid-template-columns:1fr;text-align:center">
-    <div style="max-width:880px;margin:0 auto">
+  <div class="hero-inner">
+    <div>
       <div class="hlbl">Mira Fastighet · För fastighetsägare · by Carotte Group</div>
       <h1>Se allt som händer<br>i era fastigheter.<br><em>Varje dag.</em></h1>
-      <p class="hsub" style="margin-left:auto;margin-right:auto">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
-      <div class="hact" style="justify-content:center">
+      <p class="hsub">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
+      <div class="hact">
         <button class="hcta" type="button" data-fz="open">Boka en genomgång <span>→</span></button>
         <a href="#vyerna" class="hlink">Se vyerna ↓</a>
       </div>
     </div>
+    <div class="hb-vis"><svg class="hb-art" viewBox="0 0 640 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Illustration: ett hus i genomskärning där varje våning tänds med serviceaktivitet som flödar in i Mira Fastighet">
+  <defs>
+    <radialGradient id="hbVoid" cx="50%" cy="50%" r="55%">
+      <stop offset="0" stop-color="#05060c" stop-opacity="1"/>
+      <stop offset=".55" stop-color="#0d0f1c" stop-opacity=".95"/>
+      <stop offset=".8" stop-color="#6B4FBF" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#6B4FBF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hbFloor" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#9B7DEF" stop-opacity=".05"/>
+      <stop offset=".5" stop-color="#F47B30" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#9B7DEF" stop-opacity=".05"/>
+    </linearGradient>
+    <linearGradient id="hbScan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F47B30" stop-opacity="0"/><stop offset=".5" stop-color="#F47B30" stop-opacity=".9"/><stop offset="1" stop-color="#F47B30" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="hbGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+
+  <ellipse cx="320" cy="250" rx="300" ry="215" fill="url(#hbVoid)"/>
+  <g class="hb-rings" fill="none" stroke-width="1">
+    <ellipse cx="320" cy="250" rx="255" ry="120" stroke="#9B7DEF" stroke-opacity=".22" transform="rotate(-8 320 250)"/>
+    <ellipse cx="320" cy="250" rx="215" ry="150" stroke="#F47B30" stroke-opacity=".16" transform="rotate(20 320 250)" stroke-dasharray="4 9"/>
+  </g>
+
+  <line x1="60" y1="440" x2="580" y2="440" stroke="#fff" stroke-opacity=".18"/>
+
+  <g class="hb-known" stroke="#fff" stroke-opacity=".32" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="96" y="352" width="54" height="68" rx="3"/>
+    <path d="M108 372h30M108 386h30M108 400h18"/>
+    <path d="M200 440v-44h26v44"/>
+    <circle cx="219" cy="420" r="1.6" fill="#fff" fill-opacity=".5"/>
+    <path d="M150 418h34M178 412l6 6-6 6"/>
+  </g>
+
+  <g class="hb-house">
+    <rect x="200" y="80" width="240" height="360" fill="#0b0d18" stroke="#fff" stroke-opacity=".55" stroke-width="1.6" rx="2"/>
+    <path d="M196 80h248" stroke="#fff" stroke-opacity=".55" stroke-width="2.4" stroke-linecap="round"/>
+    <g stroke="#fff" stroke-opacity=".16"><path d="M200 140h240M200 200h240M200 260h240M200 320h240M200 380h240"/></g>
+    <g class="hb-fl"><rect x="201" y="381" width="238" height="58" fill="url(#hbFloor)"/></g>
+    <g class="hb-fl"><rect x="201" y="321" width="238" height="58" fill="url(#hbFloor)"/></g>
+    <g class="hb-fl"><rect x="201" y="261" width="238" height="58" fill="url(#hbFloor)"/></g>
+    <g class="hb-fl"><rect x="201" y="201" width="238" height="58" fill="url(#hbFloor)"/></g>
+    <g class="hb-fl"><rect x="201" y="141" width="238" height="58" fill="url(#hbFloor)"/></g>
+    <g class="hb-fl"><rect x="201" y="81" width="238" height="58" fill="url(#hbFloor)"/></g>
+    <g class="hb-win" fill="#fff" fill-opacity=".07">
+      <rect x="222" y="96" width="26" height="28" rx="1.5"/><rect x="306" y="96" width="26" height="28" rx="1.5"/><rect x="390" y="96" width="26" height="28" rx="1.5"/>
+      <rect x="222" y="156" width="26" height="28" rx="1.5"/><rect x="306" y="156" width="26" height="28" rx="1.5"/><rect x="390" y="156" width="26" height="28" rx="1.5"/>
+      <rect x="222" y="216" width="26" height="28" rx="1.5"/><rect x="306" y="216" width="26" height="28" rx="1.5"/><rect x="390" y="216" width="26" height="28" rx="1.5"/>
+      <rect x="222" y="276" width="26" height="28" rx="1.5"/><rect x="306" y="276" width="26" height="28" rx="1.5"/><rect x="390" y="276" width="26" height="28" rx="1.5"/>
+      <rect x="222" y="336" width="26" height="28" rx="1.5"/><rect x="306" y="336" width="26" height="28" rx="1.5"/><rect x="390" y="336" width="26" height="28" rx="1.5"/>
+    </g>
+    <g class="hb-dots" filter="url(#hbGlow)">
+      <g class="hb-d"><circle cx="262" cy="410" r="5" fill="#9B7DEF"/><circle cx="352" cy="410" r="4" fill="#5B8DEF"/></g>
+      <g class="hb-d"><circle cx="292" cy="350" r="5" fill="#4CAF7D"/><circle cx="402" cy="350" r="4" fill="#9B7DEF"/></g>
+      <g class="hb-d"><circle cx="242" cy="290" r="4" fill="#5B8DEF"/><circle cx="332" cy="290" r="5" fill="#F47B30"/><circle cx="412" cy="290" r="4" fill="#9B7DEF"/></g>
+      <g class="hb-d"><circle cx="272" cy="230" r="5" fill="#9B7DEF"/><circle cx="372" cy="230" r="4" fill="#4CAF7D"/></g>
+      <g class="hb-d"><circle cx="252" cy="170" r="4" fill="#5B8DEF"/><circle cx="342" cy="170" r="5" fill="#9B7DEF"/><circle cx="422" cy="170" r="4" fill="#F47B30"/></g>
+      <g class="hb-d"><circle cx="302" cy="110" r="5" fill="#4CAF7D"/><circle cx="392" cy="110" r="4" fill="#9B7DEF"/></g>
+    </g>
+    <rect class="hb-scan" x="201" y="438" width="238" height="2" fill="url(#hbScan)"/>
+  </g>
+
+  <g class="hb-links" fill="none" stroke="#9B7DEF" stroke-opacity=".55" stroke-width="1.2" stroke-dasharray="3 6">
+    <path d="M440 410C500 410 470 300 520 300"/>
+    <path d="M440 290C500 290 480 280 520 280"/>
+    <path d="M440 170C500 170 470 260 520 260"/>
+    <path d="M440 110C510 110 480 240 520 240"/>
+  </g>
+
+  <g class="hb-panel">
+    <rect x="520" y="212" width="98" height="120" rx="8" fill="#23283f" stroke="#fff" stroke-opacity=".14"/>
+    <rect x="532" y="226" width="34" height="4" rx="2" fill="#F47B30"/>
+    <rect x="532" y="244" width="74" height="6" rx="3" fill="#fff" fill-opacity=".08"/><rect class="hb-bar" x="532" y="244" width="62" height="6" rx="3" fill="#9B7DEF"/>
+    <rect x="532" y="262" width="74" height="6" rx="3" fill="#fff" fill-opacity=".08"/><rect class="hb-bar" x="532" y="262" width="48" height="6" rx="3" fill="#5B8DEF"/>
+    <rect x="532" y="280" width="74" height="6" rx="3" fill="#fff" fill-opacity=".08"/><rect class="hb-bar" x="532" y="280" width="36" height="6" rx="3" fill="#4CAF7D"/>
+    <rect x="532" y="298" width="74" height="6" rx="3" fill="#fff" fill-opacity=".08"/><rect class="hb-bar" x="532" y="298" width="22" height="6" rx="3" fill="#F47B30"/>
+    <rect x="532" y="314" width="46" height="4" rx="2" fill="#fff" fill-opacity=".25"/>
+  </g>
+</svg></div>
   </div>
 </section>
 
