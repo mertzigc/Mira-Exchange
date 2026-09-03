@@ -1,8 +1,11 @@
 # Fastighetsägarvyn — Mira Fastighet
 
-> **Auth LIVE, vyn byggd mot skarp data 2026-09-03 — ej deployad.**
+> **🟢 LIVE 2026-09-03.** Auth, API och block deployade och verifierade skarpt.
 > Fem av sex flikar hämtar riktig data. Aktivitetsspåren (och därmed hyresgästpulsens
-> trend) är ännu inte inkopplade — se §6.
+> trend) är ännu inte inkopplade — se §8 steg 6.
+>
+> Presentation på startsidan + awardmaterial: färdig prompt i
+> [startsida/PROMPT-fastighetsagarvyn.md](../startsida/PROMPT-fastighetsagarvyn.md).
 > Klickbar prototyp med mockdata: `mira-fastighet-skiss.html` (öppna lokalt i webbläsare).
 > Systerdokument: [GRANSSNITTSSTRATEGI.md](GRANSSNITTSSTRATEGI.md) — **läs §3 och §4 där först.**
 > Speglar auth-mönstret i [BESOKSHANTERING.md §7.5](BESOKSHANTERING.md).

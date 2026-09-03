@@ -50,7 +50,7 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, notiser | 🟠 BYGGD + testad · **ej deployad** |
 | [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
 | [handoff/GRANSSNITTSSTRATEGI.md](handoff/GRANSSNITTSSTRATEGI.md) | En motor, många fronter: ägarens front-app vs vår motor, vad vi aldrig släpper | 🧭 STRATEGI · **läs §4 före ny hyresgästvänd yta** |
-| [handoff/FASTIGHETSAGARVYN.md](handoff/FASTIGHETSAGARVYN.md) | Mira Fastighet (`/fastighet`): ägarens överblick över servicelivet i beståndet. Roll `Hyresvärd`, egen session, inga kronor | 🟠 auth LIVE · API+block byggda, ej deployade · **läs §4 integritetsregeln före ändring** |
+| [handoff/FASTIGHETSAGARVYN.md](handoff/FASTIGHETSAGARVYN.md) | Mira Fastighet (`/fastighet`): ägarens överblick över servicelivet i beståndet. Roll `Hyresvärd`, egen session, inga kronor | 🟢 LIVE · **läs §4 integritetsregeln före ändring** |
 
 **Egna handoff-filer utanför `handoff/`:**
 `OFFERT_PRODUKTION_HANDOFF.md` (F&E offert/order) · `FORFRAGAN_KALENDER_HANDOFF.md`
@@ -86,7 +86,7 @@ och hur många kunder som kan visa pass.
 | **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |
 | **Gränssnittsstrategi** | Beställningsspec från leveranssidan → direktdialog med plattformsleverantörerna → fråga hyresgästerna → inkommande beställnings-API. Se GRANSSNITTSSTRATEGI.md §6. ⚠️ tajmingsfönster i månader | Christian |
 | **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
-| **Fastighetsägarvyn** | Auth LIVE + Bubble testat. `landlord_api.js` + `mira-fastighet.html` byggda 2026-09-03 (76 gröna, 15 mutationer/15 faller) — **ej deployade**. Fem av sex flikar på skarp data. **Nästa: deploy + klistra in blocket**, sedan aktivitetsspåren (§8 steg 6). `mira-fastighet-demo.html` = mockdata för pitchmaterial, radera aldrig | Christian |
+| **Fastighetsägarvyn** | ✅ LIVE 2026-09-03 — auth + `landlord_api.js` + `mira-fastighet.html` deployade och verifierade. Fem av sex flikar på skarp data. **Nästa: aktivitetsspåren** (FASTIGHETSAGARVYN.md §8 steg 6) — men Tengella-orgnr bör gå före. Presentation på startsidan: färdig prompt i `startsida/PROMPT-fastighetsagarvyn.md` | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
 - ~~**`create_user_account`:** parametern `role` + "Set User_role = role"~~ — ✅ **KLART**, bekräftat av Christian 2026-08-26. Kedjan Render→Bubble är hel.
