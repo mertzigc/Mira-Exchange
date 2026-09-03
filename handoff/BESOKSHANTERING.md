@@ -205,8 +205,19 @@ för receptionisten är **förkastat**.
 **`User_role`** (option set) — befintliga värden: `Ansvarig` · `Medarbetare` · `Konsult` ·
 `Ansvarig konsult`. Christian: värdena är i praktiken obsoleta → **lägg till `Receptionist`
 här** i stället för ett separat yes/no-fält. En sanning om vad en användare är.
-- ⚠️ **`dashboard_crm` har en page-load-guard på `User_role is empty`.** Den måste ändras:
-  `User_role = Receptionist` → redirect till `/visitor`, annars kommer receptionister in i CRM:et.
+- ⚠️ **RÄTTELSE 2026-09-03 (skärmbild):** guarden i `dashboard_crm` gattar INTE på
+  `User_role` utan på **`admin_crm`** — `Page is loaded` → step 1 `Go to page index`
+  *only when `Current User's admin_crm is no`*, step 2 `Run javascript` *only when
+  `admin_crm is yes`*. Den håller alltså ute både receptionister och hyresvärdar utan
+  att känna till rollerna. Påståendet ovan om `User_role is empty` var fel.
+  **Utökad 2026-09-03** till `admin_crm is no OR User_role is Receptionist OR User_role
+  is Hyresvärd`. Rollerna sätts explicit, så receptionister och hyresvärdar redirectas
+  deterministiskt oavsett vad `admin_crm` innehåller.
+  ⚠️ **Öppen fråga, äldre än det här bygget:** matchar `is no` en `admin_crm` som aldrig
+  satts? Gör den inte det blir en vanlig kundanvändare (och en utloggad besökare) kvar på
+  sidan, eftersom step 2 kräver `is yes`. `is not yes` finns inte som operator i Bubble
+  för yes/no. **Mät innan något byggs om:** logga in som kundanvändare utan `admin_crm`
+  och gå direkt på `/dashboard_crm`. Rör hela CRM:et, inte besök/fastighet.
 
 **`User.receptionist_fastigheter`** (List of Fastighet) — NYTT fält. Receptionistens scope.
 

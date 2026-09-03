@@ -245,7 +245,7 @@ tilldelning kan smalna av, aldrig vidga.
 | 5 | Sätt `User_role = Hyresvärd` + `User.Hyresvärd` på testanvändaren | ⏳ |
 | 6 | Fyll `Hyresvärd.Fastighet` **eller** `Fastighet.Ägare` för Vasakronan | ⏳ |
 | 7 | API Connector-call + backend-wf `landlord_session` (§5.5) | ⏳ |
-| 8 | Page-load-guard på `fastighet` + gren i `dashboard_crm`-guarden | ⏳ |
+| 8 | Page-load-guard på `fastighet` ✅ · `dashboard_crm`-guarden utökad med båda rollerna ✅ | ✅ |
 | 9 | Database trigger: `Hyresvärd`/`User_role` ändras → `landlord_token = ""` | ⏳ |
 | 10 | Env på Render: `LANDLORD_SESSION_SECRET` | ⏳ |
 
@@ -280,27 +280,45 @@ som *text* vid initialiseringen, och text går inte i ett date-fält. Samma fäl
 Initiera calln med ett riktigt user_id så Bubble kan lära sig svaret. Får du 403
 `no_landlord_linked` är punkt 5 i tabellen ovan inte gjord — initiera igen efteråt.
 
-**C. Backend workflow `landlord_session`** (Backend workflows → API workflows):
-- Parameter: `user_id` (text)
-- Steg 1: **Mira Render – landlord_session** med `user_id = user_id`
-- Steg 2: **Make changes to a User** (Current User)
-  - `landlord_token` = `Result of step 1's token`
-  - `landlord_token_exp` = `Result of step 1's exp_iso`
-- ⚠️ Kryssa **"This workflow can be run without authentication"** = NEJ. Den anropas
-  bara från sidan, av en inloggad user.
+**C. Backend workflow `landlord_session`** — byggt 2026-09-03, speglar `visitor_session`:
+- **Inga parametrar.** Workflowen läser `Current User` direkt. Ett schemalagt
+  backend-workflow ärver användarkontexten från den som schemalade det — det är så
+  `visitor_session` fungerar skarpt, och därför mönstret att kopiera.
+- Steg 1: **Mira Render – landlord_session**, `(body) user_id = Current User's unique id`
+- Steg 2: **Make changes to current user**, *only when `Result of step 1's body's ok is yes`*
+  - `landlord_token` = `Result of step 1's body's token`
+  - `landlord_token_exp` = `Result of step 1's body's exp_iso`
+- "Expose as a public API workflow" = **NEJ**.
+- ⚠️ Villkoret på steg 2 är det som gör att ett 403 aldrig skriver en tom token.
 
 **D. Page load på sidan `fastighet`:**
 - Villkor: `Current User is logged in` **och**
   `Current User's landlord_token is empty or Current User's landlord_token_exp < Current date/time`
-- Action: **Schedule API Workflow** `landlord_session`, `user_id = Current User's unique id`,
-  Scheduled date = `Current date/time`
+- Action: **Schedule API Workflow** `landlord_session`, Scheduled date = `Current date/time`
+  (inga parametrar — se C)
 - ⚠️ Sessionen är **asynkron** — workflowen hinner inte klart innan sidan renderar.
   Blocket startar utan token och väntar in den. Det är inte ett fel.
-- Andra page load-villkoret: `Current User's User_role is not Hyresvärd` → redirect till `index`.
+- Steg FÖRE det: `Go to page index` *only when `Current User's User_role is not Hyresvärd`*
+  — täcker även utloggad, eftersom tomt inte är Hyresvärd.
+⚠️ **Loopvarning:** misslyckas sessionen (403) förblir `landlord_token` tom, och villkoret
+schemalägger om vid varje sidladdning. Blocket måste visa felet, annars ser det ut som att
+sidan bara laddar för evigt.
 
-**E. `dashboard_crm`-guarden:** den skickar idag bara `Receptionist` vidare till
-`/visitor`. Lägg till: `User_role = Hyresvärd` → redirect till `fastighet`. **Utan den
-hamnar en fastighetsägare i vårt CRM.**
+**E. `dashboard_crm`-guarden — ✅ redan täckt (verifierat 2026-09-03).** Guarden gattar
+på **`admin_crm`**, inte på `User_role`: `admin_crm is no` → `Go to page index`. En
+hyresvärd har inte `admin_crm`, så hen släpps aldrig in. Ingen ny gren behövs.
+
+**Utökat 2026-09-03** till `admin_crm is no OR User_role is Receptionist OR User_role is
+Hyresvärd`, så hyresvärden redirectas på rollen och inte på ett fält hen ändå inte har.
+
+⚠️ `is not yes` finns inte som operator för yes/no i Bubble — det förslaget var fel.
+Om `is no` inte matchar ett osatt `admin_crm` står en vanlig kundanvändare kvar på
+`dashboard_crm`. **Det är i så fall ett äldre CRM-problem, inte den här modulens** — mät
+det separat innan något byggs om.
+
+*Valfri putsning:* guarden dumpar alla på `index`. En hyresvärd som klickar en gammal
+CRM-länk hamnar då i ingenmansland. `User_role is Hyresvärd → fastighet` respektive
+`Receptionist → visitor` före index-steget är trevligare, men är UX, inte säkerhet.
 
 **F. Database trigger på `User`:**
 ```
