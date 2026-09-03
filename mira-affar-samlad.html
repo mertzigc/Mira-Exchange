@@ -250,6 +250,24 @@
   .af .af-onbstep.mock .s{font-style:italic;}
   .af .af-onbmockbadge{display:inline-block;background:#5a4a1c;color:#e5c884;padding:1px 6px;border-radius:4px;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;}
   @media(max-width:900px){.af .af-onbsteps{grid-template-columns:repeat(2,1fr);}}
+  /* ── Kompakt-nivå (L1) för onboarding + behovsanalys på affärskortet ──
+     3-nivå expansion (Christians beslut 2026-09-03): L1 mini-rad (default),
+     L2 dagens strip, L3 fullversion (chips resp. formulär).
+     Klick på .af-tglBtn stegar 1→2→3→1. */
+  .af .af-mini{margin:6px 18px 4px;background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 12px;
+    display:flex;align-items:center;gap:12px;font-size:12px;color:var(--w70);cursor:pointer;user-select:none;}
+  .af .af-mini:hover{border-color:var(--orange);}
+  .af .af-mini .t{font-weight:700;color:var(--white);letter-spacing:.06em;text-transform:uppercase;font-size:10.5px;min-width:100px;}
+  .af .af-mini .s{color:var(--w70);flex:1;}
+  .af .af-mini .s b{color:var(--white);font-weight:600;}
+  .af .af-mini .s .ok{color:var(--green);}
+  .af .af-mini .s .warn{color:#e0a060;}
+  .af .af-mini .chev{color:var(--w40);font-size:11px;transition:transform .12s;}
+  .af .af-mini:hover .chev{color:var(--orange);}
+  /* Header-toggle (chevron uppe i strippens rubrik: gå tillbaka till mini eller vidare) */
+  .af .af-tglrow{display:flex;align-items:center;gap:6px;}
+  .af .af-tglBtn{background:none;border:0;color:var(--w40);cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;border-radius:4px;font-family:var(--fb);}
+  .af .af-tglBtn:hover{color:var(--orange);background:rgba(244,123,48,.08);}
   /* ── Behovsanalys på affärskortet (säljstödets snabbchecklista) ── */
   .af .af-ba{margin:8px 18px 4px;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
   .af .af-bah{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;}
@@ -271,9 +289,10 @@
   .af .af-basec{border-top:1px dashed var(--border);padding-top:12px;margin-top:12px;}
   .af .af-basec:first-of-type{border-top:0;padding-top:0;margin-top:0;}
   .af .af-basech{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--orange);font-weight:700;margin-bottom:8px;}
-  .af .af-bagrid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 14px;}
+  /* Fälten VÄNSTERSTÄLLDA (Christians beslut 2026-09-03): en kolumn med max-width. */
+  .af .af-bagrid{display:flex;flex-direction:column;gap:10px;max-width:560px;}
   .af .af-bafld{display:flex;flex-direction:column;gap:4px;}
-  .af .af-bafld.wide{grid-column:1 / -1;}
+  .af .af-bafld.wide{}
   .af .af-bafld label{font-size:11px;color:var(--w40);font-weight:600;letter-spacing:.02em;}
   .af .af-bafld input,.af .af-bafld select,.af .af-bafld textarea{background:var(--input);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--white);font-family:inherit;font-size:13px;}
   .af .af-bafld textarea{resize:vertical;min-height:60px;}
@@ -288,7 +307,7 @@
   .af .af-baformbtns .msg{color:var(--w70);font-size:11.5px;margin-left:auto;}
   .af .af-baformbtns .msg.err{color:#ff8080;}
   .af .af-baformbtns .msg.ok{color:var(--green);}
-  @media(max-width:900px){.af .af-bagrid{grid-template-columns:1fr;}}
+  @media(max-width:900px){.af .af-bagrid{max-width:100%;}}
 </style>
 
 <div class="af">
@@ -1139,6 +1158,52 @@
   // Data hämtas från /admin/companies/:id/onboarding och cachas per företag —
   // upprepade expand/kollaps av samma affär triggar bara EN fetch. ⚠️ Ingen
   // .catch(() => []) — vi vill se felet i konsolen, inte gömma det som "0".
+  // ── 3-nivå expansion (Christians beslut 2026-09-03) ──
+  // L1 = mini-rad (default när affären expanderas — hålla vyn kompakt)
+  // L2 = dagens strip (steg-kort / progress-bar)
+  // L3 = fullversion (onboarding: strip + delkrav-chips; behovsanalys: formuläret)
+  // Klick på mini → L2. Klick på strippens chevron → cyklar L2↔L3, ↓ tillbaka till L1.
+  var ONB_LEVEL={};   // dealId → 1|2|3 (default 1)
+  var BA_LEVEL={};    // dealId → 1|2|3 (default 1)
+  function onbLvl(did){ return ONB_LEVEL[did] || 1; }
+  function baLvl(did){  return BA_LEVEL[did]  || 1; }
+  function miniShell(kind, dealId, label, statusHtml){
+    return '<div class="af-mini" data-af="lvl-expand" data-af-kind="'+kind+'" data-did="'+esc(dealId)+'">'+
+      '<span class="t">'+esc(label)+'</span>'+
+      '<span class="s">'+statusHtml+'</span>'+
+      '<span class="chev">▸ expandera</span>'+
+    '</div>';
+  }
+  function onbMiniHtml(dealId, companyId){
+    if(!companyId) return miniShell("onb", dealId, "Onboarding", '<span class="warn">saknar företagskoppling</span>');
+    var o = ONB_CACHE[companyId];
+    var text;
+    if(!o || !o.mira) text = '<em>laddar…</em>';
+    else if(o.mira.uncertain) text = '<b>'+o.mira.done_count+'/'+o.mira.total_count+'</b> · <span class="warn">några checks kunde inte köras</span>';
+    else if(o.mira.ready)     text = '<span class="ok">✓ <b>'+o.mira.done_count+'/'+o.mira.total_count+'</b> kundresan klar</span>';
+    else {
+      var missIds = o.mira.checks.filter(function(c){ return c.ok && !c.done; }).map(function(c){ return c.id; });
+      text = '<b>'+o.mira.done_count+'/'+o.mira.total_count+'</b>' + (missIds.length ? ' · <span class="warn">saknas: '+esc(missIds.join(", "))+'</span>' : "");
+    }
+    return miniShell("onb", dealId, "Onboarding", text);
+  }
+  function baMiniHtml(dealId, companyId){
+    if(!companyId) return miniShell("ba", dealId, "Behovsanalys", '<span class="warn">saknar företagskoppling</span>');
+    if(!BA_SCHEMA) return miniShell("ba", dealId, "Behovsanalys", '<em>laddar…</em>');
+    var b = BA_LATEST[dealId];
+    if(!b || !b.latest) return miniShell("ba", dealId, "Behovsanalys", '<span class="warn">ingen analys skapad</span>');
+    var la = b.latest, c = la.completeness || {filled:0, total:BA_SCHEMA.total_fields, pct:0};
+    var statusCls = la.status === "Klar" ? "ok" : "warn";
+    return miniShell("ba", dealId, "Behovsanalys",
+      '<b>'+c.filled+'/'+c.total+'</b> ('+c.pct+' %) · <span class="'+statusCls+'">'+esc(la.status||"Utkast")+'</span>');
+  }
+  // Chevron-knapp som stegar level. On L3 → tillbaka till L1 (samla ihop).
+  function lvlChevron(kind, dealId, curLvl){
+    var next = curLvl >= 3 ? 1 : curLvl + 1;
+    var label = curLvl === 2 ? "expandera ▸" : (curLvl === 3 ? "◂ samla ihop" : "");
+    return '<span class="af-tglrow"><button class="af-tglBtn" data-af="lvl-set" data-af-kind="'+kind+'" data-did="'+esc(dealId)+'" data-lvl="'+next+'">'+label+'</button></span>';
+  }
+
   var ONB_CACHE={};                                        // companyId → {ok, mira, steps, meta}
   var ONB_INFLIGHT={};                                     // companyId → Promise (dedup)
   var ONB_STEPS=[
@@ -1165,16 +1230,20 @@
     if(s.k==="avtal")      return { css:"warn", text:"inget aktivt avtal" };
     return { css:"warn", text:"ej klart" };
   }
-  function onbStripHtml(companyId){
-    // ⚠️ Utan companyId går det inte att fråga → visar tomrum, inte falska klara pillar.
+  // Strip:en har nu två nivåer: L2 = bara steg-kort, L3 = steg-kort + delkrav-chips.
+  // dealId behövs för toggle-knappen; utelämnas den (kortets standalone-anrop)
+  // faller vi tillbaka på L3 utan chevron — samma vy som förut.
+  function onbStripHtml(companyId, dealId, lvl){
     if(!companyId) return '<div class="af-onb" data-onb-cid=""><div class="af-onbh"><span class="t">Onboarding</span><span class="p">— affären saknar företagskoppling</span></div></div>';
     var o=ONB_CACHE[companyId] || null;
+    var showChips = (lvl == null) ? true : (lvl >= 3);
+    var chev = (lvl != null && dealId) ? lvlChevron("onb", dealId, lvl) : "";
     var head='<div class="af-onbh"><span class="t">Onboarding — kundresan</span>';
     if(o && o.mira){
       var pct=o.mira.total_count?Math.round((o.mira.done_count/o.mira.total_count)*100):0;
-      head+='<span class="p">Mira teknisk setup: '+o.mira.done_count+'/'+o.mira.total_count+' ('+pct+' %)'+(o.mira.uncertain?" · <em>några checks kunde inte köras</em>":"")+'</span>';
+      head+='<span class="p">Mira teknisk setup: '+o.mira.done_count+'/'+o.mira.total_count+' ('+pct+' %)'+(o.mira.uncertain?" · <em>några checks kunde inte köras</em>":"")+' '+chev+'</span>';
     } else {
-      head+='<span class="p"><em>laddar…</em></span>';
+      head+='<span class="p"><em>laddar…</em> '+chev+'</span>';
     }
     head+='</div>';
     var steps="";
@@ -1182,7 +1251,38 @@
       var s=ONB_STEPS[i], st=onbStepState(s, o);
       steps+='<div class="af-onbstep '+st.css+'"><div class="n">'+s.n+'</div><div class="l">'+esc(s.label)+'</div><div class="s">'+st.text+'</div></div>';
     }
-    return '<div class="af-onb" data-onb-cid="'+esc(companyId)+'">'+head+'<div class="af-onbsteps">'+steps+'</div></div>';
+    var chips = "";
+    if(showChips && o && o.mira && o.mira.checks && o.mira.checks.length){
+      // L3-vyn: delkraven som chips (kortets full-vy). Samma stil som .fk-onbchecks
+      // men enkelt renderad inline här — vi behöver inte klick-navigering på affären.
+      chips = '<div class="af-onbchecks">';
+      for(var k=0;k<o.mira.checks.length;k++){
+        var c=o.mira.checks[k];
+        var cls = !c.ok ? "uncert" : (c.done ? "ok" : "miss");
+        var txt = !c.ok ? ("? "+c.label+" — okänt") : (c.done ? ("✓ "+c.label+(c.count!=null?(" ("+c.count+")"):"")) : ("○ "+c.label));
+        chips += '<span class="af-onbchip '+cls+'">'+esc(txt)+'</span>';
+      }
+      chips += '</div>';
+    }
+    return '<div class="af-onb" data-onb-cid="'+esc(companyId)+'"'+(dealId?' data-did="'+esc(dealId)+'"':'')+'>'+head+'<div class="af-onbsteps">'+steps+'</div>'+chips+'</div>';
+  }
+  // Delkrav-chip-CSS (matchar företagskortets .fk-onbchecks/.fk-onbchip)
+  // — deklareras via egen namnrymd `.af-onb*` för isolering.
+  (function(){
+    if(document.querySelector("style[data-af-onbchips]")) return;
+    var st=document.createElement("style"); st.setAttribute("data-af-onbchips","1");
+    st.textContent=".af .af-onbchecks{margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);display:flex;flex-wrap:wrap;gap:6px;}"+
+      ".af .af-onbchip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;background:var(--deep);border:1px solid var(--border);font-size:11px;color:var(--w70);}"+
+      ".af .af-onbchip.ok{color:var(--green);border-color:rgba(76,175,125,.35);}"+
+      ".af .af-onbchip.miss{color:#e0a060;border-color:rgba(224,160,96,.35);}"+
+      ".af .af-onbchip.uncert{color:var(--w40);border-style:dashed;}";
+    document.head.appendChild(st);
+  })();
+  // Väljer vy för onboarding-sektionen på affärskortet (L1 mini / L2-3 strip).
+  function onbSectionHtml(dealId, companyId){
+    var lvl = onbLvl(dealId);
+    if (lvl === 1) return onbMiniHtml(dealId, companyId);
+    return onbStripHtml(companyId, dealId, lvl);
   }
   function fetchOnboarding(companyId, dealId){
     if(!companyId) return;
@@ -1192,14 +1292,22 @@
       .then(function(j){ ONB_INFLIGHT[companyId]=null;
         if(!j||!j.ok) return;                              // 404/500: lämna cachen tom, strippen fortsätter visa "laddar…"
         ONB_CACHE[companyId]=j;
-        // Uppdatera BARA denna deals strip in-place — ingen re-render av hela affären.
-        // Fler dealer på samma kund uppdateras när användaren öppnar dem (SWR).
-        var host=root.querySelector('[data-affar-id="'+dealId+'"]');
-        var det=host && host.nextElementSibling;
-        var strip=det && det.querySelector && det.querySelector('.af-onb[data-onb-cid="'+companyId+'"]');
-        if(strip){ var w=document.createElement("div"); w.innerHTML=onbStripHtml(companyId); strip.replaceWith(w.firstElementChild); }
+        // Rita om onboarding-sektionen för DENNA deal — respekterar aktuell level.
+        refreshOnbSection(dealId, companyId);
       })
       .catch(function(e){ ONB_INFLIGHT[companyId]=null; console.error("[onboarding] "+companyId+":", e && e.message); });
+  }
+  function refreshOnbSection(dealId, companyId){
+    var host=root.querySelector('[data-affar-id="'+dealId+'"]');
+    var det=host && host.nextElementSibling;
+    if(!det) return;
+    // Hitta antingen mini-raden (L1) eller strippen (L2/L3) — vi bär `data-did`
+    // på strippen sedan 2026-09-03 och `data-did` på mini-raden alltid.
+    var el = det.querySelector('.af-mini[data-af-kind="onb"][data-did="'+dealId+'"]') ||
+             det.querySelector('.af-onb[data-did="'+dealId+'"]');
+    if(!el) return;
+    var w=document.createElement("div"); w.innerHTML=onbSectionHtml(dealId, companyId);
+    el.replaceWith(w.firstElementChild);
   }
 
   // ── BEHOVSANALYS (säljstödets snabbchecklista) ──────────────────────────
@@ -1218,28 +1326,52 @@
       .then(function(r){return r.json();});
     Promise.all([schemaP, listP]).then(function(res){
       if(res[1] && res[1].ok) BA_LATEST[dealId] = res[1];
-      // Uppdatera bara denna deals strip in-place — samma pattern som onboarding.
-      var host=root.querySelector('[data-affar-id="'+dealId+'"]');
-      var det=host && host.nextElementSibling;
-      var strip=det && det.querySelector && det.querySelector('.af-ba[data-ba-did="'+dealId+'"]');
-      if(strip){ var w=document.createElement("div"); w.innerHTML=baStripHtml(dealId, companyId); strip.replaceWith(w.firstElementChild); }
+      refreshBaSection(dealId, companyId);
     }).catch(function(e){ console.error("[behovsanalys]", e && e.message); });
+  }
+  // Väljer vy för behovsanalys-sektionen på affärskortet
+  // L1 mini / L2 strip / L3 = strip + öppet formulär (BA_OPEN styr formuläret).
+  function baSectionHtml(dealId, companyId){
+    var lvl = baLvl(dealId);
+    if (lvl === 1) return baMiniHtml(dealId, companyId);
+    var strip = baStripHtml(dealId, companyId, lvl);
+    var form  = (lvl >= 3 && BA_OPEN[dealId]) ? baFormHtmlAff(dealId, companyId) : "";
+    return strip + form;
+  }
+  function refreshBaSection(dealId, companyId){
+    var host=root.querySelector('[data-affar-id="'+dealId+'"]');
+    var det=host && host.nextElementSibling; if(!det) return;
+    // Ta bort BÅDE strip och ev. form; ersätt med ny sektions-html.
+    var mini = det.querySelector('.af-mini[data-af-kind="ba"][data-did="'+dealId+'"]');
+    var strip= det.querySelector('.af-ba[data-ba-did="'+dealId+'"]');
+    var form = det.querySelector('.af-baform[data-ba-form-did="'+dealId+'"]');
+    var anchor = strip || mini || form;
+    if(!anchor) return;
+    // Bygg wrapper med de nya elementen, injicera direkt före anchor och radera de gamla.
+    var w=document.createElement("div"); w.innerHTML = baSectionHtml(dealId, companyId);
+    var parent = anchor.parentNode;
+    while(w.firstChild) parent.insertBefore(w.firstChild, anchor);
+    if(form && form !== anchor) form.remove();
+    if(strip && strip !== anchor) strip.remove();
+    if(mini && mini !== anchor) mini.remove();
+    anchor.remove();
   }
   function baPillHtml(status){
     var s=String(status||"Utkast");
     return '<span class="af-bapill '+(s==="Klar"?"klar":"utkast")+'">'+esc(s)+'</span>';
   }
-  function baStripHtml(dealId, companyId){
+  function baStripHtml(dealId, companyId, lvl){
+    var chev = (lvl != null) ? lvlChevron("ba", dealId, lvl) : "";
     if(!BA_SCHEMA){
-      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'"><div class="af-bah"><span class="t">Behovsanalys</span><span class="meta"><em>laddar…</em></span></div></div>';
+      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'"><div class="af-bah"><span class="t">Behovsanalys</span><span class="meta"><em>laddar…</em> '+chev+'</span></div></div>';
     }
     if(!companyId){
-      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'"><div class="af-bah"><span class="t">Behovsanalys</span><span class="meta">— affären saknar företagskoppling</span></div></div>';
+      return '<div class="af-ba" data-ba-did="'+esc(dealId)+'"><div class="af-bah"><span class="t">Behovsanalys</span><span class="meta">— affären saknar företagskoppling '+chev+'</span></div></div>';
     }
     var b=BA_LATEST[dealId], la=b && b.latest, meta;
     if(!la){
       return '<div class="af-ba" data-ba-did="'+esc(dealId)+'">'+
-        '<div class="af-bah"><span class="t">Behovsanalys</span><span class="meta">säljstödets snabbchecklista · '+BA_SCHEMA.total_fields+' fält</span></div>'+
+        '<div class="af-bah"><span class="t">Behovsanalys</span><span class="meta">säljstödets snabbchecklista · '+BA_SCHEMA.total_fields+' fält '+chev+'</span></div>'+
         '<div class="af-baempty">Ingen analys på affären ännu — starta här så följer den med i offerten.</div>'+
         '<div class="af-baactions"><button class="af-baact pri" data-af="ba-new" data-did="'+esc(dealId)+'" data-cid="'+esc(companyId)+'">+ Skapa behovsanalys</button></div>'+
       '</div>';
@@ -1248,7 +1380,7 @@
     meta='<b>'+c.filled+'</b>/'+c.total+' fält ('+c.pct+' %)';
     if(la.updated_at) meta+=' · uppdaterad '+esc(la.updated_at);
     return '<div class="af-ba" data-ba-did="'+esc(dealId)+'">'+
-      '<div class="af-bah"><span class="t">Behovsanalys '+baPillHtml(la.status)+'</span><span class="meta">'+meta+'</span></div>'+
+      '<div class="af-bah"><span class="t">Behovsanalys '+baPillHtml(la.status)+'</span><span class="meta">'+meta+' '+chev+'</span></div>'+
       '<div class="af-babar"><i style="width:'+c.pct+'%"></i></div>'+
       '<div class="af-baactions">'+
         '<button class="af-baact pri" data-af="ba-open" data-did="'+esc(dealId)+'" data-cid="'+esc(companyId)+'" data-baid="'+esc(la.id)+'">Öppna &amp; fyll i</button>'+
@@ -1307,20 +1439,16 @@
     } else {
       BA_DRAFT[dealId] = {};
     }
-    // Rendera om just den här affären
-    var host=root.querySelector('[data-affar-id="'+dealId+'"]');
-    var det=host && host.nextElementSibling;
-    var cell=det && det.querySelector && det.querySelector(".deal-cell");
-    var j=chainCache[dealId];
-    if(cell && j){ cell.innerHTML=renderChainHtml(j); }
+    BA_LEVEL[dealId] = 3;                      // "Öppna & fyll i" → fullversion
+    refreshBaSection(dealId, companyId);       // ⚠️ Byt bara BA-sektionen, INTE hela affären
+                                               // (annars stängs deal-formulärets textareas/BOM-stjärnor
+                                               // ner mitt i inmatning — samma fälla som förut).
   }
   function baCancelAff(dealId){
     BA_OPEN[dealId] = null; BA_DRAFT[dealId] = null;
-    var host=root.querySelector('[data-affar-id="'+dealId+'"]');
-    var det=host && host.nextElementSibling;
-    var cell=det && det.querySelector && det.querySelector(".deal-cell");
-    var j=chainCache[dealId];
-    if(cell && j){ cell.innerHTML=renderChainHtml(j); }
+    // Behåll level (L3) om användaren vill kunna öppna igen; annars går de tillbaka till L1 via chevron.
+    var la = chainCache[dealId], onbCid = (la && la.edit && la.edit.kundforetag_id) || (la && la.deal && la.deal.company_id) || "";
+    refreshBaSection(dealId, onbCid);
   }
   function baOnInputAff(el, dealId){
     var k=el.getAttribute("data-baf"); if(!k) return;
@@ -1355,13 +1483,11 @@
         if(!j||!j.ok){ msg.textContent="✗ "+((j && (j.hint||j.error))||"kunde inte spara"); msg.className="msg err"; return; }
         msg.textContent="✓ Sparad"; msg.className="msg ok";
         BA_OPEN[did]=null; BA_DRAFT[did]=null;
-        fetchBaFor(did, cid);
-        setTimeout(function(){
-          var host=root.querySelector('[data-affar-id="'+did+'"]');
-          var det=host && host.nextElementSibling;
-          var cell=det && det.querySelector && det.querySelector(".deal-cell");
-          var jj=chainCache[did]; if(cell && jj){ cell.innerHTML=renderChainHtml(jj); }
-        }, 500);
+        // Efter save: gå tillbaka till L2 (strip) — användaren har sparat och
+        // formuläret behöver inte längre ligga uppe. fetchBaFor triggar
+        // refreshBaSection som byter bara BA-sektionen (INTE hela affären).
+        BA_LEVEL[did] = 2;
+        setTimeout(function(){ fetchBaFor(did, cid); }, 400);
       }).catch(function(){ btn.disabled=false; msg.textContent="✗ nätverksfel"; msg.className="msg err"; });
   }
   function baToggleStatusAff(btn){
@@ -1419,9 +1545,10 @@
     if(invSum!=null) sumParts.push('Fakturerat '+money0(invSum));
     var sumline=sumParts.length?('<div class="deal-sum">'+sumParts.map(function(p){ return '<span>'+esc(p)+'</span>'; }).join("")+'</div>'):'';
     var head='<div class="deal-h"><div>'+esc(D.company||"")+(D.value?' · est. '+esc(money(D.value)):'')+(D.sannolikhet!=null?' · '+esc(Math.round(D.sannolikhet*100))+'%':'')+'</div><div>'+esc(D.status||"")+'</div></div>';
-    var baStrip = baStripHtml(did, onbCid);
-    var baForm  = BA_OPEN[did] ? baFormHtmlAff(did, onbCid) : "";
-    return '<div class="deal">'+head+onbStripHtml(onbCid)+baStrip+baForm+sumline+'<div class="chain">'+steps+'</div>'+
+    // 3-nivå expansion: onbSectionHtml/baSectionHtml väljer mini/strip/full.
+    var onbSect = onbSectionHtml(did, onbCid);
+    var baSect  = baSectionHtml(did, onbCid);
+    return '<div class="deal">'+head+onbSect+baSect+sumline+'<div class="chain">'+steps+'</div>'+
       '<div class="cstep-detail" style="display:none"></div>'+
       cardActionsHtml(did)+
       cardKopplaHtml(did)+
@@ -2084,6 +2211,25 @@
     // grenen före rad-hanterarna bubblar klicket upp och fäller ihop raden.
     var bst=t.closest && t.closest(".bom-star");
     if(bst){ bomSet(bst); return; }
+    // ── 3-nivå expansion: mini-rad (L1) klick → L2; chevron → nästa nivå. ──
+    // ⚠️ Chevron-knappen hanteras FÖRE mini-rad-klicket, annars fångas den av
+    // det yttre .af-mini-elementet (chevronen ligger inuti på lvl 2/3).
+    var lvlSet=t.closest && t.closest('[data-af="lvl-set"]');
+    if(lvlSet){
+      var lsKind=lvlSet.getAttribute("data-af-kind"), lsDid=lvlSet.getAttribute("data-did"), lsLvl=Number(lvlSet.getAttribute("data-lvl"))||1;
+      var jjLs=chainCache[lsDid], cidLs=(jjLs && jjLs.edit && jjLs.edit.kundforetag_id) || (jjLs && jjLs.deal && jjLs.deal.company_id) || "";
+      if(lsKind==="onb"){ ONB_LEVEL[lsDid]=lsLvl; refreshOnbSection(lsDid, cidLs); }
+      else if(lsKind==="ba"){ BA_LEVEL[lsDid]=lsLvl; if(lsLvl<3){ BA_OPEN[lsDid]=null; BA_DRAFT[lsDid]=null; } refreshBaSection(lsDid, cidLs); }
+      return;
+    }
+    var mini=t.closest && t.closest('[data-af="lvl-expand"]');
+    if(mini){
+      var mKind=mini.getAttribute("data-af-kind"), mDid=mini.getAttribute("data-did");
+      var jjM=chainCache[mDid], cidM=(jjM && jjM.edit && jjM.edit.kundforetag_id) || (jjM && jjM.deal && jjM.deal.company_id) || "";
+      if(mKind==="onb"){ ONB_LEVEL[mDid]=2; refreshOnbSection(mDid, cidM); }
+      else if(mKind==="ba"){ BA_LEVEL[mDid]=2; refreshBaSection(mDid, cidM); }
+      return;
+    }
     // ── Behovsanalys: multi-chip klick FÖRE knappar (samma fälla som BOM-stjärnor
     //    — annars bubblar klicket upp och fäller ihop affärsraden). ──
     var baChip=t.closest && t.closest(".af-bachip");
