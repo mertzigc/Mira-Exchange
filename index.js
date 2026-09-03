@@ -24,6 +24,7 @@ import { makeMypageAuth } from "./mypage_auth.js";
 import { makeLandlordAuth, bubbleRefId } from "./landlord_auth.js";
 import { registerVisitorRoutes } from "./visitor_api.js";
 import { registerStaffRoutes } from "./staff_api.js";
+import { registerLandlordRoutes } from "./landlord_api.js";
 import { formatOrgNo } from "./orgnr.js";
 import { makeSms } from "./sms.js";
 import { DEAL_STATUS_RANK, shouldAdvanceDealStatus } from "./deal_status.js";
@@ -21181,6 +21182,17 @@ registerVisitorRoutes(app, {
   visitorAuth: _visitorAuth,
   sms: _sms,
   sendMail: sendViaSendGrid,
+  planningCors: _planningCors,
+  publicRateLimited: _publicRateLimited,
+  clientIp: _clientIp,
+});
+
+// ── Mira Fastighet (/fastighet) — fastighetsägarens vy ────────────────────────
+// ⚠️ Egen gate (_landlordAuth), ALDRIG planningAuthed. Scope-isoleringen sker vid
+//    DI-injektionen — samma princip som _visitorAuth.
+registerLandlordRoutes(app, {
+  bubbleFindAll, bubbleGet, bubbleId,
+  landlordAuth: _landlordAuth,
   planningCors: _planningCors,
   publicRateLimited: _publicRateLimited,
   clientIp: _clientIp,

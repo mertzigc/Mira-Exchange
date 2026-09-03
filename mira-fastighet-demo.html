@@ -1,6 +1,14 @@
 <!--
-  mira-fastighet-skiss.html — SKISS av fastighetsägarvyn (Mira Fastighet, sidan /fastighet).
+  mira-fastighet-demo.html — DEMOVERSION av fastighetsägarvyn (Mira Fastighet).
   Klickbar prototyp med MOCK-data. Ingen backend, ingen token, inget att deploya.
+
+  ⚠️ DEN HÄR FILEN ÄR INTE DÖD KOD. Den är underlaget för skärmdumpar och
+  presentationsmaterial mot ägarledet (Fabege, Vasakronan). Mockdatan är medvetet
+  vald: Kista Entré är huset som halkar, Tele2 är hyresgästen som gått tyst.
+  Radera den inte när `mira-fastighet.html` går skarpt — en live-vy går inte att
+  visa i en pitch utan att exponera riktiga hyresgästers driftdata.
+
+  Skarpa blocket: mira-fastighet.html (samma design, hämtar från /landlord/*).
 
   Syfte: visa vad en fastighetsägare (Hyresvärd) kan se om servicelivet i sitt bestånd
   UTAN att vi visar kronor och utan att hyresgästens innehåll läcker.
@@ -98,6 +106,10 @@
   .fa .chip{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:20px;
     padding:5px 11px;font-size:11px;color:var(--w70);white-space:nowrap;margin:2px 4px 2px 0}
   .fa .chip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  /* ⚠️ `.chip.on` betyder AKTIVT FILTER i affärsvyn — samma färg för "har tjänsten"
+     hade sagt två saker med en signal, och en rad med fyra tjänster blivit en orange
+     vägg. Tjänster får en egen, tystare form. */
+  .fa .chip.svc{background:var(--green-dim);border-color:transparent;color:var(--green);font-weight:700}
   .fa .chip.no{background:transparent;border:1px dashed var(--border);color:var(--w40)}
 
   /* ── Tre spår — samma källfärger som affärsvyns .src ─────────────────────── */
@@ -396,7 +408,7 @@
     var rows=list.map(function(c){
       var h=husById(c.hus);
       var tj=TJANSTER.map(function(t){
-        return c.tj.indexOf(t.slug)>-1 ? '<span class="chip on">'+esc(t.namn)+'</span>' : '';
+        return c.tj.indexOf(t.slug)>-1 ? '<span class="chip svc">'+esc(t.namn)+'</span>' : '';
       }).join("")||'<span class="chip no">ingen tjänst</span>';
       var saknas=TJANSTER.length-c.tj.length;
       return '<tr>'+

@@ -1,7 +1,8 @@
 # Fastighetsägarvyn — Mira Fastighet
 
-> **Skiss + auth-fundament.** Första utkast 2026-09-03. Auth BYGGT och mutationstestat
-> samma dag — **ej deployat**. Vyn själv är fortfarande mockdata.
+> **Auth LIVE, vyn byggd mot skarp data 2026-09-03 — ej deployad.**
+> Fem av sex flikar hämtar riktig data. Aktivitetsspåren (och därmed hyresgästpulsens
+> trend) är ännu inte inkopplade — se §6.
 > Klickbar prototyp med mockdata: `mira-fastighet-skiss.html` (öppna lokalt i webbläsare).
 > Systerdokument: [GRANSSNITTSSTRATEGI.md](GRANSSNITTSSTRATEGI.md) — **läs §3 och §4 där först.**
 > Speglar auth-mönstret i [BESOKSHANTERING.md §7.5](BESOKSHANTERING.md).
@@ -342,6 +343,66 @@ curl -sS -X POST "$HOST/landlord/session" \
 Kolla `kalla` i svaret: står det `fastighet_agare_svep` bär `Hyresvärd.Fastighet` ingen
 data och bör backfillas. Kolla `antal_fastigheter` mot vad du faktiskt förväntar dig.
 
+### 5.7 Blocken: ETT skarpt, ETT för presentation
+
+| Fil | Roll |
+|---|---|
+| **`mira-fastighet.html`** | Skarpt block. Klistras på sidan `fastighet`. `data-mira`: `api_host` + `landlord_token`. |
+| **`mira-fastighet-demo.html`** | Mockdata, ingen backend. **Underlaget för skärmdumpar och pitchmaterial.** |
+
+⚠️ **Radera aldrig demofilen.** En live-vy går inte att visa i en pitch mot ägarledet
+utan att exponera riktiga hyresgästers driftdata. Mockdatan är dessutom medvetet vald
+(Kista Entré halkar, Tele2 har gått tyst) — den berättar historien som verkligheten
+inte alltid gör just den dagen. **Ändras designen i det skarpa blocket ska demofilen
+följa med**, annars visar pitchen en produkt som inte finns.
+
+---
+
+## 5b. API:ET — `landlord_api.js`
+
+Två endpoints. Båda bakom `x-landlord-token`, båda scope-filtrerade mot tokenen.
+
+| Endpoint | Innehåll |
+|---|---|
+| `GET /landlord/context` | Hyresvärd, husen i tokenen (namn + adress + antal hyresgäster). Billig. |
+| `GET /landlord/overview?fastighet=` | Allt vyn visar: puls, bestånd, ärenden, kvalitet, tjänstekarta, källtäckning. |
+
+### WU — ett bygge per hyresvärd, inte per klick
+Overviewen byggs för **hela** beståndet och filtreras i minnet per hus. Bygger man per
+urval blir varje radklick ett nytt svep. Cachen är SWR med 10 min TTL.
+**⚠️ Lägg ALDRIG en `setInterval` på bygget** — den fällan kostade ~13 000 WU/dygn i augusti.
+
+Ett bygge = 1 `Hyresvärd` + N `Fastighet` (bubbleGet) + N `ClientCompany` (en per hus,
+Bubble saknar OR) + 5 `bubbleFindAll` med `in` över hela hyresgästmängden + upp till 150
+`bubbleGet` för rumsnamn. Testet vaktar att andra anropet ger **noll** nya anrop och att
+ett husfilter inte utlöser ett nytt bygge.
+
+### Tre beslut som är lätta att råka riva
+1. **`Office.Fastighet` går före hyresgästens hus.** Kontoret vet var det står; en
+   hyresgäst med kontor i två hus gör det inte. Kartan kontor→hus byggs över **hela**
+   beståndet, inte över urvalet — filtrerar man där faller ett ärende från ett kontor
+   utanför urvalet tillbaka på hyresgästens första hus och blir felbokfört på det valda.
+   *Husfiltret hade sett ut att fungera medan det räknade fel.*
+2. **Ägarens eget bolag är ingen hyresgäst hos sig själv.** Det ligger i
+   `ClientCompany.Fastighet` för sina egna hus (så drift och reception hittar det), men
+   räknas det in blir hyresgästantalet ett för högt, täckningen utspädd och ägaren en rad
+   i sin egen tjänstekarta. Det stannar ändå i scopet — annars tappas de egna ärendena.
+3. **Snittbetyg = medel av `Grade.Värde`.** `Betyg_lev` används inte: fältet är aldrig
+   verifierat mot skarp data. Ett osäkert fält är värre än ett saknat.
+
+### ⚠️ Sviten
+`landlord_api_smoke.mjs` — 76 gröna, **15 mutationer, 15 faller, 0 kraschar.**
+Mocken är **strikt**: okänd constraint-nyckel avvisas (asynkront, som ett nätverksanrop),
+okänd typ avvisas. De tillåtna nycklarna är **hårdkodade i sviten** och importeras
+medvetet INTE ur `landlord_api.js` — gör man det muterar en felstavad slug både koden och
+dess egen kontroll, och testet blir blint för exakt det fel det finns för att fånga.
+
+Tre tester som inte får tas bort:
+- rubriker från hyresgästernas ärenden får inte finnas någonstans i svaret
+- `månadskostnad` och avtalsbelopp får inte finnas någonstans i svaret
+- ägarens egna ärende i ett annat hus följer inte med ett husfilter
+  (`egna_arenden` scope-filtreras inte i efterhand — filtret måste sitta vid uttaget)
+
 ## 6. DATAINVENTERING — VAD FINNS, VAD SAKNAS
 
 ### Finns och är verifierat
@@ -432,18 +493,34 @@ båda hanteras.
 
 | Steg | Vad | Status |
 |---|---|---|
-| 0 | Verifiera `Fastighet.Ägare` i Bubble-editorn | ✅ **klart 2026-09-03** |
-| 1 | `landlord_auth.js` + `POST /landlord/session` + två svit­er, mutationstestade | ✅ **byggt, ej deployat** |
-| 2 | Bubble: OS-värde, fält, sida, guard, backend-wf, trigger (§5.4) | 🟠 delvis — se tabellen |
-| 3 | `landlord_api.js`: `/landlord/context` + `/landlord/bestand` (vy 3.1 + 3.2) | 🔴 |
-| 4 | `mira-fastighet.html` mot skarp data — beståndsvyn ensam | 🔴 |
-| 5 | Ärenden + Kvalitet (återanvänder drift-endpointernas läslager) | 🔴 |
-| 6 | **Hyresgästpuls** — trenddefinitionen skriven och testad först, vyn sedan | 🔴 |
-| 7 | Tjänstekartan + Källtäckning | 🔴 |
+| 0 | Verifiera `Fastighet.Ägare` i Bubble-editorn | ✅ klart |
+| 1 | `landlord_auth.js` + `POST /landlord/session` + två sviter | ✅ **LIVE** |
+| 2 | Bubble: OS-värde, fält, sida, guards, backend-wf | ✅ **testat av Christian** |
+| 3 | `landlord_api.js`: `/landlord/context` + `/landlord/overview` | ✅ byggt, **ej deployat** |
+| 4 | `mira-fastighet.html` mot skarp data | ✅ byggt, **ej inklistrat** |
+| 5 | Ärenden + Kvalitet + Tjänstekartan + Källtäckning | ✅ ingår i steg 3–4 |
+| 6 | **Aktivitetsspåren** (Tengella/Fortnox/Intelliplan) → hyresgästpulsens trend | 🔴 nästa |
+| 7 | Database trigger på `User` (nollar `landlord_token`) | 🔴 |
 
-Steg 1–4 är en demonstrerbar produkt: ett bestånd, riktiga siffror, ingen krona.
+### ⏭️ Steg 6 — vad som saknas innan hyresgästpulsen kan byggas
+Tre fältnamn måste **verifieras mot skarp data**, inte gissas:
+- `Activity` — kundfältet (`Clientcompany`?) och datumfältet (`Startdatum`), filtrerat på
+  `ActivityType = Housekeeping`
+- `FortnoxOrder` — hur `connection = FE` faktiskt heter i Data API:t, plus `ft_delivery_date`
+- `IntelliplanOrderMonth` — kundkoppling och månadsnyckel
+
+Trenddefinitionen ska dessutom **skrivas och testas innan vyn byggs**: "avtagande när minst
+två av tre spår faller mot föregående kvartal, tyst vid noll aktivitet på 60 dagar". Den
+måste tåla frågan *"varför står det avtagande på min bästa hyresgäst?"*.
+
+⚠️ Och den kopplade luckan: `syncTengella` hoppar tyst över kunder utan företagskoppling.
+I ägarvyn blir det *"din hyresgäst får ingen service"* — sagt till hyresvärden, om vår egen
+kund. Se [TENGELLA-HK.md](TENGELLA-HK.md) sist. **Det spåret bör gå före steg 6.**
+
+Steg 1–5 är en demonstrerbar produkt: ett bestånd, riktiga siffror, ingen krona.
 Det räcker för att visa Vasakronan och Fabege medan tajmingsfönstret i
-GRANSSNITTSSTRATEGI §6 fortfarande är öppet.
+GRANSSNITTSSTRATEGI §6 fortfarande är öppet — och `mira-fastighet-demo.html` gör det
+visningsbart utan att någon hyresgästs driftdata lämnar rummet.
 
 ---
 
