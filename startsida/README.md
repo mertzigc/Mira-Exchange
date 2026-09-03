@@ -457,6 +457,20 @@ varje handler sin vy med `closest("[data-vw]")` och togglar bara där. I mörka 
 ägarvyn en egen `lsw(i)` bredvid `sw(i)`. Verifierat: ett klick i ägarvyn rör inte
 hyresgästvyns kopia.
 
+**Fjärde varvet (samma dag), tre önskemål från Christian:**
+- **Mörk hero i ljusa filen.** `.hero.dk` — affärsvyns `#1e2235` med lila/orange orb, vit rubrik,
+  orange `em`. "Så fungerar det"-kortet (`.hur-dk .xw`) har `margin-top:-150px` och lägger sig
+  över kanten. Bara ljusa filen; den mörka har redan mörk hero.
+- **AI-sektionen i lila** (`.aix`, båda filerna): lila gradientbakgrund, lila badge och `em`,
+  och en **inline-SVG-illustration** (`.ai-art`: nebulosa, tre omloppsbanor, nodnätverk,
+  hjärnform, pulserande kärna, tre orange satelliter, blinkande stjärnor). Inline för att den
+  följer paletten via färgkoder, väger ~3 kB och inte behöver laddas upp till Bubble.
+  Animationerna (`aiPulse`, `aiSpin`, `aiTwinkle`) stängs av under `prefers-reduced-motion`.
+- **"Carotte och våra utvalda partners"** — hero-meningen, ett nytt stycke i "Datan finns för att
+  vi är där" (kurerat urval, större valfrihet, Carotte behåller kvalitetskrav, uppföljning och
+  ansvar — "Ni har en motpart"), en sjätte rad i tjänstelistan, och steg 2 i integrationsloopen
+  ("Carotte eller en utvald partner utför").
+
 ⚠️ **Tre daterade löften** i ägarvyn, alla "vintern 2026/27": Hyresgästpulsens badge,
 Mira AI-badgen (plus `.ai-quote-f`-raden i mörka filen) och brödtexten i `#puls`. Tar ni
 bort en badge påstår sidan att funktionen finns idag.

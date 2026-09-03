@@ -11,14 +11,15 @@ Meny i ägarläget: **Så fungerar det · Vyerna · Hyresgästpuls · AI & Analy
 
 **Se allt som händer i era fastigheter. *Varje dag.***
 
-Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte gör i era
+Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era
 hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller
 – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som
 faktiskt händer i huset, mätt av dem som utför arbetet.
 
 [ Boka en genomgång → ]
 
-*Ingen bild i hero – som hyresgästsidan. Beviset kommer direkt under.*
+*Ingen bild i hero. I ljusa filen är ägarvyns hero MÖRK (affärsvyns `#1e2235`) så den skiljer sig
+från hyresgästvyn, och "Så fungerar det"-kortet överlappar upp i det mörka fältet.*
 
 ---
 
@@ -120,8 +121,9 @@ Fyra punkter (motsvarar AI-sektionens tidslinje):
 
 ## 5b. Mira AI för fastighetsägare – lansering vintern 2026/27
 
-*Samma form som Mira AI-sektionen på hyresgästsidan: badge med datum, rubrik, text,
-exempelruta, fyra punkter till höger.*
+*Samma form som Mira AI-sektionen på hyresgästsidan, men i lila och med en illustration
+(nebulosa, omloppsbanor, nätverk, hjärna – inline-SVG, animerad, stilla vid
+`prefers-reduced-motion`) ovanför de fyra punkterna.*
 
 **Data från verkliga insatser. *Förslag ni kan agera på.***
 
@@ -156,11 +158,17 @@ Städare, kockar, värdar, tekniker. Varje insats registreras i Mira, och det ä
 datan ni får se. Ingen plattformsleverantör kan ta fram den, för de utför inget arbete
 i huset.
 
+Carotte utför det mesta själva. För det vi inte gör själva handplockar vi partners och
+leverantörer – ett kurerat urval som ger er och hyresgästerna större valfrihet på
+plattformen. Det vi behåller är kvalitetskraven, uppföljningen och ansvaret: samma
+kvalitetskontroll, samma kvittens i Mira, samma avtal. Ni har en motpart.
+
 - **Lokalvård** – städpass och kvalitetskontroller, yta för yta →
 - **Mat & möten** – frukost, lunch, catering och event, levererat av Carottes kök →
 - **Reception & bemanning** – värdskap och kontorsservice med Carottes personal →
 - **Drift & ärenden** – anmält, åtgärdat, kvitterat →
 - **Kvalitetskontroll** – betyg och foto per yta, varje gång →
+- **Utvalda partners** – ett kurerat urval, kvalitetssäkrat och uppföljt av Carotte →
 
 ---
 
@@ -181,7 +189,7 @@ genom dörren. Mira vet vad som hände därinne.
 Tre steg:
 
 1. **Hyresgästen beställer i er plattform** – frukosten, städningen, eventet. Ingen ny app att lära sig.
-2. **Carotte utför** – samma team, samma kvalitetskontroll, samma kvittens oavsett var beställningen kom ifrån.
+2. **Carotte eller en utvald partner utför** – samma kvalitetskontroll, samma kvittens oavsett var beställningen kom ifrån.
 3. **Ni ser helheten i Mira Fastighet** – och kan lägga den bredvid det era egna system redan visar.
 
 Har ni ingen plattform går hyresgästen direkt in i Mira. Vägen in varierar. Motorn

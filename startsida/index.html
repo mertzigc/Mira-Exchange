@@ -367,6 +367,22 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
 .ilt{font-size:14.5px;color:var(--w70);line-height:1.65;}
 @media(max-width:1000px){ .ilist{grid-template-columns:repeat(2,1fr);} }
 @media(max-width:640px){ .ilist{grid-template-columns:1fr;} }
+/* ── agarvyn: AI-sektion i lila ── */
+.aix{background:radial-gradient(ellipse at 70% 20%,rgba(155,125,239,.16) 0%,rgba(30,34,53,0) 60%),var(--base);border-top:1px solid rgba(155,125,239,.18);}
+.aix h2.sh em{color:#C3AEF5;}
+.aix .ai-quote{border-color:rgba(155,125,239,.35);}
+.ai-art{display:block;width:100%;height:auto;max-width:640px;margin:-10px auto 26px;}
+.ai-pulse{transform-origin:320px 190px;animation:aiPulse 2.6s ease-in-out infinite;}
+.ai-orbits{transform-origin:320px 190px;animation:aiSpin 90s linear infinite;}
+.ai-s1,.ai-s2,.ai-s3{transform-origin:320px 190px;animation:aiSpin 22s linear infinite;}
+.ai-s2{animation-duration:34s;animation-direction:reverse;}
+.ai-s3{animation-duration:15s;}
+.ai-stars circle{animation:aiTwinkle 3s ease-in-out infinite;}
+.ai-stars circle:nth-child(2n){animation-delay:1s}.ai-stars circle:nth-child(3n){animation-delay:2s}
+@keyframes aiPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.5);opacity:.7}}
+@keyframes aiSpin{to{transform:rotate(360deg)}}
+@keyframes aiTwinkle{0%,100%{opacity:.35}50%{opacity:1}}
+@media(prefers-reduced-motion:reduce){.ai-pulse,.ai-orbits,.ai-s1,.ai-s2,.ai-s3,.ai-stars circle{animation:none;}}
 /* Vaxlaren + fem menylankar + Logga in far inte plats under ~1080 px -
    da gar menyn in i hamburgaren och vaxlaren foljer med dit. */
 @media(max-width:1080px){
@@ -789,7 +805,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
     <div style="max-width:880px;margin:0 auto">
       <div class="hlbl">Mira Fastighet · För fastighetsägare · by Carotte Group</div>
       <h1>Se allt som händer<br>i era fastigheter.<br><em>Varje dag.</em></h1>
-      <p class="hsub" style="margin-left:auto;margin-right:auto">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
+      <p class="hsub" style="margin-left:auto;margin-right:auto">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
       <div class="hact" style="justify-content:center">
         <a href="mailto:info@carotte.se?subject=Mira%20Fastighet" class="hcta">Boka en genomgång <span>→</span></a>
         <a href="#vyerna" class="hlink">Se vyerna ↓</a>
@@ -959,7 +975,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
   </div>
 </section>
 
-<section id="ai-fastighet">
+<section id="ai-fastighet" class="aix">
   <div class="wrap ai-grid">
     <div class="sr">
       <div class="ai-badge">Mira AI för fastighetsägare · Lansering vintern 2026/27</div>
@@ -971,11 +987,60 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
         <div class="ai-quote-f">Exempel · Funktionen lanseras vintern 2026/27</div>
       </div>
     </div>
-    <div class="road sr d2">
+    <div class="sr d2">
+      <svg class="ai-art" viewBox="0 0 640 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Illustration: ett lysande nätverk i lila – Mira AI">
+  <defs>
+    <radialGradient id="aiNeb" cx="50%" cy="48%" r="60%">
+      <stop offset="0" stop-color="#9B7DEF" stop-opacity=".55"/>
+      <stop offset=".45" stop-color="#6B4FBF" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#6B4FBF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aiCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff" stop-opacity=".95"/>
+      <stop offset=".35" stop-color="#C9B8FF" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#6B4FBF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="aiLine" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9B7DEF"/><stop offset="1" stop-color="#DB6923"/>
+    </linearGradient>
+    <filter id="aiGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <ellipse cx="320" cy="190" rx="300" ry="170" fill="url(#aiNeb)"/>
+  <g class="ai-stars" fill="#9B7DEF">
+    <circle cx="48" cy="52" r="1.6"/><circle cx="120" cy="330" r="1.2"/><circle cx="590" cy="70" r="1.8"/><circle cx="560" cy="320" r="1.3"/>
+    <circle cx="90" cy="180" r="1"/><circle cx="610" cy="200" r="1.1"/><circle cx="300" cy="28" r="1.4"/><circle cx="360" cy="356" r="1.2"/>
+    <circle cx="200" cy="70" r="1"/><circle cx="470" cy="340" r="1"/><circle cx="520" cy="40" r="1"/><circle cx="60" cy="280" r="1.5"/>
+  </g>
+  <g class="ai-orbits" fill="none" stroke="#9B7DEF" stroke-opacity=".35" stroke-width="1.2">
+    <ellipse cx="320" cy="190" rx="250" ry="95" transform="rotate(-14 320 190)"/>
+    <ellipse cx="320" cy="190" rx="205" ry="140" transform="rotate(28 320 190)"/>
+    <ellipse cx="320" cy="190" rx="150" ry="150" stroke-dasharray="3 7"/>
+  </g>
+  <g class="ai-brain" fill="none" stroke="url(#aiLine)" stroke-width="1.6" stroke-linecap="round" stroke-opacity=".9">
+    <path d="M262 150c-18-30 14-60 44-46 12-28 60-26 68 2 30-14 62 16 44 46 26 18 14 60-18 60-6 26-44 32-60 10-16 22-54 16-60-10-32 0-44-42-18-60z"/>
+    <path d="M320 104v134M292 130c14 10 14 30 0 44M348 130c-14 10-14 30 0 44M276 200c16-6 34-4 44 6M364 200c-16-6-34-4-44 6"/>
+  </g>
+  <g class="ai-net" stroke="#9B7DEF" stroke-opacity=".55" stroke-width="1">
+    <path d="M320 190L180 120M320 190L150 250M320 190L470 110M320 190L500 240M320 190L250 320M320 190L400 330M180 120L150 250M470 110L500 240M250 320L400 330M180 120L300 60M470 110L360 60M300 60L360 60"/>
+  </g>
+  <g class="ai-nodes" fill="#1e2235" stroke="#9B7DEF" stroke-width="2">
+    <circle cx="180" cy="120" r="5"/><circle cx="150" cy="250" r="4"/><circle cx="470" cy="110" r="5"/><circle cx="500" cy="240" r="4"/>
+    <circle cx="250" cy="320" r="4"/><circle cx="400" cy="330" r="5"/><circle cx="300" cy="60" r="3.5"/><circle cx="360" cy="60" r="3.5"/>
+  </g>
+  <g class="ai-sat" fill="#DB6923">
+    <circle class="ai-s1" cx="565" cy="130" r="4"/><circle class="ai-s2" cx="90" cy="240" r="3.5"/><circle class="ai-s3" cx="450" cy="300" r="3"/>
+  </g>
+  <circle cx="320" cy="190" r="34" fill="url(#aiCore)" filter="url(#aiGlow)"/>
+  <circle class="ai-pulse" cx="320" cy="190" r="12" fill="#fff"/>
+</svg>
+      <div class="road">
       <div class="rstep"><div class="rhead"><span class="ricon">🛠️</span><span class="rtitle">Förbättringsförslag per hus</span></div><div class="rdesc">Vad som bör ändras, var, och vad det väntas ge.</div></div>
       <div class="rstep"><div class="rhead"><span class="ricon">⚡</span><span class="rtitle">Effektivare service</span></div><div class="rdesc">Var insatser kan läggas om utan att kvaliteten sjunker.</div></div>
       <div class="rstep"><div class="rhead"><span class="ricon">🏢</span><span class="rtitle">Hus som avviker</span></div><div class="rdesc">Vilket hus som halkar efter de andra, innan det syns i uthyrningen.</div></div>
       <div class="rstep"><div class="rhead"><span class="ricon">📞</span><span class="rtitle">Hyresgäster att prata med</span></div><div class="rdesc">Kopplat till Hyresgästpulsen: vem ni bör ringa, och varför.</div></div>
+      </div>
     </div>
   </div>
 </section>
@@ -986,6 +1051,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
       <div class="ey">Det som gör Mira Fastighet unikt</div>
       <h2 class="sh">Datan finns<br><em>för att vi är där.</em></h2>
       <p class="sp">Andra system kan visa passerloggar och hyresavtal. Mira Fastighet visar vad som händer inne i huset – och det kan den bara för att Carottes egna team är där varje dag. Städare, kockar, värdar, tekniker. Varje insats registreras i Mira, och det är den datan ni får se. Ingen plattformsleverantör kan ta fram den, för de utför inget arbete i huset.</p>
+      <p class="sp" style="margin-top:18px">Carotte utför det mesta själva. För det vi inte gör själva handplockar vi partners och leverantörer – ett kurerat urval som ger er och hyresgästerna större valfrihet på plattformen. Det vi behåller är kvalitetskraven, uppföljningen och ansvaret: samma kvalitetskontroll, samma kvittens i Mira, samma avtal. Ni har en motpart.</p>
     </div>
     <div class="sr d2">
       <div class="svclist">
@@ -994,6 +1060,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
         <div class="svcrow"><span class="csi">🤝</span><div class="cst"><div class="cstitle">Reception &amp; bemanning</div><div class="csdesc">Värdskap och kontorsservice med Carottes personal</div></div><span class="csa">→</span></div>
         <div class="svcrow"><span class="csi">🔧</span><div class="cst"><div class="cstitle">Drift &amp; ärenden</div><div class="csdesc">Anmält, åtgärdat, kvitterat</div></div><span class="csa">→</span></div>
         <div class="svcrow"><span class="csi">⭐</span><div class="cst"><div class="cstitle">Kvalitetskontroll</div><div class="csdesc">Betyg och foto per yta, varje gång</div></div><span class="csa">→</span></div>
+        <div class="svcrow"><span class="csi">🤲</span><div class="cst"><div class="cstitle">Utvalda partners</div><div class="csdesc">Ett kurerat urval – kvalitetssäkrat och uppföljt av Carotte</div></div><span class="csa">→</span></div>
       </div>
     </div>
   </div>
@@ -1012,7 +1079,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
     <div class="loopflow">
       <div class="lstep"><div class="lnum">1</div><div class="lx"><strong>Hyresgästen beställer i er plattform</strong>– frukosten, städningen, eventet. Ingen ny app att lära sig.</div></div>
       <div class="larrow">→</div>
-      <div class="lstep"><div class="lnum">2</div><div class="lx"><strong>Carotte utför</strong>– samma team, samma kvalitetskontroll, samma kvittens oavsett var beställningen kom ifrån.</div></div>
+      <div class="lstep"><div class="lnum">2</div><div class="lx"><strong>Carotte eller en utvald partner utför</strong>– samma kvalitetskontroll, samma kvittens oavsett var beställningen kom ifrån.</div></div>
       <div class="larrow">→</div>
       <div class="lstep"><div class="lnum">3</div><div class="lx"><strong>Ni ser helheten i Mira Fastighet</strong>– och kan lägga den bredvid det era egna system redan visar.</div></div>
     </div>
