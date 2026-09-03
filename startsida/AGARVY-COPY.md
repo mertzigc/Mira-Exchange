@@ -16,7 +16,8 @@ hus – städning, mat och möten, reception och bemanning, ärenden och kvalite
 – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som
 faktiskt händer i huset, mätt av dem som utför arbetet.
 
-[ Boka en genomgång → ]
+[ Boka en genomgång → ] — öppnar en modal (namn, bolag, e-post, telefon, antal fastigheter,
+plattform idag, fritext) som skapar ett lead. Inte en mejllänk.
 
 *Ingen bild i hero. I ljusa filen är ägarvyns hero MÖRK (affärsvyns `#1e2235`) så den skiljer sig
 från hyresgästvyn, och "Så fungerar det"-kortet överlappar upp i det mörka fältet.*

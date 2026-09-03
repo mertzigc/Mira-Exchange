@@ -407,6 +407,11 @@ poängen med att bygga den som ett val i stället för som en menylänk
 - **Läget i URL:en.** Ägarvyn skriver `#fastighetsagare` i hashen (`history.replaceState`,
   ingen historikpost), så länken går att dela. Sidan startar i ägarvyn om hashen finns,
   och `hashchange` följer med om någon byter hash för hand.
+- **⚠️ Bugg rättad 2026-09-03: menyn slog tillbaka till hyresgästvyn.** `hashchange`-lyssnaren
+  tolkade varje hash som inte var `#fastighetsagare` som "hyresgäst" — så ett klick på `#hur`
+  i ägarläget bytte vy. Nu byter bara `#fastighetsagare` och tom hash vy; ankarlänkar i
+  ägarläget scrollar själva (`scrollIntoView`) och skriver tillbaka `#fastighetsagare`, så
+  en delad länk behåller läget även efter att någon klickat i menyn.
 - **Menyn byter ankare.** De fem hyresgästlänkarna (`#features` …) ligger i
   `<span class="nlg" data-nlg="hyresgast">`, de fem ägarlänkarna (`#signal`, `#integritet`,
   `#bevis`, `#tackning`, `#erfarenhet`) i en syster-span. `display:contents` gör att de
@@ -470,6 +475,26 @@ hyresgästvyns kopia.
   vi är där" (kurerat urval, större valfrihet, Carotte behåller kvalitetskrav, uppföljning och
   ansvar — "Ni har en motpart"), en sjätte rad i tjänstelistan, och steg 2 i integrationsloopen
   ("Carotte eller en utvald partner utför").
+
+**"Boka en genomgång" är en modal, inte en mejllänk** (båda filerna, fjärde varvet). Samma
+`.mask`/`.wz`-form som kalkylatorn men en egen namnrymd (`#fmask`, `data-fz`) så de två
+dialogerna inte delar handlers. Ett steg — namn, fastighetsbolag, e-post (krav), telefon,
+antal fastigheter, hyresgästplattform idag, fritext — och en tack-vy. Postar till
+**`/leads/create-from-calculator`**, samma endpoint som kalkylatorn, med
+`calculator_version: "startsida-fastighet-v1"`, `titel: "Fastighetsägare"`,
+`decision_stage: "Genomgång Mira Fastighet"` och `prospect_message` som börjar med
+"Mira Fastighet · vill boka genomgång · N fastigheter · plattformsläge · fritext".
+`external_reference` är `fastighet-<mejl>`, så ett andra försök från samma adress berikar
+leadet i stället för att skapa en dubblett. Antal fastigheter och plattformsläge finns inte
+som egna Lead-fält — de ligger i beskrivningen och i `calculator_payload_raw`.
+
+⚠️ `Source` på leadet blir "Kalkylator" — det är hårdkodat i endpointen. Vill ni skilja
+ägarleads i CRM:et: filtrera på `titel = Fastighetsägare` eller `calculator_version`, eller
+lägg en rad i endpointen som läser `d.source`. Samma två saker som förut gäller fortfarande:
+endpointen saknar rate-limit och skapar ClientCompany för okända bolagsnamn.
+
+Den mörka filen hade ingen modal alls (ingen kalkylator), så där är `.mask`/`.wz`-CSS:en
+portad till mörka tokens.
 
 ⚠️ **Tre daterade löften** i ägarvyn, alla "vintern 2026/27": Hyresgästpulsens badge,
 Mira AI-badgen (plus `.ai-quote-f`-raden i mörka filen) och brödtexten i `#puls`. Tar ni

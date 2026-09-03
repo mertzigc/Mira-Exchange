@@ -744,7 +744,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   <h1 data-en-html="See everything that happens in your properties. <em>Every day.</em>">Se allt som händer i era fastigheter. <em>Varje dag.</em></h1>
   <p class="hsub" data-en="Mira Fastighet is the property owner's view in Mira. It shows everything Carotte and our selected partners do in your buildings – cleaning, food and meetings, reception and staffing, issues and quality controls – gathered per property and per tenant. It is insight you have never had: what actually happens in the building, measured by the people doing the work.">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
   <div class="cta-row">
-    <a href="mailto:info@carotte.se?subject=Mira%20Fastighet" class="cta" data-en-html="Book a walk-through <span>→</span>">Boka en genomgång <span>→</span></a>
+    <button class="cta" type="button" data-fz="open" data-en-html="Book a walk-through <span>→</span>">Boka en genomgång <span>→</span></button>
   </div>
 </section>
 
@@ -1067,7 +1067,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   <h2 class="sr" data-en-html="See it on <em>your own properties.</em>">Se det på <em>era egna fastigheter.</em></h2>
   <p class="sr d1" data-en="A walk-through takes 30 minutes and starts from your portfolio, not from a demo.">En genomgång tar 30 minuter och utgår från ert bestånd, inte från en demo.</p>
   <div class="cta-row sr d2">
-    <a href="mailto:info@carotte.se?subject=Mira%20Fastighet" class="cta" data-en-html="Book a walk-through <span>→</span>">Boka en genomgång <span>→</span></a>
+    <button class="cta" type="button" data-fz="open" data-en-html="Book a walk-through <span>→</span>">Boka en genomgång <span>→</span></button>
   </div>
 </div>
 
@@ -1082,6 +1082,61 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
   <div class="fcopy" data-en="© 2026 Carotte Group AB. All rights reserved.">© 2026 Carotte Group AB. Alla rättigheter reserverade.</div>
 </footer>
+
+<div class="mask" id="fmask" role="dialog" aria-modal="true" aria-labelledby="fzT">
+  <div class="wz">
+    <div class="wz-hd">
+      <div>
+        <div class="wz-t" id="fzT" data-en="Book a walk-through">Boka en genomgång</div>
+        <p class="wz-fine" style="margin-top:8px" data-en="30 minutes, starting from your portfolio. We come back within one working day with a time.">30 minuter, med utgångspunkt i ert bestånd. Vi återkommer inom ett dygn med en tid.</p>
+      </div>
+      <button class="wz-x" type="button" data-fz="close" aria-label="Stäng" data-en-aria-label="Close">×</button>
+    </div>
+    <div class="wz-p on" data-fp="0">
+      <div class="wz-row">
+        <div><label class="wz-lbl" for="fName" data-en="Name">Namn</label><input class="wz-in" id="fName" type="text" autocomplete="name"></div>
+        <div><label class="wz-lbl" for="fCo" data-en="Property company">Fastighetsbolag</label><input class="wz-in" id="fCo" type="text" autocomplete="organization"></div>
+      </div>
+      <div class="wz-row">
+        <div><label class="wz-lbl" for="fMail" data-en="Email *">E-post *</label><input class="wz-in" id="fMail" type="email" autocomplete="email"></div>
+        <div><label class="wz-lbl" for="fTel" data-en="Phone">Telefon</label><input class="wz-in" id="fTel" type="tel" autocomplete="tel"></div>
+      </div>
+      <div class="wz-row">
+        <div><label class="wz-lbl" for="fAnt" data-en="Properties in the portfolio">Fastigheter i beståndet</label>
+          <select class="wz-in" id="fAnt">
+            <option value="" data-en="Choose…">Välj…</option>
+            <option value="1-5">1–5</option>
+            <option value="6-20">6–20</option>
+            <option value="21-50">21–50</option>
+            <option value="50+" data-en="More than 50">Fler än 50</option>
+          </select></div>
+        <div><label class="wz-lbl" for="fPl" data-en="Tenant platform today?">Hyresgästplattform idag?</label>
+          <select class="wz-in" id="fPl">
+            <option value="" data-en="Choose…">Välj…</option>
+            <option value="ja" data-en="Yes, we have one">Ja, vi har en</option>
+            <option value="pa-gang" data-en="Being procured">Upphandlas just nu</option>
+            <option value="nej" data-en="No">Nej</option>
+          </select></div>
+      </div>
+      <div class="wz-row one">
+        <div><label class="wz-lbl" for="fMsg" data-en="Anything we should know? (optional)">Något vi bör veta? (valfritt)</label>
+          <textarea class="wz-in" id="fMsg" rows="3" placeholder="T.ex. vilka hus ni vill börja med, eller vem som bör vara med." data-en-placeholder="E.g. which buildings to start with, or who should join."></textarea></div>
+      </div>
+      <p class="wz-fine" data-en="We only use your details to contact you about Mira Fastighet.">Vi använder uppgifterna bara för att kontakta er om Mira Fastighet.</p>
+    </div>
+    <div class="wz-p" data-fp="1">
+      <div class="wz-ok">
+        <div class="tick">✓</div>
+        <div class="wz-t" style="font-size:22px;margin-bottom:10px" data-en="Thank you – we'll be in touch!">Tack – vi hörs snart!</div>
+        <p class="sp" style="margin:0 auto;font-size:14.5px" data-en="We come back within one working day with a suggested time. Feel free to look around in the meantime.">Vi återkommer inom ett dygn med förslag på tid. Under tiden får ni gärna titta runt på sidan.</p>
+      </div>
+    </div>
+    <div class="wz-foot" id="fzFoot">
+      <div style="flex:1"><div class="wz-msg" id="fzMsg"></div></div>
+      <button class="cta" type="button" data-fz="send" data-en-html="Book a walk-through <span>→</span>">Boka genomgång <span>→</span></button>
+    </div>
+  </div>
+</div>
 
 <div class="mask" id="mask" role="dialog" aria-modal="true" aria-labelledby="wzT">
   <div class="wz">
@@ -1305,8 +1360,25 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
       setView(v, byte);
     });
   });
+  /* Bara de tva lagena byter vy. En sektionshash (#hur, #features ...) ar en
+     scrollning, inte ett vybyte - utan den har spärren slog varje menyklick i
+     agarvyn tillbaka till hyresgastvyn. */
   window.addEventListener("hashchange", function(){
-    setView(location.hash === HASH_AGARE ? "agare" : "hyresgast", false);
+    if (location.hash === HASH_AGARE) setView("agare", false);
+    else if (!location.hash) setView("hyresgast", false);
+  });
+  /* Ankarlankar i agarlaget scrollar sjalva och behaller #fastighetsagare i
+     adressraden, sa en delad lank fortfarande oppnar ratt vy. */
+  document.addEventListener("click", function(e){
+    var a = e.target.closest ? e.target.closest('a[href^="#"]') : null;
+    if (!a) return;
+    var agare = !document.querySelector('[data-vw="agare"]').hidden;
+    if (!agare) return;
+    var id = a.getAttribute("href").slice(1), el = id && document.getElementById(id);
+    if (!el) return;
+    e.preventDefault();
+    el.scrollIntoView();
+    history.replaceState(null, "", HASH_AGARE);
   });
 
 
@@ -1365,6 +1437,59 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   mask.addEventListener("click", function(e){ if (e.target === mask) stang(); });
   document.addEventListener("keydown", function(e){ if (e.key === "Escape" && mask.classList.contains("on")) stang(); });
   $("#heroKvm").addEventListener("keydown", function(e){ if (e.key === "Enter") oppna(); });
+
+  /* ── Boka en genomgang (agarvyn) - egen modal, egen namnrymd (data-fz) ── */
+  var fmask = $("#fmask");
+  var FZ = {
+    sv:{badmail:"Fyll i en giltig e-postadress.", sending:"Skickar\u2026",
+        failed:"Kunde inte skicka just nu \u2013 mejla oss p\u00e5 info@carotte.se s\u00e5 bokar vi in det.",
+        neterr:"N\u00e4tverksfel \u2013 mejla oss p\u00e5 info@carotte.se s\u00e5 bokar vi in det."},
+    en:{badmail:"Please enter a valid email address.", sending:"Sending\u2026",
+        failed:"Could not send right now \u2013 email us at info@carotte.se and we will book it.",
+        neterr:"Network error \u2013 email us at info@carotte.se and we will book it."}
+  };
+  function fzT(k){ return FZ[LANG][k]; }
+  function fzVisa(n){
+    $$(".wz-p", fmask).forEach(function(p){ p.classList.toggle("on", +p.getAttribute("data-fp") === n); });
+    $("#fzFoot").style.display = n === 1 ? "none" : "flex";
+    $("#fzMsg").textContent = "";
+  }
+  function fzOppna(){ fzVisa(0); fmask.classList.add("on"); document.body.style.overflow = "hidden";
+    var f = $("#fName"); if (f) setTimeout(function(){ f.focus(); }, 50); }
+  function fzStang(){ fmask.classList.remove("on"); document.body.style.overflow = ""; }
+  $$("[data-fz=open]").forEach(function(b){ b.addEventListener("click", fzOppna); });
+  $("[data-fz=close]").addEventListener("click", fzStang);
+  fmask.addEventListener("click", function(e){ if (e.target === fmask) fzStang(); });
+  document.addEventListener("keydown", function(e){ if (e.key === "Escape" && fmask.classList.contains("on")) fzStang(); });
+  $("[data-fz=send]").addEventListener("click", function(){
+    var msg = $("#fzMsg"), mail = $("#fMail").value.trim(), knapp = $("[data-fz=send]");
+    msg.className = "wz-msg";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) { msg.className = "wz-msg err"; msg.textContent = fzT("badmail"); return; }
+    knapp.disabled = true; msg.textContent = fzT("sending");
+    var ant = $("#fAnt").value, pl = $("#fPl").value, fri = $("#fMsg").value.trim();
+    var plTxt = {ja:"har hyresg\u00e4stplattform", "pa-gang":"upphandlar plattform", nej:"ingen plattform"}[pl] || "";
+    var rad = ["Mira Fastighet \u00b7 vill boka genomg\u00e5ng"];
+    if (ant) rad.push(ant + " fastigheter");
+    if (plTxt) rad.push(plTxt);
+    if (fri) rad.push(fri);
+    var body = {
+      name: $("#fName").value.trim(), email: mail, phone: $("#fTel").value.trim(),
+      company: $("#fCo").value.trim(), titel: "Fastighets\u00e4gare",
+      prospect_message: rad.join(" \u00b7 "),
+      decision_stage: "Genomg\u00e5ng Mira Fastighet",
+      portfolio_size: ant || null, tenant_platform: pl || null,
+      calculator_version: "startsida-fastighet-v1",
+      external_reference: "fastighet-" + mail.toLowerCase(),
+      lead_language: LANG
+    };
+    fetch(API + "/leads/create-from-calculator", {
+      method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); }).then(function(j){
+      knapp.disabled = false;
+      if (!j || j.ok === false) { msg.className = "wz-msg err"; msg.textContent = fzT("failed"); return; }
+      fzVisa(1);
+    }).catch(function(){ knapp.disabled = false; msg.className = "wz-msg err"; msg.textContent = fzT("neterr"); });
+  });
 
   $$(".wz-chip").forEach(function(c){
     c.addEventListener("click", function(){
