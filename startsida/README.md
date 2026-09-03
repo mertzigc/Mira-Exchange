@@ -468,11 +468,12 @@ hyresgästvyns kopia.
   över kanten. Bara ljusa filen; den mörka har redan mörk hero.
 - **Hero-illustrationen "det svarta hålet"** (`.hb-art`, båda filerna, femte varvet): ett hus i
   genomskärning inne i ett mörkt hål med två långsamt roterande ringar. Sex våningar tänds
-  nerifrån och upp (`hbLight`, 0,6 s mellanrum), aktivitetspunkter i spårfärgerna (lila städ,
+  nerifrån och upp (0,6 s mellanrum) i en **10 s-loop** (`hbCycle`: tänds, står tända, släcks i
+  samma ordning, börjar om), aktivitetspunkter i spårfärgerna (lila städ,
   blå mat, grön bemanning, orange ärenden) tonas in och pulserar, en skanningslinje sveper
   upp genom huset en gång, och streckade linjer flödar (`hbFlow`) in i en liten Mira-panel
-  vars staplar växer fram. Utanför huset i grått: ett avtal och en dörr med pil — det ägaren
-  alltid har kunnat se. Hero:n är tvåkolumn på desktop (text vänster, bild höger), staplad
+  vars staplar växer fram. Utanför huset i grått: ett avtal med en pil mot husets dörr — det ägaren
+  alltid har kunnat se. Husets linjer är lika tunna som marklinjen (1 px, låg opacitet). Hero:n är tvåkolumn på desktop (text vänster, bild höger), staplad
   under 1000 px. `prefers-reduced-motion` visar slutläget direkt, utan skanningslinje.
   Inline-SVG, ~6 kB, ingen uppladdning.
 - **AI-sektionen i lila** (`.aix`, båda filerna): lila gradientbakgrund, lila badge och `em`,

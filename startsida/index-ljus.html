@@ -401,24 +401,27 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 .hb-vis{position:relative;z-index:1;}
 @media(max-width:1000px){.hero.dk .hb-grid{grid-template-columns:1fr;text-align:center;gap:24px;}.hero.dk .hb-grid h1,.hero.dk .hb-grid .hsub{margin:0 auto 28px;}.hero.dk .hb-grid .cta-row{justify-content:center;}.hb-vis{max-width:520px;margin:0 auto;}}
 .hb-art{display:block;width:100%;height:auto;max-width:640px;margin:0 auto;}
-.hb-fl{opacity:0;animation:hbLight .9s ease forwards;}
-.hb-fl:nth-child(4){animation-delay:.3s}.hb-fl:nth-child(5){animation-delay:.9s}.hb-fl:nth-child(6){animation-delay:1.5s}
-.hb-fl:nth-child(7){animation-delay:2.1s}.hb-fl:nth-child(8){animation-delay:2.7s}.hb-fl:nth-child(9){animation-delay:3.3s}
-.hb-d{opacity:0;animation:hbLight .6s ease forwards;}
-.hb-d:nth-child(1){animation-delay:.7s}.hb-d:nth-child(2){animation-delay:1.3s}.hb-d:nth-child(3){animation-delay:1.9s}
-.hb-d:nth-child(4){animation-delay:2.5s}.hb-d:nth-child(5){animation-delay:3.1s}.hb-d:nth-child(6){animation-delay:3.7s}
+/* En 10 s-cykel: vaningarna tands nerifran (0,6 s mellanrum), star tanda, slacks i
+   samma ordning, och det borjar om. Alla delar delar samma klocka. */
+.hb-fl{opacity:0;animation:hbCycle 10s ease-in-out infinite;}
+.hb-fl:nth-child(4){animation-delay:0s}.hb-fl:nth-child(5){animation-delay:.6s}.hb-fl:nth-child(6){animation-delay:1.2s}
+.hb-fl:nth-child(7){animation-delay:1.8s}.hb-fl:nth-child(8){animation-delay:2.4s}.hb-fl:nth-child(9){animation-delay:3s}
+.hb-d{opacity:0;animation:hbCycle 10s ease-in-out infinite;}
+.hb-d:nth-child(1){animation-delay:.4s}.hb-d:nth-child(2){animation-delay:1s}.hb-d:nth-child(3){animation-delay:1.6s}
+.hb-d:nth-child(4){animation-delay:2.2s}.hb-d:nth-child(5){animation-delay:2.8s}.hb-d:nth-child(6){animation-delay:3.4s}
 .hb-d circle{transform-box:fill-box;transform-origin:center;animation:hbPulse 2.4s ease-in-out infinite;}
 .hb-d circle:nth-child(2){animation-delay:.8s}.hb-d circle:nth-child(3){animation-delay:1.6s}
-.hb-scan{animation:hbScan 4s linear .2s 1 forwards;}
-.hb-links path{stroke-dashoffset:0;animation:hbFlow 1.6s linear infinite;opacity:0;animation:hbFlow 1.6s linear infinite,hbLight .8s ease 3.6s forwards;}
-.hb-panel{opacity:0;animation:hbLight .8s ease 3.4s forwards;}
-.hb-bar{transform-origin:left center;transform:scaleX(0);animation:hbGrow 1s ease 3.8s forwards;}
+.hb-scan{opacity:0;animation:hbScan 10s linear infinite;}
+.hb-links path{opacity:0;animation:hbFlow 1.6s linear infinite,hbLate 10s ease-in-out infinite;}
+.hb-panel{opacity:0;animation:hbLate 10s ease-in-out infinite;}
+.hb-bar{transform-origin:left center;transform:scaleX(0);animation:hbGrow 10s ease-in-out infinite;}
 .hb-rings{transform-origin:320px 250px;animation:aiSpin 120s linear infinite;}
-@keyframes hbLight{to{opacity:1}}
+@keyframes hbCycle{0%{opacity:0}6%{opacity:1}58%{opacity:1}66%{opacity:0}100%{opacity:0}}
+@keyframes hbLate{0%,34%{opacity:0}40%{opacity:1}62%{opacity:1}68%{opacity:0}100%{opacity:0}}
+@keyframes hbGrow{0%,38%{transform:scaleX(0)}48%{transform:scaleX(1)}62%{transform:scaleX(1)}66%{transform:scaleX(0)}100%{transform:scaleX(0)}}
 @keyframes hbPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.45)}}
-@keyframes hbScan{from{transform:translateY(0)}to{transform:translateY(-358px)}}
+@keyframes hbScan{0%{transform:translateY(0);opacity:0}2%{opacity:1}36%{transform:translateY(-358px);opacity:1}38%{opacity:0;transform:translateY(-358px)}99%{opacity:0;transform:translateY(-358px)}100%{opacity:0;transform:translateY(0)}}
 @keyframes hbFlow{to{stroke-dashoffset:-18}}
-@keyframes hbGrow{to{transform:scaleX(1)}}
 @media(prefers-reduced-motion:reduce){.hb-fl,.hb-d,.hb-links path,.hb-panel{animation:none;opacity:1}.hb-bar{animation:none;transform:none}.hb-d circle,.hb-scan,.hb-rings{animation:none}.hb-scan{opacity:0}}
 /* Vaxlaren + fem menylankar + sprakpillret + Logga in far inte plats under
    ~1080 px - da gar menyn in i hamburgaren och vaxlaren foljer med dit. */
@@ -805,15 +808,13 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   <g class="hb-known" stroke="#fff" stroke-opacity=".32" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
     <rect x="96" y="352" width="54" height="68" rx="3"/>
     <path d="M108 372h30M108 386h30M108 400h18"/>
-    <path d="M200 440v-44h26v44"/>
-    <circle cx="219" cy="420" r="1.6" fill="#fff" fill-opacity=".5"/>
-    <path d="M150 418h34M178 412l6 6-6 6"/>
+    <path d="M150 423h134M278 417l6 6-6 6"/>
   </g>
 
   <g class="hb-house">
-    <rect x="200" y="80" width="240" height="360" fill="#0b0d18" stroke="#fff" stroke-opacity=".55" stroke-width="1.6" rx="2"/>
-    <path d="M196 80h248" stroke="#fff" stroke-opacity=".55" stroke-width="2.4" stroke-linecap="round"/>
-    <g stroke="#fff" stroke-opacity=".16"><path d="M200 140h240M200 200h240M200 260h240M200 320h240M200 380h240"/></g>
+    <rect x="200" y="80" width="240" height="360" fill="#0b0d18" stroke="#fff" stroke-opacity=".3" stroke-width="1" rx="2"/>
+    <path d="M194 80h252" stroke="#fff" stroke-opacity=".3" stroke-width="1" stroke-linecap="round"/>
+    <g stroke="#fff" stroke-opacity=".14" stroke-width="1"><path d="M200 140h240M200 200h240M200 260h240M200 320h240M200 380h240"/></g>
     <g class="hb-fl"><rect x="201" y="381" width="238" height="58" fill="url(#hbFloor)"/></g>
     <g class="hb-fl"><rect x="201" y="321" width="238" height="58" fill="url(#hbFloor)"/></g>
     <g class="hb-fl"><rect x="201" y="261" width="238" height="58" fill="url(#hbFloor)"/></g>
@@ -834,6 +835,9 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
       <g class="hb-d"><circle cx="272" cy="230" r="5" fill="#9B7DEF"/><circle cx="372" cy="230" r="4" fill="#4CAF7D"/></g>
       <g class="hb-d"><circle cx="252" cy="170" r="4" fill="#5B8DEF"/><circle cx="342" cy="170" r="5" fill="#9B7DEF"/><circle cx="422" cy="170" r="4" fill="#F47B30"/></g>
       <g class="hb-d"><circle cx="302" cy="110" r="5" fill="#4CAF7D"/><circle cx="392" cy="110" r="4" fill="#9B7DEF"/></g>
+    </g>
+    <g class="hb-door" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M308 440v-36h24v36"/><circle cx="327" cy="423" r="1.5" fill="#fff" fill-opacity=".6" stroke="none"/>
     </g>
     <rect class="hb-scan" x="201" y="438" width="238" height="2" fill="url(#hbScan)"/>
   </g>
