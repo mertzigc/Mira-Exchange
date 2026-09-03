@@ -6,6 +6,9 @@
 >
 > Presentation på startsidan + awardmaterial: färdig prompt i
 > [startsida/PROMPT-fastighetsagarvyn.md](../startsida/PROMPT-fastighetsagarvyn.md).
+> **Säljare och drift: läs [FASTIGHETSAGARVYN-INTERNT.md](FASTIGHETSAGARVYN-INTERNT.md)** (en A4)
+> innan modulen nämns för en ägare. Startsidan har växlaren Hyresgäst ⇄ Fastighetsägare
+> sedan 2026-09-03 — se `startsida/README.md`.
 > Klickbar prototyp med mockdata: `mira-fastighet-skiss.html` (öppna lokalt i webbläsare).
 > Systerdokument: [GRANSSNITTSSTRATEGI.md](GRANSSNITTSSTRATEGI.md) — **läs §3 och §4 där först.**
 > Speglar auth-mönstret i [BESOKSHANTERING.md §7.5](BESOKSHANTERING.md).

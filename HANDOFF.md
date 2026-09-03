@@ -86,7 +86,7 @@ och hur många kunder som kan visa pass.
 | **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |
 | **Gränssnittsstrategi** | Beställningsspec från leveranssidan → direktdialog med plattformsleverantörerna → fråga hyresgästerna → inkommande beställnings-API. Se GRANSSNITTSSTRATEGI.md §6. ⚠️ tajmingsfönster i månader | Christian |
 | **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
-| **Fastighetsägarvyn** | ✅ LIVE 2026-09-03 — auth + `landlord_api.js` + `mira-fastighet.html` deployade och verifierade. Fem av sex flikar på skarp data. **Nästa: aktivitetsspåren** (FASTIGHETSAGARVYN.md §8 steg 6) — men Tengella-orgnr bör gå före. Presentation på startsidan: färdig prompt i `startsida/PROMPT-fastighetsagarvyn.md` | Christian |
+| **Fastighetsägarvyn** | ✅ LIVE 2026-09-03 — auth + `landlord_api.js` + `mira-fastighet.html` deployade och verifierade. Fem av sex flikar på skarp data. **Nästa: aktivitetsspåren** (FASTIGHETSAGARVYN.md §8 steg 6) — men Tengella-orgnr bör gå före. ✅ Startsidan har växlaren Hyresgäst ⇄ Fastighetsägare (båda filerna, 2026-09-03) — kör `ladda_upp.py` och klistra in. Säljunderlag: `handoff/FASTIGHETSAGARVYN-INTERNT.md`. Awardutkast väntar på brief | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
 - ~~**`create_user_account`:** parametern `role` + "Set User_role = role"~~ — ✅ **KLART**, bekräftat av Christian 2026-08-26. Kedjan Render→Bubble är hel.

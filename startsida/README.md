@@ -389,3 +389,129 @@ fortfarande pekar lokalt.
 
 **Regeln:** klistra alltid in `index-live.html`, aldrig `index-ljus.html` — den senare pekar
 på en `bilder/`-mapp som bara finns på din dator.
+
+
+## Perspektivväxlaren: Hyresgäst ⇄ Fastighetsägare (2026-09-03)
+
+**Båda filerna** (`index-ljus.html` och `index.html`) har en segmenterad kontroll i
+navigationen bredvid "Logga in". Den befintliga sidan är vyn **Hyresgäst**; vyn
+**Fastighetsägare** presenterar Mira Fastighet. Det är samma sida, samma motor — det är
+poängen med att bygga den som ett val i stället för som en menylänk
+(GRANSSNITTSSTRATEGI §2, "två vägar in, en motor").
+
+### Hur växlaren fungerar
+
+- **Klientsidesbyte, ingen ny route.** Hyresgästvyn ligger i `<div data-vw="hyresgast">`,
+  ägarvyn i `<div data-vw="agare" hidden>`. `setView()` togglar `hidden` på de två.
+  Ingen omladdning, inget SEO-tapp på den befintliga sidan.
+- **Läget i URL:en.** Ägarvyn skriver `#fastighetsagare` i hashen (`history.replaceState`,
+  ingen historikpost), så länken går att dela. Sidan startar i ägarvyn om hashen finns,
+  och `hashchange` följer med om någon byter hash för hand.
+- **Menyn byter ankare.** De fem hyresgästlänkarna (`#features` …) ligger i
+  `<span class="nlg" data-nlg="hyresgast">`, de fem ägarlänkarna (`#signal`, `#integritet`,
+  `#bevis`, `#tackning`, `#erfarenhet`) i en syster-span. `display:contents` gör att de
+  fortfarande ligger i navens flex-rad.
+- **Två breakpoints.** Under 1080 px går menylänkarna in i hamburgaren men växlaren står
+  kvar i listen; under 760 px flyttar växlaren in överst i hamburgarlådan (`.vsw-m`, en
+  kopia med samma handler). Sex element fick inte plats i en 375 px-list.
+- **Reveal-animationen.** `.sr`-elementen i den dolda vyn har aldrig varit i viewporten.
+  `avsloja()` ber IntersectionObservern titta igen när vyn visas — utan den står
+  sektionerna kvar på opacity 0. `prefers-reduced-motion` gäller som förut.
+- **Inga egna flikar i ägarvyn.** Första varvet hade Kvalitet/Tjänstekartan i två flikar;
+  de blev två sektioner i stället. Bygger någon flikar här igen: använd INTE `.stab`/`.usc`
+  — hyresgästvyns flikhandler togglar globalt på klassnamn.
+- **Språkväxlaren täcker ägarvyn.** Alla nya texter i `index-ljus.html` bär `data-en`
+  (även växlarens egna etiketter: Tenant / Property owner). Verifierat med `?lang=en`.
+  Den mörka varianten har ingen språkväxlare och därför inga `data-en`.
+
+### Ägarvyns sektioner — samma upplägg som hyresgästsidan, sektion för sektion
+
+Tredje varvet. De två första hade egna former och rubriker som var aforismer för någon
+som redan kan produkten ("Ett hussnitt på 4,2 döljer toaletter på 3,1") — en ägare som
+landar på sidan förstod inte vad Mira är. Nu följer ägarvyn hyresgästsidans disposition
+och tonläge rakt av: förklara vad det är, hur det fungerar, vad man ser, och sist det som
+är på väg. Copyn ligger i `AGARVY-COPY.md` och är godkänd av Christian 2026-09-03.
+
+| Hyresgäst | Fastighetsägare | Ankare | Form (samma klasser) |
+|---|---|---|---|
+| Hero + kalkylator | Se allt som händer i era fastigheter. Varje dag. + Boka en genomgång | — | `.hero` |
+| Så fungerar integrationen | Så fungerar det · Mira Fastighet — *det händer i huset / ni ser det i Mira* | `#hur` | `.xw` / `.xstep` / `.xpane` |
+| Varje funktion har Carotte bakom sig (01–06) | Allt som ger huset innehåll (01–06) | `#innehall` | `.feat-g` / `.reg` |
+| Multipla vyer. En plattform. | Sex vyer. Ett bestånd. — fem flikar med demobilder | `#vyerna` | `.sc-tabs` / `.stab` / `.usc` |
+| Mira AI – vintern 2026 | Hyresgästpuls – vintern 2026/27, pulsbilden i exempelrutan | `#puls` | `.ai-grid` / `.road` |
+| — | Mira AI för fastighetsägare – vintern 2026/27 | `#ai-fastighet` | `.ai-grid` / `.road` |
+| Inte bara mjukvara. Carotte levererar. | Datan finns för att vi är där. | `#darfor` | `.car-g` / `.svclist` |
+| Den slutna loopen | Ni har redan en plattform. Behåll den. — tre steg | `#integration` | `.loopwrap` |
+| App | Hyresgästens uppgifter stannar hos hyresgästen. | `#integritet` | `.ilist` (ny, 4 kort) |
+| CTA | Se det på era egna fastigheter. | — | `.fcta` |
+
+Menyn i ägarläget: Så fungerar det · Vyerna · Hyresgästpuls · AI & Analys · Integration.
+
+**Enda nya CSS:en** är `.ilist`/`.ili` (integritetskorten) och `.lfoot` (bildtexten under
+flikarna, bara ljusa filen). Allt annat är hyresgästsidans klasser — det är poängen: byter
+man palett eller typsnitt följer båda vyerna med.
+
+⚠️ **Samma klasser i två vyer betyder att handlers måste skopas.** Steg (`.xstep`),
+dragspel (`.regbtn`) och flikar (`.stab`) finns nu i båda vyerna. I ljusa filen hittar
+varje handler sin vy med `closest("[data-vw]")` och togglar bara där. I mörka filen har
+ägarvyn en egen `lsw(i)` bredvid `sw(i)`. Verifierat: ett klick i ägarvyn rör inte
+hyresgästvyns kopia.
+
+⚠️ **Tre daterade löften** i ägarvyn, alla "vintern 2026/27": Hyresgästpulsens badge,
+Mira AI-badgen (plus `.ai-quote-f`-raden i mörka filen) och brödtexten i `#puls`. Tar ni
+bort en badge påstår sidan att funktionen finns idag.
+
+⚠️ **`#integration` beskriver ett flöde som inte är byggt.** "Hyresgästen beställer i er
+plattform" är beställnings-API:et — steg 4 i GRANSSNITTSSTRATEGI §6, ej påbörjat. Texten
+är skriven som avsikt ("vi vill vara pusselbiten", "vägen in varierar") och Christian
+valde 2026-09-03 att låta den stå så utan datum. Säljaren måste veta läget —
+det står i `handoff/FASTIGHETSAGARVYN-INTERNT.md`.
+
+### Skärmbilderna — `rendera_fastighet.py`
+
+```bash
+python3 startsida/rendera_fastighet.py
+```
+
+Renderar de sex flikarna i **`mira-fastighet-demo.html`** (aldrig det skarpa blocket) med
+headless Chrome i 2×, 1360 px layoutbredd, resamplat till 1700 px som övriga bilder.
+Två Chrome-körningar per bild: först `--dump-dom` för att mäta sidans höjd, sedan
+skärmbilden i exakt den höjden. Hyresgästpuls och Tjänstekartan har ett tak (800
+respektive 700 css-px) — de fulla vyerna blev 1,2 gånger så höga som breda och en vägg
+på sidan; en avklippt tabell läser dessutom som en skärmbild.
+
+Två saker byts **vid rendering, inte i demofilen**:
+
+1. **"SKISS · MOCKDATA" → "EXEMPELDATA".** Publikt läses "skiss" som ofärdigt, men bilden
+   måste ändå säga att siffrorna inte är riktiga.
+2. **Namnen neutraliseras.** Demofilens mockdata är Vasakronans faktiska bestånd
+   (Hötorgshuset, Sergelhuset, Kista Entré, Klara C) med riktiga hyresgäster (Tele2,
+   Ericsson, Bonnier, Klarna …) och påhittade trender. Publicerat blir det ett påstående om
+   namngivna bolag — "Tele2 har gått tyst i Kista Entré" — som vi inte kan stå för, och
+   att illustrera ett integritetslöfte med det hade brutit löftet i samma bild. Bilderna
+   visar därför "Nordvik Fastigheter" (samma påhittade koncern som drift-bilderna) med
+   Kvarteret Almen, Kvarteret Eken, Nordport och Södra Porten. Historien är kvar:
+   Nordport halkar, Lindberg & Ek har gått tyst. Kartan ligger i `NAMN` i skriptet.
+
+Internt, i ett rum, är demofilens riktiga namn bättre — de gör historien igenkännbar.
+Det är bara publikt de inte får förekomma.
+
+| Fil | Storlek | Sektion |
+|---|---|---|
+| `fastighet-bestand.jpg` | 1700 × 1030 | `#vyerna`, flik 1 |
+| `fastighet-puls.jpg` | 1700 × 1000 | `#puls`, exempelrutan |
+| `fastighet-arenden.jpg` | 1700 × 1471 | `#vyerna`, flik 2 |
+| `fastighet-kvalitet.jpg` | 1700 × 1458 | `#vyerna`, flik 3 |
+| `fastighet-tjanster.jpg` | 1700 × 875 | `#vyerna`, flik 4 |
+| `fastighet-kallor.jpg` | 1700 × 1082 | `#vyerna`, flik 5 |
+
+Alla sex ligger under `hidden` tills vyn visas och har `loading="lazy"`, så en besökare
+som aldrig växlar laddar inte en byte av dem. `ladda_upp.py` plockar upp dem automatiskt
+eftersom de refereras som `src="bilder/…"` — kör den som vanligt så hamnar de i
+`index-live.html`.
+
+### Internt underlag
+
+`handoff/FASTIGHETSAGARVYN-INTERNT.md` — en A4 för säljare och drift: vad modulen gör,
+vad den inte gör än, exakt var integritetsgränsen går, och svaren på de fyra frågor
+som kommer. Länkad från huvudet i `handoff/FASTIGHETSAGARVYN.md`.
