@@ -12,7 +12,10 @@
   ⚠️ INGA BELOPP renderas. Servern skickar inga heller — regeln finns på båda sidor med flit.
 
   Backend: /landlord/context · /landlord/overview
-  data-mira: api_host + landlord_token. Konventioner: INGEN ?./??, IIFE, FAROOT-claim.
+  data-mira: api_host + landlord_token — bind mot `value`, inte mot `data-mira`.
+  ⚠️ x-landlord-secret får ALDRIG in i det här blocket. Den ligger i API Connectorn
+     som Private header. Hamnar den här ligger den i sidkällan på en publik sida.
+  Konventioner: INGEN ?./??, IIFE, FAROOT-claim.
 
   Designen är identisk med mira-fastighet-demo.html (mockdata för presentationsmaterial).
   Ändras utseendet här ska demofilen följa med — annars visar pitchen en produkt som inte finns.
@@ -163,8 +166,14 @@
 </style>
 
 <div class="fa">
-  <input type="hidden" data-mira="api_host" data-mira-field="api_host">
-  <input type="hidden" data-mira="landlord_token" data-mira-field="landlord_token">
+  <!-- ⚠️ `data-mira` är NAMNET, `value` är där datan ska in. Utan ett tomt `value=""`
+       finns ingen lucka att binda mot i Bubble — och då är `data-mira` det enda som
+       ser ut att duga. Det gick fel skarpt 2026-09-03: session-hemligheten hamnade i
+       `data-mira` och därmed i sidkällan på en publik sida.
+       Bind `value` på landlord_token till `Current User's landlord_token`.
+       ⚠️ ALDRIG x-landlord-secret här. Den hör hemma i API Connectorn, som Private. -->
+  <input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+  <input type="hidden" data-mira="landlord_token" value="">
 
   <div class="head">
     <div>
@@ -211,11 +220,30 @@
   // ── Sessionen: vänta in token ───────────────────────────────────────────
   // Bubble skriver landlord_token asynkront (backend-wf). Fältet uppdateras reaktivt,
   // så vi pollar tills det dyker upp i stället för att felaktigt visa "utloggad".
+  // ⚠️ Formkoll på tokenen. En landlord-token är `<base64url>.<signatur>` och innehåller
+  //    alltid en punkt. Binds något ANNAT in i fältet — typiskt session-hemligheten —
+  //    hade blocket annars pollat i 20 s och sedan sagt "sessionen kom aldrig igång",
+  //    vilket pekar helt fel håll. Felet ska namnge sig självt.
+  function tokenForm(v){
+    if(!v) return "tom";
+    return v.indexOf(".") > 0 ? "ok" : "fel_form";
+  }
   var vantat=0;
   (function vanta(){
-    if(TOK()){ STATE.ready=true; start(); return; }
+    var form=tokenForm(TOK());
+    if(form==="fel_form"){
+      $("body").innerHTML='<div class="err"><b>Fel värde bundet till landlord_token</b>'+
+        'Fältet innehåller något som inte är en session-token. Kontrollera att '+
+        '<code>value</code> på <code>data-mira="landlord_token"</code> är bundet till '+
+        "Current User's landlord_token — och att det INTE är x-landlord-secret. "+
+        'Hemligheten hör hemma i API Connectorn, som Private, aldrig i ett HTML-block.</div>';
+      return;
+    }
+    if(form==="ok"){ STATE.ready=true; start(); return; }
     vantat+=400;
     if(vantat>20000){
+      console.error('[fastighet] ingen token efter 20 s. Fältet data-mira="landlord_token" var:',
+        JSON.stringify(TOK()));
       $("body").innerHTML='<div class="err"><b>Sessionen kom aldrig igång</b>'+
         'Din inloggning hann inte hämta en session. Ladda om sidan. Kvarstår det: '+
         'kontrollera att din användare är kopplad till en fastighetsägare.</div>';

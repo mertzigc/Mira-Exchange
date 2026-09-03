@@ -327,10 +327,26 @@ When User's Hyresvärd changes  OR  User's User_role changes
   → Make changes to this User: landlord_token = ""
 ```
 
-**G. Blocket** klistras på sidan `fastighet` med två `data-mira`-fält:
-`api_host` = `https://mira-exchange.onrender.com` och
-`landlord_token` = `Current User's landlord_token`.
-⚠️ **Aldrig `planning_token` på den här sidan.**
+**G. Blocket** klistras på sidan `fastighet`. Två dolda inputs:
+
+```html
+<input type="hidden" data-mira="api_host"       value="https://mira-exchange.onrender.com">
+<input type="hidden" data-mira="landlord_token" value="">
+```
+
+⚠️ **`data-mira` är NAMNET. `value` är där datan ska in.** Bind
+`Current User's landlord_token` till **`value`** på den andra raden.
+
+⚠️ **DET HÄR GICK FEL SKARPT 2026-09-03.** Blocket levererades utan `value=""`, och då
+fanns ingen lucka att binda mot — så **session-hemligheten** hamnade i `data-mira` och
+därmed i sidkällan på en publik live-sida. `LANDLORD_SESSION_SECRET` fick roteras.
+Två spärrar finns nu: `value=""` står i blocket från början, och blocket vägrar starta
+med ett värde som inte har token-formen `<base64url>.<signatur>` — det säger
+*"fel värde bundet till landlord_token"* i stället för att polla i 20 sekunder och sedan
+peka åt fel håll.
+
+⚠️ **`x-landlord-secret` hör hemma i API Connectorn, som Private header. Aldrig i ett
+HTML-block.** Samma regel som `PLANNING_ADMIN_TOKEN`, av samma skäl.
 
 ### 5.6 Rökkör efter deploy
 
