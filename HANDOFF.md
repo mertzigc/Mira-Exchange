@@ -49,7 +49,7 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/BESOKSHANTERING.md](handoff/BESOKSHANTERING.md) | Vasakronan-besökssystem: bemannad + självincheckning, SMS/mail, kundens kontaktlista | 🟠 UNDER BYGGE · auth/session LIVE |
 | [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, notiser | 🟠 BYGGD + testad · **ej deployad** |
 | [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
-| [handoff/GRANSSNITTSSTRATEGI.md](handoff/GRANSSNITTSSTRATEGI.md) | En motor, många fronter: ägarens front-app vs vår motor, vad vi aldrig släpper | 🧭 STRATEGI · **läs §4 före ny hyresgästvänd yta** |
+| [handoff/GRANSSNITTSSTRATEGI.md](handoff/GRANSSNITTSSTRATEGI.md) | En motor, många fronter: ägarens front-app vs vår motor, vad vi aldrig släpper | 🧭 STRATEGI · **läs §4 före ny kundvänd yta** — hyresgästvänt = punkt 1–4, ägarvänt = punkt 6 (omvänd regel) |
 | [handoff/FASTIGHETSAGARVYN.md](handoff/FASTIGHETSAGARVYN.md) | Mira Fastighet (`/fastighet`): ägarens överblick över servicelivet i beståndet. Roll `Hyresvärd`, egen session, inga kronor | 🟢 LIVE · **läs §4 integritetsregeln före ändring** |
 
 **Egna handoff-filer utanför `handoff/`:**

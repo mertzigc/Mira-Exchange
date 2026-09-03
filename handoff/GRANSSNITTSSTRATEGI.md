@@ -7,7 +7,7 @@
 >
 > Formaterad version: https://claude.ai/code/artifact/2c3ad266-3282-4a03-a6ed-351054a91dc4
 > Systerdokument: Attraktivitetsaffären (erbjudandet mot ägarledet) ·
-> Fastighetsägarvyn (produktunderlag för ägarmodulen)
+> **[FASTIGHETSAGARVYN.md](FASTIGHETSAGARVYN.md)** — ägarmodulen, 🟢 LIVE sedan 2026-09-03
 
 ---
 
@@ -80,7 +80,7 @@ tre stannar hos oss.
 |---|---|---|
 | 1 | **Prislogiken och avtalet** | `pricing_engine.js` — prismotorn är enda prissanning i hela produkten (TJANSTEGRID-PRIS.md). Sätter en front sitt eget pris är den regeln bruten. |
 | 2 | **Den direkta kundrelationen** | `ClientCompany` + `Contract`/abonnemang. Ordrar får flöda genom deras gränssnitt; kontot, avtalet och dialogen får inte. |
-| 3 | **Leverans- och kvalitetsdatan** | `Matter`, `QualityControl`, `Visit`. Underlaget för ägarvyn, och det enda vi har som ingen annan kan producera. |
+| 3 | **Leverans- och kvalitetsdatan** | `Matter`, `QualityControl`, `Visit`. Underlaget för ägarvyn, och det enda vi har som ingen annan kan producera. **Byggt 2026-09-03: `landlord_api.js` + `/fastighet`, se [FASTIGHETSAGARVYN.md](FASTIGHETSAGARVYN.md).** |
 
 ---
 
@@ -110,6 +110,31 @@ designkrav från och med nu.
    bemannar disken — det är drift, inte mjukvara. Accessy ↔ Miras besökslogg är
    det uppenbara första gemensamma projektet, och att föreslå det själva gör oss
    till partner i stället för inkräktare.
+
+
+6. **⚠️ ÄGARVÄNDA ytor lyder under den OMVÄNDA regeln.** Punkt 1–4 gäller ytor mot
+   *hyresgästen* — där är fronten utbytbar med flit. Mot *ägaren* är fronten inte en
+   kostnad utan själva vallgraven: en ägare som läser vår vy för att förstå sitt eget
+   bestånd kan inte koppla bort oss utan att förlora sin enda insyn i servicelivet i
+   husen. Den ytan ger vi aldrig bort, och den byggs aldrig som en utbytbar adapter.
+   Tillagd 2026-09-03, när `/fastighet` byggdes — punkterna ovan hade ingen regel för
+   den kategorin, och utan den här läser man dem som att ägarvyn också ska vara
+   utbytbar. Det vore att ge bort det enda vi inte kan ersätta.
+
+   ⚠️ **Och därför krockar ägarvyn INTE med punkt 3.** "Aldrig kvalitetsdatan" gäller
+   maskin-till-maskin ut i en främmande plattform. Ägarvyn är vår egen front, mot en
+   namngiven inloggad person, med vårt varumärke i huvudet och vår scope-modell runt.
+   Datan lämnar aldrig oss — den visas hos oss. Läser man punkt 3 utan den här meningen
+   ser det ut som att vi bröt vår egen regel första gången den prövades.
+
+   ⚠️ **Att visa ägarvyn PUBLIKT är ett eget beslut, inte en följd av att den finns.**
+   Diagnosen i §0 är att ägaren är rädd för att bli bortkopplad. En publik
+   "Fastighetsägare"-vy kan läsas som att Carotte flyttar upp i stacken — exakt det
+   övertramp som utlöser rädslan. Framställningen måste därför göra ett jobb: det här
+   är *ert* fönster mot *era* hus, byggt av den som utför arbetet. Inte ännu en
+   plattform att upphandla. Leds det med haverilistan i §5 är vi den som förutsåg
+   problemen; leds det med "vi har också en ägarportal" är vi en till leverantör som
+   vill äga gränssnittet.
 
 ---
 
