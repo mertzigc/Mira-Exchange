@@ -17,6 +17,7 @@
   Konventioner: .fa-namnrymd, INGEN ?./??, IIFE, FAROOT-claim, raka quotes.
 -->
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
   .fa, .fa *{box-sizing:border-box;margin:0;padding:0;word-break:normal}
   .fa{
     --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
@@ -24,36 +25,37 @@
     --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
     --green:#4CAF7D;--green-dim:rgba(76,175,125,.13);
     --red:#E05A5A;--red-dim:rgba(224,90,90,.13);
-    --blue:#6C9BD6;--blue-dim:rgba(108,155,214,.13);
-    --border:rgba(255,255,255,.07);
+    --blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
     --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);
-    font-size:14px;line-height:1.5;display:block;padding:22px 24px 38px;border-radius:14px}
+    font-size:13px;line-height:1.5;display:block;padding:22px 26px 40px;border-radius:14px}
+  .fa input[type=hidden]{display:none}
 
-  .fa h1{font-size:23px;font-weight:800;letter-spacing:-.01em}
+  .fa h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}
   .fa h1 span{color:var(--orange)}
-  .fa .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.07em;margin:3px 0 0}
-  .fa .head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:space-between;margin-bottom:18px}
+  .fa .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 0}
+  .fa .head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:space-between;margin-bottom:20px}
   .fa .headctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .fa .skisstag{display:inline-block;background:var(--orange-dim);color:var(--orange);border-radius:6px;
+    padding:2px 8px;font-size:10px;font-weight:800;letter-spacing:.05em;vertical-align:middle;margin-left:9px;
+    font-family:var(--fb)}
 
   .fa .sel{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 11px;
-    color:var(--white);font-family:var(--fb);font-size:13px}
+    color:var(--white);font-family:var(--fb);font-size:12px}
   .fa .sel:focus{outline:none;border-color:var(--orange)}
-  .fa .btn{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 14px;
-    font-size:13px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb)}
-  .fa .btn:hover,.fa .btn:focus{background:var(--input)!important;border-color:var(--orange);color:var(--orange)!important;outline:none}
-  .fa .search{flex:1;min-width:200px;background:var(--input);border:1px solid var(--border);border-radius:9px;
-    padding:10px 13px;color:var(--white);font-family:var(--fb);font-size:14px}
+  .fa .search{flex:1;min-width:220px;background:var(--input);border:1px solid var(--border);border-radius:9px;
+    padding:10px 13px;color:var(--white);font-family:var(--fb);font-size:13px}
   .fa .search:focus{outline:none;border-color:var(--orange)}
   .fa .search::placeholder{color:var(--w40)}
   .fa .muted{color:var(--w40)}
+  .fa .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 
-  /* ── Pulsremsan ─────────────────────────────────────────────────────────── */
-  .fa .puls{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;margin-bottom:20px}
-  .fa .pk{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 15px 13px;position:relative}
-  .fa .pk .pl{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--w40);font-weight:700}
-  .fa .pk .pv{font-size:27px;font-weight:800;letter-spacing:-.02em;margin-top:5px;font-variant-numeric:tabular-nums;line-height:1.1}
-  .fa .pk .pu{font-size:11.5px;color:var(--w40);margin-top:1px}
-  .fa .pk .pt{position:absolute;top:13px;right:14px;font-size:11px;font-weight:800}
+  /* ── Pulsremsan — samma form som affärsvyns .fstep ───────────────────────── */
+  .fa .puls{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:20px}
+  .fa .pk{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:13px 15px;position:relative}
+  .fa .pk .pl{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
+  .fa .pk .pv{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums;line-height:1.2}
+  .fa .pk .pu{font-size:11px;color:var(--w40);margin-top:1px}
+  .fa .pk .pt{position:absolute;top:13px;right:15px;font-size:11px;font-weight:700}
   .fa .up{color:var(--green)} .fa .down{color:var(--red)} .fa .flat{color:var(--w40)}
   .fa .pk.warn{border-color:rgba(244,123,48,.35)}
   .fa .pk .pw{font-size:10.5px;color:var(--orange);margin-top:6px}
@@ -63,51 +65,58 @@
   /* ── Flikar ─────────────────────────────────────────────────────────────── */
   .fa .tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1.5px solid var(--w10);margin-bottom:16px}
   .fa .tab{background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;margin-bottom:-1.5px;
-    font-size:13px;font-weight:700;color:var(--w40);cursor:pointer;font-family:var(--fb)}
+    font-size:12px;font-weight:700;color:var(--w40);cursor:pointer;font-family:var(--fb)}
   .fa .tab:hover,.fa .tab:focus{background:none!important;color:var(--white)!important;outline:none}
   .fa .tab.on{color:var(--orange);border-bottom-color:var(--orange)}
-  .fa .tab b{display:inline-block;background:var(--w10);border-radius:9px;padding:1px 6px;font-size:10.5px;margin-left:6px}
+  .fa .tab b{display:inline-block;background:var(--w10);border-radius:9px;padding:1px 6px;font-size:10px;margin-left:6px}
 
-  .fa .bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-  .fa .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px}
-  .fa .panel h3{font-size:15px;font-weight:700;margin-bottom:4px}
-  .fa .panel .ph{font-size:11.5px;color:var(--w40);margin-bottom:14px;max-width:78ch}
+  .fa .panel{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px 18px;margin-bottom:14px}
+  .fa .panel h3{font-size:14px;font-weight:700;margin-bottom:4px}
+  .fa .panel .ph{font-size:11px;color:var(--w40);margin-bottom:14px;max-width:80ch}
 
-  /* ── Tabell ─────────────────────────────────────────────────────────────── */
+  /* ── Tabell — .grid-formen från affärsvyn ───────────────────────────────── */
   .fa .tablewrap{width:100%;overflow-x:auto}
   .fa table{width:100%;border-collapse:collapse;min-width:840px}
   .fa th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);
-    padding:9px 11px;border-bottom:1.5px solid var(--w10);white-space:nowrap;font-weight:700}
-  .fa td{padding:12px 11px;border-bottom:1px solid var(--border);vertical-align:middle}
+    padding:8px 12px;border-bottom:1.5px solid var(--w10);white-space:nowrap;font-weight:700}
+  .fa td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
   .fa tr:last-child td{border-bottom:none}
   .fa tbody tr:hover td{background:var(--card)}
   .fa .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700}
   .fa .nm{font-weight:700}
-  .fa .s{display:block;font-size:11.5px;color:var(--w40);margin-top:2px;font-weight:400}
+  .fa .s{display:block;font-size:11px;color:var(--w40);margin-top:2px;font-weight:400}
   .fa .clickrow{cursor:pointer}
 
   /* ── Pillar & chips ─────────────────────────────────────────────────────── */
   .fa .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;
     padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
-  .fa .pill i{width:6px;height:6px;border-radius:50%;display:block}
-  .fa .p-up{background:var(--green-dim);color:var(--green)}   .fa .p-up i{background:var(--green)}
-  .fa .p-flat{background:var(--w10);color:var(--w70)}         .fa .p-flat i{background:var(--w70)}
-  .fa .p-down{background:var(--orange-dim);color:var(--orange)} .fa .p-down i{background:var(--orange)}
-  .fa .p-quiet{background:var(--red-dim);color:var(--red)}    .fa .p-quiet i{background:var(--red)}
-  .fa .chip{display:inline-block;font-size:11px;color:var(--w70);background:var(--w10);border-radius:6px;
-    padding:3px 9px;white-space:nowrap;margin:2px 4px 2px 0}
-  .fa .chip.on{background:var(--green-dim);color:var(--green)}
+  .fa .pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40);display:block}
+  .fa .p-up{background:rgba(76,175,125,.13);color:var(--green)}   .fa .p-up .d{background:var(--green)}
+  .fa .p-flat{background:var(--w10);color:var(--w70)}
+  .fa .p-down{background:var(--orange-dim);color:var(--orange)}   .fa .p-down .d{background:var(--orange)}
+  .fa .p-quiet{background:rgba(224,90,90,.13);color:var(--red)}   .fa .p-quiet .d{background:var(--red)}
+  .fa .chip{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:20px;
+    padding:5px 11px;font-size:11px;color:var(--w70);white-space:nowrap;margin:2px 4px 2px 0}
+  .fa .chip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
   .fa .chip.no{background:transparent;border:1px dashed var(--border);color:var(--w40)}
 
-  /* ── Tre spår (staplar) ─────────────────────────────────────────────────── */
+  /* ── Tre spår — samma källfärger som affärsvyns .src ─────────────────────── */
+  /* Städ = Tengella (lila) · Mat & event = Fortnox (blå) · Bemanning = Intelliplan (grön) */
   .fa .spar{display:flex;gap:2px;align-items:flex-end;height:26px}
   .fa .spar i{display:block;width:5px;border-radius:1px;background:var(--w10)}
-  .fa .spar i.hk{background:rgba(108,155,214,.62)}
-  .fa .spar i.fe{background:rgba(244,123,48,.62)}
-  .fa .spar i.sp{background:rgba(76,175,125,.62)}
+  .fa .spar i.hk{background:rgba(155,125,239,.7)}
+  .fa .spar i.fe{background:rgba(91,141,239,.7)}
+  .fa .spar i.sp{background:rgba(76,175,125,.7)}
   .fa .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--w40);margin-top:10px}
   .fa .legend span{display:inline-flex;align-items:center;gap:6px}
   .fa .legend i{width:9px;height:9px;border-radius:2px;display:block}
+  .fa .src{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:6px;
+    padding:3px 8px;text-transform:uppercase;letter-spacing:.03em}
+  .fa .src .d{width:6px;height:6px;border-radius:50%;display:block}
+  .fa .src.mira{background:rgba(244,123,48,.14);color:var(--orange)}    .fa .src.mira .d{background:var(--orange)}
+  .fa .src.fortnox{background:rgba(91,141,239,.14);color:var(--blue)}   .fa .src.fortnox .d{background:var(--blue)}
+  .fa .src.tengella{background:rgba(155,125,239,.14);color:var(--purple)} .fa .src.tengella .d{background:var(--purple)}
+  .fa .src.intelliplan{background:rgba(76,175,125,.14);color:var(--green)} .fa .src.intelliplan .d{background:var(--green)}
 
   /* ── Mätare ─────────────────────────────────────────────────────────────── */
   .fa .meter{height:6px;background:var(--w10);border-radius:4px;overflow:hidden;min-width:70px}
@@ -115,7 +124,7 @@
   .fa .meter b.ok{background:var(--green)}
   .fa .meter b.low{background:var(--red)}
   .fa .mrow{display:flex;align-items:center;gap:9px}
-  .fa .mrow .mv{font-size:12px;font-variant-numeric:tabular-nums;color:var(--w70);min-width:42px;text-align:right;font-weight:700}
+  .fa .mrow .mv{font-size:11px;font-variant-numeric:tabular-nums;color:var(--w70);min-width:42px;text-align:right;font-weight:700}
 
   /* ── Tjänstematris ──────────────────────────────────────────────────────── */
   .fa .matrix{width:100%;border-collapse:collapse;min-width:760px}
@@ -125,22 +134,19 @@
   .fa .matrix td.lft{text-align:left}
   .fa .dot{display:inline-block;width:17px;height:17px;border-radius:5px;background:var(--w10)}
   .fa .dot.on{background:var(--green)}
-  .fa .dot.warm{background:rgba(244,123,48,.55)}
 
   /* ── Ärendekort ─────────────────────────────────────────────────────────── */
   .fa .agg{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:11px}
   .fa .aggk{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:13px 14px}
-  .fa .aggk .an{font-weight:700;font-size:13.5px}
-  .fa .aggk .ar{display:flex;justify-content:space-between;font-size:12px;color:var(--w70);margin-top:8px}
+  .fa .aggk .an{font-weight:700;font-size:13px}
+  .fa .aggk .ar{display:flex;justify-content:space-between;font-size:11.5px;color:var(--w70);margin-top:8px}
   .fa .aggk .ar b{font-variant-numeric:tabular-nums}
   .fa .cats{margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 
-  .fa .note{background:var(--deep);border:1px solid var(--border);border-left:3px solid var(--orange);
-    border-radius:9px;padding:12px 15px;font-size:12.5px;color:var(--w70);margin-bottom:14px;max-width:92ch}
+  .fa .note{background:var(--deep);border:1px solid var(--border);border-left:2px solid var(--orange);
+    border-radius:9px;padding:12px 15px;font-size:12px;color:var(--w70);margin-bottom:14px;max-width:95ch}
   .fa .note b{color:var(--white)}
   .fa .empty{padding:34px 20px;text-align:center;color:var(--w40)}
-  .fa .skisstag{display:inline-block;background:var(--orange-dim);color:var(--orange);border-radius:6px;
-    padding:2px 8px;font-size:10px;font-weight:800;letter-spacing:.05em;vertical-align:middle;margin-left:9px}
   @media(max-width:720px){ .fa{padding:16px 14px 30px} }
 </style>
 
@@ -319,7 +325,7 @@
   function trendPill(t){
     var m={up:["p-up","Växande"],flat:["p-flat","Stabil"],down:["p-down","Avtagande"],quiet:["p-quiet","Tyst"]};
     var x=m[t]||m.flat;
-    return '<span class="pill '+x[0]+'"><i></i>'+x[1]+'</span>';
+    return '<span class="pill '+x[0]+'"><span class="d"></span>'+x[1]+'</span>';
   }
 
   // ── Pulsremsan ────────────────────────────────────────────────────────────
@@ -376,9 +382,9 @@
        '<th>Aktivitet, 6 mån</th><th style="text-align:right">Öppna ärenden</th>'+
        '<th style="text-align:right">Tid till stängning</th><th style="text-align:right">Kvalitet</th><th>Tjänstetäckning</th>'+
      '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
-     '<div class="legend"><span><i style="background:rgba(108,155,214,.62)"></i>Städpass</span>'+
-       '<span><i style="background:rgba(244,123,48,.62)"></i>Mat &amp; event</span>'+
-       '<span><i style="background:rgba(76,175,125,.62)"></i>Bemanning</span></div></div>';
+     '<div class="legend"><span><i style="background:rgba(155,125,239,.7)"></i>Städpass</span>'+
+       '<span><i style="background:rgba(91,141,239,.7)"></i>Mat &amp; event</span>'+
+       '<span><i style="background:rgba(76,175,125,.7)"></i>Bemanning</span></div></div>';
   }
 
   // ── Flik: Hyresgästpuls ───────────────────────────────────────────────────
@@ -427,8 +433,8 @@
       var pcls=m.prio.indexOf("3")===0?"p-quiet":(m.prio.indexOf("2")===0?"p-down":"p-flat");
       return '<tr>'+
         '<td><span class="nm">'+esc(m.rubrik)+'</span><span class="s">'+esc(h?h.namn:"")+' &middot; '+esc(m.yta)+'</span></td>'+
-        '<td><span class="pill '+pcls+'"><i></i>'+esc(m.prio)+'</span></td>'+
-        '<td>'+(m.avv?'<span class="pill p-quiet"><i></i>Avvikelse</span>':'<span class="muted">&mdash;</span>')+'</td>'+
+        '<td><span class="pill '+pcls+'"><span class="d"></span>'+esc(m.prio)+'</span></td>'+
+        '<td>'+(m.avv?'<span class="pill p-quiet"><span class="d"></span>Avvikelse</span>':'<span class="muted">&mdash;</span>')+'</td>'+
         '<td class="num">'+m.dgr+'<span class="s" style="text-align:right">dgr öppet</span></td>'+
       '</tr>';
     }).join("")||'<tr><td colspan="4"><div class="empty">Inga öppna ärenden i era egna ytor.</div></td></tr>';
@@ -530,14 +536,20 @@
   }
 
   // ── Flik: Källtäckning ────────────────────────────────────────────────────
+  // Källbadge i samma form och färg som affärsvyns .src — samma källa, samma färg,
+  // över hela produkten.
+  function srcTag(namn){
+    var cls={Tengella:"tengella",Fortnox:"fortnox",Intelliplan:"intelliplan",Mira:"mira"}[namn]||"mira";
+    return '<span class="src '+cls+'"><span class="d"></span>'+esc(namn)+'</span>';
+  }
   function viewKallor(){
     var rows=KALLOR.map(function(k){
-      var pill=k.tackning>=0.9?'<span class="pill p-up"><i></i>Frisk</span>':
-               (k.tackning>0?'<span class="pill p-down"><i></i>Delvis</span>':
-                             '<span class="pill p-quiet"><i></i>Ej i drift</span>');
+      var pill=k.tackning>=0.9?'<span class="pill p-up"><span class="d"></span>Frisk</span>':
+               (k.tackning>0?'<span class="pill p-down"><span class="d"></span>Delvis</span>':
+                             '<span class="pill p-quiet"><span class="d"></span>Ej i drift</span>');
       return '<tr><td><span class="nm">'+esc(k.namn)+'</span>'+
         (k.not?'<span class="s">'+esc(k.not)+'</span>':'')+'</td>'+
-        '<td>'+esc(k.kalla)+'</td>'+
+        '<td>'+srcTag(k.kalla)+'</td>'+
         '<td style="min-width:150px">'+meter(k.tackning)+'</td>'+
         '<td>'+esc(k.sync)+'</td><td>'+pill+'</td></tr>';
     }).join("");

@@ -1,6 +1,7 @@
 # Fastighetsägarvyn — Mira Fastighet
 
-> **Skiss, inte en logg.** Första utkast 2026-09-03. Ingen kod byggd, inget deployat.
+> **Skiss + auth-fundament.** Första utkast 2026-09-03. Auth BYGGT och mutationstestat
+> samma dag — **ej deployat**. Vyn själv är fortfarande mockdata.
 > Klickbar prototyp med mockdata: `mira-fastighet-skiss.html` (öppna lokalt i webbläsare).
 > Systerdokument: [GRANSSNITTSSTRATEGI.md](GRANSSNITTSSTRATEGI.md) — **läs §3 och §4 där först.**
 > Speglar auth-mönstret i [BESOKSHANTERING.md §7.5](BESOKSHANTERING.md).
@@ -167,49 +168,161 @@ Aggregerat är samma data ett leveransbevis. Skillnaden är vem siffran tillhör
 
 ---
 
-## 5. AUTH + SCOPE — SPEGLAR /visitor
+## 5. AUTH + SCOPE — BYGGT 2026-09-03, EJ DEPLOYAT
 
-`landlord_auth.js` (ny) speglar `visitor_auth.js` rakt av. Samma HMAC, samma
-timing-safe jämförelse, samma server-till-server-mint.
+`landlord_auth.js` speglar `visitor_auth.js` rakt av. Samma HMAC, samma timing-safe
+jämförelse, samma server-till-server-mint.
 
 | | `/visitor` | `/fastighet` |
 |---|---|---|
-| Roll | `User_role = Receptionist` | `User_role = Hyresvärd` **(nytt OS-värde)** |
+| Roll | `User_role = Receptionist` | `User_role = Hyresvärd` ✅ finns |
 | Header | `x-visitor-token` | `x-landlord-token` |
-| Scope i payload | `fast: [fastighet-id]` | `fast: [fastighet-id]` + `hv: <hyresvärd-id>` |
-| TTL | 12 h (täcker ett pass) | 8 h (en arbetsdag) |
-| Env | `VISITOR_SESSION_SECRET` | `LANDLORD_SESSION_SECRET` |
+| Payload | `{uid, fast[], name}` | `{uid, hv, fast[], name}` — `hv` = Hyresvärd-id |
+| TTL | 12 h (ett pass) | 8 h (en arbetsdag) |
+| Env på Render | `VISITOR_SESSION_SECRET` | **`LANDLORD_SESSION_SECRET`** |
 
-**Scopet expanderas server-side.** `POST /landlord/session` läser `User.hyresvard`
-(ref till `Hyresvärd`), slår upp hyresvärdens fastigheter och skriver in en
-**explicit lista** i tokenen. Två skäl:
-1. Regeln **tom lista = ingen åtkomst, aldrig "alla"** överlever oförändrad från
-   `/visitor`. Den är mutationstestad där och ska inte omtolkas här.
-2. En ägares förvaltare kan ha ett smalare scope än hela beståndet
-   (`User.hyresvard_fastigheter`, valfri) utan att endpointlogiken ändras.
+**Filer:** `landlord_auth.js` · `landlord_auth_smoke.mjs` (38 gröna, **8 mutationer,
+8 faller**) · `POST /landlord/session` i `index.js` · `landlord_session_smoke.mjs`
+(27 gröna, **11 mutationer, 11 faller, 0 kraschar**) · `/landlord` i `openPrefixes`.
 
-Nekar med **403 `no_fastigheter_assigned`** hellre än att minta en tom session.
+### 5.1 ⚠️ OPTION-SET-FÄLLAN PÅ `User`
 
-⚠️ **BÄR ALDRIG `PLANNING_ADMIN_TOKEN` i blocket.** `guard()` i `companies_api.js` är
-en token för hela modulen — läcker den ligger 5 499 företag och all personal öppna.
-Samma regel som `/visitor` och Min sida.
+På `User` finns **två fält som båda ser rätt ut**:
 
-⚠️ **Tokenen är en ögonblicksbild.** Samma fälla som slog 2026-08-28 på receptionisten:
-ändras scopet i Bubble-editorn syns det inte förrän tokenen går ut. Database
-trigger på `User` behövs: `hyresvard` eller `User_role` ändras → `landlord_token = ""`.
+| Fält | Typ | Använd? |
+|---|---|---|
+| **`Hyresvärd`** (versalt H, med ä) | ref → `Hyresvärd` | ✅ **DEN HÄR** |
+| `hyresvard` | option set `User_role` | ❌ raderas — den skapades av misstag |
 
-### Kvar i Bubble innan något fungerar skarpt (Christian)
-1. Lägg **`Hyresvärd`** i option set `User_role`.
-2. Nytt fält **`User.hyresvard`** (ref till `Hyresvärd`).
-3. Valfritt: **`User.hyresvard_fastigheter`** (List of Fastighet) för smalare scope.
-4. Sida `fastighet` + page-load-guard. **`dashboard_crm`-guarden måste utökas** —
-   den skickar idag bara `Receptionist` vidare till `/visitor`; utan en gren för
-   `Hyresvärd` hamnar en fastighetsägare i vårt CRM.
-5. Backend-wf `landlord_session` → `POST {HOST}/landlord/session`, header
-   `x-landlord-secret`, body `{user_id}`. Hemligheten aldrig i ett HTML-block.
-6. Database trigger enligt ovan.
+Läser man fel fält får man tillbaka **strängen `"Hyresvärd"`**. Den är truthy, passerar
+varje enkel sanningskoll och slår sedan mot `bubbleGet("Hyresvärd", "Hyresvärd")` → 404
+som ser ut som *"hyresvärden finns inte"* i stället för *"vi läste fel fält"*.
 
----
+Därför finns `bubbleRefId()` i `landlord_auth.js`: den kräver Bubble-id-formen
+`<epoch-ms>x<siffror>` och förkastar allt annat. Ett eget test bevakar exakt den strängen.
+
+### 5.2 Beståndet — TVÅ riktningar, ingen skriven av vår kod
+
+Schemat har både `Hyresvärd.Fastighet` (List of Fastighets) och `Fastighet.Ägare`
+(ref → Hyresvärd). **Ingen av dem skrivs av vår kod** — båda kan vara tomma eller stale.
+
+Endpointen läser dem i ordning och **rapporterar vilken som bar datan** i svarets `kalla`:
+
+1. `Hyresvärd.Fastighet` → `kalla: "hyresvard_lista"` (1 anrop, normalfallet)
+2. tom lista → svep `Fastighet` och filtrera `Ägare` **i minnet** → `kalla: "fastighet_agare_svep"`
+
+⚠️ **Ägare-riktningen går medvetet INTE som Bubble-constraint.** Constraint-nycklar är
+slugar, inte visningsnamn ([[reference-bubble-data-api-keys]]), och `Ägare`s slug är
+inte verifierad. En felgissad slug ger tyst noll träffar — vilket här hade blivit
+"ägaren har inga fastigheter". Ett svep + minnesfilter kan inte ljuga på det sättet.
+
+⚠️ **`kalla: "fastighet_agare_svep"` i loggen betyder att `Hyresvärd.Fastighet` behöver
+backfillas.** Svepet är en fallback, inte en driftform.
+
+### 5.3 Fyra distinkta felkoder — inte ett gemensamt "tomt"
+
+| Kod | Betyder |
+|---|---|
+| `not_landlord` | rollen är inte Hyresvärd (svaret bär den faktiska rollen) |
+| `no_landlord_linked` | `User.Hyresvärd` tom, eller innehåller ett option-set-värde |
+| `no_fastigheter_assigned` | hyresvärden har inget bestånd i någon riktning |
+| `fastigheter_outside_landlord` | `hyresvard_fastigheter` pekar på hus som inte är ägarens |
+
+Den sista är poängen: att svara `no_fastigheter_assigned` där hade sagt "ingen tilldelning"
+när sanningen är "tilldelningen pekar fel". Ett test vaktar skillnaden.
+
+`User.hyresvard_fastigheter` **snittas** mot beståndet — den ersätter det aldrig. En
+tilldelning kan smalna av, aldrig vidga.
+
+### 5.4 Kvar i Bubble (Christian)
+
+| # | Vad | Status |
+|---|---|---|
+| 1 | `Hyresvärd` i option set `User_role` | ✅ klart |
+| 2 | `User.hyresvard_fastigheter` (List of Fastighet) | ✅ klart |
+| 3 | Sidan `fastighet` | ✅ klart |
+| 4 | **Radera fältet `User.hyresvard`** (option set, skapat av misstag) | ⏳ |
+| 5 | Sätt `User_role = Hyresvärd` + `User.Hyresvärd` på testanvändaren | ⏳ |
+| 6 | Fyll `Hyresvärd.Fastighet` **eller** `Fastighet.Ägare` för Vasakronan | ⏳ |
+| 7 | API Connector-call + backend-wf `landlord_session` (§5.5) | ⏳ |
+| 8 | Page-load-guard på `fastighet` + gren i `dashboard_crm`-guarden | ⏳ |
+| 9 | Database trigger: `Hyresvärd`/`User_role` ändras → `landlord_token = ""` | ⏳ |
+| 10 | Env på Render: `LANDLORD_SESSION_SECRET` | ⏳ |
+
+⚠️ **Punkt 9 är säkerhetsrelevant och glöms lätt.** Tokenen är en ögonblicksbild —
+samma fälla som slog på receptionisten 2026-08-28. Utan triggern släpar ett ändrat
+scope i upp till 8 timmar.
+
+### 5.5 Bubble-uppsättningen, steg för steg
+
+**A. Nya User-fält (Data → User):**
+- `landlord_token` — **text**
+- `landlord_token_exp` — **date**
+
+**B. API Connector → `Mira Render` → ny call `landlord_session`:**
+
+| Inställning | Värde |
+|---|---|
+| Use as | **Action** |
+| Data type | JSON |
+| Method | POST |
+| URL | `https://mira-exchange.onrender.com/landlord/session` |
+| Header | `x-landlord-secret` = hemligheten, **Private** ikryssad |
+| Header | `Content-Type` = `application/json` |
+| Body type | JSON |
+| Body | `{"user_id": "<user_id>"}` — `user_id` som parameter, **ej** Private |
+| Include errors in response | ✅ ikryssad |
+
+⚠️ **`exp_iso` måste sättas till typ `date` i Returned values.** Bubble lär sig fältet
+som *text* vid initialiseringen, och text går inte i ett date-fält. Samma fälla som
+`visitor_session` gick i.
+
+Initiera calln med ett riktigt user_id så Bubble kan lära sig svaret. Får du 403
+`no_landlord_linked` är punkt 5 i tabellen ovan inte gjord — initiera igen efteråt.
+
+**C. Backend workflow `landlord_session`** (Backend workflows → API workflows):
+- Parameter: `user_id` (text)
+- Steg 1: **Mira Render – landlord_session** med `user_id = user_id`
+- Steg 2: **Make changes to a User** (Current User)
+  - `landlord_token` = `Result of step 1's token`
+  - `landlord_token_exp` = `Result of step 1's exp_iso`
+- ⚠️ Kryssa **"This workflow can be run without authentication"** = NEJ. Den anropas
+  bara från sidan, av en inloggad user.
+
+**D. Page load på sidan `fastighet`:**
+- Villkor: `Current User is logged in` **och**
+  `Current User's landlord_token is empty or Current User's landlord_token_exp < Current date/time`
+- Action: **Schedule API Workflow** `landlord_session`, `user_id = Current User's unique id`,
+  Scheduled date = `Current date/time`
+- ⚠️ Sessionen är **asynkron** — workflowen hinner inte klart innan sidan renderar.
+  Blocket startar utan token och väntar in den. Det är inte ett fel.
+- Andra page load-villkoret: `Current User's User_role is not Hyresvärd` → redirect till `index`.
+
+**E. `dashboard_crm`-guarden:** den skickar idag bara `Receptionist` vidare till
+`/visitor`. Lägg till: `User_role = Hyresvärd` → redirect till `fastighet`. **Utan den
+hamnar en fastighetsägare i vårt CRM.**
+
+**F. Database trigger på `User`:**
+```
+When User's Hyresvärd changes  OR  User's User_role changes
+  → Make changes to this User: landlord_token = ""
+```
+
+**G. Blocket** klistras på sidan `fastighet` med två `data-mira`-fält:
+`api_host` = `https://mira-exchange.onrender.com` och
+`landlord_token` = `Current User's landlord_token`.
+⚠️ **Aldrig `planning_token` på den här sidan.**
+
+### 5.6 Rökkör efter deploy
+
+```bash
+curl -sS -X POST "$HOST/landlord/session" \
+  -H "x-landlord-secret: $LANDLORD_SESSION_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"<test-user-id>"}' | python3 -m json.tool
+```
+Kolla `kalla` i svaret: står det `fastighet_agare_svep` bär `Hyresvärd.Fastighet` ingen
+data och bör backfillas. Kolla `antal_fastigheter` mot vad du faktiskt förväntar dig.
 
 ## 6. DATAINVENTERING — VAD FINNS, VAD SAKNAS
 
@@ -228,19 +341,43 @@ trigger på `User` behövs: `hyresvard` eller `User_role` ändras → `landlord_
 | F&E-leveranser | `FortnoxOrder(FE)` på `ft_delivery_date` | |
 | S&P-uppdrag | `IntelliplanOrderMonth` | månadsnivå |
 
-### ⚠️ Måste verifieras i Bubble innan kod skrivs
-1. **`Fastighet.Ägare`** — schemat listar fältet (`Adress·Bild·Bildspel·Coworker·
-   Hyresgäster·Kluster·Kontor·Leverantör·Medarbetare·Region·Titel·Ägare`), men det är
-   **inte verifierat** att det pekar på `Hyresvärd`, och det är inte verifierat att det
-   är ifyllt. Utan den kopplingen finns ingen väg hyresvärd → fastigheter, och hela
-   scope-modellen i §5 faller. **Detta är den enda blockerande frågan.**
-   Fallback om fältet är tomt: härled beståndet ur `Hyresvärd.Hyresgäster` →
-   `ClientCompany.Fastighet`. Fungerar, men fastigheter utan hyresgäst i Mira syns då inte.
-2. **`Hyresvärd`-typens fulla fältlista.** Vi känner bara till `Namn` och `Hyresgäster`
-   ur mocken i `companies_smoke.mjs`.
-3. **Hur `Matter` skiljer gemensam yta från hyresgästyta.** Idag går kopplingen via
-   `Matter.Kontor` → `Office`. Ägarens egna ytor är ägarens egna Office-rader — men
-   det behöver bekräftas mot hur Vasakronans rader faktiskt ser ut.
+### ✅ Verifierat mot Bubble-editorn 2026-09-03 (skärmbilder)
+
+**`Fastighet`:** `Adress`(geo) · `Bild` · `Bildspel` · `Coworker` · `Hyresgäster`(List of
+ClientCompanies) · `Kluster` · `Kontor`(List of Offices) · `Leverantör` · `Medarbetare` ·
+`Region` · `Titel`(text) · **`Ägare` → `Hyresvärd`** ✅
+
+**`Hyresvärd`:** `Adress`(geo) · `Avtal`(List of Contracts) · `Email` ·
+**`Fastighet`(List of Fastighets)** ✅ · **`Fastighetsägare - (1) för` → ClientCompany** ·
+`Hyresgäster`(List of ClientCompanies) · `Kluster` · `Leverantör - supplier` · `Logo` ·
+`Namn`(text) · `Order`(→ raderad typ) · `Org nummer`(number) · `Produkter` ·
+`Telefon`(number) · `User`(List of Users)
+
+**`User`** (relevanta): **`Hyresvärd` → `Hyresvärd`** ✅ · `hyresvard` → **option set
+`User_role`** ⚠️ *fel fält, ska raderas* · **`hyresvard_fastigheter`(List of Fastighets)** ✅
+
+**`User_role`** (option set): `Ansvarig` · `Konsult` · `Medarbetare` · `Ansvarig konsult` ·
+`Receptionist` · **`Hyresvärd`** ✅
+
+**Blockeraren från första utkastet är därmed borta** — `Fastighet.Ägare` pekar på
+`Hyresvärd`, och dessutom finns listriktningen `Hyresvärd.Fastighet`. Se §5.2 för hur
+båda hanteras.
+
+### ⚠️ Kvar att verifiera
+
+1. **Vilken riktning som faktiskt är IFYLLD för Vasakronans bestånd.** Båda fälten finns;
+   ingen skrivs av vår kod. `kalla` i `/landlord/session`-svaret mäter det åt oss.
+2. **`Hyresvärd.Fastighetsägare - (1) för` (→ ClientCompany).** Fältnamnet är **avklippt
+   i editorns inmatningsruta** — samma klass som [[reference-bubble-id-truncation]], fast
+   på ett fältnamn. Det ser ut att vara precis den koppling §4 behöver (hyresvärdens egen
+   ClientCompany → ägarens egna ärenden), men **namnet får inte hårdkodas utan att läsas
+   av från API:t**. Kör `?debug=1`-mönstret eller `all_field_names` först.
+3. **Hur `Matter` skiljer gemensam yta från hyresgästyta.** Kopplingen går via
+   `Matter.Kontor` → `Office` → `Office.Fastighet`. Att ägarens egna ytor ligger som
+   ägarens egna Office-rader är rimligt men **inte mätt** mot Vasakronans data.
+4. **`Hyresvärd.User` (List of Users)** är en tredje väg till kopplingen ägare↔inloggning.
+   Vi använder `User.Hyresvärd` (enkelriktat, en user hör till en ägare). Skulle listan
+   vara den som underhålls i praktiken behöver §5 en fallback åt det hållet också.
 
 ### Saknas helt
 - **`Visit`-typen finns inte i Bubble än** (BESOKSHANTERING §8 steg B). Besöksflödet
@@ -275,16 +412,16 @@ trigger på `User` behövs: `hyresvard` eller `User_role` ändras → `landlord_
 
 ## 8. BYGGORDNING
 
-| Steg | Vad | Beroende |
+| Steg | Vad | Status |
 |---|---|---|
-| 0 | **Verifiera `Fastighet.Ägare` i Bubble-editorn** | blockerar allt |
-| 1 | `landlord_auth.js` + `POST /landlord/session` + `landlord_auth_smoke.mjs`, mutationstestat | steg 0 |
-| 2 | Bubble: OS-värde, `User.hyresvard`, sida, guard, backend-wf, trigger | steg 1 |
-| 3 | `landlord_api.js`: `/landlord/context` + `/landlord/bestand` (vy 3.1 + 3.2) | steg 1 |
-| 4 | `mira-fastighet.html` mot skarp data — beståndsvyn ensam | steg 3 |
-| 5 | Ärenden + Kvalitet (återanvänder drift-endpointernas läslager) | steg 4 |
-| 6 | **Hyresgästpuls** — trenddefinitionen skriven och testad först, vyn sedan | steg 5 |
-| 7 | Tjänstekartan + Källtäckning | steg 6 |
+| 0 | Verifiera `Fastighet.Ägare` i Bubble-editorn | ✅ **klart 2026-09-03** |
+| 1 | `landlord_auth.js` + `POST /landlord/session` + två svit­er, mutationstestade | ✅ **byggt, ej deployat** |
+| 2 | Bubble: OS-värde, fält, sida, guard, backend-wf, trigger (§5.4) | 🟠 delvis — se tabellen |
+| 3 | `landlord_api.js`: `/landlord/context` + `/landlord/bestand` (vy 3.1 + 3.2) | 🔴 |
+| 4 | `mira-fastighet.html` mot skarp data — beståndsvyn ensam | 🔴 |
+| 5 | Ärenden + Kvalitet (återanvänder drift-endpointernas läslager) | 🔴 |
+| 6 | **Hyresgästpuls** — trenddefinitionen skriven och testad först, vyn sedan | 🔴 |
+| 7 | Tjänstekartan + Källtäckning | 🔴 |
 
 Steg 1–4 är en demonstrerbar produkt: ett bestånd, riktiga siffror, ingen krona.
 Det räcker för att visa Vasakronan och Fabege medan tajmingsfönstret i

@@ -115,3 +115,71 @@ Källhälsan bevisade att bytet var säkert: **`FortnoxOrder(TENGELLA)` = 765 ra
 **Verifierat med BETEENDETESTER (inte grep):** `affar_ansvarig_smoke.mjs` **50/50** (från 27) kör riktiga routes mot mock-DB med både en F&E- och en HK-order: HK syns, märks `tengella`, dateras på `ft_order_date` (**inte** Created Date), får `Workorder`-status, bär sina två rader sorterade på radindex, listas **exakt en gång**, och följer både kategori- och datumfiltret. `affar_richcard_smoke.mjs` **29/29** — fixturerna skrevs om från `TengellaWorkorder` till `FortnoxOrder`+`FortnoxOrderRow`.
 
 **Mutationstestat:** HK på `ft_delivery_date` fäller 2 · borttagen HK-fråga fäller 5 · uteblivna HK-rader fäller 4 · borttagen `not in` (dubblett) fäller 2 · gissad leveransstatus fäller 1.
+
+---
+
+## 🔴 ORGNR-KEDJAN: DIAGNOS 2026-09-03 (ej byggt — eget spår)
+
+**Utlösare (Christian):** *"ang tengella så bör vi införa samma org nr check som i
+fortnox och skapa upp om tomt. titta på hela den funktionen där vi skriver oavsett
+'-' eller utan men visar i listan med '-'."*
+
+Genomläst: `orgnr.js`, `findClientCompanyByOrgNo`, `ensureClientCompanyForFortnoxCustomer`,
+`backfillFortnoxCustomerLinks`, `backfillTengellaCustomerLinks`, `syncTengella`,
+`/admin/clientcompany/normalize-orgno`. **Tre skilda saker**, som är lätta att blanda ihop:
+
+### 1. Läsningen är redan tolerant — det är inte där felet är
+`findClientCompanyByOrgNo` provar **raw · digits · `xxxxxx-xxxx`** i tur och ordning.
+`orgnr.js:orgVariants` gör samma sak för CRM-sidan, och `orgCore` strippar dessutom
+sekelprefix (`165560001111` → `5560001111`). Ingen dubblett uppstår av formatet i sig
+**så länge varje uppslag går genom en av de två helperna**.
+
+### 2. ⚠️ SKRIVNINGEN ÄR KLUVEN — två sanningar i samma kolumn
+| Väg | Skriver `ClientCompany.Org_Number` som |
+|---|---|
+| `ensureClientCompanyForFortnoxCustomer` (index.js) | **siffror** (`normalizeOrgNo`) |
+| `backfillTengellaCustomerLinks` (index.js) | **siffror** (`normalizeOrgNo`) |
+| `companies_api.js:3241` + `:3494` (CRM skapa/redigera) | **`xxxxxx-xxxx`** (`formatOrgNo`) |
+| `/admin/clientcompany/normalize-orgno` (migration) | **siffror** — skriver om ALLT |
+
+Kolumnen bär alltså båda formerna samtidigt, och migrationen kan aldrig bli klar:
+nästa CRM-redigering skriver tillbaka bindestrecket. Visningen räddas av att
+projektionen (`index.js:20863`) kör `formatOrgNo` på läsning — **därför syns felet inte**.
+
+**Risken är ny kod.** Varje framtida `{key:"Org_Number", constraint_type:"equals"}` utan
+variantloop får tyst noll träffar för halva registret. Det är exakt hur Cecil-dubbletten
+uppstod en gång.
+
+**Rekommendation: EN lagrad form — siffror.** Skäl: (a) de två synkvägarna är
+högvolymskrivarna och `orgnr.js` säger uttryckligen *rör inte `normalizeOrgNo`*;
+(b) migrationsrouten producerar redan den formen; (c) visningen är ändå härledd via
+`formatOrgNo`, så *"visar i listan med -"* påverkas inte. Ändringen blir liten:
+`companies_api.js` lagrar `orgCore(...)` i stället för `formatOrgNo(...)` och fortsätter
+visa formaterat. ⚠️ Först måste det mätas att inget ställe renderar `Org_Number` **rått**.
+
+### 3. Tengella-vägen är tunnare än Fortnox — och körs bara manuellt
+`backfillTengellaCustomerLinks` gör redan *"matcha på orgnr → länka, annars skapa"*.
+Två luckor:
+
+- **Ingen berikning.** Fortnox-vägen fyller på `ft_customer_number`, `Name_company`,
+  `Email`, `Telefon` på en befintlig CC och skapar med e-post/telefon. Tengella skapar
+  bara `Name_company` + orgnr. En kund som kommer in via Tengella får ett tomt kort.
+- **Ingen cron.** Backfillen körs bara via `POST /sync/v2-linkcustomer
+  {mode:"write", target:"tengella"}`. Emellan körningarna gäller `syncTengella`s
+  `if (!ccId || !customerId) continue;` — kunden hoppas över **tyst** och passen skapas
+  aldrig. I kalendern ser det ut som *"inga inbokade pass"*.
+
+⚠️ **Och nu blir tystnaden farligare.** Fastighetsägarvyn visar samma bortfall som
+*"din hyresgäst får ingen service"* — sagt till hyresvärden, om vår egen kund.
+Se [FASTIGHETSAGARVYN.md](FASTIGHETSAGARVYN.md) §7 punkt 1.
+
+### Att göra (eget spår — bryt ut enligt HANDOFF §"SÅ HÄR JOBBAR VI" punkt 1)
+1. Mät först: hur många `TengellaCustomer` saknar `company`, och hur många av dem har
+   orgnr? `POST /sync/v2-linkcustomer {mode:"diff", target:"tengella"}` svarar utan att skriva.
+2. `ensureClientCompanyForTengellaCustomer(tc)` som speglar Fortnox-varianten
+   (berikning + skapande), och låt backfillen använda den.
+3. Kalla den **inline i `syncTengella`** i stället för `continue` — med räknare i
+   rapporten, aldrig tyst.
+4. Bestäm och genomför den lagrade formen enligt punkt 2 ovan.
+5. Lägg backfillen i `sync_v2_cron.sh` bredvid Tengella-passen.
+6. Egen svit + mutationstest. ⚠️ Mocken får inte vara mer tillåtande än Bubble.

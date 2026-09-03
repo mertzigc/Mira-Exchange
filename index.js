@@ -21,6 +21,7 @@ import { createIntelliplanClient, describeReportPayload, profileCsvColumns, norm
 import { makeKitchenAuth } from "./kitchen_auth.js";
 import { makeVisitorAuth } from "./visitor_auth.js";
 import { makeMypageAuth } from "./mypage_auth.js";
+import { makeLandlordAuth, bubbleRefId } from "./landlord_auth.js";
 import { registerVisitorRoutes } from "./visitor_api.js";
 import { registerStaffRoutes } from "./staff_api.js";
 import { formatOrgNo } from "./orgnr.js";
@@ -479,6 +480,9 @@ function requireApiKey(req, res, next) {
     "/visitor",                    // Receptionistens yta. INTE x-api-key: /visitor/session grindas av
                                    // x-visitor-secret (Bubble-wf, server-side), övriga av x-visitor-token
                                    // som bär fastighets-scopet. Se handoff/BESOKSHANTERING.md §7.5.
+    "/landlord",                   // Fastighetsägarens yta (/fastighet). INTE x-api-key: /landlord/session
+                                   // grindas av x-landlord-secret (Bubble-wf, server-side), övriga av
+                                   // x-landlord-token som bär beståndets scope. Se handoff/FASTIGHETSAGARVYN.md §5.
     "/admin/reset-password",       // Lösenords-reset exchange (token-grindad, publik — reset_pw-sidan) (companies_api.js)
     "/prototyp/",                  // Fas 5 prototyp-preview för Carotte-testare — statisk HTML, ingen data
     "/approval/create",
@@ -19214,6 +19218,13 @@ const _visitorAuth = makeVisitorAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecr
 // Egen hemlighet, egen token, eget scope (EN user). Se mypage_auth.js.
 const MYPAGE_SESSION_SECRET = String(process.env.MYPAGE_SESSION_SECRET || "").trim();
 const _mypageAuth = makeMypageAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecret: MYPAGE_SESSION_SECRET, ttlMs: 8 * 60 * 60 * 1000 });
+
+// ── Fastighetsägarens session för /fastighet (Mira Fastighet). Se handoff/FASTIGHETSAGARVYN.md §5. ──
+//    Samma mönster som _visitorAuth: server-till-server-mint från en Bubble backend-wf som
+//    känner Current User. Tokenen bär ägarens BESTÅND (fastighets-id:n) + hyresvärd-id.
+//    ⚠️ Koppla ALDRIG in _landlordAuth.authed i planningAuthed.
+const LANDLORD_SESSION_SECRET = String(process.env.LANDLORD_SESSION_SECRET || "").trim();
+const _landlordAuth = makeLandlordAuth({ secret: PLANNING_ADMIN_TOKEN, sessionSecret: LANDLORD_SESSION_SECRET, ttlMs: 8 * 60 * 60 * 1000 });
 // Källtyp-karta per ActivityType-värde (för popup-skrivningar mot källobjektet)
 const PLANNING_SRC = {
   [ACTIVITY_CONFIG.AT_BOKNING]: { type: ACTIVITY_CONFIG.COMISSION_TYPE, status: ACTIVITY_CONFIG.C_STATUS, thread: "Tråd", start: ACTIVITY_CONFIG.C_DELIVERY, end: ACTIVITY_CONFIG.C_END },
@@ -21404,6 +21415,112 @@ app.post("/visitor/session", async (req, res) => {
   } catch (e) {
     // Bär med Bubbles status + svarskropp — annars är felet odiagnostiserbart i loggen.
     console.error("[/visitor/session]", e?.message, JSON.stringify(e?.detail || null));
+    return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
+  }
+});
+
+// ── POST /landlord/session — Bubble backend-wf → Render. Mintar fastighetsägarens session. ──
+// ⚠️ ANROPAS ALDRIG FRÅN BROWSERN. Bubble-wf:en kör server-side, känner Current User och bär
+//    LANDLORD_SESSION_SECRET. Hamnar den hemligheten i ett HTML-block kan vem som helst minta
+//    en session åt vilket user_id som helst — hela scope-modellen faller.
+// Kräver: User_role == "Hyresvärd" + User.Hyresvärd satt + minst en fastighet i beståndet.
+// Se handoff/FASTIGHETSAGARVYN.md §5.
+app.options("/landlord/session", (req, res) => { _planningCors(req, res); res.sendStatus(204); });
+app.post("/landlord/session", async (req, res) => {
+  _planningCors(req, res);
+  if (_publicRateLimited && _publicRateLimited("lsession:" + _clientIp(req), 60)) {
+    return res.status(429).json({ ok: false, error: "rate_limited" });
+  }
+  const sec = _landlordAuth.verifySessionSecret(req.headers["x-landlord-secret"]);
+  if (!sec.ok) return res.status(sec.status || 401).json({ ok: false, error: sec.error });
+
+  const userId = String((req.body && req.body.user_id) || "").trim();
+  if (!userId) return res.status(400).json({ ok: false, error: "missing_user_id" });
+  try {
+    // Samma slug-osäkerhet som /visitor/session: prova båda och bär med Bubbles svar.
+    let u = null, lastDetail = null;
+    for (const slug of ["User", "user"]) {
+      try { u = await bubbleGet(slug, userId); if (u) break; }
+      catch (e) { lastDetail = { slug, detail: e && e.detail ? e.detail : String(e && e.message || e) }; }
+    }
+    if (!u) {
+      console.error("[/landlord/session] user-läsning misslyckades", JSON.stringify(lastDetail));
+      return res.status(404).json({ ok: false, error: "user_not_found", user_id: userId, bubble: lastDetail });
+    }
+
+    const roleRaw = u.User_role;
+    const role = roleRaw == null ? "" : (typeof roleRaw === "string" ? roleRaw : String(roleRaw.display || roleRaw.Display || ""));
+    if (role !== "Hyresvärd") return res.status(403).json({ ok: false, error: "not_landlord", role: role || null });
+
+    // ⚠️ REF-FÄLTET HETER `Hyresvärd` (versalt H, med ä). På samma User finns även
+    //    `hyresvard` — ett OPTION SET-fält (User_role). Läser man det får man tillbaka
+    //    strängen "Hyresvärd", som är truthy och sedan slår mot bubbleGet("Hyresvärd",
+    //    "Hyresvärd") → 404 som ser ut som "hyresvärden finns inte". `bubbleRefId`
+    //    kräver Bubble-id-formen och förkastar option-set-värden.
+    const hv = bubbleRefId(u["Hyresvärd"]);
+    if (!hv) {
+      return res.status(403).json({ ok: false, error: "no_landlord_linked",
+        hint: "User.Hyresvärd (ref till Hyresvärd) är tom eller innehåller inte ett Bubble-id" });
+    }
+
+    const hvRow = await bubbleGet("Hyresvärd", hv).catch(() => null);
+    if (!hvRow) return res.status(404).json({ ok: false, error: "landlord_not_found", hyresvard: hv });
+    const hvNamn = String(hvRow.Namn || hvRow.name || hvRow.Name || "");
+
+    // ── Beståndet: två riktningar finns i schemat, ingen skrivs av vår kod ──────
+    //    `Hyresvärd.Fastighet` (list) och `Fastighet.Ägare` (ref). Vi läser listan
+    //    först (1 anrop). Är den tom faller vi tillbaka på ett svep av Fastighet och
+    //    filtrerar `Ägare` I MINNET — inte som Bubble-constraint, för constraint-nycklar
+    //    är slugar och `Ägare`s slug är inte verifierad ([[reference-bubble-data-api-keys]]).
+    //    `kalla` i svaret säger vilken riktning som faktiskt bar datan.
+    const rawList = hvRow.Fastighet;
+    let bestand = (Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []))
+      .map(bubbleRefId).filter(Boolean);
+    let kalla = "hyresvard_lista";
+    if (!bestand.length) {
+      const alla = await bubbleFindAll("Fastighet", {}).catch(() => []);
+      bestand = (alla || []).filter((f) => bubbleRefId(f["Ägare"]) === hv).map((f) => String(f._id || "")).filter(Boolean);
+      kalla = "fastighet_agare_svep";
+      console.log("[/landlord/session] Hyresvärd.Fastighet tom för " + hv + " — föll tillbaka på Fastighet.Ägare, hittade " + bestand.length);
+    }
+    bestand = Array.from(new Set(bestand));
+
+    // Valfri smalning per användare (en förvaltare med bara några hus).
+    // ⚠️ Snittet, inte ersättningen: listan får aldrig ge access till någon annans hus.
+    const narrowRaw = u.hyresvard_fastigheter;
+    const narrow = (Array.isArray(narrowRaw) ? narrowRaw : (narrowRaw ? [narrowRaw] : []))
+      .map(bubbleRefId).filter(Boolean);
+    let fastigheter = bestand;
+    if (narrow.length) {
+      fastigheter = bestand.filter((f) => narrow.indexOf(f) > -1);
+      // ⚠️ Eget fel, egen kod. Att svara "no_fastigheter_assigned" här hade sagt
+      //    "ingen tilldelning" när sanningen är "tilldelningen pekar utanför beståndet".
+      if (!fastigheter.length) {
+        return res.status(403).json({ ok: false, error: "fastigheter_outside_landlord",
+          hyresvard: hv, bestand: bestand.length, tilldelade: narrow.length, kalla });
+      }
+    }
+
+    // ⚠️ Ingen fastighet = ingen session. Aldrig en tom token — den hade sett ut
+    //    som en tom vy i stället för en trasig koppling.
+    if (!fastigheter.length) {
+      return res.status(403).json({ ok: false, error: "no_fastigheter_assigned", hyresvard: hv, kalla });
+    }
+
+    const name = (String(u["First Name"] || "") + " " + String(u["Surname"] || u["Last Name"] || "")).trim();
+    const m = _landlordAuth.mint({ uid: userId, hv, fastigheter, name });
+    if (!m) return res.status(500).json({ ok: false, error: "mint_failed" });
+    // exp = epoch ms (för blocket), exp_iso = ISO-sträng. ⚠️ Bubbles date-fält kan inte
+    // sättas från ett tal — utan exp_iso måste workflowen räkna om, vilket blir fel i tidszon.
+    return res.json({
+      ok: true, token: m.token,
+      exp: m.exp, exp_iso: new Date(m.exp).toISOString(),
+      hyresvard: hv, hyresvard_namn: hvNamn,
+      fastigheter: m.fastigheter, antal_fastigheter: m.fastigheter.length,
+      name, kalla,
+    });
+  } catch (e) {
+    console.error("[/landlord/session]", e?.message, JSON.stringify(e?.detail || null));
     return res.status(500).json({ ok: false, error: e?.message || String(e), detail: e?.detail || null });
   }
 });

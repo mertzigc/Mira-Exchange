@@ -50,7 +50,7 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, notiser | 🟠 BYGGD + testad · **ej deployad** |
 | [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
 | [handoff/GRANSSNITTSSTRATEGI.md](handoff/GRANSSNITTSSTRATEGI.md) | En motor, många fronter: ägarens front-app vs vår motor, vad vi aldrig släpper | 🧭 STRATEGI · **läs §4 före ny hyresgästvänd yta** |
-| [handoff/FASTIGHETSAGARVYN.md](handoff/FASTIGHETSAGARVYN.md) | Mira Fastighet (`/fastighet`): ägarens överblick över servicelivet i beståndet. Roll `Hyresvärd`, egen session, inga kronor | 🟡 SKISS · prototyp finns, **§0 blockerad på `Fastighet.Ägare`** |
+| [handoff/FASTIGHETSAGARVYN.md](handoff/FASTIGHETSAGARVYN.md) | Mira Fastighet (`/fastighet`): ägarens överblick över servicelivet i beståndet. Roll `Hyresvärd`, egen session, inga kronor | 🟠 auth BYGGT (ej deployat) · vyn = skiss · **läs §5.1 option-set-fällan** |
 
 **Egna handoff-filer utanför `handoff/`:**
 `OFFERT_PRODUKTION_HANDOFF.md` (F&E offert/order) · `FORFRAGAN_KALENDER_HANDOFF.md`
@@ -81,11 +81,12 @@ och hur många kunder som kan visa pass.
 | Drift Fas 2/3 | Se FORETAG-KUNDKORT-DRIFT.md | — |
 | **Kundgrupper (koncernöverblick)** | ✅ Fas 1 (läslagret) byggt 2026-09-01, SYNC-KARNAN §6b. ⚠️ **`ClientCompany.group` är sanningen, inte `ClientGroup.companies`.** Nästa: bulk-tilldelning + gruppvy i företagslistan, gruppfilter i affärsvyn | Christian |
 | Caspeco F&E | Migrering startar Q1-27 → ta bort `tackning`-luckan då | — |
+| **Tengella orgnr-kedjan** | 🔴 Diagnos klar 2026-09-03 (TENGELLA-HK.md sist): läsningen är tolerant, men SKRIVNINGEN är kluven (synk=siffror, CRM=`xxxxxx-xxxx`) och Tengella-backfillen saknar berikning + cron. **Eget spår — bryt ut.** Börja med `{mode:"diff"}`-mätningen | Christian |
 | **Besökshantering (Vasakronan)** | ✅ GO. Auth/session LIVE 2026-08-26. Nästa: besöksloggen (steg B). Se BESOKSHANTERING.md §8 | Christian |
 | **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |
 | **Gränssnittsstrategi** | Beställningsspec från leveranssidan → direktdialog med plattformsleverantörerna → fråga hyresgästerna → inkommande beställnings-API. Se GRANSSNITTSSTRATEGI.md §6. ⚠️ tajmingsfönster i månader | Christian |
 | **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
-| **Fastighetsägarvyn** | Skiss + klickbar prototyp klar 2026-09-03 (`mira-fastighet-skiss.html`). **Nästa: verifiera `Fastighet.Ägare` i Bubble-editorn** — utan hyresvärd→fastighet-kopplingen finns ingen scope-modell. Se FASTIGHETSAGARVYN.md §6 | Christian |
+| **Fastighetsägarvyn** | Skiss + prototyp + **auth byggt** 2026-09-03 (`landlord_auth.js` + `POST /landlord/session`, 38+27 gröna, 19 mutationer/19 faller). Schemat verifierat. **Nästa: deploy + Bubble-uppsättningen i FASTIGHETSAGARVYN.md §5.4–5.5** (radera fältet `User.hyresvard` — option set, fel typ) | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
 - ~~**`create_user_account`:** parametern `role` + "Set User_role = role"~~ — ✅ **KLART**, bekräftat av Christian 2026-08-26. Kedjan Render→Bubble är hel.
