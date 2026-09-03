@@ -1,0 +1,597 @@
+<!--
+  mira-fastighet-skiss.html — SKISS av fastighetsägarvyn (Mira Fastighet, sidan /fastighet).
+  Klickbar prototyp med MOCK-data. Ingen backend, ingen token, inget att deploya.
+
+  Syfte: visa vad en fastighetsägare (Hyresvärd) kan se om servicelivet i sitt bestånd
+  UTAN att vi visar kronor och utan att hyresgästens innehåll läcker.
+
+  Design-kontrakt när den byggs skarpt (se handoff/FASTIGHETSAGARVYN.md):
+    - Egen roll `User_role = Hyresvärd`, egen session `x-landlord-token` (landlord_auth.js),
+      speglar visitor_auth.js. BÄR ALDRIG PLANNING_ADMIN_TOKEN.
+    - Tokenen bär en EXPLICIT fastighetslista, expanderad server-side ur Hyresvärden.
+      Tom lista = ingen åtkomst, aldrig "alla".
+    - Ägaren ser sina EGNA ärenden i detalj. Hyresgästens ärenden BARA i aggregat.
+    - Inga belopp. Aldrig. Aktivitet, kvalitet, täckning.
+    - Ingen totalsumma över de tre affärsområdena (BOKNINGSLAGE-regeln) — tre spår, tre mått.
+
+  Konventioner: .fa-namnrymd, INGEN ?./??, IIFE, FAROOT-claim, raka quotes.
+-->
+<style>
+  .fa, .fa *{box-sizing:border-box;margin:0;padding:0;word-break:normal}
+  .fa{
+    --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
+    --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
+    --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
+    --green:#4CAF7D;--green-dim:rgba(76,175,125,.13);
+    --red:#E05A5A;--red-dim:rgba(224,90,90,.13);
+    --blue:#6C9BD6;--blue-dim:rgba(108,155,214,.13);
+    --border:rgba(255,255,255,.07);
+    --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);
+    font-size:14px;line-height:1.5;display:block;padding:22px 24px 38px;border-radius:14px}
+
+  .fa h1{font-size:23px;font-weight:800;letter-spacing:-.01em}
+  .fa h1 span{color:var(--orange)}
+  .fa .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.07em;margin:3px 0 0}
+  .fa .head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:space-between;margin-bottom:18px}
+  .fa .headctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+  .fa .sel{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 11px;
+    color:var(--white);font-family:var(--fb);font-size:13px}
+  .fa .sel:focus{outline:none;border-color:var(--orange)}
+  .fa .btn{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 14px;
+    font-size:13px;font-weight:700;color:var(--w70);cursor:pointer;font-family:var(--fb)}
+  .fa .btn:hover,.fa .btn:focus{background:var(--input)!important;border-color:var(--orange);color:var(--orange)!important;outline:none}
+  .fa .search{flex:1;min-width:200px;background:var(--input);border:1px solid var(--border);border-radius:9px;
+    padding:10px 13px;color:var(--white);font-family:var(--fb);font-size:14px}
+  .fa .search:focus{outline:none;border-color:var(--orange)}
+  .fa .search::placeholder{color:var(--w40)}
+  .fa .muted{color:var(--w40)}
+
+  /* ── Pulsremsan ─────────────────────────────────────────────────────────── */
+  .fa .puls{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;margin-bottom:20px}
+  .fa .pk{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 15px 13px;position:relative}
+  .fa .pk .pl{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--w40);font-weight:700}
+  .fa .pk .pv{font-size:27px;font-weight:800;letter-spacing:-.02em;margin-top:5px;font-variant-numeric:tabular-nums;line-height:1.1}
+  .fa .pk .pu{font-size:11.5px;color:var(--w40);margin-top:1px}
+  .fa .pk .pt{position:absolute;top:13px;right:14px;font-size:11px;font-weight:800}
+  .fa .up{color:var(--green)} .fa .down{color:var(--red)} .fa .flat{color:var(--w40)}
+  .fa .pk.warn{border-color:rgba(244,123,48,.35)}
+  .fa .pk .pw{font-size:10.5px;color:var(--orange);margin-top:6px}
+  @media(max-width:1100px){ .fa .puls{grid-template-columns:repeat(3,1fr)} }
+  @media(max-width:640px){ .fa .puls{grid-template-columns:repeat(2,1fr)} }
+
+  /* ── Flikar ─────────────────────────────────────────────────────────────── */
+  .fa .tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1.5px solid var(--w10);margin-bottom:16px}
+  .fa .tab{background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;margin-bottom:-1.5px;
+    font-size:13px;font-weight:700;color:var(--w40);cursor:pointer;font-family:var(--fb)}
+  .fa .tab:hover,.fa .tab:focus{background:none!important;color:var(--white)!important;outline:none}
+  .fa .tab.on{color:var(--orange);border-bottom-color:var(--orange)}
+  .fa .tab b{display:inline-block;background:var(--w10);border-radius:9px;padding:1px 6px;font-size:10.5px;margin-left:6px}
+
+  .fa .bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .fa .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+  .fa .panel h3{font-size:15px;font-weight:700;margin-bottom:4px}
+  .fa .panel .ph{font-size:11.5px;color:var(--w40);margin-bottom:14px;max-width:78ch}
+
+  /* ── Tabell ─────────────────────────────────────────────────────────────── */
+  .fa .tablewrap{width:100%;overflow-x:auto}
+  .fa table{width:100%;border-collapse:collapse;min-width:840px}
+  .fa th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);
+    padding:9px 11px;border-bottom:1.5px solid var(--w10);white-space:nowrap;font-weight:700}
+  .fa td{padding:12px 11px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .fa tr:last-child td{border-bottom:none}
+  .fa tbody tr:hover td{background:var(--card)}
+  .fa .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700}
+  .fa .nm{font-weight:700}
+  .fa .s{display:block;font-size:11.5px;color:var(--w40);margin-top:2px;font-weight:400}
+  .fa .clickrow{cursor:pointer}
+
+  /* ── Pillar & chips ─────────────────────────────────────────────────────── */
+  .fa .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;
+    padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+  .fa .pill i{width:6px;height:6px;border-radius:50%;display:block}
+  .fa .p-up{background:var(--green-dim);color:var(--green)}   .fa .p-up i{background:var(--green)}
+  .fa .p-flat{background:var(--w10);color:var(--w70)}         .fa .p-flat i{background:var(--w70)}
+  .fa .p-down{background:var(--orange-dim);color:var(--orange)} .fa .p-down i{background:var(--orange)}
+  .fa .p-quiet{background:var(--red-dim);color:var(--red)}    .fa .p-quiet i{background:var(--red)}
+  .fa .chip{display:inline-block;font-size:11px;color:var(--w70);background:var(--w10);border-radius:6px;
+    padding:3px 9px;white-space:nowrap;margin:2px 4px 2px 0}
+  .fa .chip.on{background:var(--green-dim);color:var(--green)}
+  .fa .chip.no{background:transparent;border:1px dashed var(--border);color:var(--w40)}
+
+  /* ── Tre spår (staplar) ─────────────────────────────────────────────────── */
+  .fa .spar{display:flex;gap:2px;align-items:flex-end;height:26px}
+  .fa .spar i{display:block;width:5px;border-radius:1px;background:var(--w10)}
+  .fa .spar i.hk{background:rgba(108,155,214,.62)}
+  .fa .spar i.fe{background:rgba(244,123,48,.62)}
+  .fa .spar i.sp{background:rgba(76,175,125,.62)}
+  .fa .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--w40);margin-top:10px}
+  .fa .legend span{display:inline-flex;align-items:center;gap:6px}
+  .fa .legend i{width:9px;height:9px;border-radius:2px;display:block}
+
+  /* ── Mätare ─────────────────────────────────────────────────────────────── */
+  .fa .meter{height:6px;background:var(--w10);border-radius:4px;overflow:hidden;min-width:70px}
+  .fa .meter b{display:block;height:100%;background:var(--orange);border-radius:4px}
+  .fa .meter b.ok{background:var(--green)}
+  .fa .meter b.low{background:var(--red)}
+  .fa .mrow{display:flex;align-items:center;gap:9px}
+  .fa .mrow .mv{font-size:12px;font-variant-numeric:tabular-nums;color:var(--w70);min-width:42px;text-align:right;font-weight:700}
+
+  /* ── Tjänstematris ──────────────────────────────────────────────────────── */
+  .fa .matrix{width:100%;border-collapse:collapse;min-width:760px}
+  .fa .matrix th{font-size:9.5px;padding:8px 6px;text-align:center}
+  .fa .matrix th.lft{text-align:left;min-width:190px}
+  .fa .matrix td{padding:7px 6px;text-align:center;border-bottom:1px solid var(--border)}
+  .fa .matrix td.lft{text-align:left}
+  .fa .dot{display:inline-block;width:17px;height:17px;border-radius:5px;background:var(--w10)}
+  .fa .dot.on{background:var(--green)}
+  .fa .dot.warm{background:rgba(244,123,48,.55)}
+
+  /* ── Ärendekort ─────────────────────────────────────────────────────────── */
+  .fa .agg{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:11px}
+  .fa .aggk{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:13px 14px}
+  .fa .aggk .an{font-weight:700;font-size:13.5px}
+  .fa .aggk .ar{display:flex;justify-content:space-between;font-size:12px;color:var(--w70);margin-top:8px}
+  .fa .aggk .ar b{font-variant-numeric:tabular-nums}
+  .fa .cats{margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
+
+  .fa .note{background:var(--deep);border:1px solid var(--border);border-left:3px solid var(--orange);
+    border-radius:9px;padding:12px 15px;font-size:12.5px;color:var(--w70);margin-bottom:14px;max-width:92ch}
+  .fa .note b{color:var(--white)}
+  .fa .empty{padding:34px 20px;text-align:center;color:var(--w40)}
+  .fa .skisstag{display:inline-block;background:var(--orange-dim);color:var(--orange);border-radius:6px;
+    padding:2px 8px;font-size:10px;font-weight:800;letter-spacing:.05em;vertical-align:middle;margin-left:9px}
+  @media(max-width:720px){ .fa{padding:16px 14px 30px} }
+</style>
+
+<div class="fa">
+  <div class="head">
+    <div>
+      <h1>Mira <span>Fastighet</span><span class="skisstag">SKISS · MOCKDATA</span></h1>
+      <div class="sub" data-fa="who">Vasakronan · 4 fastigheter · 38 hyresgäster</div>
+    </div>
+    <div class="headctl">
+      <select class="sel" data-fa="hus"></select>
+      <select class="sel" data-fa="period">
+        <option value="30">Senaste 30 dagarna</option>
+        <option value="90" selected>Senaste kvartalet</option>
+        <option value="365">Rullande 12 mån</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="puls" data-fa="puls"></div>
+  <div class="tabs" data-fa="tabs"></div>
+  <div data-fa="body"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var all=document.querySelectorAll(".fa"),root=null;
+  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-fa-claimed")){ root=all[i]; break; } }
+  if(!root) return; root.setAttribute("data-fa-claimed","1");
+  var $=function(k){ return root.querySelector('[data-fa="'+k+'"]'); };
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+  // ════════ MOCKDATA — ersätts av GET /landlord/* nar vyn byggs skarpt ════════
+  var TJANSTER=[
+    {slug:"hk",   namn:"Städ"},
+    {slug:"rec",  namn:"Reception"},
+    {slug:"cat",  namn:"Catering"},
+    {slug:"kaffe",namn:"Kaffe"},
+    {slug:"vaxt", namn:"Växter"},
+    {slug:"kont", namn:"Kontorsmtrl"},
+    {slug:"bud",  namn:"Bud"}
+  ];
+  var HUS=[
+    {id:"h1", namn:"Hötorgshuset", adress:"Sveavägen 17, Stockholm", hyresgaster:12, kvm:9400, arbetsplatser:820,
+     hk:[38,41,40,44,42,46], fe:[12,14,11,17,15,18], sp:[3,3,4,4,4,5],
+     oppna:9, avvikelser:2, mtts:2.1, betyg:4.4, betygdelta:0.2, tackning:0.71},
+    {id:"h2", namn:"Sergelhuset", adress:"Sergelgatan 1, Stockholm", hyresgaster:14, kvm:11200, arbetsplatser:1040,
+     hk:[52,50,54,53,57,58], fe:[22,25,24,28,26,31], sp:[6,6,5,7,7,8],
+     oppna:7, avvikelser:1, mtts:1.6, betyg:4.6, betygdelta:0.1, tackning:0.83},
+    {id:"h3", namn:"Kista Entré", adress:"Kistagången 12, Kista", hyresgaster:8, kvm:6100, arbetsplatser:490,
+     hk:[24,23,21,19,18,16], fe:[8,7,6,5,4,3], sp:[2,2,2,1,1,1],
+     oppna:11, avvikelser:5, mtts:5.4, betyg:3.6, betygdelta:-0.5, tackning:0.38},
+    {id:"h4", namn:"Klara C", adress:"Klarabergsviadukten 63, Stockholm", hyresgaster:4, kvm:3300, arbetsplatser:260,
+     hk:[14,15,14,16,15,16], fe:[5,6,6,7,8,9], sp:[1,1,1,1,2,2],
+     oppna:2, avvikelser:0, mtts:1.2, betyg:4.7, betygdelta:0.0, tackning:0.62}
+  ];
+  var HG=[
+    {id:"c1", namn:"Scania CV", hus:"h1", kvm:1800, ap:160, trend:"up",    delta:"+14 %", sen:"i går",    betyg:4.6, tj:["hk","rec","cat","kaffe","vaxt"]},
+    {id:"c2", namn:"Planhat", hus:"h1", kvm:640, ap:70,  trend:"flat",  delta:"+2 %",  sen:"2 dgr sedan", betyg:4.3, tj:["hk","kaffe","vaxt"]},
+    {id:"c3", namn:"EA / Dice", hus:"h2", kvm:2400, ap:280, trend:"up",   delta:"+21 %", sen:"idag",     betyg:4.8, tj:["hk","rec","cat","kaffe","kont","bud"]},
+    {id:"c4", namn:"Nordea Markets", hus:"h2", kvm:1900, ap:210, trend:"flat", delta:"-1 %", sen:"idag",  betyg:4.5, tj:["hk","rec","kaffe"]},
+    {id:"c5", namn:"Ericsson RnD", hus:"h3", kvm:2100, ap:190, trend:"down", delta:"-34 %", sen:"18 dgr sedan", betyg:3.4, tj:["hk","kaffe"]},
+    {id:"c6", namn:"Tele2 Business", hus:"h3", kvm:900, ap:80, trend:"quiet", delta:"-100 %", sen:"64 dgr sedan", betyg:3.1, tj:["hk"]},
+    {id:"c7", namn:"Klarna Ops", hus:"h4", kvm:1200, ap:110, trend:"up",  delta:"+9 %",  sen:"idag",     betyg:4.7, tj:["hk","cat","kaffe","vaxt"]},
+    {id:"c8", namn:"Bonnier News", hus:"h1", kvm:1500, ap:140, trend:"down", delta:"-18 %", sen:"11 dgr sedan", betyg:3.9, tj:["hk","kaffe"]},
+    {id:"c9", namn:"Kry Sverige", hus:"h2", kvm:700, ap:60, trend:"up",     delta:"+31 %", sen:"i går",   betyg:4.4, tj:["hk","cat","kaffe","vaxt","kont"]},
+    {id:"c10",namn:"Mentimeter", hus:"h4", kvm:520, ap:55, trend:"flat",  delta:"+3 %",  sen:"3 dgr sedan", betyg:4.5, tj:["hk","kaffe","vaxt"]}
+  ];
+  // Ägarens EGNA ärenden — gemensamma ytor. Detaljvisas, för de är ägarens egna rader.
+  var EGNA=[
+    {id:"m1", hus:"h3", rubrik:"Entrédörr går trögt, stänger inte hela vägen", prio:"3 - brådskande", status:"Pågående", avv:true,  dgr:6, yta:"Entré plan 1"},
+    {id:"m2", hus:"h3", rubrik:"Hiss B luktar", prio:"2", status:"Pågående", avv:true, dgr:4, yta:"Hisshall"},
+    {id:"m3", hus:"h1", rubrik:"Belysning i garage, två armaturer ur", prio:"1 - låg", status:"Pågående", avv:false, dgr:12, yta:"Garage"},
+    {id:"m4", hus:"h2", rubrik:"Loungen möbleras om inför hyresgästmöte", prio:"2", status:"Avslutat", avv:false, dgr:0, yta:"Lounge plan 2"},
+    {id:"m5", hus:"h3", rubrik:"Snöskottning uteblev vid lastkaj", prio:"3 - brådskande", status:"Pågående", avv:true, dgr:2, yta:"Lastkaj"}
+  ];
+  // Hyresgästernas ärenden — ENDAST aggregat. Aldrig rubrik, beskrivning eller person.
+  var HGAGG={
+    h1:{oppna:6, avv:1, mtts:2.4, kat:[["Städavvikelse",3],["Teknik/utrustning",2],["Övrigt",1]]},
+    h2:{oppna:5, avv:0, mtts:1.5, kat:[["Städavvikelse",2],["Förbrukning",2],["Övrigt",1]]},
+    h3:{oppna:8, avv:3, mtts:6.1, kat:[["Städavvikelse",5],["Teknik/utrustning",2],["Bemanning",1]]},
+    h4:{oppna:1, avv:0, mtts:0.9, kat:[["Förbrukning",1]]}
+  };
+  var YTOR=[
+    {namn:"Toaletter",            h1:4.2, h2:4.5, h3:3.1, h4:4.6},
+    {namn:"Pentry",               h1:4.5, h2:4.7, h3:3.4, h4:4.8},
+    {namn:"Reception / Lounge",   h1:4.6, h2:4.8, h3:3.9, h4:4.9},
+    {namn:"Korridor",             h1:4.4, h2:4.6, h3:3.8, h4:4.7},
+    {namn:"Mötesrum",             h1:4.3, h2:4.5, h3:3.5, h4:4.6},
+    {namn:"Städförråd",           h1:4.1, h2:4.4, h3:3.2, h4:4.5}
+  ];
+  var KALLOR=[
+    {namn:"Housekeeping — pass och ordrar", kalla:"Tengella", tackning:0.94, sync:"idag 04:12", ok:true,
+     not:"Kunder utan koppling till företagskortet får inga pass — de ser tomma ut i vyn."},
+    {namn:"Food & Event — leveranser", kalla:"Fortnox", tackning:0.70, sync:"idag 05:30", ok:false,
+     not:"Cirka 30 % av Food & Event går utanför Fortnox tills Caspeco-migreringen Q1-27."},
+    {namn:"Service & People — uppdrag", kalla:"Intelliplan", tackning:0.98, sync:"idag 03:40", ok:true,
+     not:"Månadsnivå. Pass per dag saknas än så länge — 1058 av 1081 konton mappade."},
+    {namn:"Ärenden och avvikelser", kalla:"Mira", tackning:1.00, sync:"realtid", ok:true, not:""},
+    {namn:"Kvalitetskontroller", kalla:"Mira", tackning:1.00, sync:"realtid", ok:true, not:""},
+    {namn:"Besöksflöde", kalla:"Mira", tackning:0.00, sync:"—", ok:false,
+     not:"Besöksloggen är inte i drift än. Kolumnen är tom tills receptionsmodulen rullar."}
+  ];
+
+  var STATE={ tab:"bestand", hus:"", q:"" };
+
+  var TABS=[
+    ["bestand","Bestånd"],
+    ["puls","Hyresgästpuls"],
+    ["arenden","Ärenden"],
+    ["kvalitet","Kvalitet"],
+    ["tjanster","Tjänstekartan"],
+    ["kallor","Källtäckning"]
+  ];
+  // Badgen är en larmsiffra, inte en radräkning: bara det som kräver något av läsaren.
+  function badge(key){
+    var v=valda(), ids=v.map(function(h){ return h.id; });
+    if(key==="puls"){
+      var n=HG.filter(function(c){ return (!STATE.hus||c.hus===STATE.hus) &&
+        (c.trend==="down"||c.trend==="quiet"); }).length;
+      return n?String(n):"";
+    }
+    if(key==="arenden"){ var t=sum(v,"oppna"); return t?String(t):""; }
+    if(key==="kallor"){
+      var k=KALLOR.filter(function(x){ return x.tackning<0.9; }).length;
+      return k?String(k):"";
+    }
+    return "";
+  }
+
+  function husById(id){ for(var i=0;i<HUS.length;i++){ if(HUS[i].id===id) return HUS[i]; } return null; }
+  function valda(){ return STATE.hus ? HUS.filter(function(h){ return h.id===STATE.hus; }) : HUS.slice(); }
+  function sum(list,key){ var t=0; for(var i=0;i<list.length;i++){ t+=list[i][key]; } return t; }
+  function sumSpar(list,key){ var t=0; for(var i=0;i<list.length;i++){ var a=list[i][key];
+    for(var j=0;j<a.length;j++) t+=a[j]; } return t; }
+  function delta(list,key){
+    var f=0,s=0;
+    for(var i=0;i<list.length;i++){ var a=list[i][key];
+      f+=a[0]+a[1]+a[2]; s+=a[3]+a[4]+a[5]; }
+    if(!f) return null; return (s-f)/f;
+  }
+  function pct(x){ return Math.round(x*100)+" %"; }
+  function trendTag(d){
+    if(d===null) return '<span class="pt flat">—</span>';
+    var v=Math.round(d*100);
+    if(v>2)  return '<span class="pt up">&#9650; '+v+' %</span>';
+    if(v<-2) return '<span class="pt down">&#9660; '+Math.abs(v)+' %</span>';
+    return '<span class="pt flat">&#8212; '+v+' %</span>';
+  }
+  function spar(h){
+    var max=1,ser=[["hk",h.hk],["fe",h.fe],["sp",h.sp]],k,j;
+    for(k=0;k<ser.length;k++){ for(j=0;j<ser[k][1].length;j++){ if(ser[k][1][j]>max) max=ser[k][1][j]; } }
+    var out='<div class="spar">';
+    for(j=0;j<6;j++){
+      for(k=0;k<ser.length;k++){
+        var v=ser[k][1][j], hgt=Math.max(2,Math.round(v/max*26));
+        out+='<i class="'+ser[k][0]+'" style="height:'+hgt+'px" title="'+ser[k][0]+' '+v+'"></i>';
+      }
+      if(j<5) out+='<i style="width:4px;height:1px;background:transparent"></i>';
+    }
+    return out+'</div>';
+  }
+  function meter(v,inv){
+    var cls = inv ? (v<0.5?"low":(v<0.75?"":"ok")) : (v<0.5?"low":(v<0.75?"":"ok"));
+    return '<div class="mrow"><div class="meter"><b class="'+cls+'" style="width:'+Math.round(v*100)+'%"></b></div>'+
+           '<span class="mv">'+pct(v)+'</span></div>';
+  }
+  function betygCell(b,d){
+    var cls = b>=4.3?"up":(b>=3.8?"flat":"down");
+    var arr = d>0.05?'&#9650;':(d<-0.05?'&#9660;':'');
+    return '<span class="'+cls+'" style="font-weight:800">'+b.toFixed(1).replace(".",",")+'</span>'+
+           '<span class="muted" style="font-size:11px"> / 5 '+arr+'</span>';
+  }
+  function trendPill(t){
+    var m={up:["p-up","Växande"],flat:["p-flat","Stabil"],down:["p-down","Avtagande"],quiet:["p-quiet","Tyst"]};
+    var x=m[t]||m.flat;
+    return '<span class="pill '+x[0]+'"><i></i>'+x[1]+'</span>';
+  }
+
+  // ── Pulsremsan ────────────────────────────────────────────────────────────
+  function paintPuls(){
+    var v=valda();
+    var hk=sumSpar(v,"hk"), fe=sumSpar(v,"fe"), sp=sumSpar(v,"sp");
+    var oppna=sum(v,"oppna"), avv=sum(v,"avvikelser");
+    var b=0; for(var i=0;i<v.length;i++) b+=v[i].betyg; b=v.length?b/v.length:0;
+    var bd=0; for(i=0;i<v.length;i++) bd+=v[i].betygdelta; bd=v.length?bd/v.length:0;
+    var tk=0; for(i=0;i<v.length;i++) tk+=v[i].tackning; tk=v.length?tk/v.length:0;
+
+    // ⚠️ INGEN totalsumma över de tre affärsområdena — tre mått, tre kort.
+    var html=''+
+     '<div class="pk">'+trendTag(delta(v,"hk"))+'<div class="pl">Städpass</div><div class="pv">'+hk+'</div>'+
+       '<div class="pu">utförda i beståndet</div></div>'+
+     '<div class="pk warn">'+trendTag(delta(v,"fe"))+'<div class="pl">Mat &amp; event</div><div class="pv">'+fe+'</div>'+
+       '<div class="pu">leveranstillfällen</div><div class="pw">täckning 70 %</div></div>'+
+     '<div class="pk">'+trendTag(delta(v,"sp"))+'<div class="pl">Bemanning</div><div class="pv">'+sp+'</div>'+
+       '<div class="pu">uppdrag (månadsnivå)</div></div>'+
+     '<div class="pk">'+(avv?'<span class="pt down">'+avv+' avvikelser</span>':'<span class="pt up">0 avvikelser</span>')+
+       '<div class="pl">Öppna ärenden</div><div class="pv">'+oppna+'</div>'+
+       '<div class="pu">varav '+avv+' avvikelser</div></div>'+
+     '<div class="pk">'+(bd>0.05?'<span class="pt up">&#9650; '+bd.toFixed(1).replace(".",",")+'</span>':
+        (bd<-0.05?'<span class="pt down">&#9660; '+Math.abs(bd).toFixed(1).replace(".",",")+'</span>':'<span class="pt flat">&#8212;</span>'))+
+       '<div class="pl">Kvalitet</div><div class="pv">'+b.toFixed(1).replace(".",",")+'</div>'+
+       '<div class="pu">snitt av kontroller, av 5</div></div>';
+    $("puls").innerHTML=html;
+  }
+
+  // ── Flik: Bestånd ─────────────────────────────────────────────────────────
+  function viewBestand(){
+    var v=valda();
+    var rows=v.map(function(h){
+      return '<tr class="clickrow" data-hus="'+h.id+'">'+
+        '<td><span class="nm">'+esc(h.namn)+'</span><span class="s">'+esc(h.adress)+'</span></td>'+
+        '<td class="num">'+h.hyresgaster+'</td>'+
+        '<td class="num">'+h.kvm.toLocaleString("sv-SE")+'<span class="s" style="text-align:right">'+h.arbetsplatser+' apl</span></td>'+
+        '<td>'+spar(h)+'</td>'+
+        '<td class="num">'+h.oppna+(h.avvikelser?'<span class="s down" style="text-align:right;color:var(--red)">'+h.avvikelser+' avvik.</span>':'')+'</td>'+
+        '<td class="num">'+h.mtts.toFixed(1).replace(".",",")+'<span class="s" style="text-align:right">dgr</span></td>'+
+        '<td class="num">'+betygCell(h.betyg,h.betygdelta)+'</td>'+
+        '<td style="min-width:130px">'+meter(h.tackning)+'</td>'+
+      '</tr>';
+    }).join("");
+    return ''+
+     '<div class="note"><b>Så här läser man den.</b> Varje rad är ett hus. Stapelgruppen visar sex månader '+
+     'av serviceaktivitet i tre spår som aldrig slås ihop till en siffra — städ, mat och bemanning är '+
+     'olika enheter, och en gemensam summa hade varit ett tal utan innebörd. Täckningen är andelen '+
+     'hyresgäster i huset som har minst en aktiv tjänst hos oss.</div>'+
+     '<div class="panel"><h3>Beståndet</h3>'+
+     '<div class="ph">Klicka en rad för att filtrera hela vyn till det huset.</div>'+
+     '<div class="tablewrap"><table><thead><tr>'+
+       '<th>Fastighet</th><th style="text-align:right">Hyresgäster</th><th style="text-align:right">Kvm i service</th>'+
+       '<th>Aktivitet, 6 mån</th><th style="text-align:right">Öppna ärenden</th>'+
+       '<th style="text-align:right">Tid till stängning</th><th style="text-align:right">Kvalitet</th><th>Tjänstetäckning</th>'+
+     '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
+     '<div class="legend"><span><i style="background:rgba(108,155,214,.62)"></i>Städpass</span>'+
+       '<span><i style="background:rgba(244,123,48,.62)"></i>Mat &amp; event</span>'+
+       '<span><i style="background:rgba(76,175,125,.62)"></i>Bemanning</span></div></div>';
+  }
+
+  // ── Flik: Hyresgästpuls ───────────────────────────────────────────────────
+  function viewPuls(){
+    var list=HG.filter(function(c){ return (!STATE.hus||c.hus===STATE.hus) &&
+      (!STATE.q||c.namn.toLowerCase().indexOf(STATE.q.toLowerCase())>-1); });
+    var ordn={quiet:0,down:1,flat:2,up:3};
+    list.sort(function(a,b){ return ordn[a.trend]-ordn[b.trend]; });
+    var rows=list.map(function(c){
+      var h=husById(c.hus);
+      var tj=TJANSTER.map(function(t){
+        return c.tj.indexOf(t.slug)>-1 ? '<span class="chip on">'+esc(t.namn)+'</span>' : '';
+      }).join("")||'<span class="chip no">ingen tjänst</span>';
+      var saknas=TJANSTER.length-c.tj.length;
+      return '<tr>'+
+        '<td><span class="nm">'+esc(c.namn)+'</span><span class="s">'+esc(h?h.namn:"")+' &middot; '+
+          c.kvm.toLocaleString("sv-SE")+' kvm &middot; '+c.ap+' arbetsplatser</span></td>'+
+        '<td>'+trendPill(c.trend)+'<span class="s">'+esc(c.delta)+' mot föregående kvartal</span></td>'+
+        '<td>'+esc(c.sen)+'</td>'+
+        '<td class="num">'+c.betyg.toFixed(1).replace(".",",")+'<span class="s" style="text-align:right">av 5</span></td>'+
+        '<td style="max-width:320px">'+tj+'<span class="s">'+saknas+' av '+TJANSTER.length+' tjänster ej aktiva</span></td>'+
+      '</tr>';
+    }).join("")||'<tr><td colspan="5"><div class="empty">Inga hyresgäster matchar.</div></td></tr>';
+
+    return ''+
+     '<div class="note"><b>Det här är inblicken ni aldrig haft.</b> En hyresgäst som slutar beställa service '+
+     'har ofta bestämt sig långt innan uppsägningen kommer. Aktivitetstrenden är den tidigaste signal som '+
+     'finns i huset — tidigare än passagestatistik, och månader före en omförhandling. '+
+     '<b>Tyst</b> betyder noll registrerad serviceaktivitet på över 60 dagar.</div>'+
+     '<div class="bar"><input class="search" data-fa="q" placeholder="Sök hyresgäst..." value="'+esc(STATE.q)+'"></div>'+
+     '<div class="panel"><h3>Hyresgästpuls</h3>'+
+     '<div class="ph">Sorterad med störst risk överst. Trenden jämför senaste kvartalet mot föregående, '+
+     'per affärsområde — en hyresgäst räknas som avtagande när minst två av tre spår faller.</div>'+
+     '<div class="tablewrap"><table><thead><tr>'+
+       '<th>Hyresgäst</th><th>Trend</th><th>Senaste aktivitet</th><th style="text-align:right">Kvalitet</th><th>Aktiva tjänster</th>'+
+     '</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }
+
+  // ── Flik: Ärenden ─────────────────────────────────────────────────────────
+  function viewArenden(){
+    var v=valda(), ids=v.map(function(h){ return h.id; });
+    var egna=EGNA.filter(function(m){ return ids.indexOf(m.hus)>-1; });
+    var oppnaEgna=egna.filter(function(m){ return m.status==="Pågående"; });
+    var rows=oppnaEgna.map(function(m){
+      var h=husById(m.hus);
+      var pcls=m.prio.indexOf("3")===0?"p-quiet":(m.prio.indexOf("2")===0?"p-down":"p-flat");
+      return '<tr>'+
+        '<td><span class="nm">'+esc(m.rubrik)+'</span><span class="s">'+esc(h?h.namn:"")+' &middot; '+esc(m.yta)+'</span></td>'+
+        '<td><span class="pill '+pcls+'"><i></i>'+esc(m.prio)+'</span></td>'+
+        '<td>'+(m.avv?'<span class="pill p-quiet"><i></i>Avvikelse</span>':'<span class="muted">&mdash;</span>')+'</td>'+
+        '<td class="num">'+m.dgr+'<span class="s" style="text-align:right">dgr öppet</span></td>'+
+      '</tr>';
+    }).join("")||'<tr><td colspan="4"><div class="empty">Inga öppna ärenden i era egna ytor.</div></td></tr>';
+
+    var kort=v.map(function(h){
+      var a=HGAGG[h.id];
+      var kat=a.kat.map(function(k){ return '<span class="chip">'+esc(k[0])+' &middot; '+k[1]+'</span>'; }).join("");
+      return '<div class="aggk"><div class="an">'+esc(h.namn)+'</div>'+
+        '<div class="ar"><span>Öppna ärenden</span><b>'+a.oppna+'</b></div>'+
+        '<div class="ar"><span>Varav avvikelser</span><b style="color:'+(a.avv?"var(--red)":"var(--w70)")+'">'+a.avv+'</b></div>'+
+        '<div class="ar"><span>Medeltid till stängning</span><b>'+a.mtts.toFixed(1).replace(".",",")+' dgr</b></div>'+
+        '<div class="cats">'+kat+'</div></div>';
+    }).join("");
+
+    return ''+
+     '<div class="panel"><h3>Era egna ytor</h3>'+
+     '<div class="ph">Entréer, hisshallar, lounger, garage och lastkajer — ärenden där ni är beställaren. '+
+     'De visas i sin helhet, för de är era.</div>'+
+     '<div class="tablewrap"><table><thead><tr>'+
+       '<th>Ärende</th><th>Prioritet</th><th>Avvikelse</th><th style="text-align:right">Ålder</th>'+
+     '</tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+     '<div class="note"><b>Varför hyresgästernas ärenden bara visas i aggregat.</b> Ett ärende innehåller '+
+     'vad som gick fel hos en namngiven hyresgäst och vem som anmälde det. Den informationen är '+
+     'hyresgästens, inte husets. Ni får volymen, avvikelsegraden, kategorin och hur lång tid vi tar på oss — allt '+
+     'som säger något om husets servicekvalitet — utan innehållet. En hyresgäst som vill dela mer '+
+     'kan slå på det själv på sitt företagskort.</div>'+
+     '<div class="panel"><h3>Hyresgästernas ärenden &mdash; aggregerat</h3>'+
+     '<div class="ph">Per hus. Inga rubriker, inga beskrivningar, inga personer.</div>'+
+     '<div class="agg">'+kort+'</div></div>';
+  }
+
+  // ── Flik: Kvalitet ────────────────────────────────────────────────────────
+  function viewKvalitet(){
+    var v=valda();
+    var head=v.map(function(h){ return '<th style="text-align:right">'+esc(h.namn)+'</th>'; }).join("");
+    var rows=YTOR.map(function(y){
+      var tds=v.map(function(h){
+        var b=y[h.id], cls=b>=4.3?"up":(b>=3.8?"flat":"down");
+        return '<td class="num"><span class="'+cls+'">'+b.toFixed(1).replace(".",",")+'</span></td>';
+      }).join("");
+      return '<tr><td class="nm">'+esc(y.namn)+'</td>'+tds+'</tr>';
+    }).join("");
+    var husrader=v.map(function(h){
+      return '<tr>'+
+        '<td><span class="nm">'+esc(h.namn)+'</span></td>'+
+        '<td style="min-width:170px">'+meter(h.betyg/5)+'</td>'+
+        '<td class="num">'+betygCell(h.betyg,h.betygdelta)+'</td>'+
+        '<td class="num">'+(h.id==="h3"?"4":(h.id==="h4"?"2":"6"))+'<span class="s" style="text-align:right">kontroller i perioden</span></td>'+
+      '</tr>';
+    }).join("");
+    return ''+
+     '<div class="note"><b>Det här är bevisföringen.</b> Varje kontroll är en fysisk genomgång av huset, '+
+     'yta för yta, med foto och betyg. Det är den enda dokumentationen av hur huset faktiskt levereras '+
+     '&mdash; och den finns bara för att vi är där och gör jobbet.</div>'+
+     '<div class="panel"><h3>Kvalitet per hus</h3>'+
+     '<div class="tablewrap"><table><thead><tr><th>Fastighet</th><th>Nivå</th>'+
+     '<th style="text-align:right">Snitt</th><th style="text-align:right">Underlag</th></tr></thead>'+
+     '<tbody>'+husrader+'</tbody></table></div></div>'+
+     '<div class="panel"><h3>Snittbetyg per ytatyp</h3>'+
+     '<div class="ph">Här syns mönstret som ett hussnitt döljer. Faller toaletterna i ett hus är det ett '+
+     'städschema som behöver ändras, inte ett samtal om helheten.</div>'+
+     '<div class="tablewrap"><table><thead><tr><th>Ytatyp</th>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }
+
+  // ── Flik: Tjänstekartan ───────────────────────────────────────────────────
+  function viewTjanster(){
+    var list=HG.filter(function(c){ return !STATE.hus||c.hus===STATE.hus; });
+    var head=TJANSTER.map(function(t){ return '<th>'+esc(t.namn)+'</th>'; }).join("");
+    var rows=list.map(function(c){
+      var h=husById(c.hus);
+      var tds=TJANSTER.map(function(t){
+        var on=c.tj.indexOf(t.slug)>-1;
+        return '<td><span class="dot'+(on?" on":"")+'" title="'+esc(t.namn)+'"></span></td>';
+      }).join("");
+      return '<tr><td class="lft"><span class="nm">'+esc(c.namn)+'</span>'+
+        '<span class="s">'+esc(h?h.namn:"")+'</span></td>'+tds+'</tr>';
+    }).join("");
+    // vitt utrymme per tjanst
+    var vitt=TJANSTER.map(function(t){
+      var n=0; for(var i=0;i<list.length;i++){ if(list[i].tj.indexOf(t.slug)===-1) n++; }
+      return {namn:t.namn, n:n, andel:list.length?n/list.length:0};
+    }).sort(function(a,b){ return b.n-a.n; });
+    var vrows=vitt.map(function(x){
+      return '<tr><td class="nm">'+esc(x.namn)+'</td>'+
+        '<td style="min-width:180px">'+meter(1-x.andel)+'</td>'+
+        '<td class="num">'+x.n+'<span class="s" style="text-align:right">hyresgäster utan</span></td></tr>';
+    }).join("");
+    return ''+
+     '<div class="note"><b>Attraktivitet, inte försäljning.</b> Kartan visar vad huset faktiskt erbjuder '+
+     'sina hyresgäster idag. Det vita utrymmet är skillnaden mellan vad ett hus kan vara och vad det är. '+
+     'Priser sitter i avtalet mellan oss och hyresgästen och visas inte här.</div>'+
+     '<div class="panel"><h3>Vem har vad</h3>'+
+     '<div class="tablewrap"><table class="matrix"><thead><tr><th class="lft">Hyresgäst</th>'+head+
+     '</tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+     '<div class="panel"><h3>Vitt utrymme</h3>'+
+     '<div class="ph">Mätarna visar hur stor andel av hyresgästerna som HAR tjänsten.</div>'+
+     '<div class="tablewrap"><table><thead><tr><th>Tjänst</th><th>Täckning</th>'+
+     '<th style="text-align:right">Lucka</th></tr></thead><tbody>'+vrows+'</tbody></table></div></div>';
+  }
+
+  // ── Flik: Källtäckning ────────────────────────────────────────────────────
+  function viewKallor(){
+    var rows=KALLOR.map(function(k){
+      var pill=k.tackning>=0.9?'<span class="pill p-up"><i></i>Frisk</span>':
+               (k.tackning>0?'<span class="pill p-down"><i></i>Delvis</span>':
+                             '<span class="pill p-quiet"><i></i>Ej i drift</span>');
+      return '<tr><td><span class="nm">'+esc(k.namn)+'</span>'+
+        (k.not?'<span class="s">'+esc(k.not)+'</span>':'')+'</td>'+
+        '<td>'+esc(k.kalla)+'</td>'+
+        '<td style="min-width:150px">'+meter(k.tackning)+'</td>'+
+        '<td>'+esc(k.sync)+'</td><td>'+pill+'</td></tr>';
+    }).join("");
+    return ''+
+     '<div class="note"><b>Det här är sidan ingen annan visar er.</b> En vy som inte berättar vad den '+
+     'inte vet är farligare än ingen vy alls: en tom kolumn ser ut som "inget händer" när den i själva '+
+     'verket betyder "vi mäter inte här än". Därför ligger täckningen öppet, och därför står det '+
+     '70 % på mat och event i pulsremsan.</div>'+
+     '<div class="panel"><h3>Vad vyn bygger på</h3>'+
+     '<div class="tablewrap"><table><thead><tr><th>Underlag</th><th>Källa</th><th>Täckning</th>'+
+     '<th>Senast uppdaterad</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+  }
+
+  // ── Rendering ─────────────────────────────────────────────────────────────
+  function paintTabs(){
+    $("tabs").innerHTML=TABS.map(function(t){
+      var b=badge(t[0]);
+      return '<button class="tab'+(STATE.tab===t[0]?" on":"")+'" data-tab="'+t[0]+'">'+esc(t[1])+
+        (b?'<b>'+esc(b)+'</b>':'')+'</button>';
+    }).join("");
+  }
+  function paintHus(){
+    var o='<option value="">Hela beståndet ('+HUS.length+' fastigheter)</option>';
+    for(var i=0;i<HUS.length;i++) o+='<option value="'+HUS[i].id+'"'+(STATE.hus===HUS[i].id?" selected":"")+'>'+
+      esc(HUS[i].namn)+'</option>';
+    $("hus").innerHTML=o;
+  }
+  function render(){
+    paintHus(); paintPuls(); paintTabs();
+    var f={bestand:viewBestand,puls:viewPuls,arenden:viewArenden,
+           kvalitet:viewKvalitet,tjanster:viewTjanster,kallor:viewKallor}[STATE.tab];
+    $("body").innerHTML=f?f():'<div class="empty">—</div>';
+    var v=valda(), hg=sum(v,"hyresgaster");
+    $("who").textContent="Vasakronan · "+v.length+
+      (v.length===1?" fastighet · ":" fastigheter · ")+hg+" hyresgäster";
+  }
+
+  root.addEventListener("click",function(e){
+    var t=e.target.closest ? e.target.closest("[data-tab]") : null;
+    if(t){ STATE.tab=t.getAttribute("data-tab"); render(); return; }
+    var r=e.target.closest ? e.target.closest("[data-hus]") : null;
+    if(r){ STATE.hus=r.getAttribute("data-hus"); render(); return; }
+  });
+  root.addEventListener("change",function(e){
+    if(e.target===$("hus")){ STATE.hus=e.target.value; render(); }
+  });
+  root.addEventListener("input",function(e){
+    if(e.target.getAttribute && e.target.getAttribute("data-fa")==="q"){
+      STATE.q=e.target.value;
+      var pos=e.target.selectionStart; render();
+      var n=$("q"); if(n){ n.focus(); n.setSelectionRange(pos,pos); }
+    }
+  });
+
+  render();
+})();
+</script>

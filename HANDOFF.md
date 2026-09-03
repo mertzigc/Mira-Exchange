@@ -50,6 +50,7 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, notiser | 🟠 BYGGD + testad · **ej deployad** |
 | [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
 | [handoff/GRANSSNITTSSTRATEGI.md](handoff/GRANSSNITTSSTRATEGI.md) | En motor, många fronter: ägarens front-app vs vår motor, vad vi aldrig släpper | 🧭 STRATEGI · **läs §4 före ny hyresgästvänd yta** |
+| [handoff/FASTIGHETSAGARVYN.md](handoff/FASTIGHETSAGARVYN.md) | Mira Fastighet (`/fastighet`): ägarens överblick över servicelivet i beståndet. Roll `Hyresvärd`, egen session, inga kronor | 🟡 SKISS · prototyp finns, **§0 blockerad på `Fastighet.Ägare`** |
 
 **Egna handoff-filer utanför `handoff/`:**
 `OFFERT_PRODUKTION_HANDOFF.md` (F&E offert/order) · `FORFRAGAN_KALENDER_HANDOFF.md`
@@ -84,6 +85,7 @@ och hur många kunder som kan visa pass.
 | **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |
 | **Gränssnittsstrategi** | Beställningsspec från leveranssidan → direktdialog med plattformsleverantörerna → fråga hyresgästerna → inkommande beställnings-API. Se GRANSSNITTSSTRATEGI.md §6. ⚠️ tajmingsfönster i månader | Christian |
 | **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
+| **Fastighetsägarvyn** | Skiss + klickbar prototyp klar 2026-09-03 (`mira-fastighet-skiss.html`). **Nästa: verifiera `Fastighet.Ägare` i Bubble-editorn** — utan hyresvärd→fastighet-kopplingen finns ingen scope-modell. Se FASTIGHETSAGARVYN.md §6 | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
 - ~~**`create_user_account`:** parametern `role` + "Set User_role = role"~~ — ✅ **KLART**, bekräftat av Christian 2026-08-26. Kedjan Render→Bubble är hel.
