@@ -49,6 +49,7 @@ Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mes
 | [handoff/BESOKSHANTERING.md](handoff/BESOKSHANTERING.md) | Vasakronan-besökssystem: bemannad + självincheckning, SMS/mail, kundens kontaktlista | 🟠 UNDER BYGGE · auth/session LIVE |
 | [handoff/STAFF-MODULEN.md](handoff/STAFF-MODULEN.md) | Service & People i dashboard_crm: åtgärdslista, receptionister, besöksuppsättningar, notiser | 🟠 BYGGD + testad · **ej deployad** |
 | [handoff/APP-FRIKOPPLING.md](handoff/APP-FRIKOPPLING.md) | iOS-app bort från Bubble: Capacitor-paket + push-utredning | 🟡 STRATEGI · ej byggd |
+| [handoff/GRANSSNITTSSTRATEGI.md](handoff/GRANSSNITTSSTRATEGI.md) | En motor, många fronter: ägarens front-app vs vår motor, vad vi aldrig släpper | 🧭 STRATEGI · **läs §4 före ny hyresgästvänd yta** |
 
 **Egna handoff-filer utanför `handoff/`:**
 `OFFERT_PRODUKTION_HANDOFF.md` (F&E offert/order) · `FORFRAGAN_KALENDER_HANDOFF.md`
@@ -81,6 +82,7 @@ och hur många kunder som kan visa pass.
 | Caspeco F&E | Migrering startar Q1-27 → ta bort `tackning`-luckan då | — |
 | **Besökshantering (Vasakronan)** | ✅ GO. Auth/session LIVE 2026-08-26. Nästa: besöksloggen (steg B). Se BESOKSHANTERING.md §8 | Christian |
 | **Staff-modulen** | ✅ BYGGD 2026-08-28 (staff_api.js + mira-staff.html + staff_smoke.mjs, 156 gröna · roll + tilldelning). **Nästa: deploy + rökkör §10 i STAFF-MODULEN.md** — två fältnamnsantaganden är ej verifierade mot skarp data | Christian |
+| **Gränssnittsstrategi** | Beställningsspec från leveranssidan → direktdialog med plattformsleverantörerna → fråga hyresgästerna → inkommande beställnings-API. Se GRANSSNITTSSTRATEGI.md §6. ⚠️ tajmingsfönster i månader | Christian |
 | **App-frikoppling (iOS)** | Utred push: OneSignal vs Bubble-native → sedan Capacitor-paket. Se APP-FRIKOPPLING.md | Christian |
 
 ### ⚠️ KVAR I BUBBLE (Christian)
