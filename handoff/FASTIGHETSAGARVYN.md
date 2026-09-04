@@ -324,6 +324,37 @@ inte ett nytt block utan den.
 bibliotekprefix. `fa` (Font Awesome), `fas`/`far`/`fab`, `md` (Material), `btn`, `col`,
 `row`, `nav`, `ui` är alla upptagna av något.
 
+### 5.4d ⚠️ ATT ROTERA `LANDLORD_SESSION_SECRET` — TRE STÄLLEN, INTE TVÅ
+
+**Skarpt fall 2026-09-04.** Hemligheten roterades på Render och togs bort ur blocket —
+men **API Connector-headern glömdes**. Varje anrop till `/landlord/session` svarade då
+401, och sessionen slutade förnyas.
+
+⚠️ **Felet är TYST.** Backend-workflowens steg 2 är villkorat på
+`Result of step 1's body's ok is yes`. Vid 401 kör steget bara inte — inget fel, ingen
+logg, ingen notis. Den gamla tokenen ligger kvar och fungerar tills den går ut, så
+symtomet dyker upp **upp till 8 timmar efter** att man bröt kedjan, med en helt annan
+sida av produkten framför sig. Det var därför den här jakten kostade en förmiddag.
+
+**Checklista vid rotation — alla tre, i denna ordning:**
+1. `LANDLORD_SESSION_SECRET` på Render → **vänta in omstarten**
+2. API Connector → call `landlord_session` → header `x-landlord-secret` (Private)
+3. Verifiera INNAN du går vidare:
+   ```bash
+   curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$HOST/landlord/session" \
+     -H "x-landlord-secret: $LANDLORD_SESSION_SECRET" \
+     -H "Content-Type: application/json" -d '{"user_id":"<live-user-id>"}'
+   ```
+   200 = kedjan hel. 401 = steg 1 och 2 är osynkade. 503 = env saknas på Render.
+
+**Samma sak gäller `VISITOR_SESSION_SECRET` och `MYPAGE_SESSION_SECRET`** — identisk
+konstruktion, identisk tystnad.
+
+💡 **Värt att bygga om någon gång:** lägg ett steg i Bubble-workflowen som vid
+`ok is no` skriver felet till ett fält eller skickar en notis. Ett tyst villkor som
+sväljer ett auth-fel är en fälla som återkommer. Inte akut — checklistan ovan plus
+blockets felmeddelande (som numera nämner just den här orsaken) räcker.
+
 ### 5.5 Bubble-uppsättningen, steg för steg
 
 **A. Nya User-fält (Data → User):**
