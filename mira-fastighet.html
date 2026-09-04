@@ -254,24 +254,78 @@
 
   function felruta(j){
     var m={
-      unauthorized:"Sessionen har gått ut. Ladda om sidan.",
       outside_scope:"Det huset ligger utanför din behörighet.",
       rate_limited:"För många anrop. Vänta en minut."
     }[j&&j.error]||("Kunde inte hämta data"+(j&&j.error?" ("+j.error+")":"."));
     return '<div class="err"><b>Något gick fel</b>'+esc(m)+'</div>';
   }
 
+  // ── Tokenförnyelse ────────────────────────────────────────────────────────
+  // ⚠️ EN TOKEN-FORMAD STRÄNG ÄR INTE EN GILTIG SESSION. Tokenen lever 8 h; kommer
+  //    man tillbaka dagen efter ligger den kvar i fältet men är utgången, och
+  //    backend svarar 401. Blocket gav förut upp direkt och skrev "ladda om sidan"
+  //    — trots att Bubbles page-load-workflow just då höll på att minta en ny.
+  //    Förnyelsen är ASYNKRON precis som den första sessionen: vi måste vänta in
+  //    att fältets värde BYTS, inte att det blir ifyllt.
+  //    Skarpt fall 2026-09-04: token utgången 21:56 kvällen innan, sidan öppnad 09:31.
+  var FORNYAR=false;
+  function vantaNyToken(gammal){
+    return new Promise(function(res){
+      var t=0;
+      (function p(){
+        var v=TOK();
+        if(v && v!==gammal && v.indexOf(".")>0) return res(true);
+        t+=500; if(t>25000) return res(false);
+        setTimeout(p,500);
+      })();
+    });
+  }
+  // Ett omtag, inte fler: hjälper inte en ny token är det inte tokenen som är fel.
+  function apiR(path, gjortOmtag){
+    var tokenFore=TOK();
+    return api(path).then(function(j){
+      if(j.__status!==401 || gjortOmtag) return j;
+      if(!FORNYAR){
+        FORNYAR=true;
+        $("err").innerHTML="";
+        $("body").innerHTML='<div class="wait">Sessionen gick ut — förnyar...</div>';
+      }
+      return vantaNyToken(tokenFore).then(function(fick){
+        FORNYAR=false;
+        if(!fick){ j.__fornyelse_uteblev=true; return j; }
+        return apiR(path, true);
+      });
+    });
+  }
+  // ⚠️ Felet måste peka på RÄTT sak. "Ladda om sidan" är fel råd när omladdningen
+  //    inte hjälper — och det gör den inte om /landlord/session svarar 403.
+  function sessionsfel(){
+    console.error("[fastighet] tokenen förnyades aldrig. landlord_token var:", JSON.stringify(TOK()));
+    return '<div class="err"><b>Sessionen gick ut och förnyades inte</b>'+
+      'Din session löpte ut och en ny hämtades aldrig. Två vanliga orsaker: '+
+      'page load-villkoret på sidan <code>fastighet</code> utlöste inte workflowen, '+
+      'eller så svarade <code>/landlord/session</code> med ett fel — t.ex. att '+
+      'hyresvärden saknar fastigheter i sitt bestånd. Kolla Bubbles server-logg för '+
+      '<code>landlord_session</code>.</div>';
+  }
+
   function start(){
-    api("/landlord/context").then(function(j){
-      if(!j.ok){ $("err").innerHTML=felruta(j); $("body").innerHTML=""; return; }
+    apiR("/landlord/context", false).then(function(j){
+      if(!j.ok){
+        $("err").innerHTML = j.__fornyelse_uteblev ? sessionsfel() : felruta(j);
+        $("body").innerHTML=""; return;
+      }
       STATE.ctx=j; paintHus(); paintWho(); load();
     }).catch(function(){ $("err").innerHTML=felruta(null); $("body").innerHTML=""; });
   }
   function load(){
     STATE.laddar=true; $("body").innerHTML='<div class="wait">Hämtar...</div>';
-    api("/landlord/overview"+(STATE.hus?("?fastighet="+encodeURIComponent(STATE.hus)):"")).then(function(j){
+    apiR("/landlord/overview"+(STATE.hus?("?fastighet="+encodeURIComponent(STATE.hus)):""), false).then(function(j){
       STATE.laddar=false;
-      if(!j.ok){ $("err").innerHTML=felruta(j); $("body").innerHTML=""; return; }
+      if(!j.ok){
+        $("err").innerHTML = j.__fornyelse_uteblev ? sessionsfel() : felruta(j);
+        $("body").innerHTML=""; return;
+      }
       $("err").innerHTML=""; STATE.ov=j; render();
     }).catch(function(){ STATE.laddar=false; $("err").innerHTML=felruta(null); $("body").innerHTML=""; });
   }
