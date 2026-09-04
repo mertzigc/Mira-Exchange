@@ -302,11 +302,13 @@
   function sessionsfel(){
     console.error("[fastighet] tokenen förnyades aldrig. landlord_token var:", JSON.stringify(TOK()));
     return '<div class="err"><b>Sessionen gick ut och förnyades inte</b>'+
-      'Din session löpte ut och en ny hämtades aldrig. Två vanliga orsaker: '+
-      'page load-villkoret på sidan <code>fastighet</code> utlöste inte workflowen, '+
-      'eller så svarade <code>/landlord/session</code> med ett fel — t.ex. att '+
-      'hyresvärden saknar fastigheter i sitt bestånd. Kolla Bubbles server-logg för '+
-      '<code>landlord_session</code>.</div>';
+      '<b style="font-weight:400;color:#fff">Ladda om sidan först.</b> Sessionen förnyas '+
+      'vid sidladdning, så har fliken stått öppen sedan den gick ut räcker en omladdning. '+
+      'Hjälper inte det är det något av två: page load-villkoret på sidan '+
+      '<code>fastighet</code> utlöser inte workflowen, eller så svarar '+
+      '<code>/landlord/session</code> med ett fel — t.ex. att hyresvärden saknar '+
+      'fastigheter i sitt bestånd. Bubbles server-logg för <code>landlord_session</code> '+
+      'säger vilket.</div>';
   }
 
   function start(){
