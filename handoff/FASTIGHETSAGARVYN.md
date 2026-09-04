@@ -520,6 +520,57 @@ Tre tester som inte får tas bort:
 - ägarens egna ärende i ett annat hus följer inte med ett husfilter
   (`egna_arenden` scope-filtreras inte i efterhand — filtret måste sitta vid uttaget)
 
+## 5c. ⚠️ ÄGAREN BÄR TVÅ HATTAR — hur ytorna sitter ihop
+
+Fastighetsägaren är **både hyresvärd och kund**. De köper reception, lokalvård och event
+till sina egna ytor precis som vilken hyresgäst som helst. Startsidan lovar det uttryckligen:
+*"I Mira har ni exakt samma verktyg som hyresgästerna … Beståndsvyn och er egen beställning
+ligger i samma inloggning."*
+
+### Funktionaliteten finns redan — det som saknas är navigationen
+Ägaren **är** en `ClientCompany`. Därmed har de redan bokning, ärenden, planering, fakturor
+och kvalitetsbetyg genom den vanliga kundvyn. Inget av det behöver byggas om för ägarledet.
+Det som saknas är en väg mellan de två hattarna.
+
+### ⚠️ Varför Mira Fastighet INTE ska bli en flik i `dashboard_company`
+
+1. **Det är ett annat subjekt, inte en annan vy.** Varje modul i kundvyn svarar på frågan
+   *"för DET HÄR bolaget"*. Mira Fastighet svarar på *"för DE HÄR husen, aggregerat över
+   ANDRA bolag, med innehållet undanhållet"*. En flik signalerar "samma sak, annan vinkel"
+   — och det är precis vad det inte är.
+2. **Scope-isoleringen blir en disciplinfråga i stället för en strukturell garanti.**
+   `dashboard_company` är redan en yta med blandad auth (`mypage_token`, `company_id` via
+   CORS-allowlist, Bubble-native). Lägger man dit ett landlord-token-block ligger tre
+   scope-modeller på samma sida. Nästa utvecklare som återanvänder sidans befintliga
+   company-scopade fetchers inifrån fastighetsfliken bryter integritetsregeln **tyst**.
+   Två sidor med var sin token gör det misstaget omöjligt i stället för olämpligt.
+
+### Rekommendation: kontextväxlare, inte flik
+Samma grepp som startsidans egen Hyresgäst ⇄ Fastighetsägare-toggle, fast inloggad:
+
+| Steg | Vad | Kostnad |
+|---|---|---|
+| 1 | **Två länkar.** I `/fastighet`-headern: *"Till vårt eget kundkonto →"*. I `dashboard_company`, villkorat på `Current User's Hyresvärd is not empty`: *"Till Mira Fastighet →"*. | En kvart. Uppfyller startsidans löfte om samma inloggning. |
+| 2 | Länkarna blir en **segmenterad kontroll** i båda ytornas header, samma visuella språk som startsidans växlare. | Halvdag. |
+| 3 | Ägaren som bara är ägare (transaktionschef som aldrig bokar lunch) ska inte mötas av en kundvy full av tomma moduler — dölj växlaren när `Fastighetsägare`-kopplingen saknas. | Villkor, inte kod. |
+
+⚠️ **Bygg inte en tredje, sammanslagen vy.** Två subjekt, två ytor, en växlare. Slår man ihop
+dem måste varje modul veta vilken hatt användaren bär just nu — och det är exakt den sortens
+implicit läge som gör att fel data visas för fel part någon gång.
+
+### ⚠️ Datakravet som måste vara rätt först
+Växlaren pekar på ägarens **egen** `ClientCompany`, och den ligger i
+`Hyresvärd."Fastighetsägare - (1) för…"` (fältet med det avklippta namnet, se §5b).
+**`User.Company` på ägarens inloggning måste peka på samma bolag.**
+
+⚠️ På testanvändaren 2026-09-04 gjorde den inte det: `User.Company` pekade på ett bolag som
+ligger i Fabeges `Hyresgäster`-lista — alltså på en av deras **hyresgäster**, inte på Fabege
+själva. Med den kopplingen skickar växlaren ägaren in i en hyresgästs kundvy. Kontrollera
+den innan steg 1 rullas ut, och lägg gärna en koll i `/landlord/context` som flaggar när
+`User.Company` ≠ ägarens egen ClientCompany.
+
+---
+
 ## 6. DATAINVENTERING — VAD FINNS, VAD SAKNAS
 
 ### Finns och är verifierat
