@@ -1268,6 +1268,35 @@ Affärsvyns "skapa affär av lead/aktivitet" finns nu även på kortets **Leads*
 - **⚠️ Varför smoken inte fångade det:** mockens `bubblePatch` gjorde `Object.assign` rakt av och var alltså **mer tillåtande än Bubble**. Nu validerar mocken mot `KNOWN_FIELDS` (verifierade scheman) och kastar samma 400 som Bubble. **Mutationstestat:** sätter man tillbaka `used_at` faller 3 tester (exchange ok, "brände token", replay→400). Utöka `KNOWN_FIELDS` när fler typer verifierats — det är billigaste skyddet mot precis den här klassen av fel.
 - **OBS för felsökningen:** patch-felet var *caught*, så exchange fortsatte och returnerade 200. Det är därför sannolikt **inte** det som blockerade själva användarskapandet — den blockeringen ligger troligen i Bubble-wf:en `assign_temp_password` eller på `reset_pw`-sidan. Nästa försök visar orsaken i Render-loggen tack vare (3).
 
+### ⚠️ reset_pw: "invalid_or_expired" vid nytt konto — orsaken var osynlig (2026-09-04, öppet)
+**Symptom:** ny användare öppnar lösenordslänken, fyller i lösenord, Bekräfta → Bubble-popup
+`Render PW process - reset_password_exchange ... HTTP 400 {"ok":false,"error":"invalid_or_expired"}`.
+- **Backend-koden är rätt:** exchange svarar 400 bara när ingen rad med `token_hash` är obränd
+  och oförfallen. Men svaret sa inte VARFÖR, och `.catch(() => [])` runt uppslaget gjorde
+  dessutom varje Bubble-fel (401/429/500) till samma 400. Tre helt olika fel såg identiska ut.
+- **Fyra kandidater, i sannolikhetsordning:**
+  1. **Token redan bränd** — sedan 2026-08-18 är exchange engångs. Kallas den två gånger
+     faller andra anropet: dubbeltryck på Bekräfta (mobil!), omförsök efter att "Update
+     password" fallit (lösenordsregel/matchning kollas EFTER exchange), exchange i *Page is
+     loaded* i st.f. i knapp-workflowet, eller att sidan öppnats två gånger (mailklientens
+     förhandsvisning + "öppna i Chrome"; länkskannrar som kör JS bränner den innan användaren).
+  2. **Utgången** — TTL 24 h från `send`.
+  3. **Okänd token** — `t` manglad/tom rad (raden skapades aldrig, fel domän i länken).
+  4. **Bubble-uppslaget föll** — syntes tidigare INTE alls.
+- **Fix (companies_api.js):** svaret bär nu `reason` (`already_used` | `expired` | `unknown_token`)
+  + svensk `hint`; felkoden `invalid_or_expired` är oförändrad så inget i Bubble bryts. Fallet
+  uppslag → **502 `lookup_failed`** (fail-loud). Render-loggen skriver
+  `[/admin/reset-password/exchange] <reason> rows=<n> email=<maskad>`.
+- **Verifierat:** companies_smoke **553/553** (+4: already_used, unknown_token, expired,
+  lookup_failed) — **mutationstestat**, exakt de fyra faller mot gammal kod, inget kraschar.
+- **Mät nästa gång det händer** (Christians shell):
+  `curl -sS "https://mira-fm.com/api/1.1/obj/PasswordReset?constraints=[{\"key\":\"email\",\"constraint_type\":\"equals\",\"value\":\"<mail>\"}]&sort_field=Created%20Date&descending=true" -H "Authorization: Bearer $BUBBLE_API_KEY"`
+  → `used`/`expires_at` per rad + Render-loggens reason-rad avgör vilket av 1–4 det är.
+- **Bubble-sidan reset_pw — checklista (oavsett orsak):** exchange ska anropas EN gång, i
+  Bekräfta-workflowet, EFTER villkoret "lösenord matchar + uppfyller reglerna" (Only when),
+  aldrig i Page is loaded; knappen låses efter klick (state `busy`) mot dubbeltryck; bocka i
+  "Include errors in response" på exchange-anropet och visa `hint` i st.f. Bubbles råa popup.
+
 ### ⚠️ User_role saknades på nya konton → utkastad från dashboard_crm (löst 2026-08-18)
 **Symptom:** ny användare (skapad via kortets "Skapa konto") kunde sätta lösenord och logga in, men kastades direkt ut till `/index` — såg ut som en utloggning.
 - **Diagnos via Bubbles debugger:** inloggningen var oskyldig — `Go to page dashboard_crm` KÖRDE (`admin_crm is yes` läses korrekt). Utkastningen sker på **dashboard_crm**, som har tre "Page is loaded"-guards (`RE: Redirect - Standard`) som alla gör `Go to page index`: `Current User is logged out` · **`Current User's User_role is empty`** · `Current User's Company is empty`. Company var satt, hon var inloggad → **User_role tom** var boven.

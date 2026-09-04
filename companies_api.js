@@ -3133,14 +3133,36 @@ export function registerCompaniesRoutes(app, deps) {
         return res.status(501).json({ ok: false, error: "not_configured", hint: "Sätt env BUBBLE_ASSIGN_TEMP_WF + bygg Bubble-wf assign_temp_password." });
       }
       const hash = _sha256(token);
-      const rows = await bubbleFindAll("PasswordReset", { constraints: [{ key: "token_hash", constraint_type: "equals", value: hash }] }).catch(() => []);
+      // ⚠️ Faller uppslaget mot Bubble är svaret OKÄNT — inte "ogiltig länk". Tidigare
+      // `.catch(() => [])` gjorde varje Bubble-fel (401/429/500) till invalid_or_expired
+      // och odiagnostiserbart. Fail-loud: 502 + Render-logg. (2026-09-04)
+      let rows;
+      try {
+        rows = await bubbleFindAll("PasswordReset", { constraints: [{ key: "token_hash", constraint_type: "equals", value: hash }] });
+      } catch (e) {
+        console.error("[/admin/reset-password/exchange] token-uppslag föll:", e?.message, e?.detail);
+        return res.status(502).json({ ok: false, error: "lookup_failed", hint: "kunde inte fråga Bubble efter token — försök igen om en stund" });
+      }
+      const list = Array.isArray(rows) ? rows : [];
       const now = Date.now();
-      const row = (rows || []).find((r) => {
+      const row = list.find((r) => {
         if (r.used === true) return false;
         const exp = r.expires_at ? Date.parse(r.expires_at) : 0;
         return !(exp && exp < now);
       });
-      if (!row) return res.status(400).json({ ok: false, error: "invalid_or_expired" });
+      if (!row) {
+        // Skilj på VARFÖR: redan bränd (dubbelanrop/omförsök/skanner), utgången (24 h)
+        // eller okänd (manglad länk / raden saknas). Felkoden är oförändrad
+        // (invalid_or_expired) — reason + hint är nya, för Bubble-popupen och loggen.
+        const reason = !list.length ? "unknown_token" : (list.some((r) => r.used === true) ? "already_used" : "expired");
+        const hint = reason === "already_used" ? "Länken är redan använd. Begär en ny lösenordslänk."
+                   : reason === "expired" ? "Länken har gått ut (giltig 24 h). Begär en ny lösenordslänk."
+                   : "Länken är ogiltig.";
+        const em = _str(list[0] && list[0].email);
+        const masked = em ? em.replace(/^(.).*?(@.*)$/, "$1***$2") : "-";
+        console.warn(`[/admin/reset-password/exchange] ${reason} rows=${list.length} email=${masked}`);
+        return res.status(400).json({ ok: false, error: "invalid_or_expired", reason, hint });
+      }
       // ⚠️ BRÄNN TOKEN — måste lyckas innan vi lämnar ut ett temp-lösenord.
       // PasswordReset-typen har BARA {email, coworker, token_hash, expires_at, used}.
       // Tidigare patchades även `used_at` (finns inte) → Bubble avvisade HELA patchen,

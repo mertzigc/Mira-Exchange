@@ -1,5 +1,6 @@
 // Smoke: företagslista (companies_api.js). Mockad Bubble + injicerade delade cachar.
 //   node companies_smoke.mjs
+import nodeCrypto from "node:crypto";
 import { registerCompaniesRoutes } from "./companies_api.js";
 import * as ORG from "./orgnr.js";
 import { readFileSync } from "node:fs";
@@ -564,6 +565,23 @@ const run = async () => {
   ok("exchange utan token → 400 missing_token", exNo.code === 400 && exNo.body.error === "missing_token");
   var exInit = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: "__INIT__" } });
   ok("exchange __INIT__ → sample-svar (rör ej data)", exInit.body.ok && exInit.body.sample === true && exInit.body.temp_password === "INIT-SAMPLE-PW");
+  // ⚠️ 2026-09-04: "invalid_or_expired" sa inte VARFÖR — en bränd token (dubbelanrop på
+  // reset_pw / omförsök / länkskanner), en utgången och en okänd såg identiska ut i
+  // Bubble-popupen. reason + hint skiljer dem åt; felkoden är oförändrad.
+  ok("exchange bränd token → reason already_used + svensk hint", ex2.body.reason === "already_used" && /redan använd/.test(ex2.body.hint || ""));
+  ok("exchange okänd token → reason unknown_token", exBad.body.reason === "unknown_token");
+  var expRaw = "e".repeat(48);
+  STORE.PasswordReset.push({ _id: "pr_exp", email: "gammal@acme.se", token_hash: nodeCrypto.createHash("sha256").update(expRaw).digest("hex"), expires_at: new Date(Date.now() - 60000).toISOString(), used: false });
+  var exExp = await call(s.routes, "post", "/admin/reset-password/exchange", { body: { token: expRaw } });
+  ok("exchange utgången token → 400 + reason expired", exExp.code === 400 && exExp.body.error === "invalid_or_expired" && exExp.body.reason === "expired");
+  // ⚠️ Fallet uppslag är OKÄNT svar, inte "ogiltig länk". Gammal kod svalde Bubble-felet
+  // med .catch(() => []) → 400 invalid_or_expired → man felsökte länken i st.f. Bubble.
+  var lkDeps = Object.assign({}, deps, {
+    bubbleFindAll: async (t, o) => { if (t === "PasswordReset") { const e = new Error("bubbleFind failed"); e.detail = { status: 500, body: "boom" }; throw e; } return deps.bubbleFindAll(t, o); },
+  });
+  var lks = mk(); registerCompaniesRoutes(lks.app, lkDeps);
+  var lk = await call(lks.routes, "post", "/admin/reset-password/exchange", { body: { token: rawTok } });
+  ok("exchange: fallet Bubble-uppslag → 502 lookup_failed (inte 400 invalid_or_expired)", lk.code === 502 && lk.body.error === "lookup_failed");
 
   var pw404 = await call(s.routes, "post", "/admin/companies/coworker/:id/send-password", { params: { id: "nope" } });
   ok("send-password okänd coworker → 404", pw404.code === 404);
