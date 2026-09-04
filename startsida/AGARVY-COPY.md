@@ -3,7 +3,7 @@
 > Utkast 4, 2026-09-03. Följer hyresgästsektionens upplägg sektion för sektion.
 > ✅ Godkänd och byggd i `index-ljus.html` + `index.html` 2026-09-03 (utkast 4). Bilder = `startsida/bilder/fastighet-*.jpg`.
 
-Meny i ägarläget: **Så fungerar det · Vyerna · Hyresgästpuls · AI & Analys · Integration**
+Meny i ägarläget: **Så fungerar det · Vyerna · Som kund · Hyresgästpuls · AI & Analys · Integration**
 
 ---
 
@@ -94,6 +94,34 @@ varje dag – ordnat per fastighet, per hyresgäst och per typ av yta.
 | Källtäckning | `fastighet-kallor.jpg` | mira-fm.com / källtäckning | Vad vi mäter |
 
 *(Hyresgästpulsen visas i sektion 5, inte här – den är daterad.)*
+
+---
+
+## 4b. Ni är också kund. Allt på ett ställe.
+
+*Tillagd 2026-09-03 efter Oscars poäng: ägaren är inte bara betraktare utan en av husets
+viktigaste kunder. Samma form som "Multipla vyer": fyra kort + flikar med HYRESGÄSTVYNS
+skärmbilder (bokningar, ärenden, översikt) – det är samma plattform.*
+
+Ett hus har ytor som ingen hyresgäst äger: entrén, receptionen, hisshallarna, garaget,
+gården. Där är ni beställaren – städning av allmänna ytor, bemanning av husets reception,
+aktiveringar och event för hela fastigheten, drift och underhåll. I Mira har ni exakt
+samma verktyg som hyresgästerna: ni bokar tjänster, skapar ärenden, ser planeringen,
+betygsätter resultatet och får notiser när något är klart. Beståndsvyn och er egen
+beställning ligger i samma inloggning.
+
+- **Boka tjänster** – städ av allmänna ytor, reception, event och aktiveringar för huset.
+- **Ärenden i era ytor** – trasig belysning i garaget, snö vid lastkajen. Ni skapar, Carotte ser det direkt, ni följer till stängning.
+- **Planering & kvalitet** – vad som är inbokat i huset den här veckan, och betyget på det som gjordes förra.
+- **Notiser** – när entrén är städad, när teknikern är på väg, när en leverans landat.
+
+Flikar: Bokningar (`skarm-bokningar.jpg`) · Ärenden (`skarm-arenden.jpg`) · Översikt (`skarm-oversikt.jpg`),
+etikett "Era egna ytor". Bildtext: *Samma vyer som hyresgästerna – det är samma plattform.*
+
+Kundperspektivet ligger dessutom in på tre ställen: hero-meningen ("Och allt ni själva
+beställer till huset ligger på samma ställe"), steg 3 i Så fungerar det (det är **er
+förvaltare** som anmäler entrédörren i Mira, med foto) och register-raden Ärenden ("ni
+skapar dem själva i Mira som vilken kund som helst").
 
 ---
 

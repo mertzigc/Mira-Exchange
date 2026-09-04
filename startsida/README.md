@@ -443,6 +443,7 @@ och tonläge rakt av: förklara vad det är, hur det fungerar, vad man ser, och 
 | Så fungerar integrationen | Så fungerar det · Mira Fastighet — *det händer i huset / ni ser det i Mira* | `#hur` | `.xw` / `.xstep` / `.xpane` |
 | Varje funktion har Carotte bakom sig (01–06) | Allt som ger huset innehåll (01–06) | `#innehall` | `.feat-g` / `.reg` |
 | Multipla vyer. En plattform. | Sex vyer. Ett bestånd. — fem flikar med demobilder | `#vyerna` | `.sc-tabs` / `.stab` / `.usc` |
+| (Multipla vyer, igen) | **Ni är också kund. Allt på ett ställe.** – fyra kort + hyresgästvyns tre skärmbilder | `#kund` | `.ilist` + `.sc-tabs` / `.stab` / `.usc` |
 | Mira AI – vintern 2026 | Hyresgästpuls – vintern 2026/27, pulsbilden i exempelrutan | `#puls` | `.ai-grid` / `.road` |
 | — | Mira AI för fastighetsägare – vintern 2026/27 | `#ai-fastighet` | `.ai-grid` / `.road` |
 | Inte bara mjukvara. Carotte levererar. | Datan finns för att vi är där. | `#darfor` | `.car-g` / `.svclist` |
@@ -450,7 +451,7 @@ och tonläge rakt av: förklara vad det är, hur det fungerar, vad man ser, och 
 | App | Hyresgästens uppgifter stannar hos hyresgästen. | `#integritet` | `.ilist` (ny, 4 kort) |
 | CTA | Se det på era egna fastigheter. | — | `.fcta` |
 
-Menyn i ägarläget: Så fungerar det · Vyerna · Hyresgästpuls · AI & Analys · Integration.
+Menyn i ägarläget: Så fungerar det · Vyerna · Som kund · Hyresgästpuls · AI & Analys · Integration.
 
 **Enda nya CSS:en** är `.ilist`/`.ili` (integritetskorten) och `.lfoot` (bildtexten under
 flikarna, bara ljusa filen). Allt annat är hyresgästsidans klasser — det är poängen: byter
@@ -458,8 +459,9 @@ man palett eller typsnitt följer båda vyerna med.
 
 ⚠️ **Samma klasser i två vyer betyder att handlers måste skopas.** Steg (`.xstep`),
 dragspel (`.regbtn`) och flikar (`.stab`) finns nu i båda vyerna. I ljusa filen hittar
-varje handler sin vy med `closest("[data-vw]")` och togglar bara där. I mörka filen har
-ägarvyn en egen `lsw(i)` bredvid `sw(i)`. Verifierat: ett klick i ägarvyn rör inte
+varje handler sin **sektion** med `closest("section, [data-vw]")` och togglar bara där — sedan
+`#kund` kom till finns två flikgrupper i samma vy, så vy-nivån räckte inte längre. I mörka filen har
+ägarvyn `lsw(i)` för `#vyerna` och `ksw(i)` för `#kund` bredvid hyresgästvyns `sw(i)`. Verifierat: ett klick i ägarvyn rör inte
 hyresgästvyns kopia.
 
 **Fjärde varvet (samma dag), tre önskemål från Christian:**

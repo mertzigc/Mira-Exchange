@@ -46,7 +46,8 @@ nav.stuck{border-bottom-color:var(--line);}
 .nl-txt{font-family:var(--fh);font-size:25px;color:var(--ink);letter-spacing:-.02em;}
 .nl-txt span{color:var(--o);}
 .nav-links{display:flex;gap:28px;}
-.nav-links a{font-size:13.5px;color:var(--ink70);text-decoration:none;transition:color .2s;}
+.nav-links a{font-size:13.5px;color:var(--ink70);text-decoration:none;transition:color .2s;white-space:nowrap;}
+.btn-g,.vsw-b{white-space:nowrap;}
 .nav-links a:hover{color:var(--ink);}
 .btn-g{font-size:13px;font-weight:700;color:var(--ink);background:var(--surface);
   border:1px solid var(--line-2);border-radius:999px;padding:9px 20px;
@@ -424,8 +425,8 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
 @keyframes hbFlow{to{stroke-dashoffset:-18}}
 @media(prefers-reduced-motion:reduce){.hb-fl,.hb-d,.hb-links path,.hb-panel{animation:none;opacity:1}.hb-bar{animation:none;transform:none}.hb-d circle,.hb-scan,.hb-rings{animation:none}.hb-scan{opacity:0}}
 /* Vaxlaren + fem menylankar + sprakpillret + Logga in far inte plats under
-   ~1080 px - da gar menyn in i hamburgaren och vaxlaren foljer med dit. */
-@media(max-width:1080px){
+   ~1280 px - da gar menyn in i hamburgaren och vaxlaren foljer med dit. */
+@media(max-width:1280px){
   .nav-links{display:none;position:absolute;top:74px;left:0;right:0;background:var(--canvas);
     padding:20px;flex-direction:column;gap:16px;border-bottom:1px solid var(--line);}
   .nav-links.open{display:flex;}
@@ -483,6 +484,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     <span class="nlg" data-nlg="agare" hidden>
       <a href="#hur" data-en="How it works">Så fungerar det</a>
       <a href="#vyerna" data-en="The views">Vyerna</a>
+      <a href="#kund" data-en="As a customer">Som kund</a>
       <a href="#puls" data-en="Tenant pulse">Hyresgästpuls</a>
       <a href="#ai-fastighet" data-en="AI &amp; Analytics">AI &amp; Analys</a>
       <a href="#integration" data-en="Integration">Integration</a>
@@ -773,7 +775,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   <div class="hb-grid">
   <div>
   <h1 data-en-html="See everything that happens in your properties. <em>Every day.</em>">Se allt som händer i era fastigheter. <em>Varje dag.</em></h1>
-  <p class="hsub" data-en="Mira Fastighet is the property owner's view in Mira. It shows everything Carotte and our selected partners do in your buildings – cleaning, food and meetings, reception and staffing, issues and quality controls – gathered per property and per tenant. It is insight you have never had: what actually happens in the building, measured by the people doing the work.">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
+  <p class="hsub" data-en="Mira Fastighet is the property owner's view in Mira. It shows everything Carotte and our selected partners do in your buildings – cleaning, food and meetings, reception and staffing, issues and quality controls – gathered per property and per tenant. It is insight you have never had: what actually happens in the building, measured by the people doing the work. And everything you order for the building yourself sits in the same place.">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet. Och allt ni själva beställer till huset ligger på samma ställe.</p>
   <div class="cta-row">
     <button class="cta" type="button" data-fz="open" data-en-html="Book a walk-through <span>→</span>">Boka en genomgång <span>→</span></button>
   </div>
@@ -871,7 +873,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     <div class="xsteps">
       <button class="xstep on" type="button" data-x="0"><b data-en="Step 1">Steg 1</b><span data-en="Carotte cleans at a tenant">Carotte städar hos en hyresgäst</span></button>
       <button class="xstep" type="button" data-x="1"><b data-en="Step 2">Steg 2</b><span data-en="A tenant orders breakfast">En hyresgäst beställer frukost</span></button>
-      <button class="xstep" type="button" data-x="2"><b data-en="Step 3">Steg 3</b><span data-en="Someone reports the entrance door">Någon anmäler entrédörren</span></button>
+      <button class="xstep" type="button" data-x="2"><b data-en="Step 3">Steg 3</b><span data-en="Your manager reports the entrance door">Er förvaltare anmäler entrédörren</span></button>
       <button class="xstep" type="button" data-x="3"><b data-en="Step 4">Steg 4</b><span data-en="Carotte runs a quality control">Carotte gör en kvalitetskontroll</span></button>
     </div>
     <div class="xpane on" data-xp="0">
@@ -907,15 +909,15 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
     <div class="xpane" data-xp="2">
       <div class="xside l">
         <span class="xcap d" data-en="It happens in the building">Det händer i huset</span>
-        <div class="xname" data-en="Someone reports that the entrance door sticks">Någon anmäler att entrédörren går trögt</div>
-        <div class="xdesc" data-en="Carotte's technician fixes it the same day">Carottes tekniker åtgärdar samma dag</div>
+        <div class="xname" data-en="Your manager reports in Mira that the entrance door sticks">Er förvaltare anmäler i Mira att entrédörren går trögt</div>
+        <div class="xdesc" data-en="Photo attached. Carotte's technician fixes it the same day">Foto bifogat. Carottes tekniker åtgärdar samma dag</div>
         <span class="xstat s-live" data-en="Being fixed">Åtgärdas</span>
       </div>
       <div class="xarrow" aria-hidden="true"><svg viewBox="0 0 52 16" fill="none"><path d="M2 8h44" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M40 2l7 6-7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="xside r">
         <span class="xcap f" data-en="You see it in Mira Fastighet">Ni ser det i Mira Fastighet</span>
         <div class="xname" data-en="The issue, its priority and how fast it was closed">Ärendet, prioriteten och hur snabbt det stängdes</div>
-        <div class="xdesc" data-en="It is your entrance – you see all of it">Det är er entré – ni ser allt</div>
+        <div class="xdesc" data-en="It is your entrance and your issue – you see all of it">Det är er entré och ert ärende – ni ser allt</div>
         <span class="xstat s-live" data-en="Open">Öppet</span>
       </div>
     </div>
@@ -958,7 +960,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
       <div class="regitem">
         <button class="regbtn" type="button"><span class="regnum">03</span><span class="regtitle" data-en="Issues">Ärenden</span><span class="regplus">+</span></button>
         <div class="regbody"><div class="regbody-in">
-          <p class="regdesc" data-en="Your own areas – entrances, lift lobbies, garages, loading bays – in full detail. The tenants' issues as totals per building: how many, how serious, and how fast they are closed.">Era egna ytor – entréer, hisshallar, garage, lastkajer – i full detalj. Hyresgästernas ärenden som summor per hus: hur många, hur allvarliga och hur snabbt de stängs.</p>
+          <p class="regdesc" data-en="Your own areas – entrances, lift lobbies, garages, loading bays – in full detail, and you raise them yourself in Mira like any customer. The tenants' issues as totals per building: how many, how serious, and how fast they are closed.">Era egna ytor – entréer, hisshallar, garage, lastkajer – i full detalj, och ni skapar dem själva i Mira som vilken kund som helst. Hyresgästernas ärenden som summor per hus: hur många, hur allvarliga och hur snabbt de stängs.</p>
         </div></div>
       </div>
       <div class="regitem">
@@ -1026,7 +1028,33 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   </div>
 </section>
 
-<section id="puls" class="tint">
+<section id="kund" class="tint">
+  <div class="wrap">
+    <div class="sc-hd sr">
+      <h2 class="sh" style="max-width:760px;margin:0 auto 14px" data-en-html="You are a customer too. <em>Everything in one place.</em>">Ni är också kund. <em>Allt på ett ställe.</em></h2>
+      <p class="sp" style="margin:0 auto;max-width:720px" data-en="A building has areas no tenant owns: the entrance, the reception, the lift lobbies, the garage, the courtyard. There you are the client – cleaning of common areas, staffing of the building's reception, activations and events for the whole property, operations and maintenance. In Mira you have exactly the same tools as the tenants: you book services, raise issues, see the schedule, rate the result and get notified when something is done. The portfolio view and your own orders sit behind the same login.">Ett hus har ytor som ingen hyresgäst äger: entrén, receptionen, hisshallarna, garaget, gården. Där är ni beställaren – städning av allmänna ytor, bemanning av husets reception, aktiveringar och event för hela fastigheten, drift och underhåll. I Mira har ni exakt samma verktyg som hyresgästerna: ni bokar tjänster, skapar ärenden, ser planeringen, betygsätter resultatet och får notiser när något är klart. Beståndsvyn och er egen beställning ligger i samma inloggning.</p>
+    </div>
+    <div class="ilist sr d1" style="margin:0 auto 44px">
+      <div class="ili"><div class="ilk" data-en="Book services">Boka tjänster</div><div class="ilt" data-en="Cleaning of common areas, reception, events and activations for the building. A couple of clicks, straight to Carotte's team.">Städ av allmänna ytor, reception, event och aktiveringar för huset. Ett par klick, direkt till Carottes team.</div></div>
+      <div class="ili"><div class="ilk" data-en="Issues in your areas">Ärenden i era ytor</div><div class="ilt" data-en="A broken light in the garage, snow at the loading bay. You raise the issue, Carotte sees it at once, you follow it to closure.">Trasig belysning i garaget, snö vid lastkajen. Ni skapar ärendet, Carotte ser det direkt, ni följer det till stängning.</div></div>
+      <div class="ili"><div class="ilk" data-en="Schedule &amp; quality">Planering &amp; kvalitet</div><div class="ilt" data-en="What is booked in the building this week, and the rating of what was done last week.">Vad som är inbokat i huset den här veckan, och betyget på det som gjordes förra.</div></div>
+      <div class="ili"><div class="ilk" data-en="Notifications">Notiser</div><div class="ilt" data-en="When the entrance has been cleaned, when the technician is on the way, when a delivery has landed.">När entrén är städad, när teknikern är på väg, när en leverans har landat.</div></div>
+    </div>
+    <div class="sc-tabs sr d1">
+      <button class="stab on" type="button" data-t="0" data-en="Bookings">Bokningar</button>
+      <button class="stab" type="button" data-t="1" data-en="Issues">Ärenden</button>
+      <button class="stab" type="button" data-t="2" data-en="Overview">Översikt</button>
+    </div>
+    <div class="sr d2">
+      <div class="usc on" data-tp="0"><div class="sw"><div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / services">mira-fm.com / tjänster</div><div class="stb-r" data-en="Your own areas">Era egna ytor</div></div><img class="shot-img" src="bilder/skarm-bokningar.jpg" alt="Tjänstevyn i Mira: aktiva tjänster, förslag och paket att beställa för husets egna ytor" data-en-alt="The services view in Mira: active services, suggestions and packages to order for the building's own areas" width="1700" height="906" loading="lazy"></div></div>
+      <div class="usc" data-tp="1"><div class="sw"><div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / issues">mira-fm.com / ärenden</div><div class="stb-r" data-en="Your own areas">Era egna ytor</div></div><img class="shot-img" src="bilder/skarm-arenden.jpg" alt="Ärendelistan i Mira med prioritet, plats och status" data-en-alt="The issue list in Mira with priority, location and status" width="1700" height="811" loading="lazy"></div></div>
+      <div class="usc" data-tp="2"><div class="sw"><div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl" data-en="mira-fm.com / overview">mira-fm.com / översikt</div><div class="stb-r" data-en="Your own areas">Era egna ytor</div></div><img class="shot-img" src="bilder/skarm-oversikt.jpg" alt="Översiktsvyn i Mira med bokningar, ärenden, kvalitetsbetyg och kundansvarig" data-en-alt="The overview in Mira with bookings, issues, quality ratings and account manager" width="1700" height="690" loading="lazy"></div></div>
+    </div>
+    <p class="lfoot sr d3" data-en="Same views as the tenants – it is the same platform.">Samma vyer som hyresgästerna – det är samma plattform.</p>
+  </div>
+</section>
+
+<section id="puls">
   <div class="wrap ai-grid">
     <div class="sr">
       <div class="ai-badge" data-en="Tenant pulse — launching winter 2026/27">Hyresgästpuls — lansering vintern 2026/27</div>
@@ -1402,7 +1430,7 @@ footer{border-top:1px solid var(--line);padding:44px clamp(24px,6vw,96px);displa
   /* växelverkan */
   /* Steg, dragspel och flikar finns i BADA vyerna med samma klasser - skopa till
      narmaste vy sa ett klick i agarvyn inte styr hyresgastvyns kopia. */
-  function vy(e){ return (e.closest && e.closest("[data-vw]")) || document; }
+  function vy(e){ return (e.closest && e.closest("section, [data-vw]")) || document; }
   $$(".xstep").forEach(function(b){
     b.addEventListener("click", function(){
       var i = b.getAttribute("data-x"), r = vy(b);

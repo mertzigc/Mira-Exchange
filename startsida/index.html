@@ -49,7 +49,8 @@ nav.stuck{background:rgba(30,34,53,.88);backdrop-filter:blur(20px) saturate(1.3)
 .nl{display:flex;align-items:center;text-decoration:none;}
 .nl img{height:44px;width:auto;object-fit:contain;display:block;}
 .nav-links{display:flex;gap:30px;}
-.nav-links a{font-size:13.5px;color:var(--w70);text-decoration:none;transition:color .2s;}
+.nav-links a{font-size:13.5px;color:var(--w70);text-decoration:none;transition:color .2s;white-space:nowrap;}
+.btn-g,.vsw-b{white-space:nowrap;}
 .nav-links a:hover{color:#fff;}
 .nav-r{display:flex;align-items:center;gap:12px;}
 .btn-g{font-size:13px;color:var(--w70);background:var(--input);border:1px solid var(--bdr);
@@ -438,9 +439,9 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
 @keyframes hbScan{0%{transform:translateY(0);opacity:0}2%{opacity:1}36%{transform:translateY(-358px);opacity:1}38%{opacity:0;transform:translateY(-358px)}99%{opacity:0;transform:translateY(-358px)}100%{opacity:0;transform:translateY(0)}}
 @keyframes hbFlow{to{stroke-dashoffset:-18}}
 @media(prefers-reduced-motion:reduce){.hb-fl,.hb-d,.hb-links path,.hb-panel{animation:none;opacity:1}.hb-bar{animation:none;transform:none}.hb-d circle,.hb-scan,.hb-rings{animation:none}.hb-scan{opacity:0}}
-/* Vaxlaren + fem menylankar + Logga in far inte plats under ~1080 px -
+/* Vaxlaren + fem menylankar + Logga in far inte plats under ~1280 px -
    da gar menyn in i hamburgaren och vaxlaren foljer med dit. */
-@media(max-width:1080px){
+@media(max-width:1280px){
   .nav-links{display:none;position:absolute;top:68px;left:0;right:0;background:rgba(30,34,53,.98);
     padding:20px;flex-direction:column;gap:16px;border-bottom:1px solid var(--bdr);}
   .nav-links.open{display:flex;}
@@ -499,6 +500,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
     <span class="nlg" data-nlg="agare" hidden>
       <a href="#hur">Så fungerar det</a>
       <a href="#vyerna">Vyerna</a>
+      <a href="#kund">Som kund</a>
       <a href="#puls">Hyresgästpuls</a>
       <a href="#ai-fastighet">AI &amp; Analys</a>
       <a href="#integration">Integration</a>
@@ -860,7 +862,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
     <div>
       <div class="hlbl">Mira Fastighet · För fastighetsägare · by Carotte Group</div>
       <h1>Se allt som händer<br>i era fastigheter.<br><em>Varje dag.</em></h1>
-      <p class="hsub">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet.</p>
+      <p class="hsub">Mira Fastighet är fastighetsägarens vy i Mira. Den visar allt som Carotte och våra utvalda partners gör i era hus – städning, mat och möten, reception och bemanning, ärenden och kvalitetskontroller – samlat per fastighet och per hyresgäst. Det är insyn ni aldrig har haft: vad som faktiskt händer i huset, mätt av dem som utför arbetet. Och allt ni själva beställer till huset ligger på samma ställe.</p>
       <div class="hact">
         <button class="hcta" type="button" data-fz="open">Boka en genomgång <span>→</span></button>
         <a href="#vyerna" class="hlink">Se vyerna ↓</a>
@@ -991,14 +993,14 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
       <div class="xsplit"></div>
       <div class="xrow">
         <div class="xside l">
-          <div class="xhead"><span class="xicon">🚪</span><span class="xname">Någon anmäler att entrédörren går trögt</span></div>
-          <div class="xdesc">Carottes tekniker åtgärdar samma dag</div>
+          <div class="xhead"><span class="xicon">🚪</span><span class="xname">Er förvaltare anmäler i Mira att entrédörren går trögt</span></div>
+          <div class="xdesc">Foto bifogat. Carottes tekniker åtgärdar samma dag</div>
           <span class="xstat s-live">Åtgärdas</span>
         </div>
         <div class="xrail"><div class="xnode">→</div></div>
         <div class="xside r">
           <div class="xhead"><span class="xicon">📋</span><span class="xname">Ärendet, prioriteten och hur snabbt det stängdes</span></div>
-          <div class="xdesc">Det är er entré – ni ser allt</div>
+          <div class="xdesc">Det är er entré och ert ärende – ni ser allt</div>
           <span class="xstat s-live">Öppet</span>
         </div>
       </div>
@@ -1040,7 +1042,7 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
       <div class="regrow sr d3">
         <div class="regnum">03</div>
         <div class="regmain"><div class="regicon">📋</div><div class="regtitle">Ärenden</div></div>
-        <div class="regside"><div class="regdesc">Era egna ytor – entréer, hisshallar, garage, lastkajer – i full detalj. Hyresgästernas ärenden som summor per hus: hur många, hur allvarliga och hur snabbt de stängs.</div></div>
+        <div class="regside"><div class="regdesc">Era egna ytor – entréer, hisshallar, garage, lastkajer – i full detalj, och ni skapar dem själva i Mira som vilken kund som helst. Hyresgästernas ärenden som summor per hus: hur många, hur allvarliga och hur snabbt de stängs.</div></div>
       </div>
       <div class="regrow sr d4">
         <div class="regnum">04</div>
@@ -1091,7 +1093,34 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
   </div>
 </section>
 
-<section id="puls" class="ai-sec">
+<section id="kund">
+  <div class="wrap">
+    <div class="sc-hd sr">
+      <div class="ey" style="justify-content:center">Ni som kund</div>
+      <h2 class="sh" style="max-width:760px;margin:0 auto 14px">Ni är också kund. <em>Allt på ett ställe.</em></h2>
+      <p class="sp" style="margin:0 auto;max-width:720px">Ett hus har ytor som ingen hyresgäst äger: entrén, receptionen, hisshallarna, garaget, gården. Där är ni beställaren – städning av allmänna ytor, bemanning av husets reception, aktiveringar och event för hela fastigheten, drift och underhåll. I Mira har ni exakt samma verktyg som hyresgästerna: ni bokar tjänster, skapar ärenden, ser planeringen, betygsätter resultatet och får notiser när något är klart. Beståndsvyn och er egen beställning ligger i samma inloggning.</p>
+    </div>
+    <div class="ilist sr d1" style="margin:0 auto 44px">
+      <div class="ili"><div class="ilk">Boka tjänster</div><div class="ilt">Städ av allmänna ytor, reception, event och aktiveringar för huset. Ett par klick, direkt till Carottes team.</div></div>
+      <div class="ili"><div class="ilk">Ärenden i era ytor</div><div class="ilt">Trasig belysning i garaget, snö vid lastkajen. Ni skapar ärendet, Carotte ser det direkt, ni följer det till stängning.</div></div>
+      <div class="ili"><div class="ilk">Planering &amp; kvalitet</div><div class="ilt">Vad som är inbokat i huset den här veckan, och betyget på det som gjordes förra.</div></div>
+      <div class="ili"><div class="ilk">Notiser</div><div class="ilt">När entrén är städad, när teknikern är på väg, när en leverans har landat.</div></div>
+    </div>
+    <div class="sc-tabs sr d1">
+      <button class="stab on" onclick="ksw(0)">Bokningar</button>
+      <button class="stab" onclick="ksw(1)">Ärenden</button>
+      <button class="stab" onclick="ksw(2)">Översikt</button>
+    </div>
+    <div class="sr d2">
+      <div class="usc on" data-tp="0"><div class="sw"><div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / tjänster</div><div class="stb-r">Era egna ytor</div></div><img class="shot-img" src="bilder/skarm-bokningar.jpg" alt="Tjänstevyn i Mira: aktiva tjänster, förslag och paket att beställa för husets egna ytor" width="1700" height="906" loading="lazy"></div></div>
+      <div class="usc" data-tp="1"><div class="sw"><div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / ärenden</div><div class="stb-r">Era egna ytor</div></div><img class="shot-img" src="bilder/skarm-arenden.jpg" alt="Ärendelistan i Mira med prioritet, plats och status" width="1700" height="811" loading="lazy"></div></div>
+      <div class="usc" data-tp="2"><div class="sw"><div class="stb"><div class="sdots"><div class="sdot sd-r"></div><div class="sdot sd-y"></div><div class="sdot sd-g"></div></div><div class="surl">mira-fm.com / översikt</div><div class="stb-r">Era egna ytor</div></div><img class="shot-img" src="bilder/skarm-oversikt.jpg" alt="Översiktsvyn i Mira med bokningar, ärenden, kvalitetsbetyg och kundansvarig" width="1700" height="690" loading="lazy"></div></div>
+    </div>
+    <p class="sc-note sr d3">Samma vyer som hyresgästerna – det är samma plattform.</p>
+  </div>
+</section>
+
+<section id="puls" class="ai-sec tint">
   <div class="wrap ai-grid">
     <div class="sr">
       <div class="ai-badge">Hyresgästpuls · Lansering vintern 2026/27</div>
@@ -1340,7 +1369,13 @@ footer{border-top:1px solid var(--bdr);padding:40px 46px;display:flex;
     tabs.forEach(function(t,j){ t.classList.toggle('on', i===j); });
     screens.forEach(function(s,j){ s.classList.toggle('on', i===j); });
   };
-  var ltabs = ag.querySelectorAll('.stab'), lscreens = ag.querySelectorAll('.usc');
+  var vy = document.getElementById('vyerna'), ku = document.getElementById('kund');
+  var ltabs = vy.querySelectorAll('.stab'), lscreens = vy.querySelectorAll('.usc');
+  var ktabs = ku.querySelectorAll('.stab'), kscreens = ku.querySelectorAll('.usc');
+  window.ksw = function(i){
+    ktabs.forEach(function(t,j){ t.classList.toggle('on', i===j); });
+    kscreens.forEach(function(s,j){ s.classList.toggle('on', i===j); });
+  };
   window.lsw = function(i){
     ltabs.forEach(function(t,j){ t.classList.toggle('on', i===j); });
     lscreens.forEach(function(s,j){ s.classList.toggle('on', i===j); });
