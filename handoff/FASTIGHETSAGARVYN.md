@@ -283,6 +283,47 @@ fel (t.ex. `no_fastigheter_assigned` när hyresvärden saknar bestånd). Fel rå
 
 **Testat i harness:** utgången token → 401 → fältet byts → omtag → vyn renderar.
 
+### 5.4c ⚠️⚠️ NAMNRYMDEN `.fa` KROCKADE MED FONT AWESOME
+
+**Skarpt fall 2026-09-04, efter deploy.** Blocket visade "Hämtar beståndet..." för alltid.
+Konsolen sa två saker:
+
+```
+[fastighet] ingen token efter 20 s. Fältet data-mira="landlord_token" var: ""
+Uncaught TypeError: Cannot set properties of null (setting 'innerHTML') at vanta
+```
+
+Tokenen var **inte** tom i databasen. Blocket letade i fel element.
+
+**Roten:** namnrymden hette `.fa` — **Font Awesomes klassprefix**. Bubble-sidor är fulla av
+`<i class="fa fa-…">`, så `document.querySelectorAll(".fa")` matchade varje ikon på sidan.
+Root-claimen tog första oclaimade träffen, vilket blev en ikon. Därefter var både
+`[data-fa="landlord_token"]` och `[data-fa="body"]` null → tom token, sedan krasch.
+
+⚠️ **Felet var flackt.** Det berodde på DOM-ordningen, så det fungerade ibland — vilket är
+värre än att det aldrig fungerat. En session tidigare samma dag gick blocket ända fram till
+ett 401, alltså hade det då hittat rätt rot.
+
+**Fixat, två lager:**
+1. Namnrymden omdöpt `.fa` → **`.mfast`** (CSS, markup, `data-mfast`, `data-mfast-claimed`).
+2. **Claimen verifierar formen:** ett element räknas bara som vårt block om det innehåller
+   `[data-mfast="body"]`. Namnbytet räcker för i dag; formkollen gör kollisionen omöjlig
+   oavsett vad någon annan råkar döpa en klass till i framtiden.
+
+**Testat:** harness med `<i class="fa">` både före och efter blocket → rätt rot, förnyelsen
+går igenom, vyn renderar.
+
+### ✅ Övriga block är INTE drabbade
+`mira-visitor.html` `.vi` · `mira-affar-samlad.html` `.af` · `mira-drift.html` `.dr` ·
+`mira-staff.html` `.st` — ingen krockar med ett känt bibliotek. **Men alla claimar utan
+formkoll**, så samma fel är latent i dem. Lägg in `querySelector('[data-XX="…"]')`-kollen
+nästa gång ett av blocken ändå ska röras. Inte ett eget spår värt en session, men skriv
+inte ett nytt block utan den.
+
+⚠️ **Regel för nya block:** namnrymden ska vara två–tre bokstäver som inte är ett
+bibliotekprefix. `fa` (Font Awesome), `fas`/`far`/`fab`, `md` (Material), `btn`, `col`,
+`row`, `nav`, `ui` är alla upptagna av något.
+
 ### 5.5 Bubble-uppsättningen, steg för steg
 
 **A. Nya User-fält (Data → User):**

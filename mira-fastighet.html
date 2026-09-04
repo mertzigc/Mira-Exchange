@@ -15,15 +15,15 @@
   data-mira: api_host + landlord_token — bind mot `value`, inte mot `data-mira`.
   ⚠️ x-landlord-secret får ALDRIG in i det här blocket. Den ligger i API Connectorn
      som Private header. Hamnar den här ligger den i sidkällan på en publik sida.
-  Konventioner: INGEN ?./??, IIFE, FAROOT-claim.
+  Konventioner: INGEN ?./??, IIFE, MFASTROOT-claim.
 
   Designen är identisk med mira-fastighet-demo.html (mockdata för presentationsmaterial).
   Ändras utseendet här ska demofilen följa med — annars visar pitchen en produkt som inte finns.
 -->
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
-  .fa, .fa *{box-sizing:border-box;margin:0;padding:0;word-break:normal}
-  .fa{
+  .mfast, .mfast *{box-sizing:border-box;margin:0;padding:0;word-break:normal}
+  .mfast{
     --base:#1e2235;--panel:#23283f;--card:#262b42;--deep:#2c314e;--input:#2e3350;
     --orange:#F47B30;--orange-dim:rgba(244,123,48,.13);
     --white:#fff;--w70:rgba(255,255,255,.70);--w40:rgba(255,255,255,.40);--w10:rgba(255,255,255,.07);
@@ -32,140 +32,140 @@
     --blue:#5B8DEF;--purple:#9B7DEF;--border:rgba(255,255,255,.07);
     --fb:Arial,sans-serif;background:var(--base);color:var(--white);font-family:var(--fb);
     font-size:13px;line-height:1.5;display:block;padding:22px 26px 40px;border-radius:14px}
-  .fa input[type=hidden]{display:none}
+  .mfast input[type=hidden]{display:none}
 
-  .fa h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}
-  .fa h1 span{color:var(--orange)}
-  .fa .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 0}
-  .fa .head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:space-between;margin-bottom:20px}
-  .fa .headctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .mfast h1{font-family:'DM Serif Display',Georgia,serif;font-size:26px}
+  .mfast h1 span{color:var(--orange)}
+  .mfast .sub{color:var(--w40);font-size:11px;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 0}
+  .mfast .head{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;justify-content:space-between;margin-bottom:20px}
+  .mfast .headctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 
-  .fa .sel{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 11px;
+  .mfast .sel{background:var(--input);border:1px solid var(--border);border-radius:9px;padding:9px 11px;
     color:var(--white);font-family:var(--fb);font-size:12px}
-  .fa .sel:focus{outline:none;border-color:var(--orange)}
-  .fa .search{flex:1;min-width:220px;background:var(--input);border:1px solid var(--border);border-radius:9px;
+  .mfast .sel:focus{outline:none;border-color:var(--orange)}
+  .mfast .search{flex:1;min-width:220px;background:var(--input);border:1px solid var(--border);border-radius:9px;
     padding:10px 13px;color:var(--white);font-family:var(--fb);font-size:13px}
-  .fa .search:focus{outline:none;border-color:var(--orange)}
-  .fa .search::placeholder{color:var(--w40)}
-  .fa .muted{color:var(--w40)}
-  .fa .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .mfast .search:focus{outline:none;border-color:var(--orange)}
+  .mfast .search::placeholder{color:var(--w40)}
+  .mfast .muted{color:var(--w40)}
+  .mfast .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 
   /* ── Pulsremsan — samma form som affärsvyns .fstep ───────────────────────── */
-  .fa .puls{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:20px}
-  .fa .pk{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:13px 15px;position:relative}
-  .fa .pk .pl{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
-  .fa .pk .pv{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums;line-height:1.2}
-  .fa .pk .pu{font-size:11px;color:var(--w40);margin-top:1px}
-  .fa .pk .pt{position:absolute;top:13px;right:15px;font-size:11px;font-weight:700}
-  .fa .up{color:var(--green)} .fa .down{color:var(--red)} .fa .flat{color:var(--w40)}
-  .fa .pk.warn{border-color:rgba(244,123,48,.35)}
-  .fa .pk .pw{font-size:10.5px;color:var(--orange);margin-top:6px}
-  @media(max-width:1100px){ .fa .puls{grid-template-columns:repeat(3,1fr)} }
-  @media(max-width:640px){ .fa .puls{grid-template-columns:repeat(2,1fr)} }
+  .mfast .puls{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:20px}
+  .mfast .pk{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:13px 15px;position:relative}
+  .mfast .pk .pl{font-size:11px;color:var(--w40);text-transform:uppercase;letter-spacing:.05em}
+  .mfast .pk .pv{font-size:22px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums;line-height:1.2}
+  .mfast .pk .pu{font-size:11px;color:var(--w40);margin-top:1px}
+  .mfast .pk .pt{position:absolute;top:13px;right:15px;font-size:11px;font-weight:700}
+  .mfast .up{color:var(--green)} .mfast .down{color:var(--red)} .mfast .flat{color:var(--w40)}
+  .mfast .pk.warn{border-color:rgba(244,123,48,.35)}
+  .mfast .pk .pw{font-size:10.5px;color:var(--orange);margin-top:6px}
+  @media(max-width:1100px){ .mfast .puls{grid-template-columns:repeat(3,1fr)} }
+  @media(max-width:640px){ .mfast .puls{grid-template-columns:repeat(2,1fr)} }
 
   /* ── Flikar ─────────────────────────────────────────────────────────────── */
-  .fa .tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1.5px solid var(--w10);margin-bottom:16px}
-  .fa .tab{background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;margin-bottom:-1.5px;
+  .mfast .tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1.5px solid var(--w10);margin-bottom:16px}
+  .mfast .tab{background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;margin-bottom:-1.5px;
     font-size:12px;font-weight:700;color:var(--w40);cursor:pointer;font-family:var(--fb)}
-  .fa .tab:hover,.fa .tab:focus{background:none!important;color:var(--white)!important;outline:none}
-  .fa .tab.on{color:var(--orange);border-bottom-color:var(--orange)}
-  .fa .tab b{display:inline-block;background:var(--w10);border-radius:9px;padding:1px 6px;font-size:10px;margin-left:6px}
+  .mfast .tab:hover,.mfast .tab:focus{background:none!important;color:var(--white)!important;outline:none}
+  .mfast .tab.on{color:var(--orange);border-bottom-color:var(--orange)}
+  .mfast .tab b{display:inline-block;background:var(--w10);border-radius:9px;padding:1px 6px;font-size:10px;margin-left:6px}
 
-  .fa .panel{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px 18px;margin-bottom:14px}
-  .fa .panel h3{font-size:14px;font-weight:700;margin-bottom:4px}
-  .fa .panel .ph{font-size:11px;color:var(--w40);margin-bottom:14px;max-width:80ch}
+  .mfast .panel{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:16px 18px;margin-bottom:14px}
+  .mfast .panel h3{font-size:14px;font-weight:700;margin-bottom:4px}
+  .mfast .panel .ph{font-size:11px;color:var(--w40);margin-bottom:14px;max-width:80ch}
 
   /* ── Tabell — .grid-formen från affärsvyn ───────────────────────────────── */
-  .fa .tablewrap{width:100%;overflow-x:auto}
-  .fa table{width:100%;border-collapse:collapse;min-width:840px}
-  .fa th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);
+  .mfast .tablewrap{width:100%;overflow-x:auto}
+  .mfast table{width:100%;border-collapse:collapse;min-width:840px}
+  .mfast th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--w40);
     padding:8px 12px;border-bottom:1.5px solid var(--w10);white-space:nowrap;font-weight:700}
-  .fa td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
-  .fa tr:last-child td{border-bottom:none}
-  .fa tbody tr:hover td{background:var(--card)}
-  .fa .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700}
-  .fa .nm{font-weight:700}
-  .fa .s{display:block;font-size:11px;color:var(--w40);margin-top:2px;font-weight:400}
-  .fa .clickrow{cursor:pointer}
+  .mfast td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+  .mfast tr:last-child td{border-bottom:none}
+  .mfast tbody tr:hover td{background:var(--card)}
+  .mfast .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:700}
+  .mfast .nm{font-weight:700}
+  .mfast .s{display:block;font-size:11px;color:var(--w40);margin-top:2px;font-weight:400}
+  .mfast .clickrow{cursor:pointer}
 
   /* ── Pillar & chips ─────────────────────────────────────────────────────── */
-  .fa .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;
+  .mfast .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;
     padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
-  .fa .pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40);display:block}
-  .fa .p-up{background:rgba(76,175,125,.13);color:var(--green)}   .fa .p-up .d{background:var(--green)}
-  .fa .p-flat{background:var(--w10);color:var(--w70)}
-  .fa .p-down{background:var(--orange-dim);color:var(--orange)}   .fa .p-down .d{background:var(--orange)}
-  .fa .p-quiet{background:rgba(224,90,90,.13);color:var(--red)}   .fa .p-quiet .d{background:var(--red)}
-  .fa .chip{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:20px;
+  .mfast .pill .d{width:6px;height:6px;border-radius:50%;background:var(--w40);display:block}
+  .mfast .p-up{background:rgba(76,175,125,.13);color:var(--green)}   .mfast .p-up .d{background:var(--green)}
+  .mfast .p-flat{background:var(--w10);color:var(--w70)}
+  .mfast .p-down{background:var(--orange-dim);color:var(--orange)}   .mfast .p-down .d{background:var(--orange)}
+  .mfast .p-quiet{background:rgba(224,90,90,.13);color:var(--red)}   .mfast .p-quiet .d{background:var(--red)}
+  .mfast .chip{display:inline-block;background:var(--input);border:1px solid var(--border);border-radius:20px;
     padding:5px 11px;font-size:11px;color:var(--w70);white-space:nowrap;margin:2px 4px 2px 0}
-  .fa .chip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
+  .mfast .chip.on{background:var(--orange);border-color:var(--orange);color:#1c1206;font-weight:700}
   /* ⚠️ `.chip.on` betyder AKTIVT FILTER i affärsvyn — samma färg för "har tjänsten"
      hade sagt två saker med en signal, och en rad med fyra tjänster blivit en orange
      vägg. Tjänster får en egen, tystare form. */
-  .fa .chip.svc{background:var(--green-dim);border-color:transparent;color:var(--green);font-weight:700}
-  .fa .chip.no{background:transparent;border:1px dashed var(--border);color:var(--w40)}
+  .mfast .chip.svc{background:var(--green-dim);border-color:transparent;color:var(--green);font-weight:700}
+  .mfast .chip.no{background:transparent;border:1px dashed var(--border);color:var(--w40)}
 
   /* ── Tre spår — samma källfärger som affärsvyns .src ─────────────────────── */
   /* Städ = Tengella (lila) · Mat & event = Fortnox (blå) · Bemanning = Intelliplan (grön) */
-  .fa .spar{display:flex;gap:2px;align-items:flex-end;height:26px}
-  .fa .spar i{display:block;width:5px;border-radius:1px;background:var(--w10)}
-  .fa .spar i.hk{background:rgba(155,125,239,.7)}
-  .fa .spar i.fe{background:rgba(91,141,239,.7)}
-  .fa .spar i.sp{background:rgba(76,175,125,.7)}
-  .fa .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--w40);margin-top:10px}
-  .fa .legend span{display:inline-flex;align-items:center;gap:6px}
-  .fa .legend i{width:9px;height:9px;border-radius:2px;display:block}
-  .fa .src{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:6px;
+  .mfast .spar{display:flex;gap:2px;align-items:flex-end;height:26px}
+  .mfast .spar i{display:block;width:5px;border-radius:1px;background:var(--w10)}
+  .mfast .spar i.hk{background:rgba(155,125,239,.7)}
+  .mfast .spar i.fe{background:rgba(91,141,239,.7)}
+  .mfast .spar i.sp{background:rgba(76,175,125,.7)}
+  .mfast .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--w40);margin-top:10px}
+  .mfast .legend span{display:inline-flex;align-items:center;gap:6px}
+  .mfast .legend i{width:9px;height:9px;border-radius:2px;display:block}
+  .mfast .src{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;border-radius:6px;
     padding:3px 8px;text-transform:uppercase;letter-spacing:.03em}
-  .fa .src .d{width:6px;height:6px;border-radius:50%;display:block}
-  .fa .src.mira{background:rgba(244,123,48,.14);color:var(--orange)}    .fa .src.mira .d{background:var(--orange)}
-  .fa .src.fortnox{background:rgba(91,141,239,.14);color:var(--blue)}   .fa .src.fortnox .d{background:var(--blue)}
-  .fa .src.tengella{background:rgba(155,125,239,.14);color:var(--purple)} .fa .src.tengella .d{background:var(--purple)}
-  .fa .src.intelliplan{background:rgba(76,175,125,.14);color:var(--green)} .fa .src.intelliplan .d{background:var(--green)}
+  .mfast .src .d{width:6px;height:6px;border-radius:50%;display:block}
+  .mfast .src.mira{background:rgba(244,123,48,.14);color:var(--orange)}    .mfast .src.mira .d{background:var(--orange)}
+  .mfast .src.fortnox{background:rgba(91,141,239,.14);color:var(--blue)}   .mfast .src.fortnox .d{background:var(--blue)}
+  .mfast .src.tengella{background:rgba(155,125,239,.14);color:var(--purple)} .mfast .src.tengella .d{background:var(--purple)}
+  .mfast .src.intelliplan{background:rgba(76,175,125,.14);color:var(--green)} .mfast .src.intelliplan .d{background:var(--green)}
 
   /* ── Mätare ─────────────────────────────────────────────────────────────── */
-  .fa .meter{height:6px;background:var(--w10);border-radius:4px;overflow:hidden;min-width:70px}
-  .fa .meter b{display:block;height:100%;background:var(--orange);border-radius:4px}
-  .fa .meter b.ok{background:var(--green)}
-  .fa .meter b.low{background:var(--red)}
-  .fa .mrow{display:flex;align-items:center;gap:9px}
-  .fa .mrow .mv{font-size:11px;font-variant-numeric:tabular-nums;color:var(--w70);min-width:42px;text-align:right;font-weight:700}
+  .mfast .meter{height:6px;background:var(--w10);border-radius:4px;overflow:hidden;min-width:70px}
+  .mfast .meter b{display:block;height:100%;background:var(--orange);border-radius:4px}
+  .mfast .meter b.ok{background:var(--green)}
+  .mfast .meter b.low{background:var(--red)}
+  .mfast .mrow{display:flex;align-items:center;gap:9px}
+  .mfast .mrow .mv{font-size:11px;font-variant-numeric:tabular-nums;color:var(--w70);min-width:42px;text-align:right;font-weight:700}
 
   /* ── Tjänstematris ──────────────────────────────────────────────────────── */
-  .fa .matrix{width:100%;border-collapse:collapse;min-width:760px}
-  .fa .matrix th{font-size:9.5px;padding:8px 6px;text-align:center}
-  .fa .matrix th.lft{text-align:left;min-width:190px}
-  .fa .matrix td{padding:7px 6px;text-align:center;border-bottom:1px solid var(--border)}
-  .fa .matrix td.lft{text-align:left}
-  .fa .dot{display:inline-block;width:17px;height:17px;border-radius:5px;background:var(--w10)}
-  .fa .dot.on{background:var(--green)}
+  .mfast .matrix{width:100%;border-collapse:collapse;min-width:760px}
+  .mfast .matrix th{font-size:9.5px;padding:8px 6px;text-align:center}
+  .mfast .matrix th.lft{text-align:left;min-width:190px}
+  .mfast .matrix td{padding:7px 6px;text-align:center;border-bottom:1px solid var(--border)}
+  .mfast .matrix td.lft{text-align:left}
+  .mfast .dot{display:inline-block;width:17px;height:17px;border-radius:5px;background:var(--w10)}
+  .mfast .dot.on{background:var(--green)}
 
   /* ── Ärendekort ─────────────────────────────────────────────────────────── */
-  .fa .agg{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:11px}
-  .fa .aggk{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:13px 14px}
-  .fa .aggk .an{font-weight:700;font-size:13px}
-  .fa .aggk .ar{display:flex;justify-content:space-between;font-size:11.5px;color:var(--w70);margin-top:8px}
-  .fa .aggk .ar b{font-variant-numeric:tabular-nums}
-  .fa .cats{margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
+  .mfast .agg{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:11px}
+  .mfast .aggk{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:13px 14px}
+  .mfast .aggk .an{font-weight:700;font-size:13px}
+  .mfast .aggk .ar{display:flex;justify-content:space-between;font-size:11.5px;color:var(--w70);margin-top:8px}
+  .mfast .aggk .ar b{font-variant-numeric:tabular-nums}
+  .mfast .cats{margin-top:10px;padding-top:9px;border-top:1px solid var(--border)}
 
-  .fa .note{background:var(--deep);border:1px solid var(--border);border-left:2px solid var(--orange);
+  .mfast .note{background:var(--deep);border:1px solid var(--border);border-left:2px solid var(--orange);
     border-radius:9px;padding:12px 15px;font-size:12px;color:var(--w70);margin-bottom:14px;max-width:95ch}
-  .fa .note b{color:var(--white)}
-  .fa .empty{padding:34px 20px;text-align:center;color:var(--w40)}
-  @media(max-width:720px){ .fa{padding:16px 14px 30px} }
+  .mfast .note b{color:var(--white)}
+  .mfast .empty{padding:34px 20px;text-align:center;color:var(--w40)}
+  @media(max-width:720px){ .mfast{padding:16px 14px 30px} }
 </style>
 <style>
   /* Tillägg utöver demoblocket: väntläge, felruta, dämpade pulskort. */
-  .fa .wait{padding:44px 20px;text-align:center;color:var(--w40);font-size:13px}
-  .fa .err{background:rgba(224,90,90,.10);border:1px solid rgba(224,90,90,.35);border-radius:10px;
+  .mfast .wait{padding:44px 20px;text-align:center;color:var(--w40);font-size:13px}
+  .mfast .err{background:rgba(224,90,90,.10);border:1px solid rgba(224,90,90,.35);border-radius:10px;
     padding:14px 16px;color:#ffb0b0;font-size:12.5px;margin-bottom:14px}
-  .fa .err b{display:block;color:#fff;margin-bottom:3px;font-size:13px}
-  .fa .pk.dim{opacity:.45}
-  .fa .pk.dim .pv{font-size:16px;font-weight:700;color:var(--w40)}
-  .fa .foot{margin-top:16px;font-size:10.5px;color:var(--w40)}
+  .mfast .err b{display:block;color:#fff;margin-bottom:3px;font-size:13px}
+  .mfast .pk.dim{opacity:.45}
+  .mfast .pk.dim .pv{font-size:16px;font-weight:700;color:var(--w40)}
+  .mfast .foot{margin-top:16px;font-size:10.5px;color:var(--w40)}
 </style>
 
-<div class="fa">
+<div class="mfast">
   <!-- ⚠️ `data-mira` är NAMNET, `value` är där datan ska in. Utan ett tomt `value=""`
        finns ingen lucka att binda mot i Bubble — och då är `data-mira` det enda som
        ser ut att duga. Det gick fel skarpt 2026-09-03: session-hemligheten hamnade i
@@ -178,28 +178,40 @@
   <div class="head">
     <div>
       <h1>Mira <span>Fastighet</span></h1>
-      <div class="sub" data-fa="who">Laddar...</div>
+      <div class="sub" data-mfast="who">Laddar...</div>
     </div>
     <div class="headctl">
-      <select class="sel" data-fa="hus"></select>
-      <button class="btn" data-fa="reload" type="button">Uppdatera</button>
+      <select class="sel" data-mfast="hus"></select>
+      <button class="btn" data-mfast="reload" type="button">Uppdatera</button>
     </div>
   </div>
 
-  <div data-fa="err"></div>
-  <div class="puls" data-fa="puls"></div>
-  <div class="tabs" data-fa="tabs"></div>
-  <div data-fa="body"><div class="wait">Hamtar beståndet...</div></div>
-  <div class="foot" data-fa="foot"></div>
+  <div data-mfast="err"></div>
+  <div class="puls" data-mfast="puls"></div>
+  <div class="tabs" data-mfast="tabs"></div>
+  <div data-mfast="body"><div class="wait">Hamtar beståndet...</div></div>
+  <div class="foot" data-mfast="foot"></div>
 </div>
 
 <script>
 (function(){
   "use strict";
-  var all=document.querySelectorAll(".fa"),root=null;
-  for(var i=0;i<all.length;i++){ if(!all[i].getAttribute("data-fa-claimed")){ root=all[i]; break; } }
-  if(!root) return; root.setAttribute("data-fa-claimed","1");
-  var $=function(k){ return root.querySelector('[data-fa="'+k+'"]'); };
+  // ⚠️ CLAIMA BARA ETT ELEMENT SOM FAKTISKT ÄR VÅRT BLOCK.
+  //    Skarpt fall 2026-09-04: namnrymden hette `.fa` — Font Awesomes klassprefix.
+  //    `querySelectorAll(".fa")` matchade varje FA-ikon på Bubble-sidan, skriptet
+  //    claimade en ikon, och därefter var både token-fältet och `[data-fa="body"]`
+  //    null: tom token, sedan "Cannot set properties of null". Felet var flackt —
+  //    det berodde på DOM-ordningen.
+  //    Namnrymden är omdöpt, men formkollen är det som gör kollisionen omöjlig:
+  //    ett element utan vår egen markup inuti är inte vårt block, vad det än heter.
+  var all=document.querySelectorAll(".mfast"),root=null;
+  for(var i=0;i<all.length;i++){
+    if(all[i].getAttribute("data-mfast-claimed")) continue;
+    if(!all[i].querySelector('[data-mfast="body"]')) continue;
+    root=all[i]; break;
+  }
+  if(!root) return; root.setAttribute("data-mfast-claimed","1");
+  var $=function(k){ return root.querySelector('[data-mfast="'+k+'"]'); };
   var cfgEl=function(k){ return root.querySelector('[data-mira="'+k+'"]'); };
   var cfg=function(k){ var el=cfgEl(k); return (el&&el.value)||""; };
   var HOST=cfg("api_host").replace(/\/+$/,"");
