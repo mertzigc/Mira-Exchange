@@ -260,6 +260,29 @@ tilldelning kan smalna av, aldrig vidga.
 samma fälla som slog på receptionisten 2026-08-28. Utan triggern släpar ett ändrat
 scope i upp till 8 timmar.
 
+### 5.4b ⚠️ FÖRNYELSEN — en token-formad sträng är inte en giltig session
+
+**Skarpt fall 2026-09-04.** Token utgången 21:56 kvällen innan, sidan öppnad 09:31.
+Blocket såg ett ifyllt, token-format fält, drog slutsatsen "session finns", anropade
+och fick 401 — och skrev *"Sessionen har gått ut. Ladda om sidan."* Omladdning hjälpte
+inte, för blocket gjorde om exakt samma sak.
+
+**Roten:** väntloopen vid start bevakar bara att fältet blir IFYLLT. Vid förnyelse är
+fältet redan ifyllt — det är *värdet* som byts. Bubbles page-load-workflow mintar om
+asynkront precis som vid första inloggningen, men blocket hade redan gett upp.
+
+**Fixat:** vid 401 går blocket in i väntläge (*"Sessionen gick ut — förnyar..."*), pollar
+tills `landlord_token` får ett **annat** värde, och gör om anropet. Ett omtag, inte fler —
+hjälper inte en färsk token är det inte tokenen som är fel.
+
+⚠️ **Och felmeddelandet pekar nu rätt.** Kommer ingen ny token inom 25 s står det inte
+längre "ladda om sidan" utan att förnyelsen uteblev, med de två faktiska orsakerna:
+page load-villkoret utlöste inte workflowen, eller `/landlord/session` svarade med ett
+fel (t.ex. `no_fastigheter_assigned` när hyresvärden saknar bestånd). Fel råd är värre
+än inget råd — "ladda om" skickar en felsökare varv efter varv förbi orsaken.
+
+**Testat i harness:** utgången token → 401 → fältet byts → omtag → vyn renderar.
+
 ### 5.5 Bubble-uppsättningen, steg för steg
 
 **A. Nya User-fält (Data → User):**
