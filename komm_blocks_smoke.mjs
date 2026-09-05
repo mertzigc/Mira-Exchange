@@ -11,6 +11,9 @@
 // innehållet försvinner utan felmeddelande.
 import fs from "node:fs";
 import { normBlocks, renderBlocksEmail, renderBlocksWeb, BLOCK_TYPES, safeUrl, videoEmbedSrc, BLOCK_CSS } from "./content_blocks.js";
+// MAIL_PAL_DARK behovs i sandladan nedan: blocksHtmlFor fick default-parametern
+// `pal = MAIL_PAL_DARK` 2026-08-26, och utklippet ser inte emailer.js importer.
+import { MAIL_PAL_DARK } from "./mail_theme.js";
 
 let pass = 0, fail = 0;
 const ok = (label, cond) => { if (cond) { pass++; console.log("  ✓ " + label); } else { fail++; console.log("  ✗ " + label); } };
@@ -179,13 +182,13 @@ const run = async () => {
   let getCalls = [], INV = {};
   const makeBlocksFn = () => {
     getCalls = [];
-    const factory = new Function("_bubbleGet", "normBlocks", "renderBlocksEmail", `
+    const factory = new Function("_bubbleGet", "normBlocks", "renderBlocksEmail", "MAIL_PAL_DARK", `
       ${blocksFnSrc}
       return { blocksHtmlFor, cache: _blocksCache };
     `);
     return factory(
       async (type, id) => { getCalls.push({ type, id }); if (!(id in INV)) throw new Error("not found"); return INV[id]; },
-      normBlocks, renderBlocksEmail
+      normBlocks, renderBlocksEmail, MAIL_PAL_DARK
     );
   };
 
@@ -243,7 +246,7 @@ const run = async () => {
   // ══════════════════════════════════════════════════════════════════════════
   for (const [tmpl, label] of [["tmplInviteInvitation", "inbjudan"], ["tmplNewsAnnouncement", "nyhetsutskick"], ["tmplSurveyInvitation", "undersökning"]]) {
     const body = slice(EMAILER_SRC, `async function ${tmpl}(`, "\n}\n", tmpl);
-    ok(`${label}: hämtar blocken`, /await blocksHtmlFor\(x, accent\)/.test(body));
+    ok(`${label}: hämtar blocken`, /await blocksHtmlFor\(x, accent(, pal)?\)/.test(body));
     ok(`${label}: lägger in dem i body`, /\+ blocks/.test(body));
   }
 

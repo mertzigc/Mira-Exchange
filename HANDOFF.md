@@ -28,6 +28,14 @@ avsågs — och ordet fanns då på exakt ett ställe i dokumentationen).
 
 ---
 
+## 🆕 NY I REPOT?
+Läs **[README.md](README.md)** först — snabbstart, katalogstruktur, deploy och de
+fällor som redan kostat tid. **[BLOCK-INDEX.md](BLOCK-INDEX.md)** säger vilket
+HTML-block som sitter var i Bubble. Miljövariablerna ligger i `.env.example`.
+Testsviterna körs samlat med `npm test` (37 sviter, ~2 500 kontroller, ~3 s).
+
+---
+
 ## 🚀 NY SESSION?
 Kopiera prompten i **[SESSION-START.md](SESSION-START.md)**, fyll i ämne + mål.
 Den ger maximal kontext på tre filer och stänger de tre fel som kostat oss mest.

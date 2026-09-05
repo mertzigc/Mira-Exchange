@@ -1,3 +1,19 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+.DS_Store
+**/.DS_Store
+
+# Kundavtal och personuppgifter hor inte hemma i ett kodrepo.
+# Historiken rensas med ./rensa_historik.sh — las den forst.
+Avtal*Carotte/
+
+# Originalbilder (upp till 70 MB styck). Webbversionerna som sidan faktiskt
+# anvander ligger i startsida/bilder/ och ar sparade.
+Bilder/*.tif
+Bilder/*.TIF
 
 unresolved.json
 Mira_kunddata_att_rensa.xlsx
